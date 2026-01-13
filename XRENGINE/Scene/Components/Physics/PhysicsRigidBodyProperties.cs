@@ -37,30 +37,18 @@ namespace XREngine.Components.Physics
         public static PhysicsGroupsMask Empty => new(0, 0, 0, 0);
     }
 
-    public struct PhysicsMassFrame
+    public struct PhysicsMassFrame(Vector3 translation, Quaternion rotation)
     {
-        public Vector3 Translation;
-        public Quaternion Rotation;
-
-        public PhysicsMassFrame(Vector3 translation, Quaternion rotation)
-        {
-            Translation = translation;
-            Rotation = rotation;
-        }
+        public Vector3 Translation = translation;
+        public Quaternion Rotation = rotation;
 
         public static PhysicsMassFrame Identity => new(Vector3.Zero, Quaternion.Identity);
     }
 
-    public struct PhysicsSolverIterations
+    public struct PhysicsSolverIterations(uint positions, uint velocities)
     {
-        public uint MinPositionIterations;
-        public uint MinVelocityIterations;
-
-        public PhysicsSolverIterations(uint positions, uint velocities)
-        {
-            MinPositionIterations = positions;
-            MinVelocityIterations = velocities;
-        }
+        public uint MinPositionIterations = positions;
+        public uint MinVelocityIterations = velocities;
 
         public static PhysicsSolverIterations Default => new(8, 2);
     }

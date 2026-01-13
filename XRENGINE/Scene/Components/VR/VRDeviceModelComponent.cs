@@ -20,13 +20,13 @@ namespace XREngine.Components.VR
             if (IsLoaded)
                 return;
 
-            Engine.VRState.Api.DeviceDetected += DeviceDetected;
+            Engine.VRState.OpenVRApi.DeviceDetected += DeviceDetected;
             VerifyDevices();
         }
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
-            Engine.VRState.Api.DeviceDetected -= DeviceDetected;
+            Engine.VRState.OpenVRApi.DeviceDetected -= DeviceDetected;
         }
 
         private void DeviceDetected(VrDevice device)
@@ -40,7 +40,7 @@ namespace XREngine.Components.VR
             if (IsLoaded)
                 return;
             
-            foreach (VrDevice device in Engine.VRState.Api.TrackedDevices)
+            foreach (VrDevice device in Engine.VRState.OpenVRApi.TrackedDevices)
             {
                 if (GetRenderModel(device) is not DeviceModel d)
                     continue;
@@ -142,9 +142,9 @@ namespace XREngine.Components.VR
                     if (IsActive)
                     {
                         if (Model is not null)
-                            Engine.VRState.Api.DeviceDetected -= DeviceDetected;
+                            Engine.VRState.OpenVRApi.DeviceDetected -= DeviceDetected;
                         else
-                            Engine.VRState.Api.DeviceDetected += DeviceDetected;
+                            Engine.VRState.OpenVRApi.DeviceDetected += DeviceDetected;
                     }
                     break;
             }

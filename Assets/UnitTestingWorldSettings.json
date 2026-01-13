@@ -50,6 +50,7 @@
   "ThirdPersonPawn": false,
   "VRPawn": false,
   "EmulatedVRPawn": false,
+  "CharacterControllerCapsuleTranslationY": 1.6,
   "SinglePassStereoVR": false,
 
   "AddPhysics": true,

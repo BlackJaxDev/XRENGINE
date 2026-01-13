@@ -430,7 +430,7 @@ namespace XREngine
                 private bool _transformCullingIsAxisAligned = true;
                 private bool _renderCullingVolumes = false;
                 private float _debugTextMaxLifespan = 0.0f;
-                private bool _logMissingShaderSamplers = true;
+                private bool _logMissingShaderSamplers = false;
 
                 private bool _cullShadowCollectionByCameraFrusta = true;
 

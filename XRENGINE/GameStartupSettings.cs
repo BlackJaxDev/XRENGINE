@@ -34,11 +34,16 @@ namespace XREngine
         //private int _tcpListenerPort = 5001;
         private string _serverIP = "127.0.0.1";
 
+        [Category("Windows")]
+        [Description("List of windows that will be created at startup (resolution, target world, local players, etc.).")]
         public List<GameWindowStartupSettings> StartupWindows
         {
             get => _startupWindows;
             set => SetField(ref _startupWindows, value);
         }
+
+        [Category("Logging")]
+        [Description("When enabled, engine output is written to a log file in addition to the console.")]
         public bool LogOutputToFile
         {
             get => _logOutputToFile;
@@ -48,26 +53,40 @@ namespace XREngine
         /// Experimental toggle for GPU-driven render dispatch.
         /// When enabled, rendering commands are generated on the GPU for improved efficiency.
         /// </summary>
+        [Category("Rendering")]
+        [Description("Experimental: when enabled, rendering commands are generated on the GPU for improved efficiency.")]
         public bool GPURenderDispatch
         {
             get => _gpuRenderDispatch;
             set => SetField(ref _gpuRenderDispatch, value);
         }
+
+        [Category("User Defaults")]
+        [Description("Default per-user settings to apply when a project does not have saved user settings yet.")]
         public UserSettings DefaultUserSettings
         {
             get => _defaultUserSettings;
             set => SetField(ref _defaultUserSettings, value);
         }
+
+        [Category("Viewports")]
+        [Description("Preferred viewport layout for two local players.")]
         public ETwoPlayerPreference TwoPlayerViewportPreference
         {
             get => _twoPlayerViewportPreference;
             set => SetField(ref _twoPlayerViewportPreference, value);
         }
+
+        [Category("Viewports")]
+        [Description("Preferred viewport layout for three local players.")]
         public EThreePlayerPreference ThreePlayerViewportPreference
         {
             get => _threePlayerViewportPreference;
             set => SetField(ref _threePlayerViewportPreference, value);
         }
+
+        [Category("Assets")]
+        [Description("Project-relative folder (or path) used as the default location for runtime texture assets.")]
         public string TexturesFolder
         {
             get => _texturesFolder;
@@ -96,28 +115,43 @@ namespace XREngine
             /// </summary>
             Local,
         }
+
+        [Category("Networking")]
+        [Description("Determines whether the application runs as Server, Client, P2P Client, or Local-only.")]
         public ENetworkingType NetworkingType
         {
             get => _networkingType;
             set => SetField(ref _networkingType, value);
         }
+
+        [Category("Networking")]
+        [Description("UDP multicast group IP used for LAN discovery / multicast messaging when applicable.")]
         public string UdpMulticastGroupIP
         {
             get => _udpMulticastGroupIP;
             set => SetField(ref _udpMulticastGroupIP, value);
         }
+
+        [Category("Networking")]
+        [Description("UDP multicast port used for LAN discovery / multicast messaging when applicable.")]
         public int UdpMulticastPort
         {
             get => _udpMulticastPort;
             set => SetField(ref _udpMulticastPort, value);
         }
         private int _udpClientReceivePort = 5001;
+
+        [Category("Networking")]
+        [Description("Local UDP port that the client listens on for inbound packets.")]
         public int UdpClientRecievePort
         {
             get => _udpClientReceivePort;
             set => SetField(ref _udpClientReceivePort, value);
         }
         private int _udpServerSendPort = 5000;
+
+        [Category("Networking")]
+        [Description("UDP port that the server sends from / expects clients to target.")]
         public int UdpServerSendPort
         {
             get => _udpServerSendPort;
@@ -133,16 +167,24 @@ namespace XREngine
         //    get => _tcpListenerPort;
         //    set => SetField(ref _tcpListenerPort, value);
         //}
+        [Category("Networking")]
+        [Description("Server IP address or hostname the client should connect to in Client mode.")]
         public string ServerIP
         {
             get => _serverIP;
             set => SetField(ref _serverIP, value);
         }
+
+        [Category("Time")]
+        [Description("Target game-logic update rate (ticks per second). Null uses engine default.")]
         public float? TargetUpdatesPerSecond
         {
             get => _targetUpdatesPerSecond;
             set => SetField(ref _targetUpdatesPerSecond, value);
         }
+
+        [Category("Time")]
+        [Description("Fixed physics tick rate (frames per second).")]
         public float FixedFramesPerSecond
         {
             get => _fixedFramesPerSecond;
@@ -152,13 +194,20 @@ namespace XREngine
         /// If true, the VR system will start in the same application as the game itself.
         /// This means VR cannot be turned off without restarting the game.
         /// </summary>
+        [Category("VR")]
+        [Description("If true, VR starts in-process and cannot be turned off without restarting.")]
         public bool RunVRInPlace
         {
             get => _runVRInPlace;
             set => SetField(ref _runVRInPlace, value);
         }
+
+        [Category("Layers")]
+        [Description("Mapping from layer index to display name used by editor/UI.")]
         public Dictionary<int, string> LayerNames { get; set; } = DefaultLayers.All;
 
+        [Category("Build")]
+        [Description("Build/publish configuration for this project.")]
         public BuildSettings BuildSettings
         {
             get => _buildSettings;
@@ -199,6 +248,8 @@ namespace XREngine
         /// <summary>
         /// The maximum number of times a mirror can reflect another mirror.
         /// </summary>
+        [Category("Rendering")]
+        [Description("Limits recursive mirror rendering to avoid runaway recursion and cost.")]
         public EMaxMirrorRecursionCount MaxMirrorRecursionCount { get; set; } = EMaxMirrorRecursionCount.Eight;
 
         #region Overrideable Settings (Project > Engine cascade)

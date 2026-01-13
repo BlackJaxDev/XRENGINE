@@ -51,6 +51,7 @@
   "Locomotion": false,
   "ThirdPersonPawn": true,
   "VRPawn": false,
+  "CharacterControllerCapsuleTranslationY": 1.6,
   "UseOpenXR": true,
   "EmulatedVRPawn": false,
   "SinglePassStereoVR": false,

@@ -34,7 +34,7 @@ namespace XREngine.Components.VR
             if (device is null || device.DeviceIndex != DeviceIndex.Value)
                 return null;
 
-            return Engine.VRState.Api.CVR.GetTrackedDeviceClass(device.DeviceIndex) == Valve.VR.ETrackedDeviceClass.GenericTracker
+            return Engine.VRState.OpenVRApi.CVR.GetTrackedDeviceClass(device.DeviceIndex) == Valve.VR.ETrackedDeviceClass.GenericTracker
                 ? device.Model
                 : null;
         }

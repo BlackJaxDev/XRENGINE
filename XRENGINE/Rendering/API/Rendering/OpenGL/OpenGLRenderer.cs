@@ -263,14 +263,61 @@ namespace XREngine.Rendering.OpenGL
 
         private unsafe static void SetupDebug(GL api)
         {
-            api.Enable(EnableCap.DebugOutput);
-            api.Enable(EnableCap.DebugOutputSynchronous);
-            api.DebugMessageCallback(DebugCallback, null);
+            // Be defensive here: some drivers (or non-debug contexts) can report GL_INVALID_OPERATION
+            // for DebugMessageControl even though the process otherwise supports OpenGL.
+            // We still try to enable the callback; we just skip driver-level filtering when unsupported.
+
+            bool supportsDebugOutput = true;
+            string[]? extensions = Engine.Rendering.State.OpenGLExtensions;
+            if (extensions is { Length: > 0 })
+            {
+                supportsDebugOutput = extensions.Any(static e =>
+                    string.Equals(e, "GL_KHR_debug", StringComparison.Ordinal)
+                    || string.Equals(e, "GL_ARB_debug_output", StringComparison.Ordinal));
+            }
+
+            if (!supportsDebugOutput)
+                return;
+
+            try
+            {
+                api.Enable(EnableCap.DebugOutput);
+                api.Enable(EnableCap.DebugOutputSynchronous);
+                api.DebugMessageCallback(DebugCallback, null);
+            }
+            catch
+            {
+                return;
+            }
+
+            bool isDebugContext = false;
+            try
+            {
+                int flags = api.GetInteger(GLEnum.ContextFlags);
+                isDebugContext = ((ContextFlagMask)flags).HasFlag(ContextFlagMask.ContextFlagDebugBit);
+            }
+            catch
+            {
+                // If we can't query flags, assume non-debug context.
+            }
+
+            if (!isDebugContext)
+                return;
 
             // Disable known-noisy messages at the driver level to avoid spamming logs.
-            uint[] ids = Array.ConvertAll(_ignoredMessageIds, static x => unchecked((uint)x));
-            fixed (uint* ptr = ids)
-                api.DebugMessageControl(GLEnum.DontCare, GLEnum.DontCare, GLEnum.DontCare, (uint)ids.Length, ptr, false);
+            if (_ignoredMessageIds.Length == 0)
+                return;
+
+            try
+            {
+                uint[] ids = Array.ConvertAll(_ignoredMessageIds, static x => unchecked((uint)x));
+                fixed (uint* ptr = ids)
+                    api.DebugMessageControl(GLEnum.DontCare, GLEnum.DontCare, GLEnum.DontCare, (uint)ids.Length, ptr, false);
+            }
+            catch
+            {
+                // Ignore: callback will still work, we just won't filter spammy IDs.
+            }
         }
 
         private static int[] _ignoredMessageIds =
@@ -1044,9 +1091,13 @@ namespace XREngine.Rendering.OpenGL
         private uint _luminanceFrontPbo;
         private uint _luminanceFrontPboSize;
 
-        // Extension support flags (cached after first check)
+        // Extension / capability support flags (cached after first check)
         private bool? _hasTextureFilterMinmax;
         private bool HasTextureFilterMinmax => _hasTextureFilterMinmax ??= IsExtensionSupported("GL_ARB_texture_filter_minmax");
+
+        // Auto exposure compute support is dependent on the active GL context version/extensions.
+        // Cache the result so we don't repeatedly probe/attempt compilation after a failure.
+        private bool? _supportsGpuAutoExposure;
 
         // Compute shader for parallel luminance reduction
         private XRRenderProgram? _luminanceComputeProgram;
@@ -1060,7 +1111,7 @@ namespace XREngine.Rendering.OpenGL
         private bool _autoExposureComputeInitialized;
 
         private const string LuminanceComputeShaderSource = @"
-#version 460
+    #version 430
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
@@ -1105,7 +1156,7 @@ void main() {
 ";
 
         private const string AutoExposureComputeShaderSource2D = @"
-#version 460
+    #version 430
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
@@ -1288,7 +1339,7 @@ void main()
 ";
 
         private const string AutoExposureComputeShaderSource2DArray = @"
-#version 460
+    #version 430
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
@@ -1518,7 +1569,45 @@ void main()
             }
         }
 
-        public override bool SupportsGpuAutoExposure => true;
+        public override bool SupportsGpuAutoExposure
+        {
+            get
+            {
+                if (_supportsGpuAutoExposure == false)
+                    return false;
+
+                _supportsGpuAutoExposure ??= ComputeSupportsGpuAutoExposure();
+                if (_supportsGpuAutoExposure != true)
+                    return false;
+
+                // Lazily compile/initialize once we know the context should support it.
+                EnsureAutoExposureComputeResources();
+
+                if (!_autoExposureComputeInitialized)
+                    _supportsGpuAutoExposure = false;
+
+                return _autoExposureComputeInitialized;
+            }
+        }
+
+        private bool ComputeSupportsGpuAutoExposure()
+        {
+            try
+            {
+                // Compute shaders are core in GL 4.3+. Image load/store is core in GL 4.2+.
+                int major = Api.GetInteger(GLEnum.MajorVersion);
+                int minor = Api.GetInteger(GLEnum.MinorVersion);
+
+                bool hasCompute = (major > 4) || (major == 4 && minor >= 3) || IsExtensionSupported("GL_ARB_compute_shader");
+                bool hasImageLoadStore = (major > 4) || (major == 4 && minor >= 2) || IsExtensionSupported("GL_ARB_shader_image_load_store");
+
+                return hasCompute && hasImageLoadStore;
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
         public override void UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
         {
@@ -1526,7 +1615,11 @@ void main()
 
             EnsureAutoExposureComputeResources();
             if (!_autoExposureComputeInitialized)
+            {
+                // Prevent repeated attempts if compilation failed (ensures CPU fallback is used).
+                _supportsGpuAutoExposure = false;
                 return;
+            }
 
             var glExposure = GenericToAPI<GLTexture2D>(exposureTex);
             if (glExposure is null)

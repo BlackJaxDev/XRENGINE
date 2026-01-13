@@ -17,6 +17,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
@@ -29,9 +30,26 @@ namespace XREngine
     {
         public static class VRState
         {
-            private static OpenXRAPI? _openXR;
-            private static VR? _api = null;
-            public static VR Api => _api ??= new VR();
+            public enum VRRuntime
+            {
+                None,
+                OpenVR,
+                OpenXR
+            }
+
+            private static VRRuntime _activeRuntime = VRRuntime.None;
+            public static VRRuntime ActiveRuntime => _activeRuntime;
+
+            public static bool IsOpenVRActive => _activeRuntime == VRRuntime.OpenVR;
+            public static bool IsOpenXRActive => _activeRuntime == VRRuntime.OpenXR;
+
+            private static OpenXRAPI? _openXRApi = null;
+            public static OpenXRAPI? OpenXRApi => _openXRApi;
+
+            private static VR? _openVRApi = null;
+            public static VR OpenVRApi => _openVRApi ??= new VR();
+
+            private static VR? OpenVRApiIfActive => IsOpenVRActive ? _openVRApi : null;
 
             public enum VRMode
             {
@@ -53,6 +71,69 @@ namespace XREngine
             private static readonly Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> _actions = [];
             public static Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> Actions => _actions;
 
+            private static bool _vrCallbacksInstalled;
+            private static bool _vrCallbacksStereo;
+
+            private static void InitRenderCallbacks(XRWindow window)
+            {
+                AttachRenderCallback(window);
+                Renderer = window.Renderer;
+
+                bool wantStereo = Stereo;
+                if (!_vrCallbacksInstalled)
+                {
+                    if (wantStereo)
+                    {
+                        Engine.Time.Timer.CollectVisible += CollectVisibleStereo;
+                        Engine.Time.Timer.SwapBuffers += SwapBuffersStereo;
+                    }
+                    else
+                    {
+                        Engine.Time.Timer.CollectVisible += CollectVisibleTwoPass;
+                        Engine.Time.Timer.SwapBuffers += SwapBuffersTwoPass;
+                    }
+
+                    Debug.Out($"VRState callbacks: CollectVisible={(wantStereo ? nameof(CollectVisibleStereo) : nameof(CollectVisibleTwoPass))}, " +
+                              $"SwapBuffers={(wantStereo ? nameof(SwapBuffersStereo) : nameof(SwapBuffersTwoPass))}, " +
+                              $"Stereo={wantStereo}, Runtime={_activeRuntime}");
+
+                    _vrCallbacksInstalled = true;
+                    _vrCallbacksStereo = wantStereo;
+                    return;
+                }
+
+                if (_vrCallbacksStereo == wantStereo)
+                    return;
+
+                // Switch variants: remove only the previously-installed handlers, then add the new ones.
+                if (_vrCallbacksStereo)
+                {
+                    Engine.Time.Timer.CollectVisible -= CollectVisibleStereo;
+                    Engine.Time.Timer.SwapBuffers -= SwapBuffersStereo;
+                }
+                else
+                {
+                    Engine.Time.Timer.CollectVisible -= CollectVisibleTwoPass;
+                    Engine.Time.Timer.SwapBuffers -= SwapBuffersTwoPass;
+                }
+
+                if (wantStereo)
+                {
+                    Engine.Time.Timer.CollectVisible += CollectVisibleStereo;
+                    Engine.Time.Timer.SwapBuffers += SwapBuffersStereo;
+                }
+                else
+                {
+                    Engine.Time.Timer.CollectVisible += CollectVisibleTwoPass;
+                    Engine.Time.Timer.SwapBuffers += SwapBuffersTwoPass;
+                }
+
+                Debug.Out($"VRState callbacks: CollectVisible={(wantStereo ? nameof(CollectVisibleStereo) : nameof(CollectVisibleTwoPass))}, " +
+                          $"SwapBuffers={(wantStereo ? nameof(SwapBuffersStereo) : nameof(SwapBuffersTwoPass))}, " +
+                          $"Stereo={wantStereo}, Runtime={_activeRuntime}");
+
+                _vrCallbacksStereo = wantStereo;
+            }
             public static event Action<Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>>>? ActionsChanged;
 
             private static Frustum? _stereoCullingFrustum = null;
@@ -67,14 +148,27 @@ namespace XREngine
             {
                 get
                 {
-                    if (Api.Headset is not null)
+                    switch (_activeRuntime)
                     {
-                        ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
-                        return (float)Api.CVR.GetFloatTrackedDeviceProperty(Api.Headset!.DeviceIndex, ETrackedDeviceProperty.Prop_UserIpdMeters_Float, ref error);
-                    }
-                    else
-                    {
-                        return (float)0f;
+                        case VRRuntime.OpenVR:
+                            var vr = OpenVRApiIfActive;
+                            if (vr?.Headset is not null)
+                            {
+                                ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
+                                return (float)vr.CVR.GetFloatTrackedDeviceProperty(vr.Headset!.DeviceIndex, ETrackedDeviceProperty.Prop_UserIpdMeters_Float, ref error);
+                            }
+                            return 0f;
+                        case VRRuntime.OpenXR:
+                            // OpenXR does not expose a single "user IPD" property in core.
+                            // Derive it from the per-eye poses returned by xrLocateViews.
+                            // This is available before engine-eye transforms are applied.
+                            var oxr = OpenXRApi;
+                            if (oxr is null)
+                                return 0f;
+
+                            return oxr.TryGetLatestIPD(out float ipd) ? ipd : 0f;
+                        default:
+                            return 0f;
                     }
                 }
             }
@@ -188,9 +282,17 @@ namespace XREngine
 
                 try
                 {
-                    _openXR ??= new OpenXRAPI();
-                    _openXR.Window = window;
+                    // OpenXR should reuse the same engine callback hooks (Render + Timer.CollectVisible/SwapBuffers)
+                    // as the OpenVR path. Disable OpenVR submission/state, but keep callback wiring unified.
+                    DisableOpenVRRuntimeState();
+
+                    _openXRApi ??= new OpenXRAPI();
+                    _openXRApi.Window = window;
+                    _activeRuntime = VRRuntime.OpenXR;
                     IsInVR = true;
+
+                    // Ensure VRState owns the engine callback hooks for OpenXR as well.
+                    InitRenderCallbacks(window);
                     return true;
                 }
                 catch (Exception ex)
@@ -200,7 +302,12 @@ namespace XREngine
                 }
             }
 
-            // OpenXR rendering runs through its own render callback path, not VRState.Render().
+            private static void DisableOpenVRRuntimeState()
+            {
+                _openVrRuntimeActiveForRender = false;
+                _emulatedRenderActive = false;
+            }
+
             // Expose the same "RecalcMatrixOnDraw" hook so OpenXR can keep locomotion/VR rigs updated
             // at the same point in the frame as the OpenVR path.
             internal static void InvokeRecalcMatrixOnDraw()
@@ -245,7 +352,7 @@ namespace XREngine
             private static async Task<bool> InitSteamVR(IActionManifest actionManifest, VrManifest vrManifest)
                 => await Task.Run(() =>
                 {
-                    var vr = Api;
+                    var vr = OpenVRApi;
                     vr.DeviceDetected += OnDeviceDetected;
                     if (!vr.TryStart(EVRApplicationType.VRApplication_Scene))
                     {
@@ -255,6 +362,9 @@ namespace XREngine
                     }
                     else
                     {
+                        _openVRApi = vr;
+                        _activeRuntime = VRRuntime.OpenVR;
+
                         InstallApp(vrManifest);
                         vr.SetActionManifest(actionManifest);
                         CreateActions(actionManifest, vr);
@@ -307,11 +417,13 @@ namespace XREngine
 
             public static void InitRenderEmulated(XRWindow window)
             {
+                if (IsOpenXRActive)
+                    return;
+
                 _openVrRuntimeActiveForRender = false;
                 _emulatedRenderActive = true;
 
-                AttachRenderCallback(window);
-                Renderer = window.Renderer;
+                InitRenderCallbacks(window);
 
                 if (!TryGetRenderTargetSize(out uint rW, out uint rH))
                     return;
@@ -341,11 +453,11 @@ namespace XREngine
                 rW = 0u;
                 rH = 0u;
 
-                if (_openVrRuntimeActiveForRender)
+                if (_openVrRuntimeActiveForRender && IsOpenVRActive)
                 {
                     try
                     {
-                        Api.CVR.GetRecommendedRenderTargetSize(ref rW, ref rH);
+                        OpenVRApi.CVR.GetRecommendedRenderTargetSize(ref rW, ref rH);
                     }
                     catch
                     {
@@ -379,14 +491,16 @@ namespace XREngine
 
             private static void InitRender(XRWindow window)
             {
+                if (!IsOpenVRActive)
+                    return;
+
                 _openVrRuntimeActiveForRender = true;
                 _emulatedRenderActive = false;
 
-                AttachRenderCallback(window);
-                Renderer = window.Renderer;
+                InitRenderCallbacks(window);
 
                 uint rW = 0u, rH = 0u;
-                Api.CVR.GetRecommendedRenderTargetSize(ref rW, ref rH);
+                OpenVRApi.CVR.GetRecommendedRenderTargetSize(ref rW, ref rH);
                 _lastRenderWidth = rW;
                 _lastRenderHeight = rH;
 
@@ -403,9 +517,6 @@ namespace XREngine
 
             private static void InitTwoPass(XRWindow window, uint rW, uint rH, XRTexture2D left, XRTexture2D right)
             {
-                Engine.Time.Timer.CollectVisible += CollectVisibleTwoPass;
-                Engine.Time.Timer.SwapBuffers += SwapBuffersTwoPass;
-
                 RemakeTwoPass(window, rW, rH, left, right);
 
                 if (ViewInformation.LeftEyeCamera is not null)
@@ -450,9 +561,6 @@ namespace XREngine
 
             private static void InitSinglePass(XRWindow window, uint rW, uint rH, XRTexture2D left, XRTexture2D right)
             {
-                Engine.Time.Timer.CollectVisible += CollectVisibleStereo;
-                Engine.Time.Timer.SwapBuffers += SwapBuffersStereo;
-
                 SetViewportParameters(rW, rH, StereoViewport = new XRViewport(window));
                 StereoViewport.RenderPipeline = new DefaultRenderPipeline(true);
                 StereoViewport.AutomaticallyCollectVisible = false;
@@ -506,6 +614,12 @@ namespace XREngine
 
             private static void CollectVisibleTwoPass()
             {
+                if (IsOpenXRActive)
+                {
+                    OpenXRApi?.EngineCollectVisibleTick();
+                    return;
+                }
+
                 if (_twoPassRenderPipeline is null)
                     return;
 
@@ -530,6 +644,12 @@ namespace XREngine
             }
             private static void CollectVisibleStereo()
             {
+                if (IsOpenXRActive)
+                {
+                    OpenXRApi?.EngineCollectVisibleTick();
+                    return;
+                }
+
                 var scene = ViewInformation.World?.VisualScene;
                 var node = ViewInformation.HMDNode;
                 var frustum = _stereoCullingFrustum;
@@ -546,6 +666,13 @@ namespace XREngine
             private static void SwapBuffersTwoPass()
             {
                 using var sample = Engine.Profiler.Start("VRState.SwapBuffersTwoPass");
+
+                if (IsOpenXRActive)
+                {
+                    OpenXRApi?.EngineSwapBuffersTick();
+                    return;
+                }
+
                 _twoPassRenderPipeline?.MeshRenderCommands?.SwapBuffers();
                 //LeftEyeViewport?.SwapBuffers();
                 //RightEyeViewport?.SwapBuffers();
@@ -553,11 +680,24 @@ namespace XREngine
             private static void SwapBuffersStereo()
             {
                 using var sample = Engine.Profiler.Start("VRState.SwapBuffersStereo");
+
+                if (IsOpenXRActive)
+                {
+                    OpenXRApi?.EngineSwapBuffersTick();
+                    return;
+                }
+
                 StereoViewport?.SwapBuffers();
             }
 
             private static void Render()
             {
+                if (IsOpenXRActive)
+                {
+                    OpenXRApi?.EngineRenderTick();
+                    return;
+                }
+
                 if (!_openVrRuntimeActiveForRender && !_emulatedRenderActive)
                     return;
 
@@ -585,21 +725,21 @@ namespace XREngine
                 }
 
                 //Begin drawing to the headset (OpenVR runtime only)
-                if (_openVrRuntimeActiveForRender)
-                    _ = Api.UpdateDraw(Origin);
+                if (_openVrRuntimeActiveForRender && IsOpenVRActive)
+                    _ = OpenVRApi.UpdateDraw(Origin);
 
                 //Update VR-related transforms
                 RecalcMatrixOnDraw?.Invoke();
 
-                if (_openVrRuntimeActiveForRender)
-                    IsPowerSaving = Api.CVR.ShouldApplicationReduceRenderingWork();
+                if (_openVrRuntimeActiveForRender && IsOpenVRActive)
+                    IsPowerSaving = OpenVRApi.CVR.ShouldApplicationReduceRenderingWork();
 
                 if (Stereo)
                     RenderSinglePass();
                 else
                     RenderTwoPass();
 
-                if (_openVrRuntimeActiveForRender && Rendering.Settings.LogVRFrameTimes)
+                if (_openVrRuntimeActiveForRender && IsOpenVRActive && Rendering.Settings.LogVRFrameTimes)
                     ReadStats();
             }
 
@@ -654,8 +794,8 @@ namespace XREngine
                     nint? rightHandle = StereoRightViewTexture?.APIWrappers?.FirstOrDefault()?.GetHandle();
                     if (leftHandle is not null && rightHandle is not null)
                         SubmitRenders(leftHandle.Value, rightHandle.Value);
-                    //}
                 }
+
                 //else
                 //{
                 //    nint? arrayHandle = VRStereoViewTextureArray?.APIWrappers?.FirstOrDefault()?.GetHandle();
@@ -673,7 +813,7 @@ namespace XREngine
                     if (_powerSaving == value)
                         return;
                     _powerSaving = value;
-                    if (!_openVrRuntimeActiveForRender)
+                    if (!_openVrRuntimeActiveForRender || !IsOpenVRActive)
                         return;
 
                     if (_powerSaving)
@@ -689,7 +829,7 @@ namespace XREngine
                     return;
 
                 ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
-                float hz = Api.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
+                float hz = OpenVRApi.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
                 if (error != ETrackedPropertyError.TrackedProp_Success || hz <= 0.0f)
                     return;
                 
@@ -701,7 +841,7 @@ namespace XREngine
                     return;
 
                 ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
-                float hz = Api.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
+                float hz = OpenVRApi.CVR.GetFloatTrackedDeviceProperty(0, ETrackedDeviceProperty.Prop_DisplayFrequency_Float, ref error);
                 if (error != ETrackedPropertyError.TrackedProp_Success || hz <= 0.0f)
                     return;
                 
@@ -778,23 +918,23 @@ namespace XREngine
 
             private static void Update()
             {
-                if (Api.Headset is null)
-                    Api.UpdateInput(0);
+                if (OpenVRApi.Headset is null)
+                    OpenVRApi.UpdateInput(0);
                 else
                 {
-                    uint deviceIndex = Api.Headset!.DeviceIndex;
+                    uint deviceIndex = OpenVRApi.Headset!.DeviceIndex;
                     ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
 
                     float secondsSinceLastVsync = 0.0f;
                     ulong frameCount = 0uL;
-                    Api.CVR.GetTimeSinceLastVsync(ref secondsSinceLastVsync, ref frameCount);
+                    OpenVRApi.CVR.GetTimeSinceLastVsync(ref secondsSinceLastVsync, ref frameCount);
 
-                    float displayFrequency = Api.CVR.GetFloatTrackedDeviceProperty(
+                    float displayFrequency = OpenVRApi.CVR.GetFloatTrackedDeviceProperty(
                         deviceIndex,
                         ETrackedDeviceProperty.Prop_DisplayFrequency_Float,
                         ref error);
 
-                    float motionToPhoton = Api.CVR.GetFloatTrackedDeviceProperty(
+                    float motionToPhoton = OpenVRApi.CVR.GetFloatTrackedDeviceProperty(
                         deviceIndex,
                         ETrackedDeviceProperty.Prop_SecondsFromVsyncToPhotons_Float,
                         ref error);
@@ -802,9 +942,9 @@ namespace XREngine
                     float frameDuration = 1.0f / displayFrequency;
                     float fSecondsFromNow = frameDuration - secondsSinceLastVsync + motionToPhoton;
 
-                    Api.UpdateInput(fSecondsFromNow);
+                    OpenVRApi.UpdateInput(fSecondsFromNow);
                 }
-                Api.Update();
+                OpenVRApi.Update();
             }
 
             /// <summary>
@@ -858,6 +998,9 @@ namespace XREngine
                 EColorSpace colorSpace = EColorSpace.Auto,
                 EVRSubmitFlags flags = EVRSubmitFlags.Submit_Default)
             {
+                if (!IsOpenVRActive)
+                    return;
+
                 _eyeTex.eColorSpace = colorSpace;
                 _eyeTex.eType = apiType;
 
@@ -993,6 +1136,9 @@ namespace XREngine
 
             private static void ReadStats()
             {
+                if (!IsOpenVRActive)
+                    return;
+
                 uint size = (uint)Marshal.SizeOf<Compositor_FrameTiming>();
                 Compositor_FrameTiming currentFrame = new();
                 Compositor_FrameTiming previousFrame = new();

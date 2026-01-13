@@ -213,11 +213,25 @@ namespace XREngine.Scene
 
         public bool CollectingVisibleShadowMaps { get; private set; } = false;
 
+        // When shadow collection is culled by camera frusta, some lights may be intentionally skipped.
+        // If we still swap their internal shadow-viewport buffers, we can end up swapping in an empty
+        // visibility buffer (depending on viewport implementation), causing shadows to flicker on/off.
+        // Track which lights actually collected this tick so SwapBuffers can preserve the last good buffers.
+        private readonly HashSet<LightComponent> _shadowLightsCollectedThisTick = new();
+
         public void CollectVisibleItems()
         {
             //CollectingVisibleShadowMaps = true;
 
-            if (Engine.Rendering.Settings.CullShadowCollectionByCameraFrusta)
+            _shadowLightsCollectedThisTick.Clear();
+
+            // In VR the active view frusta can change extremely rapidly (late-latched HMD pose), and can
+            // also differ from the desktop/mirror camera. Frustum-based shadow collection culling can
+            // therefore cause visible shadow caster popping that looks like lighting/material flicker.
+            // Prefer stability over CPU savings while in VR.
+            bool cullByCameraFrusta = Engine.Rendering.Settings.CullShadowCollectionByCameraFrusta && !Engine.VRState.IsInVR;
+
+            if (cullByCameraFrusta)
             {
                 List<(Frustum Frustum, Vector3 Position, float MaxDistance)> cameraFrustumScratch = new(4);
                 foreach (XRWindow window in Engine.Windows)
@@ -252,7 +266,10 @@ namespace XREngine.Scene
                             continue;
 
                         if (IsLightShadowRelevant(l, cameraFrustumScratch))
+                        {
                             l.CollectVisibleItems();
+                            _shadowLightsCollectedThisTick.Add(l);
+                        }
                     }
 
                     foreach (SpotLightComponent l in DynamicSpotLights)
@@ -261,7 +278,10 @@ namespace XREngine.Scene
                             continue;
 
                         if (IsLightShadowRelevant(l, cameraFrustumScratch))
+                        {
                             l.CollectVisibleItems();
+                            _shadowLightsCollectedThisTick.Add(l);
+                        }
                     }
 
                     foreach (PointLightComponent l in DynamicPointLights)
@@ -270,7 +290,10 @@ namespace XREngine.Scene
                             continue;
 
                         if (IsLightShadowRelevant(l, cameraFrustumScratch))
+                        {
                             l.CollectVisibleItems();
+                            _shadowLightsCollectedThisTick.Add(l);
+                        }
                     }
                 }
                 else
@@ -278,30 +301,48 @@ namespace XREngine.Scene
                     // Safe fallback: if we can't discover any active cameras, preserve previous behavior.
                     foreach (DirectionalLightComponent l in DynamicDirectionalLights)
                         if (l.IsActiveInHierarchy)
+                        {
                             l.CollectVisibleItems();
+                            _shadowLightsCollectedThisTick.Add(l);
+                        }
 
                     foreach (SpotLightComponent l in DynamicSpotLights)
                         if (l.IsActiveInHierarchy)
+                        {
                             l.CollectVisibleItems();
+                            _shadowLightsCollectedThisTick.Add(l);
+                        }
 
                     foreach (PointLightComponent l in DynamicPointLights)
                         if (l.IsActiveInHierarchy)
+                        {
                             l.CollectVisibleItems();
+                            _shadowLightsCollectedThisTick.Add(l);
+                        }
                 }
             }
             else
             {
                 foreach (DirectionalLightComponent l in DynamicDirectionalLights)
                     if (l.IsActiveInHierarchy)
+                    {
                         l.CollectVisibleItems();
+                        _shadowLightsCollectedThisTick.Add(l);
+                    }
                 
                 foreach (SpotLightComponent l in DynamicSpotLights)
                     if (l.IsActiveInHierarchy)
+                    {
                         l.CollectVisibleItems();
+                        _shadowLightsCollectedThisTick.Add(l);
+                    }
 
                 foreach (PointLightComponent l in DynamicPointLights)
                     if (l.IsActiveInHierarchy)
+                    {
                         l.CollectVisibleItems();
+                        _shadowLightsCollectedThisTick.Add(l);
+                    }
             }
 
             double budgetMs = CaptureBudgetMilliseconds;
@@ -416,22 +457,28 @@ namespace XREngine.Scene
         {
             using var sample = Engine.Profiler.Start("Lights3DCollection.SwapBuffers");
 
+            bool cullByCameraFrusta = Engine.Rendering.Settings.CullShadowCollectionByCameraFrusta && !Engine.VRState.IsInVR;
+            bool gateShadowSwaps = cullByCameraFrusta;
+
             using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.DirectionalLights"))
             {
                 foreach (DirectionalLightComponent l in DynamicDirectionalLights)
-                    l.SwapBuffers(LightmapBaking);
+                    if (!gateShadowSwaps || _shadowLightsCollectedThisTick.Contains(l))
+                        l.SwapBuffers(LightmapBaking);
             }
 
             using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.SpotLights"))
             {
                 foreach (SpotLightComponent l in DynamicSpotLights)
-                    l.SwapBuffers(LightmapBaking);
+                    if (!gateShadowSwaps || _shadowLightsCollectedThisTick.Contains(l))
+                        l.SwapBuffers(LightmapBaking);
             }
 
             using (Engine.Profiler.Start("Lights3DCollection.SwapBuffers.PointLights"))
             {
                 foreach (PointLightComponent l in DynamicPointLights)
-                    l.SwapBuffers(LightmapBaking);
+                    if (!gateShadowSwaps || _shadowLightsCollectedThisTick.Contains(l))
+                        l.SwapBuffers(LightmapBaking);
             }
 
             using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.LightmapBaking"))

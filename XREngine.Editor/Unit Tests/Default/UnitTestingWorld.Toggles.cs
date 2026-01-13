@@ -75,6 +75,12 @@ public static partial class UnitTestingWorld
         public bool Locomotion = true; //Enables the player to physically locomote in the world. Requires a physical floor.
         public bool ThirdPersonPawn = false; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
 
+        /// <summary>
+        /// World-space Y translation to apply to the character controller capsule/root on spawn.
+        /// If null, UnitTestingWorld will pick a safe default that places the capsule just above the floor.
+        /// </summary>
+        public float? CharacterControllerCapsuleTranslationY { get; set; }
+
         //Physics
         public bool PhysicsChain = true; //Adds a jiggle physics chain to the character pawn.
         public bool AddPhysics = true;

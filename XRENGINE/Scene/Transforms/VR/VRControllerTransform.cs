@@ -20,8 +20,8 @@ namespace XREngine.Data.Components.Scene
         }
 
         public Controller? Controller => LeftHand
-            ? Engine.VRState.Api.LeftController
-            : Engine.VRState.Api.RightController;
+            ? Engine.VRState.OpenVRApi.LeftController
+            : Engine.VRState.OpenVRApi.RightController;
 
         public override VrDevice? Device => Controller;
     }
