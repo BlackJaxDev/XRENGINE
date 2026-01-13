@@ -160,12 +160,19 @@ namespace XREngine.Rendering.OpenGL
             if (id == InvalidBindingId)
                 return;
 
-            if (!OnPreBind())
-                return;
+            // Even if our engine-side tracking believes this texture is already bound, perform the GL bind.
+            // This prevents state drift (or new texture names from `glGenTextures`) from leaving the object
+            // non-existent/uninitialized for DSA calls (e.g. `glTextureStorage2D`, `glTextureView`, FBO attach).
+            bool alreadyTrackedBound = ReferenceEquals(Renderer.BoundTexture, this);
+            if (!alreadyTrackedBound)
+            {
+                if (!OnPreBind())
+                    return;
+                Renderer.BoundTexture = this;
+            }
 
             Api.BindTexture(ToGLEnum(TextureTarget), id);
             Renderer.BoundTexture = this;
-
             VerifySettings();
         }
 
@@ -235,18 +242,41 @@ namespace XREngine.Rendering.OpenGL
             => Invalidate();
 
         public virtual void AttachToFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
-            => Api.NamedFramebufferTexture(Renderer.GenericToAPI<GLFrameBuffer>(fbo)!.BindingId, ToGLEnum(attachment), BindingId, mipLevel);
+        {
+            // Ensure the texture exists and has storage before attaching.
+            // Some render targets are attached before first bind/push (e.g. shadow maps).
+            var previous = Renderer.BoundTexture;
+            Bind();
+
+            Api.NamedFramebufferTexture(Renderer.GenericToAPI<GLFrameBuffer>(fbo)!.BindingId, ToGLEnum(attachment), BindingId, mipLevel);
+
+            if (previous is null || ReferenceEquals(previous, this))
+                Unbind();
+            else
+                previous.Bind();
+        }
         public virtual void DetachFromFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
             => Api.NamedFramebufferTexture(Renderer.GenericToAPI<GLFrameBuffer>(fbo)!.BindingId, ToGLEnum(attachment), 0, mipLevel);
 
         public void AttachToFBO_OVRMultiView(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel, int offset, uint numViews)
-            => Renderer.OVRMultiView?.NamedFramebufferTextureMultiview(
+        {
+            // Ensure the texture exists and has storage before attaching.
+            var previous = Renderer.BoundTexture;
+            Bind();
+
+            Renderer.OVRMultiView?.NamedFramebufferTextureMultiview(
                 Renderer.GenericToAPI<GLFrameBuffer>(fbo)!.BindingId,
                 ToFrameBufferAttachement(attachment),
                 BindingId,
                 mipLevel,
                 offset,
                 numViews);
+
+            if (previous is null || ReferenceEquals(previous, this))
+                Unbind();
+            else
+                previous.Bind();
+        }
         public void DetachFromFBO_OVRMultiView(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel, int offset, uint numViews)
             => Renderer.OVRMultiView?.NamedFramebufferTextureMultiview(
                 Renderer.GenericToAPI<GLFrameBuffer>(fbo)!.BindingId,

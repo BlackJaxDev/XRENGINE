@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Threading;
 
 namespace XREngine.Data.Core
 {
@@ -19,6 +20,22 @@ namespace XREngine.Data.Core
     [Serializable]
     public abstract class XRBase : IXRNotifyPropertyChanged, IXRNotifyPropertyChanging
     {
+        private static readonly AsyncLocal<int> PropertyNotificationSuppressionDepth = new();
+
+        public static bool ArePropertyNotificationsSuppressed => PropertyNotificationSuppressionDepth.Value > 0;
+
+        public static IDisposable SuppressPropertyNotifications()
+            => new PropertyNotificationSuppressionScope();
+
+        private readonly struct PropertyNotificationSuppressionScope : IDisposable
+        {
+            public PropertyNotificationSuppressionScope()
+                => PropertyNotificationSuppressionDepth.Value++;
+
+            public void Dispose()
+                => PropertyNotificationSuppressionDepth.Value--;
+        }
+
         /// <summary>
         /// This event is called after the value of a property's backing field changes.
         /// </summary>
@@ -43,6 +60,12 @@ namespace XREngine.Data.Core
             if (ReferenceEquals(field, value))
                 return false;
 
+            if (ArePropertyNotificationsSuppressed)
+            {
+                field = value;
+                return true;
+            }
+
             if (!OnPropertyChanging(propertyName, field, value))
                 return false;
 
@@ -54,6 +77,12 @@ namespace XREngine.Data.Core
 
         protected bool SetFieldUnchecked<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
         {
+            if (ArePropertyNotificationsSuppressed)
+            {
+                field = value;
+                return true;
+            }
+
             OnPropertyChanging(propertyName, field, value);
             T prev = field;
             field = value;
@@ -65,6 +94,12 @@ namespace XREngine.Data.Core
         {
             if (ReferenceEquals(field, value))
                 return field;
+
+            if (ArePropertyNotificationsSuppressed)
+            {
+                field = value;
+                return field;
+            }
 
             if (!OnPropertyChanging(propertyName, field, value))
                 return field;
@@ -79,6 +114,12 @@ namespace XREngine.Data.Core
         {
             if (ReferenceEquals(field, value))
                 return field;
+
+            if (ArePropertyNotificationsSuppressed)
+            {
+                field = value;
+                return field;
+            }
 
             if (!OnPropertyChanging(propertyName, field, value))
                 return field;
@@ -99,6 +140,12 @@ namespace XREngine.Data.Core
             if (ReferenceEquals(field, value))
                 return false;
 
+            if (ArePropertyNotificationsSuppressed)
+            {
+                field = value;
+                return true;
+            }
+
             if (!OnPropertyChanging(propertyName, field, value))
                 return false;
 
@@ -113,6 +160,12 @@ namespace XREngine.Data.Core
         {
             if (ReferenceEquals(field, value))
                 return false;
+
+            if (ArePropertyNotificationsSuppressed)
+            {
+                field = value;
+                return true;
+            }
 
             if (!OnPropertyChanging(propertyName, field, value))
                 return false;

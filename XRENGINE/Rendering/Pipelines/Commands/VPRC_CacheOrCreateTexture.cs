@@ -66,9 +66,23 @@ namespace XREngine.Rendering.Pipelines.Commands
                 {
                     if (Resize is not null)
                     {
-                        Resize.Invoke(texture);
-                        RegisterDescriptor(texture);
-                        return;
+                        try
+                        {
+                            Resize.Invoke(texture);
+                        }
+                        catch
+                        {
+                            // If resizing fails, fall back to recreation.
+                        }
+
+                        // Some "needs recreate" conditions are about type correctness, not size.
+                        // Resizing won't fix those, so re-check and recreate if still invalid.
+                        bool stillInvalid = NeedsRecreate?.Invoke(texture) ?? false;
+                        if (!stillInvalid)
+                        {
+                            RegisterDescriptor(texture);
+                            return;
+                        }
                     }
 
                     texture = null;

@@ -1,4 +1,4 @@
-using Extensions;
+﻿using Extensions;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering
@@ -7,6 +7,7 @@ namespace XREngine.Rendering
     /// Framebuffer object for rendering targets, also known as an 'FBO'.
     /// FBOs allow for rendering to textures or renderbuffers instead of the default framebuffer (the window canvas).
     /// </summary>
+    [RuntimeOnly]
     public class XRFrameBuffer : GenericRenderObject
     {
         public XRFrameBuffer() { }
@@ -87,9 +88,6 @@ namespace XREngine.Rendering
             Resized?.Invoke();
         }
 
-        public event Action? PreSetRenderTargets;
-        public event Action? PostSetRenderTargets;
-
         public void SetRenderTargets(XRMaterial? material)
             => SetRenderTargets(material?.Textures.
                 Where(x => x?.FrameBufferAttachment != null).
@@ -98,8 +96,6 @@ namespace XREngine.Rendering
 
         public void SetRenderTargets(params (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
         {
-            PreSetRenderTargets?.Invoke();
-
             Targets = targets;
             TextureTypes = EFrameBufferTextureTypeFlags.None;
 
@@ -168,8 +164,6 @@ namespace XREngine.Rendering
             }
 
             DrawBuffers = [.. fboAttachments];
-
-            PostSetRenderTargets?.Invoke();
         }
 
         private static EDrawBuffersAttachment ToDrawBuffer(EFrameBufferAttachment attachment)
@@ -351,8 +345,6 @@ namespace XREngine.Rendering
                 UnbindRequested?.Invoke();
         }
 
-        public event Action<int>? PreSetRenderTarget;
-        public event Action<int>? PostSetRenderTarget;
         public event Action? SetDrawBuffersRequested;
 
         private unsafe void SetDrawBuffers()
@@ -360,15 +352,63 @@ namespace XREngine.Rendering
 
         public void SetRenderTarget(int i, (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex) target)
         {
-            if (Targets is null || !Targets.IndexInRangeArrayT(i))
+            var currentTargets = Targets;
+            if (currentTargets is null || !currentTargets.IndexInRangeArrayT(i))
             {
                 Debug.Out($"Index {i} is out of range for the number of targets in the framebuffer.");
                 return;
             }
 
-            PreSetRenderTarget?.Invoke(i);
-            Targets[i] = target;
-            PostSetRenderTarget?.Invoke(i);
+            // SetRenderTargets is intended to be callable from any thread.
+            // To keep API wrappers thread-safe, update the Targets reference (and DrawBuffers/TextureTypes)
+            // via SetRenderTargets so wrappers can react to Targets property changes on the render thread.
+            var newTargets = new (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[currentTargets.Length];
+            Array.Copy(currentTargets, newTargets, currentTargets.Length);
+            newTargets[i] = target;
+            SetRenderTargets(newTargets);
+        }
+
+        /// <summary>
+        /// Detaches a specific set of targets from this framebuffer.
+        /// Intended for API wrappers that cache currently-attached targets and need to detach them later.
+        /// </summary>
+        public void DetachTargets((IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
+        {
+            if (targets is null || targets.Length == 0)
+                return;
+
+            using var t = BindState();
+            for (int i = 0; i < targets.Length; ++i)
+            {
+                var (Target, Attachment, MipLevel, LayerIndex) = targets[i];
+                switch (Target)
+                {
+                    default:
+                        {
+                            if (Target is not XRTexture texture)
+                                break;
+                            texture.Bind();
+                            texture.DetachFromFBO(this, Attachment, MipLevel);
+                            break;
+                        }
+                    case XRRenderBuffer buf:
+                        buf.Bind();
+                        buf.DetachFromFBO(this, Attachment);
+                        break;
+                    case XRTexture2DArray arrayRef when LayerIndex >= 0:
+                        arrayRef.Bind();
+                        arrayRef.DetachImageFromFBO(this, Attachment, LayerIndex, MipLevel);
+                        break;
+                    case XRTextureCube cuberef when LayerIndex >= 0 && LayerIndex < 6:
+                        cuberef.Bind();
+                        cuberef.DetachFaceFromFBO(this, Attachment, ECubemapFace.PosX + LayerIndex, MipLevel);
+                        break;
+                    case XRTexture2DArray arrayref when arrayref.OVRMultiViewParameters is XRTexture2DArray.OVRMultiView ovr:
+                        arrayref.Bind();
+                        arrayref.DetachFromFBO_OVRMultiView(this, Attachment, MipLevel, ovr.Offset, ovr.NumViews);
+                        break;
+                }
+            }
         }
 
         public unsafe void AttachAll()

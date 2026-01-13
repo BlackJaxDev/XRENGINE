@@ -55,10 +55,10 @@ namespace XREngine.Components
         internal protected XRComponent() { }
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
 
-        internal static T New<T>(SceneNode node) where T : XRComponent 
+        internal static T New<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(SceneNode node) where T : XRComponent 
             => (T)New(node, typeof(T))!;
 
-        internal static XRComponent? New(SceneNode node, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] Type t)
+        internal static XRComponent? New(SceneNode node, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] Type t)
         {
             if (t is null || !t.IsSubclassOf(typeof(XRComponent)))
                 return null;
@@ -256,6 +256,15 @@ namespace XREngine.Components
 
             switch (propName)
             {
+                case nameof(World):
+                    // During snapshot restore/load, components can already be active-in-hierarchy
+                    // by the time their owning SceneNode assigns World. Re-bind render infos so
+                    // renderables are registered into the VisualScene.
+                    if (World is null)
+                        VerifyInterfacesOnStop();
+                    else if (IsActiveInHierarchy)
+                        VerifyInterfacesOnStart();
+                    break;
                 case nameof(IsActive):
                     if (IsActiveInHierarchy)
                         OnComponentActivated();

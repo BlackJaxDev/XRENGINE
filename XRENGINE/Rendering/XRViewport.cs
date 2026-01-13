@@ -21,6 +21,7 @@ namespace XREngine.Rendering
     /// Defines a rectangular area to render to.
     /// Can either be a window or render texture.
     /// </summary>
+    [RuntimeOnly]
     public sealed class XRViewport : XRBase
     {
         public XRWindow? Window { get; set; }
@@ -170,23 +171,100 @@ namespace XREngine.Rendering
             bool allowScreenSpaceUICollectVisible = true,
             IVolume? collectionVolumeOverride = null)
         {
+            Debug.RenderingEvery(
+                $"XRViewport.CollectVisible.Tick.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] CollectVisible tick. PlayMode={0} VP[{1}] AutoCollect={2} CameraNull={3} WorldNull={4} PipelineNull={5} AssocPlayer={6}",
+                Engine.PlayMode.State,
+                Index,
+                AutomaticallyCollectVisible,
+                ActiveCamera is null,
+                (worldOverride ?? World) is null,
+                _renderPipeline.Pipeline is null,
+                AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
+
             XRCamera? camera = cameraOverride ?? ActiveCamera;
             if (camera is null)
+            {
+                Debug.RenderingWarningEvery(
+                    $"XRViewport.CollectVisible.NoCamera.{GetHashCode()}[{Index}]",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] CollectVisible skipped: no ActiveCamera. VP[{0}] AssocPlayer={1} CameraComponentNull={2} CameraFieldNull={3}",
+                    Index,
+                    AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>",
+                    CameraComponent is null,
+                    Camera is null);
                 return;
+            }
 
             XRWorldInstance? world = worldOverride ?? World;
+
+            if (world is null)
+            {
+                Debug.RenderingWarningEvery(
+                    $"XRViewport.CollectVisible.NoWorld.{GetHashCode()}[{Index}]",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] CollectVisible skipped: no World. VP[{0}] WorldOverrideNull={1} WorldInstanceOverrideNull={2} CameraNodeWorldNull={3}",
+                    Index,
+                    worldOverride is null,
+                    WorldInstanceOverride is null,
+                    CameraComponent?.SceneNode?.World is null);
+                return;
+            }
+
+            if (world.VisualScene is null)
+            {
+                Debug.RenderingWarningEvery(
+                    $"XRViewport.CollectVisible.NoVisualScene.{GetHashCode()}[{Index}]",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] CollectVisible skipped: world.VisualScene is null. VP[{0}] World={1}",
+                    Index,
+                    world.TargetWorld?.Name ?? "<unknown>");
+                return;
+            }
 
             // Only run player-view light intersection bookkeeping for player-associated viewports.
             if (AssociatedPlayer is not null && world is not null)
                 world.Lights.UpdateCameraLightIntersections(camera);
 
+            var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+            int beforeUpdatingCount = 0;
+            //if (Environment.GetEnvironmentVariable("XRE_DEBUG_RENDER_SUBMIT") == "1")
+                beforeUpdatingCount = commandCollection.GetUpdatingCommandCount();
+
             world?.VisualScene?.CollectRenderedItems(
-                renderCommandsOverride ?? _renderPipeline.MeshRenderCommands,
+                commandCollection,
                 camera,
                 CameraComponent?.CullWithFrustum ?? CullWithFrustum,
                 CameraComponent?.CullingCameraOverride,
                 collectionVolumeOverride,
                 collectMirrors);
+
+            //if (Environment.GetEnvironmentVariable("XRE_DEBUG_RENDER_SUBMIT") == "1")
+            {
+                int afterUpdatingCount = commandCollection.GetUpdatingCommandCount();
+                int delta = afterUpdatingCount - beforeUpdatingCount;
+
+                string visualSceneType = world?.VisualScene?.GetType().Name ?? "<null>";
+                int trackedRenderables = world?.VisualScene?.Renderables?.Count ?? -1;
+
+                (uint Draws, uint Instances) gpuVisible = (0, 0);
+                if (world?.VisualScene is VisualScene3D vs3d)
+                    gpuVisible = vs3d.LastGpuVisibility;
+
+                Debug.RenderingEvery(
+                    $"XRViewport.CollectVisible.Submit.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] CollectVisible submit. PlayMode={0} VP[{1}] CmdsUpdating={2} Delta={3} VisualScene={4} TrackedRenderables={5} GpuVisibleDraws={6} GpuVisibleInstances={7}",
+                    Engine.PlayMode.State,
+                    Index,
+                    afterUpdatingCount,
+                    delta,
+                    visualSceneType,
+                    trackedRenderables,
+                    gpuVisible.Draws,
+                    gpuVisible.Instances);
+            }
 
             if (allowScreenSpaceUICollectVisible)
                 CollectVisible_ScreenSpaceUI();
@@ -197,6 +275,15 @@ namespace XREngine.Rendering
             bool allowScreenSpaceUISwap = true)
         {
             using var sample = Engine.Profiler.Start($"XRViewport.SwapBuffers[{Index}]");
+
+            Debug.RenderingEvery(
+                $"XRViewport.SwapBuffers.Tick.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] SwapBuffers tick. PlayMode={0} VP[{1}] AutoSwap={2} AssocPlayer={3}",
+                Engine.PlayMode.State,
+                Index,
+                AutomaticallySwapBuffers,
+                AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
 
             var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
             using (Engine.Profiler.Start("XRViewport.SwapBuffers.MeshCommands"))
@@ -260,13 +347,52 @@ namespace XREngine.Rendering
         {
             XRCamera? camera = cameraOverride ?? ActiveCamera;
             if (camera is null)
+            {
+                Debug.RenderingWarningEvery(
+                    $"XRViewport.Render.NoCamera.{GetHashCode()}[{Index}]",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] Render skipped: no ActiveCamera. VP[{0}] AssocPlayer={1} CameraComponentNull={2} CameraFieldNull={3}",
+                    Index,
+                    AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>",
+                    CameraComponent is null,
+                    Camera is null);
                 return;
+            }
 
             var world = worldOverride ?? World;
             if (world is null)
             {
-                Debug.LogWarning("No world is set to this viewport.");
+                Debug.RenderingWarningEvery(
+                    $"XRViewport.Render.NoWorld.{GetHashCode()}[{Index}]",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] Render skipped: no World. VP[{0}] WorldOverrideNull={1} WorldInstanceOverrideNull={2} CameraNodeWorldNull={3}",
+                    Index,
+                    worldOverride is null,
+                    WorldInstanceOverride is null,
+                    CameraComponent?.SceneNode?.World is null);
                 return;
+            }
+
+            if (world.VisualScene is null)
+            {
+                Debug.RenderingWarningEvery(
+                    $"XRViewport.Render.NoVisualScene.{GetHashCode()}[{Index}]",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] Render skipped: world.VisualScene is null. VP[{0}] World={1}",
+                    Index,
+                    world.TargetWorld?.Name ?? "<unknown>");
+                return;
+            }
+
+            if (_renderPipeline.Pipeline is null)
+            {
+                Debug.RenderingWarningEvery(
+                    $"XRViewport.Render.NoPipeline.{GetHashCode()}[{Index}]",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] Render running with null pipeline. VP[{0}] CameraComponent={1} CameraRenderPipelineNull={2}",
+                    Index,
+                    CameraComponent?.GetType().Name ?? "<null>",
+                    CameraComponent?.Camera.RenderPipeline is null);
             }
 
             if (State.RenderingPipelineState?.ViewportStack.Contains(this) ?? false)

@@ -1,5 +1,6 @@
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.NV;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
@@ -12,10 +13,7 @@ namespace XREngine.Rendering.OpenGL
         protected override void UnlinkData()
         {
             Data.SetDrawBuffersRequested -= SetDrawBuffers;
-            Data.PreSetRenderTarget -= PreSetRenderTarget;
-            Data.PostSetRenderTarget -= PostSetRenderTarget;
-            Data.PreSetRenderTargets -= PreSetRenderTargets;
-            Data.PostSetRenderTargets -= PostSetRenderTargets;
+            Data.PropertyChanged -= DataOnPropertyChanged;
             Data.BindForReadRequested -= BindForReading;
             Data.BindForWriteRequested -= BindForWriting;
             Data.BindRequested -= Bind;
@@ -27,10 +25,7 @@ namespace XREngine.Rendering.OpenGL
         protected override void LinkData()
         {
             Data.SetDrawBuffersRequested += SetDrawBuffers;
-            Data.PreSetRenderTarget += PreSetRenderTarget;
-            Data.PostSetRenderTarget += PostSetRenderTarget;
-            Data.PreSetRenderTargets += PreSetRenderTargets;
-            Data.PostSetRenderTargets += PostSetRenderTargets;
+            Data.PropertyChanged += DataOnPropertyChanged;
             Data.BindForReadRequested += BindForReading;
             Data.BindForWriteRequested += BindForWriting;
             Data.BindRequested += Bind;
@@ -39,41 +34,13 @@ namespace XREngine.Rendering.OpenGL
             Data.UnbindRequested += Unbind;
         }
 
-        private bool _invalidated = true;
+        private volatile bool _invalidated = true;
+        private (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? _attachedTargetsCache;
 
-        private void PreSetRenderTargets()
+        private void DataOnPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            if (IsGenerated)
-                Data.DetachAll();
-            else
-                _invalidated = true;
-        }
-        private void PostSetRenderTargets()
-        {
-            if (IsGenerated)
-                Data.AttachAll();
-            else
-                _invalidated = true;
-        }
-
-        private void PreSetRenderTarget(int i)
-        {
-            if (IsGenerated)
-            {
-                Bind();
-                Data.Detach(i);
-            }
-            else
-                _invalidated = true;
-        }
-        private void PostSetRenderTarget(int i)
-        {
-            if (IsGenerated)
-            {
-                Data.Attach(i);
-                Unbind();
-            }
-            else
+            // NOTE: PropertyChanged can occur from any thread. Do not perform GL calls here.
+            if (e.PropertyName == nameof(XRFrameBuffer.Targets) || e.PropertyName == nameof(XRFrameBuffer.DrawBuffers))
                 _invalidated = true;
         }
 
@@ -82,10 +49,28 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!_invalidated || _verifying)
                 return;
+
+            // We intentionally defer attachment changes to the render thread.
+            if (!Engine.IsRenderThread)
+                return;
+
             _verifying = true;
-            _invalidated = false;
-            Data.AttachAll();
-            _verifying = false;
+            try
+            {
+                _invalidated = false;
+
+                if (_attachedTargetsCache is not null && _attachedTargetsCache.Length > 0)
+                    Data.DetachTargets(_attachedTargetsCache);
+
+                Data.AttachAll();
+
+                // Snapshot currently attached targets so future changes can detach the previous set.
+                _attachedTargetsCache = Data.Targets?.ToArray();
+            }
+            finally
+            {
+                _verifying = false;
+            }
         }
 
         public override bool TryGetBindingId(out uint bindingId)
@@ -98,46 +83,85 @@ namespace XREngine.Rendering.OpenGL
 
         public void BindForReading()
         {
+            if (!Engine.IsRenderThread)
+            {
+                Debug.LogWarning("Can't bind framebuffer from non-render thread.");
+                return;
+            }
+            
             Api.BindFramebuffer(GLEnum.ReadFramebuffer, BindingId);
         }
 
         public void UnbindFromReading()
         {
-            //CheckErrors();
+            if (!Engine.IsRenderThread)
+            {
+                Debug.LogWarning("Can't unbind framebuffer from non-render thread.");
+                return;
+            }
+
             Api.BindFramebuffer(GLEnum.ReadFramebuffer, 0);
         }
 
         public void BindForWriting()
         {
+            if (!Engine.IsRenderThread)
+            {
+                Debug.LogWarning("Can't bind framebuffer from non-render thread.");
+                return;
+            }
+
             Api.BindFramebuffer(GLEnum.DrawFramebuffer, BindingId);
         }
         public void UnbindFromWriting()
         {
-            //CheckErrors();
+            if (!Engine.IsRenderThread)
+            {
+                Debug.LogWarning("Can't unbind framebuffer from non-render thread.");
+                return;
+            }
+
             Api.BindFramebuffer(GLEnum.DrawFramebuffer, 0);
         }
 
         //Same as BindForWriting, technically
         public void Bind()
         {
+            if (!Engine.IsRenderThread)
+            {
+                Debug.LogWarning("Can't bind framebuffer from non-render thread.");
+                return;
+            }
+
             Api.BindFramebuffer(GLEnum.Framebuffer, BindingId);
         }
         //Same as UnbindFromWriting, technically
         public void Unbind()
         {
-            //CheckErrors();
+            if (!Engine.IsRenderThread)
+            {
+                Debug.LogWarning("Can't unbind framebuffer from non-render thread.");
+                return;
+            }
+
             Api.BindFramebuffer(GLEnum.Framebuffer, 0);
         }
 
         public unsafe void SetDrawBuffers()
         {
-            var casted = Data.DrawBuffers?.Select(ToGLEnum)?.ToArray();
-            if (casted != null)
+            if (!Engine.IsRenderThread)
             {
-                fixed (GLEnum* drawBuffers = casted)
-                {
-                    Api.NamedFramebufferDrawBuffers(BindingId, (uint)casted.Length, drawBuffers);
-                }
+                Debug.LogWarning("Can't set framebuffer draw buffers from non-render thread.");
+                return;
+            }
+
+            var casted = Data.DrawBuffers?.Select(ToGLEnum)?.ToArray();
+            if (casted is null || casted.Length == 0)
+                casted = [GLEnum.None];
+
+            fixed (GLEnum* drawBuffers = casted)
+            {
+                Api.NamedFramebufferDrawBuffers(BindingId, (uint)casted.Length, drawBuffers);
             }
             Api.NamedFramebufferReadBuffer(BindingId, GLEnum.None);
             CheckErrors();

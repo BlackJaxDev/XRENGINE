@@ -43,6 +43,7 @@ namespace XREngine
     public class Debug
     {
         private static readonly ConcurrentDictionary<string, DateTime> RecentMessageCache = new();
+        private static readonly ConcurrentDictionary<string, long> RateLimitedMessageCache = new();
         public static Queue<(string, DateTime)> Output { get; } = new Queue<(string, DateTime)>();
         public static bool AllowOutput { get; set; } = true;
 
@@ -356,6 +357,53 @@ namespace XREngine
 #if DEBUG || EDITOR
             Out(EOutputVerbosity.Normal, true, false, false, true, 4 + lineIgnoreCount, includedLineCount, message);
 #endif
+        }
+
+        /// <summary>
+        /// Returns true if the caller should emit a message for <paramref name="key"/>, rate-limited by <paramref name="interval"/>.
+        /// Uses a monotonic clock (Stopwatch).
+        /// </summary>
+        public static bool ShouldLogEvery(string key, TimeSpan interval)
+        {
+    #if DEBUG || EDITOR
+            if (interval <= TimeSpan.Zero)
+            return true;
+
+            long now = Stopwatch.GetTimestamp();
+            long minTicks = (long)(interval.TotalSeconds * Stopwatch.Frequency);
+
+            if (RateLimitedMessageCache.TryGetValue(key, out long last) && (now - last) < minTicks)
+            return false;
+
+            RateLimitedMessageCache[key] = now;
+            return true;
+    #else
+            return false;
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited rendering log. Intended for per-frame diagnostics.
+        /// </summary>
+        public static void RenderingEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+            return;
+            Rendering(message, args);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited warning without stack trace (keeps logs readable).
+        /// </summary>
+        public static void RenderingWarningEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+            return;
+            Log(ELogCategory.Rendering, EOutputVerbosity.Normal, false, "[WARN] " + message, args);
+    #endif
         }
 
         public static void LogError(string message, int lineIgnoreCount = 0, int includedLineCount = 10)

@@ -1,4 +1,7 @@
+using XREngine.Data.Rendering;
+using XREngine.Data.Colors;
 using XREngine.Rendering.RenderGraph;
+using System;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -25,8 +28,40 @@ namespace XREngine.Rendering.Pipelines.Commands
         protected override void Execute()
         {
             var fbo = ActivePipelineInstance.RenderState.OutputFBO;
+
+            //if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DEBUG_PRESENT_CLEAR")))
+            {
+                Debug.RenderingEvery(
+                    $"PresentDbg.BindOutputFBO.{Engine.PlayMode.State}",
+                    TimeSpan.FromSeconds(1),
+                    "[PresentDbg] BindOutputFBO. PlayMode={0} OutputFBO_Null={1} OutputFBO={2} Write={3}",
+                    Engine.PlayMode.State,
+                    fbo is null,
+                    fbo?.Name ?? "<null>",
+                    Write);
+            }
+
             if (fbo is null)
+            {
+                // OutputFBO == null means "render to the window". We must still explicitly bind the
+                // default framebuffer; otherwise, any previous pass/callback that bound an FBO will
+                // cause the final blit to render offscreen (black window).
+                Engine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
+
+                // Debug aid: set `XRE_DEBUG_PRESENT_CLEAR=1` to clear the default framebuffer to a vivid color.
+                // If the window stays black, we're likely not binding/presenting the default framebuffer.
+                // If it turns magenta but the scene never appears, the final blit/composite isn't drawing.
+                if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DEBUG_PRESENT_CLEAR")))
+                {
+                    Engine.Rendering.State.ClearColor(ColorF4.Magenta);
+                    Engine.Rendering.State.Clear(true, false, false);
+                }
+
+                if (ClearColor || ClearDepth || ClearStencil)
+                    Engine.Rendering.State.Clear(ClearColor, ClearDepth, ClearStencil);
+
                 return;
+            }
             
             if (Write)
                 fbo.BindForWriting();

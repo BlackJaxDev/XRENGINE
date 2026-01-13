@@ -36,6 +36,7 @@ namespace XREngine.Components.Lights
         protected XRViewport? ZPosVP => Viewports[4];
         protected XRViewport? ZNegVP => Viewports[5];
 
+        [RuntimeOnly]
         [YamlIgnore]
         public XRViewport?[] Viewports { get; } = new XRViewport?[6];
 
@@ -49,25 +50,31 @@ namespace XREngine.Components.Lights
             new Rotator(0.0f, 0.0f, 180.0f).ToQuaternion(),   // -Z
         ];
 
+        [RuntimeOnly]
         protected XRTextureCube? _environmentTextureCubemap;
+
+        [RuntimeOnly]
         protected XRTexture2D? _environmentTextureOctahedral;
+
+        [RuntimeOnly]
         protected XRTextureCube? _environmentDepthTextureCubemap;
         protected XRRenderBuffer? _tempDepth;
         private XRCubeFrameBuffer? _renderFBO;
         private XRQuadFrameBuffer? _octahedralFBO;
         private XRMaterial? _octahedralMaterial;
-        private DelSetUniforms? _octahedralSamplerBinder;
 
         private const uint OctahedralResolutionMultiplier = 2u;
         private static XRShader? s_cubemapToOctaShader;
         private static XRShader? s_fullscreenTriVertexShader;
 
+        [RuntimeOnly]
         public XRTextureCube? EnvironmentTextureCubemap
         {
             get => _environmentTextureCubemap;
             set => SetField(ref _environmentTextureCubemap, value);
         }
 
+        [RuntimeOnly]
         public XRTexture2D? EnvironmentTextureOctahedral
         {
             get => _environmentTextureOctahedral;
@@ -155,7 +162,7 @@ namespace XREngine.Components.Lights
                     CullWithFrustum = true,
                 };
                 var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
-                if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true)
+                if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
                 {
                     grading.AutoExposure = false;
                     grading.Exposure = 1.0f;
@@ -313,47 +320,46 @@ namespace XREngine.Components.Lights
             }
 
             // Always (re)bind the sampler once per init to avoid handler accumulation across recaptures.
-            if (_octahedralSamplerBinder is not null)
-                _octahedralFBO!.SettingUniforms -= _octahedralSamplerBinder;
-
-            _octahedralSamplerBinder = program =>
-            {
-                if (_environmentTextureCubemap is null)
-                {
-                    Debug.LogWarning("SceneCapture: cubemap is null during octa blit!");
-                    return;
-                }
-
-                var cubeTex = _environmentTextureCubemap as XRTextureCube;
-                Debug.Out($"SceneCapture octa blit: cubemap '{_environmentTextureCubemap.Name}' Extent={cubeTex?.Extent ?? 0}");
-
-                // Get the GL texture object to check if it exists
-                var renderer = AbstractRenderer.Current;
-                if (renderer != null)
-                {
-                    var glTex = renderer.GetOrCreateAPIRenderObject(_environmentTextureCubemap, generateNow: true);
-                    if (glTex != null)
-                    {
-                        var handle = glTex.GetHandle();
-                        Debug.Out($"SceneCapture: GL cubemap handle={handle}, IsGenerated={glTex.IsGenerated}");
-                    }
-                    else
-                    {
-                        Debug.LogWarning("SceneCapture: Failed to get GL texture object for cubemap!");
-                    }
-                }
-
-                // Force bind the cubemap to texture unit 0 and set the sampler uniform
-                _environmentTextureCubemap.Bind();
-                program.Sampler("Texture0", _environmentTextureCubemap, 0);
-            };
-            _octahedralFBO!.SettingUniforms += _octahedralSamplerBinder;
+            _octahedralFBO!.SettingUniforms -= BindOctahedralSampler;
+            _octahedralFBO!.SettingUniforms += BindOctahedralSampler;
 
             _octahedralFBO.FullScreenMesh.GetDefaultVersion().AllowShaderPipelines = false;
             _octahedralFBO.FullScreenMesh.GetOVRMultiViewVersion().AllowShaderPipelines = false;
             _octahedralFBO.FullScreenMesh.GetNVStereoVersion().AllowShaderPipelines = false;
 
             _octahedralFBO!.SetRenderTargets((_environmentTextureOctahedral!, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+        }
+
+        private void BindOctahedralSampler(XRRenderProgram program)
+        {
+            if (_environmentTextureCubemap is null)
+            {
+                Debug.LogWarning("SceneCapture: cubemap is null during octa blit!");
+                return;
+            }
+
+            var cubeTex = _environmentTextureCubemap as XRTextureCube;
+            Debug.Out($"SceneCapture octa blit: cubemap '{_environmentTextureCubemap.Name}' Extent={cubeTex?.Extent ?? 0}");
+
+            // Get the GL texture object to check if it exists
+            var renderer = AbstractRenderer.Current;
+            if (renderer != null)
+            {
+                var glTex = renderer.GetOrCreateAPIRenderObject(_environmentTextureCubemap, generateNow: true);
+                if (glTex != null)
+                {
+                    var handle = glTex.GetHandle();
+                    Debug.Out($"SceneCapture: GL cubemap handle={handle}, IsGenerated={glTex.IsGenerated}");
+                }
+                else
+                {
+                    Debug.LogWarning("SceneCapture: Failed to get GL texture object for cubemap!");
+                }
+            }
+
+            // Force bind the cubemap to texture unit 0 and set the sampler uniform
+            _environmentTextureCubemap.Bind();
+            program.Sampler("Texture0", _environmentTextureCubemap, 0);
         }
 
         private uint GetOctahedralExtent()

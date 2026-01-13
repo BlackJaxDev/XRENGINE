@@ -17,6 +17,7 @@ namespace XREngine.Rendering
     /// <summary>
     /// Links a Silk.NET generated window to an API-specific engine renderer.
     /// </summary>
+    [RuntimeOnly]
     public sealed class XRWindow : XRBase
     {
         public static event Action<XRWindow, bool>? AnyWindowFocusChanged;
@@ -309,20 +310,80 @@ namespace XREngine.Rendering
             {
                 Renderer.Active = true;
                 AbstractRenderer.Current = Renderer;
+            
+                bool useViewportPanelMode =
+                    Engine.IsEditor &&
+                    Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel;
+                bool canRenderWindowViewports = !Engine.VRState.IsInVR || Engine.Rendering.Settings.RenderWindowsWhileInVR;
+
+                // High-signal render diagnostics (rate-limited)
+                {
+                    string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
+                    if (!canRenderWindowViewports)
+                    {
+                        Debug.RenderingEvery(
+                            keyBase + ".VRGated",
+                            TimeSpan.FromSeconds(1),
+                            "[RenderDiag] Window gated by VR. IsInVR={0}, RenderWindowsWhileInVR={1}",
+                            Engine.VRState.IsInVR,
+                            Engine.Rendering.Settings.RenderWindowsWhileInVR);
+                    }
+
+                    if (!ShouldBeRendering())
+                    {
+                        Debug.RenderingWarningEvery(
+                            keyBase + ".NotRendering",
+                            TimeSpan.FromSeconds(1),
+                            "[RenderDiag] Window not rendering: Viewports={0}, TargetWorldInstanceNull={1}, PresentationMode={2}, CanRenderWindowViewports={3}",
+                            Viewports.Count,
+                            TargetWorldInstance is null,
+                            Engine.Rendering.Settings.ViewportPresentationMode,
+                            canRenderWindowViewports);
+                    }
+
+                    // Per-viewport state snapshot (only a few times a second)
+                    Debug.RenderingEvery(
+                        keyBase + ".ViewportSummary",
+                        TimeSpan.FromSeconds(2),
+                        "[RenderDiag] Window tick. Delta={0:F4}s, Viewports={1}, TargetWorld={2}, PanelMode={3}",
+                        delta,
+                        Viewports.Count,
+                        TargetWorldInstance?.TargetWorld?.Name ?? "<null>",
+                        useViewportPanelMode);
+
+                    foreach (var vp in Viewports)
+                    {
+                        var activeCamera = vp.ActiveCamera;
+                        var world = vp.World;
+                        bool hasPipeline = vp.RenderPipelineInstance.Pipeline is not null;
+                        Debug.RenderingEvery(
+                            keyBase + $".VP.{vp.Index}",
+                            TimeSpan.FromSeconds(2),
+                            "[RenderDiag] VP[{0}] Region={1}x{2}@({3},{4}) Internal={5}x{6} ActiveCameraNull={7} WorldNull={8} PipelineNull={9} AssocPlayer={10}",
+                            vp.Index,
+                            vp.Width,
+                            vp.Height,
+                            vp.X,
+                            vp.Y,
+                            vp.InternalWidth,
+                            vp.InternalHeight,
+                            activeCamera is null,
+                            world is null,
+                            !hasPipeline,
+                            vp.AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
+                    }
+                }
 
                 using (var preRenderSample = Engine.Profiler.Start("XRWindow.GlobalPreRender"))
                 {
                     TargetWorldInstance?.GlobalPreRender();
                 }
+                
                 using (var renderCallbackSample = Engine.Profiler.Start("XRWindow.RenderViewportsCallback"))
                 {
                     RenderViewportsCallback?.Invoke();
                 }
-                bool useViewportPanelMode =
-                    Engine.IsEditor &&
-                    Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel;
 
-                bool canRenderWindowViewports = !Engine.VRState.IsInVR || Engine.Rendering.Settings.RenderWindowsWhileInVR;
                 if (canRenderWindowViewports)
                 {
                     if (useViewportPanelMode)
@@ -345,6 +406,11 @@ namespace XREngine.Rendering
                         }
                         else
                         {
+                            Debug.RenderingEvery(
+                                $"XRWindow.RenderCallback.{GetHashCode()}.PanelRegionMissing",
+                                TimeSpan.FromSeconds(1),
+                                "[RenderDiag] Viewport panel mode active but region missing/invalid. Region={0}",
+                                viewportPanelRegion.HasValue ? $"{viewportPanelRegion.Value.Width}x{viewportPanelRegion.Value.Height}" : "<null>");
                             RestoreViewportPanelSizingIfNeeded();
                             DestroyViewportPanelFBO();
                         }
@@ -353,6 +419,11 @@ namespace XREngine.Rendering
                     {
                         RestoreViewportPanelSizingIfNeeded();
                         DestroyViewportPanelFBO();
+
+                        // RenderViewportsCallback (e.g., ImGui) can leave scissor/cropping enabled.
+                        // Ensure world rendering starts from a clean state so clears and passes aren't clipped/offset.
+                        Renderer.SetCroppingEnabled(false);
+
                         RenderViewports();
                     }
                 }

@@ -5,6 +5,7 @@ namespace XREngine.Rendering
     /// <summary>
     /// This is the base class for all objects that are allocated by the rendering api (opengl, vulkan, etc).
     /// </summary>
+    [RuntimeOnly]
     public abstract class AbstractRenderAPIObject(XRWindow window) : XRBase, IDisposable
     {
         public XRWindow Window { get; } = window;

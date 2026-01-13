@@ -69,6 +69,7 @@ namespace XREngine.Components.Physics
         /// The rigid body constructed for whatever physics engine to use.
         /// </summary>
         [Browsable(false)]
+        [RuntimeOnly]
         public IAbstractDynamicRigidBody? RigidBody
         {
             get => _rigidBody;

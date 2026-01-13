@@ -197,8 +197,10 @@ public abstract partial class RenderPipeline : XRAsset
             case XRTexture2DArrayView:
                 return false;
             default:
-                Debug.LogWarning($"Texture {t.Name} is not a 2D or 2DArray texture. Cannot resize.");
-                return false;
+                // If the cached texture is the wrong type (e.g., due to stale cache/state restore),
+                // keep the pipeline healthy by forcing a recreate via the factory.
+                Debug.LogWarning($"Texture {t.Name} is not a 2D/2DArray texture (type={t.GetType().Name}). Forcing recreate.");
+                return true;
         }
     }
 
@@ -222,8 +224,8 @@ public abstract partial class RenderPipeline : XRAsset
             case XRTexture2DArrayView:
                 return false;
             default:
-                Debug.LogWarning($"Texture {t.Name} is not a 2D or 2DArray texture. Cannot resize.");
-                return false;
+                Debug.LogWarning($"Texture {t.Name} is not a 2D/2DArray texture (type={t.GetType().Name}). Forcing recreate.");
+                return true;
         }
     }
 

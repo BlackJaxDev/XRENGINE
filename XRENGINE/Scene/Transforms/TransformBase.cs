@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Reflection;
+using XREngine.Core.Files;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -42,7 +43,7 @@ namespace XREngine.Scene.Transforms
     /// </summary>
     [Serializable]
     [MemoryPackable(GenerateType.NoGenerate)]
-    public abstract partial class TransformBase : XRWorldObjectBase, IRenderable
+    public abstract partial class TransformBase : XRWorldObjectBase, IRenderable, IPostCookedBinaryDeserialize
     {
         #region Delegates & Events
 
@@ -652,6 +653,55 @@ namespace XREngine.Scene.Transforms
             SetParent(parent, false, EParentAssignmentMode.Immediate);
         }
 
+        void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
+        {
+            // Deserialization may replace the EventList while property notifications are suppressed.
+            // Re-attach invariants that are normally installed via property change callbacks.
+            if (_children is null)
+                _children = new EventList<TransformBase>() { ThreadSafe = true };
+
+            _children.ThreadSafe = true;
+            _children.PostAnythingAdded -= ChildAdded;
+            _children.PostAnythingRemoved -= ChildRemoved;
+            _children.PostAnythingAdded += ChildAdded;
+            _children.PostAnythingRemoved += ChildRemoved;
+
+            // Ensure this transform appears in its parent's child list.
+            if (_parent is not null)
+            {
+                if (_parent._children is null)
+                    _parent._children = new EventList<TransformBase>() { ThreadSafe = true };
+
+                _parent._children.ThreadSafe = true;
+                _parent._children.PostAnythingAdded -= _parent.ChildAdded;
+                _parent._children.PostAnythingRemoved -= _parent.ChildRemoved;
+                _parent._children.PostAnythingAdded += _parent.ChildAdded;
+                _parent._children.PostAnythingRemoved += _parent.ChildRemoved;
+
+                lock (_parent._children)
+                {
+                    if (!_parent._children.Contains(this))
+                        _parent._children.Add(this);
+                }
+
+                _depth = _parent._depth + 1;
+                if (World is null && _parent.World is not null)
+                    World = _parent.World;
+            }
+
+            // Ensure each child points back to this as its parent.
+            lock (_children)
+            {
+                foreach (var child in _children)
+                {
+                    if (child is null)
+                        continue;
+                    if (child._parent != this)
+                        child.Parent = this;
+                }
+            }
+        }
+
         #endregion
 
         #region Public Methods
@@ -1227,6 +1277,7 @@ namespace XREngine.Scene.Transforms
             }
         }
 
+        [RuntimeOnly]
         protected RenderInfo3D RenderInfo { get; set; }
 
         protected virtual RenderInfo[] GetDebugRenderInfo()

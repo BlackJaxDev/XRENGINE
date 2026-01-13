@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics.CodeAnalysis;
 
 namespace XREngine.Rendering.PostProcessing;
 
@@ -57,6 +58,7 @@ public sealed class PostProcessStageDescriptor(
     public string Key { get; } = key;
     public string DisplayName { get; } = string.IsNullOrWhiteSpace(displayName) ? key : displayName;
     public IReadOnlyList<PostProcessParameterDescriptor> Parameters { get; } = parameters ?? Array.Empty<PostProcessParameterDescriptor>();
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties)]
     public Type? BackingType { get; } = backingType;
 }
 

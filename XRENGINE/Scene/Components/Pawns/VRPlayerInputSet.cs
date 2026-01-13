@@ -61,6 +61,7 @@ namespace XREngine.Components
         }
 
         private PhysxDynamicRigidBody? _leftHandOverlap = null;
+        [RuntimeOnly]
         public PhysxDynamicRigidBody? LeftHandOverlap
         {
             get => _leftHandOverlap;
@@ -68,6 +69,7 @@ namespace XREngine.Components
         }
 
         private PhysxDynamicRigidBody? _rightHandOverlap = null;
+        [RuntimeOnly]
         public PhysxDynamicRigidBody? RightHandOverlap
         {
             get => _rightHandOverlap;
@@ -75,6 +77,7 @@ namespace XREngine.Components
         }
 
         private PhysxDynamicRigidBody? _rightHandBody = null;
+        [RuntimeOnly]
         public PhysxDynamicRigidBody? RightHandRigidBody
         {
             get => _rightHandBody;
@@ -82,6 +85,7 @@ namespace XREngine.Components
         }
 
         private PhysxDynamicRigidBody? _leftHandBody = null;
+        [RuntimeOnly]
         public PhysxDynamicRigidBody? LeftHandRigidBody
         {
             get => _leftHandBody;
@@ -89,6 +93,7 @@ namespace XREngine.Components
         }
 
         private PhysxJoint_Distance? _leftHandConstraint;
+        [RuntimeOnly]
         public PhysxJoint_Distance? LeftHandConstraint
         {
             get => _leftHandConstraint;
@@ -96,6 +101,7 @@ namespace XREngine.Components
         }
 
         private PhysxJoint_Distance? _rightHandConstraint;
+        [RuntimeOnly]
         public PhysxJoint_Distance? RightHandConstraint
         {
             get => _rightHandConstraint;

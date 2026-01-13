@@ -2,6 +2,7 @@
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Components;
 using XREngine.Core.Attributes;
+using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
@@ -14,7 +15,7 @@ namespace XREngine.Scene
 {
     [Serializable]
     [MemoryPackable]
-    public sealed partial class SceneNode : XRWorldObjectBase
+    public sealed partial class SceneNode : XRWorldObjectBase, IPostCookedBinaryDeserialize
     {
         //private static SceneNode? _dummy;
         //internal static SceneNode Dummy => _dummy ??= new SceneNode() { IsDummy = true };
@@ -113,7 +114,19 @@ namespace XREngine.Scene
             set
             {
                 _components.Clear();
-                _components.AddRange(value);
+                if (value is null)
+                    return;
+
+                // Snapshot restore can yield null entries when certain component types cannot be
+                // instantiated (missing public parameterless ctor, runtime-only/native types, etc).
+                // Avoid losing *all* components due to a single null.
+                foreach (var component in value)
+                {
+                    if (component is null)
+                        continue;
+
+                    _components.Add(component);
+                }
             }
         }
 
@@ -435,7 +448,40 @@ namespace XREngine.Scene
         public SceneNode? Parent
         {
             get => _transform?.Parent?.SceneNode;
-            set => _transform?.Parent = value?.Transform;
+            set
+            {
+                if (_transform is null)
+                    return;
+
+                var oldParent = _transform.Parent;
+                var newParent = value?.Transform;
+                if (ReferenceEquals(oldParent, newParent))
+                    return;
+
+                OnParentChanging();
+
+                // During cooked snapshot deserialization we suppress property notifications.
+                // Parent/child list maintenance normally happens in property change callbacks,
+                // so we do it explicitly here to keep hierarchy traversal valid.
+                _transform.Parent = newParent;
+
+                if (oldParent is not null)
+                {
+                    lock (oldParent.Children)
+                        oldParent.Children.Remove(_transform);
+                }
+
+                if (newParent is not null)
+                {
+                    lock (newParent.Children)
+                    {
+                        if (!newParent.Children.Contains(_transform))
+                            newParent.Children.Add(_transform);
+                    }
+                }
+
+                OnParentChanged();
+            }
         }
 
         private SceneNodePrefabLink? _prefab;
@@ -1390,6 +1436,29 @@ namespace XREngine.Scene
         {
             tfm = sceneNode.GetTransformAs<TTransform>(true)!;
             return sceneNode;
+        }
+
+        void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
+        {
+            if (_transform is null)
+                return;
+
+            // The deserializer may overwrite Transform while property notifications are suppressed,
+            // which bypasses the normal LinkTransform() logic.
+            _transform.PropertyChanged -= TransformPropertyChanged;
+            _transform.PropertyChanging -= TransformPropertyChanging;
+
+            _transform.Name = Name;
+            _transform.SceneNode = this;
+            _transform.World = World;
+
+            _transform.PropertyChanged += TransformPropertyChanged;
+            _transform.PropertyChanging += TransformPropertyChanging;
+
+            if (IsActiveInHierarchy)
+                ActivateTransform();
+            else
+                DeactivateTransform();
         }
 
         /// <summary>
