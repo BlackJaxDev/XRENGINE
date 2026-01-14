@@ -79,28 +79,20 @@ namespace XREngine.Input
                 var pawn = _controlledPawn;
                 var pawnCamera = pawn?.GetCamera();
 
-                Debug.RenderingEvery(
-                    $"ViewportBind.Player.{GetHashCode()}.{(int)_index}",
-                    TimeSpan.FromSeconds(0.5),
-                    "[ViewportDiag] UpdateViewportCamera: P{0} CtrlHash={1} VPHash={2} Pawn={3} PawnCamNull={4}",
-                    (int)_index + 1,
-                    GetHashCode(),
-                    _viewport.GetHashCode(),
-                    pawn?.Name ?? "<null>",
-                    pawnCamera is null);
+                Debug.Out($"[LocalPlayerController] UpdateViewportCamera: VP={_viewport.GetHashCode()} Pawn={pawn?.Name ?? "<null>"} PawnCamera={(pawnCamera is null ? "NULL" : pawnCamera.Name ?? pawnCamera.GetHashCode().ToString())}");
 
                 _viewport.CameraComponent = pawnCamera;
+                
+                // Extended diagnostic: capture camera's XRCamera object and its transform details
+                var xrCam = _viewport.CameraComponent?.Camera;
+                var camTfm = xrCam?.Transform;
+                Debug.Out($"[LocalPlayerController] After setting CameraComponent: VP.CameraComponent={((_viewport.CameraComponent is null) ? "NULL" : _viewport.CameraComponent.Name ?? _viewport.CameraComponent.GetHashCode().ToString())} VP.ActiveCamera={((_viewport.ActiveCamera is null) ? "NULL" : _viewport.ActiveCamera.GetHashCode().ToString())} XRCam={xrCam?.GetHashCode().ToString() ?? "NULL"} CamTfm={camTfm?.GetHashCode().ToString() ?? "NULL"} CamWorldPos={camTfm?.WorldTranslation.ToString() ?? "NULL"} CamRenderPos={camTfm?.RenderTranslation.ToString() ?? "NULL"}");
+                
                 Input.UpdateDevices(_viewport.Window?.Input, Engine.VRState.Actions);
             }
             else
             {
-                Debug.RenderingWarningEvery(
-                    $"ViewportBind.Player.NoViewport.{GetHashCode()}.{(int)_index}",
-                    TimeSpan.FromSeconds(0.5),
-                    "[ViewportDiag] UpdateViewportCamera: P{0} CtrlHash={1} viewport=NULL (cannot bind camera). Pawn={2}",
-                    (int)_index + 1,
-                    GetHashCode(),
-                    _controlledPawn?.Name ?? "<null>");
+                Debug.Out($"[LocalPlayerController] UpdateViewportCamera: viewport is NULL, cannot bind camera. Pawn={_controlledPawn?.Name ?? "<null>"}");
                 Input.UpdateDevices(null, Engine.VRState.Actions);
             }
         }
@@ -109,8 +101,11 @@ namespace XREngine.Input
         /// Forces viewport/camera/input rebinding.
         /// Useful after snapshot restore when runtime-only wiring must be rebuilt.
         /// </summary>
-        internal void RefreshViewportCamera()
-            => UpdateViewportCamera();
+        public void RefreshViewportCamera()
+        {
+            Debug.Out($"[LocalPlayerController] RefreshViewportCamera called. VP={(Viewport is null ? "NULL" : Viewport.GetHashCode().ToString())} Pawn={ControlledPawn?.Name ?? "<null>"}");
+            UpdateViewportCamera();
+        }
 
         protected override void RegisterInput(InputInterface input)
         {

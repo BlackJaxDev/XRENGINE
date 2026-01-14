@@ -42,6 +42,26 @@ namespace XREngine.Rendering
             _panelResizeLastChangeUtc = default;
         }
 
+        /// <summary>
+        /// Forces immediate destruction of the scene panel FBO/texture.
+        /// Use this during play mode transitions to ensure stale content is not displayed.
+        /// </summary>
+        public void InvalidateResourcesImmediate()
+        {
+            // Force immediate destruction so the GL texture handle becomes invalid
+            _scenePanelFBO?.Destroy(true);
+            _scenePanelFBO = null;
+            _scenePanelTexture?.Destroy(true);
+            _scenePanelTexture = null;
+            
+            _scenePanelSizingActive = false;
+            _lastPanelWidth = 0;
+            _lastPanelHeight = 0;
+            _pendingPanelWidth = 0;
+            _pendingPanelHeight = 0;
+            _panelResizeLastChangeUtc = default;
+        }
+
         public void OnFramebufferResized(XRWindow window, Vector2D<int> framebufferSize)
         {
             // If the underlying framebuffer/swapchain changes, scene-panel resources can become stale.

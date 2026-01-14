@@ -13,18 +13,27 @@ namespace XREngine.Editor;
 /// - Keyboard shortcuts (F5 to play, Shift+F5 to stop)
 /// - Visual indicators for play mode
 /// - Editor pawn possession tracking and restoration
+/// 
+/// NOTE: Snapshot capture/restore is handled by Engine.PlayMode.
+/// This controller only tracks editor-specific state like pawn possessions.
 /// </summary>
 public static class EditorPlayModeController
 {
-    private static WorldStateSnapshot? _editModeSnapshot;
     private static bool _initialized;
     private static readonly Dictionary<LocalInputInterface, ShortcutHandlers> _shortcutHandlers = new(ReferenceEqualityComparer.Instance);
-    
+
+    private sealed record PlayerPossessionSnapshot(
+        Type ControllerType,
+        Guid? PawnId,
+        Guid? PawnNodeId,
+        Type? PawnType,
+        string? PawnName);
+
     /// <summary>
-    /// Stores the editor pawn possessions for each local player before entering play mode.
-    /// Key is the local player index, value is the pawn that was controlled.
+    /// Stores the editor possession state for each local player before entering play mode.
+    /// Must survive snapshot restore (which can replace scene nodes/components).
     /// </summary>
-    private static readonly Dictionary<ELocalPlayerIndex, PawnComponent?> _editorPawnSnapshot = [];
+    private static readonly Dictionary<ELocalPlayerIndex, PlayerPossessionSnapshot> _editorPossessionSnapshot = [];
 
     private record ShortcutHandlers(Action PlayPause, Action Stop, Action StepFrame);
 
@@ -42,6 +51,7 @@ public static class EditorPlayModeController
         Engine.PlayMode.PostEnterPlay += OnPostEnterPlay;
         Engine.PlayMode.PreExitPlay += OnPreExitPlay;
         Engine.PlayMode.PostExitPlay += OnPostExitPlay;
+        Engine.PlayMode.PostSnapshotRestore += OnPostSnapshotRestore;
         Engine.PlayMode.Paused += OnPaused;
         Engine.PlayMode.Resumed += OnResumed;
 
@@ -64,6 +74,7 @@ public static class EditorPlayModeController
         Engine.PlayMode.PostEnterPlay -= OnPostEnterPlay;
         Engine.PlayMode.PreExitPlay -= OnPreExitPlay;
         Engine.PlayMode.PostExitPlay -= OnPostExitPlay;
+        Engine.PlayMode.PostSnapshotRestore -= OnPostSnapshotRestore;
         Engine.PlayMode.Paused -= OnPaused;
         Engine.PlayMode.Resumed -= OnResumed;
 
@@ -79,19 +90,9 @@ public static class EditorPlayModeController
         // Disable undo recording during play
         // Undo.SuppressRecording(); // TODO: Implement in Undo class
 
-        // Save current editor pawn possessions for restoration when exiting play mode
+        // Save current editor pawn possessions for restoration when exiting play mode.
+        // This is saved BEFORE any snapshot operations so we have the original editor pawn references.
         SaveEditorPawnSnapshot();
-
-        // Save current world state if using SerializeAndRestore mode
-        if (Engine.PlayMode.Configuration.StateRestorationMode == EStateRestorationMode.SerializeAndRestore)
-        {
-            var currentWorld = GetCurrentEditorWorld();
-            if (currentWorld is not null)
-            {
-                _editModeSnapshot = WorldStateSnapshot.Capture(currentWorld);
-                Debug.Out($"Captured world state snapshot for {currentWorld.Name}");
-            }
-        }
 
         // Clear selection to avoid editing during play
         Selection.Clear();
@@ -123,18 +124,8 @@ public static class EditorPlayModeController
         // Re-enable undo recording
         // Undo.ResumeRecording(); // TODO: Implement in Undo class
 
-        // Restore world state based on configuration
-        if (Engine.PlayMode.Configuration.StateRestorationMode == EStateRestorationMode.SerializeAndRestore
-            && _editModeSnapshot is not null)
-        {
-            _editModeSnapshot.Restore();
-            Debug.Out("Restored world state from snapshot");
-
-            var world = GetCurrentEditorWorld();
-            if (world is not null && XRWorldInstance.WorldInstances.TryGetValue(world, out var instance))
-                instance.Lights.RebuildCachesFromWorld();
-        }
-        _editModeSnapshot = null;
+        // NOTE: World state restore is already handled by Engine.PlayMode.
+        // We just need to restore editor-specific state here.
 
         // Re-enable transform gizmos
         // TransformTool.Enable(); // TODO: Implement
@@ -142,11 +133,24 @@ public static class EditorPlayModeController
         // Clear undo history from play session
         Undo.ClearHistory();
 
-        // Restore editor pawn possessions
+        // Restore editor pawn possessions - this is done after Engine.PlayMode restores the snapshot
         RestoreEditorPawnSnapshot();
 
         // Notify UI to update
         PlayModeUIChanged?.Invoke(false);
+    }
+
+    /// <summary>
+    /// Called after Engine.PlayMode restores a snapshot (SerializeAndRestore mode).
+    /// This is the right time to rebuild light caches after deserialization.
+    /// </summary>
+    private static void OnPostSnapshotRestore(XRWorld world)
+    {
+        Debug.Out($"EditorPlayModeController: PostSnapshotRestore for world {world?.Name ?? "<null>"}");
+
+        // Rebuild light caches after deserialization
+        if (world is not null && XRWorldInstance.WorldInstances.TryGetValue(world, out var instance))
+            instance.Lights.RebuildCachesFromWorld();
     }
 
     private static void OnPaused()
@@ -263,14 +267,21 @@ public static class EditorPlayModeController
     /// </summary>
     private static void SaveEditorPawnSnapshot()
     {
-        _editorPawnSnapshot.Clear();
+        _editorPossessionSnapshot.Clear();
         
         foreach (var player in Engine.State.LocalPlayers)
         {
             if (player is LocalPlayerController localPlayer)
             {
-                _editorPawnSnapshot[localPlayer.LocalPlayerIndex] = localPlayer.ControlledPawn;
-                Debug.Out($"Saved editor pawn for player {localPlayer.LocalPlayerIndex}: {localPlayer.ControlledPawn?.Name ?? "null"}");
+                var pawn = localPlayer.ControlledPawn;
+                _editorPossessionSnapshot[localPlayer.LocalPlayerIndex] = new PlayerPossessionSnapshot(
+                    localPlayer.GetType(),
+                    pawn?.ID,
+                    pawn?.SceneNode?.ID,
+                    pawn?.GetType(),
+                    pawn?.Name);
+
+                Debug.Out($"Saved editor possession for player {localPlayer.LocalPlayerIndex}: Pawn={pawn?.Name ?? "null"} PawnId={pawn?.ID.ToString() ?? "null"}");
             }
         }
     }
@@ -281,27 +292,180 @@ public static class EditorPlayModeController
     /// </summary>
     private static void RestoreEditorPawnSnapshot()
     {
-        foreach (var (playerIndex, editorPawn) in _editorPawnSnapshot)
+        foreach (var (playerIndex, snapshot) in _editorPossessionSnapshot)
         {
-            if (editorPawn is null)
-                continue;
+            var localPlayer = Engine.State.GetOrCreateLocalPlayer(playerIndex, snapshot.ControllerType);
 
-            // Check if the editor pawn still exists (wasn't destroyed during play)
-            if (editorPawn.SceneNode is null || editorPawn.IsDestroyed)
+            PawnComponent? resolvedPawn = null;
+
+            // Best: find by stable object ID (snapshot restore should preserve IDs).
+            if (snapshot.PawnId is Guid pawnId
+                && XREngine.Data.Core.XRObjectBase.ObjectsCache.TryGetValue(pawnId, out var obj)
+                && obj is PawnComponent pawnById
+                && pawnById.SceneNode is not null
+                && !pawnById.IsDestroyed)
             {
-                Debug.Out($"Editor pawn for player {playerIndex} was destroyed during play, cannot restore");
+                resolvedPawn = pawnById;
+            }
+
+            // Fallback: locate by owning scene node ID + pawn type.
+            if (resolvedPawn is null && snapshot.PawnNodeId is Guid nodeId
+                && XREngine.Data.Core.XRObjectBase.ObjectsCache.TryGetValue(nodeId, out var nodeObj)
+                && nodeObj is SceneNode node
+                && !node.IsDestroyed)
+            {
+                if (snapshot.PawnType is Type pawnType)
+                    resolvedPawn = node.Components.OfType<PawnComponent>().FirstOrDefault(p => pawnType.IsInstanceOfType(p));
+                else
+                    resolvedPawn = node.Components.OfType<PawnComponent>().FirstOrDefault();
+            }
+
+            // Last resort: attempt to match by name + type across the current world.
+            if (resolvedPawn is null && snapshot.PawnType is Type pawnType2)
+            {
+                resolvedPawn = FindPawnInCurrentWorldByNameAndType(snapshot.PawnName, pawnType2);
+            }
+
+            if (resolvedPawn is null)
+            {
+                Debug.Out($"Failed to restore editor pawn for player {playerIndex}: PawnId={snapshot.PawnId?.ToString() ?? "null"} Name={snapshot.PawnName ?? "<null>"}");
                 continue;
             }
 
-            var localPlayer = Engine.State.GetOrCreateLocalPlayer(playerIndex);
-            if (localPlayer is not null)
+            // Ensure the player has a viewport bound (it should have been restored by RebindRuntimeRendering,
+            // but if not, try to register with the first window)
+            if (localPlayer.Viewport is null)
             {
-                localPlayer.ControlledPawn = editorPawn;
-                Debug.Out($"Restored editor pawn for player {playerIndex}: {editorPawn.Name}");
+                var window = Engine.Windows.FirstOrDefault();
+                if (window is not null)
+                {
+                    window.RegisterController(localPlayer, autoSizeAllViewports: false);
+                    Debug.Out($"[EditorPlayModeController] Manually registered player {playerIndex} with window viewport");
+                }
+            }
+
+            // IMPORTANT: Ensure input devices are connected BEFORE setting ControlledPawn.
+            // When ControlledPawn is set, RegisterController() calls Input.TryRegisterInput() which
+            // will fail if no devices are connected. UpdateDevices re-acquires devices from the window.
+            var viewportWindow = localPlayer.Viewport?.Window;
+            if (viewportWindow is not null)
+            {
+                localPlayer.Input.UpdateDevices(viewportWindow.Input, Engine.VRState.Actions);
+                Debug.Out($"[EditorPlayModeController] Updated input devices for player {playerIndex} before pawn possession");
+            }
+
+            localPlayer.ControlledPawn = resolvedPawn;
+            Debug.Out($"[EditorPlayModeController] Set ControlledPawn to {resolvedPawn.Name}, now calling RefreshViewportCamera");
+            localPlayer.RefreshViewportCamera();
+            Debug.Out($"[EditorPlayModeController] RefreshViewportCamera completed");
+
+            // Enhanced debug logging for viewport/camera binding diagnosis
+            var actualViewport = localPlayer.Viewport;
+            var pawnCamera = resolvedPawn.GetCamera();
+            var xrCam = pawnCamera?.Camera;
+            
+            // CRITICAL FIX: After snapshot restore, the XRCamera's Transform reference can become stale.
+            // The camera was created with a reference to the original scene node transform, but 
+            // deserialization may have replaced the scene node's transform with a new instance.
+            // We must rebind the camera's transform to the CameraComponent's current transform.
+            if (xrCam is not null && pawnCamera is not null)
+            {
+                var componentTransform = pawnCamera.Transform;
+                var cameraTransform = xrCam.Transform;
+                
+                if (cameraTransform != componentTransform)
+                {
+                    Debug.Out($"[EditorPlayModeController] Camera transform mismatch detected! " +
+                        $"CamTfm={cameraTransform?.GetHashCode()} at {cameraTransform?.WorldTranslation} vs " +
+                        $"CompTfm={componentTransform?.GetHashCode()} at {componentTransform?.WorldTranslation}. Rebinding...");
+                    xrCam.Transform = componentTransform;
+                }
+                
+                // Now recalculate matrices with the correct transform
+                var camTfm = xrCam.Transform;
+                if (camTfm is not null)
+                {
+                    camTfm.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+                    Debug.Out($"[EditorPlayModeController] Forced matrix recalc for camera transform. WorldPos={camTfm.WorldTranslation} RenderPos={camTfm.RenderTranslation}");
+                }
+                
+                Debug.Out($"Restored editor pawn for player {playerIndex}: {resolvedPawn.Name} " +
+                    $"| Viewport={(actualViewport is null ? "NULL" : actualViewport.GetHashCode().ToString())} " +
+                    $"| PawnCamera={(pawnCamera is null ? "NULL" : pawnCamera.Name ?? pawnCamera.GetHashCode().ToString())} " +
+                    $"| VP.CameraComponent={(actualViewport?.CameraComponent is null ? "NULL" : actualViewport?.CameraComponent?.Name ?? actualViewport?.CameraComponent?.GetHashCode().ToString())} " +
+                    $"| XRCam={xrCam.GetHashCode()} " +
+                    $"| CamTfmHash={camTfm?.GetHashCode().ToString() ?? "NULL"}" +
+                    $"| Camera.Viewports={xrCam.Viewports.Count}");
+            }
+            else
+            {
+                Debug.Out($"Restored editor pawn for player {playerIndex}: {resolvedPawn.Name} " +
+                    $"| Viewport={(actualViewport is null ? "NULL" : actualViewport.GetHashCode().ToString())} " +
+                    $"| PawnCamera={(pawnCamera is null ? "NULL" : pawnCamera.Name ?? pawnCamera.GetHashCode().ToString())} " +
+                    $"| VP.CameraComponent={(actualViewport?.CameraComponent is null ? "NULL" : actualViewport?.CameraComponent?.Name ?? actualViewport?.CameraComponent?.GetHashCode().ToString())} " +
+                    $"| XRCam=NULL | CamTfmHash=NULL");
+            }
+            
+            // Final safety check: ensure the viewport is bound to the camera
+            // This catches edge cases where SetField didn't detect changes
+            actualViewport?.EnsureViewportBoundToCamera();
+        }
+
+        _editorPossessionSnapshot.Clear();
+    }
+
+    private static PawnComponent? FindPawnInCurrentWorldByNameAndType(string? pawnName, Type pawnType)
+    {
+        if (pawnType is null)
+            return null;
+
+        var world = GetCurrentEditorWorld();
+        if (world is null)
+            return null;
+
+        // Search all scenes in the current editor world.
+        foreach (var scene in world.Scenes)
+        {
+            if (scene.RootNodes is null)
+                continue;
+
+            foreach (var root in scene.RootNodes)
+            {
+                var found = FindPawnRecursive(root, pawnName, pawnType);
+                if (found is not null)
+                    return found;
             }
         }
-        
-        _editorPawnSnapshot.Clear();
+
+        return null;
+    }
+
+    private static PawnComponent? FindPawnRecursive(SceneNode node, string? pawnName, Type pawnType)
+    {
+        if (node is null)
+            return null;
+
+        foreach (var pawn in node.Components.OfType<PawnComponent>())
+        {
+            if (!pawnType.IsInstanceOfType(pawn))
+                continue;
+
+            if (string.IsNullOrWhiteSpace(pawnName) || string.Equals(pawn.Name, pawnName, StringComparison.Ordinal))
+                return pawn;
+        }
+
+        foreach (var child in node.Transform.Children)
+        {
+            var childNode = child.SceneNode;
+            if (childNode is null)
+                continue;
+
+            var found = FindPawnRecursive(childNode, pawnName, pawnType);
+            if (found is not null)
+                return found;
+        }
+
+        return null;
     }
 
     #endregion

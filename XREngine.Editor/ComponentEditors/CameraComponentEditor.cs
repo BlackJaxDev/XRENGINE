@@ -119,7 +119,9 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
 
         // Viewport count
-        int viewportCount = component.Camera.Viewports.Count;
+        var cam = component.Camera;
+        int viewportCount = cam.Viewports.Count;
+        ImGui.TextDisabled($"(CameraHash: {cam.GetHashCode()})");
         if (viewportCount > 0)
         {
             ImGui.TextColored(new Vector4(1.0f, 0.8f, 0.4f, 1.0f), $"Viewports: {viewportCount}");
@@ -856,7 +858,23 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             return true;
         }
 
-        foreach (var viewport in component.Camera.Viewports)
+        // Take a snapshot of the viewports collection to avoid "Collection was modified" exceptions
+        // during play mode transitions when viewports may be added/removed concurrently.
+        XRViewport[] viewportsSnapshot;
+        try
+        {
+            viewportsSnapshot = [.. component.Camera.Viewports];
+        }
+        catch (InvalidOperationException)
+        {
+            // Collection was modified during snapshot - return failure gracefully
+            texture = null;
+            pixelSize = Vector2.Zero;
+            failure = "Viewports collection is being modified.";
+            return false;
+        }
+
+        foreach (var viewport in viewportsSnapshot)
         {
             if (viewport is null || viewport.CameraComponent != component && viewport.Camera != component.Camera)
                 continue;

@@ -27,43 +27,51 @@ namespace XREngine.Rendering.Commands
         public bool IsShadowPass { get; private set; } = false;
         public void SetRenderPasses(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters, IEnumerable<RenderPassMetadata>? passMetadata = null)
         {
-            _updatingPasses = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value is null ? [] : (ICollection<RenderCommand>)new SortedSet<RenderCommand>(x.Value));
-
-            _renderingPasses = [];
-            _gpuPasses = [];
-
-            // PassMetadata should be unique by PassIndex, but during restore/re-init we may end up with duplicates.
-            // Avoid crashing the entire engine; keep the first entry and warn.
-            _passMetadata = [];
-            if (passMetadata is not null)
+            using (_lock.EnterScope())
             {
-                foreach (var meta in passMetadata)
+                _updatingPasses = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value is null ? [] : (ICollection<RenderCommand>)new SortedSet<RenderCommand>(x.Value));
+
+                _renderingPasses = [];
+                _gpuPasses = [];
+
+                // PassMetadata should be unique by PassIndex, but during restore/re-init we may end up with duplicates.
+                // Avoid crashing the entire engine; keep the first entry and warn.
+                _passMetadata = [];
+                if (passMetadata is not null)
                 {
-                    if (_passMetadata.TryAdd(meta.PassIndex, meta))
-                        continue;
+                    foreach (var meta in passMetadata)
+                    {
+                        if (_passMetadata.TryAdd(meta.PassIndex, meta))
+                            continue;
 
-                    var existing = _passMetadata[meta.PassIndex];
-                    Debug.RenderingWarningEvery(
-                        $"RenderPassMetadata.Duplicate.{meta.PassIndex}",
-                        TimeSpan.FromSeconds(5),
-                        "[RenderDiag] Duplicate RenderPassMetadata PassIndex={0}. Keeping first ('{1}', Stage={2}), ignoring ('{3}', Stage={4}).",
-                        meta.PassIndex,
-                        existing.Name,
-                        existing.Stage,
-                        meta.Name,
-                        meta.Stage);
+                        var existing = _passMetadata[meta.PassIndex];
+                        Debug.RenderingWarningEvery(
+                            $"RenderPassMetadata.Duplicate.{meta.PassIndex}",
+                            TimeSpan.FromSeconds(5),
+                            "[RenderDiag] Duplicate RenderPassMetadata PassIndex={0}. Keeping first ('{1}', Stage={2}), ignoring ('{3}', Stage={4}).",
+                            meta.PassIndex,
+                            existing.Name,
+                            existing.Stage,
+                            meta.Name,
+                            meta.Stage);
+                    }
                 }
-            }
 
-            foreach (KeyValuePair<int, ICollection<RenderCommand>> pass in _updatingPasses)
-            {
-                _renderingPasses.Add(pass.Key, []);
-                var gpuPass = new GPURenderPassCollection(pass.Key);
-                gpuPass.SetDebugContext(_ownerPipeline, pass.Key);
-                _gpuPasses.Add(pass.Key, gpuPass);
+                foreach (KeyValuePair<int, ICollection<RenderCommand>> pass in _updatingPasses)
+                {
+                    // Use TryAdd to safely handle any edge cases with duplicate keys
+                    _renderingPasses.TryAdd(pass.Key, []);
+                    
+                    if (!_gpuPasses.ContainsKey(pass.Key))
+                    {
+                        var gpuPass = new GPURenderPassCollection(pass.Key);
+                        gpuPass.SetDebugContext(_ownerPipeline, pass.Key);
+                        _gpuPasses[pass.Key] = gpuPass;
+                    }
 
-                if (!_passMetadata.ContainsKey(pass.Key))
-                    _passMetadata[pass.Key] = new RenderPassMetadata(pass.Key, $"Pass{pass.Key}", RenderGraphPassStage.Graphics);
+                    if (!_passMetadata.ContainsKey(pass.Key))
+                        _passMetadata[pass.Key] = new RenderPassMetadata(pass.Key, $"Pass{pass.Key}", RenderGraphPassStage.Graphics);
+                }
             }
         }
 

@@ -249,6 +249,28 @@ namespace XREngine.Rendering
             CameraComponent = null;
         }
 
+        /// <summary>
+        /// Ensures this viewport is registered in the active camera's Viewports list.
+        /// Call this after play mode transitions or snapshot restore to fix broken bindings.
+        /// </summary>
+        public void EnsureViewportBoundToCamera()
+        {
+            var camera = ActiveCamera;
+            Debug.Out($"[XRViewport] EnsureViewportBoundToCamera: VP[{Index}] ActiveCamera={camera?.GetHashCode().ToString() ?? "NULL"} _camera={_camera?.GetHashCode().ToString() ?? "NULL"} _cameraComponent?.Camera={_cameraComponent?.Camera?.GetHashCode().ToString() ?? "NULL"}");
+            if (camera is null)
+                return;
+
+            if (!camera.Viewports.Contains(this))
+            {
+                Debug.Out($"[XRViewport] EnsureViewportBoundToCamera: Adding VP[{Index}] to camera {camera.GetHashCode()} Viewports (was missing, now count={camera.Viewports.Count + 1})");
+                camera.Viewports.Add(this);
+            }
+            else
+            {
+                Debug.Out($"[XRViewport] EnsureViewportBoundToCamera: VP[{Index}] already in camera {camera.GetHashCode()} Viewports (count={camera.Viewports.Count})");
+            }
+        }
+
         #endregion
 
         #region Property Change Handlers
@@ -312,11 +334,33 @@ namespace XREngine.Rendering
                             Engine.Time.Timer.CollectVisible += CollectVisibleAutomatic;
                     }
                     if (SetRenderPipelineFromCamera)
+                    {
                         _renderPipeline.Pipeline = _camera?.RenderPipeline;
+
+                        // When the camera (and therefore pipeline) changes, we must push current
+                        // sizing into the new pipeline instance. Otherwise the new pipeline can run
+                        // with stale dimensions until a window resize occurs.
+                        _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight);
+                        _renderPipeline.ViewportResized(Width, Height);
+
+                        // When the camera changes, destroy the pipeline cache to ensure
+                        // stale textures/FBOs from the previous camera don't persist.
+                        _renderPipeline.DestroyCache();
+                    }
                     break;
                 case nameof(CameraComponent):
                     ResizeCameraComponentUI();
-                    Camera = CameraComponent?.Camera;
+                    // Set the Camera property - this will handle viewport binding if the reference changes
+                    var newCam = CameraComponent?.Camera;
+                    Debug.Out($"[XRViewport] CameraComponent changed: VP[{Index}] OldCamera={_camera?.GetHashCode().ToString() ?? "NULL"} NewCamera={newCam?.GetHashCode().ToString() ?? "NULL"} CamCompName={CameraComponent?.Name ?? "<null>"} CamCompHash={CameraComponent?.GetHashCode().ToString() ?? "null"}");
+                    Camera = newCam;
+                    // IMPORTANT: Even if Camera reference didn't change, we must ensure this viewport
+                    // is in the camera's Viewports list. This can happen when:
+                    // 1. The editor pawn survives snapshot restore (same objects reused)
+                    // 2. The viewport was removed from camera.Viewports during play mode
+                    // 3. SetField didn't detect a change because references are equal
+                    EnsureViewportBoundToCamera();
+                    Debug.Out($"[XRViewport] After EnsureViewportBoundToCamera: VP[{Index}] Camera.Viewports.Count={ActiveCamera?.Viewports.Count ?? -1}");
                     //_renderPipeline.Pipeline = CameraComponent?.RenderPipeline;
                     break;
             }
@@ -601,6 +645,24 @@ namespace XREngine.Rendering
                 Debug.LogWarning("Render recursion: Viewport is already currently rendering.");
                 return;
             }
+
+            // Diagnostic: Log camera transform state during render to help diagnose play mode transition issues
+            Debug.RenderingEvery(
+                $"XRViewport.Render.CameraState.{GetHashCode()}[{Index}]",
+                TimeSpan.FromSeconds(2),
+                "[RenderDiag] VP[{0}] Render CameraState: CamHash={1} CamCompHash={2} CamCompName={3} TfmHash={4} TfmPos={5:F2},{6:F2},{7:F2} RenderPos={8:F2},{9:F2},{10:F2} PlayMode={11}",
+                Index,
+                camera.GetHashCode(),
+                CameraComponent?.GetHashCode().ToString() ?? "null",
+                CameraComponent?.Name ?? "<null>",
+                camera.Transform?.GetHashCode().ToString() ?? "null",
+                camera.Transform?.WorldTranslation.X ?? 0,
+                camera.Transform?.WorldTranslation.Y ?? 0,
+                camera.Transform?.WorldTranslation.Z ?? 0,
+                camera.Transform?.RenderTranslation.X ?? 0,
+                camera.Transform?.RenderTranslation.Y ?? 0,
+                camera.Transform?.RenderTranslation.Z ?? 0,
+                Engine.PlayMode.State);
 
             //using (Engine.Profiler.Start("XRViewport.Render"))
             {
