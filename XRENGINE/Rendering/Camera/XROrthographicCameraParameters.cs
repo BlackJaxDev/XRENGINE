@@ -1,8 +1,14 @@
+using System;
 using System.Numerics;
 using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering
 {
+    /// <summary>
+    /// Orthographic camera parameters for 2D or isometric rendering.
+    /// Objects appear the same size regardless of distance.
+    /// </summary>
+    [CameraParameterEditor("Orthographic", SortOrder = 1, Description = "Orthographic projection for 2D/UI or isometric rendering.")]
     public class XROrthographicCameraParameters : XRCameraParameters
     {
         private Vector2 _originPercentages = Vector2.Zero;
@@ -123,6 +129,30 @@ namespace XREngine.Rendering
 
         public override Vector2 GetFrustumSizeAtDistance(float drawDistance)
             => new(Width, Height);
+
+        /// <summary>
+        /// Creates a new orthographic camera from previous parameters.
+        /// Uses frustum size at distance 1 for perspective cameras.
+        /// </summary>
+        public override XRCameraParameters CreateFromPrevious(XRCameraParameters? previous)
+        {
+            if (previous is null)
+                return new XROrthographicCameraParameters();
+
+            if (previous is XROrthographicCameraParameters ortho)
+                return new XROrthographicCameraParameters(ortho.Width, ortho.Height, ortho.NearZ, ortho.FarZ);
+
+            // Calculate frustum size at distance 1 for reasonable ortho dimensions
+            Vector2 frustum = previous.GetFrustumSizeAtDistance(MathF.Max(previous.NearZ + 1.0f, 1.0f));
+            return new XROrthographicCameraParameters(
+                MathF.Max(1.0f, frustum.X),
+                MathF.Max(1.0f, frustum.Y),
+                previous.NearZ,
+                previous.FarZ);
+        }
+
+        protected override XRCameraParameters CreateDefaultInstance()
+            => new XROrthographicCameraParameters();
 
         public override string ToString()
             => $"NearZ: {NearZ}, FarZ: {FarZ}, Width: {Width}, Height: {Height}, Origin: {Origin}";

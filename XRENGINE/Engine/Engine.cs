@@ -210,7 +210,10 @@ namespace XREngine
                         if (viewport.AssociatedPlayer is not null && !ReferenceEquals(viewport.AssociatedPlayer.Viewport, viewport))
                             viewport.AssociatedPlayer.Viewport = viewport;
 
-                        if (viewport.AssociatedPlayer is not null && viewport.WorldInstanceOverride is null)
+                        // Player viewports should render the active/restored world instance.
+                        // If WorldInstanceOverride points at the pre-restore world, the viewport can keep rendering
+                        // an invalid VisualScene and appear black even though possession is correct.
+                        if (viewport.AssociatedPlayer is not null && !ReferenceEquals(viewport.WorldInstanceOverride, worldInstance))
                             viewport.WorldInstanceOverride = worldInstance;
 
                         // Rebind camera from controlled pawn (may have changed across restore / BeginPlay).
@@ -222,6 +225,7 @@ namespace XREngine
                         if (playerForRebind is not null && playerPawnCamera is not null)
                         {
                             playerForRebind.RefreshViewportCamera();
+                            viewport.EnsureViewportBoundToCamera();
                         }
                         else
                         {

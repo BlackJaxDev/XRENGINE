@@ -1397,7 +1397,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (fbo is null)
             return null;
         
-        float? depth = vp.GetDepth(fbo, (IVector2)internalSizeCoordinate);
+        float? depth = XRViewport.GetDepth(fbo, (IVector2)internalSizeCoordinate);
         return depth;
     }
 

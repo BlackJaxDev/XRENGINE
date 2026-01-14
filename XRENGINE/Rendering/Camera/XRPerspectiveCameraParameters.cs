@@ -1,9 +1,15 @@
+using System;
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering
 {
+    /// <summary>
+    /// Standard perspective camera parameters using vertical FOV and aspect ratio.
+    /// This is the most common camera type for 3D rendering.
+    /// </summary>
+    [CameraParameterEditor("Perspective", SortOrder = 0, Description = "Standard perspective projection with FOV and aspect ratio.")]
     public class XRPerspectiveCameraParameters : XRCameraParameters
     {
         private float _aspectRatio;
@@ -97,6 +103,41 @@ namespace XREngine.Rendering
             float width = height * AspectRatio;
             return new Vector2(width, height);
         }
+
+        public override float GetApproximateVerticalFov() => VerticalFieldOfView;
+        public override float GetApproximateAspectRatio() => AspectRatio;
+
+        /// <summary>
+        /// Creates a new perspective camera from previous parameters.
+        /// Intelligently converts FOV from physical cameras and other types.
+        /// </summary>
+        public override XRCameraParameters CreateFromPrevious(XRCameraParameters? previous)
+        {
+            if (previous is null)
+                return new XRPerspectiveCameraParameters();
+
+            if (previous is XRPerspectiveCameraParameters persp)
+            {
+                return new XRPerspectiveCameraParameters(
+                    persp.VerticalFieldOfView,
+                    persp.InheritAspectRatio ? null : persp.AspectRatio,
+                    persp.NearZ,
+                    persp.FarZ)
+                {
+                    InheritAspectRatio = persp.InheritAspectRatio
+                };
+            }
+
+            // Use approximate FOV from other types
+            float fov = previous.GetApproximateVerticalFov();
+            return new XRPerspectiveCameraParameters(fov, null, previous.NearZ, previous.FarZ)
+            {
+                InheritAspectRatio = true
+            };
+        }
+
+        protected override XRCameraParameters CreateDefaultInstance()
+            => new XRPerspectiveCameraParameters();
 
         public Frustum GetUntransformedFrustumSlice(float nearZ, float farZ)
             => new(VerticalFieldOfView, AspectRatio, nearZ, farZ, Globals.Forward, Globals.Up, Vector3.Zero);

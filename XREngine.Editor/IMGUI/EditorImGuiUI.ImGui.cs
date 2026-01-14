@@ -231,9 +231,6 @@ public static partial class EditorImGuiUI
 
         private static void EnsureScenePanelWindowHooked()
         {
-            if (_scenePanelHookedWindow is not null)
-                return;
-
             if (!Engine.IsEditor)
                 return;
 
@@ -243,6 +240,28 @@ public static partial class EditorImGuiUI
             var window = Engine.Windows[0];
             if (window is null)
                 return;
+
+            // The editor can recreate/replace the main XRWindow across play/edit transitions.
+            // If that happens, we must move the scene-panel hook to the new window; otherwise
+            // viewport-panel mode won't render (region provider filters by hooked window).
+            if (_scenePanelHookedWindow is not null)
+            {
+                if (ReferenceEquals(_scenePanelHookedWindow, window))
+                    return;
+
+                try
+                {
+                    _scenePanelHookedWindow.RenderViewportsCallback -= RenderEditorScenePanelMode;
+                }
+                catch
+                {
+                    // Best-effort unhook; don't fail the frame.
+                }
+
+                _scenePanelHookedWindow = null;
+                _scenePanelImGuiViewport = null;
+                _scenePanelRenderRegion = null;
+            }
 
             _scenePanelHookedWindow = window;
             window.RenderViewportsCallback += RenderEditorScenePanelMode;

@@ -82,6 +82,9 @@ namespace XREngine.Input
                 Debug.Out($"[LocalPlayerController] UpdateViewportCamera: VP={_viewport.GetHashCode()} Pawn={pawn?.Name ?? "<null>"} PawnCamera={(pawnCamera is null ? "NULL" : pawnCamera.Name ?? pawnCamera.GetHashCode().ToString())}");
 
                 _viewport.CameraComponent = pawnCamera;
+                // Even if the CameraComponent reference didn't change, snapshot restore or play-mode transitions
+                // can leave the viewport missing from XRCamera.Viewports.
+                _viewport.EnsureViewportBoundToCamera();
                 
                 // Extended diagnostic: capture camera's XRCamera object and its transform details
                 var xrCam = _viewport.CameraComponent?.Camera;
