@@ -67,9 +67,11 @@ public partial class DefaultRenderPipeline
 
     private XRFrameBuffer CreatePostProcessOutputFBO()
     {
-        XRTexture outputTexture = GetTexture<XRTexture>(PostProcessOutputTextureName)!;
+        XRTexture? outputTexture = GetTexture<XRTexture>(PostProcessOutputTextureName);
+        if (outputTexture is null)
+            throw new InvalidOperationException($"Post-process output texture '{PostProcessOutputTextureName}' not found. Ensure textures are created before FBOs.");
         if (outputTexture is not IFrameBufferAttachement attach)
-            throw new InvalidOperationException("Post-process output texture must be FBO attachable.");
+            throw new InvalidOperationException($"Post-process output texture must be FBO attachable. Got type: {outputTexture.GetType().Name}");
 
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {

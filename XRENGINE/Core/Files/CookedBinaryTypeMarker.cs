@@ -32,5 +32,44 @@ internal enum CookedBinaryTypeMarker : byte
     Vector3 = 27,
     Vector4 = 28,
     Quaternion = 29,
-    Matrix4x4 = 30
+    Matrix4x4 = 30,
+    ColorF3 = 31,
+    ColorF4 = 32,
+    BlittableStruct = 33,
+    XREvent = 34,
+    XREventGeneric = 35,
+    Nullable = 36,
+    ValueTuple = 37,
+    
+    // High-priority additional types
+    Half = 38,
+    DateTimeOffset = 39,
+    DateOnly = 40,
+    TimeOnly = 41,
+    HashSet = 42,
+    Plane = 43,
+    Uri = 44,
+    TypeRef = 45,
+    
+    // Geometry types
+    Segment = 46,
+    Ray = 47,
+    AABB = 48,
+    Sphere = 49,
+    Triangle = 50,
+    Frustum = 51,
+    
+    // Medium-priority types
+    Version = 52,
+    BigInteger = 53,
+    Complex = 54,
+    IPAddress = 55,
+    IPEndPoint = 56,
+    Range = 57,
+    Index = 58,
+    
+    // Low-priority types
+    BitArray = 59,
+    CultureInfo = 60,
+    Regex = 61
 }

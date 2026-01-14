@@ -6,14 +6,19 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Text;
 using MemoryPack;
 using XREngine.Data;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Components;
@@ -376,6 +381,80 @@ public static class CookedBinarySerializer
         return calculator.Length;
     }
 
+    // Dictionary mapping known types to their serialization handlers for O(1) dispatch
+    private static readonly Dictionary<Type, Action<CookedBinaryWriter, object>> PrimitiveWriters = new()
+    {
+        [typeof(bool)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Boolean); w.Write((bool)v); },
+        [typeof(byte)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Byte); w.Write((byte)v); },
+        [typeof(sbyte)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.SByte); w.Write((sbyte)v); },
+        [typeof(short)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Int16); w.Write((short)v); },
+        [typeof(ushort)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.UInt16); w.Write((ushort)v); },
+        [typeof(int)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Int32); w.Write((int)v); },
+        [typeof(uint)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.UInt32); w.Write((uint)v); },
+        [typeof(long)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Int64); w.Write((long)v); },
+        [typeof(ulong)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.UInt64); w.Write((ulong)v); },
+        [typeof(float)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Single); w.Write((float)v); },
+        [typeof(double)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Double); w.Write((double)v); },
+        [typeof(decimal)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Decimal); w.Write((decimal)v); },
+        [typeof(char)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Char); w.Write((char)v); },
+        [typeof(string)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.String); w.Write((string)v); },
+        [typeof(Guid)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Guid); w.Write(((Guid)v).ToByteArray()); },
+        [typeof(DateTime)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.DateTime); w.Write(((DateTime)v).ToBinary()); },
+        [typeof(TimeSpan)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.TimeSpan); w.Write(((TimeSpan)v).Ticks); },
+        [typeof(Vector2)] = (w, v) => { var x = (Vector2)v; w.Write((byte)CookedBinaryTypeMarker.Vector2); w.Write(x.X); w.Write(x.Y); },
+        [typeof(Vector3)] = (w, v) => { var x = (Vector3)v; w.Write((byte)CookedBinaryTypeMarker.Vector3); w.Write(x.X); w.Write(x.Y); w.Write(x.Z); },
+        [typeof(Vector4)] = (w, v) => { var x = (Vector4)v; w.Write((byte)CookedBinaryTypeMarker.Vector4); w.Write(x.X); w.Write(x.Y); w.Write(x.Z); w.Write(x.W); },
+        [typeof(Quaternion)] = (w, v) => { var x = (Quaternion)v; w.Write((byte)CookedBinaryTypeMarker.Quaternion); w.Write(x.X); w.Write(x.Y); w.Write(x.Z); w.Write(x.W); },
+        [typeof(Matrix4x4)] = (w, v) =>
+        {
+            var m = (Matrix4x4)v;
+            w.Write((byte)CookedBinaryTypeMarker.Matrix4x4);
+            w.Write(m.M11); w.Write(m.M12); w.Write(m.M13); w.Write(m.M14);
+            w.Write(m.M21); w.Write(m.M22); w.Write(m.M23); w.Write(m.M24);
+            w.Write(m.M31); w.Write(m.M32); w.Write(m.M33); w.Write(m.M34);
+            w.Write(m.M41); w.Write(m.M42); w.Write(m.M43); w.Write(m.M44);
+        },
+        [typeof(ColorF3)] = (w, v) => { var c = (ColorF3)v; w.Write((byte)CookedBinaryTypeMarker.ColorF3); w.Write(c.R); w.Write(c.G); w.Write(c.B); },
+        [typeof(ColorF4)] = (w, v) => { var c = (ColorF4)v; w.Write((byte)CookedBinaryTypeMarker.ColorF4); w.Write(c.R); w.Write(c.G); w.Write(c.B); w.Write(c.A); },
+        
+        // High-priority additional types
+        [typeof(Half)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Half); w.Write(BitConverter.HalfToUInt16Bits((Half)v)); },
+        [typeof(DateTimeOffset)] = (w, v) => { var d = (DateTimeOffset)v; w.Write((byte)CookedBinaryTypeMarker.DateTimeOffset); w.Write(d.Ticks); w.Write((short)d.Offset.TotalMinutes); },
+        [typeof(DateOnly)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.DateOnly); w.Write(((DateOnly)v).DayNumber); },
+        [typeof(TimeOnly)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.TimeOnly); w.Write(((TimeOnly)v).Ticks); },
+        [typeof(System.Numerics.Plane)] = (w, v) => { var p = (System.Numerics.Plane)v; w.Write((byte)CookedBinaryTypeMarker.Plane); w.Write(p.Normal.X); w.Write(p.Normal.Y); w.Write(p.Normal.Z); w.Write(p.D); },
+        [typeof(Uri)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Uri); w.Write(((Uri)v).OriginalString); },
+        
+        // Geometry types
+        [typeof(Segment)] = (w, v) => { var s = (Segment)v; w.Write((byte)CookedBinaryTypeMarker.Segment); w.Write(s.Start.X); w.Write(s.Start.Y); w.Write(s.Start.Z); w.Write(s.End.X); w.Write(s.End.Y); w.Write(s.End.Z); },
+        [typeof(Ray)] = (w, v) => { var r = (Ray)v; w.Write((byte)CookedBinaryTypeMarker.Ray); w.Write(r.StartPoint.X); w.Write(r.StartPoint.Y); w.Write(r.StartPoint.Z); w.Write(r.Direction.X); w.Write(r.Direction.Y); w.Write(r.Direction.Z); },
+        [typeof(AABB)] = (w, v) => { var a = (AABB)v; w.Write((byte)CookedBinaryTypeMarker.AABB); w.Write(a.Min.X); w.Write(a.Min.Y); w.Write(a.Min.Z); w.Write(a.Max.X); w.Write(a.Max.Y); w.Write(a.Max.Z); },
+        [typeof(Sphere)] = (w, v) => { var s = (Sphere)v; w.Write((byte)CookedBinaryTypeMarker.Sphere); w.Write(s.Center.X); w.Write(s.Center.Y); w.Write(s.Center.Z); w.Write(s.Radius); },
+        [typeof(Triangle)] = (w, v) =>
+        {
+            var t = (Triangle)v;
+            w.Write((byte)CookedBinaryTypeMarker.Triangle);
+            w.Write(t.A.X); w.Write(t.A.Y); w.Write(t.A.Z);
+            w.Write(t.B.X); w.Write(t.B.Y); w.Write(t.B.Z);
+            w.Write(t.C.X); w.Write(t.C.Y); w.Write(t.C.Z);
+        },
+        
+        // Medium-priority types
+        [typeof(Version)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.Version); w.Write(((Version)v).ToString()); },
+        [typeof(Complex)] = (w, v) => { var c = (Complex)v; w.Write((byte)CookedBinaryTypeMarker.Complex); w.Write(c.Real); w.Write(c.Imaginary); },
+        [typeof(IPAddress)] = (w, v) => { var ip = (IPAddress)v; var bytes = ip.GetAddressBytes(); w.Write((byte)CookedBinaryTypeMarker.IPAddress); w.Write((byte)bytes.Length); w.Write(bytes); },
+        [typeof(Range)] = (w, v) => { var r = (Range)v; w.Write((byte)CookedBinaryTypeMarker.Range); w.Write(r.Start.Value); w.Write(r.Start.IsFromEnd); w.Write(r.End.Value); w.Write(r.End.IsFromEnd); },
+        [typeof(Index)] = (w, v) => { var i = (Index)v; w.Write((byte)CookedBinaryTypeMarker.Index); w.Write(i.Value); w.Write(i.IsFromEnd); },
+        
+        // Low-priority types
+        [typeof(CultureInfo)] = (w, v) => { w.Write((byte)CookedBinaryTypeMarker.CultureInfo); w.Write(((CultureInfo)v).Name); },
+        [typeof(Regex)] = (w, v) => { var r = (Regex)v; w.Write((byte)CookedBinaryTypeMarker.Regex); w.Write(r.ToString()); w.Write((int)r.Options); },
+        [typeof(BitArray)] = (w, v) => { var b = (BitArray)v; w.Write((byte)CookedBinaryTypeMarker.BitArray); w.Write(b.Length); int byteCount = (b.Length + 7) / 8; byte[] bytes = new byte[byteCount]; b.CopyTo(bytes, 0); w.Write(bytes); },
+        [typeof(BigInteger)] = (w, v) => { var bi = (BigInteger)v; byte[] bytes = bi.ToByteArray(); w.Write((byte)CookedBinaryTypeMarker.BigInteger); w.Write(bytes.Length); w.Write(bytes); },
+        [typeof(IPEndPoint)] = (w, v) => { var ep = (IPEndPoint)v; byte[] addr = ep.Address.GetAddressBytes(); w.Write((byte)CookedBinaryTypeMarker.IPEndPoint); w.Write((byte)addr.Length); w.Write(addr); w.Write(ep.Port); },
+        [typeof(Frustum)] = (w, v) => { var f = (Frustum)v; w.Write((byte)CookedBinaryTypeMarker.Frustum); foreach (var c in f.Corners) { w.Write(c.X); w.Write(c.Y); w.Write(c.Z); } },
+    };
+
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
     internal static void WriteValue(CookedBinaryWriter writer, object? value, bool allowCustom, CookedBinarySerializationCallbacks? callbacks)
@@ -396,125 +475,14 @@ public static class CookedBinarySerializer
             return;
         }
 
-        if (runtimeType == typeof(bool))
+        // Fast path: O(1) lookup for known primitive/value types
+        if (PrimitiveWriters.TryGetValue(runtimeType, out var primitiveWriter))
         {
-            writer.Write((byte)CookedBinaryTypeMarker.Boolean);
-            writer.Write((bool)value);
+            primitiveWriter(writer, value);
             return;
         }
 
-        if (runtimeType == typeof(byte))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Byte);
-            writer.Write((byte)value);
-            return;
-        }
-
-        if (runtimeType == typeof(sbyte))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.SByte);
-            writer.Write((sbyte)value);
-            return;
-        }
-
-        if (runtimeType == typeof(short))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Int16);
-            writer.Write((short)value);
-            return;
-        }
-
-        if (runtimeType == typeof(ushort))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.UInt16);
-            writer.Write((ushort)value);
-            return;
-        }
-
-        if (runtimeType == typeof(int))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Int32);
-            writer.Write((int)value);
-            return;
-        }
-
-        if (runtimeType == typeof(uint))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.UInt32);
-            writer.Write((uint)value);
-            return;
-        }
-
-        if (runtimeType == typeof(long))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Int64);
-            writer.Write((long)value);
-            return;
-        }
-
-        if (runtimeType == typeof(ulong))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.UInt64);
-            writer.Write((ulong)value);
-            return;
-        }
-
-        if (runtimeType == typeof(float))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Single);
-            writer.Write((float)value);
-            return;
-        }
-
-        if (runtimeType == typeof(double))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Double);
-            writer.Write((double)value);
-            return;
-        }
-
-        if (runtimeType == typeof(decimal))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Decimal);
-            writer.Write((decimal)value);
-            return;
-        }
-
-        if (runtimeType == typeof(char))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Char);
-            writer.Write((char)value);
-            return;
-        }
-
-        if (value is string s)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.String);
-            writer.Write(s);
-            return;
-        }
-
-        if (value is Guid guid)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Guid);
-            writer.Write(guid.ToByteArray());
-            return;
-        }
-
-        if (value is DateTime dateTime)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.DateTime);
-            writer.Write(dateTime.ToBinary());
-            return;
-        }
-
-        if (value is TimeSpan timeSpan)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.TimeSpan);
-            writer.Write(timeSpan.Ticks);
-            return;
-        }
-
+        // Handle byte[] separately (can't use typeof(byte[]) reliably for array subtype matching)
         if (value is byte[] bytes)
         {
             writer.Write((byte)CookedBinaryTypeMarker.ByteArray);
@@ -532,51 +500,30 @@ public static class CookedBinarySerializer
             return;
         }
 
-        // System.Numerics types - serialize directly for efficiency and reliability
-        if (value is Vector2 v2)
+        // XREvent and XREvent<T> - serialize only persistent calls (runtime delegates are not serializable)
+        if (value is XREvent xrEvent)
         {
-            writer.Write((byte)CookedBinaryTypeMarker.Vector2);
-            writer.Write(v2.X);
-            writer.Write(v2.Y);
+            writer.Write((byte)CookedBinaryTypeMarker.XREvent);
+            WriteXREventPersistentCalls(writer, xrEvent.PersistentCalls, allowCustom, callbacks);
             return;
         }
 
-        if (value is Vector3 v3)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Vector3);
-            writer.Write(v3.X);
-            writer.Write(v3.Y);
-            writer.Write(v3.Z);
+        if (TryWriteGenericXREvent(writer, value, runtimeType, allowCustom, callbacks))
             return;
-        }
 
-        if (value is Vector4 v4)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Vector4);
-            writer.Write(v4.X);
-            writer.Write(v4.Y);
-            writer.Write(v4.Z);
-            writer.Write(v4.W);
+        // Nullable<T> - write the underlying value if present
+        if (TryWriteNullable(writer, value, runtimeType, allowCustom, callbacks))
             return;
-        }
 
-        if (value is Quaternion q)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Quaternion);
-            writer.Write(q.X);
-            writer.Write(q.Y);
-            writer.Write(q.Z);
-            writer.Write(q.W);
+        // ValueTuple - serialize tuple elements
+        if (TryWriteValueTuple(writer, value, runtimeType, allowCustom, callbacks))
             return;
-        }
 
-        if (value is Matrix4x4 m)
+        // Type reference
+        if (value is Type typeRef)
         {
-            writer.Write((byte)CookedBinaryTypeMarker.Matrix4x4);
-            writer.Write(m.M11); writer.Write(m.M12); writer.Write(m.M13); writer.Write(m.M14);
-            writer.Write(m.M21); writer.Write(m.M22); writer.Write(m.M23); writer.Write(m.M24);
-            writer.Write(m.M31); writer.Write(m.M32); writer.Write(m.M33); writer.Write(m.M34);
-            writer.Write(m.M41); writer.Write(m.M42); writer.Write(m.M43); writer.Write(m.M44);
+            writer.Write((byte)CookedBinaryTypeMarker.TypeRef);
+            WriteTypeName(writer, typeRef);
             return;
         }
 
@@ -616,6 +563,10 @@ public static class CookedBinarySerializer
             return;
         }
 
+        // HashSet<T> - must be before IList check since HashSet doesn't implement IList
+        if (TryWriteHashSet(writer, value, runtimeType, allowCustom, callbacks))
+            return;
+
         if (value is IList list)
         {
             writer.Write((byte)CookedBinaryTypeMarker.List);
@@ -631,6 +582,18 @@ public static class CookedBinarySerializer
             writer.Write((byte)CookedBinaryTypeMarker.CustomObject);
             WriteTypeName(writer, runtimeType);
             custom.WriteCookedBinary(writer);
+            return;
+        }
+
+        // Blittable struct fallback: if the type is an unmanaged struct with sequential/explicit layout,
+        // serialize it directly via raw memory copy.
+        if (runtimeType.IsValueType && !runtimeType.IsPrimitive && !runtimeType.IsEnum && IsBlittableStruct(runtimeType))
+        {
+            writer.Write((byte)CookedBinaryTypeMarker.BlittableStruct);
+            WriteTypeName(writer, runtimeType);
+            int size = Marshal.SizeOf(runtimeType);
+            writer.Write(size);
+            WriteBlittableValue(writer, value, size);
             return;
         }
 
@@ -684,6 +647,46 @@ public static class CookedBinarySerializer
             CookedBinaryTypeMarker.Vector4 => new Vector4(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
             CookedBinaryTypeMarker.Quaternion => new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
             CookedBinaryTypeMarker.Matrix4x4 => ReadMatrix4x4(reader),
+            CookedBinaryTypeMarker.ColorF3 => new ColorF3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+            CookedBinaryTypeMarker.ColorF4 => new ColorF4(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+            
+            // High-priority additional types
+            CookedBinaryTypeMarker.Half => BitConverter.UInt16BitsToHalf(reader.ReadUInt16()),
+            CookedBinaryTypeMarker.DateTimeOffset => new DateTimeOffset(reader.ReadInt64(), TimeSpan.FromMinutes(reader.ReadInt16())),
+            CookedBinaryTypeMarker.DateOnly => DateOnly.FromDayNumber(reader.ReadInt32()),
+            CookedBinaryTypeMarker.TimeOnly => new TimeOnly(reader.ReadInt64()),
+            CookedBinaryTypeMarker.Plane => new System.Numerics.Plane(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+            CookedBinaryTypeMarker.Uri => new Uri(reader.ReadString()),
+            CookedBinaryTypeMarker.TypeRef => ReadTypeRef(reader),
+            CookedBinaryTypeMarker.HashSet => ReadHashSet(reader, callbacks),
+            
+            // Geometry types
+            CookedBinaryTypeMarker.Segment => new Segment(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle())),
+            CookedBinaryTypeMarker.Ray => new Ray(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle())),
+            CookedBinaryTypeMarker.AABB => new AABB(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle())),
+            CookedBinaryTypeMarker.Sphere => new Sphere(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), reader.ReadSingle()),
+            CookedBinaryTypeMarker.Triangle => new Triangle(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle())),
+            CookedBinaryTypeMarker.Frustum => ReadFrustum(reader),
+            
+            // Medium-priority types
+            CookedBinaryTypeMarker.Version => Version.Parse(reader.ReadString()),
+            CookedBinaryTypeMarker.BigInteger => ReadBigInteger(reader),
+            CookedBinaryTypeMarker.Complex => new Complex(reader.ReadDouble(), reader.ReadDouble()),
+            CookedBinaryTypeMarker.IPAddress => ReadIPAddress(reader),
+            CookedBinaryTypeMarker.IPEndPoint => ReadIPEndPoint(reader),
+            CookedBinaryTypeMarker.Range => new Range(new Index(reader.ReadInt32(), reader.ReadBoolean()), new Index(reader.ReadInt32(), reader.ReadBoolean())),
+            CookedBinaryTypeMarker.Index => new Index(reader.ReadInt32(), reader.ReadBoolean()),
+            
+            // Low-priority types
+            CookedBinaryTypeMarker.BitArray => ReadBitArray(reader),
+            CookedBinaryTypeMarker.CultureInfo => CultureInfo.GetCultureInfo(reader.ReadString()),
+            CookedBinaryTypeMarker.Regex => new Regex(reader.ReadString(), (RegexOptions)reader.ReadInt32()),
+            
+            CookedBinaryTypeMarker.BlittableStruct => ReadBlittableStruct(reader),
+            CookedBinaryTypeMarker.XREvent => ReadXREvent(reader),
+            CookedBinaryTypeMarker.XREventGeneric => ReadXREventGeneric(reader),
+            CookedBinaryTypeMarker.Nullable => ReadNullable(reader, callbacks),
+            CookedBinaryTypeMarker.ValueTuple => ReadValueTuple(reader, callbacks),
             CookedBinaryTypeMarker.Enum => ReadEnum(reader),
             CookedBinaryTypeMarker.Array => ReadArray(reader, callbacks),
             CookedBinaryTypeMarker.List => ReadList(reader, callbacks),
@@ -902,6 +905,157 @@ public static class CookedBinarySerializer
                 for (int i = 0; i < 16; i++)
                     reader.ReadSingle();
                 return;
+            case CookedBinaryTypeMarker.ColorF3:
+                reader.ReadSingle();
+                reader.ReadSingle();
+                reader.ReadSingle();
+                return;
+            case CookedBinaryTypeMarker.ColorF4:
+                reader.ReadSingle();
+                reader.ReadSingle();
+                reader.ReadSingle();
+                reader.ReadSingle();
+                return;
+            
+            // High-priority additional types
+            case CookedBinaryTypeMarker.Half:
+                reader.ReadUInt16();
+                return;
+            case CookedBinaryTypeMarker.DateTimeOffset:
+                reader.ReadInt64(); // ticks
+                reader.ReadInt16(); // offset minutes
+                return;
+            case CookedBinaryTypeMarker.DateOnly:
+                reader.ReadInt32();
+                return;
+            case CookedBinaryTypeMarker.TimeOnly:
+                reader.ReadInt64();
+                return;
+            case CookedBinaryTypeMarker.Plane:
+                reader.SkipBytes(sizeof(float) * 4);
+                return;
+            case CookedBinaryTypeMarker.Uri:
+                reader.ReadString();
+                return;
+            case CookedBinaryTypeMarker.TypeRef:
+                reader.ReadString();
+                return;
+            case CookedBinaryTypeMarker.HashSet:
+            {
+                reader.ReadString(); // element type name
+                int count = reader.ReadInt32();
+                for (int i = 0; i < count; i++)
+                    SkipValue(reader);
+                return;
+            }
+            
+            // Geometry types
+            case CookedBinaryTypeMarker.Segment:
+                reader.SkipBytes(sizeof(float) * 6);
+                return;
+            case CookedBinaryTypeMarker.Ray:
+                reader.SkipBytes(sizeof(float) * 6);
+                return;
+            case CookedBinaryTypeMarker.AABB:
+                reader.SkipBytes(sizeof(float) * 6);
+                return;
+            case CookedBinaryTypeMarker.Sphere:
+                reader.SkipBytes(sizeof(float) * 4);
+                return;
+            case CookedBinaryTypeMarker.Triangle:
+                reader.SkipBytes(sizeof(float) * 9);
+                return;
+            case CookedBinaryTypeMarker.Frustum:
+            {
+                // 8 corners (3 floats each) - planes reconstructed on deserialize
+                reader.SkipBytes(sizeof(float) * 8 * 3);
+                return;
+            }
+            
+            // Medium-priority types
+            case CookedBinaryTypeMarker.Version:
+                reader.ReadString();
+                return;
+            case CookedBinaryTypeMarker.BigInteger:
+            {
+                int length = reader.ReadInt32();
+                reader.SkipBytes(length);
+                return;
+            }
+            case CookedBinaryTypeMarker.Complex:
+                reader.SkipBytes(sizeof(double) * 2);
+                return;
+            case CookedBinaryTypeMarker.IPAddress:
+            {
+                int length = reader.ReadByte();
+                reader.SkipBytes(length);
+                return;
+            }
+            case CookedBinaryTypeMarker.IPEndPoint:
+            {
+                int length = reader.ReadByte();
+                reader.SkipBytes(length + sizeof(int)); // address + port
+                return;
+            }
+            case CookedBinaryTypeMarker.Range:
+                reader.SkipBytes(sizeof(int) + sizeof(bool) + sizeof(int) + sizeof(bool));
+                return;
+            case CookedBinaryTypeMarker.Index:
+                reader.SkipBytes(sizeof(int) + sizeof(bool));
+                return;
+            
+            // Low-priority types
+            case CookedBinaryTypeMarker.BitArray:
+            {
+                int bitLength = reader.ReadInt32();
+                int byteCount = (bitLength + 7) / 8;
+                reader.SkipBytes(byteCount);
+                return;
+            }
+            case CookedBinaryTypeMarker.CultureInfo:
+                reader.ReadString();
+                return;
+            case CookedBinaryTypeMarker.Regex:
+                reader.ReadString();
+                reader.ReadInt32();
+                return;
+            
+            case CookedBinaryTypeMarker.BlittableStruct:
+            {
+                reader.ReadString(); // type name
+                int size = reader.ReadInt32();
+                reader.SkipBytes(size);
+                return;
+            }
+            case CookedBinaryTypeMarker.XREvent:
+            {
+                SkipXRPersistentCallList(reader);
+                return;
+            }
+            case CookedBinaryTypeMarker.XREventGeneric:
+            {
+                reader.ReadString(); // type argument
+                SkipXRPersistentCallList(reader);
+                return;
+            }
+            case CookedBinaryTypeMarker.Nullable:
+            {
+                reader.ReadString(); // underlying type name
+                bool hasValue = reader.ReadBoolean();
+                if (hasValue)
+                    SkipValue(reader);
+                return;
+            }
+            case CookedBinaryTypeMarker.ValueTuple:
+            {
+                int count = reader.ReadInt32();
+                for (int i = 0; i < count; i++)
+                {
+                    reader.ReadString(); // element type name
+                    SkipValue(reader);
+                }
+                return;
+            }
             case CookedBinaryTypeMarker.Object:
             {
                 reader.ReadString(); // runtime type name
@@ -1193,6 +1347,415 @@ public static class CookedBinarySerializer
             reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(),
             reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(),
             reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+    }
+
+    private static readonly ConcurrentDictionary<Type, bool> BlittableStructCache = new();
+
+    private static bool IsBlittableStruct(Type type)
+    {
+        if (!type.IsValueType || type.IsPrimitive || type.IsEnum)
+            return false;
+
+        return BlittableStructCache.GetOrAdd(type, static t =>
+        {
+            // Check for StructLayout with Sequential or Explicit layout
+            var layoutAttr = t.GetCustomAttribute<StructLayoutAttribute>();
+            if (layoutAttr is null)
+                return false;
+
+            if (layoutAttr.Value != LayoutKind.Sequential && layoutAttr.Value != LayoutKind.Explicit)
+                return false;
+
+            // Verify all fields are blittable
+            foreach (var field in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                Type fieldType = field.FieldType;
+                if (!IsBlittableType(fieldType))
+                    return false;
+            }
+
+            return true;
+        });
+    }
+
+    private static bool IsBlittableType(Type type)
+    {
+        if (type.IsPrimitive)
+            return true;
+        if (type.IsEnum)
+            return true;
+        if (type == typeof(decimal))
+            return true;
+        if (type.IsPointer)
+            return true;
+        if (type.IsValueType && !type.IsGenericType)
+            return IsBlittableStruct(type);
+        return false;
+    }
+
+    private static unsafe void WriteBlittableValue(CookedBinaryWriter writer, object value, int size)
+    {
+        byte* buffer = stackalloc byte[size];
+        Marshal.StructureToPtr(value, (IntPtr)buffer, fDeleteOld: false);
+        writer.WriteBytes(new ReadOnlySpan<byte>(buffer, size));
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static unsafe object? ReadBlittableStruct(CookedBinaryReader reader)
+    {
+        string typeName = reader.ReadString();
+        Type targetType = ResolveType(typeName);
+        int size = reader.ReadInt32();
+        byte[] data = reader.ReadBytes(size);
+
+        int expectedSize = Marshal.SizeOf(targetType);
+        if (size != expectedSize)
+            throw new InvalidOperationException($"Blittable struct size mismatch: expected {expectedSize}, got {size} for type '{targetType}'.");
+
+        fixed (byte* ptr = data)
+        {
+            return Marshal.PtrToStructure((IntPtr)ptr, targetType);
+        }
+    }
+
+    // XREvent serialization helpers
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static void WriteXREventPersistentCalls(CookedBinaryWriter writer, List<XRPersistentCall>? calls, bool allowCustom, CookedBinarySerializationCallbacks? callbacks)
+    {
+        if (calls is null || calls.Count == 0)
+        {
+            writer.Write(0);
+            return;
+        }
+
+        writer.Write(calls.Count);
+        foreach (var call in calls)
+            WriteXRPersistentCall(writer, call);
+    }
+
+    private static void WriteXRPersistentCall(CookedBinaryWriter writer, XRPersistentCall call)
+    {
+        writer.Write(call.NodeId.ToByteArray());
+        writer.Write(call.TargetObjectId.ToByteArray());
+        writer.Write(call.MethodName ?? string.Empty);
+        writer.Write(call.UseTupleExpansion);
+        
+        var paramTypes = call.ParameterTypeNames;
+        if (paramTypes is null || paramTypes.Length == 0)
+        {
+            writer.Write(0);
+        }
+        else
+        {
+            writer.Write(paramTypes.Length);
+            foreach (var typeName in paramTypes)
+                writer.Write(typeName ?? string.Empty);
+        }
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static bool TryWriteGenericXREvent(CookedBinaryWriter writer, object value, Type runtimeType, bool allowCustom, CookedBinarySerializationCallbacks? callbacks)
+    {
+        if (!runtimeType.IsGenericType || runtimeType.GetGenericTypeDefinition() != typeof(XREvent<>))
+            return false;
+
+        writer.Write((byte)CookedBinaryTypeMarker.XREventGeneric);
+        WriteTypeName(writer, runtimeType.GetGenericArguments()[0]); // Write the T type
+        
+        // Get PersistentCalls property via reflection
+        var prop = runtimeType.GetProperty(nameof(XREvent.PersistentCalls));
+        var calls = prop?.GetValue(value) as List<XRPersistentCall>;
+        WriteXREventPersistentCalls(writer, calls, allowCustom, callbacks);
+        return true;
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static XREvent ReadXREvent(CookedBinaryReader reader)
+        => new XREvent { PersistentCalls = ReadXRPersistentCallList(reader) };
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static object ReadXREventGeneric(CookedBinaryReader reader)
+    {
+        string typeArg = reader.ReadString();
+        Type elementType = ResolveType(typeArg);
+        Type eventType = typeof(XREvent<>).MakeGenericType(elementType);
+        
+        var evt = Activator.CreateInstance(eventType)!;
+        var calls = ReadXRPersistentCallList(reader);
+        
+        var prop = eventType.GetProperty(nameof(XREvent.PersistentCalls));
+        prop?.SetValue(evt, calls);
+        
+        return evt;
+    }
+
+    private static List<XRPersistentCall>? ReadXRPersistentCallList(CookedBinaryReader reader)
+    {
+        int count = reader.ReadInt32();
+        if (count == 0)
+            return null;
+
+        var calls = new List<XRPersistentCall>(count);
+        for (int i = 0; i < count; i++)
+            calls.Add(ReadXRPersistentCall(reader));
+        return calls;
+    }
+
+    private static XRPersistentCall ReadXRPersistentCall(CookedBinaryReader reader)
+    {
+        var call = new XRPersistentCall
+        {
+            NodeId = new Guid(reader.ReadBytes(16)),
+            TargetObjectId = new Guid(reader.ReadBytes(16)),
+            MethodName = reader.ReadString(),
+            UseTupleExpansion = reader.ReadBoolean()
+        };
+
+        int paramCount = reader.ReadInt32();
+        if (paramCount > 0)
+        {
+            call.ParameterTypeNames = new string[paramCount];
+            for (int i = 0; i < paramCount; i++)
+                call.ParameterTypeNames[i] = reader.ReadString();
+        }
+
+        return call;
+    }
+
+    private static void SkipXRPersistentCallList(CookedBinaryReader reader)
+    {
+        int count = reader.ReadInt32();
+        for (int i = 0; i < count; i++)
+            SkipXRPersistentCall(reader);
+    }
+
+    private static void SkipXRPersistentCall(CookedBinaryReader reader)
+    {
+        reader.SkipBytes(16); // NodeId
+        reader.SkipBytes(16); // TargetObjectId
+        reader.ReadString();  // MethodName
+        reader.ReadBoolean(); // UseTupleExpansion
+        
+        int paramCount = reader.ReadInt32();
+        for (int i = 0; i < paramCount; i++)
+            reader.ReadString();
+    }
+
+    // Nullable<T> serialization helpers
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static bool TryWriteNullable(CookedBinaryWriter writer, object value, Type runtimeType, bool allowCustom, CookedBinarySerializationCallbacks? callbacks)
+    {
+        Type? underlyingType = Nullable.GetUnderlyingType(runtimeType);
+        if (underlyingType is null)
+            return false;
+
+        writer.Write((byte)CookedBinaryTypeMarker.Nullable);
+        WriteTypeName(writer, underlyingType);
+        
+        // For boxed nullable, if we got here the value is not null (null would have been handled earlier)
+        // So hasValue is always true for non-null boxed nullable
+        writer.Write(true); // hasValue
+        WriteValue(writer, value, allowCustom, callbacks);
+        return true;
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static object? ReadNullable(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
+    {
+        string underlyingTypeName = reader.ReadString();
+        Type underlyingType = ResolveType(underlyingTypeName);
+        bool hasValue = reader.ReadBoolean();
+        
+        if (!hasValue)
+            return null;
+        
+        object? value = ReadValue(reader, underlyingType, callbacks);
+        return value;
+    }
+
+    // ValueTuple serialization helpers
+    private static readonly HashSet<Type> ValueTupleTypes = new()
+    {
+        typeof(ValueTuple<>),
+        typeof(ValueTuple<,>),
+        typeof(ValueTuple<,,>),
+        typeof(ValueTuple<,,,>),
+        typeof(ValueTuple<,,,,>),
+        typeof(ValueTuple<,,,,,>),
+        typeof(ValueTuple<,,,,,,>),
+        typeof(ValueTuple<,,,,,,,>)
+    };
+
+    private static bool IsValueTupleType(Type type)
+        => type.IsValueType && type.IsGenericType && ValueTupleTypes.Contains(type.GetGenericTypeDefinition());
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static bool TryWriteValueTuple(CookedBinaryWriter writer, object value, Type runtimeType, bool allowCustom, CookedBinarySerializationCallbacks? callbacks)
+    {
+        if (!IsValueTupleType(runtimeType))
+            return false;
+
+        var tuple = (ITuple)value;
+        int length = tuple.Length;
+        Type[] typeArgs = runtimeType.GetGenericArguments();
+
+        writer.Write((byte)CookedBinaryTypeMarker.ValueTuple);
+        writer.Write(length);
+
+        for (int i = 0; i < length; i++)
+        {
+            WriteTypeName(writer, typeArgs[i]);
+            WriteValue(writer, tuple[i], allowCustom, callbacks);
+        }
+
+        return true;
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static object ReadValueTuple(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
+    {
+        int count = reader.ReadInt32();
+        if (count == 0)
+            return default(ValueTuple);
+
+        Type[] typeArgs = new Type[count];
+        object?[] values = new object?[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            string typeName = reader.ReadString();
+            typeArgs[i] = ResolveType(typeName);
+            values[i] = ReadValue(reader, typeArgs[i], callbacks);
+        }
+
+        // Create the appropriate ValueTuple type and instantiate it
+        Type tupleType = count switch
+        {
+            1 => typeof(ValueTuple<>).MakeGenericType(typeArgs),
+            2 => typeof(ValueTuple<,>).MakeGenericType(typeArgs),
+            3 => typeof(ValueTuple<,,>).MakeGenericType(typeArgs),
+            4 => typeof(ValueTuple<,,,>).MakeGenericType(typeArgs),
+            5 => typeof(ValueTuple<,,,,>).MakeGenericType(typeArgs),
+            6 => typeof(ValueTuple<,,,,,>).MakeGenericType(typeArgs),
+            7 => typeof(ValueTuple<,,,,,,>).MakeGenericType(typeArgs),
+            8 => typeof(ValueTuple<,,,,,,,>).MakeGenericType(typeArgs),
+            _ => throw new NotSupportedException($"ValueTuple with {count} elements is not supported.")
+        };
+
+        return Activator.CreateInstance(tupleType, values)!;
+    }
+
+    // Type reference helpers
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static Type ReadTypeRef(CookedBinaryReader reader)
+    {
+        string typeName = reader.ReadString();
+        return ResolveType(typeName);
+    }
+
+    // HashSet helpers
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static bool TryWriteHashSet(CookedBinaryWriter writer, object value, Type runtimeType, bool allowCustom, CookedBinarySerializationCallbacks? callbacks)
+    {
+        if (!runtimeType.IsGenericType || runtimeType.GetGenericTypeDefinition() != typeof(HashSet<>))
+            return false;
+
+        Type elementType = runtimeType.GetGenericArguments()[0];
+        writer.Write((byte)CookedBinaryTypeMarker.HashSet);
+        WriteTypeName(writer, elementType);
+
+        // HashSet implements IEnumerable, use reflection to get count and enumerate
+        var countProp = runtimeType.GetProperty("Count");
+        int count = (int)(countProp?.GetValue(value) ?? 0);
+        writer.Write(count);
+
+        foreach (object? item in (IEnumerable)value)
+            WriteValue(writer, item, allowCustom, callbacks);
+
+        return true;
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static object ReadHashSet(CookedBinaryReader reader, CookedBinarySerializationCallbacks? callbacks)
+    {
+        string elementTypeName = reader.ReadString();
+        Type elementType = ResolveType(elementTypeName);
+        Type hashSetType = typeof(HashSet<>).MakeGenericType(elementType);
+
+        int count = reader.ReadInt32();
+        object hashSet = Activator.CreateInstance(hashSetType)!;
+        var addMethod = hashSetType.GetMethod("Add")!;
+
+        for (int i = 0; i < count; i++)
+        {
+            object? item = ReadValue(reader, elementType, callbacks);
+            addMethod.Invoke(hashSet, [item]);
+        }
+
+        return hashSet;
+    }
+
+    // Frustum read helper
+    private static Frustum ReadFrustum(CookedBinaryReader reader)
+    {
+        // Read 8 corners: NBL, NBR, NTL, NTR, FBL, FBR, FTL, FTR (planes reconstructed automatically)
+        Vector3 ReadVector3() => new(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+        
+        Vector3 nearBottomLeft = ReadVector3();
+        Vector3 nearBottomRight = ReadVector3();
+        Vector3 nearTopLeft = ReadVector3();
+        Vector3 nearTopRight = ReadVector3();
+        Vector3 farBottomLeft = ReadVector3();
+        Vector3 farBottomRight = ReadVector3();
+        Vector3 farTopLeft = ReadVector3();
+        Vector3 farTopRight = ReadVector3();
+        
+        return new Frustum(
+            nearBottomLeft, nearBottomRight, nearTopLeft, nearTopRight,
+            farBottomLeft, farBottomRight, farTopLeft, farTopRight);
+    }
+
+    // Medium/low priority type read helpers
+    private static BigInteger ReadBigInteger(CookedBinaryReader reader)
+    {
+        int length = reader.ReadInt32();
+        byte[] bytes = reader.ReadBytes(length);
+        return new BigInteger(bytes);
+    }
+
+    private static IPAddress ReadIPAddress(CookedBinaryReader reader)
+    {
+        int length = reader.ReadByte();
+        byte[] bytes = reader.ReadBytes(length);
+        return new IPAddress(bytes);
+    }
+
+    private static IPEndPoint ReadIPEndPoint(CookedBinaryReader reader)
+    {
+        int length = reader.ReadByte();
+        byte[] addressBytes = reader.ReadBytes(length);
+        int port = reader.ReadInt32();
+        return new IPEndPoint(new IPAddress(addressBytes), port);
+    }
+
+    private static BitArray ReadBitArray(CookedBinaryReader reader)
+    {
+        int bitLength = reader.ReadInt32();
+        int byteCount = (bitLength + 7) / 8;
+        byte[] bytes = reader.ReadBytes(byteCount);
+        return new BitArray(bytes) { Length = bitLength };
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
@@ -1567,7 +2130,220 @@ public static class CookedBinarySerializer
                 return;
             }
 
+            // Color types - fixed sizes
+            if (value is ColorF3)
+            {
+                AddBytes(sizeof(float) * 3);
+                return;
+            }
+
+            if (value is ColorF4)
+            {
+                AddBytes(sizeof(float) * 4);
+                return;
+            }
+
+            // Half type (2 bytes)
+            if (value is Half)
+            {
+                AddBytes(2);
+                return;
+            }
+
+            // DateTimeOffset (8 + 2 bytes for ticks + offset)
+            if (value is DateTimeOffset)
+            {
+                AddBytes(sizeof(long) + sizeof(short));
+                return;
+            }
+
+            // DateOnly (4 bytes for day number)
+            if (value is DateOnly)
+            {
+                AddBytes(sizeof(int));
+                return;
+            }
+
+            // TimeOnly (8 bytes for ticks)
+            if (value is TimeOnly)
+            {
+                AddBytes(sizeof(long));
+                return;
+            }
+
+            // System.Numerics.Plane (4 floats)
+            if (value is System.Numerics.Plane)
+            {
+                AddBytes(sizeof(float) * 4);
+                return;
+            }
+
+            // Uri (string)
+            if (value is Uri uri)
+            {
+                AddBytes(SizeOfString(uri.OriginalString));
+                return;
+            }
+
+            // Geometry types
+            if (value is Segment)
+            {
+                AddBytes(sizeof(float) * 6); // 2 Vector3
+                return;
+            }
+
+            if (value is Ray)
+            {
+                AddBytes(sizeof(float) * 6); // 2 Vector3
+                return;
+            }
+
+            if (value is AABB)
+            {
+                AddBytes(sizeof(float) * 6); // 2 Vector3
+                return;
+            }
+
+            if (value is Sphere)
+            {
+                AddBytes(sizeof(float) * 4); // Vector3 + float
+                return;
+            }
+
+            if (value is Triangle)
+            {
+                AddBytes(sizeof(float) * 9); // 3 Vector3
+                return;
+            }
+
+            if (value is Frustum)
+            {
+                // 8 corners (3 floats each) - planes reconstructed on deserialize
+                AddBytes(sizeof(float) * 8 * 3);
+                return;
+            }
+
+            // Medium-priority types
+            if (value is Version version)
+            {
+                AddBytes(SizeOfString(version.ToString()));
+                return;
+            }
+
+            if (value is BigInteger bigInt)
+            {
+                byte[] bigIntBytes = bigInt.ToByteArray();
+                AddBytes(sizeof(int) + bigIntBytes.Length);
+                return;
+            }
+
+            if (value is Complex)
+            {
+                AddBytes(sizeof(double) * 2);
+                return;
+            }
+
+            if (value is IPAddress ip)
+            {
+                AddBytes(1 + ip.GetAddressBytes().Length); // length byte + address bytes
+                return;
+            }
+
+            if (value is IPEndPoint endPoint)
+            {
+                AddBytes(1 + endPoint.Address.GetAddressBytes().Length + sizeof(int)); // length byte + address + port
+                return;
+            }
+
+            if (value is Range)
+            {
+                AddBytes(sizeof(int) + sizeof(bool) + sizeof(int) + sizeof(bool)); // start value, start isFromEnd, end value, end isFromEnd
+                return;
+            }
+
+            if (value is Index)
+            {
+                AddBytes(sizeof(int) + sizeof(bool)); // value + isFromEnd
+                return;
+            }
+
+            // Low-priority types
+            if (value is BitArray bitArray)
+            {
+                int byteCount = (bitArray.Length + 7) / 8;
+                AddBytes(sizeof(int) + byteCount); // length + bytes
+                return;
+            }
+
+            if (value is CultureInfo culture)
+            {
+                AddBytes(SizeOfString(culture.Name));
+                return;
+            }
+
+            if (value is Regex regex)
+            {
+                AddBytes(SizeOfString(regex.ToString()) + sizeof(int)); // pattern + options
+                return;
+            }
+
+            // XREvent and XREvent<T>
+            if (value is XREvent xrEvent)
+            {
+                AddBytes(1); // marker
+                AddXRPersistentCallListSize(xrEvent.PersistentCalls);
+                return;
+            }
+
+            if (TryAddGenericXREventSize(value))
+                return;
+
             Type runtimeType = value.GetType();
+
+            // Nullable<T>
+            Type? nullableUnderlying = Nullable.GetUnderlyingType(runtimeType);
+            if (nullableUnderlying is not null)
+            {
+                AddBytes(1); // marker
+                AddBytes(SizeOfTypeName(nullableUnderlying));
+                AddBytes(sizeof(bool)); // hasValue
+                // For boxed nullable, value is always present if we got here
+                AddValue(value, allowCustom);
+                return;
+            }
+
+            // ValueTuple
+            if (IsValueTupleType(runtimeType))
+            {
+                var tuple = (ITuple)value;
+                Type[] typeArgs = runtimeType.GetGenericArguments();
+                AddBytes(1); // marker
+                AddBytes(sizeof(int)); // count
+                for (int i = 0; i < tuple.Length; i++)
+                {
+                    AddBytes(SizeOfTypeName(typeArgs[i]));
+                    AddValue(tuple[i], allowCustom);
+                }
+                return;
+            }
+
+            // Type reference
+            if (value is Type typeRef)
+            {
+                AddBytes(SizeOfTypeName(typeRef));
+                return;
+            }
+
+            // HashSet<T>
+            if (runtimeType.IsGenericType && runtimeType.GetGenericTypeDefinition() == typeof(HashSet<>))
+            {
+                Type elementType = runtimeType.GetGenericArguments()[0];
+                AddBytes(SizeOfTypeName(elementType));
+                AddBytes(sizeof(int)); // count
+                foreach (object? item in (IEnumerable)value)
+                    AddValue(item, allowCustom);
+                return;
+            }
 
             if (runtimeType.IsEnum)
             {
@@ -1612,6 +2388,14 @@ public static class CookedBinarySerializer
                 return;
             }
 
+            // Blittable struct fallback
+            if (runtimeType.IsValueType && !runtimeType.IsPrimitive && !runtimeType.IsEnum && IsBlittableStruct(runtimeType))
+            {
+                int structSize = Marshal.SizeOf(runtimeType);
+                AddBytes(SizeOfTypeName(runtimeType) + sizeof(int) + structSize);
+                return;
+            }
+
             AddBytes(SizeOfTypeName(runtimeType));
 
             if (TryGetMemoryPackLength(value, runtimeType, out int memoryPackLength))
@@ -1649,6 +2433,47 @@ public static class CookedBinarySerializer
                 }
                 AddValue(value, allowCustom);
             }
+        }
+
+        private void AddXRPersistentCallListSize(List<XRPersistentCall>? calls)
+        {
+            AddBytes(sizeof(int)); // count
+            if (calls is null || calls.Count == 0)
+                return;
+
+            foreach (var call in calls)
+                AddXRPersistentCallSize(call);
+        }
+
+        private void AddXRPersistentCallSize(XRPersistentCall call)
+        {
+            AddBytes(16); // NodeId
+            AddBytes(16); // TargetObjectId
+            AddBytes(SizeOfString(call.MethodName ?? string.Empty));
+            AddBytes(sizeof(bool)); // UseTupleExpansion
+            AddBytes(sizeof(int)); // param count
+            
+            var paramTypes = call.ParameterTypeNames;
+            if (paramTypes is { Length: > 0 })
+            {
+                foreach (var typeName in paramTypes)
+                    AddBytes(SizeOfString(typeName ?? string.Empty));
+            }
+        }
+
+        private bool TryAddGenericXREventSize(object value)
+        {
+            var runtimeType = value.GetType();
+            if (!runtimeType.IsGenericType || runtimeType.GetGenericTypeDefinition() != typeof(XREvent<>))
+                return false;
+
+            AddBytes(1); // marker
+            AddBytes(SizeOfTypeName(runtimeType.GetGenericArguments()[0])); // type argument
+            
+            var prop = runtimeType.GetProperty(nameof(XREvent.PersistentCalls));
+            var calls = prop?.GetValue(value) as List<XRPersistentCall>;
+            AddXRPersistentCallListSize(calls);
+            return true;
         }
 
         private void AddBytes(long count)

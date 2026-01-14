@@ -176,15 +176,18 @@ public static partial class EditorImGuiUI
             return;
 
         var payload = ImGui.AcceptDragDropPayload(ImGuiAssetUtilities.AssetPayloadType);
-        if (payload.Data != IntPtr.Zero && payload.DataSize > 0)
+        unsafe
         {
-            string? path = ImGuiAssetUtilities.GetPathFromPayload(payload);
-            if (!string.IsNullOrWhiteSpace(path))
+            if ((nint)payload.NativePtr != IntPtr.Zero && payload.Data != IntPtr.Zero && payload.DataSize > 0)
             {
-                if (TryLoadPrefabAsset(path, out var prefab))
-                    EnqueueSceneEdit(() => SpawnPrefabNode(world, parent: null, prefab!));
-                else if (TryLoadModelAsset(path, out var model))
-                    EnqueueSceneEdit(() => SpawnModelNode(world, parent: null, model!, path));
+                string? path = ImGuiAssetUtilities.GetPathFromPayload(payload);
+                if (!string.IsNullOrWhiteSpace(path))
+                {
+                    if (TryLoadPrefabAsset(path, out var prefab))
+                        EnqueueSceneEdit(() => SpawnPrefabNode(world, parent: null, prefab!));
+                    else if (TryLoadModelAsset(path, out var model))
+                        EnqueueSceneEdit(() => SpawnModelNode(world, parent: null, model!, path));
+                }
             }
         }
 

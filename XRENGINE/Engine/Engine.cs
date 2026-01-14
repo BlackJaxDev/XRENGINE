@@ -214,7 +214,23 @@ namespace XREngine
                             viewport.WorldInstanceOverride = worldInstance;
 
                         // Rebind camera from controlled pawn (may have changed across restore / BeginPlay).
-                        viewport.AssociatedPlayer?.RefreshViewportCamera();
+                        // NOTE: During snapshot restore (especially when exiting play), the ControlledPawn can be
+                        // temporarily null or mid-destruction. Calling RefreshViewportCamera() in that window will
+                        // actively clear VP.CameraComponent, causing black output until something later rebinds it.
+                        var playerForRebind = viewport.AssociatedPlayer;
+                        var playerPawnCamera = playerForRebind?.ControlledPawn?.GetCamera();
+                        if (playerForRebind is not null && playerPawnCamera is not null)
+                        {
+                            playerForRebind.RefreshViewportCamera();
+                        }
+                        else
+                        {
+                            Debug.Out(
+                                "[{0}] Rebind: skipping RefreshViewportCamera for VP[{1}] (player={2}) because ControlledPawn camera is null.",
+                                phase,
+                                viewport.Index,
+                                playerForRebind?.LocalPlayerIndex.ToString() ?? "<null>");
+                        }
 
                         var p = viewport.AssociatedPlayer;
                         var pawn = p?.ControlledPawn;
@@ -257,9 +273,12 @@ namespace XREngine
                             });
                         }
 
-                        if (viewport.ActiveCamera is null)
+                        // Only warn when we *expected* a camera/world to exist (i.e. the player has a pawn camera).
+                        // During PostSnapshotRestore the pawn can be transiently null while higher-level systems (editor/game mode)
+                        // re-possess or spawn the correct pawn.
+                        if (viewport.ActiveCamera is null && viewport.AssociatedPlayer?.ControlledPawn?.GetCamera() is not null)
                             Debug.LogWarning($"[{phase}] Viewport {viewport.Index} has no ActiveCamera (player={viewport.AssociatedPlayer?.LocalPlayerIndex}).");
-                        if (viewport.World is null)
+                        if (viewport.World is null && viewport.AssociatedPlayer?.ControlledPawn?.GetCamera() is not null)
                             Debug.LogWarning($"[{phase}] Viewport {viewport.Index} has no World (player={viewport.AssociatedPlayer?.LocalPlayerIndex}).");
                     }
 

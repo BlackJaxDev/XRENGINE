@@ -250,6 +250,49 @@ namespace XREngine
                     SourceWorld.Scenes.Remove(removedScene);
                 }
 
+                // IMPORTANT:
+                // Gameplay code can spawn SceneNodes directly into XRWorldInstance.RootNodes without
+                // attaching them to any XRScene (e.g. player pawns). Those roots are not tracked by
+                // scene serialization and will survive snapshot restore unless explicitly removed.
+                //
+                // After restoring all scenes, destroy any root nodes that are not present in any
+                // restored scene's RootNodes list.
+                if (runtimeInstance is not null)
+                {
+                    var expectedRoots = new HashSet<SceneNode>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+
+                    foreach (var scene in SourceWorld.Scenes)
+                    {
+                        if (scene.RootNodes is null)
+                            continue;
+
+                        foreach (var root in scene.RootNodes)
+                        {
+                            if (root is null)
+                                continue;
+                            expectedRoots.Add(root);
+                        }
+                    }
+
+                    int removedCount = 0;
+                    foreach (var root in runtimeInstance.RootNodes.ToArray())
+                    {
+                        if (root is null)
+                            continue;
+
+                        if (expectedRoots.Contains(root))
+                            continue;
+
+                        removedCount++;
+                        Debug.Out($"[SnapshotRestore] Destroying orphan root node '{root.Name ?? SceneNode.DefaultName}' (Hash={root.GetHashCode()})");
+                        runtimeInstance.RootNodes.Remove(root);
+                        root.Destroy(now: true);
+                    }
+
+                    if (removedCount > 0)
+                        Debug.Out($"[SnapshotRestore] Removed {removedCount} orphan root node(s) not present in restored scenes.");
+                }
+
                 Debug.Out($"World state restored from snapshot taken at {CaptureTime}");
                 return true;
             }

@@ -286,19 +286,27 @@ namespace XREngine
                     }
 
                     // Step 5: Restore world state based on configuration
+                    XRWorld? restoredWorld = null;
                     switch (Configuration.StateRestorationMode)
                     {
                         case EStateRestorationMode.SerializeAndRestore:
                             _editModeSnapshot?.Restore();
+                            restoredWorld = ResolveStartupWorld();
                             break;
                         case EStateRestorationMode.ReloadFromAsset:
                             ReloadWorldsFromAssetsAsync().GetAwaiter().GetResult();
+                            restoredWorld = ResolveStartupWorld();
                             break;
                         case EStateRestorationMode.PersistChanges:
                             // Do nothing - changes persist
                             break;
                     }
                     _editModeSnapshot = null;
+
+                    // Rebind runtime rendering after snapshot restore (same as entering play mode).
+                    // This ensures viewports/cameras/world bindings are properly wired after deserialization.
+                    if (restoredWorld is not null)
+                        PostSnapshotRestore?.Invoke(restoredWorld);
 
                     State = EPlayModeState.Edit;
                     PostExitPlay?.Invoke();

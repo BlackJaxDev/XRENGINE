@@ -421,9 +421,36 @@ namespace XREngine.Rendering
 
         private void OnPlayModeTransition()
         {
-            // Invalidate scene panel resources so they're recreated with proper sizing
-            // on the next frame after the play mode transition completes.
-            _scenePanelAdapter.InvalidateResources();
+            Debug.Out($"[XRWindow] OnPlayModeTransition called. PlayModeState={Engine.PlayMode.State} Viewports={Viewports.Count}");
+            
+            // Invalidate scene panel resources IMMEDIATELY so stale textures don't persist.
+            // Using immediate destruction ensures the GL texture handle is invalidated before
+            // ImGui tries to display it on the next frame.
+            _scenePanelAdapter.InvalidateResourcesImmediate();
+
+            // Also destroy all viewport render pipeline caches to ensure stale textures/FBOs
+            // from the previous play mode state don't persist into the new state.
+            foreach (var viewport in Viewports)
+            {
+                Debug.Out($"[XRWindow] Destroying pipeline cache for VP[{viewport.Index}] CameraComponent={viewport.CameraComponent?.Name ?? "<null>"} ActiveCamera={viewport.ActiveCamera?.GetHashCode().ToString() ?? "null"}");
+                viewport.RenderPipelineInstance.DestroyCache();
+            }
+
+            // Some rendering state (viewport size/internal resolution/aspect ratio) is only recomputed
+            // on resize events. Play mode transitions can invalidate cached GPU resources without
+            // any actual OS resize, leaving the window presenting stale/incorrect content until the
+            // user manually resizes a panel/window.
+            //
+            // Force a sizing refresh against the current framebuffer dimensions to mimic that resize.
+            var fb = Window?.FramebufferSize ?? default;
+            if (fb.X > 0 && fb.Y > 0)
+            {
+                foreach (var viewport in Viewports)
+                    viewport.Resize((uint)fb.X, (uint)fb.Y, setInternalResolution: true);
+
+                // Notify renderer that cached framebuffer-dependent objects may be invalid.
+                Renderer.FrameBufferInvalidated();
+            }
         }
 
         #endregion
