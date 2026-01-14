@@ -7,14 +7,25 @@ using XREngine.Data.Geometry;
 namespace XREngine.Rendering
 {
     /// <summary>
-    /// Retrieves the view and projection matrices for a VR eye camera from OpenVR.
+    /// Camera parameters that retrieve projection from OpenVR/SteamVR.
+    /// Used for VR rendering with eye-specific asymmetric projections.
     /// </summary>
-    /// <param name="leftEye"></param>
-    /// <param name="nearPlane"></param>
-    /// <param name="farPlane"></param>
+    /// <param name="leftEye">True for left eye, false for right eye.</param>
+    /// <param name="nearPlane">Near clipping plane distance.</param>
+    /// <param name="farPlane">Far clipping plane distance.</param>
+    [CameraParameterEditor("OpenVR Eye", SortOrder = 4, Category = "VR", Description = "VR eye camera using OpenVR/SteamVR projection.")]
     public class XROVRCameraParameters(bool leftEye, float nearPlane, float farPlane) 
         : XRCameraParameters(nearPlane, farPlane)
     {
+        public XROVRCameraParameters()
+            : this(true, 0.1f, 10000f) { }
+        public XROVRCameraParameters(XROVRCameraParameters other)
+            : this(other.LeftEye, other.NearZ, other.FarZ) { }
+        public XROVRCameraParameters(XRCameraParameters other, bool leftEye)
+            : this(leftEye, other.NearZ, other.FarZ) { }
+        public XROVRCameraParameters(float nearPlane, float farPlane)
+            : this(true, nearPlane, farPlane) { }
+
         private bool _leftEye = leftEye;
         public bool LeftEye
         {
@@ -81,5 +92,19 @@ namespace XREngine.Rendering
 
         protected override Frustum CalculateUntransformedFrustum()
             => new((_projectionMatrix ?? CalculateProjectionMatrix()).Inverted());
+
+        /// <summary>
+        /// Creates a new OpenVR camera from previous parameters.
+        /// </summary>
+        public override XRCameraParameters CreateFromPrevious(XRCameraParameters? previous)
+        {
+            if (previous is XROVRCameraParameters ovr)
+                return new XROVRCameraParameters(ovr.LeftEye, ovr.NearZ, ovr.FarZ);
+
+            return new XROVRCameraParameters(true, previous?.NearZ ?? 0.1f, previous?.FarZ ?? 10000f);
+        }
+
+        protected override XRCameraParameters CreateDefaultInstance()
+            => new XROVRCameraParameters(true, 0.1f, 10000f);
     }
 }

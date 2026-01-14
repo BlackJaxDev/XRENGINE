@@ -16,6 +16,7 @@ namespace XREngine.Rendering
     /// - Principal point is expressed in pixels using the common computer-vision convention:
     ///   origin at the top-left of the image, X right, Y down.
     /// </summary>
+    [CameraParameterEditor("Physical", SortOrder = 2, Description = "Physical camera using sensor size and focal length.")]
     public class XRPhysicalCameraParameters : XRCameraParameters
     {
         private float _sensorWidthMm;
@@ -269,5 +270,57 @@ namespace XREngine.Rendering
 
         public override string ToString()
             => $"NearZ: {NearZ}, FarZ: {FarZ}, Sensor: {SensorWidthMm}x{SensorHeightMm}mm, Focal: {FocalLengthMm}mm";
+
+        public override float GetApproximateVerticalFov() => VerticalFieldOfViewDegrees;
+
+        public override float GetApproximateAspectRatio()
+        {
+            ResolveResolution(out float w, out float h);
+            return w / MathF.Max(1.0f, h);
+        }
+
+        /// <summary>
+        /// Creates a new physical camera from previous parameters.
+        /// Converts FOV to focal length when coming from perspective cameras.
+        /// </summary>
+        public override XRCameraParameters CreateFromPrevious(XRCameraParameters? previous)
+        {
+            if (previous is null)
+                return new XRPhysicalCameraParameters();
+
+            if (previous is XRPhysicalCameraParameters physical)
+            {
+                return new XRPhysicalCameraParameters(
+                    physical.SensorWidthMm,
+                    physical.SensorHeightMm,
+                    physical.FocalLengthMm,
+                    physical.ResolutionWidthPx,
+                    physical.ResolutionHeightPx,
+                    physical.NearZ,
+                    physical.FarZ)
+                {
+                    InheritResolution = physical.InheritResolution,
+                    InheritPrincipalPoint = physical.InheritPrincipalPoint,
+                    PrincipalPointPx = physical.PrincipalPointPx
+                };
+            }
+
+            // Convert FOV to focal length for 36mm sensor (full-frame)
+            const float sensorH = 24.0f;
+            float fovRad = previous.GetApproximateVerticalFov() * MathF.PI / 180.0f;
+            float focalLength = sensorH / (2.0f * MathF.Tan(fovRad / 2.0f));
+
+            return new XRPhysicalCameraParameters(
+                36.0f, sensorH, focalLength,
+                1920, 1080,
+                previous.NearZ, previous.FarZ)
+            {
+                InheritResolution = true,
+                InheritPrincipalPoint = true
+            };
+        }
+
+        protected override XRCameraParameters CreateDefaultInstance()
+            => new XRPhysicalCameraParameters();
     }
 }

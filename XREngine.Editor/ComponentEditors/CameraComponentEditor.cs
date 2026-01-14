@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Numerics;
+using System.Reflection;
 using XREngine.Components;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -18,18 +19,116 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     private const float PreviewMaxEdge = 256.0f;
     private const float PreviewMinEdge = 96.0f;
 
-    private readonly struct ParameterOption(string label, Type type)
+    /// <summary>
+    /// Cached information about a camera parameter type for the editor dropdown.
+    /// </summary>
+    private readonly struct ParameterOption
     {
-        public string Label { get; } = label;
-        public Type ParameterType { get; } = type;
+        public string Label { get; }
+        public Type ParameterType { get; }
+        public int SortOrder { get; }
+        public string? Category { get; }
+        public string? Description { get; }
+
+        public ParameterOption(Type type)
+        {
+            ParameterType = type;
+            
+            // Get attribute if present
+            var attr = type.GetCustomAttribute<CameraParameterEditorAttribute>();
+            
+            // Use attribute values or generate defaults
+            Label = !string.IsNullOrEmpty(attr?.DisplayName) 
+                ? attr.DisplayName 
+                : GenerateFriendlyName(type);
+            SortOrder = attr?.SortOrder ?? 100;
+            Category = attr?.Category;
+            Description = attr?.Description;
+        }
+
+        private static string GenerateFriendlyName(Type type)
+        {
+            string name = type.Name;
+
+            // Remove common prefixes and suffixes
+            if (name.StartsWith("XR", StringComparison.Ordinal))
+                name = name.Substring(2);
+            if (name.EndsWith("CameraParameters", StringComparison.Ordinal))
+                name = name.Substring(0, name.Length - "CameraParameters".Length);
+
+            // Insert spaces before capital letters (e.g., "OpenXRFov" -> "Open XR Fov")
+            var result = new System.Text.StringBuilder();
+            for (int i = 0; i < name.Length; i++)
+            {
+                char c = name[i];
+                if (i > 0 && char.IsUpper(c) && !char.IsUpper(name[i - 1]))
+                    result.Append(' ');
+                result.Append(c);
+            }
+
+            return result.Length > 0 ? result.ToString() : type.Name;
+        }
     }
 
-    private static readonly ParameterOption[] ParameterOptions =
-    [
-        new("Perspective", typeof(XRPerspectiveCameraParameters)),
-        new("Orthographic", typeof(XROrthographicCameraParameters)),
-        new("OpenVR Eye", typeof(XROVRCameraParameters))
-    ];
+    /// <summary>
+    /// Lazily-initialized array of all concrete XRCameraParameters types.
+    /// Automatically discovers all available camera parameter types via reflection,
+    /// respecting the <see cref="CameraParameterEditorAttribute"/> for ordering and display.
+    /// </summary>
+    private static ParameterOption[]? _parameterOptions;
+    private static ParameterOption[] ParameterOptions => _parameterOptions ??= DiscoverParameterTypes();
+
+    /// <summary>
+    /// Discovers all concrete types derived from XRCameraParameters across all loaded assemblies.
+    /// Types with <see cref="CameraParameterEditorAttribute.Hidden"/> set to true are excluded.
+    /// </summary>
+    private static ParameterOption[] DiscoverParameterTypes()
+    {
+        var baseType = typeof(XRCameraParameters);
+        
+        // Search in the main engine assembly and any assemblies that reference it
+        var assemblies = AppDomain.CurrentDomain.GetAssemblies()
+            .Where(a => !a.IsDynamic && ReferencesAssembly(a, baseType.Assembly));
+
+        var types = assemblies
+            .SelectMany(a =>
+            {
+                try { return a.GetTypes(); }
+                catch { return []; }
+            })
+            .Where(t => t.IsClass && !t.IsAbstract && baseType.IsAssignableFrom(t))
+            .Where(t =>
+            {
+                var attr = t.GetCustomAttribute<CameraParameterEditorAttribute>();
+                return attr?.Hidden != true;
+            })
+            .Select(t => new ParameterOption(t))
+            .OrderBy(o => o.SortOrder)
+            .ThenBy(o => o.Category ?? "")
+            .ThenBy(o => o.Label)
+            .ToArray();
+
+        return types.Length > 0 ? types : [new ParameterOption(typeof(XRPerspectiveCameraParameters))];
+    }
+
+    /// <summary>
+    /// Checks if an assembly references or is the target assembly.
+    /// </summary>
+    private static bool ReferencesAssembly(Assembly assembly, Assembly target)
+    {
+        if (assembly == target)
+            return true;
+        
+        try
+        {
+            return assembly.GetReferencedAssemblies()
+                .Any(r => r.FullName == target.FullName);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
 
     private static readonly string[] PreferredPreviewTextureNames =
@@ -350,20 +449,37 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         DrawParameterTypeSwitcher(camera, parameters);
         DrawCommonParameterControls(parameters);
 
-        switch (parameters)
+        // Check for custom editor from attribute first
+        var customEditor = CameraParameterEditorRegistry.GetEditor(parameters.GetType());
+        if (customEditor is not null)
         {
-            case XRPerspectiveCameraParameters perspective:
-                DrawPerspectiveParameters(perspective);
-                break;
-            case XROrthographicCameraParameters orthographic:
-                DrawOrthographicParameters(orthographic);
-                break;
-            case XROVRCameraParameters ovr:
-                DrawOpenVREyeParameters(ovr);
-                break;
-            default:
-                ImGui.TextDisabled($"No custom editor for {parameters.GetType().Name}.");
-                break;
+            customEditor.DrawEditor(parameters);
+        }
+        else
+        {
+            // Fall back to built-in editors for known types
+            switch (parameters)
+            {
+                case XRPerspectiveCameraParameters perspective:
+                    DrawPerspectiveParameters(perspective);
+                    break;
+                case XROrthographicCameraParameters orthographic:
+                    DrawOrthographicParameters(orthographic);
+                    break;
+                case XRPhysicalCameraParameters physical:
+                    DrawPhysicalCameraParameters(physical);
+                    break;
+                case XROpenXRFovCameraParameters openXrFov:
+                    DrawOpenXRFovParameters(openXrFov);
+                    break;
+                case XROVRCameraParameters ovr:
+                    DrawOpenVREyeParameters(ovr);
+                    break;
+                default:
+                    ImGui.TextDisabled($"No custom editor for {parameters.GetType().Name}.");
+                    ImGui.TextDisabled("Add [CameraParameterEditor] attribute with CustomEditorType to provide a custom UI.");
+                    break;
+            }
         }
 
         ImGui.Spacing();
@@ -372,24 +488,50 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
     private static void DrawParameterTypeSwitcher(XRCamera camera, XRCameraParameters current)
     {
-        int currentIndex = Array.FindIndex(ParameterOptions, option => option.ParameterType.IsInstanceOfType(current));
-        if (currentIndex < 0)
-            currentIndex = 0;
+        int currentIndex = Array.FindIndex(ParameterOptions, option => option.ParameterType == current.GetType());
+        
+        // Handle unknown types that aren't in the discovered list
+        string currentLabel = currentIndex >= 0 
+            ? ParameterOptions[currentIndex].Label 
+            : new ParameterOption(current.GetType()).Label;
 
-        string currentLabel = ParameterOptions[currentIndex].Label;
+        // Show category/description for current type
+        var currentOption = currentIndex >= 0 ? ParameterOptions[currentIndex] : new ParameterOption(current.GetType());
+        
         ImGui.SetNextItemWidth(-1f);
         if (ImGui.BeginCombo("Projection Type", currentLabel))
         {
+            string? lastCategory = null;
+            
             for (int i = 0; i < ParameterOptions.Length; i++)
             {
-                bool selected = i == currentIndex;
-                if (ImGui.Selectable(ParameterOptions[i].Label, selected) && !selected)
+                var option = ParameterOptions[i];
+                
+                // Draw category separator if category changes
+                if (option.Category != lastCategory && !string.IsNullOrEmpty(option.Category))
                 {
-                    XRCameraParameters replacement = CreateParameterInstance(ParameterOptions[i].ParameterType, current);
+                    if (i > 0)
+                        ImGui.Separator();
+                    ImGui.TextDisabled(option.Category);
+                    lastCategory = option.Category;
+                }
+                else if (option.Category != lastCategory)
+                {
+                    lastCategory = option.Category;
+                }
+
+                bool selected = i == currentIndex;
+                if (ImGui.Selectable(option.Label, selected) && !selected)
+                {
+                    XRCameraParameters replacement = CreateParameterInstance(option.ParameterType, current);
                     camera.Parameters = replacement;
                     current = replacement;
                     currentIndex = i;
                 }
+
+                // Show tooltip with description if available
+                if (ImGui.IsItemHovered() && !string.IsNullOrEmpty(option.Description))
+                    ImGui.SetTooltip(option.Description);
 
                 if (selected)
                     ImGui.SetItemDefaultFocus();
@@ -397,47 +539,31 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
             ImGui.EndCombo();
         }
+        
+        // Show description below the combo if current type has one
+        if (!string.IsNullOrEmpty(currentOption.Description))
+            ImGui.TextDisabled(currentOption.Description);
     }
 
+    /// <summary>
+    /// Creates a new camera parameter instance of the specified type, using <see cref="XRCameraParameters.CreateFromPrevious"/>
+    /// to intelligently convert settings from the previous parameter type.
+    /// </summary>
+    /// <remarks>
+    /// This method first attempts to use the parameter type's own <c>CreateFromPrevious</c> method,
+    /// which allows each camera type to define its own conversion logic. Custom camera types
+    /// can override this method to provide intelligent conversions from other types.
+    /// </remarks>
     private static XRCameraParameters CreateParameterInstance(Type targetType, XRCameraParameters previous)
     {
-        XRCameraParameters instance = targetType switch
-        {
-            Type t when t == typeof(XRPerspectiveCameraParameters) =>
-                ClonePerspective(previous),
-            Type t when t == typeof(XROrthographicCameraParameters) =>
-                CloneOrthographic(previous),
-            Type t when t == typeof(XROVRCameraParameters) =>
-                new XROVRCameraParameters(true, previous.NearZ, previous.FarZ),
-            _ => (Activator.CreateInstance(targetType) as XRCameraParameters)
-                 ?? new XRPerspectiveCameraParameters(previous.NearZ, previous.FarZ)
-        };
-
+        // Use the CreateFromPrevious pattern which allows each type to define its own conversion logic
+        var instance = XRCameraParameters.CreateFromType(targetType, previous);
+        
+        // Ensure near/far planes are preserved
         instance.NearZ = previous.NearZ;
         instance.FarZ = previous.FarZ;
+        
         return instance;
-
-        static XRPerspectiveCameraParameters ClonePerspective(XRCameraParameters previous)
-        {
-            if (previous is XRPerspectiveCameraParameters prior)
-            {
-                return new XRPerspectiveCameraParameters(prior.VerticalFieldOfView, prior.InheritAspectRatio ? null : prior.AspectRatio, prior.NearZ, prior.FarZ)
-                {
-                    InheritAspectRatio = prior.InheritAspectRatio
-                };
-            }
-
-            return new XRPerspectiveCameraParameters(previous.NearZ, previous.FarZ);
-        }
-
-        static XROrthographicCameraParameters CloneOrthographic(XRCameraParameters previous)
-        {
-            if (previous is XROrthographicCameraParameters ortho)
-                return new XROrthographicCameraParameters(ortho.Width, ortho.Height, ortho.NearZ, ortho.FarZ);
-
-            Vector2 frustum = previous.GetFrustumSizeAtDistance(MathF.Max(previous.NearZ + 1.0f, 1.0f));
-            return new XROrthographicCameraParameters(MathF.Max(1.0f, frustum.X), MathF.Max(1.0f, frustum.Y), previous.NearZ, previous.FarZ);
-        }
     }
 
     private static void DrawCommonParameterControls(XRCameraParameters parameters)
@@ -498,6 +624,180 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         Vector2 origin = parameters.Origin;
         ImGui.TextDisabled($"Origin Offset: ({origin.X:F2}, {origin.Y:F2})");
+    }
+
+    /// <summary>
+    /// Draws the custom editor UI for physical camera parameters.
+    /// Shows sensor size, focal length, resolution, and principal point settings.
+    /// </summary>
+    private static void DrawPhysicalCameraParameters(XRPhysicalCameraParameters parameters)
+    {
+        // Sensor Size Section
+        ImGui.SeparatorText("Sensor / Filmback");
+
+        float sensorW = parameters.SensorWidthMm;
+        if (ImGui.DragFloat("Sensor Width (mm)", ref sensorW, 0.1f, 0.1f, 100.0f, "%.2f"))
+            parameters.SensorWidthMm = MathF.Max(0.1f, sensorW);
+
+        float sensorH = parameters.SensorHeightMm;
+        if (ImGui.DragFloat("Sensor Height (mm)", ref sensorH, 0.1f, 0.1f, 100.0f, "%.2f"))
+            parameters.SensorHeightMm = MathF.Max(0.1f, sensorH);
+
+        // Sensor presets
+        if (ImGui.BeginCombo("Sensor Preset", "Select"))
+        {
+            if (ImGui.Selectable("Full Frame (36x24mm)"))
+            {
+                parameters.SensorWidthMm = 36.0f;
+                parameters.SensorHeightMm = 24.0f;
+            }
+            if (ImGui.Selectable("APS-C (23.5x15.6mm)"))
+            {
+                parameters.SensorWidthMm = 23.5f;
+                parameters.SensorHeightMm = 15.6f;
+            }
+            if (ImGui.Selectable("Super 35 (24.89x18.66mm)"))
+            {
+                parameters.SensorWidthMm = 24.89f;
+                parameters.SensorHeightMm = 18.66f;
+            }
+            if (ImGui.Selectable("Micro Four Thirds (17.3x13mm)"))
+            {
+                parameters.SensorWidthMm = 17.3f;
+                parameters.SensorHeightMm = 13.0f;
+            }
+            if (ImGui.Selectable("IMAX (70x48.5mm)"))
+            {
+                parameters.SensorWidthMm = 70.0f;
+                parameters.SensorHeightMm = 48.5f;
+            }
+            ImGui.EndCombo();
+        }
+
+        ImGui.Spacing();
+
+        // Lens Section
+        ImGui.SeparatorText("Lens");
+
+        float focalLength = parameters.FocalLengthMm;
+        if (ImGui.DragFloat("Focal Length (mm)", ref focalLength, 0.5f, 1.0f, 1200.0f, "%.1f"))
+            parameters.FocalLengthMm = MathF.Max(1.0f, focalLength);
+
+        // Common focal length presets
+        if (ImGui.BeginCombo("Focal Length Preset", "Select"))
+        {
+            float[] presets = [14, 24, 35, 50, 85, 100, 135, 200, 300, 400, 600];
+            foreach (float preset in presets)
+            {
+                if (ImGui.Selectable($"{preset}mm"))
+                    parameters.FocalLengthMm = preset;
+            }
+            ImGui.EndCombo();
+        }
+
+        ImGui.TextDisabled($"Vertical FOV: {parameters.VerticalFieldOfViewDegrees:F1}°");
+        ImGui.TextDisabled($"Horizontal FOV: {parameters.HorizontalFieldOfViewDegrees:F1}°");
+
+        ImGui.Spacing();
+
+        // Resolution Section
+        ImGui.SeparatorText("Output Resolution");
+
+        bool inheritRes = parameters.InheritResolution;
+        if (ImGui.Checkbox("Inherit from Render Area", ref inheritRes))
+            parameters.InheritResolution = inheritRes;
+
+        using (new ImGuiDisabledScope(parameters.InheritResolution))
+        {
+            int resW = parameters.ResolutionWidthPx;
+            if (ImGui.DragInt("Width (px)", ref resW, 1.0f, 1, 16384))
+                parameters.ResolutionWidthPx = Math.Max(1, resW);
+
+            int resH = parameters.ResolutionHeightPx;
+            if (ImGui.DragInt("Height (px)", ref resH, 1.0f, 1, 16384))
+                parameters.ResolutionHeightPx = Math.Max(1, resH);
+        }
+
+        ImGui.Spacing();
+
+        // Principal Point Section
+        ImGui.SeparatorText("Principal Point");
+
+        bool inheritPP = parameters.InheritPrincipalPoint;
+        if (ImGui.Checkbox("Center (Auto)", ref inheritPP))
+            parameters.InheritPrincipalPoint = inheritPP;
+
+        using (new ImGuiDisabledScope(parameters.InheritPrincipalPoint))
+        {
+            Vector2 pp = parameters.PrincipalPointPx;
+            if (ImGui.DragFloat2("Principal Point (px)", ref pp, 1.0f))
+                parameters.PrincipalPointPx = pp;
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The optical center of the lens.\nOrigin is top-left, X right, Y down.\nUsed for off-axis projections.");
+    }
+
+    /// <summary>
+    /// Draws the custom editor UI for OpenXR asymmetric FOV camera parameters.
+    /// Shows the four angle boundaries in both radians and degrees.
+    /// </summary>
+    private static void DrawOpenXRFovParameters(XROpenXRFovCameraParameters parameters)
+    {
+        ImGui.SeparatorText("Asymmetric FOV Angles");
+
+        ImGui.TextDisabled("Angles are in radians. Positive = outward from center.");
+        ImGui.TextDisabled("Left/Down are typically negative, Right/Up are positive.");
+
+        ImGui.Spacing();
+
+        // Left angle (typically negative)
+        float left = parameters.AngleLeft;
+        float leftDeg = float.RadiansToDegrees(left);
+        if (ImGui.DragFloat("Left Angle", ref left, 0.01f, -MathF.PI / 2.0f, 0.0f, $"{left:F3} rad ({leftDeg:F1}°)"))
+            parameters.AngleLeft = left;
+
+        // Right angle (typically positive)
+        float right = parameters.AngleRight;
+        float rightDeg = float.RadiansToDegrees(right);
+        if (ImGui.DragFloat("Right Angle", ref right, 0.01f, 0.0f, MathF.PI / 2.0f, $"{right:F3} rad ({rightDeg:F1}°)"))
+            parameters.AngleRight = right;
+
+        // Up angle (typically positive)
+        float up = parameters.AngleUp;
+        float upDeg = float.RadiansToDegrees(up);
+        if (ImGui.DragFloat("Up Angle", ref up, 0.01f, 0.0f, MathF.PI / 2.0f, $"{up:F3} rad ({upDeg:F1}°)"))
+            parameters.AngleUp = up;
+
+        // Down angle (typically negative)
+        float down = parameters.AngleDown;
+        float downDeg = float.RadiansToDegrees(down);
+        if (ImGui.DragFloat("Down Angle", ref down, 0.01f, -MathF.PI / 2.0f, 0.0f, $"{down:F3} rad ({downDeg:F1}°)"))
+            parameters.AngleDown = down;
+
+        ImGui.Spacing();
+
+        // Calculated total FOV
+        float hFov = float.RadiansToDegrees(right - left);
+        float vFov = float.RadiansToDegrees(up - down);
+        ImGui.TextDisabled($"Total Horizontal FOV: {hFov:F1}°");
+        ImGui.TextDisabled($"Total Vertical FOV: {vFov:F1}°");
+
+        ImGui.Spacing();
+
+        // Symmetric preset button
+        if (ImGui.Button("Make Symmetric"))
+        {
+            float avgH = (MathF.Abs(left) + MathF.Abs(right)) / 2.0f;
+            float avgV = (MathF.Abs(up) + MathF.Abs(down)) / 2.0f;
+            parameters.SetAngles(-avgH, avgH, avgV, -avgV);
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Reset to 90° Symmetric"))
+        {
+            float halfFov = MathF.PI / 4.0f; // 45 degrees
+            parameters.SetAngles(-halfFov, halfFov, halfFov, -halfFov);
+        }
     }
 
     private static void DrawOpenVREyeParameters(XROVRCameraParameters parameters)

@@ -104,30 +104,97 @@ namespace XREngine.Rendering
     {
         #region Fields
 
+        /// <summary>
+        /// The transform that defines this camera's position and orientation in world space.
+        /// Used to calculate view matrices and camera direction vectors.
+        /// </summary>
         private TransformBase? _transform;
+
+        /// <summary>
+        /// Bit mask determining which layers this camera renders.
+        /// Objects on layers not included in this mask are culled during visibility collection.
+        /// Defaults to LayerMask.Everything (all layers visible).
+        /// </summary>
         private LayerMask _cullingMask = LayerMask.Everything;
+
+        /// <summary>
+        /// Maximum distance from the camera at which shadows are collected.
+        /// Lights beyond this distance won't cast shadows for this camera.
+        /// Default is PositiveInfinity, meaning shadows are collected up to FarZ.
+        /// </summary>
         private float _shadowCollectMaxDistance = float.PositiveInfinity;
+
+        /// <summary>
+        /// The projection parameters (FOV, aspect ratio, near/far planes) for this camera.
+        /// Can be perspective or orthographic depending on the parameter type.
+        /// </summary>
         private XRCameraParameters? _parameters;
+
+        /// <summary>
+        /// Collection of post-processing states keyed by render pipeline.
+        /// Each pipeline can have its own set of post-process effect configurations.
+        /// </summary>
         private CameraPostProcessStateCollection _postProcessStates = new();
+
+        /// <summary>
+        /// Optional custom material used for post-processing passes.
+        /// When set, overrides the default post-process material.
+        /// </summary>
         private XRMaterial? _postProcessMaterial;
+
+        /// <summary>
+        /// The render pipeline defining how this camera renders the scene.
+        /// Contains the sequence of render passes (G-buffer, lighting, post-process, etc.).
+        /// </summary>
         private RenderPipeline? _renderPipeline = null;
+
+        /// <summary>
+        /// Cached projection matrix with oblique near plane clipping applied.
+        /// Recalculated when transform changes or oblique plane is set.
+        /// </summary>
         private Matrix4x4 _obliqueProjectionMatrix = Matrix4x4.Identity;
+
+        /// <summary>
+        /// Optional oblique near clipping plane in world space.
+        /// When set, modifies the projection to clip against this plane instead of the standard near plane.
+        /// Used for portal/mirror rendering and water reflections.
+        /// </summary>
         private Plane? _obliqueNearClippingPlane = null;
+
+        /// <summary>
+        /// Stack of projection jitter offsets in clip space.
+        /// Multiple systems (TAA, DLSS, etc.) can push jitter without conflicting.
+        /// The topmost value is applied to the projection matrix.
+        /// </summary>
         private readonly Stack<Vector2> _projectionJitterStack = new();
 
         #endregion
 
         #region Constructors
 
+        /// <summary>
+        /// Creates a new camera with default settings.
+        /// Sets up viewport event handlers for tracking viewport additions/removals.
+        /// </summary>
         public XRCamera()
         {
             Viewports.PostAnythingAdded += OnViewportAdded;
             Viewports.PostAnythingRemoved += OnViewportRemoved;
         }
 
+        /// <summary>
+        /// Creates a new camera with the specified transform.
+        /// The transform defines the camera's position and orientation in world space.
+        /// </summary>
+        /// <param name="transform">The transform to use for view matrix calculation.</param>
         public XRCamera(TransformBase transform) : this()
             => Transform = transform;
 
+        /// <summary>
+        /// Creates a new camera with specified transform and projection parameters.
+        /// </summary>
+        /// <param name="transform">The transform to use for view matrix calculation.</param>
+        /// <param name="parameters">The projection parameters (FOV, aspect ratio, near/far planes).</param>
         public XRCamera(TransformBase transform, XRCameraParameters parameters) : this(transform)
             => Parameters = parameters;
 
@@ -136,17 +203,38 @@ namespace XREngine.Rendering
         #region Viewports
 
         /// <summary>
-        /// Viewports that this camera renders into.
+        /// Collection of viewports that this camera renders into.
+        /// A single camera can render to multiple viewports (e.g., split-screen, picture-in-picture).
+        /// Not serialized as viewport associations are established at runtime.
         /// </summary>
         [YamlIgnore]
         public EventList<XRViewport> Viewports { get; set; } = [];
 
+        /// <summary>
+        /// Raised when a viewport is added to this camera's Viewports collection.
+        /// Provides both the camera and the newly added viewport.
+        /// </summary>
         public event Action<XRCamera, XRViewport>? ViewportAdded;
+
+        /// <summary>
+        /// Raised when a viewport is removed from this camera's Viewports collection.
+        /// Provides both the camera and the removed viewport.
+        /// </summary>
         public event Action<XRCamera, XRViewport>? ViewportRemoved;
 
+        /// <summary>
+        /// Internal handler for viewport removal events.
+        /// Forwards the event to ViewportRemoved subscribers.
+        /// </summary>
+        /// <param name="item">The viewport that was removed.</param>
         private void OnViewportRemoved(XRViewport item)
             => ViewportRemoved?.Invoke(this, item);
 
+        /// <summary>
+        /// Internal handler for viewport addition events.
+        /// Forwards the event to ViewportAdded subscribers.
+        /// </summary>
+        /// <param name="item">The viewport that was added.</param>
         private void OnViewportAdded(XRViewport item)
             => ViewportAdded?.Invoke(this, item);
 
@@ -187,24 +275,49 @@ namespace XREngine.Rendering
 
         #region Post-processing state
 
+        /// <summary>
+        /// Collection of post-processing states for different render pipelines.
+        /// Each pipeline can have its own configuration of post-process effects.
+        /// </summary>
         public CameraPostProcessStateCollection PostProcessStates
         {
             get => _postProcessStates;
             set => SetField(ref _postProcessStates, value ?? new CameraPostProcessStateCollection());
         }
 
+        /// <summary>
+        /// Gets the active post-process state for the current render pipeline.
+        /// Creates a new state if one doesn't exist for the active pipeline.
+        /// </summary>
+        /// <returns>The post-process state for the active pipeline, or null if no pipeline is set.</returns>
         public PipelinePostProcessState? GetActivePostProcessState()
         {
             var pipeline = _renderPipeline ?? RenderPipeline;
             return pipeline is null ? null : _postProcessStates.GetOrCreateState(pipeline);
         }
 
+        /// <summary>
+        /// Gets the state for a specific post-process stage by its key identifier.
+        /// </summary>
+        /// <param name="stageKey">The unique key identifying the post-process stage.</param>
+        /// <returns>The stage state, or null if not found.</returns>
         public PostProcessStageState? GetPostProcessStageState(string stageKey)
             => GetActivePostProcessState()?.GetStage(stageKey);
 
+        /// <summary>
+        /// Gets the state for a post-process stage by its settings type.
+        /// </summary>
+        /// <typeparam name="TSettings">The settings class type for the post-process stage.</typeparam>
+        /// <returns>The stage state, or null if not found.</returns>
         public PostProcessStageState? GetPostProcessStageState<TSettings>() where TSettings : class
             => GetActivePostProcessState()?.GetStage<TSettings>();
 
+        /// <summary>
+        /// Finds a post-process stage that contains a parameter with the specified name.
+        /// Useful for dynamic parameter lookup without knowing the exact stage type.
+        /// </summary>
+        /// <param name="parameterName">The name of the parameter to search for.</param>
+        /// <returns>The stage state containing the parameter, or null if not found.</returns>
         public PostProcessStageState? FindPostProcessStageByParameter(string parameterName)
             => GetActivePostProcessState()?.FindStageByParameter(parameterName);
 
@@ -226,6 +339,15 @@ namespace XREngine.Rendering
 
         #region Property change handlers
 
+        /// <summary>
+        /// Called before a property value changes. Handles cleanup of old values.
+        /// Specifically unsubscribes from the old transform's matrix change events.
+        /// </summary>
+        /// <typeparam name="T">The type of the property being changed.</typeparam>
+        /// <param name="propName">The name of the property being changed.</param>
+        /// <param name="field">The current (old) value of the property.</param>
+        /// <param name="new">The new value being assigned to the property.</param>
+        /// <returns>True if the change should proceed, false to cancel the change.</returns>
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
             bool change = base.OnPropertyChanging(propName, field, @new);
@@ -238,6 +360,15 @@ namespace XREngine.Rendering
             return change;
         }
 
+        /// <summary>
+        /// Called after a property value has changed. Handles setup for new values.
+        /// Specifically subscribes to the new transform's matrix change events
+        /// and recalculates the oblique projection matrix.
+        /// </summary>
+        /// <typeparam name="T">The type of the property that changed.</typeparam>
+        /// <param name="propName">The name of the property that changed.</param>
+        /// <param name="prev">The previous value of the property.</param>
+        /// <param name="field">The new (current) value of the property.</param>
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -250,6 +381,12 @@ namespace XREngine.Rendering
             }
         }
 
+        /// <summary>
+        /// Callback invoked when the camera's transform render matrix changes.
+        /// Triggers recalculation of the oblique projection matrix if one is set.
+        /// </summary>
+        /// <param name="base">The transform that changed.</param>
+        /// <param name="renderMatrix">The new render matrix value.</param>
         private void RenderMatrixChanged(TransformBase @base, Matrix4x4 renderMatrix)
             => CalculateObliqueProjectionMatrix();
 
@@ -293,6 +430,11 @@ namespace XREngine.Rendering
             return StateObject.New(PopProjectionJitter);
         }
 
+        /// <summary>
+        /// Removes the topmost jitter offset from the projection jitter stack.
+        /// Called automatically when a StateObject from PushProjectionJitter is disposed.
+        /// Safe to call when the stack is empty (no-op).
+        /// </summary>
         public void PopProjectionJitter()
         {
             if (_projectionJitterStack.Count <= 0)
@@ -301,14 +443,31 @@ namespace XREngine.Rendering
             _projectionJitterStack.Pop();
         }
 
+        /// <summary>
+        /// Removes all jitter offsets from the projection jitter stack.
+        /// Use to reset jitter state completely, such as when changing render modes.
+        /// </summary>
         public void ClearProjectionJitter()
             => _projectionJitterStack.Clear();
 
+        /// <summary>
+        /// Gets the base projection matrix without jitter applied.
+        /// Returns the oblique projection matrix if an oblique clipping plane is set,
+        /// otherwise returns the standard projection from Parameters.
+        /// </summary>
+        /// <returns>The base projection matrix.</returns>
         private Matrix4x4 GetBaseProjectionMatrix()
             => _obliqueNearClippingPlane != null
                 ? _obliqueProjectionMatrix
                 : Parameters.GetProjectionMatrix();
 
+        /// <summary>
+        /// Applies the current jitter offset to a projection matrix.
+        /// Modifies the appropriate matrix elements based on projection type
+        /// (orthographic vs perspective use different elements for translation).
+        /// </summary>
+        /// <param name="projection">The projection matrix to modify.</param>
+        /// <returns>The jittered projection matrix.</returns>
         private Matrix4x4 ApplyProjectionJitter(Matrix4x4 projection)
         {
             if (_projectionJitterStack.Count <= 0)
@@ -332,6 +491,11 @@ namespace XREngine.Rendering
             return projection;
         }
 
+        /// <summary>
+        /// Checks if a Vector2 is effectively zero (within floating-point epsilon).
+        /// </summary>
+        /// <param name="value">The vector to check.</param>
+        /// <returns>True if both components are within epsilon of zero.</returns>
         private static bool IsZeroVector(Vector2 value)
             => MathF.Abs(value.X) <= float.Epsilon && MathF.Abs(value.Y) <= float.Epsilon;
 
@@ -339,6 +503,11 @@ namespace XREngine.Rendering
 
         #region Oblique near clipping
 
+        /// <summary>
+        /// Recalculates the oblique projection matrix when the transform or clipping plane changes.
+        /// Transforms the oblique plane from world space to view space and applies it to the projection.
+        /// Only has effect when an oblique near clipping plane is set.
+        /// </summary>
         private void CalculateObliqueProjectionMatrix()
         {
             var nearPlane = _obliqueNearClippingPlane;
@@ -356,6 +525,11 @@ namespace XREngine.Rendering
             _obliqueProjectionMatrix = CalculateObliqueProjectionMatrix(Parameters.GetProjectionMatrix(), new(planeNormalView.X, planeNormalView.Y, planeNormalView.Z, XRMath.GetPlaneDistance(planePositionView, planeNormalView)));
         }
 
+        /// <summary>
+        /// Gets the inverse of the current projection matrix.
+        /// Used for unprojecting screen coordinates back to world space.
+        /// Logs a warning and returns identity if the matrix cannot be inverted.
+        /// </summary>
         public Matrix4x4 InverseProjectionMatrix
         {
             get
@@ -369,6 +543,11 @@ namespace XREngine.Rendering
             }
         }
 
+        /// <summary>
+        /// Creates default perspective camera parameters.
+        /// Returns a perspective camera with 90° FOV, no fixed aspect ratio, 0.1 near, 10000 far.
+        /// </summary>
+        /// <returns>Default perspective camera parameters.</returns>
         private static XRPerspectiveCameraParameters GetDefaultCameraParameters()
             => new(90.0f, null, 0.1f, 10000.0f);
 
@@ -478,9 +657,26 @@ namespace XREngine.Rendering
             return GeoUtil.ClosestPlanePointToPoint(-forward, XRMath.GetPlaneDistance(farPoint, -forward), point);
         }
 
+        /// <summary>
+        /// The camera's forward direction in world space (cached from transform).
+        /// </summary>
         public Vector3 WorldForward => Transform.WorldForward;
+
+        /// <summary>
+        /// The camera's forward direction used for rendering (may differ from WorldForward during interpolation).
+        /// </summary>
         public Vector3 RenderForward => Transform.RenderForward;
+
+        /// <summary>
+        /// The camera's forward direction in local space (typically negative Z).
+        /// </summary>
         public Vector3 LocalForward => Transform.LocalForward;
+
+        /// <summary>
+        /// Gets the camera's current forward direction in world space.
+        /// Recalculates from the transform if needed.
+        /// </summary>
+        /// <returns>The world-space forward direction vector.</returns>
         public Vector3 GetWorldForward()
             => Transform.GetWorldForward();
 
@@ -609,18 +805,46 @@ namespace XREngine.Rendering
         #endregion
 
         #region Lens Distortion helpers
+
+        /// <summary>
+        /// Immutable struct containing lens distortion parameters for coordinate conversion.
+        /// Encapsulates all settings needed to apply or invert lens distortion effects.
+        /// </summary>
+        /// <param name="mode">The type of lens distortion (None, Radial, RadialAutoFromFOV, Panini).</param>
+        /// <param name="intensity">The intensity of radial distortion (positive = barrel, negative = pincushion).</param>
+        /// <param name="paniniDistance">The Panini projection distance parameter (0 = rectilinear, 1 = cylindrical).</param>
+        /// <param name="paniniCrop">Scale factor to fit the Panini projection within the frame.</param>
+        /// <param name="paniniViewExtents">The view extents for Panini projection based on FOV and aspect.</param>
         private readonly struct LensParams(ELensDistortionMode mode, float intensity, float paniniDistance, float paniniCrop, Vector2 paniniViewExtents)
         {
+            /// <summary>The type of lens distortion being applied.</summary>
             public ELensDistortionMode Mode { get; } = mode;
+
+            /// <summary>Radial distortion intensity (positive = barrel, negative = pincushion).</summary>
             public float Intensity { get; } = intensity;
+
+            /// <summary>Panini projection distance (0-1, where 0 is rectilinear and 1 is cylindrical).</summary>
             public float PaniniDistance { get; } = paniniDistance;
+
+            /// <summary>Scale factor applied to fit Panini projection within the frame.</summary>
             public float PaniniCrop { get; } = paniniCrop;
+
+            /// <summary>The view extents used for Panini projection calculations.</summary>
             public Vector2 PaniniViewExtents { get; } = paniniViewExtents;
 
+            /// <summary>
+            /// Returns true if lens distortion is enabled and will have a visible effect.
+            /// For Panini, requires distance > 0. For radial, requires non-zero intensity.
+            /// </summary>
             public bool Enabled
                 => Mode != ELensDistortionMode.None && (Mode == ELensDistortionMode.Panini ? PaniniDistance > 0.0f : MathF.Abs(Intensity) > 0.0f);
         }
 
+        /// <summary>
+        /// Retrieves the current lens distortion parameters from the post-process settings.
+        /// Returns disabled parameters if no lens distortion settings are found or camera is not perspective.
+        /// </summary>
+        /// <returns>The active lens distortion parameters.</returns>
         private LensParams GetActiveLensParams()
         {
             var stage = GetPostProcessStageState<LensDistortionSettings>();
@@ -663,6 +887,14 @@ namespace XREngine.Rendering
             return new LensParams(mode, intensity, paniniDistance, paniniCrop, paniniViewExtents);
         }
 
+        /// <summary>
+        /// Applies forward lens distortion to UV coordinates.
+        /// Transforms undistorted UVs to distorted screen-space UVs.
+        /// Used when projecting world points to screen coordinates.
+        /// </summary>
+        /// <param name="uv01">Undistorted UV coordinates in [0,1] range.</param>
+        /// <param name="lens">The lens distortion parameters to apply.</param>
+        /// <returns>Distorted UV coordinates.</returns>
         private static Vector2 ApplyLensDistortionForward(Vector2 uv01, LensParams lens)
         {
             return lens.Mode switch
@@ -673,6 +905,14 @@ namespace XREngine.Rendering
             };
         }
 
+        /// <summary>
+        /// Inverts lens distortion from UV coordinates.
+        /// Transforms distorted screen-space UVs back to undistorted UVs.
+        /// Used when unprojecting screen coordinates to world rays.
+        /// </summary>
+        /// <param name="uv01">Distorted UV coordinates in [0,1] range.</param>
+        /// <param name="lens">The lens distortion parameters to invert.</param>
+        /// <returns>Undistorted UV coordinates.</returns>
         private static Vector2 ApplyLensDistortionInverse(Vector2 uv01, LensParams lens)
         {
             return lens.Mode switch
@@ -683,6 +923,14 @@ namespace XREngine.Rendering
             };
         }
 
+        /// <summary>
+        /// Applies radial (barrel/pincushion) distortion to UV coordinates.
+        /// Positive intensity creates barrel distortion, negative creates pincushion.
+        /// Uses the standard polynomial model: r' = r(1 + k*r²).
+        /// </summary>
+        /// <param name="uv01">Input UV coordinates in [0,1] range.</param>
+        /// <param name="intensity">Distortion intensity coefficient.</param>
+        /// <returns>Distorted UV coordinates.</returns>
         private static Vector2 ApplyRadialDistortion(Vector2 uv01, float intensity)
         {
             if (MathF.Abs(intensity) <= float.Epsilon)
@@ -699,6 +947,13 @@ namespace XREngine.Rendering
             return distorted + new Vector2(0.5f, 0.5f);
         }
 
+        /// <summary>
+        /// Inverts radial distortion using Newton-Raphson iteration.
+        /// Finds the undistorted radius r such that r(1 + k*r²) = r_distorted.
+        /// </summary>
+        /// <param name="uv01">Distorted UV coordinates in [0,1] range.</param>
+        /// <param name="intensity">Distortion intensity coefficient.</param>
+        /// <returns>Undistorted UV coordinates.</returns>
         private static Vector2 InvertRadialDistortion(Vector2 uv01, float intensity)
         {
             if (MathF.Abs(intensity) <= float.Epsilon)
@@ -724,6 +979,13 @@ namespace XREngine.Rendering
             return dir * r + new Vector2(0.5f, 0.5f);
         }
 
+        /// <summary>
+        /// Applies Panini projection distortion to UV coordinates.
+        /// Panini projection reduces peripheral stretching in wide-FOV images.
+        /// </summary>
+        /// <param name="uv01">Input UV coordinates in [0,1] range.</param>
+        /// <param name="lens">Lens parameters containing Panini settings.</param>
+        /// <returns>Distorted UV coordinates with Panini projection applied.</returns>
         private static Vector2 ApplyPaniniForward(Vector2 uv01, LensParams lens)
         {
             if (lens.PaniniDistance <= 0.0f)
@@ -735,6 +997,14 @@ namespace XREngine.Rendering
             return projNdc * 0.5f + new Vector2(0.5f, 0.5f);
         }
 
+        /// <summary>
+        /// Inverts Panini projection using iterative numerical solving.
+        /// Finds the undistorted view-space position whose Panini-projected UV matches the input.
+        /// Uses Newton-Raphson with numerical Jacobian for convergence.
+        /// </summary>
+        /// <param name="uv01">Distorted UV coordinates in [0,1] range.</param>
+        /// <param name="lens">Lens parameters containing Panini settings.</param>
+        /// <returns>Undistorted UV coordinates.</returns>
         private static Vector2 InvertPanini(Vector2 uv01, LensParams lens)
         {
             if (lens.PaniniDistance <= 0.0f)
@@ -776,6 +1046,13 @@ namespace XREngine.Rendering
             return uvUndistorted;
         }
 
+        /// <summary>
+        /// Helper method that applies Panini projection from view-space coordinates.
+        /// Converts view position through Panini projection and back to UV space.
+        /// </summary>
+        /// <param name="viewPos">Position in view space.</param>
+        /// <param name="lens">Lens parameters containing Panini settings.</param>
+        /// <returns>UV coordinates after Panini projection.</returns>
         private static Vector2 ApplyPaniniFromView(Vector2 viewPos, LensParams lens)
         {
             Vector2 projPos = ApplyPaniniProjection(viewPos, lens.PaniniDistance);
@@ -783,6 +1060,14 @@ namespace XREngine.Rendering
             return projNdc * 0.5f + new Vector2(0.5f, 0.5f);
         }
 
+        /// <summary>
+        /// Applies the core Panini projection transformation.
+        /// Projects a view-space position onto a cylindrical surface and then onto the image plane.
+        /// The distance parameter d controls interpolation between rectilinear (d=0) and cylindrical (d=1).
+        /// </summary>
+        /// <param name="viewPos">Position in view space to project.</param>
+        /// <param name="d">Panini distance parameter (0-1).</param>
+        /// <returns>Projected position on the image plane.</returns>
         private static Vector2 ApplyPaniniProjection(Vector2 viewPos, float d)
         {
             float viewDist = 1.0f + d;
@@ -801,20 +1086,48 @@ namespace XREngine.Rendering
 
         #region Rays / queries
 
+        /// <summary>
+        /// Creates a line segment from near plane to far plane through the specified screen point.
+        /// The segment endpoints are world-space positions on the camera's clipping planes.
+        /// </summary>
+        /// <param name="normalizedScreenPoint">Normalized screen coordinates in [0,1] range.</param>
+        /// <returns>A segment from near plane to far plane through the screen point.</returns>
         public Segment GetWorldSegment(Vector2 normalizedScreenPoint)
         {
             Vector3 start = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, 0.0f);
             Vector3 end = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, 1.0f);
             return new Segment(start, end);
         }
+
+        /// <summary>
+        /// Creates a ray from the camera's near plane through the specified screen point.
+        /// The ray originates at the near plane position and extends in the view direction.
+        /// </summary>
+        /// <param name="normalizedScreenPoint">Normalized screen coordinates in [0,1] range.</param>
+        /// <returns>A ray from near plane through the screen point into the scene.</returns>
         public Ray GetWorldRay(Vector2 normalizedScreenPoint)
         {
             Vector3 start = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, 0.0f);
             Vector3 end = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, 1.0f);
             return new Ray(start, end - start);
         }
+
+        /// <summary>
+        /// Gets the world-space position at a specific normalized depth through the screen point.
+        /// </summary>
+        /// <param name="normalizedScreenPoint">Normalized screen coordinates in [0,1] range.</param>
+        /// <param name="depth">Normalized depth (0 = near plane, 1 = far plane).</param>
+        /// <returns>World-space position at the specified depth.</returns>
         public Vector3 GetPointAtDepth(Vector2 normalizedScreenPoint, float depth)
             => NormalizedViewportToWorldCoordinate(normalizedScreenPoint, depth);
+
+        /// <summary>
+        /// Gets the world-space position at a specific distance along the view ray.
+        /// Unlike GetPointAtDepth, this uses linear distance from the camera rather than depth buffer values.
+        /// </summary>
+        /// <param name="normalizedScreenPoint">Normalized screen coordinates in [0,1] range.</param>
+        /// <param name="distance">Linear distance from the camera in world units.</param>
+        /// <returns>World-space position at the specified distance.</returns>
         public Vector3 GetPointAtDistance(Vector2 normalizedScreenPoint, float distance)
             => GetWorldSegment(normalizedScreenPoint).PointAtLineDistance(distance);
 
@@ -835,6 +1148,12 @@ namespace XREngine.Rendering
 
         #region Rendering uniforms / pipeline
 
+        /// <summary>
+        /// Sets ambient occlusion shader uniforms from this camera's post-process settings.
+        /// Falls back to default values if no AO settings are configured.
+        /// </summary>
+        /// <param name="program">The shader program to set uniforms on.</param>
+        /// <param name="overrideType">Optional override for the AO algorithm type.</param>
         public virtual void SetAmbientOcclusionUniforms(XRRenderProgram program, AmbientOcclusionSettings.EType? overrideType = null)
         {
             var stage = GetPostProcessStageState<AmbientOcclusionSettings>();
@@ -850,6 +1169,10 @@ namespace XREngine.Rendering
 
         // Post-process uniform setup moved to pipeline helpers.
 
+        /// <summary>
+        /// Optional custom material for post-processing passes.
+        /// When set, used instead of the default post-process material.
+        /// </summary>
         public XRMaterial? PostProcessMaterial
         {
             get => _postProcessMaterial;
@@ -866,6 +1189,13 @@ namespace XREngine.Rendering
             set => SetField(ref _renderPipeline, value);
         }
 
+        /// <summary>
+        /// Sets all camera-related shader uniforms for rendering.
+        /// Includes view/projection matrices, camera position, and direction vectors.
+        /// Handles both mono and stereo rendering modes with appropriate uniform names.
+        /// </summary>
+        /// <param name="program">The shader program to set uniforms on.</param>
+        /// <param name="stereoLeftEye">If true, sets left-eye uniforms; if false, sets right-eye uniforms (stereo mode only).</param>
         public virtual void SetUniforms(XRRenderProgram program, bool stereoLeftEye = true)
         {
             var tfm = Transform;
@@ -900,6 +1230,12 @@ namespace XREngine.Rendering
             Parameters.SetUniforms(program);
         }
 
+        /// <summary>
+        /// Gets the orthographic camera's bounds as a 2D rectangle if using orthographic projection.
+        /// Returns null if the camera is not using orthographic projection.
+        /// The bounds are translated by the camera's world position.
+        /// </summary>
+        /// <returns>The camera's view bounds, or null if not orthographic.</returns>
         public BoundingRectangleF? GetOrthoCameraBounds()
         {
             if (Parameters is not XROrthographicCameraParameters op)
