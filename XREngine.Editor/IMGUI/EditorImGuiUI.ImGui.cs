@@ -222,16 +222,16 @@ public static partial class EditorImGuiUI
                 _transformEditorCache.Clear();
             };
             Engine.Time.Timer.UpdateFrame += ProcessQueuedSceneEdits;
-            Engine.Time.Timer.UpdateFrame += EnsureViewportPanelWindowHooked;
+            Engine.Time.Timer.UpdateFrame += EnsureScenePanelWindowHooked;
             Selection.SelectionChanged += HandleSceneSelectionChanged;
         }
 
-        private static XRWindow? _viewportPanelHookedWindow;
-        private static XRViewport? _viewportPanelImGuiViewport;
+        private static XRWindow? _scenePanelHookedWindow;
+        private static XRViewport? _scenePanelImGuiViewport;
 
-        private static void EnsureViewportPanelWindowHooked()
+        private static void EnsureScenePanelWindowHooked()
         {
-            if (_viewportPanelHookedWindow is not null)
+            if (_scenePanelHookedWindow is not null)
                 return;
 
             if (!Engine.IsEditor)
@@ -244,11 +244,11 @@ public static partial class EditorImGuiUI
             if (window is null)
                 return;
 
-            _viewportPanelHookedWindow = window;
-            window.RenderViewportsCallback += RenderEditorViewportPanelMode;
+            _scenePanelHookedWindow = window;
+            window.RenderViewportsCallback += RenderEditorScenePanelMode;
         }
 
-        private static void RenderEditorViewportPanelMode()
+        private static void RenderEditorScenePanelMode()
         {
             if (Engine.Rendering.Settings.ViewportPresentationMode != Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel)
                 return;
@@ -256,7 +256,7 @@ public static partial class EditorImGuiUI
             if (AbstractRenderer.Current is not { } renderer)
                 return;
 
-            XRWindow? window = _viewportPanelHookedWindow;
+            XRWindow? window = _scenePanelHookedWindow;
             XRViewport? viewport = window?.Viewports.FirstOrDefault();
             if (viewport is null)
                 return;
@@ -269,9 +269,9 @@ public static partial class EditorImGuiUI
             if (fbSize.X <= 0 || fbSize.Y <= 0)
                 return;
 
-            _viewportPanelImGuiViewport ??= new XRViewport(window);
-            _viewportPanelImGuiViewport.Window = window;
-            _viewportPanelImGuiViewport.Resize((uint)fbSize.X, (uint)fbSize.Y, setInternalResolution: false);
+            _scenePanelImGuiViewport ??= new XRViewport(window);
+            _scenePanelImGuiViewport.Window = window;
+            _scenePanelImGuiViewport.Resize((uint)fbSize.X, (uint)fbSize.Y, setInternalResolution: false);
 
             // Clear the backbuffer since we won't be rendering the world to it in this mode.
             try
@@ -287,7 +287,7 @@ public static partial class EditorImGuiUI
                 // Best-effort clear; don't fail the frame.
             }
 
-            renderer.TryRenderImGui(_viewportPanelImGuiViewport, canvas: null, camera: viewport.ActiveCamera, draw: RenderEditor);
+            renderer.TryRenderImGui(_scenePanelImGuiViewport, canvas: null, camera: viewport.ActiveCamera, draw: RenderEditor);
         }
 
         private static partial void BeginAddComponentForHierarchyNode(SceneNode node);
@@ -541,7 +541,7 @@ public static partial class EditorImGuiUI
             DrawRenderPipelineGraphPanel();
             DrawShaderGraphPanel();
             DrawHierarchyPanel();
-            DrawViewportPanel();
+            DrawScenePanel();
             DrawInspectorPanel();
             DrawAssetExplorerPanel();
 
@@ -594,11 +594,11 @@ public static partial class EditorImGuiUI
             }
 
             bool uiWantsCapture = io.WantCaptureMouse || captureKeyboard;
-            bool allowEngineInputThroughViewportPanel =
+            bool allowEngineInputThroughScenePanel =
                 Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel &&
-                _viewportPanelInteracting;
+                _scenePanelInteracting;
 
-            Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughViewportPanel && Engine.PlayMode.State != EPlayModeState.EnteringPlay && !Engine.PlayMode.IsPlaying);
+            Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughScenePanel && Engine.PlayMode.State != EPlayModeState.EnteringPlay && !Engine.PlayMode.IsPlaying);
         }
 
         private static void SuppressUnexpectedImGuiDebugWindows()

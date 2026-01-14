@@ -27,7 +27,6 @@ namespace XREngine.Rendering.Pipelines.Commands
         private uint _currentWidth;
         private uint _currentHeight;
         private uint _frameIndex;
-        private bool _restirInitialized;
 
         private readonly uint _reservoirStride = (uint)Marshal.SizeOf<RestirGI.Reservoir>();
 
@@ -59,15 +58,6 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             uint width = (uint)region.Width;
             uint height = (uint)region.Height;
-
-            if (!_restirInitialized)
-            {
-                // Attempt NV ray tracing init once; fall back to compute path when unavailable.
-                if (!RestirGI.TryInit())
-                    Debug.LogWarning("ReSTIR NV ray tracing unavailable; falling back to compute path.");
-
-                _restirInitialized = true;
-            }
 
             if (!EnsurePrograms())
                 return;
@@ -109,6 +99,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private bool TryRayTrace(uint width, uint height)
         {
+            // Vulkan-only optional RT path.
+            if (!Engine.Rendering.State.IsVulkan)
+                return false;
+
             // Only try when fully configured
             if (RayTracingPipelineId == 0 || RayTracingSbtBufferId == 0 || RayTracingSbtStride == 0)
                 return false;

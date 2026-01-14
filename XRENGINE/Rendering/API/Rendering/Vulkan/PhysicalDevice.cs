@@ -39,6 +39,49 @@ public unsafe partial class VulkanRenderer
         // Intel PCI vendor ID.
         Engine.Rendering.State.IsIntel = properties.VendorID == 0x8086;
         Engine.Rendering.State.IsVulkan = true;
+
+        // Cache Vulkan ray tracing extension availability once at startup.
+        Engine.Rendering.State.HasVulkanRayTracing = ProbeVulkanRayTracingSupport(_physicalDevice);
+    }
+
+    private bool ProbeVulkanRayTracingSupport(PhysicalDevice device)
+    {
+        try
+        {
+            uint extensionsCount = 0;
+            Api!.EnumerateDeviceExtensionProperties(device, (byte*)null, ref extensionsCount, null);
+
+            var availableExtensions = new ExtensionProperties[extensionsCount];
+            fixed (ExtensionProperties* availableExtensionsPtr = availableExtensions)
+            {
+                Api!.EnumerateDeviceExtensionProperties(device, (byte*)null, ref extensionsCount, availableExtensionsPtr);
+            }
+
+            var availableExtensionNames = availableExtensions
+                .Select(static extension => Marshal.PtrToStringAnsi((IntPtr)extension.ExtensionName))
+                .Where(static n => !string.IsNullOrWhiteSpace(n))
+                .ToHashSet(StringComparer.Ordinal);
+
+            // Prefer KHR ray tracing pipeline; fall back to legacy NV extension if present.
+            bool hasKhrRt =
+                availableExtensionNames.Contains("VK_KHR_ray_tracing_pipeline") &&
+                availableExtensionNames.Contains("VK_KHR_acceleration_structure") &&
+                availableExtensionNames.Contains("VK_KHR_deferred_host_operations");
+            bool hasNvRt = availableExtensionNames.Contains("VK_NV_ray_tracing");
+
+            bool supported = hasKhrRt || hasNvRt;
+
+            Debug.Out(EOutputVerbosity.Normal, false, supported
+                ? "Vulkan ray tracing extensions: available"
+                : "Vulkan ray tracing extensions: not reported; RT features will remain disabled.");
+
+            return supported;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"Failed to query Vulkan ray tracing extensions: {ex.Message}");
+            return false;
+        }
     }
 
     private bool IsDeviceSuitable(PhysicalDevice device, out QueueFamilyIndices indices)

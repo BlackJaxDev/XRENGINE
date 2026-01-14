@@ -9,6 +9,11 @@ namespace XREngine.Components
         public class DebugDrawSphere(float radius, Vector3 localOffset, ColorF4 color, bool solid) : DebugShapeBase(color, solid)
         {
             /// <summary>
+            /// Parameterless constructor for serialization.
+            /// </summary>
+            public DebugDrawSphere() : this(1.0f, Vector3.Zero, ColorF4.White, false) { }
+
+            /// <summary>
             /// The radius of the sphere.
             /// </summary>
             public float Radius

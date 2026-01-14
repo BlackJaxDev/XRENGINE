@@ -1,5 +1,7 @@
 using XREngine.Data.Rendering;
 using XREngine.Rendering.RenderGraph;
+using System;
+using System.Linq;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -40,6 +42,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (SourceFBOName is null || DestinationFBOName is null)
                 return;
 
+            int passIndex = ResolvePassIndex($"Blit_{SourceFBOName}_to_{DestinationFBOName}");
+            using var passScope = passIndex != int.MinValue
+                ? Engine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                : default;
+
             var source = ActivePipelineInstance.GetFBO<XRFrameBuffer>(SourceFBOName);
             var destination = ActivePipelineInstance.GetFBO<XRFrameBuffer>(DestinationFBOName);
             if (source is null || destination is null)
@@ -53,6 +60,16 @@ namespace XREngine.Rendering.Pipelines.Commands
                 BlitDepth,
                 BlitStencil,
                 LinearFilter);
+        }
+
+        private int ResolvePassIndex(string passName)
+        {
+            var metadata = ParentPipeline?.PassMetadata;
+            if (metadata is null)
+                return int.MinValue;
+
+            var match = metadata.FirstOrDefault(m => string.Equals(m.Name, passName, StringComparison.OrdinalIgnoreCase));
+            return match?.PassIndex ?? int.MinValue;
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

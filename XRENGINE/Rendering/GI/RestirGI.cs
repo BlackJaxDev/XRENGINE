@@ -32,11 +32,6 @@ public static class RestirGI
     private static bool _supportLogged;
     private static bool _isRayTracingSupported;
 
-    static RestirGI()
-    {
-        VerifyRayTracingSupport(logSuccess: true);
-    }
-
     public static bool TryInit()
     {
         VerifyRayTracingSupport(logSuccess: false);
@@ -53,6 +48,10 @@ public static class RestirGI
     /// </summary>
     public static bool VerifyRayTracingSupport(bool logSuccess)
     {
+        // Vulkan-only feature path.
+        if (!Engine.Rendering.State.IsVulkan)
+            return false;
+
         if (_supportLogged)
             return _isRayTracingSupported;
 
@@ -67,7 +66,7 @@ public static class RestirGI
             }
             else
             {
-                Debug.LogWarning("ReSTIR NV ray tracing unavailable: GL_NV_ray_tracing extension not reported. Compute fallback will be used.");
+                Debug.LogWarning("ReSTIR NV ray tracing unavailable: GL_NV_ray_tracing not reported by the current OpenGL driver/context. Compute fallback will be used.");
             }
         }
         catch (DllNotFoundException ex)
@@ -90,7 +89,7 @@ public static class RestirGI
     public static void Init()
     {
         if (!TryInit())
-            throw new InvalidOperationException("GL_NV_ray_tracing is not available on the current device.");
+            throw new InvalidOperationException("GL_NV_ray_tracing is not available on the current OpenGL device/context.");
     }
 
     public static bool TryBind(uint pipeline)
@@ -190,7 +189,7 @@ public static class RestirGI
     public unsafe struct Reservoir
     {
         public Vector3 Li;              // sampled radiance
-        public float Pdf;               // sample’s PDF
+        public float Pdf;               // sampleï¿½s PDF
 
         public Vector3 SampleDir;       // sampled direction in world space
         public float W;                 // reservoir weight sum

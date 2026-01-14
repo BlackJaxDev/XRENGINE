@@ -24,6 +24,30 @@ namespace XREngine
             {
                 public static ulong RenderFrameId { get; private set; }
 
+                [ThreadStatic]
+                private static int _currentRenderGraphPassIndex;
+
+                static State()
+                {
+                    _currentRenderGraphPassIndex = int.MinValue;
+                }
+
+                /// <summary>
+                /// The render-graph pass index currently being executed by the active pipeline.
+                /// Vulkan uses this to align per-pass layout transitions and barriers with the pipeline DAG.
+                /// </summary>
+                public static int CurrentRenderGraphPassIndex => _currentRenderGraphPassIndex;
+
+                /// <summary>
+                /// Temporarily sets <see cref="CurrentRenderGraphPassIndex"/> for the duration of a scope.
+                /// </summary>
+                public static StateObject PushRenderGraphPassIndex(int passIndex)
+                {
+                    int previous = _currentRenderGraphPassIndex;
+                    _currentRenderGraphPassIndex = passIndex;
+                    return StateObject.New(() => _currentRenderGraphPassIndex = previous);
+                }
+
                 internal static void BeginRenderFrame()
                 {
                     unchecked
@@ -114,9 +138,15 @@ namespace XREngine
                 /// </summary>
                 public static bool IsVulkan { get; internal set; }
                 /// <summary>
-                /// True when GL_NV_ray_tracing is reported by the current OpenGL context.
+                /// Legacy OpenGL NV ray tracing availability (GL_NV_ray_tracing).
+                /// Note: engine ray tracing / DLSS / XeSS paths are Vulkan-focused; this is typically false.
                 /// </summary>
                 public static bool HasNvRayTracing { get; internal set; }
+
+                /// <summary>
+                /// True when the selected Vulkan physical device reports ray tracing pipeline extensions.
+                /// </summary>
+                public static bool HasVulkanRayTracing { get; internal set; }
 
                 /// <summary>
                 /// All OpenGL extensions reported by the current OpenGL context (via GL_NUM_EXTENSIONS + glGetStringi).

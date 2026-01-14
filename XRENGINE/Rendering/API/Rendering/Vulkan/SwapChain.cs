@@ -50,7 +50,12 @@ public unsafe partial class VulkanRenderer
     //private VkBuffer<UniformBufferObject>[]? uniformBuffers;
     private Format swapChainImageFormat;
     private Extent2D swapChainExtent;
-    //private VkTexture? _depth;
+
+    private Image _swapchainDepthImage;
+    private DeviceMemory _swapchainDepthMemory;
+    private ImageView _swapchainDepthView;
+    private Format _swapchainDepthFormat;
+    private ImageAspectFlags _swapchainDepthAspect;
 
     private void RecreateSwapChain()
     {
@@ -69,6 +74,7 @@ public unsafe partial class VulkanRenderer
     }
     private void DestroyAllSwapChainObjects()
     {
+        DestroyDebugTriangleResources();
         DestroyDepth();
         DestroyCommandBuffers();
         DestroyFrameBuffers();
@@ -85,6 +91,12 @@ public unsafe partial class VulkanRenderer
     {
         CreateSwapChain();
         CreateImageViews();
+
+        _swapchainDepthFormat = FindDepthFormat();
+        _swapchainDepthAspect = IsDepthStencilFormat(_swapchainDepthFormat)
+            ? (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)
+            : ImageAspectFlags.DepthBit;
+
         CreateRenderPass();
         //_testModel?.Generate();
         CreateDepth();
@@ -97,21 +109,85 @@ public unsafe partial class VulkanRenderer
 
     private void DestroyDepth()
     {
-        //_depth?.Deallocate();
+        if (_swapchainDepthView.Handle != 0)
+        {
+            Api!.DestroyImageView(device, _swapchainDepthView, null);
+            _swapchainDepthView = default;
+        }
+
+        if (_swapchainDepthImage.Handle != 0)
+        {
+            Api!.DestroyImage(device, _swapchainDepthImage, null);
+            _swapchainDepthImage = default;
+        }
+
+        if (_swapchainDepthMemory.Handle != 0)
+        {
+            Api!.FreeMemory(device, _swapchainDepthMemory, null);
+            _swapchainDepthMemory = default;
+        }
     }
 
     private void CreateDepth()
     {
-        //_depth = new VkTexture(this, swapChainExtent.Width, swapChainExtent.Height, FindDepthFormat())
-        //{
-        //    Tiling = ImageTiling.Optimal,
-        //    Usage = ImageUsageFlags.DepthStencilAttachmentBit,
-        //    Properties = MemoryPropertyFlags.DeviceLocalBit,
-        //    AspectFlags = ImageAspectFlags.DepthBit,
-        //    CreateSampler = false,
-        //};
-        //_depth.Allocate();
+        if (_swapchainDepthImage.Handle != 0)
+            return;
+
+        ImageCreateInfo imageInfo = new()
+        {
+            SType = StructureType.ImageCreateInfo,
+            ImageType = ImageType.Type2D,
+            Extent = new Extent3D(swapChainExtent.Width, swapChainExtent.Height, 1),
+            MipLevels = 1,
+            ArrayLayers = 1,
+            Format = _swapchainDepthFormat,
+            Tiling = ImageTiling.Optimal,
+            InitialLayout = ImageLayout.Undefined,
+            Usage = ImageUsageFlags.DepthStencilAttachmentBit,
+            Samples = SampleCountFlags.Count1Bit,
+            SharingMode = SharingMode.Exclusive,
+        };
+
+        if (Api!.CreateImage(device, ref imageInfo, null, out _swapchainDepthImage) != Result.Success)
+            throw new Exception("Failed to create swapchain depth image.");
+
+        Api!.GetImageMemoryRequirements(device, _swapchainDepthImage, out MemoryRequirements memRequirements);
+
+        MemoryAllocateInfo allocInfo = new()
+        {
+            SType = StructureType.MemoryAllocateInfo,
+            AllocationSize = memRequirements.Size,
+            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
+        };
+
+        if (Api!.AllocateMemory(device, ref allocInfo, null, out _swapchainDepthMemory) != Result.Success)
+            throw new Exception("Failed to allocate swapchain depth memory.");
+
+        if (Api!.BindImageMemory(device, _swapchainDepthImage, _swapchainDepthMemory, 0) != Result.Success)
+            throw new Exception("Failed to bind swapchain depth memory.");
+
+        ImageViewCreateInfo viewInfo = new()
+        {
+            SType = StructureType.ImageViewCreateInfo,
+            Image = _swapchainDepthImage,
+            ViewType = ImageViewType.Type2D,
+            Format = _swapchainDepthFormat,
+            SubresourceRange = new ImageSubresourceRange
+            {
+                AspectMask = _swapchainDepthAspect,
+                BaseMipLevel = 0,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1,
+            }
+        };
+
+        if (Api!.CreateImageView(device, ref viewInfo, null, out _swapchainDepthView) != Result.Success)
+            throw new Exception("Failed to create swapchain depth view.");
     }
+
+    private static bool IsDepthStencilFormat(Format format)
+        => format is Format.D32SfloatS8Uint or Format.D24UnormS8Uint or Format.D16UnormS8Uint;
 
     private Format FindSupportedFormat(IEnumerable<Format> candidates, ImageTiling tiling, FormatFeatureFlags features)
     {

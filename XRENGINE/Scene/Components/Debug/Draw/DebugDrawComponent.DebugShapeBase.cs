@@ -9,6 +9,11 @@ namespace XREngine.Components
         public abstract class DebugShapeBase(ColorF4 color, bool solid) : XRBase
         {
             /// <summary>
+            /// Parameterless constructor for serialization.
+            /// </summary>
+            protected DebugShapeBase() : this(ColorF4.White, false) { }
+
+            /// <summary>
             /// The color of the shape.
             /// </summary>
             public ColorF4 Color

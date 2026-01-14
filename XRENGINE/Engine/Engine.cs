@@ -74,6 +74,42 @@ namespace XREngine
         private static void OnPostEnterPlay_RebindRuntimeRendering()
             => RebindRuntimeRendering(ResolveStartupWorldForRebind(), "PostEnterPlay");
 
+        private static void LogViewportRebindSummary(string phase, XRWorldInstance worldInstance)
+        {
+
+            string worldName = worldInstance.TargetWorld?.Name ?? "<unknown>";
+            Debug.RenderingEvery(
+                $"ViewportRebind.{phase}.Summary.{worldInstance.GetHashCode()}",
+                TimeSpan.FromSeconds(0.5),
+                "[ViewportDiag] {0}: PlayMode={1} World={2} Windows={3}",
+                phase,
+                PlayMode.State,
+                worldName,
+                _windows.Count);
+
+            for (int i = 0; i < State.LocalPlayers.Length; i++)
+            {
+                var player = State.LocalPlayers[i];
+                string playerType = player?.GetType().Name ?? "<null>";
+                string pawnName = player?.ControlledPawn?.Name ?? "<null>";
+                int playerHash = player?.GetHashCode() ?? 0;
+                int viewportHash = player?.Viewport?.GetHashCode() ?? 0;
+                bool hasCamera = player?.ControlledPawn?.GetCamera() is not null;
+
+                Debug.RenderingEvery(
+                    $"ViewportRebind.{phase}.Player.{worldInstance.GetHashCode()}.{i}",
+                    TimeSpan.FromSeconds(0.5),
+                    "[ViewportDiag] {0}: P{1} CtrlType={2} CtrlHash={3} ViewportHash={4} Pawn={5} PawnHasCamera={6}",
+                    phase,
+                    i + 1,
+                    playerType,
+                    playerHash,
+                    viewportHash,
+                    pawnName,
+                    hasCamera);
+            }
+        }
+
         private static XRWorld? ResolveStartupWorldForRebind()
         {
             if (PlayMode.Configuration.StartupWorld is not null)
@@ -96,6 +132,8 @@ namespace XREngine
             {
                 XRWorldInstance? worldInstance = XRWorldInstance.GetOrInitWorld(world);
 
+                LogViewportRebindSummary(phase, worldInstance);
+
                 //if (Environment.GetEnvironmentVariable("XRE_DEBUG_RENDER_DUMP") == "1")
                     DumpWorldRenderablesOncePerPhase(worldInstance, phase);
 
@@ -104,14 +142,68 @@ namespace XREngine
 
                 foreach (var window in _windows)
                 {
+                    Debug.RenderingEvery(
+                        $"ViewportRebind.{phase}.Window.{window.GetHashCode()}",
+                        TimeSpan.FromSeconds(0.5),
+                        "[ViewportDiag] {0}: WindowHash={1} TargetWorldMatch={2} Viewports={3} PresentationMode={4}",
+                        phase,
+                        window.GetHashCode(),
+                        ReferenceEquals(window.TargetWorldInstance, worldInstance),
+                        window.Viewports.Count,
+                        Engine.Rendering.Settings.ViewportPresentationMode);
+
                     // Ensure the window is targeting the restored world instance.
                     if (!ReferenceEquals(window.TargetWorldInstance, worldInstance))
                         window.TargetWorldInstance = worldInstance;
+
+                    // If a window ended up with zero viewports (runtime-only), log it loudly.
+                    // We do not auto-create here unless explicitly needed; call sites can decide.
+                    if (window.Viewports.Count == 0)
+                    {
+                        Debug.RenderingWarningEvery(
+                            $"ViewportRebind.{phase}.WindowNoViewports.{window.GetHashCode()}",
+                            TimeSpan.FromSeconds(0.5),
+                            "[ViewportDiag] {0}: WindowHash={1} has 0 viewports. LocalPlayers={2}",
+                            phase,
+                            window.GetHashCode(),
+                            State.LocalPlayers.Count(p => p is not null));
+                    }
 
                     // Ensure viewports are linked to this window and have a world override.
                     foreach (var viewport in window.Viewports)
                     {
                         viewport.Window = window;
+
+                        // Repair stale player-controller references.
+                        // Snapshot restore (and controller type swaps) can leave XRViewport.AssociatedPlayer
+                        // pointing at a controller instance that is no longer the one stored in Engine.State.LocalPlayers.
+                        var associated = viewport.AssociatedPlayer;
+                        if (associated is not null)
+                        {
+                            var current = State.GetLocalPlayer(associated.LocalPlayerIndex) ?? State.GetOrCreateLocalPlayer(associated.LocalPlayerIndex);
+                            if (!ReferenceEquals(current, associated))
+                            {
+                                Debug.Out(
+                                    "[{0}] Rebind: viewport {1} had stale AssociatedPlayer. OldHash={2} NewHash={3} Index={4}",
+                                    phase,
+                                    viewport.Index,
+                                    associated.GetHashCode(),
+                                    current.GetHashCode(),
+                                    associated.LocalPlayerIndex);
+                                viewport.AssociatedPlayer = current;
+                            }
+                        }
+                        else
+                        {
+                            // Try to infer association from the player's Viewport pointer (also runtime-only).
+                            // This helps when the viewport survived but the association was lost.
+                            var inferred = State.LocalPlayers.FirstOrDefault(p => p is not null && ReferenceEquals(p.Viewport, viewport));
+                            if (inferred is not null)
+                            {
+                                Debug.Out("[{0}] Rebind: inferred AssociatedPlayer for viewport {1} -> P{2}", phase, viewport.Index, (int)inferred.LocalPlayerIndex + 1);
+                                viewport.AssociatedPlayer = inferred;
+                            }
+                        }
 
                         // LocalPlayerController.Viewport is runtime-only ([YamlIgnore]) and can be lost across snapshot restore.
                         // Without it, RefreshViewportCamera() cannot rebind the viewport's CameraComponent (resulting in black output).
@@ -123,6 +215,28 @@ namespace XREngine
 
                         // Rebind camera from controlled pawn (may have changed across restore / BeginPlay).
                         viewport.AssociatedPlayer?.RefreshViewportCamera();
+
+                        var p = viewport.AssociatedPlayer;
+                        var pawn = p?.ControlledPawn;
+                        var pawnCam = pawn?.GetCamera();
+                        var cam = viewport.ActiveCamera;
+                        int camViewportCount = cam?.Viewports.Count ?? 0;
+                        Debug.RenderingEvery(
+                            $"ViewportRebind.{phase}.VP.{window.GetHashCode()}.{viewport.Index}",
+                            TimeSpan.FromSeconds(0.5),
+                            "[ViewportDiag] {0}: Win={1} VP[{2}] AssocP={3} PHash={4} P.ViewportMatch={5} Pawn={6} PawnCamNull={7} VP.CameraComponentNull={8} ActiveCameraNull={9} Camera.Viewports={10} WorldNull={11}",
+                            phase,
+                            window.GetHashCode(),
+                            viewport.Index,
+                            p is null ? "<null>" : $"P{(int)p.LocalPlayerIndex + 1}",
+                            p?.GetHashCode() ?? 0,
+                            p is not null && ReferenceEquals(p.Viewport, viewport),
+                            pawn?.Name ?? "<null>",
+                            pawnCam is null,
+                            viewport.CameraComponent is null,
+                            cam is null,
+                            camViewportCount,
+                            viewport.World is null);
 
                         // Snapshot restore can invalidate cached GPU resources (textures/FBOs/programs).
                         // If the pipeline keeps references to objects whose underlying API handles were destroyed,

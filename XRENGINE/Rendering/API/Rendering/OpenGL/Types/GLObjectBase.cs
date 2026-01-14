@@ -542,7 +542,11 @@ namespace XREngine.Rendering.OpenGL
                 };
 
             public static InternalFormat ToInternalFormat(EPixelInternalFormat internalFormat)
-                => (InternalFormat)internalFormat.ConvertByName(typeof(InternalFormat));
+                // IMPORTANT: EPixelInternalFormat values are OpenGL numeric constants.
+                // Casting preserves the exact value (e.g., DepthComponent32f = 0x8CAC).
+                // Name-based conversion can accidentally map formats by partial name match
+                // (e.g., "*32f" -> Rgba32f), which breaks FBO completeness.
+                => (InternalFormat)(int)internalFormat;
 
             public static EPixelInternalFormat ToBaseInternalFormat(ESizedInternalFormat sizedInternalFormat)
                 => sizedInternalFormat switch
@@ -623,44 +627,96 @@ namespace XREngine.Rendering.OpenGL
                     _ => throw new ArgumentOutOfRangeException(nameof(sizedInternalFormat), sizedInternalFormat, null),
                 };
 
-            //public static ESizedInternalFormat ToSizedInternalFormat(EPixelInternalFormat internalFormat)
-            //    => internalFormat switch
-            //    {
-            //        EPixelInternalFormat.Rgb8 => ESizedInternalFormat.Rgb8,
-            //        EPixelInternalFormat.Rgba8 => ESizedInternalFormat.Rgba8,
-            //        EPixelInternalFormat.Rgba16 => ESizedInternalFormat.Rgba16,
-            //        EPixelInternalFormat.R8 => ESizedInternalFormat.R8,
-            //        EPixelInternalFormat.R16 => ESizedInternalFormat.R16,
-            //        EPixelInternalFormat.RG8 => ESizedInternalFormat.Rg8,
-            //        EPixelInternalFormat.RG16 => ESizedInternalFormat.Rg16,
-            //        EPixelInternalFormat.R16f => ESizedInternalFormat.R16f,
-            //        EPixelInternalFormat.R32f => ESizedInternalFormat.R32f,
-            //        EPixelInternalFormat.RG16f => ESizedInternalFormat.Rg16f,
-            //        EPixelInternalFormat.RG32f => ESizedInternalFormat.Rg32f,
-            //        EPixelInternalFormat.R8i => ESizedInternalFormat.R8i,
-            //        EPixelInternalFormat.R8ui => ESizedInternalFormat.R8ui,
-            //        EPixelInternalFormat.R16i => ESizedInternalFormat.R16i,
-            //        EPixelInternalFormat.R16ui => ESizedInternalFormat.R16ui,
-            //        EPixelInternalFormat.R32i => ESizedInternalFormat.R32i,
-            //        EPixelInternalFormat.R32ui => ESizedInternalFormat.R32ui,
-            //        EPixelInternalFormat.RG8i => ESizedInternalFormat.Rg8i,
-            //        EPixelInternalFormat.RG8ui => ESizedInternalFormat.Rg8ui,
-            //        EPixelInternalFormat.RG16i => ESizedInternalFormat.Rg16i,
-            //        EPixelInternalFormat.RG16ui => ESizedInternalFormat.Rg16ui,
-            //        EPixelInternalFormat.RG32i => ESizedInternalFormat.Rg32i,
-            //        EPixelInternalFormat.RG32ui => ESizedInternalFormat.Rg32ui,
-            //        EPixelInternalFormat.Rgb16f => ESizedInternalFormat.Rgb16f,
-            //        EPixelInternalFormat.Rgb32f => ESizedInternalFormat.Rgb32f,
-            //        EPixelInternalFormat.Rgba32f => ESizedInternalFormat.Rgba32f,
-            //        EPixelInternalFormat.Rgba16f => ESizedInternalFormat.Rgba16f,
-            //        EPixelInternalFormat.Rgba32ui => ESizedInternalFormat.Rgba32ui,
-            //        EPixelInternalFormat.Rgba16ui => ESizedInternalFormat.Rgba16ui,
-            //        EPixelInternalFormat.Rgba8ui => ESizedInternalFormat.Rgba8ui,
-            //        EPixelInternalFormat.Rgba32i => ESizedInternalFormat.Rgba32i,
-            //        EPixelInternalFormat.Rgba16i => ESizedInternalFormat.Rgba16i,
-            //        EPixelInternalFormat.Rgba8i => ESizedInternalFormat.Rgba8i,
-            //        _ => throw new ArgumentOutOfRangeException(nameof(internalFormat), internalFormat, null),
-            //    };
+            /// <summary>
+            /// Converts EPixelInternalFormat to ESizedInternalFormat for use with immutable texture storage.
+            /// Returns null if no direct sized equivalent exists (caller should use default).
+            /// </summary>
+            public static ESizedInternalFormat? ToSizedInternalFormat(EPixelInternalFormat internalFormat)
+                => internalFormat switch
+                {
+                    // Red channel formats
+                    EPixelInternalFormat.R8 => ESizedInternalFormat.R8,
+                    EPixelInternalFormat.R8SNorm => ESizedInternalFormat.R8Snorm,
+                    EPixelInternalFormat.R16 => ESizedInternalFormat.R16,
+                    EPixelInternalFormat.R16SNorm => ESizedInternalFormat.R16Snorm,
+                    EPixelInternalFormat.R16f => ESizedInternalFormat.R16f,
+                    EPixelInternalFormat.R32f => ESizedInternalFormat.R32f,
+                    EPixelInternalFormat.R8i => ESizedInternalFormat.R8i,
+                    EPixelInternalFormat.R8ui => ESizedInternalFormat.R8ui,
+                    EPixelInternalFormat.R16i => ESizedInternalFormat.R16i,
+                    EPixelInternalFormat.R16ui => ESizedInternalFormat.R16ui,
+                    EPixelInternalFormat.R32i => ESizedInternalFormat.R32i,
+                    EPixelInternalFormat.R32ui => ESizedInternalFormat.R32ui,
+
+                    // RG channel formats
+                    EPixelInternalFormat.RG8 => ESizedInternalFormat.Rg8,
+                    EPixelInternalFormat.RG8SNorm => ESizedInternalFormat.Rg8Snorm,
+                    EPixelInternalFormat.RG16 => ESizedInternalFormat.Rg16,
+                    EPixelInternalFormat.RG16SNorm => ESizedInternalFormat.Rg16Snorm,
+                    EPixelInternalFormat.RG16f => ESizedInternalFormat.Rg16f,
+                    EPixelInternalFormat.RG32f => ESizedInternalFormat.Rg32f,
+                    EPixelInternalFormat.RG8i => ESizedInternalFormat.Rg8i,
+                    EPixelInternalFormat.RG8ui => ESizedInternalFormat.Rg8ui,
+                    EPixelInternalFormat.RG16i => ESizedInternalFormat.Rg16i,
+                    EPixelInternalFormat.RG16ui => ESizedInternalFormat.Rg16ui,
+                    EPixelInternalFormat.RG32i => ESizedInternalFormat.Rg32i,
+                    EPixelInternalFormat.RG32ui => ESizedInternalFormat.Rg32ui,
+
+                    // RGB formats
+                    EPixelInternalFormat.R3G3B2 => ESizedInternalFormat.R3G3B2,
+                    EPixelInternalFormat.Rgb4 => ESizedInternalFormat.Rgb4,
+                    EPixelInternalFormat.Rgb5 => ESizedInternalFormat.Rgb5,
+                    EPixelInternalFormat.Rgb8 => ESizedInternalFormat.Rgb8,
+                    EPixelInternalFormat.Rgb8SNorm => ESizedInternalFormat.Rgb8Snorm,
+                    EPixelInternalFormat.Rgb10 => ESizedInternalFormat.Rgb10,
+                    EPixelInternalFormat.Rgb12 => ESizedInternalFormat.Rgb12,
+                    EPixelInternalFormat.Rgb16SNorm => ESizedInternalFormat.Rgb16Snorm,
+                    EPixelInternalFormat.Srgb8 => ESizedInternalFormat.Srgb8,
+                    EPixelInternalFormat.Rgb16f => ESizedInternalFormat.Rgb16f,
+                    EPixelInternalFormat.Rgb32f => ESizedInternalFormat.Rgb32f,
+                    EPixelInternalFormat.R11fG11fB10f => ESizedInternalFormat.R11fG11fB10f,
+                    EPixelInternalFormat.Rgb9E5 => ESizedInternalFormat.Rgb9E5,
+                    EPixelInternalFormat.Rgb8i => ESizedInternalFormat.Rgb8i,
+                    EPixelInternalFormat.Rgb8ui => ESizedInternalFormat.Rgb8ui,
+                    EPixelInternalFormat.Rgb16i => ESizedInternalFormat.Rgb16i,
+                    EPixelInternalFormat.Rgb16ui => ESizedInternalFormat.Rgb16ui,
+                    EPixelInternalFormat.Rgb32i => ESizedInternalFormat.Rgb32i,
+                    EPixelInternalFormat.Rgb32ui => ESizedInternalFormat.Rgb32ui,
+
+                    // RGBA formats
+                    EPixelInternalFormat.Rgba2 => ESizedInternalFormat.Rgba2,
+                    EPixelInternalFormat.Rgba4 => ESizedInternalFormat.Rgba4,
+                    EPixelInternalFormat.Rgb5A1 => ESizedInternalFormat.Rgb5A1,
+                    EPixelInternalFormat.Rgba8 => ESizedInternalFormat.Rgba8,
+                    EPixelInternalFormat.Rgba8SNorm => ESizedInternalFormat.Rgba8Snorm,
+                    EPixelInternalFormat.Rgb10A2 => ESizedInternalFormat.Rgb10A2,
+                    EPixelInternalFormat.Rgba12 => ESizedInternalFormat.Rgba12,
+                    EPixelInternalFormat.Rgba16 => ESizedInternalFormat.Rgba16,
+                    EPixelInternalFormat.Srgb8Alpha8 => ESizedInternalFormat.Srgb8Alpha8,
+                    EPixelInternalFormat.Rgba16f => ESizedInternalFormat.Rgba16f,
+                    EPixelInternalFormat.Rgba32f => ESizedInternalFormat.Rgba32f,
+                    EPixelInternalFormat.Rgba8i => ESizedInternalFormat.Rgba8i,
+                    EPixelInternalFormat.Rgba8ui => ESizedInternalFormat.Rgba8ui,
+                    EPixelInternalFormat.Rgba16i => ESizedInternalFormat.Rgba16i,
+                    EPixelInternalFormat.Rgba16ui => ESizedInternalFormat.Rgba16ui,
+                    EPixelInternalFormat.Rgba32i => ESizedInternalFormat.Rgba32i,
+                    EPixelInternalFormat.Rgba32ui => ESizedInternalFormat.Rgba32ui,
+
+                    // Depth formats - CRITICAL for shadow maps!
+                    EPixelInternalFormat.DepthComponent16 => ESizedInternalFormat.DepthComponent16,
+                    EPixelInternalFormat.DepthComponent24 => ESizedInternalFormat.DepthComponent24,
+                    EPixelInternalFormat.DepthComponent32f => ESizedInternalFormat.DepthComponent32f,
+
+                    // Depth-stencil formats
+                    EPixelInternalFormat.Depth24Stencil8 => ESizedInternalFormat.Depth24Stencil8,
+                    EPixelInternalFormat.Depth32fStencil8 => ESizedInternalFormat.Depth32fStencil8,
+
+                    // Stencil formats
+                    EPixelInternalFormat.StencilIndex8 => ESizedInternalFormat.StencilIndex8,
+
+                    // For unsized or legacy formats, return null to indicate caller should use defaults
+                    _ => null,
+                };
 
             protected virtual uint CreateObject()
                 => Renderer.CreateObjects(Type, 1)[0];

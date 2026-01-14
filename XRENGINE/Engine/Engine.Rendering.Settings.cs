@@ -27,7 +27,7 @@ namespace XREngine
             /// can provide the framebuffer-space render bounds (in window coordinates) that all viewports
             /// should render into for that frame.
             /// </summary>
-            public static Func<global::XREngine.Rendering.XRWindow, global::XREngine.Data.Geometry.BoundingRectangle?>? ViewportPanelRenderRegionProvider { get; set; }
+            public static Func<global::XREngine.Rendering.XRWindow, global::XREngine.Data.Geometry.BoundingRectangle?>? ScenePanelRenderRegionProvider { get; set; }
 
             /// <summary>
             private static EngineSettings _settings = new();
@@ -231,18 +231,32 @@ namespace XREngine
                 #region Editor / Viewport Presentation
 
                 private EViewportPresentationMode _viewportPresentationMode = EViewportPresentationMode.FullViewportBehindImGuiUI;
+                private int _scenePanelResizeDebounceMs = 0;
 
                 /// <summary>
                 /// Controls how the main world viewport is presented when Dear ImGui is active.
                 /// - FullViewportBehindImGuiUI: renders the world full-screen behind ImGui.
-                /// - UseViewportPanel: shows a dockable "Viewport" panel and constrains scene rendering to that panel.
+                /// - UseViewportPanel: shows a dockable "Scene" panel and constrains scene rendering to that panel.
                 /// </summary>
                 [Category("Editor")]
-                [Description("Controls whether the world renders full-screen behind ImGui UI, or is constrained to the docked Viewport panel.")]
+                [Description("Controls whether the world renders full-screen behind ImGui UI, or is constrained to the docked Scene panel.")]
                 public EViewportPresentationMode ViewportPresentationMode
                 {
                     get => _viewportPresentationMode;
                     set => SetField(ref _viewportPresentationMode, value);
+                }
+
+                /// <summary>
+                /// When using the docked Scene panel presentation mode, resizing the panel can generate many
+                /// intermediate sizes. This debounce delays viewport/FBO resizing until the size has stabilized.
+                /// Set to 0 to disable debouncing.
+                /// </summary>
+                [Category("Editor")]
+                [Description("Debounce in milliseconds for Scene panel resizes (0 disables).")]
+                public int ScenePanelResizeDebounceMs
+                {
+                    get => _scenePanelResizeDebounceMs;
+                    set => SetField(ref _scenePanelResizeDebounceMs, Math.Max(0, value));
                 }
 
                 #endregion
@@ -1334,6 +1348,15 @@ namespace XREngine
 
                 if (applyAll || propertyName == nameof(EngineSettings.UseGpuBvh))
                     Engine.Rendering.ApplyGpuBvhPreference();
+
+                if (applyAll || propertyName == nameof(EngineSettings.ViewportPresentationMode))
+                {
+                    foreach (var window in Engine.Windows)
+                    {
+                        window.InvalidateScenePanelResources();
+                        window.RequestRenderStateRecheck(resetCircuitBreaker: true);
+                    }
+                }
 
                 //if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
                 //    || propertyName == nameof(EngineSettings.DlssQuality)

@@ -11,42 +11,42 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
-    private static bool _viewportPanelInteracting;
+    private static bool _scenePanelInteracting;
 
-    private static BoundingRectangle? _viewportPanelRenderRegion;
+    private static BoundingRectangle? _scenePanelRenderRegion;
 
-    private static void DrawViewportPanel()
+    private static void DrawScenePanel()
     {
         if (Engine.Rendering.Settings.ViewportPresentationMode != Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel)
         {
-            _viewportPanelInteracting = false;
-            _viewportPanelRenderRegion = null;
+            _scenePanelInteracting = false;
+            _scenePanelRenderRegion = null;
             return;
         }
 
-        EnsureViewportPanelRenderRegionProvider();
+        EnsureScenePanelRenderRegionProvider();
 
         ImGuiWindowFlags flags =
             ImGuiWindowFlags.NoScrollbar |
             ImGuiWindowFlags.NoScrollWithMouse |
             ImGuiWindowFlags.NoCollapse;
 
-        if (!ImGui.Begin("Viewport", flags))
+        if (!ImGui.Begin("Scene", flags))
         {
-            _viewportPanelInteracting = false;
-            _viewportPanelRenderRegion = null;
+            _scenePanelInteracting = false;
+            _scenePanelRenderRegion = null;
             ImGui.End();
             return;
         }
 
-        _viewportPanelInteracting =
+        _scenePanelInteracting =
             ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows | ImGuiHoveredFlags.AllowWhenBlockedByActiveItem) ||
             ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows);
 
-        UpdateViewportPanelRenderRegion();
+        UpdateScenePanelRenderRegion();
 
         // Display the viewport FBO texture as an ImGui image
-        DisplayViewportPanelImage();
+        DisplayScenePanelImage();
 
         ImGui.End();
     }
@@ -55,13 +55,13 @@ public static partial class EditorImGuiUI
     /// Displays the viewport panel FBO texture as an ImGui image.
     /// This allows the scene render to respect ImGui's Z ordering.
     /// </summary>
-    private static void DisplayViewportPanelImage()
+    private static void DisplayScenePanelImage()
     {
         XRWindow? window = Engine.Windows.Count > 0 ? Engine.Windows[0] : null;
         if (window is null)
             return;
 
-        var texture = window.ViewportPanelTexture;
+        var texture = window.ScenePanelTexture;
         if (texture is null)
             return;
 
@@ -85,18 +85,18 @@ public static partial class EditorImGuiUI
         Vector2 uv1 = new(1.0f, 0.0f); // top-right
         ImGui.Image(handle, contentSize, uv0, uv1);
 
-        // Handle asset drop on the viewport image - must be right after ImGui.Image()
+        // Handle asset drop on the scene image - must be right after ImGui.Image()
         XRWorldInstance? world = TryGetActiveWorldInstance();
         if (world is not null)
-            HandleViewportModelAssetDrop(world);
+            HandleScenePanelModelAssetDrop(world);
     }
 
-    private static void EnsureViewportPanelRenderRegionProvider()
+    private static void EnsureScenePanelRenderRegionProvider()
     {
-        if (Engine.Rendering.ViewportPanelRenderRegionProvider is not null)
+        if (Engine.Rendering.ScenePanelRenderRegionProvider is not null)
             return;
 
-        Engine.Rendering.ViewportPanelRenderRegionProvider = window =>
+        Engine.Rendering.ScenePanelRenderRegionProvider = window =>
         {
             if (!Engine.IsEditor)
                 return null;
@@ -104,19 +104,19 @@ public static partial class EditorImGuiUI
             if (Engine.Rendering.Settings.ViewportPresentationMode != Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel)
                 return null;
 
-            if (_viewportPanelHookedWindow is not null && !ReferenceEquals(window, _viewportPanelHookedWindow))
+            if (_scenePanelHookedWindow is not null && !ReferenceEquals(window, _scenePanelHookedWindow))
                 return null;
 
-            return _viewportPanelRenderRegion;
+            return _scenePanelRenderRegion;
         };
     }
 
-    private static void UpdateViewportPanelRenderRegion()
+    private static void UpdateScenePanelRenderRegion()
     {
         XRWindow? window = Engine.Windows.Count > 0 ? Engine.Windows[0] : null;
         if (window is null)
         {
-            _viewportPanelRenderRegion = null;
+            _scenePanelRenderRegion = null;
             return;
         }
 
@@ -130,7 +130,7 @@ public static partial class EditorImGuiUI
 
         if (contentSize.X <= 1 || contentSize.Y <= 1)
         {
-            _viewportPanelRenderRegion = null;
+            _scenePanelRenderRegion = null;
             return;
         }
 
@@ -139,7 +139,7 @@ public static partial class EditorImGuiUI
 
         if (fb.X <= 0 || fb.Y <= 0)
         {
-            _viewportPanelRenderRegion = null;
+            _scenePanelRenderRegion = null;
             return;
         }
 
@@ -163,14 +163,14 @@ public static partial class EditorImGuiUI
 
         if (w <= 0 || h <= 0)
         {
-            _viewportPanelRenderRegion = null;
+            _scenePanelRenderRegion = null;
             return;
         }
 
-        _viewportPanelRenderRegion = new BoundingRectangle(x, y, w, h);
+        _scenePanelRenderRegion = new BoundingRectangle(x, y, w, h);
     }
 
-    private static void HandleViewportModelAssetDrop(XRWorldInstance world)
+    private static void HandleScenePanelModelAssetDrop(XRWorldInstance world)
     {
         if (!ImGui.BeginDragDropTarget())
             return;

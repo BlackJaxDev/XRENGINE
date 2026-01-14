@@ -22,9 +22,49 @@ public unsafe partial class VulkanRenderer
     private XRFrameBuffer? _boundDrawFrameBuffer;
     private XRFrameBuffer? _boundReadFrameBuffer;
 
+    internal Viewport GetCurrentViewport()
+        => _state.GetViewport();
+
+    internal Rect2D GetCurrentScissor()
+        => _state.GetScissor();
+
+    internal XRFrameBuffer? GetCurrentDrawFrameBuffer()
+        => _boundDrawFrameBuffer;
+
+    internal bool GetDepthTestEnabled()
+        => _state.GetDepthTestEnabled();
+
+    internal bool GetDepthWriteEnabled()
+        => _state.GetDepthWriteEnabled();
+
+    internal CompareOp GetDepthCompareOp()
+        => _state.GetDepthCompareOp();
+
+    internal uint GetStencilWriteMask()
+        => _state.GetStencilWriteMask();
+
+    internal ColorComponentFlags GetColorWriteMask()
+        => _state.GetColorWriteMask();
+
+    internal bool GetCroppingEnabled()
+        => _state.GetCroppingEnabled();
+
+    internal ColorF4 GetClearColorValue()
+        => _state.GetClearColorValue();
+
+    internal float GetClearDepthValue()
+        => _state.GetClearDepthValue();
+
+    internal uint GetClearStencilValue()
+        => _state.GetClearStencilValue();
+
+    internal Extent2D GetCurrentTargetExtent()
+        => _state.GetCurrentTargetExtent();
+
     private sealed class VulkanStateTracker
     {
         private Extent2D _swapchainExtent;
+        private Extent2D _currentTargetExtent;
         private bool _viewportExplicitlySet;
         private Viewport _viewport;
         private Rect2D _scissor;
@@ -65,28 +105,47 @@ public unsafe partial class VulkanRenderer
         public void SetSwapchainExtent(Extent2D extent)
         {
             _swapchainExtent = extent;
+            if (_currentTargetExtent.Width == 0 && _currentTargetExtent.Height == 0)
+                _currentTargetExtent = extent;
             if (!_viewportExplicitlySet)
             {
-                _viewport = DefaultViewport(extent);
+                _viewport = DefaultViewport(_currentTargetExtent);
             }
 
             if (!CroppingEnabled)
             {
-                _scissor = DefaultScissor(extent);
+                _scissor = DefaultScissor(_currentTargetExtent);
             }
         }
 
+        public void SetCurrentTargetExtent(Extent2D extent)
+        {
+            _currentTargetExtent = extent;
+            if (!_viewportExplicitlySet)
+                _viewport = DefaultViewport(extent);
+
+            if (!CroppingEnabled)
+                _scissor = DefaultScissor(extent);
+        }
+
+        public Extent2D GetCurrentTargetExtent()
+            => _currentTargetExtent;
+
         public Viewport GetViewport()
-            => _viewportExplicitlySet ? _viewport : DefaultViewport(_swapchainExtent);
+            => _viewportExplicitlySet ? _viewport : DefaultViewport(_currentTargetExtent);
 
         public void SetViewport(BoundingRectangle region)
         {
+            // Engine regions are specified in OpenGL-style bottom-left coordinates.
+            // Vulkan's viewport/scissor use top-left framebuffer coordinates, so we flip Y.
+            // Negative viewport height flips the coordinate system to match OpenGL.
+            float viewportY = _currentTargetExtent.Height - region.Y;
             _viewport = new Viewport
             {
                 X = region.X,
-                Y = region.Y,
+                Y = viewportY,
                 Width = region.Width,
-                Height = region.Height,
+                Height = -region.Height,
                 MinDepth = 0.0f,
                 MaxDepth = 1.0f
             };
@@ -94,13 +153,15 @@ public unsafe partial class VulkanRenderer
         }
 
         public Rect2D GetScissor()
-            => CroppingEnabled ? _scissor : DefaultScissor(_swapchainExtent);
+            => CroppingEnabled ? _scissor : DefaultScissor(_currentTargetExtent);
 
         public void SetScissor(BoundingRectangle region)
         {
+            // Convert bottom-left origin to Vulkan's top-left scissor origin.
+            int yTopLeft = (int)_currentTargetExtent.Height - (region.Y + region.Height);
             _scissor = new Rect2D
             {
-                Offset = new Offset2D(region.X, region.Y),
+                Offset = new Offset2D(region.X, yTopLeft),
                 Extent = new Extent2D((uint)Math.Max(region.Width, 0), (uint)Math.Max(region.Height, 0))
             };
         }
@@ -109,8 +170,18 @@ public unsafe partial class VulkanRenderer
         {
             CroppingEnabled = enabled;
             if (!enabled)
-                _scissor = DefaultScissor(_swapchainExtent);
+                _scissor = DefaultScissor(_currentTargetExtent);
         }
+
+        public bool GetDepthTestEnabled() => DepthTestEnabled;
+        public bool GetDepthWriteEnabled() => DepthWriteEnabled;
+        public CompareOp GetDepthCompareOp() => DepthCompareOp;
+        public uint GetStencilWriteMask() => StencilWriteMask;
+        public ColorComponentFlags GetColorWriteMask() => ColorWriteMask;
+        public bool GetCroppingEnabled() => CroppingEnabled;
+        public ColorF4 GetClearColorValue() => ClearColor;
+        public float GetClearDepthValue() => ClearDepth;
+        public uint GetClearStencilValue() => ClearStencil;
 
         private static Viewport DefaultViewport(Extent2D extent)
             => new()
@@ -204,6 +275,8 @@ public unsafe partial class VulkanRenderer
     private void OnSwapchainExtentChanged(Extent2D extent)
     {
         _state.SetSwapchainExtent(extent);
+        if (_boundDrawFrameBuffer is null)
+            _state.SetCurrentTargetExtent(extent);
         MarkCommandBuffersDirty();
     }
 
@@ -214,7 +287,7 @@ public unsafe partial class VulkanRenderer
         _resourceAllocator.RebuildPhysicalPlan(this);
         _resourceAllocator.AllocatePhysicalImages(this);
 
-        IReadOnlyCollection<RenderPassMetadata>? passMetadata = Engine.Rendering.State.CurrentRenderingPipeline?.MeshRenderCommands.PassMetadata?.Values?.ToList();
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata = Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata;
         _barrierPlanner.Rebuild(passMetadata, _resourcePlanner, _resourceAllocator);
     }
 

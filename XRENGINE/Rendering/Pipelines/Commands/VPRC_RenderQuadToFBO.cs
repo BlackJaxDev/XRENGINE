@@ -1,5 +1,6 @@
 using System;
 using XREngine.Rendering.RenderGraph;
+using System.Linq;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -25,11 +26,30 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (SourceQuadFBOName is null)
                 return;
 
+            string destination = DestinationFBOName
+                ?? ActivePipelineInstance.RenderState.OutputFBO?.Name
+                ?? RenderGraphResourceNames.OutputRenderTarget;
+
+            int passIndex = ResolvePassIndex($"QuadBlit_{SourceQuadFBOName}_to_{destination}");
+            using var passScope = passIndex != int.MinValue
+                ? Engine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                : default;
+
             XRQuadFrameBuffer? sourceFBO = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(SourceQuadFBOName);
             if (sourceFBO is null)
                 return;
 
             sourceFBO.Render(DestinationFBOName is null ? null : ActivePipelineInstance.GetFBO<XRFrameBuffer>(DestinationFBOName));
+        }
+
+        private int ResolvePassIndex(string passName)
+        {
+            var metadata = ParentPipeline?.PassMetadata;
+            if (metadata is null)
+                return int.MinValue;
+
+            var match = metadata.FirstOrDefault(m => string.Equals(m.Name, passName, StringComparison.OrdinalIgnoreCase));
+            return match?.PassIndex ?? int.MinValue;
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

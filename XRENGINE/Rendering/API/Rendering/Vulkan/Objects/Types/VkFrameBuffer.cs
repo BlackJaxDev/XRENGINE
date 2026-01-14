@@ -9,16 +9,125 @@ public unsafe partial class VulkanRenderer
     public class VkFrameBuffer(VulkanRenderer api, XRFrameBuffer data) : VkObject<XRFrameBuffer>(api, data)
     {
         private Framebuffer _frameBuffer = default;
+        private RenderPass _renderPass = default;
+        private FrameBufferAttachmentSignature[]? _attachmentSignature;
 
         public override VkObjectType Type { get; } = VkObjectType.Framebuffer;
         public override bool IsGenerated { get; }
 
         public Framebuffer FrameBuffer => _frameBuffer;
+        public RenderPass RenderPass => _renderPass;
+
+        internal uint AttachmentCount => (uint)(_attachmentSignature?.Length ?? 0);
+
+        internal void WriteClearValues(ClearValue* destination, uint clearValueCount)
+        {
+            if (_attachmentSignature is null || clearValueCount == 0)
+                return;
+
+            var clearColor = Renderer.GetClearColorValue();
+            float clearDepth = Renderer.GetClearDepthValue();
+            uint clearStencil = Renderer.GetClearStencilValue();
+
+            uint count = Math.Min(clearValueCount, (uint)_attachmentSignature.Length);
+            for (uint i = 0; i < count; i++)
+            {
+                var sig = _attachmentSignature[i];
+                if (sig.Role == AttachmentRole.Color)
+                {
+                    destination[i] = new ClearValue
+                    {
+                        Color = new ClearColorValue
+                        {
+                            Float32_0 = clearColor.R,
+                            Float32_1 = clearColor.G,
+                            Float32_2 = clearColor.B,
+                            Float32_3 = clearColor.A
+                        }
+                    };
+                }
+                else
+                {
+                    destination[i] = new ClearValue
+                    {
+                        DepthStencil = new ClearDepthStencilValue
+                        {
+                            Depth = clearDepth,
+                            Stencil = clearStencil
+                        }
+                    };
+                }
+            }
+        }
+
+        internal uint WriteClearAttachments(ClearAttachment* destination, bool clearColor, bool clearDepth, bool clearStencil)
+        {
+            if (_attachmentSignature is null)
+                return 0;
+
+            uint count = 0;
+
+            if (clearColor)
+            {
+                var clearColorValue = Renderer.GetClearColorValue();
+                uint colorIndexInSubpass = 0;
+                for (int i = 0; i < _attachmentSignature.Length; i++)
+                {
+                    var sig = _attachmentSignature[i];
+                    if (sig.Role != AttachmentRole.Color)
+                        continue;
+
+                    destination[count++] = new ClearAttachment
+                    {
+                        AspectMask = ImageAspectFlags.ColorBit,
+                        ColorAttachment = colorIndexInSubpass,
+                        ClearValue = new ClearValue
+                        {
+                            Color = new ClearColorValue
+                            {
+                                Float32_0 = clearColorValue.R,
+                                Float32_1 = clearColorValue.G,
+                                Float32_2 = clearColorValue.B,
+                                Float32_3 = clearColorValue.A
+                            }
+                        }
+                    };
+
+                    colorIndexInSubpass++;
+                }
+            }
+
+            if (clearDepth || clearStencil)
+            {
+                ImageAspectFlags aspects = ImageAspectFlags.None;
+                if (clearDepth)
+                    aspects |= ImageAspectFlags.DepthBit;
+                if (clearStencil)
+                    aspects |= ImageAspectFlags.StencilBit;
+
+                destination[count++] = new ClearAttachment
+                {
+                    AspectMask = aspects,
+                    ClearValue = new ClearValue
+                    {
+                        DepthStencil = new ClearDepthStencilValue
+                        {
+                            Depth = Renderer.GetClearDepthValue(),
+                            Stencil = Renderer.GetClearStencilValue()
+                        }
+                    }
+                };
+            }
+
+            return count;
+        }
 
         public override void Destroy()
         {
             Api!.DestroyFramebuffer(Device, _frameBuffer, null);
             _frameBuffer = default;
+            _renderPass = default;
+            _attachmentSignature = null;
         }
 
         protected override uint CreateObjectInternal()
@@ -34,6 +143,8 @@ public unsafe partial class VulkanRenderer
             }
 
             RenderPass renderPass = Renderer.GetOrCreateFrameBufferRenderPass(signatures);
+            _renderPass = renderPass;
+            _attachmentSignature = signatures;
 
             fixed (ImageView* viewsPtr = views)
             {

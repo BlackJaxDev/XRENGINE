@@ -156,6 +156,11 @@ namespace XREngine.Rendering.Vulkan
                     return;
             }
 
+            if (_boundDrawFrameBuffer is null)
+                _state.SetCurrentTargetExtent(swapChainExtent);
+            else
+                _state.SetCurrentTargetExtent(new Extent2D(Math.Max(_boundDrawFrameBuffer.Width, 1u), Math.Max(_boundDrawFrameBuffer.Height, 1u)));
+
             if (fbo is not null)
             {
                 EnsureFrameBufferRegistered(fbo);
@@ -170,7 +175,23 @@ namespace XREngine.Rendering.Vulkan
         public override void Clear(bool color, bool depth, bool stencil)
         {
             _state.SetClearState(color, depth, stencil);
-            MarkCommandBuffersDirty();
+
+            int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
+            XRFrameBuffer? target = _boundDrawFrameBuffer;
+            Rect2D rect = _state.GetCroppingEnabled()
+                ? _state.GetScissor()
+                : new Rect2D(new Offset2D(0, 0), _state.GetCurrentTargetExtent());
+
+            EnqueueFrameOp(new ClearOp(
+                passIndex,
+                target,
+                color,
+                depth,
+                stencil,
+                _state.GetClearColorValue(),
+                _state.GetClearDepthValue(),
+                _state.GetClearStencilValue(),
+                rect));
         }
         public override byte GetStencilIndex(float x, float y)
         {

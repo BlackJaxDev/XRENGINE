@@ -51,6 +51,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void RenderGPU()
         {
+            using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(_renderPass);
+
             ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, true);
             ActivePipelineInstance.MeshRenderCommands.RenderGPU(_renderPass);
 
@@ -62,6 +64,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void RenderCPU()
         {
+            using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(_renderPass);
             ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, false);
         }
 

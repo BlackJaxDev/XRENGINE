@@ -23,8 +23,20 @@ public unsafe partial class VulkanRenderer
             LoadOp = colorLoadOp,
             StoreOp = colorStoreOp,
             StencilLoadOp = AttachmentLoadOp.DontCare,
-            InitialLayout = ImageLayout.Undefined,
+            InitialLayout = ImageLayout.ColorAttachmentOptimal,
             FinalLayout = ImageLayout.PresentSrcKhr,
+        };
+
+        AttachmentDescription depthAttachment = new()
+        {
+            Format = _swapchainDepthFormat,
+            Samples = SampleCountFlags.Count1Bit,
+            LoadOp = AttachmentLoadOp.Load,
+            StoreOp = AttachmentStoreOp.Store,
+            StencilLoadOp = AttachmentLoadOp.Load,
+            StencilStoreOp = AttachmentStoreOp.Store,
+            InitialLayout = ImageLayout.DepthStencilAttachmentOptimal,
+            FinalLayout = ImageLayout.DepthStencilAttachmentOptimal,
         };
 
         AttachmentReference colorAttachmentRef = new()
@@ -33,18 +45,29 @@ public unsafe partial class VulkanRenderer
             Layout = ImageLayout.ColorAttachmentOptimal,
         };
 
+        AttachmentReference depthAttachmentRef = new()
+        {
+            Attachment = 1,
+            Layout = ImageLayout.DepthStencilAttachmentOptimal,
+        };
+
         SubpassDescription subpass = new()
         {
             PipelineBindPoint = PipelineBindPoint.Graphics,
             ColorAttachmentCount = 1,
             PColorAttachments = &colorAttachmentRef,
+            PDepthStencilAttachment = &depthAttachmentRef,
         };
+
+        AttachmentDescription* attachmentsPtr = stackalloc AttachmentDescription[2];
+        attachmentsPtr[0] = colorAttachment;
+        attachmentsPtr[1] = depthAttachment;
 
         RenderPassCreateInfo renderPassInfo = new()
         {
             SType = StructureType.RenderPassCreateInfo,
-            AttachmentCount = 1,
-            PAttachments = &colorAttachment,
+            AttachmentCount = 2,
+            PAttachments = attachmentsPtr,
             SubpassCount = 1,
             PSubpasses = &subpass,
         };

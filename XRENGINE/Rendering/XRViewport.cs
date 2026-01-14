@@ -24,42 +24,80 @@ namespace XREngine.Rendering
     [RuntimeOnly]
     public sealed class XRViewport : XRBase
     {
-        public XRWindow? Window { get; set; }
+        #region Fields
 
         private XRCamera? _camera = null;
+        private CameraComponent? _cameraComponent = null;
+        private LocalPlayerController? _associatedPlayer = null;
 
         private BoundingRectangle _region = new();
         private BoundingRectangle _internalResolutionRegion = new();
 
-        public BoundingRectangle Region => _region;
-        public BoundingRectangle InternalResolutionRegion => _internalResolutionRegion;
+        private readonly XRRenderPipelineInstance _renderPipeline = new();
+
+        private bool _setRenderPipelineFromCamera = true;
+        private bool _automaticallyCollectVisible = true;
+        private bool _automaticallySwapBuffers = true;
+        private bool _allowUIRender = true;
+        private bool _cullWithFrustum = true;
+        private int _index = 0;
 
         public float _leftPercentage = 0.0f;
         public float _rightPercentage = 1.0f;
         public float _bottomPercentage = 0.0f;
         public float _topPercentage = 1.0f;
-        private LocalPlayerController? _associatedPlayer = null;
+
+        #endregion
+
+        #region Events
+
+        public event Action<XRViewport>? Resized;
+        public event Action<XRViewport>? InternalResolutionResized;
+
+        #endregion
+
+        #region Properties
+
+        public XRWindow? Window { get; set; }
+
+        /// <summary>
+        /// The world instance to render.
+        /// This must be set when no camera component is set, and will take precedence over the camera component's world instance if both are set.
+        /// </summary>
+        public XRWorldInstance? WorldInstanceOverride { get; set; } = null;
+
+        /// <summary>
+        /// The world instance that will be rendered to this viewport.
+        /// </summary>
+        public XRWorldInstance? World => WorldInstanceOverride ?? CameraComponent?.SceneNode?.World;
+
+        public BoundingRectangle Region => _region;
+        public BoundingRectangle InternalResolutionRegion => _internalResolutionRegion;
 
         public int X
         {
             get => _region.X;
             set => _region.X = value;
         }
+
         public int Y
         {
             get => _region.Y;
             set => _region.Y = value;
         }
+
         public int Width
         {
             get => _region.Width;
             set => _region.Width = value;
         }
+
         public int Height
         {
             get => _region.Height;
             set => _region.Height = value;
         }
+
         public int InternalWidth => _internalResolutionRegion.Width;
         public int InternalHeight => _internalResolutionRegion.Height;
 
@@ -92,21 +130,66 @@ namespace XREngine.Rendering
             }
         }
 
-        /// <summary>
-        /// The world instance to render.
-        /// This must be set when no camera component is set, and will take precedence over the camera component's world instance if both are set.
-        /// </summary>
-        public XRWorldInstance? WorldInstanceOverride { get; set; } = null;
-        /// <summary>
-        /// The world instance that will be rendered to this viewport.
-        /// </summary>
-        public XRWorldInstance? World => WorldInstanceOverride ?? CameraComponent?.SceneNode?.World;
-
-        public void Destroy()
+        public CameraComponent? CameraComponent
         {
-            Camera = null;
-            CameraComponent = null;
+            get => _cameraComponent;
+            set => SetField(ref _cameraComponent, value);
         }
+
+        /// <summary>
+        /// The camera that will render to this viewport.
+        /// </summary>
+        public XRCamera? Camera
+        {
+            get => _camera;
+            set => SetField(ref _camera, value);
+        }
+
+        public XRCamera? ActiveCamera => _cameraComponent?.Camera ?? _camera;
+
+        [YamlIgnore]
+        public XRRenderPipelineInstance RenderPipelineInstance => _renderPipeline;
+
+        [YamlIgnore]
+        public RenderPipeline? RenderPipeline
+        {
+            get => _renderPipeline.Pipeline;
+            set => _renderPipeline.Pipeline = value;
+        }
+
+        public bool SetRenderPipelineFromCamera
+        {
+            get => _setRenderPipelineFromCamera;
+            set => SetField(ref _setRenderPipelineFromCamera, value);
+        }
+
+        public bool AutomaticallyCollectVisible
+        {
+            get => _automaticallyCollectVisible;
+            set => SetField(ref _automaticallyCollectVisible, value);
+        }
+
+        public bool AutomaticallySwapBuffers
+        {
+            get => _automaticallySwapBuffers;
+            set => SetField(ref _automaticallySwapBuffers, value);
+        }
+
+        public bool AllowUIRender
+        {
+            get => _allowUIRender;
+            set => SetField(ref _allowUIRender, value);
+        }
+
+        public bool CullWithFrustum
+        {
+            get => _cullWithFrustum;
+            set => SetField(ref _cullWithFrustum, value);
+        }
+
+        #endregion
+
+        #region Constructors
 
         public XRViewport(XRWindow? window)
         {
@@ -132,26 +215,116 @@ namespace XREngine.Rendering
             Resize(width, height);
         }
 
-        public bool AutomaticallyCollectVisible
+        #endregion
+
+        #region Static Factory Methods
+
+        public static XRViewport ForTotalViewportCount(XRWindow window, int totalViewportCount)
         {
-            get => _automaticallyCollectVisible;
-            set => SetField(ref _automaticallyCollectVisible, value);
+            int index = totalViewportCount;
+            XRViewport viewport = new(window);
+            if (index == 0)
+            {
+                viewport.Index = index;
+                viewport.SetFullScreen();
+            }
+            else
+                viewport.ViewportCountChanged(
+                    index,
+                    totalViewportCount + 1,
+                    Engine.GameSettings.TwoPlayerViewportPreference,
+                    Engine.GameSettings.ThreePlayerViewportPreference);
+
+            viewport.Index = index;
+            return viewport;
         }
-        public bool AutomaticallySwapBuffers
+
+        #endregion
+
+        #region Lifecycle
+
+        public void Destroy()
         {
-            get => _automaticallySwapBuffers;
-            set => SetField(ref _automaticallySwapBuffers, value);
+            Camera = null;
+            CameraComponent = null;
         }
-        public bool AllowUIRender
+
+        #endregion
+
+        #region Property Change Handlers
+
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
-            get => _allowUIRender;
-            set => SetField(ref _allowUIRender, value);
+            bool change = base.OnPropertyChanging(propName, field, @new);
+            if (change)
+            {
+                switch (propName)
+                {
+                    case nameof(AutomaticallySwapBuffers):
+                        if (_automaticallySwapBuffers && _camera is not null)
+                            Engine.Time.Timer.SwapBuffers -= SwapBuffersAutomatic;
+                        break;
+                    case nameof(AutomaticallyCollectVisible):
+                        if (_automaticallyCollectVisible && _camera is not null)
+                            Engine.Time.Timer.CollectVisible -= CollectVisibleAutomatic;
+                        break;
+                    case nameof(Camera):
+                        if (_camera is not null)
+                        {
+                            _camera.Viewports.Remove(this);
+
+                            if (AutomaticallySwapBuffers)
+                                Engine.Time.Timer.SwapBuffers -= SwapBuffersAutomatic;
+
+                            if (AutomaticallyCollectVisible)
+                                Engine.Time.Timer.CollectVisible -= CollectVisibleAutomatic;
+                        }
+                        break;
+                }
+            }
+            return change;
         }
-        public bool CullWithFrustum
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
-            get => _cullWithFrustum;
-            set => SetField(ref _cullWithFrustum, value);
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(AutomaticallySwapBuffers):
+                    if (_automaticallySwapBuffers && _camera is not null)
+                        Engine.Time.Timer.SwapBuffers += SwapBuffersAutomatic;
+                    break;
+                case nameof(AutomaticallyCollectVisible):
+                    if (_automaticallyCollectVisible && _camera is not null)
+                        Engine.Time.Timer.CollectVisible += CollectVisibleAutomatic;
+                    break;
+                case nameof(Camera):
+                    if (_camera is not null)
+                    {
+                        if (!_camera.Viewports.Contains(this))
+                            _camera.Viewports.Add(this);
+                        SetAspectRatioToCamera();
+
+                        if (AutomaticallySwapBuffers)
+                            Engine.Time.Timer.SwapBuffers += SwapBuffersAutomatic;
+
+                        if (AutomaticallyCollectVisible)
+                            Engine.Time.Timer.CollectVisible += CollectVisibleAutomatic;
+                    }
+                    if (SetRenderPipelineFromCamera)
+                        _renderPipeline.Pipeline = _camera?.RenderPipeline;
+                    break;
+                case nameof(CameraComponent):
+                    ResizeCameraComponentUI();
+                    Camera = CameraComponent?.Camera;
+                    //_renderPipeline.Pipeline = CameraComponent?.RenderPipeline;
+                    break;
+            }
         }
+
+        #endregion
+
+        #region Visibility Collection
 
         /// <summary>
         /// Collects all visible items in the world and UI within the active camera for this viewport (ActiveCamera) and puts them into the render pipeline's render command collection.
@@ -171,6 +344,7 @@ namespace XREngine.Rendering
             bool allowScreenSpaceUICollectVisible = true,
             IVolume? collectionVolumeOverride = null)
         {
+/*
             Debug.RenderingEvery(
                 $"XRViewport.CollectVisible.Tick.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
                 TimeSpan.FromSeconds(1),
@@ -182,6 +356,7 @@ namespace XREngine.Rendering
                 (worldOverride ?? World) is null,
                 _renderPipeline.Pipeline is null,
                 AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
+*/
 
             XRCamera? camera = cameraOverride ?? ActiveCamera;
             if (camera is null)
@@ -252,6 +427,7 @@ namespace XREngine.Rendering
                 if (world?.VisualScene is VisualScene3D vs3d)
                     gpuVisible = vs3d.LastGpuVisibility;
 
+/*
                 Debug.RenderingEvery(
                     $"XRViewport.CollectVisible.Submit.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
                     TimeSpan.FromSeconds(1),
@@ -264,38 +440,11 @@ namespace XREngine.Rendering
                     trackedRenderables,
                     gpuVisible.Draws,
                     gpuVisible.Instances);
+*/
             }
 
             if (allowScreenSpaceUICollectVisible)
                 CollectVisible_ScreenSpaceUI();
-        }
-
-        public void SwapBuffers(
-            RenderCommandCollection? renderCommandsOverride = null,
-            bool allowScreenSpaceUISwap = true)
-        {
-            using var sample = Engine.Profiler.Start($"XRViewport.SwapBuffers[{Index}]");
-
-            Debug.RenderingEvery(
-                $"XRViewport.SwapBuffers.Tick.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
-                TimeSpan.FromSeconds(1),
-                "[RenderDiag] SwapBuffers tick. PlayMode={0} VP[{1}] AutoSwap={2} AssocPlayer={3}",
-                Engine.PlayMode.State,
-                Index,
-                AutomaticallySwapBuffers,
-                AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
-
-            var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-            using (Engine.Profiler.Start("XRViewport.SwapBuffers.MeshCommands"))
-            {
-                commandCollection.SwapBuffers();
-            }
-
-            if (allowScreenSpaceUISwap)
-            {
-                using var uiSample = Engine.Profiler.Start("XRViewport.SwapBuffers.ScreenSpaceUI");
-                SwapBuffers_ScreenSpaceUI();
-            }
         }
 
         /// <summary>
@@ -314,6 +463,45 @@ namespace XREngine.Rendering
             if (ui.CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
                 ui?.CollectVisibleItemsScreenSpace();
         }
+
+        private void CollectVisibleAutomatic()
+        {
+            CollectVisible();
+        }
+
+        #endregion
+
+        #region Buffer Swapping
+
+        public void SwapBuffers(
+            RenderCommandCollection? renderCommandsOverride = null,
+            bool allowScreenSpaceUISwap = true)
+        {
+            using var sample = Engine.Profiler.Start($"XRViewport.SwapBuffers[{Index}]");
+
+/*
+            Debug.RenderingEvery(
+                $"XRViewport.SwapBuffers.Tick.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] SwapBuffers tick. PlayMode={0} VP[{1}] AutoSwap={2} AssocPlayer={3}",
+                Engine.PlayMode.State,
+                Index,
+                AutomaticallySwapBuffers,
+                AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
+*/
+            var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+            using (Engine.Profiler.Start("XRViewport.SwapBuffers.MeshCommands"))
+            {
+                commandCollection.SwapBuffers();
+            }
+
+            if (allowScreenSpaceUISwap)
+            {
+                using var uiSample = Engine.Profiler.Start("XRViewport.SwapBuffers.ScreenSpaceUI");
+                SwapBuffers_ScreenSpaceUI();
+            }
+        }
+
         /// <summary>
         /// Swaps the screen space UI buffers.
         /// If AllowUIRender is false, the camera component has no UI canvas, or the canvas is not set to screen space, this will do nothing.
@@ -333,11 +521,24 @@ namespace XREngine.Rendering
                 ui?.SwapBuffersScreenSpace();
         }
 
+        private void SwapBuffersAutomatic()
+        {
+            using var sample = Engine.Profiler.Start("XRViewport.SwapBuffersAutomatic");
+            SwapBuffers();
+        }
+
+        #endregion
+
+        #region Rendering
+
         /// <summary>
         /// Renders this camera's view to the specified viewport.
         /// </summary>
-        /// <param name="vp"></param>
         /// <param name="targetFbo"></param>
+        /// <param name="worldOverride"></param>
+        /// <param name="cameraOverride"></param>
+        /// <param name="shadowPass"></param>
+        /// <param name="forcedMaterial"></param>
         public void Render(
             XRFrameBuffer? targetFbo = null,
             XRWorldInstance? worldOverride = null,
@@ -421,11 +622,14 @@ namespace XREngine.Rendering
                 RenderScreenSpaceUIOverlay(targetFbo);
             }
         }
+
         /// <summary>
         /// Renders this camera's view to the FBO in stereo.
         /// </summary>
-        /// <param name="vp"></param>
         /// <param name="targetFbo"></param>
+        /// <param name="leftCamera"></param>
+        /// <param name="rightCamera"></param>
+        /// <param name="worldOverride"></param>
         public void RenderStereo(
             XRFrameBuffer? targetFbo,
             XRCamera? leftCamera,
@@ -475,125 +679,9 @@ namespace XREngine.Rendering
             ui.RenderScreenSpace(this, targetFbo);
         }
 
-        private CameraComponent? _cameraComponent = null;
-        public CameraComponent? CameraComponent
-        {
-            get => _cameraComponent;
-            set => SetField(ref _cameraComponent, value);
-        }
+        #endregion
 
-        /// <summary>
-        /// The camera that will render to this viewport.
-        /// </summary>
-        public XRCamera? Camera
-        {
-            get => _camera;
-            set => SetField(ref _camera, value);
-        }
-
-        public XRCamera? ActiveCamera => _cameraComponent?.Camera ?? _camera;
-
-        private readonly XRRenderPipelineInstance _renderPipeline = new();
-        [YamlIgnore]
-        public XRRenderPipelineInstance RenderPipelineInstance => _renderPipeline;
-
-        private void CollectVisibleAutomatic()
-        {
-            CollectVisible();
-        }
-        private void SwapBuffersAutomatic()
-        {
-            using var sample = Engine.Profiler.Start("XRViewport.SwapBuffersAutomatic");
-            SwapBuffers();
-        }
-
-        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
-        {
-            bool change = base.OnPropertyChanging(propName, field, @new);
-            if (change)
-            {
-                switch (propName)
-                {
-                    case nameof(AutomaticallySwapBuffers):
-                        if (_automaticallySwapBuffers && _camera is not null)
-                            Engine.Time.Timer.SwapBuffers -= SwapBuffersAutomatic;
-                        break;
-                    case nameof(AutomaticallyCollectVisible):
-                        if (_automaticallyCollectVisible && _camera is not null)
-                            Engine.Time.Timer.CollectVisible -= CollectVisibleAutomatic;
-                        break;
-                    case nameof(Camera):
-                        if (_camera is not null)
-                        {
-                            _camera.Viewports.Remove(this);
-
-                            if (AutomaticallySwapBuffers)
-                                Engine.Time.Timer.SwapBuffers -= SwapBuffersAutomatic;
-
-                            if (AutomaticallyCollectVisible)
-                                Engine.Time.Timer.CollectVisible -= CollectVisibleAutomatic;
-                        }
-                        break;
-                }
-            }
-            return change;
-        }
-        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
-        {
-            base.OnPropertyChanged(propName, prev, field);
-            switch (propName)
-            {
-                case nameof(AutomaticallySwapBuffers):
-                    if (_automaticallySwapBuffers && _camera is not null)
-                        Engine.Time.Timer.SwapBuffers += SwapBuffersAutomatic;
-                    break;
-                case nameof(AutomaticallyCollectVisible):
-                    if (_automaticallyCollectVisible && _camera is not null)
-                        Engine.Time.Timer.CollectVisible += CollectVisibleAutomatic;
-                    break;
-                case nameof(Camera):
-                    if (_camera is not null)
-                    {
-                        if (!_camera.Viewports.Contains(this))
-                            _camera.Viewports.Add(this);
-                        SetAspectRatioToCamera();
-
-                        if (AutomaticallySwapBuffers)
-                            Engine.Time.Timer.SwapBuffers += SwapBuffersAutomatic;
-
-                        if (AutomaticallyCollectVisible)
-                            Engine.Time.Timer.CollectVisible += CollectVisibleAutomatic;
-                    }
-                    if (SetRenderPipelineFromCamera)
-                        _renderPipeline.Pipeline = _camera?.RenderPipeline;
-                    break;
-                case nameof(CameraComponent):
-                    ResizeCameraComponentUI();
-                    Camera = CameraComponent?.Camera;
-                    //_renderPipeline.Pipeline = CameraComponent?.RenderPipeline;
-                    break;
-            }
-        }
-
-        [YamlIgnore]
-        public RenderPipeline? RenderPipeline
-        {
-            get => _renderPipeline.Pipeline;
-            set => _renderPipeline.Pipeline = value;
-        }
-
-        private bool _setRenderPipelineFromCamera = true;
-        private bool _automaticallyCollectVisible = true;
-        private bool _automaticallySwapBuffers = true;
-        private bool _allowUIRender = true;
-        private int _index = 0;
-        private bool _cullWithFrustum = true;
-
-        public bool SetRenderPipelineFromCamera
-        {
-            get => _setRenderPipelineFromCamera;
-            set => SetField(ref _setRenderPipelineFromCamera, value);
-        }
+        #region Resizing
 
         /// <summary>
         /// Sizes the viewport according to the window's size and the sizing percentages set to this viewport.
@@ -630,8 +718,31 @@ namespace XREngine.Rendering
             Resized?.Invoke(this);
         }
 
-        public event Action<XRViewport>? Resized;
-        public event Action<XRViewport>? InternalResolutionResized;
+        /// <summary>
+        /// This is texture dimensions that the camera will render at, which will be scaled up to the actual resolution of the viewport.
+        /// </summary>
+        /// <param name="width"></param>
+        /// <param name="height"></param>
+        /// <param name="correctAspect"></param>
+        public void SetInternalResolution(int width, int height, bool correctAspect)
+        {
+            _internalResolutionRegion.Width = width;
+            _internalResolutionRegion.Height = height;
+            if (correctAspect)
+            {
+                //Shrink the internal resolution to fit the aspect ratio of the viewport
+                float aspect = (float)_region.Width / _region.Height;
+                if (aspect > 1.0f)
+                    _internalResolutionRegion.Height = (int)(_internalResolutionRegion.Width / aspect);
+                else
+                    _internalResolutionRegion.Width = (int)(_internalResolutionRegion.Height * aspect);
+            }
+            _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight);
+            InternalResolutionResized?.Invoke(this);
+        }
+
+        public void SetInternalResolutionPercentage(float widthPercent, float heightPercent)
+            => SetInternalResolution((int)(widthPercent * _region.Width), (int)(heightPercent * _region.Height), true);
 
         private void ResizeRenderPipeline()
             => _renderPipeline.ViewportResized(Width, Height);
@@ -655,87 +766,46 @@ namespace XREngine.Rendering
             tfm.Height = _region.Size.Y;
         }
 
-        /// <summary>
-        /// This is texture dimensions that the camera will render at, which will be scaled up to the actual resolution of the viewport.
-        /// </summary>
-        /// <param name="width"></param>
-        /// <param name="height"></param>
-        public void SetInternalResolution(int width, int height, bool correctAspect)
-        {
-            _internalResolutionRegion.Width = width;
-            _internalResolutionRegion.Height = height;
-            if (correctAspect)
-            {
-                //Shrink the internal resolution to fit the aspect ratio of the viewport
-                float aspect = (float)_region.Width / _region.Height;
-                if (aspect > 1.0f)
-                    _internalResolutionRegion.Height = (int)(_internalResolutionRegion.Width / aspect);
-                else
-                    _internalResolutionRegion.Width = (int)(_internalResolutionRegion.Height * aspect);
-            }
-            _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight);
-            InternalResolutionResized?.Invoke(this);
-        }
+        #endregion
 
-        public void SetInternalResolutionPercentage(float widthPercent, float heightPercent)
-            => SetInternalResolution((int)(widthPercent * _region.Width), (int)(heightPercent * _region.Height), true);
+        #region Coordinate Conversion
 
-        public static XRViewport ForTotalViewportCount(XRWindow window, int totalViewportCount)
-        {
-            int index = totalViewportCount;
-            XRViewport viewport = new(window);
-            if (index == 0)
-            {
-                viewport.Index = index;
-                viewport.SetFullScreen();
-            }
-            else
-                viewport.ViewportCountChanged(
-                    index,
-                    totalViewportCount + 1,
-                    Engine.GameSettings.TwoPlayerViewportPreference,
-                    Engine.GameSettings.ThreePlayerViewportPreference);
-
-            viewport.Index = index;
-            return viewport;
-        }
-
-        #region Coordinate conversion
         /// <summary>
         /// Converts a window coordinate to a viewport coordinate.
         /// </summary>
-        /// <param name="coord"></param>
-        /// <returns></returns>
         public Vector2 ScreenToViewportCoordinate(Vector2 coord)
             => new(coord.X - _region.X, coord.Y - _region.Y);
+
         public void ScreenToViewportCoordinate(ref Vector2 coord)
             => coord = ScreenToViewportCoordinate(coord);
+
         /// <summary>
         /// Converts a viewport coordinate to a window coordinate.
         /// </summary>
-        /// <param name="coord"></param>
-        /// <returns></returns>
         public Vector2 ViewportToScreenCoordinate(Vector2 coord)
             => new(coord.X + _region.X, coord.Y + _region.Y);
+
         public void ViewportToScreenCoordinate(ref Vector2 coord)
             => coord = ViewportToScreenCoordinate(coord);
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="viewportPoint"></param>
-        /// <returns></returns>
+
         public Vector2 ViewportToInternalCoordinate(Vector2 viewportPoint)
             => viewportPoint * (InternalResolutionRegion.Size / _region.Size);
+
         public Vector2 InternalToViewportCoordinate(Vector2 viewportPoint)
             => viewportPoint * (_region.Size / InternalResolutionRegion.Size);
+
         public Vector2 NormalizeViewportCoordinate(Vector2 viewportPoint)
             => viewportPoint / _region.Size;
+
         public Vector2 DenormalizeViewportCoordinate(Vector2 normalizedViewportPoint)
             => normalizedViewportPoint * _region.Size;
+
         public Vector2 NormalizeInternalCoordinate(Vector2 viewportPoint)
             => viewportPoint / _internalResolutionRegion.Size;
+
         public Vector2 DenormalizeInternalCoordinate(Vector2 normalizedViewportPoint)
             => normalizedViewportPoint * _internalResolutionRegion.Size;
+
         public Vector3 NormalizedViewportToWorldCoordinate(Vector2 normalizedViewportPoint, float depth)
         {
             if (_camera is null)
@@ -743,8 +813,10 @@ namespace XREngine.Rendering
 
             return _camera.NormalizedViewportToWorldCoordinate(normalizedViewportPoint, depth);
         }
+
         public Vector3 NormalizedViewportToWorldCoordinate(Vector3 normalizedViewportPoint)
             => NormalizedViewportToWorldCoordinate(new Vector2(normalizedViewportPoint.X, normalizedViewportPoint.Y), normalizedViewportPoint.Z);
+
         public Vector3 WorldToNormalizedViewportCoordinate(Vector3 worldPoint)
         {
             if (_camera is null)
@@ -756,34 +828,40 @@ namespace XREngine.Rendering
         #endregion
 
         #region Picking
+
         public float GetDepth(IVector2 viewportPoint)
         {
             State.UnbindFrameBuffers(EFramebufferTarget.ReadFramebuffer);
             State.SetReadBuffer(EReadBufferMode.None);
             return State.GetDepth(viewportPoint.X, viewportPoint.Y);
         }
+
         public byte GetStencil(Vector2 viewportPoint)
         {
             State.UnbindFrameBuffers(EFramebufferTarget.ReadFramebuffer);
             State.SetReadBuffer(EReadBufferMode.None);
             return State.GetStencilIndex(viewportPoint.X, viewportPoint.Y);
         }
+
         public float GetDepth(XRFrameBuffer fbo, IVector2 viewportPoint)
         {
             using var t = fbo.BindForReadingState();
             State.SetReadBuffer(EReadBufferMode.None);
             return State.GetDepth(viewportPoint.X, viewportPoint.Y);
         }
+
         public async Task<float> GetDepthAsync(XRFrameBuffer fbo, IVector2 viewportPoint)
         {
             return await State.GetDepthAsync(fbo, viewportPoint.X, viewportPoint.Y);
         }
+
         public byte GetStencil(XRFrameBuffer fbo, Vector2 viewportPoint)
         {
             using var t = fbo.BindForReadingState();
             State.SetReadBuffer(EReadBufferMode.None);
             return State.GetStencilIndex(viewportPoint.X, viewportPoint.Y);
         }
+
         /// <summary>
         /// Returns a ray projected from the given screen location.
         /// </summary>
@@ -794,6 +872,7 @@ namespace XREngine.Rendering
 
             return _camera.GetWorldRay(viewportPoint / _region.Size);
         }
+
         /// <summary>
         /// Returns a segment projected from the given screen location.
         /// Endpoints are located on the NearZ and FarZ planes.
@@ -809,18 +888,10 @@ namespace XREngine.Rendering
         //TODO: provide PickScene with a List<(XRComponent item, object? data)> pool to take from and release to. As few allocations as possible for constant picking every frame.
 
         //private readonly RayTraceClosest _closestPick = new(Vector3.Zero, Vector3.Zero, 0, 0xFFFF);
+
         /// <summary>
         /// Tests against the HUD and the world for a collision hit at the provided viewport point ray.
         /// </summary>
-        /// <param name="normalizedViewportPosition"></param>
-        /// <param name="testHud"></param>
-        /// <param name="interactableHudOnly"></param>
-        /// <param name="testSceneOctree"></param>
-        /// <param name="hitNormalWorld"></param>
-        /// <param name="hitPositionWorld"></param>
-        /// <param name="hitDistance"></param>
-        /// <param name="ignored"></param>
-        /// <returns></returns>
         public void PickSceneAsync(
             Vector2 normalizedViewportPosition,
             bool testHud,
@@ -872,7 +943,7 @@ namespace XREngine.Rendering
             if (testScenePhysics)
             {
                 World.RaycastPhysicsAsync(
-                    CameraComponent, 
+                    CameraComponent,
                     normalizedViewportPosition,
                     layerMask,
                     filter,
@@ -880,9 +951,11 @@ namespace XREngine.Rendering
                     physicsFinishedCallback);
             }
         }
+
         #endregion
 
-        #region Viewport Resizing
+        #region Viewport Layout
+
         public void ViewportCountChanged(int newIndex, int total, ETwoPlayerPreference twoPlayerPref, EThreePlayerPreference threePlayerPref)
         {
             Index = newIndex;
@@ -975,34 +1048,13 @@ namespace XREngine.Rendering
                     break;
             }
         }
-        public void SetTopLeft()
+
+        public void SetFullScreen()
         {
-            _leftPercentage = 0.0f;
-            _rightPercentage = 0.5f;
-            _topPercentage = 1.0f;
-            _bottomPercentage = 0.5f;
+            _leftPercentage = _bottomPercentage = 0.0f;
+            _rightPercentage = _topPercentage = 1.0f;
         }
-        public void SetTopRight()
-        {
-            _leftPercentage = 0.0f;
-            _rightPercentage = 0.5f;
-            _topPercentage = 1.0f;
-            _bottomPercentage = 0.5f;
-        }
-        public void SetBottomLeft()
-        {
-            _leftPercentage = 0.0f;
-            _rightPercentage = 0.5f;
-            _topPercentage = 1.0f;
-            _bottomPercentage = 0.5f;
-        }
-        public void SetBottomRight()
-        {
-            _leftPercentage = 0.0f;
-            _rightPercentage = 0.5f;
-            _topPercentage = 1.0f;
-            _bottomPercentage = 0.5f;
-        }
+
         public void SetTop()
         {
             _leftPercentage = 0.0f;
@@ -1010,6 +1062,7 @@ namespace XREngine.Rendering
             _topPercentage = 1.0f;
             _bottomPercentage = 0.5f;
         }
+
         public void SetBottom()
         {
             _leftPercentage = 0.0f;
@@ -1017,6 +1070,7 @@ namespace XREngine.Rendering
             _topPercentage = 0.5f;
             _bottomPercentage = 0.0f;
         }
+
         public void SetLeft()
         {
             _leftPercentage = 0.0f;
@@ -1024,6 +1078,7 @@ namespace XREngine.Rendering
             _topPercentage = 1.0f;
             _bottomPercentage = 0.0f;
         }
+
         public void SetRight()
         {
             _leftPercentage = 0.5f;
@@ -1031,11 +1086,39 @@ namespace XREngine.Rendering
             _topPercentage = 1.0f;
             _bottomPercentage = 0.0f;
         }
-        public void SetFullScreen()
+
+        public void SetTopLeft()
         {
-            _leftPercentage = _bottomPercentage = 0.0f;
-            _rightPercentage = _topPercentage = 1.0f;
+            _leftPercentage = 0.0f;
+            _rightPercentage = 0.5f;
+            _topPercentage = 1.0f;
+            _bottomPercentage = 0.5f;
         }
+
+        public void SetTopRight()
+        {
+            _leftPercentage = 0.5f;
+            _rightPercentage = 1.0f;
+            _topPercentage = 1.0f;
+            _bottomPercentage = 0.5f;
+        }
+
+        public void SetBottomLeft()
+        {
+            _leftPercentage = 0.0f;
+            _rightPercentage = 0.5f;
+            _topPercentage = 0.5f;
+            _bottomPercentage = 0.0f;
+        }
+
+        public void SetBottomRight()
+        {
+            _leftPercentage = 0.5f;
+            _rightPercentage = 1.0f;
+            _topPercentage = 0.5f;
+            _bottomPercentage = 0.0f;
+        }
+
         #endregion
     }
 }

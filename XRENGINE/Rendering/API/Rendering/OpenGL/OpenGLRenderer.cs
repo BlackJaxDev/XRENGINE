@@ -173,11 +173,8 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 Engine.Rendering.State.OpenGLExtensions = extensions;
-                bool hasNvRayTracing = extensions.Any(static e => string.Equals(e, "GL_NV_ray_tracing", StringComparison.Ordinal));
-                Engine.Rendering.State.HasNvRayTracing = hasNvRayTracing;
-                Debug.Out(EOutputVerbosity.Normal, false, hasNvRayTracing
-                    ? "GL_NV_ray_tracing: available"
-                    : "GL_NV_ray_tracing: NOT reported; RT path will fall back.");
+                // Ray tracing / DLSS / XeSS are Vulkan-focused; do not probe GL_NV_ray_tracing on OpenGL startup.
+                Engine.Rendering.State.HasNvRayTracing = false;
             }
 
             GLRenderProgram.ReadBinaryShaderCache(version);

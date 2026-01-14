@@ -9,6 +9,11 @@ namespace XREngine.Components
         public class DebugDrawPoint(Vector3 localOffset, ColorF4 color) : DebugShapeBase(color, false)
         {
             /// <summary>
+            /// Parameterless constructor for serialization.
+            /// </summary>
+            public DebugDrawPoint() : this(Vector3.Zero, ColorF4.White) { }
+
+            /// <summary>
             /// The local offset of the point relative to this component's transform.
             /// </summary>
             public Vector3 LocalOffset

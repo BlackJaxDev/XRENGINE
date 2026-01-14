@@ -18,12 +18,68 @@ namespace XREngine.Rendering
     /// Links a Silk.NET generated window to an API-specific engine renderer.
     /// </summary>
     [RuntimeOnly]
-    public sealed class XRWindow : XRBase
+    public sealed class XRWindow : XRBase, IDisposable
     {
+        #region Nested Types
+
+        private class NodeRepresentation
+        {
+            public Guid ServerGUID { get; set; }
+            public (string? FullTypeDef, Guid ServerGUID) TransformType { get; set; } = (null, Guid.Empty);
+            public (string FullTypeDef, Guid ServerGUID)[] ComponentTypes { get; set; } = [];
+            public NodeRepresentation[] Children { get; set; } = [];
+        }
+
+        private class WorldHierarchy
+        {
+            public string? GameModeFullTypeDef { get; set; }
+            public NodeRepresentation?[]? RootNodes { get; set; } = [];
+        }
+
+        #endregion
+
+        #region Events
+
         public static event Action<XRWindow, bool>? AnyWindowFocusChanged;
         public event Action<XRWindow, bool>? FocusChanged;
+        public event Action? RenderViewportsCallback;
 
+        #endregion
+
+        #region Fields
+
+        private readonly EventList<XRViewport> _viewports = [];
         private XRWorldInstance? _targetWorldInstance;
+        private bool _isFocused = false;
+
+        // Editor scene-panel presentation (dockable viewport panel) adapter.
+        private readonly XRWindowScenePanelAdapter _scenePanelAdapter = new();
+
+        #endregion
+
+        private bool _isDisposing;
+        private bool _isDisposed;
+
+        private Exception? _lastRenderException;
+        private int _consecutiveRenderFailures;
+        private DateTime _renderDisabledUntilUtc;
+
+        private bool _rendererInitialized;
+
+        #region Properties
+
+        /// <summary>
+        /// Silk.NET window instance.
+        /// </summary>
+        public IWindow Window { get; }
+
+        /// <summary>
+        /// Interface to render a scene for this window using the requested graphics API.
+        /// </summary>
+        public AbstractRenderer Renderer { get; }
+
+        public IInputContext? Input { get; private set; }
+
         public XRWorldInstance? TargetWorldInstance
         {
             get => _targetWorldInstance;
@@ -40,8 +96,112 @@ namespace XREngine.Rendering
         /// </summary>
         public bool UseNativeTitleBar { get; }
 
-        private readonly EventList<XRViewport> _viewports = [];
         public EventList<XRViewport> Viewports => _viewports;
+
+        public bool IsTickLinked { get; private set; } = false;
+
+        public bool IsFocused
+        {
+            get => _isFocused;
+            private set => SetField(ref _isFocused, value);
+        }
+
+        /// <summary>
+        /// Gets the texture containing the rendered scene for dockable editor scene-panel presentation.
+        /// </summary>
+        public XRTexture2D? ScenePanelTexture => _scenePanelAdapter.Texture;
+
+        /// <summary>
+        /// Gets the FBO used for rendering in dockable editor scene-panel presentation.
+        /// </summary>
+        public XRFrameBuffer? ScenePanelFrameBuffer => _scenePanelAdapter.FrameBuffer;
+
+
+        #endregion
+
+        public bool IsDisposed => _isDisposed;
+
+        public Exception? LastRenderException => _lastRenderException;
+
+        public int ConsecutiveRenderFailures => _consecutiveRenderFailures;
+
+        public DateTime? RenderDisabledUntilUtc
+            => _renderDisabledUntilUtc == default ? null : _renderDisabledUntilUtc;
+
+        public bool IsRenderTemporarilyDisabled
+            => RenderDisabledUntilUtc is DateTime until && DateTime.UtcNow < until;
+
+        public TimeSpan? RenderDisableRemaining
+        {
+            get
+            {
+                DateTime? until = RenderDisabledUntilUtc;
+                if (until is null)
+                    return null;
+
+                TimeSpan remaining = until.Value - DateTime.UtcNow;
+                return remaining <= TimeSpan.Zero ? TimeSpan.Zero : remaining;
+            }
+        }
+
+        public void ResetRenderCircuitBreaker()
+        {
+            _consecutiveRenderFailures = 0;
+            _renderDisabledUntilUtc = default;
+            _lastRenderException = null;
+        }
+
+        /// <summary>
+        /// Forces the window to re-evaluate whether it should be tick-linked and rendering.
+        /// Intended for settings/UI changes that don't touch Viewports/TargetWorldInstance.
+        /// </summary>
+        public void RequestRenderStateRecheck(bool resetCircuitBreaker = false)
+        {
+            if (_isDisposed || _isDisposing)
+                return;
+
+            if (resetCircuitBreaker)
+                ResetRenderCircuitBreaker();
+
+            VerifyTick();
+        }
+
+        /// <summary>
+        /// Destroys viewport-panel mode GPU resources so they are recreated on demand.
+        /// Useful after swapchain/framebuffer invalidation or device/context transitions.
+        /// </summary>
+        public void InvalidateScenePanelResources()
+        {
+            if (_isDisposed || _isDisposing)
+                return;
+
+            _scenePanelAdapter.InvalidateResources();
+        }
+
+        #region Constructor
+
+        public XRWindow(WindowOptions options, bool useNativeTitleBar)
+        {
+            _viewports.CollectionChanged += ViewportsChanged;
+
+            Silk.NET.Windowing.Window.PrioritizeGlfw();
+            Window = Silk.NET.Windowing.Window.Create(options);
+            UseNativeTitleBar = useNativeTitleBar;
+
+            LinkWindow();
+            Window.Initialize();
+
+            Renderer = Window.API.API switch
+            {
+                ContextAPI.OpenGL => new OpenGLRenderer(this, true),
+                ContextAPI.Vulkan => new VulkanRenderer(this, true),
+                _ => throw new Exception($"Unsupported API: {Window.API.API}"),
+            };
+        }
+
+        #endregion
+
+        #region Property Changed
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
@@ -61,18 +221,518 @@ namespace XREngine.Rendering
             }
         }
 
-        private class NodeRepresentation
+        #endregion
+
+        #region Public Methods - World Management
+
+        public void SetWorld(XRWorld? targetWorld)
         {
-            public Guid ServerGUID { get; set; }
-            public (string? FullTypeDef, Guid ServerGUID) TransformType { get; set; } = (null, Guid.Empty);
-            public (string FullTypeDef, Guid ServerGUID)[] ComponentTypes { get; set; } = [];
-            public NodeRepresentation[] Children { get; set; } = [];
+            if (targetWorld is not null)
+                TargetWorldInstance = XRWorldInstance.GetOrInitWorld(targetWorld);
         }
-        private class WorldHierarchy
+
+        #endregion
+
+        #region Public Methods - Viewport Management
+
+        public XRViewport GetOrAddViewportForPlayer(LocalPlayerController controller, bool autoSizeAllViewports)
+            => controller.Viewport ??= AddViewportForPlayer(controller, autoSizeAllViewports);
+
+        /// <summary>
+        /// Remakes all viewports in order of active local player indices.
+        /// </summary>
+        public void ResizeAllViewportsAccordingToPlayers()
         {
-            public string? GameModeFullTypeDef { get; set; }
-            public NodeRepresentation?[]? RootNodes { get; set; } = [];
+            using var sample = Engine.Profiler.Start("XRWindow.ResizeAllViewportsAccordingToPlayers");
+
+            LocalPlayerController[] players = [.. Viewports
+                .Select(x => x.AssociatedPlayer)
+                .OfType<LocalPlayerController>()
+                .Distinct()
+                .OrderBy(x => (int)x.LocalPlayerIndex)];
+            foreach (var viewport in Viewports)
+                viewport.Destroy();
+            Viewports.Clear();
+            for (int i = 0; i < players.Length; i++)
+                AddViewportForPlayer(players[i], false);
         }
+
+        public void UpdateViewportSizes()
+        {
+            using var sample = Engine.Profiler.Start("XRWindow.UpdateViewportSizes");
+            ResizeViewports(Window.Size);
+        }
+
+        #endregion
+
+        #region Public Methods - Player Registration
+
+        public void RegisterLocalPlayer(ELocalPlayerIndex playerIndex, bool autoSizeAllViewports)
+            => RegisterController(Engine.State.GetOrCreateLocalPlayer(playerIndex), autoSizeAllViewports);
+
+        public void RegisterController(LocalPlayerController controller, bool autoSizeAllViewports)
+            => GetOrAddViewportForPlayer(controller, autoSizeAllViewports).AssociatedPlayer = controller;
+
+        public void UnregisterLocalPlayer(ELocalPlayerIndex playerIndex)
+        {
+            LocalPlayerController? controller = Engine.State.GetLocalPlayer(playerIndex);
+            if (controller is not null)
+                UnregisterController(controller);
+        }
+
+        public void UnregisterController(LocalPlayerController controller)
+        {
+            if (controller.Viewport != null && Viewports.Contains(controller.Viewport))
+                controller.Viewport = null;
+        }
+
+        #endregion
+
+        #region Public Methods - Rendering
+
+        public void RenderViewports()
+        {
+            using var sample = Engine.Profiler.Start("XRWindow.RenderViewports");
+            foreach (var viewport in Viewports)
+            {
+                using var viewportSample = Engine.Profiler.Start($"XRViewport.Render[{viewport.Index}]");
+                viewport.Render();
+            }
+        }
+
+        /// <summary>
+        /// Renders all viewports to the specified FBO instead of the window framebuffer.
+        /// </summary>
+        public void RenderViewportsToFBO(XRFrameBuffer? targetFBO)
+        {
+            if (targetFBO is null)
+            {
+                RenderViewports();
+                return;
+            }
+
+            using var sample = Engine.Profiler.Start("XRWindow.RenderViewportsToFBO");
+            foreach (var viewport in Viewports)
+            {
+                using var viewportSample = Engine.Profiler.Start($"XRViewport.RenderToFBO[{viewport.Index}]");
+                viewport.Render(targetFBO);
+            }
+        }
+
+        #endregion
+
+        #region Window Event Handlers
+
+        private void Window_Load()
+        {
+            //Task.Run(() =>
+            //{
+                Input = Window.CreateInput();
+                Input.ConnectionChanged += Input_ConnectionChanged;
+            //});
+        }
+
+        private void Window_Closing()
+        {
+            try
+            {
+                Dispose();
+            }
+            finally
+            {
+                Engine.RemoveWindow(this);
+            }
+        }
+
+        private void OnFocusChanged(bool focused)
+        {
+            IsFocused = focused;
+            FocusChanged?.Invoke(this, focused);
+            AnyWindowFocusChanged?.Invoke(this, focused);
+        }
+
+        private void FramebufferResizeCallback(Vector2D<int> obj)
+        {
+            using var sample = Engine.Profiler.Start("XRWindow.FramebufferResize");
+
+            //Debug.Out("Window resized to {0}x{1}", obj.X, obj.Y);
+            Viewports.ForEach(vp => vp.Resize((uint)obj.X, (uint)obj.Y, true));
+
+            _scenePanelAdapter.OnFramebufferResized(this, obj);
+
+            Renderer.FrameBufferInvalidated();
+
+            //var timer = Engine.Time.Timer;
+            //await timer.DispatchCollectVisible();
+            //await timer.DispatchSwapBuffers();
+            //timer.DispatchRender();
+        }
+
+        private void Input_ConnectionChanged(IInputDevice device, bool connected)
+        {
+            switch (device)
+            {
+                case IKeyboard keyboard:
+                    break;
+                case IMouse mouse:
+                    break;
+                case IGamepad gamepad:
+                    break;
+            }
+        }
+
+        #endregion
+
+        #region Window Linking
+
+        private void LinkWindow()
+        {
+            IWindow? w = Window;
+            if (w is null)
+                return;
+
+            w.FramebufferResize += FramebufferResizeCallback;
+            w.Render += RenderCallback;
+            w.FocusChanged += OnFocusChanged;
+            w.Closing += Window_Closing;
+            w.Load += Window_Load;
+
+            // Subscribe to play mode transitions to invalidate scene panel resources
+            Engine.PlayMode.PreEnterPlay += OnPlayModeTransition;
+            Engine.PlayMode.PostExitPlay += OnPlayModeTransition;
+        }
+
+        private void UnlinkWindow()
+        {
+            var w = Window;
+            if (w is null)
+                return;
+
+            w.FramebufferResize -= FramebufferResizeCallback;
+            w.Render -= RenderCallback;
+            w.FocusChanged -= OnFocusChanged;
+            w.Closing -= Window_Closing;
+            w.Load -= Window_Load;
+
+            // Unsubscribe from play mode events
+            Engine.PlayMode.PreEnterPlay -= OnPlayModeTransition;
+            Engine.PlayMode.PostExitPlay -= OnPlayModeTransition;
+        }
+
+        private void OnPlayModeTransition()
+        {
+            // Invalidate scene panel resources so they're recreated with proper sizing
+            // on the next frame after the play mode transition completes.
+            _scenePanelAdapter.InvalidateResources();
+        }
+
+        #endregion
+
+        #region Tick Management
+
+        private void VerifyTick()
+        {
+            using var sample = Engine.Profiler.Start("XRWindow.VerifyTick");
+
+            if (_isDisposed || _isDisposing)
+                return;
+
+            if (ShouldBeRendering())
+            {
+                if (IsTickLinked)
+                    return;
+
+                IsTickLinked = true;
+                BeginTick();
+            }
+            else
+            {
+                if (!IsTickLinked)
+                    return;
+
+                IsTickLinked = false;
+                EndTick();
+            }
+        }
+
+        private void BeginTick()
+        {
+            using var sample = Engine.Profiler.Start("XRWindow.BeginTick");
+
+            Renderer.Initialize();
+            _rendererInitialized = true;
+            Engine.Time.Timer.SwapBuffers += SwapBuffers;
+            Engine.Time.Timer.RenderFrame += RenderFrame;
+        }
+
+        private void EndTick()
+        {
+            using var sample = Engine.Profiler.Start("XRWindow.EndTick");
+
+            Engine.Time.Timer.SwapBuffers -= SwapBuffers;
+            Engine.Time.Timer.RenderFrame -= RenderFrame;
+            //Engine.Rendering.DestroyObjectsForRenderer(Renderer);
+            Renderer.CleanUp();
+            _rendererInitialized = false;
+            Window.DoEvents();
+        }
+
+        private void SwapBuffers()
+        {
+            using var sample = Engine.Profiler.Start("XRWindow.SwapBuffers");
+        }
+
+        private void RenderFrame()
+        {
+            // Guard against rendering after window is disposed or GL context is invalid
+            if (_isDisposed || _isDisposing)
+                return;
+
+            using var sample = Engine.Profiler.Start("XRWindow.Timer.RenderFrame");
+
+            {
+                using var eventsSample = Engine.Profiler.Start("XRWindow.Timer.DoEvents");
+                Window.DoEvents();
+            }
+
+            // Re-check after DoEvents in case window was closed
+            if (_isDisposed || _isDisposing)
+                return;
+
+            {
+                using var doRenderSample = Engine.Profiler.Start("XRWindow.Timer.DoRender");
+                Window.DoRender();
+            }
+        }
+
+        private bool ShouldBeRendering()
+            => !_isDisposed && !_isDisposing && Viewports.Count > 0 && TargetWorldInstance is not null;
+
+        #endregion
+
+        #region Render Callback
+
+        //private float _lastFrameTime = 0.0f;
+        private void RenderCallback(double delta)
+        {
+            if (_isDisposed || _isDisposing)
+                return;
+
+            if (_renderDisabledUntilUtc != default && DateTime.UtcNow < _renderDisabledUntilUtc)
+                return;
+
+            using var frameSample = Engine.Profiler.Start("XRWindow.RenderFrame");
+
+            // Reset per-frame rendering statistics at the start of each frame
+            Engine.Rendering.Stats.BeginFrame();
+
+            try
+            {
+                Renderer.Active = true;
+                AbstractRenderer.Current = Renderer;
+
+                bool useScenePanelMode =
+                    Engine.IsEditor &&
+                    Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel;
+                bool canRenderWindowViewports = !Engine.VRState.IsInVR || Engine.Rendering.Settings.RenderWindowsWhileInVR;
+
+                LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports);
+
+                using (var preRenderSample = Engine.Profiler.Start("XRWindow.GlobalPreRender"))
+                {
+                    TargetWorldInstance?.GlobalPreRender();
+                }
+
+                using (var renderCallbackSample = Engine.Profiler.Start("XRWindow.RenderViewportsCallback"))
+                {
+                    RenderViewportsCallback?.Invoke();
+                }
+
+                RenderWindowViewports(useScenePanelMode, canRenderWindowViewports);
+
+                using (var postRenderSample = Engine.Profiler.Start("XRWindow.GlobalPostRender"))
+                {
+                    TargetWorldInstance?.GlobalPostRender();
+                }
+
+                // Allow the renderer to perform any per-window end-of-frame work (e.g., Vulkan acquire/submit/present).
+                Renderer.RenderWindow(delta);
+
+                // Successful frame: clear circuit breaker state.
+                _consecutiveRenderFailures = 0;
+                _renderDisabledUntilUtc = default;
+            }
+            catch (Exception ex)
+            {
+                _lastRenderException = ex;
+                _consecutiveRenderFailures++;
+
+                // Simple circuit breaker to avoid exception spam + runaway per-frame failures.
+                // Backoff grows up to 5 seconds.
+                int backoffMs = Math.Min(5000, 100 * _consecutiveRenderFailures);
+                _renderDisabledUntilUtc = DateTime.UtcNow.AddMilliseconds(backoffMs);
+
+                string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
+                Debug.RenderingWarningEvery(
+                    keyBase + ".Exception",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] Render exception (disabled {0}ms, failures={1}). {2}",
+                    backoffMs,
+                    _consecutiveRenderFailures,
+                    ex);
+            }
+            finally
+            {
+                Renderer.Active = false;
+                AbstractRenderer.Current = null;
+            }
+        }
+
+        private void LogRenderDiagnostics(double delta, bool useScenePanelMode, bool canRenderWindowViewports)
+        {
+            string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
+
+            if (!canRenderWindowViewports)
+            {
+                Debug.RenderingEvery(
+                    keyBase + ".VRGated",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] Window gated by VR. IsInVR={0}, RenderWindowsWhileInVR={1}",
+                    Engine.VRState.IsInVR,
+                    Engine.Rendering.Settings.RenderWindowsWhileInVR);
+            }
+
+            if (!ShouldBeRendering())
+            {
+                Debug.RenderingWarningEvery(
+                    keyBase + ".NotRendering",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] Window not rendering: Viewports={0}, TargetWorldInstanceNull={1}, PresentationMode={2}, CanRenderWindowViewports={3}",
+                    Viewports.Count,
+                    TargetWorldInstance is null,
+                    Engine.Rendering.Settings.ViewportPresentationMode,
+                    canRenderWindowViewports);
+            }
+
+            // Per-viewport state snapshot (only a few times a second)
+            Debug.RenderingEvery(
+                keyBase + ".ViewportSummary",
+                TimeSpan.FromSeconds(2),
+                "[RenderDiag] Window tick. Delta={0:F4}s, Viewports={1}, TargetWorld={2}, PanelMode={3}",
+                delta,
+                Viewports.Count,
+                TargetWorldInstance?.TargetWorld?.Name ?? "<null>",
+                useScenePanelMode);
+
+            foreach (var vp in Viewports)
+            {
+                var activeCamera = vp.ActiveCamera;
+                var world = vp.World;
+                bool hasPipeline = vp.RenderPipelineInstance.Pipeline is not null;
+                Debug.RenderingEvery(
+                    keyBase + $".VP.{vp.Index}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDiag] VP[{0}] Region={1}x{2}@({3},{4}) Internal={5}x{6} ActiveCameraNull={7} WorldNull={8} PipelineNull={9} AssocPlayer={10}",
+                    vp.Index,
+                    vp.Width,
+                    vp.Height,
+                    vp.X,
+                    vp.Y,
+                    vp.InternalWidth,
+                    vp.InternalHeight,
+                    activeCamera is null,
+                    world is null,
+                    !hasPipeline,
+                    vp.AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
+            }
+        }
+
+        private void RenderWindowViewports(bool useScenePanelMode, bool canRenderWindowViewports)
+        {
+            if (canRenderWindowViewports)
+            {
+                if (useScenePanelMode)
+                {
+                    _scenePanelAdapter.TryRenderScenePanelMode(this);
+                }
+                else
+                {
+                    _scenePanelAdapter.EndScenePanelMode(this);
+
+                    // RenderViewportsCallback (e.g., ImGui) can leave scissor/cropping enabled.
+                    // Ensure world rendering starts from a clean state so clears and passes aren't clipped/offset.
+                    Renderer.SetCroppingEnabled(false);
+
+                    RenderViewports();
+                }
+            }
+            else
+            {
+                _scenePanelAdapter.EndScenePanelMode(this);
+            }
+        }
+
+        #endregion
+
+        #region Viewport Collection Management
+
+        private void ViewportsChanged(object sender, TCollectionChangedEventArgs<XRViewport> e)
+        {
+            switch (e.Action)
+            {
+                case ECollectionChangedAction.Remove:
+                    foreach (var viewport in e.OldItems)
+                        viewport.Destroy();
+                    break;
+                case ECollectionChangedAction.Clear:
+                    foreach (var viewport in e.OldItems)
+                        viewport.Destroy();
+                    break;
+            }
+            VerifyTick();
+        }
+
+        private XRViewport AddViewportForPlayer(LocalPlayerController? controller, bool autoSizeAllViewports)
+        {
+            using var sample = Engine.Profiler.Start("XRWindow.AddViewportForPlayer");
+
+            XRViewport newViewport = XRViewport.ForTotalViewportCount(this, Viewports.Count);
+            newViewport.AssociatedPlayer = controller;
+            Viewports.Add(newViewport);
+
+            Debug.Out("Added new viewport to {0}: {1}", GetType().GetFriendlyName(), newViewport.Index);
+
+            Debug.Out(
+                "[ViewportDiag] XRWindow.AddViewportForPlayer: WinHash={0} VP[{1}] VPHash={2} AssocCtrlHash={3} AssocIndex={4} Ctrl.ViewportHash={5}",
+                GetHashCode(),
+                newViewport.Index,
+                newViewport.GetHashCode(),
+                controller?.GetHashCode() ?? 0,
+                controller is null ? "<null>" : $"P{(int)controller.LocalPlayerIndex + 1}",
+                controller?.Viewport?.GetHashCode() ?? 0);
+
+            if (autoSizeAllViewports)
+                ResizeAllViewportsAccordingToPlayers();
+
+            return newViewport;
+        }
+
+        private void ResizeViewports(Vector2D<int> obj)
+        {
+            using var sample = Engine.Profiler.Start("XRWindow.ResizeViewports");
+
+            void SetSize(XRViewport vp)
+            {
+                vp.Resize((uint)obj.X, (uint)obj.Y, true);
+                //vp.SetInternalResolution((int)(obj.X * 0.5f), (int)(obj.X * 0.5f), false);
+                //vp.SetInternalResolutionPercentage(0.5f, 0.5f);
+            }
+            Viewports.ForEach(SetSize);
+        }
+
+        #endregion
+
+        #region World Hierarchy Encoding (Networking)
 
         private WorldHierarchy? EncodeWorldHierarchy()
         {
@@ -106,610 +766,97 @@ namespace XREngine.Rendering
             };
         }
 
-        private void ViewportsChanged(object sender, TCollectionChangedEventArgs<XRViewport> e)
+        #endregion
+
+        #region Disposal
+
+        public void Dispose()
         {
-            switch (e.Action)
-            {
-                case ECollectionChangedAction.Remove:
-                    foreach (var viewport in e.OldItems)
-                        viewport.Destroy();
-                    break;
-                case ECollectionChangedAction.Clear:
-                    foreach (var viewport in e.OldItems)
-                        viewport.Destroy();
-                    break;
-            }
-            VerifyTick();
-        }
-
-        public bool IsTickLinked { get; private set; } = false;
-        private void VerifyTick()
-        {
-            using var sample = Engine.Profiler.Start("XRWindow.VerifyTick");
-
-            if (ShouldBeRendering())
-            {
-                if (IsTickLinked)
-                    return;
-
-                IsTickLinked = true;
-                BeginTick();
-            }
-            else
-            {
-                if (!IsTickLinked)
-                    return;
-
-                IsTickLinked = false;
-                EndTick();
-            }
-        }
-
-        public void RenderViewports()
-        {
-            using var sample = Engine.Profiler.Start("XRWindow.RenderViewports");
-            foreach (var viewport in Viewports)
-            {
-                using var viewportSample = Engine.Profiler.Start($"XRViewport.Render[{viewport.Index}]");
-                viewport.Render();
-            }
-        }
-
-        private void UnlinkWindow()
-        {
-            var w = Window;
-            if (w is null)
+            if (_isDisposed)
                 return;
 
-            w.FramebufferResize -= FramebufferResizeCallback;
-            w.Render -= RenderCallback;
-            w.FocusChanged -= OnFocusChanged;
-            w.Closing -= Window_Closing;
-            w.Load -= Window_Load;
-        }
-
-        private void LinkWindow()
-        {
-            IWindow? w = Window;
-            if (w is null)
-                return;
-
-            w.FramebufferResize += FramebufferResizeCallback;
-            w.Render += RenderCallback;
-            w.FocusChanged += OnFocusChanged;
-            w.Closing += Window_Closing;
-            w.Load += Window_Load;
-        }
-
-        private bool _isFocused = false;
-        public bool IsFocused
-        {
-            get => _isFocused;
-            private set => SetField(ref _isFocused, value);
-        }
-
-        private void OnFocusChanged(bool focused)
-        {
-            IsFocused = focused;
-            FocusChanged?.Invoke(this, focused);
-            AnyWindowFocusChanged?.Invoke(this, focused);
-        }
-
-        private void EndTick()
-        {
-            using var sample = Engine.Profiler.Start("XRWindow.EndTick");
-
-            Engine.Time.Timer.SwapBuffers -= SwapBuffers;
-            Engine.Time.Timer.RenderFrame -= RenderFrame;
-            //Engine.Rendering.DestroyObjectsForRenderer(Renderer);
-            Renderer.CleanUp();
-            Window.DoEvents();
-        }
-
-        private void BeginTick()
-        {
-            using var sample = Engine.Profiler.Start("XRWindow.BeginTick");
-
-            Renderer.Initialize();
-            Engine.Time.Timer.SwapBuffers += SwapBuffers;
-            Engine.Time.Timer.RenderFrame += RenderFrame;
-        }
-
-        private void SwapBuffers()
-        {
-            using var sample = Engine.Profiler.Start("XRWindow.SwapBuffers");
-        }
-
-        private void RenderFrame()
-        {
-            using var sample = Engine.Profiler.Start("XRWindow.Timer.RenderFrame");
-
-            {
-                using var eventsSample = Engine.Profiler.Start("XRWindow.Timer.DoEvents");
-                Window.DoEvents();
-            }
-
-            {
-                using var doRenderSample = Engine.Profiler.Start("XRWindow.Timer.DoRender");
-                Window.DoRender();
-            }
-        }
-
-        public event Action? RenderViewportsCallback;
-
-        private bool _viewportPanelSizingActive;
-        private int _lastViewportPanelX;
-        private int _lastViewportPanelY;
-        private int _lastViewportPanelWidth;
-        private int _lastViewportPanelHeight;
-
-        // FBO for viewport panel mode - renders scene to texture for ImGui display
-        private XRTexture2D? _viewportPanelTexture;
-        private XRFrameBuffer? _viewportPanelFBO;
-
-        /// <summary>
-        /// Gets the texture containing the rendered scene for viewport panel mode.
-        /// Returns null if not in viewport panel mode or if the FBO hasn't been created yet.
-        /// </summary>
-        public XRTexture2D? ViewportPanelTexture => _viewportPanelTexture;
-
-        /// <summary>
-        /// Gets the FBO used for rendering in viewport panel mode.
-        /// </summary>
-        public XRFrameBuffer? ViewportPanelFBO => _viewportPanelFBO;
-
-        private void EnsureViewportPanelFBO(int width, int height)
-        {
-            if (width <= 0 || height <= 0)
-                return;
-
-            bool needsResize = _viewportPanelTexture is not null &&
-                (_viewportPanelTexture.Width != (uint)width || _viewportPanelTexture.Height != (uint)height);
-
-            if (_viewportPanelFBO is null || needsResize)
-            {
-                // Create or recreate texture with the correct size
-                _viewportPanelTexture = XRTexture2D.CreateFrameBufferTexture(
-                    (uint)width,
-                    (uint)height,
-                    EPixelInternalFormat.Rgba8,
-                    EPixelFormat.Rgba,
-                    EPixelType.UnsignedByte,
-                    EFrameBufferAttachment.ColorAttachment0);
-                _viewportPanelTexture.Resizable = true;
-                _viewportPanelTexture.MinFilter = ETexMinFilter.Linear;
-                _viewportPanelTexture.MagFilter = ETexMagFilter.Linear;
-                _viewportPanelTexture.UWrap = ETexWrapMode.ClampToEdge;
-                _viewportPanelTexture.VWrap = ETexWrapMode.ClampToEdge;
-                _viewportPanelTexture.Name = "ViewportPanelTexture";
-
-                _viewportPanelFBO = new XRFrameBuffer((_viewportPanelTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1))
-                {
-                    Name = "ViewportPanelFBO"
-                };
-            }
-        }
-
-        private void DestroyViewportPanelFBO()
-        {
-            _viewportPanelFBO?.Destroy();
-            _viewportPanelFBO = null;
-            _viewportPanelTexture?.Destroy();
-            _viewportPanelTexture = null;
-        }
-
-        //private float _lastFrameTime = 0.0f;
-        private void RenderCallback(double delta)
-        {
-            using var frameSample = Engine.Profiler.Start("XRWindow.RenderFrame");
-
-            // Reset per-frame rendering statistics at the start of each frame
-            Engine.Rendering.Stats.BeginFrame();
-
+            _isDisposing = true;
             try
             {
-                Renderer.Active = true;
-                AbstractRenderer.Current = Renderer;
-            
-                bool useViewportPanelMode =
-                    Engine.IsEditor &&
-                    Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel;
-                bool canRenderWindowViewports = !Engine.VRState.IsInVR || Engine.Rendering.Settings.RenderWindowsWhileInVR;
-
-                // High-signal render diagnostics (rate-limited)
+                // Ensure engine tick callbacks are detached before any other teardown.
+                if (IsTickLinked)
                 {
-                    string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
-                    if (!canRenderWindowViewports)
+                    IsTickLinked = false;
+                    try
                     {
-                        Debug.RenderingEvery(
-                            keyBase + ".VRGated",
-                            TimeSpan.FromSeconds(1),
-                            "[RenderDiag] Window gated by VR. IsInVR={0}, RenderWindowsWhileInVR={1}",
-                            Engine.VRState.IsInVR,
-                            Engine.Rendering.Settings.RenderWindowsWhileInVR);
+                        EndTick();
                     }
-
-                    if (!ShouldBeRendering())
+                    catch
                     {
-                        Debug.RenderingWarningEvery(
-                            keyBase + ".NotRendering",
-                            TimeSpan.FromSeconds(1),
-                            "[RenderDiag] Window not rendering: Viewports={0}, TargetWorldInstanceNull={1}, PresentationMode={2}, CanRenderWindowViewports={3}",
-                            Viewports.Count,
-                            TargetWorldInstance is null,
-                            Engine.Rendering.Settings.ViewportPresentationMode,
-                            canRenderWindowViewports);
-                    }
-
-                    // Per-viewport state snapshot (only a few times a second)
-                    Debug.RenderingEvery(
-                        keyBase + ".ViewportSummary",
-                        TimeSpan.FromSeconds(2),
-                        "[RenderDiag] Window tick. Delta={0:F4}s, Viewports={1}, TargetWorld={2}, PanelMode={3}",
-                        delta,
-                        Viewports.Count,
-                        TargetWorldInstance?.TargetWorld?.Name ?? "<null>",
-                        useViewportPanelMode);
-
-                    foreach (var vp in Viewports)
-                    {
-                        var activeCamera = vp.ActiveCamera;
-                        var world = vp.World;
-                        bool hasPipeline = vp.RenderPipelineInstance.Pipeline is not null;
-                        Debug.RenderingEvery(
-                            keyBase + $".VP.{vp.Index}",
-                            TimeSpan.FromSeconds(2),
-                            "[RenderDiag] VP[{0}] Region={1}x{2}@({3},{4}) Internal={5}x{6} ActiveCameraNull={7} WorldNull={8} PipelineNull={9} AssocPlayer={10}",
-                            vp.Index,
-                            vp.Width,
-                            vp.Height,
-                            vp.X,
-                            vp.Y,
-                            vp.InternalWidth,
-                            vp.InternalHeight,
-                            activeCamera is null,
-                            world is null,
-                            !hasPipeline,
-                            vp.AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
+                        // Best-effort cleanup; shutdown paths should not throw.
                     }
                 }
-
-                using (var preRenderSample = Engine.Profiler.Start("XRWindow.GlobalPreRender"))
+                else if (_rendererInitialized)
                 {
-                    TargetWorldInstance?.GlobalPreRender();
-                }
-                
-                using (var renderCallbackSample = Engine.Profiler.Start("XRWindow.RenderViewportsCallback"))
-                {
-                    RenderViewportsCallback?.Invoke();
-                }
-
-                if (canRenderWindowViewports)
-                {
-                    if (useViewportPanelMode)
+                    // Defensive: if renderer was initialized without tick linking, still attempt cleanup.
+                    try
                     {
-                        BoundingRectangle? viewportPanelRegion = Engine.Rendering.ViewportPanelRenderRegionProvider?.Invoke(this);
-                        if (viewportPanelRegion.HasValue && viewportPanelRegion.Value.Width > 0 && viewportPanelRegion.Value.Height > 0)
-                        {
-                            // ImGui rendering typically leaves scissor/cropping enabled.
-                            // Ensure world rendering starts from a clean state so clears and passes aren't clipped/offset.
-                            Renderer.SetCroppingEnabled(false);
-
-                            // Ensure FBO exists and is the correct size
-                            EnsureViewportPanelFBO(viewportPanelRegion.Value.Width, viewportPanelRegion.Value.Height);
-
-                            // Apply viewport sizing (but not position - we render at 0,0 in the FBO)
-                            ApplyViewportPanelRegionForFBO(viewportPanelRegion.Value);
-
-                            // Render viewports to the FBO
-                            RenderViewportsToFBO(_viewportPanelFBO);
-                        }
-                        else
-                        {
-                            Debug.RenderingEvery(
-                                $"XRWindow.RenderCallback.{GetHashCode()}.PanelRegionMissing",
-                                TimeSpan.FromSeconds(1),
-                                "[RenderDiag] Viewport panel mode active but region missing/invalid. Region={0}",
-                                viewportPanelRegion.HasValue ? $"{viewportPanelRegion.Value.Width}x{viewportPanelRegion.Value.Height}" : "<null>");
-                            RestoreViewportPanelSizingIfNeeded();
-                            DestroyViewportPanelFBO();
-                        }
+                        Renderer.CleanUp();
                     }
-                    else
+                    catch
                     {
-                        RestoreViewportPanelSizingIfNeeded();
-                        DestroyViewportPanelFBO();
-
-                        // RenderViewportsCallback (e.g., ImGui) can leave scissor/cropping enabled.
-                        // Ensure world rendering starts from a clean state so clears and passes aren't clipped/offset.
-                        Renderer.SetCroppingEnabled(false);
-
-                        RenderViewports();
                     }
+
+                    _rendererInitialized = false;
                 }
-                else
+
+                // Free dockable scene-panel GPU resources.
+                _scenePanelAdapter.Dispose();
+
+                // Unhook input.
+                if (Input is not null)
                 {
-                    RestoreViewportPanelSizingIfNeeded();
-                    DestroyViewportPanelFBO();
+                    try
+                    {
+                        Input.ConnectionChanged -= Input_ConnectionChanged;
+                    }
+                    catch
+                    {
+                    }
+
+                    try
+                    {
+                        (Input as IDisposable)?.Dispose();
+                    }
+                    catch
+                    {
+                    }
+
+                    Input = null;
                 }
-                using (var postRenderSample = Engine.Profiler.Start("XRWindow.GlobalPostRender"))
+
+                // Unhook window events and release viewports.
+                UnlinkWindow();
+                try
                 {
-                    TargetWorldInstance?.GlobalPostRender();
+                    Viewports.Clear();
                 }
-            
+                catch
+                {
+                }
+
+                // Finally, release the window itself if possible.
+                try
+                {
+                    (Window as IDisposable)?.Dispose();
+                }
+                catch
+                {
+                }
             }
             finally
             {
-                Renderer.Active = false;
-                AbstractRenderer.Current = null;
+                _isDisposed = true;
+                _isDisposing = false;
+                GC.SuppressFinalize(this);
             }
         }
 
-        private bool ShouldBeRendering()
-            => Viewports.Count > 0 && TargetWorldInstance is not null;
-
-        private void FramebufferResizeCallback(Vector2D<int> obj)
-        {
-            using var sample = Engine.Profiler.Start("XRWindow.FramebufferResize");
-
-            //Debug.Out("Window resized to {0}x{1}", obj.X, obj.Y);
-            Viewports.ForEach(vp => vp.Resize((uint)obj.X, (uint)obj.Y, true));
-            Renderer.FrameBufferInvalidated();
-
-            //var timer = Engine.Time.Timer;
-            //await timer.DispatchCollectVisible();
-            //await timer.DispatchSwapBuffers();
-            //timer.DispatchRender();
-        }
-
-        private void ApplyViewportPanelRegion(BoundingRectangle region)
-        {
-            if (Viewports.Count == 0)
-                return;
-
-            bool sizeChanged =
-                !_viewportPanelSizingActive ||
-                region.Width != _lastViewportPanelWidth ||
-                region.Height != _lastViewportPanelHeight;
-
-            // Always resize viewports to match the panel size.
-            // Resize() sets X=0, Y=0 from percentage fields; we then set the actual offset.
-            if (sizeChanged)
-            {
-                Viewports.ForEach(vp => vp.Resize((uint)region.Width, (uint)region.Height, setInternalResolution: true));
-            }
-
-            // Set viewport position to match the panel bounds.
-            // This affects Region which is used by VPRC_PushViewportRenderArea(UseInternalResolution=false)
-            // for the final output pass only. Internal passes use InternalResolutionRegion (always 0,0).
-            foreach (var vp in Viewports)
-            {
-                vp.X = region.X;
-                vp.Y = region.Y;
-            }
-
-            _viewportPanelSizingActive = true;
-            _lastViewportPanelX = region.X;
-            _lastViewportPanelY = region.Y;
-            _lastViewportPanelWidth = region.Width;
-            _lastViewportPanelHeight = region.Height;
-        }
-
-        /// <summary>
-        /// Applies viewport sizing for FBO mode. Unlike ApplyViewportPanelRegion, this sets
-        /// viewport position to (0,0) since we're rendering to an FBO that will be displayed by ImGui.
-        /// </summary>
-        private void ApplyViewportPanelRegionForFBO(BoundingRectangle region)
-        {
-            if (Viewports.Count == 0)
-                return;
-
-            bool sizeChanged =
-                !_viewportPanelSizingActive ||
-                region.Width != _lastViewportPanelWidth ||
-                region.Height != _lastViewportPanelHeight;
-
-            // Always resize viewports to match the panel size.
-            if (sizeChanged)
-            {
-                Viewports.ForEach(vp => vp.Resize((uint)region.Width, (uint)region.Height, setInternalResolution: true));
-            }
-
-            // For FBO mode, viewport position is always (0,0) since the FBO is the same size as the content area.
-            // ImGui will position the rendered image at the correct location.
-            foreach (var vp in Viewports)
-            {
-                vp.X = 0;
-                vp.Y = 0;
-            }
-
-            _viewportPanelSizingActive = true;
-            _lastViewportPanelX = 0;
-            _lastViewportPanelY = 0;
-            _lastViewportPanelWidth = region.Width;
-            _lastViewportPanelHeight = region.Height;
-        }
-
-        /// <summary>
-        /// Renders all viewports to the specified FBO instead of the window framebuffer.
-        /// </summary>
-        public void RenderViewportsToFBO(XRFrameBuffer? targetFBO)
-        {
-            if (targetFBO is null)
-            {
-                RenderViewports();
-                return;
-            }
-
-            using var sample = Engine.Profiler.Start("XRWindow.RenderViewportsToFBO");
-            foreach (var viewport in Viewports)
-            {
-                using var viewportSample = Engine.Profiler.Start($"XRViewport.RenderToFBO[{viewport.Index}]");
-                viewport.Render(targetFBO);
-            }
-        }
-
-        private void RestoreViewportPanelSizingIfNeeded()
-        {
-            if (!_viewportPanelSizingActive)
-                return;
-
-            var fb = Window.FramebufferSize;
-            if (fb.X > 0 && fb.Y > 0)
-            {
-                Viewports.ForEach(vp => vp.Resize((uint)fb.X, (uint)fb.Y, setInternalResolution: true));
-            }
-
-            _viewportPanelSizingActive = false;
-            _lastViewportPanelX = 0;
-            _lastViewportPanelY = 0;
-            _lastViewportPanelWidth = 0;
-            _lastViewportPanelHeight = 0;
-        }
-
-        public XRViewport GetOrAddViewportForPlayer(LocalPlayerController controller, bool autoSizeAllViewports)
-            => controller.Viewport ??= AddViewportForPlayer(controller, autoSizeAllViewports);
-
-        private XRViewport AddViewportForPlayer(LocalPlayerController? controller, bool autoSizeAllViewports)
-        {
-            using var sample = Engine.Profiler.Start("XRWindow.AddViewportForPlayer");
-
-            XRViewport newViewport = XRViewport.ForTotalViewportCount(this, Viewports.Count);
-            newViewport.AssociatedPlayer = controller;
-            Viewports.Add(newViewport);
-
-            Debug.Out("Added new viewport to {0}: {1}", GetType().GetFriendlyName(), newViewport.Index);
-
-            if (autoSizeAllViewports)
-                ResizeAllViewportsAccordingToPlayers();
-
-            return newViewport;
-        }
-
-        /// <summary>
-        /// Remakes all viewports in order of active local player indices.
-        /// </summary>
-        public void ResizeAllViewportsAccordingToPlayers()
-        {
-            using var sample = Engine.Profiler.Start("XRWindow.ResizeAllViewportsAccordingToPlayers");
-
-            LocalPlayerController[] players = [.. Viewports
-                .Select(x => x.AssociatedPlayer)
-                .OfType<LocalPlayerController>()
-                .Distinct()
-                .OrderBy(x => (int)x.LocalPlayerIndex)];
-            foreach (var viewport in Viewports)
-                viewport.Destroy();
-            Viewports.Clear();
-            for (int i = 0; i < players.Length; i++)
-                AddViewportForPlayer(players[i], false);
-        }
-
-
-        public void RegisterLocalPlayer(ELocalPlayerIndex playerIndex, bool autoSizeAllViewports)
-            => RegisterController(Engine.State.GetOrCreateLocalPlayer(playerIndex), autoSizeAllViewports);
-
-        public void RegisterController(LocalPlayerController controller, bool autoSizeAllViewports)
-            => GetOrAddViewportForPlayer(controller, autoSizeAllViewports).AssociatedPlayer = controller;
-
-        public void UnregisterLocalPlayer(ELocalPlayerIndex playerIndex)
-        {
-            LocalPlayerController? controller = Engine.State.GetLocalPlayer(playerIndex);
-            if (controller is not null)
-                UnregisterController(controller);
-        }
-
-        public void UnregisterController(LocalPlayerController controller)
-        {
-            if (controller.Viewport != null && Viewports.Contains(controller.Viewport))
-                controller.Viewport = null;
-        }
-
-        /// <summary>
-        /// Silk.NET window instance.
-        /// </summary>
-        public IWindow Window { get; }
-
-        /// <summary>
-        /// Interface to render a scene for this window using the requested graphics API.
-        /// </summary>
-        public AbstractRenderer Renderer { get; }
-
-        public IInputContext? Input { get; private set; }
-
-        public XRWindow(WindowOptions options, bool useNativeTitleBar)
-        {
-            _viewports.CollectionChanged += ViewportsChanged;
-            Silk.NET.Windowing.Window.PrioritizeGlfw();
-            Window = Silk.NET.Windowing.Window.Create(options);
-            UseNativeTitleBar = useNativeTitleBar;
-            LinkWindow();
-            Window.Initialize();
-            //Window.IsEventDriven = true;
-            Renderer = Window.API.API switch
-            {
-                ContextAPI.OpenGL => new OpenGLRenderer(this, true),
-                ContextAPI.Vulkan => new VulkanRenderer(this, true),
-                _ => throw new Exception($"Unsupported API: {Window.API.API}"),
-            };
-        }
-
-        private void Window_Load()
-        {
-            //Task.Run(() =>
-            //{
-                Input = Window.CreateInput();
-                Input.ConnectionChanged += Input_ConnectionChanged;
-            //});
-        }
-
-        private void Input_ConnectionChanged(IInputDevice device, bool connected)
-        {
-            switch (device)
-            {
-                case IKeyboard keyboard:
-                    
-                    break;
-                case IMouse mouse:
-
-                    break;
-                case IGamepad gamepad:
-
-                    break;
-            }
-        }
-
-        private void Window_Closing()
-        {
-            //Renderer.Dispose();
-            //Window.Dispose();
-            UnlinkWindow();
-            Engine.RemoveWindow(this);
-        }
-
-        private void ResizeViewports(Vector2D<int> obj)
-        {
-            using var sample = Engine.Profiler.Start("XRWindow.ResizeViewports");
-
-            void SetSize(XRViewport vp)
-            {
-                vp.Resize((uint)obj.X, (uint)obj.Y, true);
-                //vp.SetInternalResolution((int)(obj.X * 0.5f), (int)(obj.X * 0.5f), false);
-                //vp.SetInternalResolutionPercentage(0.5f, 0.5f);
-            }
-            Viewports.ForEach(SetSize);
-        }
-
-        public void UpdateViewportSizes()
-        {
-            using var sample = Engine.Profiler.Start("XRWindow.UpdateViewportSizes");
-            ResizeViewports(Window.Size);
-        }
-
-        public void SetWorld(XRWorld? targetWorld)
-        {
-            if (targetWorld is not null)
-                TargetWorldInstance = XRWorldInstance.GetOrInitWorld(targetWorld);
-        }
+        #endregion
     }
 }

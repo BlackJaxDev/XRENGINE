@@ -29,14 +29,15 @@ public unsafe partial class VulkanRenderer
 
         for (int i = 0; i < swapChainImageViews.Length; i++)
         {
-            ImageView* attachmentsPtr = stackalloc ImageView[1];
+            ImageView* attachmentsPtr = stackalloc ImageView[2];
             attachmentsPtr[0] = swapChainImageViews[i];
+            attachmentsPtr[1] = _swapchainDepthView;
 
             FramebufferCreateInfo framebufferInfo = new()
             {
                 SType = StructureType.FramebufferCreateInfo,
                 RenderPass = _renderPass,
-                AttachmentCount = 1,
+                AttachmentCount = 2,
                 PAttachments = attachmentsPtr,
                 Width = swapChainExtent.Width,
                 Height = swapChainExtent.Height,

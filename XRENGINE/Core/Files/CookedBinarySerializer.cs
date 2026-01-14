@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -531,6 +532,54 @@ public static class CookedBinarySerializer
             return;
         }
 
+        // System.Numerics types - serialize directly for efficiency and reliability
+        if (value is Vector2 v2)
+        {
+            writer.Write((byte)CookedBinaryTypeMarker.Vector2);
+            writer.Write(v2.X);
+            writer.Write(v2.Y);
+            return;
+        }
+
+        if (value is Vector3 v3)
+        {
+            writer.Write((byte)CookedBinaryTypeMarker.Vector3);
+            writer.Write(v3.X);
+            writer.Write(v3.Y);
+            writer.Write(v3.Z);
+            return;
+        }
+
+        if (value is Vector4 v4)
+        {
+            writer.Write((byte)CookedBinaryTypeMarker.Vector4);
+            writer.Write(v4.X);
+            writer.Write(v4.Y);
+            writer.Write(v4.Z);
+            writer.Write(v4.W);
+            return;
+        }
+
+        if (value is Quaternion q)
+        {
+            writer.Write((byte)CookedBinaryTypeMarker.Quaternion);
+            writer.Write(q.X);
+            writer.Write(q.Y);
+            writer.Write(q.Z);
+            writer.Write(q.W);
+            return;
+        }
+
+        if (value is Matrix4x4 m)
+        {
+            writer.Write((byte)CookedBinaryTypeMarker.Matrix4x4);
+            writer.Write(m.M11); writer.Write(m.M12); writer.Write(m.M13); writer.Write(m.M14);
+            writer.Write(m.M21); writer.Write(m.M22); writer.Write(m.M23); writer.Write(m.M24);
+            writer.Write(m.M31); writer.Write(m.M32); writer.Write(m.M33); writer.Write(m.M34);
+            writer.Write(m.M41); writer.Write(m.M42); writer.Write(m.M43); writer.Write(m.M44);
+            return;
+        }
+
         if (runtimeType.IsEnum)
         {
             writer.Write((byte)CookedBinaryTypeMarker.Enum);
@@ -630,6 +679,11 @@ public static class CookedBinarySerializer
             CookedBinaryTypeMarker.DateTime => DateTime.FromBinary(reader.ReadInt64()),
             CookedBinaryTypeMarker.TimeSpan => new TimeSpan(reader.ReadInt64()),
             CookedBinaryTypeMarker.ByteArray => ReadByteArray(reader),
+            CookedBinaryTypeMarker.Vector2 => new Vector2(reader.ReadSingle(), reader.ReadSingle()),
+            CookedBinaryTypeMarker.Vector3 => new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+            CookedBinaryTypeMarker.Vector4 => new Vector4(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+            CookedBinaryTypeMarker.Quaternion => new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+            CookedBinaryTypeMarker.Matrix4x4 => ReadMatrix4x4(reader),
             CookedBinaryTypeMarker.Enum => ReadEnum(reader),
             CookedBinaryTypeMarker.Array => ReadArray(reader, callbacks),
             CookedBinaryTypeMarker.List => ReadList(reader, callbacks),
@@ -828,6 +882,26 @@ public static class CookedBinarySerializer
                 reader.ReadBytes(length);
                 return;
             }
+            case CookedBinaryTypeMarker.Vector2:
+                reader.ReadSingle();
+                reader.ReadSingle();
+                return;
+            case CookedBinaryTypeMarker.Vector3:
+                reader.ReadSingle();
+                reader.ReadSingle();
+                reader.ReadSingle();
+                return;
+            case CookedBinaryTypeMarker.Vector4:
+            case CookedBinaryTypeMarker.Quaternion:
+                reader.ReadSingle();
+                reader.ReadSingle();
+                reader.ReadSingle();
+                reader.ReadSingle();
+                return;
+            case CookedBinaryTypeMarker.Matrix4x4:
+                for (int i = 0; i < 16; i++)
+                    reader.ReadSingle();
+                return;
             case CookedBinaryTypeMarker.Object:
             {
                 reader.ReadString(); // runtime type name
@@ -1028,6 +1102,7 @@ public static class CookedBinarySerializer
     }
 
     private static readonly ConcurrentDictionary<Type, byte> LoggedTypeDeserializationFailures = new();
+    private static readonly ConcurrentDictionary<Type, byte> LoggedMemoryPackSerializationFailures = new();
 
     private static void LogTypeDeserializationFailure(Type type, Exception ex)
     {
@@ -1035,6 +1110,24 @@ public static class CookedBinarySerializer
             return;
 
         Debug.LogWarning($"Cooked binary deserialization skipped type '{type}': {ex.Message}");
+    }
+
+    private static void LogMemoryPackSerializationFailure(Type type, Exception ex)
+    {
+        if (!LoggedMemoryPackSerializationFailures.TryAdd(type, 0))
+            return;
+
+        Debug.LogWarning($"[MEMORYPACK SERIALIZE FAIL] Type '{type.FullName}' is not supported by MemoryPack. " +
+            $"Consider adding explicit support in CookedBinarySerializer. Exception: {ex.GetType().Name}: {ex.Message}");
+    }
+
+    private static void LogMemoryPackDeserializationFailure(Type type, Exception ex)
+    {
+        if (!LoggedTypeDeserializationFailures.TryAdd(type, 0))
+            return;
+
+        Debug.LogWarning($"[MEMORYPACK DESERIALIZE FAIL] Type '{type.FullName}' failed to deserialize via MemoryPack. " +
+            $"This may cause data loss! Consider adding explicit support in CookedBinarySerializer. Exception: {ex.GetType().Name}: {ex.Message}");
     }
 
     private static void LogMemberSerializationFailure(Type ownerType, string memberName, Exception ex)
@@ -1062,7 +1155,7 @@ public static class CookedBinarySerializer
         catch (Exception ex)
         {
             // Safe to skip because the payload is length-prefixed and already consumed.
-            LogTypeDeserializationFailure(targetType, ex);
+            LogMemoryPackDeserializationFailure(targetType, ex);
             return null;
         }
     }
@@ -1091,6 +1184,15 @@ public static class CookedBinarySerializer
         int length = reader.ReadInt32();
         byte[] data = reader.ReadBytes(length);
         return new DataSource(data);
+    }
+
+    private static Matrix4x4 ReadMatrix4x4(CookedBinaryReader reader)
+    {
+        return new Matrix4x4(
+            reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(),
+            reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(),
+            reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(),
+            reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
@@ -1324,6 +1426,7 @@ public static class CookedBinarySerializer
         }
         catch (Exception ex) when (IsMemoryPackUnsupported(ex))
         {
+            LogMemoryPackSerializationFailure(runtimeType, ex);
             data = null;
             return false;
         }
@@ -1436,6 +1539,31 @@ public static class CookedBinarySerializer
             if (value is DataSource dataSource)
             {
                 AddBytes(sizeof(int) + checked((int)dataSource.Length));
+                return;
+            }
+
+            // System.Numerics types - fixed sizes
+            if (value is Vector2)
+            {
+                AddBytes(sizeof(float) * 2);
+                return;
+            }
+
+            if (value is Vector3)
+            {
+                AddBytes(sizeof(float) * 3);
+                return;
+            }
+
+            if (value is Vector4 or Quaternion)
+            {
+                AddBytes(sizeof(float) * 4);
+                return;
+            }
+
+            if (value is Matrix4x4)
+            {
+                AddBytes(sizeof(float) * 16);
                 return;
             }
 

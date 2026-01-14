@@ -79,41 +79,302 @@ namespace XREngine.Rendering.Vulkan
 
             EmitPendingMemoryBarriers(commandBuffer);
 
+            // Ensure swapchain resources are transitioned appropriately before any rendering.
             var swapchainBarriers = _barrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
             if (swapchainBarriers.Count > 0)
                 EmitPlannedImageBarriers(commandBuffer, swapchainBarriers);
             else
                 EmitPlannedImageBarriers(commandBuffer, _barrierPlanner.ImageBarriers);
 
-            RenderPassBeginInfo renderPassInfo = new()
+            var ops = DrainFrameOps();
+
+            bool renderPassActive = false;
+            XRFrameBuffer? activeTarget = null;
+            RenderPass activeRenderPass = default;
+            Framebuffer activeFramebuffer = default;
+            Rect2D activeRenderArea = default;
+            int activePassIndex = int.MinValue;
+
+            void EndActiveRenderPass()
             {
-                SType = StructureType.RenderPassBeginInfo,
-                RenderPass = _renderPass,
-                Framebuffer = swapChainFramebuffers![imageIndex],
-                RenderArea = new Rect2D
+                if (!renderPassActive)
+                    return;
+                Api!.CmdEndRenderPass(commandBuffer);
+                renderPassActive = false;
+                activeTarget = null;
+                activeRenderPass = default;
+                activeFramebuffer = default;
+                activeRenderArea = default;
+            }
+
+            void BeginRenderPassForTarget(XRFrameBuffer? target)
+            {
+                // Assumes no active render pass.
+                if (target is null)
                 {
-                    Offset = new Offset2D(0, 0),
-                    Extent = swapChainExtent
+                    RenderPassBeginInfo renderPassInfo = new()
+                    {
+                        SType = StructureType.RenderPassBeginInfo,
+                        RenderPass = _renderPass,
+                        Framebuffer = swapChainFramebuffers![imageIndex],
+                        RenderArea = new Rect2D
+                        {
+                            Offset = new Offset2D(0, 0),
+                            Extent = swapChainExtent
+                        }
+                    };
+
+                    const uint attachmentCount = 2;
+                    ClearValue* clearValues = stackalloc ClearValue[(int)attachmentCount];
+                    _state.WriteClearValues(clearValues, attachmentCount);
+                    renderPassInfo.ClearValueCount = attachmentCount;
+                    renderPassInfo.PClearValues = clearValues;
+
+                    Api!.CmdBeginRenderPass(commandBuffer, &renderPassInfo, SubpassContents.Inline);
+
+                    renderPassActive = true;
+                    activeTarget = null;
+                    activeRenderPass = _renderPass;
+                    activeFramebuffer = swapChainFramebuffers![imageIndex];
+                    activeRenderArea = renderPassInfo.RenderArea;
+                    return;
                 }
-            };
 
-            const uint attachmentCount = 1;
-            ClearValue* clearValues = stackalloc ClearValue[(int)attachmentCount];
-            _state.WriteClearValues(clearValues, attachmentCount);
+                var vkFrameBuffer = GenericToAPI<VkFrameBuffer>(target);
+                if (vkFrameBuffer is null)
+                    throw new InvalidOperationException("Failed to resolve Vulkan framebuffer for target.");
 
-            renderPassInfo.ClearValueCount = attachmentCount;
-            renderPassInfo.PClearValues = clearValues;
+                RenderPassBeginInfo fboPassInfo = new()
+                {
+                    SType = StructureType.RenderPassBeginInfo,
+                    RenderPass = vkFrameBuffer.RenderPass,
+                    Framebuffer = vkFrameBuffer.FrameBuffer,
+                    RenderArea = new Rect2D
+                    {
+                        Offset = new Offset2D(0, 0),
+                        Extent = new Extent2D(Math.Max(target.Width, 1u), Math.Max(target.Height, 1u))
+                    }
+                };
 
-            Api!.CmdBeginRenderPass(commandBuffer, &renderPassInfo, SubpassContents.Inline);
+                uint attachmentCountFbo = Math.Max(vkFrameBuffer.AttachmentCount, 1u);
+                ClearValue* clearValuesFbo = stackalloc ClearValue[(int)attachmentCountFbo];
+                vkFrameBuffer.WriteClearValues(clearValuesFbo, attachmentCountFbo);
+                fboPassInfo.ClearValueCount = attachmentCountFbo;
+                fboPassInfo.PClearValues = clearValuesFbo;
+
+                Api!.CmdBeginRenderPass(commandBuffer, &fboPassInfo, SubpassContents.Inline);
+
+                renderPassActive = true;
+                activeTarget = target;
+                activeRenderPass = vkFrameBuffer.RenderPass;
+                activeFramebuffer = vkFrameBuffer.FrameBuffer;
+                activeRenderArea = fboPassInfo.RenderArea;
+            }
+
+            void EmitPassBarriers(int passIndex)
+            {
+                var barriers = _barrierPlanner.GetBarriersForPass(passIndex);
+                if (barriers.Count > 0)
+                    EmitPlannedImageBarriers(commandBuffer, barriers);
+            }
+
+            foreach (var op in ops)
+            {
+                if (op.PassIndex != activePassIndex)
+                {
+                    // Barriers are safest outside render passes.
+                    EndActiveRenderPass();
+                    EmitPassBarriers(op.PassIndex);
+                    activePassIndex = op.PassIndex;
+                }
+
+                switch (op)
+                {
+                    case BlitOp blit:
+                        EndActiveRenderPass();
+                        RecordBlitOp(commandBuffer, blit);
+                        break;
+
+                    case ClearOp clear:
+                        if (!renderPassActive || activeTarget != clear.Target)
+                        {
+                            EndActiveRenderPass();
+                            BeginRenderPassForTarget(clear.Target);
+                        }
+                        RecordClearOp(commandBuffer, imageIndex, clear);
+                        break;
+
+                    case MeshDrawOp drawOp:
+                        if (!renderPassActive || activeTarget != drawOp.Target)
+                        {
+                            EndActiveRenderPass();
+                            BeginRenderPassForTarget(drawOp.Target);
+                        }
+
+                        // Apply per-draw dynamic state snapshot (OpenGL-like immediate semantics).
+                        Viewport viewport = drawOp.Draw.Viewport;
+                        Api!.CmdSetViewport(commandBuffer, 0, 1, &viewport);
+                        Rect2D scissor = drawOp.Draw.Scissor;
+                        Api!.CmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+                        drawOp.Draw.Renderer.RecordDraw(commandBuffer, drawOp.Draw, activeRenderPass);
+                        break;
+                }
+            }
+
+            // Always finish with a swapchain render pass so ImGui/debug overlay can present.
+            if (!renderPassActive || activeTarget is not null)
+            {
+                EndActiveRenderPass();
+                BeginRenderPassForTarget(null);
+            }
 
             ApplyDynamicState(commandBuffer);
-            RenderQueuedMeshes(commandBuffer);
+            RenderDebugTriangle(commandBuffer);
             RenderImGui(commandBuffer, imageIndex);
-
-            Api!.CmdEndRenderPass(commandBuffer);
+            EndActiveRenderPass();
 
             if (Api!.EndCommandBuffer(commandBuffer) != Result.Success)
                 throw new Exception("Failed to record command buffer.");
+        }
+
+        private void RecordClearOp(CommandBuffer commandBuffer, uint imageIndex, ClearOp op)
+        {
+            _ = imageIndex;
+            ClearRect clearRect = new()
+            {
+                Rect = op.Rect,
+                BaseArrayLayer = 0,
+                LayerCount = 1
+            };
+
+            ClearRect* rectPtr = stackalloc ClearRect[1];
+            rectPtr[0] = clearRect;
+
+            if (op.Target is null)
+            {
+                // Swapchain: single color attachment + depth.
+                ClearAttachment* attachments = stackalloc ClearAttachment[2];
+                uint count = 0;
+
+                if (op.ClearColor)
+                {
+                    attachments[count++] = new ClearAttachment
+                    {
+                        AspectMask = ImageAspectFlags.ColorBit,
+                        ColorAttachment = 0,
+                        ClearValue = new ClearValue
+                        {
+                            Color = new ClearColorValue
+                            {
+                                Float32_0 = op.Color.R,
+                                Float32_1 = op.Color.G,
+                                Float32_2 = op.Color.B,
+                                Float32_3 = op.Color.A
+                            }
+                        }
+                    };
+                }
+
+                if (op.ClearDepth || op.ClearStencil)
+                {
+                    ImageAspectFlags aspects = ImageAspectFlags.None;
+                    if (op.ClearDepth)
+                        aspects |= ImageAspectFlags.DepthBit;
+                    if (op.ClearStencil)
+                        aspects |= ImageAspectFlags.StencilBit;
+
+                    attachments[count++] = new ClearAttachment
+                    {
+                        AspectMask = aspects,
+                        ClearValue = new ClearValue
+                        {
+                            DepthStencil = new ClearDepthStencilValue
+                            {
+                                Depth = op.Depth,
+                                Stencil = op.Stencil
+                            }
+                        }
+                    };
+                }
+
+                if (count > 0)
+                    Api!.CmdClearAttachments(commandBuffer, count, attachments, 1, rectPtr);
+
+                return;
+            }
+
+            var vkFrameBuffer = GenericToAPI<VkFrameBuffer>(op.Target);
+            if (vkFrameBuffer is null)
+                return;
+
+            uint maxAttachments = Math.Max(vkFrameBuffer.AttachmentCount + 1u, 2u);
+            ClearAttachment* fboAttachments = stackalloc ClearAttachment[(int)maxAttachments];
+            uint fboCount = vkFrameBuffer.WriteClearAttachments(fboAttachments, op.ClearColor, op.ClearDepth, op.ClearStencil);
+            if (fboCount > 0)
+                Api!.CmdClearAttachments(commandBuffer, fboCount, fboAttachments, 1, rectPtr);
+        }
+
+        private void RecordBlitOp(CommandBuffer commandBuffer, BlitOp op)
+        {
+            if (!TryResolveBlitImage(op.InFbo, op.ColorBit, op.DepthBit, op.StencilBit, out var source))
+                return;
+            if (!TryResolveBlitImage(op.OutFbo, op.ColorBit, op.DepthBit, op.StencilBit, out var destination))
+                return;
+
+            Filter filter = op.LinearFilter ? Filter.Linear : Filter.Nearest;
+            ImageBlit region = BuildImageBlit(source, destination, op.InX, op.InY, op.InW, op.InH, op.OutX, op.OutY, op.OutW, op.OutH);
+
+            // Transition to transfer layouts, blit, then transition back to preferred layouts.
+            TransitionForBlit(
+                commandBuffer,
+                source,
+                source.PreferredLayout,
+                ImageLayout.TransferSrcOptimal,
+                source.AccessMask,
+                AccessFlags.TransferReadBit,
+                source.StageMask,
+                PipelineStageFlags.TransferBit);
+
+            TransitionForBlit(
+                commandBuffer,
+                destination,
+                destination.PreferredLayout,
+                ImageLayout.TransferDstOptimal,
+                destination.AccessMask,
+                AccessFlags.TransferWriteBit,
+                destination.StageMask,
+                PipelineStageFlags.TransferBit);
+
+            Api!.CmdBlitImage(
+                commandBuffer,
+                source.Image,
+                ImageLayout.TransferSrcOptimal,
+                destination.Image,
+                ImageLayout.TransferDstOptimal,
+                1,
+                &region,
+                filter);
+
+            TransitionForBlit(
+                commandBuffer,
+                source,
+                ImageLayout.TransferSrcOptimal,
+                source.PreferredLayout,
+                AccessFlags.TransferReadBit,
+                source.AccessMask,
+                PipelineStageFlags.TransferBit,
+                source.StageMask);
+
+            TransitionForBlit(
+                commandBuffer,
+                destination,
+                ImageLayout.TransferDstOptimal,
+                destination.PreferredLayout,
+                AccessFlags.TransferWriteBit,
+                destination.AccessMask,
+                PipelineStageFlags.TransferBit,
+                destination.StageMask);
         }
 
         private void ApplyDynamicState(CommandBuffer commandBuffer)

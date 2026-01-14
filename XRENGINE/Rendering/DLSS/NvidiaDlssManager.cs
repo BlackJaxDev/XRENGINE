@@ -24,6 +24,7 @@ namespace XREngine.Rendering.DLSS
         private static bool _probed;
         private static bool _cachedIsSupported;
         private static bool _lastIsNvidia;
+        private static bool _lastIsVulkan;
         private static string? _lastError;
 
         public static bool IsSupported
@@ -48,7 +49,9 @@ namespace XREngine.Rendering.DLSS
         {
             // Vulkan sets IsNVIDIA during adapter selection; OpenGL sets it when the context is created.
             // The original static ctor probe could run before either of those, permanently caching false.
-            if (_probed && _lastIsNvidia == Engine.Rendering.State.IsNVIDIA)
+            if (_probed &&
+                _lastIsNvidia == Engine.Rendering.State.IsNVIDIA &&
+                _lastIsVulkan == Engine.Rendering.State.IsVulkan)
                 return;
 
             DetectSupport();
@@ -58,7 +61,15 @@ namespace XREngine.Rendering.DLSS
         {
             _probed = true;
             _lastIsNvidia = Engine.Rendering.State.IsNVIDIA;
+            _lastIsVulkan = Engine.Rendering.State.IsVulkan;
             _lastError = null;
+
+            if (!Engine.Rendering.State.IsVulkan)
+            {
+                _lastError = "DLSS requires a Vulkan renderer.";
+                _cachedIsSupported = false;
+                return;
+            }
 
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
