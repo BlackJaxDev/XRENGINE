@@ -1,7 +1,7 @@
 # OpenXR Implementation Comparison
 
-**Generated:** 2026-01-08  
-**Status:** Implementation Review Complete
+**Generated:** 2026-01-13  
+**Status:** Implementation Review Updated
 
 This document compares the XREngine OpenXR implementation against:
 1. The official [OpenXR Tutorial](https://openxr-tutorial.com/android/vulkan/3-graphics.html)
@@ -11,10 +11,12 @@ This document compares the XREngine OpenXR implementation against:
 
 ## Summary
 
-The OpenXR implementation is **architecturally sound** and follows the tutorial pattern correctly. Key fixes have been applied:
-- Direct OpenXR pose usage for camera transforms
-- Infinite swapchain wait timeout (`long.MaxValue`)
-- GL flush before swapchain image release
+The OpenXR implementation is **architecturally sound** and follows the tutorial pattern correctly. Recent updates made it significantly more robust in the engine's multi-threaded render model:
+- Predicted **and** late pose sampling (`LocateViews(Predicted)` for culling, `LocateViews(Late)` right before rendering)
+- Central pose/FOV caches (HMD, per-eye, controllers, trackers) with a timing selector (`PoseTimingForRecalc`)
+- Safer OpenGL execution (no forced WGL context switching, deferred GL session init on the render thread)
+- Stronger swapchain safety (infinite wait timeout, always-release-on-finally, GL flush)
+- GL state isolation to avoid contaminating desktop rendering and cross-eye state leakage
 
 ---
 
@@ -31,22 +33,34 @@ The OpenXR implementation is **architecturally sound** and follows the tutorial 
 | **Camera Pose** | Render from `views[i].pose` position/orientation | ✅ `UpdateOpenXrEyeCameraFromView` sets camera transform from `_views[viewIndex].Pose` | `RenderDeviceToAbsoluteTrackingMatrix` × `GetEyeToHeadTransform` |
 | **Projection Matrix** | Use `views[i].fov` angles | ✅ `XROpenXRFovCameraParameters.SetAngles(...)` uses FOV from `_views` | `CVR.GetProjectionMatrix()` |
 | **GPU Sync Before Release** | `EndRendering()` blocks until GPU done | ✅ `_gl.Flush()` before release | N/A |
+| **Swapchain Safety** | Always release acquired image | ✅ Release in `finally` (even on exception) | N/A |
+| **Late Pose Update** | Sample poses close to render | ✅ `LocateViews(Late)` + action pose cache refresh on render thread | Typical `WaitGetPoses()` timing |
+| **Device Pose Integration** | HMD/controllers tracked per-frame | ✅ VR transforms pull from OpenXR caches (HMD, controllers, trackers via user paths) | Device matrices from OpenVR |
+| **GL State Isolation** | Keep engine state stable | ✅ GL snapshot restore + sanitation; per-eye scissor/mask guards | N/A |
 
 ---
 
 ## Key Implementation Details
 
-### Frame Loop (OpenXrSwapBuffers)
+### Frame Loop (Engine Thread Split)
 
 ```
-1. PollEvents()           - Handle session state changes
-2. WaitFrame()            - Get predicted display time, shouldRender flag
-3. BeginFrame()           - Signal frame start to runtime
-4. LocateViews()          - Get per-eye poses & FOV for predictedDisplayTime
-5. UpdateOpenXrEyeCameraFromView() - Set camera transforms from OpenXR poses
-6. CollectVisible()       - Engine culling/visibility
-7. SwapBuffers()          - Engine buffer swap
-8. Set _framePrepared=1   - Signal render thread
+Render thread (end of frame):
+1. PollEvents()                    - Handle session state changes
+2. (Optional) LocateViews(Late)    - Late-update tracked poses & FOV
+3. InvokeRecalcMatrixOnDraw(Late)  - Let VR transforms refresh render matrices
+4. RenderFrame()                   - Acquire/Wait/Render/Release per-eye swapchain images
+5. EndFrame()                      - Submit CompositionLayerProjection
+6. PrepareNextFrameOnRenderThread():
+    a. WaitFrame()                  - Get predictedDisplayTime + shouldRender
+    b. BeginFrame()                 - Signal frame start to runtime
+    c. LocateViews(Predicted)       - Predicted per-eye view poses & FOV
+    d. UpdateActionPoseCaches(Predicted) - Predicted controller/tracker poses
+    e. InvokeRecalcMatrixOnDraw(Predicted) - Update VR rig for CollectVisible
+
+CollectVisible thread:
+7. OpenXrCollectVisible()           - Build per-eye buffers using predicted views
+8. OpenXrSwapBuffers()              - Publish buffers; set _framePrepared=1
 ```
 
 ### Render Loop (RenderFrame → RenderEye)
@@ -57,10 +71,11 @@ The OpenXR implementation is **architecturally sound** and follows the tutorial 
    a. AcquireSwapchainImage()
    b. WaitSwapchainImage(timeout=INFINITE)
    c. Bind FBO, set viewport
-   d. Render scene with OpenXR camera
-   e. Flush GL
-   f. ReleaseSwapchainImage()
-   g. Fill projectionViews[i] with pose/fov from _views[i]
+    d. Sanitize per-eye GL state (scissor/masks)
+    e. Render scene with OpenXR camera
+    f. Flush GL
+    g. ReleaseSwapchainImage() (always, via `finally`)
+    h. Fill projectionViews[i] with pose/fov from _views[i]
 3. EndFrame() with CompositionLayerProjection
 ```
 
@@ -87,6 +102,11 @@ Matrix4x4 mtx = device.RenderDeviceToAbsoluteTrackingMatrix;  // HMD pose
 ```
 
 **Key difference:** OpenXR returns complete per-eye poses directly from `xrLocateViews()`. OpenVR requires composing HMD pose with eye-to-head transform.
+
+**VR rig integration (new):** if the app provides a VR rig (e.g., `VREyeTransform` / `VRHeadsetTransform`), the engine now:
+- Updates predicted/late pose caches in `OpenXRAPI`
+- Lets transforms pull from the correct cache via `PoseTimingForRecalc`
+- Still applies a late render-matrix update to minimize latency
 
 ---
 
@@ -121,11 +141,17 @@ if (sessionActive && frameState.shouldRender) {
 }
 ```
 
-Current code checks `_sessionBegun` and `_frameState.ShouldRender` but not specific session states.
+Current code gates on `_sessionBegun` and `_frameState.ShouldRender` (and ends frames with **no layers** when `ShouldRender == 0`), but does not explicitly check `SYNCHRONIZED/VISIBLE/FOCUSED` before attempting to prepare/render.
 
 ### 3. Depth Swapchain
 
 Tutorial creates both color AND depth swapchains. Current implementation only creates color swapchains for OpenXR. This could affect depth testing in certain scenarios.
+
+### 4. ViewState-Driven Tracking Loss Handling
+
+Now that device/controller/tracker transforms are driven from OpenXR pose caches, it may be worth defining a consistent policy for invalid tracking:
+- Freeze last valid pose vs. identity vs. hide/disable renderable
+- Clear controller validity flags and tracker entries when the runtime reports invalid
 
 ---
 
@@ -140,16 +166,22 @@ Tutorial creates both color AND depth swapchains. Current implementation only cr
 | **Projection Matrix** | `GetProjectionMatrix(eye, near, far)` | FOV angles from `xrLocateViews()`, build matrix yourself |
 | **Threading Model** | Single-threaded typical | Explicitly supports split CollectVisible/Render threads |
 
+OpenXR in XREngine specifically keeps **xr* calls on the render thread** while allowing the engine's CollectVisible thread to build buffers from the predicted views.
+
 ---
 
 ## File References
 
 | File | Purpose |
 |------|---------|
-| `XRENGINE/Rendering/API/Rendering/OpenXR/Init.cs` | Main OpenXR integration |
+| `XRENGINE/Rendering/API/Rendering/OpenXR/Init.cs` | OpenXR API construction + loader handling |
+| `XRENGINE/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs` | Render/CollectVisible thread split + frame submission |
+| `XRENGINE/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs` | Pose/FOV caches (predicted + late) + device pose API |
+| `XRENGINE/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs` | Core xr calls (`WaitFrame`, `BeginFrame`, `LocateViews`, events) |
+| `XRENGINE/Rendering/API/Rendering/OpenXR/OpenXRAPI.NativeLoader.cs` | `openxr_loader.dll` resolution + active runtime detection |
 | `XRENGINE/Rendering/Camera/XROpenXRFovCameraParameters.cs` | Asymmetric FOV projection matrix |
 | `XRENGINE/Engine/Engine.VRState.cs` | OpenVR integration (reference) |
-| `XRENGINE/Scene/Transforms/VR/VRDeviceTransformBase.cs` | OpenVR device transforms |
+| `XRENGINE/Scene/Transforms/VR/VRDeviceTransformBase.cs` | VR transforms (OpenVR matrices and OpenXR pose cache integration) |
 | `XRENGINE/Scene/Transforms/VR/VREyeTransform.cs` | OpenVR eye-to-head offset |
 | `XRENGINE/Rendering/Camera/XROVRCameraParameters.cs` | OpenVR projection matrix |
 

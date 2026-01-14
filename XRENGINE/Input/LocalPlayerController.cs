@@ -76,11 +76,33 @@ namespace XREngine.Input
         {
             if (_viewport is not null)
             {
-                _viewport.CameraComponent = _controlledPawn?.GetCamera();
+                var pawn = _controlledPawn;
+                var pawnCamera = pawn?.GetCamera();
+
+                Debug.RenderingEvery(
+                    $"ViewportBind.Player.{GetHashCode()}.{(int)_index}",
+                    TimeSpan.FromSeconds(0.5),
+                    "[ViewportDiag] UpdateViewportCamera: P{0} CtrlHash={1} VPHash={2} Pawn={3} PawnCamNull={4}",
+                    (int)_index + 1,
+                    GetHashCode(),
+                    _viewport.GetHashCode(),
+                    pawn?.Name ?? "<null>",
+                    pawnCamera is null);
+
+                _viewport.CameraComponent = pawnCamera;
                 Input.UpdateDevices(_viewport.Window?.Input, Engine.VRState.Actions);
             }
             else
+            {
+                Debug.RenderingWarningEvery(
+                    $"ViewportBind.Player.NoViewport.{GetHashCode()}.{(int)_index}",
+                    TimeSpan.FromSeconds(0.5),
+                    "[ViewportDiag] UpdateViewportCamera: P{0} CtrlHash={1} viewport=NULL (cannot bind camera). Pawn={2}",
+                    (int)_index + 1,
+                    GetHashCode(),
+                    _controlledPawn?.Name ?? "<null>");
                 Input.UpdateDevices(null, Engine.VRState.Actions);
+            }
         }
 
         /// <summary>

@@ -31,7 +31,30 @@ namespace XREngine.Rendering.Commands
 
             _renderingPasses = [];
             _gpuPasses = [];
-            _passMetadata = passMetadata?.ToDictionary(m => m.PassIndex) ?? new Dictionary<int, RenderPassMetadata>();
+
+            // PassMetadata should be unique by PassIndex, but during restore/re-init we may end up with duplicates.
+            // Avoid crashing the entire engine; keep the first entry and warn.
+            _passMetadata = [];
+            if (passMetadata is not null)
+            {
+                foreach (var meta in passMetadata)
+                {
+                    if (_passMetadata.TryAdd(meta.PassIndex, meta))
+                        continue;
+
+                    var existing = _passMetadata[meta.PassIndex];
+                    Debug.RenderingWarningEvery(
+                        $"RenderPassMetadata.Duplicate.{meta.PassIndex}",
+                        TimeSpan.FromSeconds(5),
+                        "[RenderDiag] Duplicate RenderPassMetadata PassIndex={0}. Keeping first ('{1}', Stage={2}), ignoring ('{3}', Stage={4}).",
+                        meta.PassIndex,
+                        existing.Name,
+                        existing.Stage,
+                        meta.Name,
+                        meta.Stage);
+                }
+            }
+
             foreach (KeyValuePair<int, ICollection<RenderCommand>> pass in _updatingPasses)
             {
                 _renderingPasses.Add(pass.Key, []);

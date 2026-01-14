@@ -1,6 +1,5 @@
 using ImageMagick;
 using ImGuiNET;
-using Silk.NET.Core.Attributes;
 using Silk.NET.Core.Native;
 using Silk.NET.Windowing;
 using System;
@@ -23,6 +22,7 @@ namespace XREngine.Rendering
     /// </summary>
     public abstract unsafe class AbstractRenderer : XRBase//, IDisposable
     {
+        #region Constants / Statics
         /// <summary>
         /// If true, this renderer is currently being used to render a window.
         /// </summary>
@@ -30,6 +30,18 @@ namespace XREngine.Rendering
 
         public static readonly Vector3 UIPositionBias = new(0.0f, 0.0f, 0.1f);
         public static readonly Rotator UIRotation = new(90.0f, 0.0f, 0.0f, ERotationOrder.YPR);
+
+        /// <summary>
+        /// Use this to retrieve the currently rendering window renderer.
+        /// </summary>
+        public static AbstractRenderer? Current { get; internal set; }
+
+        public const float DefaultPointSize = 5.0f;
+        public const float DefaultLineSize = 1.0f;
+        #endregion
+
+        #region Window / Lifecycle
+        private XRWindow _window;
 
         protected AbstractRenderer(XRWindow window, bool shouldLinkWindow = true)
         {
@@ -40,36 +52,58 @@ namespace XREngine.Rendering
                 _renderObjectCache = Engine.Rendering.CreateObjectsForNewRenderer(this);
         }
 
-        private readonly Lock _roCacheLock = new();
-        private readonly ConcurrentDictionary<GenericRenderObject, AbstractRenderAPIObject> _renderObjectCache = [];
-        public IReadOnlyDictionary<GenericRenderObject, AbstractRenderAPIObject> RenderObjectCache => _renderObjectCache;
-
-        private readonly Stack<BoundingRectangle> _renderAreaStack = new();
-        public BoundingRectangle CurrentRenderArea
-            => _renderAreaStack.Count > 0 
-            ? _renderAreaStack.Peek()
-            : new BoundingRectangle(0, 0, Window.Size.X, Window.Size.Y);
-
-        public void FrameBufferInvalidated()
-        {
-            _frameBufferInvalidated = true;
-        }
-        protected bool _frameBufferInvalidated = false;
-
         public IWindow Window => XRWindow.Window;
 
-        private XRWindow _window;
         public XRWindow XRWindow
         {
             get => _window;
             protected set => _window = value;
         }
 
-        /// <summary>
-        /// Use this to retrieve the currently rendering window renderer.
-        /// </summary>
-        public static AbstractRenderer? Current { get; internal set; }
+        public abstract void Initialize();
+        public abstract void CleanUp();
 
+        protected abstract void WindowRenderCallback(double delta);
+
+        public void RenderWindow(double delta)
+            => WindowRenderCallback(delta);
+
+        protected virtual void MainLoop() => Window?.Run();
+
+        public void Dispose()
+        {
+            //UnlinkWindow();
+            //_viewports.Clear();
+            //_currentCamera = null;
+            //_worldInstance = null;
+            //foreach (var obj in _renderObjectCache.Values)
+            //    obj.Destroy();
+            //_renderObjectCache.Clear();
+            //GC.SuppressFinalize(this);
+        }
+
+        public void FrameBufferInvalidated()
+        {
+            _frameBufferInvalidated = true;
+        }
+
+        protected bool _frameBufferInvalidated = false;
+        #endregion
+
+        #region Render Area
+        private readonly Stack<BoundingRectangle> _renderAreaStack = new();
+
+        public BoundingRectangle CurrentRenderArea
+            => _renderAreaStack.Count > 0
+            ? _renderAreaStack.Peek()
+            : new BoundingRectangle(0, 0, Window.Size.X, Window.Size.Y);
+
+        public abstract void CropRenderArea(BoundingRectangle region);
+        public abstract void SetRenderArea(BoundingRectangle region);
+        public abstract void SetCroppingEnabled(bool enabled);
+        #endregion
+
+        #region ImGui
         private float _lastImGuiTimestamp = float.MinValue;
 
         protected interface IImGuiRendererBackend
@@ -211,24 +245,12 @@ namespace XREngine.Rendering
             _verifiedExtensions.TryGetValue(name, out bool exists);
             return exists;
         }
+        #endregion
 
-        public static byte* ToAnsi(string str)
-            => (byte*)Marshal.StringToHGlobalAnsi(str);
-        public static string? FromAnsi(byte* ptr)
-            => Marshal.PtrToStringAnsi((nint)ptr);
-
-        public abstract void Initialize();
-        public abstract void CleanUp();
-
-        protected abstract void WindowRenderCallback(double delta);
-        protected virtual void MainLoop() => Window?.Run();
-
-        public const float DefaultPointSize = 5.0f;
-        public const float DefaultLineSize = 1.0f;
-
-        public abstract void CropRenderArea(BoundingRectangle region);
-        public abstract void SetRenderArea(BoundingRectangle region);
-        public abstract void SetCroppingEnabled(bool enabled);
+        #region Render Object Cache
+        private readonly Lock _roCacheLock = new();
+        private readonly ConcurrentDictionary<GenericRenderObject, AbstractRenderAPIObject> _renderObjectCache = [];
+        public IReadOnlyDictionary<GenericRenderObject, AbstractRenderAPIObject> RenderObjectCache => _renderObjectCache;
 
         /// <summary>
         /// Gets or creates a new API-specific render object linked to this window renderer from a generic render object.
@@ -278,6 +300,16 @@ namespace XREngine.Rendering
         /// <param name="renderObject"></param>
         /// <returns></returns>
         protected abstract AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject);
+        #endregion
+
+        #region Utilities
+        public static byte* ToAnsi(string str)
+            => (byte*)Marshal.StringToHGlobalAnsi(str);
+        public static string? FromAnsi(byte* ptr)
+            => Marshal.PtrToStringAnsi((nint)ptr);
+        #endregion
+
+        #region Luminance / Exposure
 
         public bool CalcDotLuminance(XRTexture2D texture, out float dotLuminance, bool genMipmapsNow)
             => CalcDotLuminance(texture, Engine.Rendering.Settings.DefaultLuminance, out dotLuminance, genMipmapsNow);
@@ -313,6 +345,9 @@ namespace XREngine.Rendering
         public void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
             => CalcDotLuminanceFrontAsyncCompute(region, withTransparency, Engine.Rendering.Settings.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
+        #endregion
+
+        #region Core Rendering / IO
 
         public abstract void Clear(bool color, bool depth, bool stencil);
         public abstract void BindFrameBuffer(EFramebufferTarget fboTarget, XRFrameBuffer? fbo);
@@ -330,22 +365,12 @@ namespace XREngine.Rendering
         public abstract void AllowDepthWrite(bool allow);
         public abstract void DepthFunc(EComparison always);
 
-        public void Dispose()
-        {
-            //UnlinkWindow();
-            //_viewports.Clear();
-            //_currentCamera = null;
-            //_worldInstance = null;
-            //foreach (var obj in _renderObjectCache.Values)
-            //    obj.Destroy();
-            //_renderObjectCache.Clear();
-            //GC.SuppressFinalize(this);
-        }
-
         public abstract void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ);
 
         public abstract void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback);
+        #endregion
 
+        #region Blitting
         /// <summary>
         /// Blits the contents of one framebuffer to another.
         /// </summary>
@@ -550,11 +575,16 @@ namespace XREngine.Rendering
             EReadBufferMode readBufferMode,
             bool colorBit, bool depthBit, bool stencilBit,
             bool linearFilter);
+        #endregion
+
+        #region Synchronization / Masks
 
         public abstract void MemoryBarrier(EMemoryBarrierMask mask);
         public abstract void ColorMask(bool red, bool green, bool blue, bool alpha);
 
-        // ===================== Indirect + Pipeline Abstraction (initial surface) =====================
+        #endregion
+
+        #region Indirect + Pipeline Abstraction (initial surface)
 
         /// <summary>
         /// Binds the VAO (or equivalent) for the given mesh renderer version for subsequent draws.
@@ -591,7 +621,7 @@ namespace XREngine.Rendering
         /// </summary>
         public abstract void MultiDrawElementsIndirect(uint drawCount, uint stride);
         public abstract void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset);
-    public abstract void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset = 0);
+        public abstract void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset = 0);
 
         /// <summary>
         /// Apply the given render parameters (depth/blend/cull/stencil, etc.).
@@ -617,28 +647,8 @@ namespace XREngine.Rendering
         /// Blocks the CPU until all GPU commands have completed.
         /// </summary>
         public abstract void WaitForGpu();
-    }
-    [Flags]
-    public enum EMemoryBarrierMask : int
-    {
-        None = 0,
-        VertexAttribArray = 0x1,
-        ElementArray = 0x2,
-        Uniform = 0x4,
-        TextureFetch = 0x8,
-        ShaderGlobalAccess = 0x10,
-        ShaderImageAccess = 0x20,
-        Command = 0x40,
-        PixelBuffer = 0x80,
-        TextureUpdate = 0x100,
-        BufferUpdate = 0x200,
-        Framebuffer = 0x400,
-        TransformFeedback = 0x800,
-        AtomicCounter = 0x1000,
-        ShaderStorage = 0x2000,
-        ClientMappedBuffer = 0x4000,
-        QueryBuffer = 0x8000,
-        All = unchecked((int)0xFFFFFFFF),
+
+        #endregion
     }
     public abstract unsafe partial class AbstractRenderer<TAPI>(XRWindow window, bool shouldLinkWindow = true) : AbstractRenderer(window, shouldLinkWindow) where TAPI : NativeAPI
     {

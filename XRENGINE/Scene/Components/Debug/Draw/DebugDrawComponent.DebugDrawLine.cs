@@ -9,6 +9,11 @@ namespace XREngine.Components
         public class DebugDrawLine(Vector3 start, Vector3 end, ColorF4 color) : DebugShapeBase(color, false)
         {
             /// <summary>
+            /// Parameterless constructor for serialization.
+            /// </summary>
+            public DebugDrawLine() : this(Vector3.Zero, Vector3.Zero, ColorF4.White) { }
+
+            /// <summary>
             /// Start position relative to this component's transform.
             /// </summary>
             public Vector3 StartOffset

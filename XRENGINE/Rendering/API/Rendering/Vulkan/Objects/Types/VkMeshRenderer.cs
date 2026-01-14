@@ -8,6 +8,7 @@ using System.Runtime.CompilerServices;
 using XREngine;
 using XREngine.Data.Core;
 using XREngine.Data;
+using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -17,41 +18,80 @@ using VkBufferHandle = Silk.NET.Vulkan.Buffer;
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
-	private readonly List<PendingMeshDraw> _pendingMeshDraws = [];
+	private readonly Lock _frameOpsLock = new();
+	private readonly List<FrameOp> _frameOps = [];
+
+	internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target);
+	internal sealed record ClearOp(
+		int PassIndex,
+		XRFrameBuffer? Target,
+		bool ClearColor,
+		bool ClearDepth,
+		bool ClearStencil,
+		ColorF4 Color,
+		float Depth,
+		uint Stencil,
+		Rect2D Rect) : FrameOp(PassIndex, Target);
+
+	internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw) : FrameOp(PassIndex, Target);
+
+	internal sealed record BlitOp(
+		int PassIndex,
+		XRFrameBuffer InFbo,
+		XRFrameBuffer OutFbo,
+		int InX,
+		int InY,
+		uint InW,
+		uint InH,
+		int OutX,
+		int OutY,
+		uint OutW,
+		uint OutH,
+		EReadBufferMode ReadBufferMode,
+		bool ColorBit,
+		bool DepthBit,
+		bool StencilBit,
+		bool LinearFilter) : FrameOp(PassIndex, null);
+
+	internal void EnqueueFrameOp(FrameOp op)
+	{
+		using (_frameOpsLock.EnterScope())
+			_frameOps.Add(op);
+		MarkCommandBuffersDirty();
+	}
+
+	internal FrameOp[] DrainFrameOps()
+	{
+		using (_frameOpsLock.EnterScope())
+		{
+			if (_frameOps.Count == 0)
+				return Array.Empty<FrameOp>();
+			var ops = _frameOps.ToArray();
+			_frameOps.Clear();
+			return ops;
+		}
+	}
 
 	internal readonly record struct PendingMeshDraw(
 		VkMeshRenderer Renderer,
+		Viewport Viewport,
+		Rect2D Scissor,
+		bool DepthTestEnabled,
+		bool DepthWriteEnabled,
+		CompareOp DepthCompareOp,
+		uint StencilWriteMask,
+		ColorComponentFlags ColorWriteMask,
 		Matrix4x4 ModelMatrix,
 		Matrix4x4 PreviousModelMatrix,
 		XRMaterial? MaterialOverride,
 		uint Instances,
 		EMeshBillboardMode BillboardMode);
 
-	internal void QueueMeshDraw(in PendingMeshDraw draw)
-	{
-		_pendingMeshDraws.Add(draw);
-		MarkCommandBuffersDirty();
-	}
+	private static bool ViewportEquals(in Viewport a, in Viewport b)
+		=> a.X == b.X && a.Y == b.Y && a.Width == b.Width && a.Height == b.Height && a.MinDepth == b.MinDepth && a.MaxDepth == b.MaxDepth;
 
-	private void RenderQueuedMeshes(CommandBuffer commandBuffer)
-	{
-		if (_pendingMeshDraws.Count == 0)
-			return;
-
-		foreach (var draw in _pendingMeshDraws.ToArray())
-		{
-			try
-			{
-				draw.Renderer.RecordDraw(commandBuffer, draw);
-			}
-			catch (Exception ex)
-			{
-				Debug.LogException(ex, "Failed to record Vulkan mesh draw.");
-			}
-		}
-
-		_pendingMeshDraws.Clear();
-	}
+	private static bool RectEquals(in Rect2D a, in Rect2D b)
+		=> a.Offset.X == b.Offset.X && a.Offset.Y == b.Offset.Y && a.Extent.Width == b.Extent.Width && a.Extent.Height == b.Extent.Height;
 
 	/// <summary>
 	/// Vulkan implementation for mesh rendering. This is intentionally conservative: it builds a basic
@@ -66,7 +106,14 @@ public unsafe partial class VulkanRenderer
 		private IndexSize _triangleIndexSize;
 		private IndexSize _lineIndexSize;
 		private IndexSize _pointIndexSize;
-		private readonly Dictionary<PrimitiveTopology, Pipeline> _pipelines = new();
+		private readonly Dictionary<PipelineKey, Pipeline> _pipelines = new();
+				private readonly record struct PipelineKey(
+					PrimitiveTopology Topology,
+					ulong RenderPassHandle,
+					bool DepthTestEnabled,
+					bool DepthWriteEnabled,
+					CompareOp DepthCompareOp,
+					ColorComponentFlags ColorWriteMask);
 		private VkRenderProgram? _program;
 		private XRRenderProgram? _generatedProgram;
 		private VertexInputBindingDescription[] _vertexBindings = [];
@@ -170,8 +217,25 @@ public unsafe partial class VulkanRenderer
 
 		private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode)
 		{
-			var draw = new PendingMeshDraw(this, modelMatrix, prevModelMatrix, materialOverride, instances, billboardMode);
-			Renderer.QueueMeshDraw(draw);
+			int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
+			XRFrameBuffer? target = Renderer.GetCurrentDrawFrameBuffer();
+
+			var draw = new PendingMeshDraw(
+				this,
+				Renderer.GetCurrentViewport(),
+				Renderer.GetCurrentScissor(),
+				Renderer.GetDepthTestEnabled(),
+				Renderer.GetDepthWriteEnabled(),
+				Renderer.GetDepthCompareOp(),
+				Renderer.GetStencilWriteMask(),
+				Renderer.GetColorWriteMask(),
+				modelMatrix,
+				prevModelMatrix,
+				materialOverride,
+				instances,
+				billboardMode);
+
+			Renderer.EnqueueFrameOp(new MeshDrawOp(passIndex, target, draw));
 		}
 
 		private void CollectBuffers()
@@ -331,14 +395,22 @@ public unsafe partial class VulkanRenderer
 			_vertexAttributes = [.. attributes];
 		}
 
-		private bool EnsurePipeline(XRMaterial material, PrimitiveTopology topology, out Pipeline pipeline)
+		private bool EnsurePipeline(XRMaterial material, PrimitiveTopology topology, in PendingMeshDraw draw, RenderPass renderPass, out Pipeline pipeline)
 		{
 			pipeline = default;
 
 			if (_pipelineDirty)
 				DestroyPipelines();
 
-			if (_pipelines.TryGetValue(topology, out pipeline) && pipeline.Handle != 0 && !_pipelineDirty)
+			PipelineKey key = new(
+				topology,
+				renderPass.Handle,
+				draw.DepthTestEnabled,
+				draw.DepthWriteEnabled,
+				draw.DepthCompareOp,
+				draw.ColorWriteMask);
+
+			if (_pipelines.TryGetValue(key, out pipeline) && pipeline.Handle != 0 && !_pipelineDirty)
 				return true;
 
 			_descriptorDirty = true; // Pipeline/program changes invalidate descriptor sets
@@ -399,16 +471,16 @@ public unsafe partial class VulkanRenderer
 				PipelineDepthStencilStateCreateInfo depthStencil = new()
 				{
 					SType = StructureType.PipelineDepthStencilStateCreateInfo,
-					DepthTestEnable = Renderer._state.DepthTestEnabled ? Vk.True : Vk.False,
-					DepthWriteEnable = Renderer._state.DepthWriteEnabled ? Vk.True : Vk.False,
-					DepthCompareOp = Renderer._state.DepthCompareOp,
+					DepthTestEnable = draw.DepthTestEnabled ? Vk.True : Vk.False,
+					DepthWriteEnable = draw.DepthWriteEnabled ? Vk.True : Vk.False,
+					DepthCompareOp = draw.DepthCompareOp,
 					DepthBoundsTestEnable = Vk.False,
 					StencilTestEnable = Vk.False,
 				};
 
 				PipelineColorBlendAttachmentState colorBlendAttachment = new()
 				{
-					ColorWriteMask = Renderer._state.ColorWriteMask,
+					ColorWriteMask = draw.ColorWriteMask,
 					BlendEnable = Vk.False,
 				};
 
@@ -452,12 +524,12 @@ public unsafe partial class VulkanRenderer
 							PDepthStencilState = &depthStencil,
 							PColorBlendState = &colorBlending,
 							PDynamicState = &dynamicState,
-							RenderPass = Renderer._renderPass,
+								RenderPass = renderPass,
 							Subpass = 0,
 						};
 
-						pipeline = _program!.CreateGraphicsPipeline(ref pipelineInfo);
-						_pipelines[topology] = pipeline;
+							pipeline = _program!.CreateGraphicsPipeline(ref pipelineInfo);
+							_pipelines[key] = pipeline;
 						_pipelineDirty = false;
 						_meshDirty = false;
 						success = pipeline.Handle != 0;
@@ -481,7 +553,7 @@ public unsafe partial class VulkanRenderer
 			_pipelines.Clear();
 		}
 
-		internal void RecordDraw(CommandBuffer commandBuffer, in PendingMeshDraw draw)
+		internal void RecordDraw(CommandBuffer commandBuffer, in PendingMeshDraw draw, RenderPass renderPass)
 		{
 			EnsureBuffers();
 
@@ -524,7 +596,7 @@ public unsafe partial class VulkanRenderer
 				if (indexCount == 0)
 					return false;
 
-				if (!EnsurePipeline(material, topology, out var pipeline))
+				if (!EnsurePipeline(material, topology, drawCopy, renderPass, out var pipeline))
 					return false;
 
 				Api!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, pipeline);
@@ -552,7 +624,7 @@ public unsafe partial class VulkanRenderer
 			if (!drew && Mesh is not null)
 			{
 				uint vertexCount = (uint)Math.Max(Mesh.VertexCount, 0);
-				if (vertexCount > 0 && EnsurePipeline(material, PrimitiveTopology.TriangleList, out var pipeline))
+				if (vertexCount > 0 && EnsurePipeline(material, PrimitiveTopology.TriangleList, drawCopy, renderPass, out var pipeline))
 				{
 					Api!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 					BindDescriptorsIfAvailable(commandBuffer, material, drawCopy);

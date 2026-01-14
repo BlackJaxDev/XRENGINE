@@ -27,5 +27,10 @@ internal enum CookedBinaryTypeMarker : byte
     Dictionary = 22,
     Object = 23,
     CustomObject = 24,
-    DataSource = 25
+    DataSource = 25,
+    Vector2 = 26,
+    Vector3 = 27,
+    Vector4 = 28,
+    Quaternion = 29,
+    Matrix4x4 = 30
 }

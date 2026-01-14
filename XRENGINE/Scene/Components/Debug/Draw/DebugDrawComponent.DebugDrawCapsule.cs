@@ -9,6 +9,11 @@ namespace XREngine.Components
         public class DebugDrawCapsule(float radius, Vector3 localStartOffset, Vector3 localEndOffset, ColorF4 color, bool solid) : DebugShapeBase(color, solid)
         {
             /// <summary>
+            /// Parameterless constructor for serialization.
+            /// </summary>
+            public DebugDrawCapsule() : this(1.0f, Vector3.Zero, Vector3.UnitY, ColorF4.White, false) { }
+
+            /// <summary>
             /// The radius of the capsule.
             /// </summary>
             public float Radius

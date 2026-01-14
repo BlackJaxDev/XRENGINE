@@ -181,62 +181,24 @@ namespace XREngine.Rendering.Vulkan
             EnsureFrameBufferRegistered(outFBO);
             EnsureFrameBufferAttachmentsRegistered(outFBO);
 
-            using var scope = NewCommandScope();
-
-            void DoBlit(BlitImageInfo source, BlitImageInfo destination, Filter filter)
-            {
-                TransitionForBlit(scope.CommandBuffer, source, source.PreferredLayout, ImageLayout.TransferSrcOptimal, source.AccessMask, AccessFlags.TransferReadBit, source.StageMask, PipelineStageFlags.TransferBit);
-                TransitionForBlit(scope.CommandBuffer, destination, destination.PreferredLayout, ImageLayout.TransferDstOptimal, destination.AccessMask, AccessFlags.TransferWriteBit, destination.StageMask, PipelineStageFlags.TransferBit);
-
-                ImageBlit region = BuildImageBlit(source, destination, inX, inY, inW, inH, outX, outY, outW, outH);
-
-                Api!.CmdBlitImage(
-                    scope.CommandBuffer,
-                    source.Image,
-                    ImageLayout.TransferSrcOptimal,
-                    destination.Image,
-                    ImageLayout.TransferDstOptimal,
-                    1,
-                    &region,
-                    filter);
-
-                TransitionForBlit(scope.CommandBuffer, source, ImageLayout.TransferSrcOptimal, source.PreferredLayout, AccessFlags.TransferReadBit, source.AccessMask, PipelineStageFlags.TransferBit, source.StageMask);
-                TransitionForBlit(scope.CommandBuffer, destination, ImageLayout.TransferDstOptimal, destination.PreferredLayout, AccessFlags.TransferWriteBit, destination.AccessMask, PipelineStageFlags.TransferBit, destination.StageMask);
-            }
-
-            if (colorBit)
-            {
-                if (!TryResolveBlitImage(inFBO, wantColor: true, wantDepth: false, wantStencil: false, out BlitImageInfo srcColor))
-                {
-                    Debug.LogWarning($"Vulkan Blit: Unable to resolve source color attachment for '{inFBO.Name ?? "<unnamed>"}'.");
-                }
-                else if (!TryResolveBlitImage(outFBO, wantColor: true, wantDepth: false, wantStencil: false, out BlitImageInfo dstColor))
-                {
-                    Debug.LogWarning($"Vulkan Blit: Unable to resolve destination color attachment for '{outFBO.Name ?? "<unnamed>"}'.");
-                }
-                else
-                {
-                    Filter filter = linearFilter ? Filter.Linear : Filter.Nearest;
-                    DoBlit(srcColor, dstColor, filter);
-                }
-            }
-
-            if (depthBit || stencilBit)
-            {
-                Filter depthFilter = Filter.Nearest; // Vulkan spec: depth/stencil blits must use nearest.
-                if (!TryResolveBlitImage(inFBO, wantColor: false, wantDepth: depthBit, wantStencil: stencilBit, out BlitImageInfo srcDepth))
-                {
-                    Debug.LogWarning($"Vulkan Blit: Skipping depth/stencil blit; source attachment not compatible for '{inFBO.Name ?? "<unnamed>"}'.");
-                }
-                else if (!TryResolveBlitImage(outFBO, wantColor: false, wantDepth: depthBit, wantStencil: stencilBit, out BlitImageInfo dstDepth))
-                {
-                    Debug.LogWarning($"Vulkan Blit: Skipping depth/stencil blit; destination attachment not compatible for '{outFBO.Name ?? "<unnamed>"}'.");
-                }
-                else
-                {
-                    DoBlit(srcDepth, dstDepth, depthFilter);
-                }
-            }
+            int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
+            EnqueueFrameOp(new BlitOp(
+                passIndex,
+                inFBO,
+                outFBO,
+                inX,
+                inY,
+                inW,
+                inH,
+                outX,
+                outY,
+                outW,
+                outH,
+                readBufferMode,
+                colorBit,
+                depthBit,
+                stencilBit,
+                linearFilter));
         }
         public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
         {
