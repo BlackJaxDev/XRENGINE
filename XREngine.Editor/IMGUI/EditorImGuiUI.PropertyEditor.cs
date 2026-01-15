@@ -197,10 +197,12 @@ public static partial class EditorImGuiUI
                     ImGui.Separator();
                 }
 
-                bool handledByAssetInspector = false;
                 if (primary is XRAsset asset)
                 {
+                    // Ensure edits from the reflection inspector mark this asset dirty.
                     using var assetScope = new InspectorAssetContextScope(asset.SourceAsset ?? asset);
+
+                    bool handledByAssetInspector = false;
 
                     // Allow custom inspectors to draw even if this asset is already tracked in the visited set.
                     visited.Remove(primary);
@@ -212,10 +214,14 @@ public static partial class EditorImGuiUI
                     {
                         visited.Add(primary);
                     }
-                }
 
-                if (!handledByAssetInspector)
+                    if (!handledByAssetInspector)
+                        DrawSettingsProperties(targets, visited);
+                }
+                else
+                {
                     DrawSettingsProperties(targets, visited);
+                }
 
                 ImGui.TreePop();
             }
@@ -2688,7 +2694,8 @@ public static partial class EditorImGuiUI
                     return false;
 
                 list[index] = newValue!;
-                NotifyInspectorValueEdited(null);
+                if (_inspectorAssetContext is not null)
+                    NotifyInspectorValueEdited(_inspectorAssetContext);
                 return true;
             }
             catch
@@ -2774,6 +2781,23 @@ public static partial class EditorImGuiUI
 
             if (asset is not null && !asset.IsDirty)
                 asset.MarkDirty();
+        }
+
+        private static XRBase? ResolveUndoTarget(InspectorTargetSet targets)
+        {
+            if (_inspectorAssetContext is XRAsset asset)
+                return asset;
+
+            return targets.PrimaryTarget as XRBase;
+        }
+
+        private static void UpdateInspectorUndoScope(string description, InspectorTargetSet targets)
+        {
+            var undoTarget = ResolveUndoTarget(targets);
+            if (undoTarget is null)
+                return;
+
+            ImGuiUndoHelper.UpdateScope(description, undoTarget);
         }
 
         private static void NotifyInspectorValueEdited(InspectorTargetSet targets)
@@ -2876,6 +2900,8 @@ public static partial class EditorImGuiUI
                             hasMixedValues = false;
                         }
                     }
+
+                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
                 }
                 handled = true;
             }
@@ -2916,6 +2942,8 @@ public static partial class EditorImGuiUI
                                 }
                             }
 
+                            UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+
                             ImGui.Separator();
 
                             for (int i = 0; i < enumValues.Length; i++)
@@ -2950,6 +2978,8 @@ public static partial class EditorImGuiUI
                                         hasMixedValues = false;
                                     }
                                 }
+
+                                UpdateInspectorUndoScope($"Edit {property.Name}", targets);
                             }
 
                             ImGui.EndCombo();
@@ -2985,9 +3015,13 @@ public static partial class EditorImGuiUI
                                         selectedIndex = i;
                                     }
                                 }
+
+                                UpdateInspectorUndoScope($"Edit {property.Name}", targets);
                             }
                             ImGui.EndCombo();
                         }
+
+                        UpdateInspectorUndoScope($"Edit {property.Name}", targets);
                     }
                     handled = true;
                 }
@@ -3007,6 +3041,8 @@ public static partial class EditorImGuiUI
                             hasMixedValues = false;
                         }
                     }
+
+                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
                 }
                 handled = true;
             }
@@ -3025,6 +3061,8 @@ public static partial class EditorImGuiUI
                             hasMixedValues = false;
                         }
                     }
+
+                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
                 }
                 handled = true;
             }
@@ -3043,6 +3081,8 @@ public static partial class EditorImGuiUI
                             hasMixedValues = false;
                         }
                     }
+
+                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
                 }
                 handled = true;
             }
@@ -3061,6 +3101,8 @@ public static partial class EditorImGuiUI
                             hasMixedValues = false;
                         }
                     }
+
+                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
                 }
                 handled = true;
             }
@@ -3082,6 +3124,8 @@ public static partial class EditorImGuiUI
                     }
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip("Layer bitmask. -1 = all layers.");
+
+                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
                 }
                 handled = true;
             }
@@ -4462,7 +4506,10 @@ public static partial class EditorImGuiUI
                 return true;
             }
 
-            return TryDrawNumericEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, Apply, "##Value");
+            bool handled = TryDrawNumericEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, Apply, "##Value");
+            if (handled)
+                UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+            return handled;
         }
 
         private static bool TryDrawColorProperty(InspectorTargetSet targets, PropertyInfo property, Type effectiveType, bool canWrite, IReadOnlyList<object?> previousValues, ref object? currentValue, ref bool isCurrentlyNull)
@@ -4484,6 +4531,8 @@ public static partial class EditorImGuiUI
                             isCurrentlyNull = false;
                         }
                     }
+
+                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
                 }
                 return true;
             }
@@ -4503,6 +4552,8 @@ public static partial class EditorImGuiUI
                             isCurrentlyNull = false;
                         }
                     }
+
+                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
                 }
                 return true;
             }

@@ -21,7 +21,7 @@ namespace XREngine
         private EEngineQuality _soundQuality = EEngineQuality.Highest;
 
         //Preferred libraries - will use whichever is available if the preferred one is not.
-        private ERenderLibrary _renderLibrary = ERenderLibrary.OpenGL;
+        private ERenderLibrary _renderLibrary = ERenderLibrary.Vulkan;
         private EAudioLibrary _audioLibrary = EAudioLibrary.OpenAL;
         private EPhysicsLibrary _physicsLibrary = EPhysicsLibrary.PhysX;
 

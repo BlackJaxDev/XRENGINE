@@ -6,6 +6,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.UI;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using XREngine.Components.Scene.Transforms;
@@ -411,6 +412,15 @@ namespace XREngine.Scene
         /// <param name="retainParent"></param>
         public void SetTransform(TransformBase transform, ETransformSetFlags flags = ETransformSetFlags.Default)
         {
+            if (transform is UICanvasTransform && !TryGetComponent<UICanvasComponent>(out _))
+            {
+                if (TryGetComponent<PawnComponent>(out _) || TryGetComponent<CameraComponent>(out _))
+                {
+                    Debug.LogWarning($"Ignoring attempt to assign UICanvasTransform to node '{Name}' because it has no UICanvasComponent.");
+                    return;
+                }
+            }
+
             if (flags.HasFlag(ETransformSetFlags.ClearNewChildren))
                 transform.Clear();
 

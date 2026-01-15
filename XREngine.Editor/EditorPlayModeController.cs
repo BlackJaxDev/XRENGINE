@@ -133,8 +133,12 @@ public static class EditorPlayModeController
         // Clear undo history from play session
         Undo.ClearHistory();
 
-        // Restore editor pawn possessions - this is done after Engine.PlayMode restores the snapshot
-        RestoreEditorPawnSnapshot();
+        // Restore editor pawn possessions.
+        // Prefer restoring during PostSnapshotRestore when exiting play (so rendering/input rebinding
+        // sees the correct editor pawn), but keep a fallback here for restoration modes that don't
+        // invoke PostSnapshotRestore.
+        if (_editorPossessionSnapshot.Count > 0)
+            RestoreEditorPawnSnapshot();
 
         // Notify UI to update
         PlayModeUIChanged?.Invoke(false);
@@ -146,11 +150,90 @@ public static class EditorPlayModeController
     /// </summary>
     private static void OnPostSnapshotRestore(XRWorld world)
     {
-        Debug.Out($"EditorPlayModeController: PostSnapshotRestore for world {world?.Name ?? "<null>"}");
+        Debug.Out($"EditorPlayModeController: PostSnapshotRestore for world {world?.Name ?? "<null>"} State={Engine.PlayMode.State}");
 
         // Rebuild light caches after deserialization
         if (world is not null && XRWorldInstance.WorldInstances.TryGetValue(world, out var instance))
             instance.Lights.RebuildCachesFromWorld();
+
+        // Only rebind camera transforms when EXITING play mode, not when ENTERING.
+        // PostSnapshotRestore fires both when entering (after deserializing the play-mode copy)
+        // and when exiting (after restoring the edit-mode snapshot).
+        if (Engine.PlayMode.State != EPlayModeState.ExitingPlay)
+        {
+            Debug.Out($"[EditorPlayModeController] Skipping camera rebind (not ExitingPlay, State={Engine.PlayMode.State})");
+            return;
+        }
+
+        // CRITICAL: After snapshot restore, XRCamera instances inside CameraComponents may have
+        // stale Transform references. The Lazy<XRCamera> captures the Transform at creation time,
+        // but deserialization may have replaced the scene node's transform with a new instance.
+        // Rebind all camera transforms to ensure rendering uses the correct (restored) transforms.
+        if (world is not null)
+            RebindAllCameraTransforms(world);
+
+        // CRITICAL: When exiting play, snapshot restore happens before PlayMode state flips back to Edit.
+        // If we wait until PostExitPlay to restore the editor pawn possession, systems that rebind
+        // runtime-only wiring during PostSnapshotRestore can still observe the (transient) play pawn.
+        // Restore the editor pawn possession here so LocalPlayerController.ControlledPawn is correct
+        // for subsequent edit-mode rebinding.
+        if (Engine.IsEditor && _editorPossessionSnapshot.Count > 0)
+        {
+            Debug.Out("[EditorPlayModeController] ExitingPlay PostSnapshotRestore: restoring editor pawn possession now.");
+            RestoreEditorPawnSnapshot();
+        }
+    }
+
+    /// <summary>
+    /// Rebinds XRCamera.Transform to CameraComponent.Transform for all camera components in the world.
+    /// This fixes stale transform references that can occur after snapshot restore.
+    /// </summary>
+    private static void RebindAllCameraTransforms(XRWorld world)
+    {
+        int reboundCount = 0;
+        foreach (var scene in world.Scenes)
+        {
+            if (scene.RootNodes is null)
+                continue;
+
+            foreach (var root in scene.RootNodes)
+            {
+                RebindCameraTransformsRecursive(root, ref reboundCount);
+            }
+        }
+
+        if (reboundCount > 0)
+            Debug.Out($"[EditorPlayModeController] Rebound {reboundCount} camera transform(s) after snapshot restore.");
+    }
+
+    private static void RebindCameraTransformsRecursive(SceneNode node, ref int reboundCount)
+    {
+        if (node is null)
+            return;
+
+        foreach (var cameraComponent in node.Components.OfType<CameraComponent>())
+        {
+            // Only rebind if the Lazy<XRCamera> has already been created
+            // (accessing .Camera would create it unnecessarily)
+            var xrCam = cameraComponent.Camera;
+            var componentTransform = cameraComponent.Transform;
+
+            if (xrCam is not null && componentTransform is not null && !ReferenceEquals(xrCam.Transform, componentTransform))
+            {
+                Debug.Out($"[EditorPlayModeController] Rebinding camera transform for '{cameraComponent.Name ?? cameraComponent.GetType().Name}': " +
+                    $"OldTfm={xrCam.Transform?.GetHashCode().ToString() ?? "NULL"} NewTfm={componentTransform.GetHashCode()}");
+                xrCam.Transform = componentTransform;
+                componentTransform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+                reboundCount++;
+            }
+        }
+
+        foreach (var child in node.Transform.Children)
+        {
+            var childNode = child.SceneNode;
+            if (childNode is not null)
+                RebindCameraTransformsRecursive(childNode, ref reboundCount);
+        }
     }
 
     private static void OnPaused()
@@ -332,27 +415,43 @@ public static class EditorPlayModeController
                 continue;
             }
 
-            // Ensure the player has a viewport bound (it should have been restored by RebindRuntimeRendering,
-            // but if not, try to register with the first window)
-            if (localPlayer.Viewport is null)
+            // CRITICAL FIX: After snapshot restore, the pawn's CameraComponent field can point to a stale
+            // reference (old deserialized object) instead of the actual sibling CameraComponent that was
+            // restored with the scene node. Force rebind to the sibling camera to ensure consistency.
+            var siblingCamera = resolvedPawn.GetSiblingComponent<CameraComponent>();
+            if (siblingCamera is not null && !ReferenceEquals(resolvedPawn.CameraComponent, siblingCamera))
             {
-                var window = Engine.Windows.FirstOrDefault();
-                if (window is not null)
-                {
-                    window.RegisterController(localPlayer, autoSizeAllViewports: false);
-                    Debug.Out($"[EditorPlayModeController] Manually registered player {playerIndex} with window viewport");
-                }
+                Debug.Out($"[EditorPlayModeController] Rebinding pawn CameraComponent: Old={resolvedPawn.CameraComponent?.GetHashCode().ToString() ?? "NULL"} New={siblingCamera.GetHashCode()}");
+                resolvedPawn.CameraComponent = siblingCamera;
+            }
+
+            // Reset any lingering play-mode possession state. This forces all the same notifications
+            // that happen on startup (pawn possession happens before/after viewport registration).
+            localPlayer.UnlinkControlledPawn();
+
+            // Ensure the player is registered with a valid viewport on a live window.
+            // NOTE: localPlayer.Viewport can be non-null but stale across snapshot restore; use the
+            // defensive XRWindow helper to repair the player ↔ viewport linkage.
+            var window = Engine.Windows.FirstOrDefault(w => w.Viewports.Any(vp => vp.AssociatedPlayer?.LocalPlayerIndex == playerIndex))
+                ?? Engine.Windows.FirstOrDefault();
+            if (window is null)
+            {
+                Debug.Out($"[EditorPlayModeController] Cannot restore editor pawn: no windows exist (player {playerIndex}).");
+                continue;
+            }
+
+            var ensuredViewport = window.EnsureControllerRegistered(localPlayer, autoSizeAllViewports: false);
+            if (ensuredViewport is null)
+            {
+                Debug.Out($"[EditorPlayModeController] Failed to ensure viewport registration for player {playerIndex}.");
+                continue;
             }
 
             // IMPORTANT: Ensure input devices are connected BEFORE setting ControlledPawn.
             // When ControlledPawn is set, RegisterController() calls Input.TryRegisterInput() which
             // will fail if no devices are connected. UpdateDevices re-acquires devices from the window.
-            var viewportWindow = localPlayer.Viewport?.Window;
-            if (viewportWindow is not null)
-            {
-                localPlayer.Input.UpdateDevices(viewportWindow.Input, Engine.VRState.Actions);
-                Debug.Out($"[EditorPlayModeController] Updated input devices for player {playerIndex} before pawn possession");
-            }
+            localPlayer.Input.UpdateDevices(ensuredViewport.Window?.Input, Engine.VRState.Actions);
+            Debug.Out($"[EditorPlayModeController] Updated input devices for player {playerIndex} before pawn possession");
 
             localPlayer.ControlledPawn = resolvedPawn;
             Debug.Out($"[EditorPlayModeController] Set ControlledPawn to {resolvedPawn.Name}, now calling RefreshViewportCamera");
@@ -370,17 +469,18 @@ public static class EditorPlayModeController
             // We must rebind the camera's transform to the CameraComponent's current transform.
             if (xrCam is not null && pawnCamera is not null)
             {
-                var componentTransform = pawnCamera.Transform;
                 var cameraTransform = xrCam.Transform;
-                
-                if (cameraTransform != componentTransform)
+                var componentTransform = pawnCamera.Transform;
+                if (!ReferenceEquals(cameraTransform, componentTransform))
                 {
                     Debug.Out($"[EditorPlayModeController] Camera transform mismatch detected! " +
-                        $"CamTfm={cameraTransform?.GetHashCode()} at {cameraTransform?.WorldTranslation} vs " +
-                        $"CompTfm={componentTransform?.GetHashCode()} at {componentTransform?.WorldTranslation}. Rebinding...");
+                        $"CamTfm={cameraTransform.GetHashCode()} at {cameraTransform.WorldTranslation} vs " +
+                        $"CompTfm={componentTransform.GetHashCode()} at {componentTransform.WorldTranslation}. Rebinding...");
+#pragma warning disable CS8601 // Possible null reference assignment
                     xrCam.Transform = componentTransform;
+#pragma warning restore CS8601 // Possible null reference assignment
                 }
-                
+
                 // Now recalculate matrices with the correct transform
                 var camTfm = xrCam.Transform;
                 if (camTfm is not null)

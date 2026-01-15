@@ -275,15 +275,46 @@ namespace XREngine.Rendering.Vulkan
         private const int MAX_FRAMES_IN_FLIGHT = 2;
 
         private int currentFrame = 0;
+        private ulong _vkDebugFrameCounter = 0;
 
         protected override void WindowRenderCallback(double delta)
         {
+            _vkDebugFrameCounter++;
+
+            // If the window resized (or other framebuffer-dependent state changed), rebuild swapchain resources
+            // before we acquire/record/submit. Waiting until after present can cause visible stretching/borders.
+            if (_frameBufferInvalidated)
+            {
+                _frameBufferInvalidated = false;
+                RecreateSwapChain();
+            }
+
             // 1. Wait for the previous frame to finish
             Api!.WaitForFences(device, 1, ref inFlightFences![currentFrame], true, ulong.MaxValue);
+
+            // Helpful when tracking down DPI / resize issues.
+            Debug.RenderingEvery(
+                $"Vulkan.Frame.{GetHashCode()}.Sizes",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Frame={0} WindowFB={1}x{2} Swapchain={3}x{4}",
+                _vkDebugFrameCounter,
+                Window.FramebufferSize.X,
+                Window.FramebufferSize.Y,
+                swapChainExtent.Width,
+                swapChainExtent.Height);
 
             // 2. Acquire the next image from the swap chain
             uint imageIndex = 0;
             var result = khrSwapChain!.AcquireNextImage(device, swapChain, ulong.MaxValue, imageAvailableSemaphores![currentFrame], default, ref imageIndex);
+
+            Debug.RenderingEvery(
+                $"Vulkan.Frame.{GetHashCode()}.Acquire",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Frame={0} InFlightSlot={1} AcquiredImage={2} LastPresented={3}",
+                _vkDebugFrameCounter,
+                currentFrame,
+                imageIndex,
+                _lastPresentedImageIndex);
 
             if (result == Result.ErrorOutOfDateKhr)
             {
@@ -336,6 +367,13 @@ namespace XREngine.Rendering.Vulkan
             if (Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, inFlightFences[currentFrame]) != Result.Success)
                 throw new Exception("Failed to submit draw command buffer.");
 
+            Debug.RenderingEvery(
+                $"Vulkan.Frame.{GetHashCode()}.Submit",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Frame={0} SubmittedImage={1}",
+                _vkDebugFrameCounter,
+                imageIndex);
+
             // 6. Present the image
             var swapChains = stackalloc[] { swapChain };
             PresentInfoKHR presentInfo = new()
@@ -350,6 +388,14 @@ namespace XREngine.Rendering.Vulkan
 
             result = khrSwapChain.QueuePresent(presentQueue, ref presentInfo);
             _lastPresentedImageIndex = imageIndex;
+
+            Debug.RenderingEvery(
+                $"Vulkan.Frame.{GetHashCode()}.Present",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Frame={0} PresentedImage={1} Result={2}",
+                _vkDebugFrameCounter,
+                imageIndex,
+                result);
 
             _frameBufferInvalidated |=
                 result == Result.ErrorOutOfDateKhr ||

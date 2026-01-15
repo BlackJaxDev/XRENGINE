@@ -1,5 +1,6 @@
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.EXT;
+using Silk.NET.Core.Native;
 using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.Vulkan;
@@ -8,7 +9,43 @@ public unsafe partial class VulkanRenderer
     private ExtDebugUtils? debugUtils;
     private DebugUtilsMessengerEXT debugMessenger;
 
+#if DEBUG
     private bool EnableValidationLayers = true;
+#else
+    private bool EnableValidationLayers = false;
+#endif
+
+    private bool SupportsDebugUtilsLabels => debugUtils is not null;
+
+    private void CmdBeginLabel(CommandBuffer commandBuffer, string name)
+    {
+        if (!SupportsDebugUtilsLabels)
+            return;
+
+        nint namePtr = SilkMarshal.StringToPtr(name);
+        try
+        {
+            DebugUtilsLabelEXT label = new()
+            {
+                SType = StructureType.DebugUtilsLabelExt,
+                PLabelName = (byte*)namePtr,
+            };
+
+            debugUtils!.CmdBeginDebugUtilsLabel(commandBuffer, in label);
+        }
+        finally
+        {
+            SilkMarshal.Free(namePtr);
+        }
+    }
+
+    private void CmdEndLabel(CommandBuffer commandBuffer)
+    {
+        if (!SupportsDebugUtilsLabels)
+            return;
+
+        debugUtils!.CmdEndDebugUtilsLabel(commandBuffer);
+    }
 
     private readonly string[] validationLayers =
     [

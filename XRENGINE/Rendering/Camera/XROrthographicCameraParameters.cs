@@ -27,6 +27,7 @@ namespace XREngine.Rendering
         private float _orthoTopPercentage = 1.0f;
         private float _width;
         private float _height;
+        private bool _inheritAspectRatio = true;
 
         public XROrthographicCameraParameters(float width, float height, float nearPlane, float farPlane) : base(nearPlane, farPlane)
         {
@@ -39,22 +40,93 @@ namespace XREngine.Rendering
         {
         }
 
+        /// <summary>
+        /// Width of the orthographic view in world units.
+        /// When <see cref="InheritAspectRatio"/> is true, this is automatically calculated from Height and the viewport's aspect ratio.
+        /// </summary>
         public float Width
         {
             get => _width;
-            set => SetField(ref _width, value);
+            set
+            {
+                // Capture aspect ratio before changing width
+                float currentAspect = AspectRatio;
+                if (SetField(ref _width, value) && _inheritAspectRatio && currentAspect > 0)
+                {
+                    // Maintain the aspect ratio by updating height
+                    _height = value / currentAspect;
+                    OnPropertyChanged(nameof(Height), _height * currentAspect, _height);
+                }
+            }
         }
 
+        /// <summary>
+        /// Height of the orthographic view in world units.
+        /// This is the primary size control - Width is derived from this when InheritAspectRatio is enabled.
+        /// </summary>
         public float Height 
         {
             get => _height;
-            set => SetField(ref _height, value);
+            set
+            {
+                // Capture aspect ratio before changing height
+                float currentAspect = AspectRatio;
+                if (SetField(ref _height, value) && _inheritAspectRatio && currentAspect > 0)
+                {
+                    // Maintain the aspect ratio by updating width
+                    _width = value * currentAspect;
+                    OnPropertyChanged(nameof(Width), _width / currentAspect, _width);
+                }
+            }
+        }
+
+        /// <summary>
+        /// If true, the aspect ratio will be inherited from the viewport, and Width will be automatically
+        /// calculated as Height * viewportAspectRatio. Similar to perspective camera's InheritAspectRatio.
+        /// </summary>
+        public bool InheritAspectRatio
+        {
+            get => _inheritAspectRatio;
+            set => SetField(ref _inheritAspectRatio, value);
+        }
+
+        /// <summary>
+        /// The current aspect ratio (Width / Height).
+        /// </summary>
+        public float AspectRatio => _height > 0 ? _width / _height : 1f;
+
+        /// <summary>
+        /// Sets the aspect ratio by providing viewport dimensions.
+        /// When InheritAspectRatio is true, this updates Width to maintain the aspect ratio based on current Height.
+        /// Called by the viewport when it resizes.
+        /// </summary>
+        public void SetAspectRatio(float viewportWidth, float viewportHeight)
+        {
+            if (!_inheritAspectRatio || viewportHeight <= 0)
+                return;
+
+            float aspectRatio = viewportWidth / viewportHeight;
+            _width = _height * aspectRatio;
+            Resized();
         }
 
         public void Resize(float width, float height)
         {
             _width = width;
             _height = height;
+            Resized();
+        }
+
+        /// <summary>
+        /// Scales the orthographic view uniformly by the given factor, maintaining aspect ratio.
+        /// Values > 1 zoom out (show more), values &lt; 1 zoom in (show less).
+        /// </summary>
+        public void Scale(float factor)
+        {
+            if (factor <= 0)
+                return;
+            _width *= factor;
+            _height *= factor;
             Resized();
         }
 
@@ -130,9 +202,36 @@ namespace XREngine.Rendering
         public override Vector2 GetFrustumSizeAtDistance(float drawDistance)
             => new(Width, Height);
 
+        public override float GetApproximateVerticalFov()
+        {
+            // Orthographic has no real FOV, but we can approximate one based on the view size
+            // Use a reference distance of 10 units to compute an equivalent FOV
+            const float referenceDistance = 10f;
+            return 2f * MathF.Atan2(Height / 2f, referenceDistance) * (180f / MathF.PI);
+        }
+
+        public override float GetApproximateAspectRatio()
+            => Height > 0 ? Width / Height : 1f;
+
+        /// <summary>
+        /// Calculates the best perspective FOV and camera distance to match this orthographic view.
+        /// The returned FOV and distance will produce a perspective frustum that matches
+        /// the orthographic view size at the specified focus distance.
+        /// </summary>
+        /// <param name="targetFov">Desired target FOV in degrees. If null, uses 60 degrees.</param>
+        /// <returns>A tuple of (fov, distance) where distance is how far back the camera should be.</returns>
+        public (float fov, float distance) CalculatePerspectiveEquivalent(float? targetFov = null)
+        {
+            float fov = targetFov ?? 60f;
+            float fovRad = fov * MathF.PI / 180f;
+            // distance = frustumHeight / (2 * tan(fov/2))
+            float distance = Height / (2f * MathF.Tan(fovRad / 2f));
+            return (fov, distance);
+        }
+
         /// <summary>
         /// Creates a new orthographic camera from previous parameters.
-        /// Uses frustum size at distance 1 for perspective cameras.
+        /// For perspective cameras, uses the frustum size at a reasonable focus distance.
         /// </summary>
         public override XRCameraParameters CreateFromPrevious(XRCameraParameters? previous)
         {
@@ -140,15 +239,49 @@ namespace XREngine.Rendering
                 return new XROrthographicCameraParameters();
 
             if (previous is XROrthographicCameraParameters ortho)
-                return new XROrthographicCameraParameters(ortho.Width, ortho.Height, ortho.NearZ, ortho.FarZ);
+            {
+                var result = new XROrthographicCameraParameters(ortho.Width, ortho.Height, ortho.NearZ, ortho.FarZ)
+                {
+                    InheritAspectRatio = ortho.InheritAspectRatio
+                };
+                result.SetOriginPercentages(ortho._originPercentages);
+                return result;
+            }
 
-            // Calculate frustum size at distance 1 for reasonable ortho dimensions
-            Vector2 frustum = previous.GetFrustumSizeAtDistance(MathF.Max(previous.NearZ + 1.0f, 1.0f));
-            return new XROrthographicCameraParameters(
-                MathF.Max(1.0f, frustum.X),
-                MathF.Max(1.0f, frustum.Y),
+            // For perspective cameras, calculate a reasonable focus distance based on near/far range
+            // Use a distance that's about 10 units or near + 1, whichever is larger
+            float focusDistance = MathF.Max(previous.NearZ + 1.0f, 10.0f);
+            Vector2 frustum = previous.GetFrustumSizeAtDistance(focusDistance);
+            
+            var newOrtho = new XROrthographicCameraParameters(
+                MathF.Max(0.1f, frustum.X),
+                MathF.Max(0.1f, frustum.Y),
                 previous.NearZ,
                 previous.FarZ);
+            
+            // Center the view and inherit aspect ratio from viewport
+            newOrtho.SetOriginCentered();
+            newOrtho.InheritAspectRatio = true;
+            
+            return newOrtho;
+        }
+
+        /// <summary>
+        /// Creates an orthographic camera that matches the view of a perspective camera at the given focus distance.
+        /// </summary>
+        public static XROrthographicCameraParameters CreateFromPerspective(
+            XRPerspectiveCameraParameters perspective, 
+            float focusDistance)
+        {
+            Vector2 frustum = perspective.GetFrustumSizeAtDistance(focusDistance);
+            var ortho = new XROrthographicCameraParameters(
+                frustum.X,
+                frustum.Y,
+                perspective.NearZ,
+                perspective.FarZ);
+            ortho.SetOriginCentered();
+            ortho.InheritAspectRatio = perspective.InheritAspectRatio;
+            return ortho;
         }
 
         protected override XRCameraParameters CreateDefaultInstance()

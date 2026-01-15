@@ -13,10 +13,6 @@ public unsafe partial class VulkanRenderer
 	private Pipeline _debugTrianglePipeline;
 	private ulong _debugTriangleRenderPassHandle;
 
-	private static bool DebugTriangleEnabled
-		=> string.Equals(Environment.GetEnvironmentVariable("XRE_VK_DEBUG_TRIANGLE"), "1", StringComparison.OrdinalIgnoreCase)
-			|| string.Equals(Environment.GetEnvironmentVariable("XRE_VK_DEBUG_TRIANGLE"), "true", StringComparison.OrdinalIgnoreCase);
-
 	private void DestroyDebugTriangleResources()
 	{
 		if (Api is null)
@@ -43,9 +39,6 @@ public unsafe partial class VulkanRenderer
 
 	private void EnsureDebugTrianglePipeline()
 	{
-		if (!DebugTriangleEnabled)
-			return;
-
 		ulong currentRp = _renderPass.Handle;
 		if (_debugTrianglePipeline.Handle != 0 && _debugTriangleRenderPassHandle == currentRp)
 			return;
@@ -223,9 +216,6 @@ public unsafe partial class VulkanRenderer
 
 	private void RenderDebugTriangle(CommandBuffer commandBuffer)
 	{
-		if (!DebugTriangleEnabled)
-			return;
-
 		EnsureDebugTrianglePipeline();
 		if (_debugTrianglePipeline.Handle == 0)
 			return;

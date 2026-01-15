@@ -909,6 +909,12 @@ public static partial class EditorImGuiUI
 
         private static partial void DrawComponentInspector(XRComponent component, HashSet<object> visited)
         {
+            // Add possess button for all PawnComponent types
+            if (component is PawnComponent pawnComponent)
+            {
+                DrawPawnPossessButton(pawnComponent);
+            }
+
             var editor = ResolveComponentEditor(component.GetType());
             if (editor is null)
             {
@@ -925,6 +931,61 @@ public static partial class EditorImGuiUI
                 Debug.LogException(ex, $"Custom component editor '{editor.GetType().FullName}' failed for '{component.GetType().FullName}'");
                 DrawDefaultComponentInspector(component, visited);
             }
+        }
+
+        private static void DrawPawnPossessButton(PawnComponent pawn)
+        {
+            var mainPlayer = Engine.State.MainPlayer;
+            bool isCurrentlyPossessed = ReferenceEquals(mainPlayer?.ControlledPawn, pawn);
+
+            if (isCurrentlyPossessed)
+            {
+                ImGui.TextColored(new Vector4(0.4f, 0.8f, 0.4f, 1.0f), "✓ Currently Possessed by Player 1");
+            }
+            else
+            {
+                if (ImGui.Button("Possess as Player 1"))
+                {
+                    PossessPawnAsMainPlayer(pawn);
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Make Player 1 possess this pawn. This will switch the main viewport camera to this pawn's camera.");
+                }
+            }
+            ImGui.Spacing();
+        }
+
+        private static void PossessPawnAsMainPlayer(PawnComponent pawn)
+        {
+            var mainPlayer = Engine.State.MainPlayer;
+            if (mainPlayer is null)
+            {
+                Debug.LogWarning("Cannot possess pawn: no main player exists.");
+                return;
+            }
+
+            // Unlink from current pawn first
+            mainPlayer.UnlinkControlledPawn();
+
+            // Ensure player has a valid viewport
+            var window = Engine.Windows.FirstOrDefault();
+            if (window is not null)
+            {
+                var ensuredViewport = window.EnsureControllerRegistered(mainPlayer, autoSizeAllViewports: false);
+                if (ensuredViewport is not null)
+                {
+                    mainPlayer.Input.UpdateDevices(ensuredViewport.Window?.Input, Engine.VRState.Actions);
+                }
+            }
+
+            // Set the controlled pawn - this triggers UpdateViewportCamera
+            mainPlayer.ControlledPawn = pawn;
+
+            // Force refresh the viewport camera binding
+            mainPlayer.RefreshViewportCamera();
+
+            Debug.Out($"[EditorImGuiUI] Possessed pawn '{pawn.Name ?? pawn.GetType().Name}' as Player 1");
         }
 
         public static partial void DrawDefaultComponentInspector(XRComponent component, HashSet<object> visited)

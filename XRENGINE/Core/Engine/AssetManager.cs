@@ -1777,15 +1777,17 @@ namespace XREngine
             if (asset.ID == Guid.Empty)
             {
                 Debug.LogWarning("An asset was loaded with an empty ID.");
-                return;
             }
 
-            XRAsset UpdateIDDict(Guid existingID, XRAsset existingAsset)
+            if (asset.ID != Guid.Empty)
             {
-                Debug.Out($"An asset with the ID {existingID} already exists in the asset manager. The new asset will be added to the list of assets with the same ID.");
-                return existingAsset;
+                XRAsset UpdateIDDict(Guid existingID, XRAsset existingAsset)
+                {
+                    Debug.Out($"An asset with the ID {existingID} already exists in the asset manager. The new asset will be added to the list of assets with the same ID.");
+                    return existingAsset;
+                }
+                LoadedAssetsByIDInternal.AddOrUpdate(asset.ID, asset, UpdateIDDict);
             }
-            LoadedAssetsByIDInternal.AddOrUpdate(asset.ID, asset, UpdateIDDict);
 
             asset.PropertyChanged += AssetPropertyChanged;
         }
@@ -1805,6 +1807,14 @@ namespace XREngine
                 return;
 
             CacheAsset(asset);
+
+            // If the asset was marked dirty before it was tracked (common for in-memory settings objects),
+            // it would have missed the IsDirty PropertyChanged hook. Backfill DirtyAssets here.
+            if (asset.IsDirty && asset.ID != Guid.Empty)
+            {
+                DirtyAssets.TryAdd(asset.ID, asset);
+                AssetMarkedDirty?.Invoke(asset);
+            }
         }
 
         void AssetPropertyChanged(object? s, Data.Core.IXRPropertyChangedEventArgs e)
@@ -2177,6 +2187,16 @@ namespace XREngine
                 CacheAsset(asset);
             asset.ClearDirty();
             DirtyAssets.TryRemove(asset.ID, out _);
+
+            // If this is the root asset, clear any embedded dirty entries that point to it.
+            foreach (var kvp in DirtyAssets.ToArray())
+            {
+                if (ReferenceEquals(kvp.Value.SourceAsset, asset))
+                {
+                    kvp.Value.ClearDirty();
+                    DirtyAssets.TryRemove(kvp.Key, out _);
+                }
+            }
             
             // Track save time to prevent file watcher from reloading
             if (!string.IsNullOrEmpty(asset.FilePath))

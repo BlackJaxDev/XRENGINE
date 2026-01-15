@@ -1,4 +1,5 @@
 using ImGuiNET;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
@@ -18,6 +19,18 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 {
     private const float PreviewMaxEdge = 256.0f;
     private const float PreviewMinEdge = 96.0f;
+
+    /// <summary>
+    /// Active camera transitions keyed by camera instance.
+    /// </summary>
+    private static readonly ConcurrentDictionary<XRCamera, CameraProjectionTransition> _activeTransitions = new();
+
+    /// <summary>
+    /// Settings for animated camera transitions.
+    /// </summary>
+    private static bool _enableAnimatedTransitions = true;
+    private static float _transitionDuration = 1.0f;
+    private static float _focusDistance = 10f;
 
     /// <summary>
     /// Cached information about a camera parameter type for the editor dropdown.
@@ -176,6 +189,17 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         var player = component.GetUsingLocalPlayer();
         var pawn = component.GetUsingPawn();
 
+        // Authoritative viewport bindings: scan live windows.
+        var boundViewports = new List<XRViewport>();
+        foreach (var window in Engine.Windows)
+        {
+            foreach (var vp in window.Viewports)
+            {
+                if (ReferenceEquals(vp.CameraComponent, component))
+                    boundViewports.Add(vp);
+            }
+        }
+
         // Status indicator with color
         Vector4 statusColor = isActive 
             ? new Vector4(0.2f, 0.8f, 0.2f, 1.0f)  // Green for active
@@ -219,17 +243,18 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         // Viewport count
         var cam = component.Camera;
-        int viewportCount = cam.Viewports.Count;
+        int viewportCount = boundViewports.Count;
         ImGui.TextDisabled($"(CameraHash: {cam.GetHashCode()})");
+        ImGui.TextDisabled($"(XRCamera.Viewports: {cam.Viewports.Count})");
         if (viewportCount > 0)
         {
             ImGui.TextColored(new Vector4(1.0f, 0.8f, 0.4f, 1.0f), $"Viewports: {viewportCount}");
             if (ImGui.IsItemHovered())
             {
                 string tooltip = "Bound viewports:\n";
-                for (int i = 0; i < component.Camera.Viewports.Count; i++)
+                for (int i = 0; i < boundViewports.Count; i++)
                 {
-                    var vp = component.Camera.Viewports[i];
+                    var vp = boundViewports[i];
                     tooltip += $"  [{i}] {vp.Region.Width}x{vp.Region.Height}";
                     if (vp.Window is not null)
                         tooltip += $" (Window: {vp.Window.Window.Title ?? "untitled"})";
@@ -498,6 +523,16 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         // Show category/description for current type
         var currentOption = currentIndex >= 0 ? ParameterOptions[currentIndex] : new ParameterOption(current.GetType());
         
+        // Check if a transition is in progress
+        bool isTransitioning = _activeTransitions.TryGetValue(camera, out var transition) && transition.IsTransitioning;
+        
+        // Show transition progress if active
+        if (isTransitioning && transition is not null)
+        {
+            ImGui.ProgressBar(transition.Progress, new Vector2(-1, 0), "Transitioning...");
+            ImGui.BeginDisabled();
+        }
+        
         ImGui.SetNextItemWidth(-1f);
         if (ImGui.BeginCombo("Projection Type", currentLabel))
         {
@@ -521,17 +556,19 @@ public sealed class CameraComponentEditor : IXRComponentEditor
                 }
 
                 bool selected = i == currentIndex;
-                if (ImGui.Selectable(option.Label, selected) && !selected)
+                if (ImGui.Selectable(option.Label, selected) && !selected && !isTransitioning)
                 {
-                    XRCameraParameters replacement = CreateParameterInstance(option.ParameterType, current);
-                    camera.Parameters = replacement;
-                    current = replacement;
-                    currentIndex = i;
+                    SwitchCameraType(camera, current, option.ParameterType);
                 }
 
                 // Show tooltip with description if available
                 if (ImGui.IsItemHovered() && !string.IsNullOrEmpty(option.Description))
-                    ImGui.SetTooltip(option.Description);
+                {
+                    string tooltip = option.Description;
+                    if (_enableAnimatedTransitions && CameraProjectionTransition.CanAnimateTransition(current.GetType(), option.ParameterType))
+                        tooltip += "\n\n(Animated transition available)";
+                    ImGui.SetTooltip(tooltip);
+                }
 
                 if (selected)
                     ImGui.SetItemDefaultFocus();
@@ -540,9 +577,93 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             ImGui.EndCombo();
         }
         
+        if (isTransitioning)
+            ImGui.EndDisabled();
+        
         // Show description below the combo if current type has one
         if (!string.IsNullOrEmpty(currentOption.Description))
             ImGui.TextDisabled(currentOption.Description);
+            
+        // Transition settings (collapsible)
+        DrawTransitionSettings();
+    }
+
+    /// <summary>
+    /// Draws the transition settings UI.
+    /// </summary>
+    private static void DrawTransitionSettings()
+    {
+        if (ImGui.TreeNode("Transition Settings"))
+        {
+            ImGui.Checkbox("Animated Transitions", ref _enableAnimatedTransitions);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("When enabled, switching between Perspective and Orthographic\nwill use a smooth dolly zoom animation.");
+                
+            if (_enableAnimatedTransitions)
+            {
+                ImGui.SliderFloat("Duration", ref _transitionDuration, 0.1f, 3.0f, "%.1f sec");
+                ImGui.DragFloat("Focus Distance", ref _focusDistance, 0.5f, 0.1f, 1000f, "%.1f");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Distance from camera to the focus point.\nObjects at this distance maintain their apparent size during transition.");
+            }
+            
+            ImGui.TreePop();
+        }
+    }
+
+    /// <summary>
+    /// Handles switching camera types, potentially with animation.
+    /// </summary>
+    private static void SwitchCameraType(XRCamera camera, XRCameraParameters current, Type targetType)
+    {
+        // Cancel any existing transition
+        if (_activeTransitions.TryRemove(camera, out var existingTransition))
+            existingTransition.Cancel();
+
+        // Check if we should animate
+        if (_enableAnimatedTransitions && CameraProjectionTransition.CanAnimateTransition(current.GetType(), targetType))
+        {
+            var newTransition = new CameraProjectionTransition(camera, camera.Transform);
+            
+            // Register completion handler
+            newTransition.TransitionCompleted += OnTransitionCompleted;
+            
+            _activeTransitions[camera] = newTransition;
+            
+            // Start the appropriate transition
+            if (current is XRPerspectiveCameraParameters && targetType == typeof(XROrthographicCameraParameters))
+            {
+                newTransition.StartPerspectiveToOrthographic(_transitionDuration, _focusDistance);
+            }
+            else if (current is XROrthographicCameraParameters && targetType == typeof(XRPerspectiveCameraParameters))
+            {
+                // Get the target FOV from the current perspective settings or default to 60
+                float targetFov = 60f;
+                newTransition.StartOrthographicToPerspective(_transitionDuration, targetFov, _focusDistance);
+            }
+        }
+        else
+        {
+            // No animation, just switch directly
+            XRCameraParameters replacement = CreateParameterInstance(targetType, current);
+            camera.Parameters = replacement;
+        }
+    }
+
+    /// <summary>
+    /// Called when a camera transition completes.
+    /// </summary>
+    private static void OnTransitionCompleted(CameraProjectionTransition transition)
+    {
+        // Find and remove the completed transition
+        foreach (var kvp in _activeTransitions)
+        {
+            if (kvp.Value == transition)
+            {
+                _activeTransitions.TryRemove(kvp.Key, out _);
+                break;
+            }
+        }
     }
 
     /// <summary>
@@ -599,13 +720,30 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
     private static void DrawOrthographicParameters(XROrthographicCameraParameters parameters)
     {
-        float width = parameters.Width;
-        if (ImGui.DragFloat("Width", ref width, 0.1f, 0.01f, 100000f, "%.2f"))
-            parameters.Width = MathF.Max(0.01f, width);
+        // Aspect Ratio Section
+        ImGui.SeparatorText("Aspect Ratio");
+        
+        bool inheritAspect = parameters.InheritAspectRatio;
+        if (ImGui.Checkbox("Inherit Aspect Ratio", ref inheritAspect))
+            parameters.InheritAspectRatio = inheritAspect;
 
+        // Width is disabled when inheriting aspect ratio (it's calculated from height)
+        using (new ImGuiDisabledScope(parameters.InheritAspectRatio))
+        {
+            float width = parameters.Width;
+            if (ImGui.DragFloat("Width", ref width, 0.1f, 0.01f, 100000f, "%.2f"))
+                parameters.Width = MathF.Max(0.01f, width);
+        }
+
+        // Height is the primary control - always editable
         float height = parameters.Height;
         if (ImGui.DragFloat("Height", ref height, 0.1f, 0.01f, 100000f, "%.2f"))
             parameters.Height = MathF.Max(0.01f, height);
+
+        ImGui.TextDisabled($"Aspect Ratio: {parameters.AspectRatio:F3}");
+
+        // Origin Section
+        ImGui.SeparatorText("Origin");
 
         if (ImGui.BeginCombo("Origin Preset", "Select"))
         {

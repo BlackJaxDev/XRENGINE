@@ -108,8 +108,34 @@ namespace XREngine.Rendering
         public override float GetApproximateAspectRatio() => AspectRatio;
 
         /// <summary>
+        /// Calculates the camera distance needed to achieve a specific frustum height at that distance.
+        /// </summary>
+        /// <param name="frustumHeight">The desired frustum height at the calculated distance.</param>
+        /// <returns>The distance from camera where the frustum will have the specified height.</returns>
+        public float GetDistanceForFrustumHeight(float frustumHeight)
+        {
+            float fovRad = float.DegreesToRadians(VerticalFieldOfView);
+            return frustumHeight / (2f * MathF.Tan(fovRad / 2f));
+        }
+
+        /// <summary>
+        /// Calculates the best FOV and distance to match an orthographic view.
+        /// </summary>
+        /// <param name="orthoHeight">The orthographic view height.</param>
+        /// <param name="targetFov">The desired target FOV in degrees. If null, uses 60 degrees.</param>
+        /// <returns>A tuple of (fov, distance) where distance is how far back the camera should be positioned.</returns>
+        public static (float fov, float distance) CalculateForOrthoMatch(float orthoHeight, float? targetFov = null)
+        {
+            float fov = targetFov ?? 60f;
+            float fovRad = fov * MathF.PI / 180f;
+            float distance = orthoHeight / (2f * MathF.Tan(fovRad / 2f));
+            return (fov, distance);
+        }
+
+        /// <summary>
         /// Creates a new perspective camera from previous parameters.
         /// Intelligently converts FOV from physical cameras and other types.
+        /// For orthographic cameras, calculates appropriate FOV based on view size.
         /// </summary>
         public override XRCameraParameters CreateFromPrevious(XRCameraParameters? previous)
         {
@@ -128,12 +154,47 @@ namespace XREngine.Rendering
                 };
             }
 
+            if (previous is XROrthographicCameraParameters ortho)
+            {
+                // For orthographic, calculate a reasonable FOV based on the ortho dimensions
+                // We'll use a default FOV and store the aspect ratio
+                float fov = 60f;
+                float aspect = ortho.Width / ortho.Height;
+                return new XRPerspectiveCameraParameters(fov, aspect, ortho.NearZ, ortho.FarZ)
+                {
+                    InheritAspectRatio = false // Preserve the ortho aspect ratio initially
+                };
+            }
+
             // Use approximate FOV from other types
-            float fov = previous.GetApproximateVerticalFov();
-            return new XRPerspectiveCameraParameters(fov, null, previous.NearZ, previous.FarZ)
+            float approxFov = previous.GetApproximateVerticalFov();
+            return new XRPerspectiveCameraParameters(approxFov, null, previous.NearZ, previous.FarZ)
             {
                 InheritAspectRatio = true
             };
+        }
+
+        /// <summary>
+        /// Creates a perspective camera configured to match an orthographic view at the given focus distance.
+        /// The caller should position the camera at the returned distance from the focus point.
+        /// </summary>
+        /// <param name="ortho">The orthographic camera to match.</param>
+        /// <param name="targetFov">The desired FOV in degrees.</param>
+        /// <returns>A tuple of (parameters, distance) where distance is how far to position the camera.</returns>
+        public static (XRPerspectiveCameraParameters parameters, float distance) CreateFromOrthographic(
+            XROrthographicCameraParameters ortho,
+            float targetFov = 60f)
+        {
+            float aspect = ortho.Width / ortho.Height;
+            float fovRad = targetFov * MathF.PI / 180f;
+            float distance = ortho.Height / (2f * MathF.Tan(fovRad / 2f));
+            
+            var persp = new XRPerspectiveCameraParameters(targetFov, aspect, ortho.NearZ, ortho.FarZ)
+            {
+                InheritAspectRatio = false
+            };
+            
+            return (persp, distance);
         }
 
         protected override XRCameraParameters CreateDefaultInstance()

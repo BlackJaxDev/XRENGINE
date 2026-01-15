@@ -2,6 +2,7 @@
 using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
+using XREngine.Rendering;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components
@@ -38,20 +39,44 @@ namespace XREngine.Components
             set => SetField(ref _pitchIncrementModifier, value);
         }
 
+        /// <summary>
+        /// Scale factor for orthographic zoom. Values > 1 zoom slower, values &lt; 1 zoom faster.
+        /// </summary>
+        private float _orthoZoomSpeed = 0.1f;
+        public float OrthoZoomSpeed
+        {
+            get => _orthoZoomSpeed;
+            set => SetField(ref _orthoZoomSpeed, value);
+        }
+
+        /// <summary>
+        /// Gets the camera component attached to this pawn.
+        /// </summary>
+        protected CameraComponent? CameraComponent => GetSiblingComponent<CameraComponent>();
+
+        /// <summary>
+        /// Returns true if the camera is currently using orthographic projection.
+        /// </summary>
+        protected bool IsOrthographic => CameraComponent?.Camera?.Parameters is XROrthographicCameraParameters;
+
         protected override void OnScrolled(float diff)
         {
             if (ShiftPressed)
                 diff *= ShiftSpeedModifier;
 
-            //if (CtrlPressed)
-            //{
-            //    if (diff > 0.0f)
-            //        ScrollSpeedModifier *= 0.5f;
-            //    else if (diff < 0.0f)
-            //        ShiftSpeedModifier *= 1.5f;
-            //}
-
-            TransformAs<Transform>()?.TranslateRelative(0.0f, 0.0f, diff * -ScrollSpeed * ScrollSpeedModifier);
+            // For orthographic cameras, scroll zooms (scales width/height) instead of moving
+            if (CameraComponent?.Camera?.Parameters is XROrthographicCameraParameters ortho)
+            {
+                // Positive diff = scroll up = zoom in = smaller view
+                // Negative diff = scroll down = zoom out = larger view
+                float scaleFactor = 1f - (diff * OrthoZoomSpeed * ScrollSpeedModifier);
+                scaleFactor = Math.Clamp(scaleFactor, 0.5f, 2f); // Limit per-scroll change
+                ortho.Scale(scaleFactor);
+            }
+            else
+            {
+                TransformAs<Transform>()?.TranslateRelative(0.0f, 0.0f, diff * -ScrollSpeed * ScrollSpeedModifier);
+            }
         }
 
         protected override void MouseMove(float x, float y)
@@ -70,9 +95,18 @@ namespace XREngine.Components
                 x *= ShiftSpeedModifier;
                 y *= ShiftSpeedModifier;
             }
+
+            // For orthographic cameras, scale translation speed by the view size
+            float translationScale = 1f;
+            if (CameraComponent?.Camera?.Parameters is XROrthographicCameraParameters ortho)
+            {
+                // Larger ortho view = need to move more to cover same screen distance
+                translationScale = ortho.Height;
+            }
+
             TransformAs<Transform>()?.TranslateRelative(
-                -x * MouseTranslateSpeed,
-                -y * MouseTranslateSpeed,
+                -x * MouseTranslateSpeed * translationScale,
+                -y * MouseTranslateSpeed * translationScale,
                 0.0f);
         }
 
@@ -97,6 +131,19 @@ namespace XREngine.Components
 
             AddYawPitch(yaw, pitch);
         }
+
+        /// <summary>
+        /// Zooms the orthographic camera by scaling its view size.
+        /// </summary>
+        /// <param name="factor">Scale factor. Values > 1 zoom out (show more), values &lt; 1 zoom in (show less).</param>
+        public void ZoomOrtho(float factor)
+        {
+            if (CameraComponent?.Camera?.Parameters is XROrthographicCameraParameters ortho)
+            {
+                ortho.Scale(factor);
+            }
+        }
+
         protected override void Tick()
         {
             IncrementRotation();
@@ -119,11 +166,32 @@ namespace XREngine.Components
 
             //Don't time dilate user inputs
             float delta = Engine.UndilatedDelta;
-            //Vector2 dir = Vector2.Normalize(new(_incRight, _incUp));
-            TransformAs<Transform>()?.TranslateRelative(
-                incRight * delta,
-                incUp * delta,
-                -incForward * delta);
+
+            // For orthographic cameras, forward/backward controls zoom instead of movement
+            if (CameraComponent?.Camera?.Parameters is XROrthographicCameraParameters ortho)
+            {
+                // Forward = zoom in (smaller view), backward = zoom out (larger view)
+                if (!incForward.IsZero())
+                {
+                    float zoomFactor = 1f - (incForward * delta * OrthoZoomSpeed);
+                    zoomFactor = Math.Clamp(zoomFactor, 0.9f, 1.1f); // Limit per-tick change
+                    ortho.Scale(zoomFactor);
+                }
+
+                // Scale translation by ortho view size for consistent feel
+                float translationScale = ortho.Height * 0.1f; // Scale down for reasonable speed
+                TransformAs<Transform>()?.TranslateRelative(
+                    incRight * delta * translationScale,
+                    incUp * delta * translationScale,
+                    0.0f); // No forward movement for ortho
+            }
+            else
+            {
+                TransformAs<Transform>()?.TranslateRelative(
+                    incRight * delta,
+                    incUp * delta,
+                    -incForward * delta);
+            }
         }
 
         private void IncrementRotation()

@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using XREngine;
+using XREngine.Core.Files;
 
 namespace XREngine.Editor;
 
@@ -17,6 +18,16 @@ public static partial class EditorImGuiUI
                 return;
             }
 
+            // Ensure Engine Settings participates in dirty tracking even if no project is loaded yet.
+            if (Engine.Rendering.Settings is XRAsset engineSettingsAsset && Engine.Assets is not null)
+            {
+                engineSettingsAsset.Name ??= "Engine Settings";
+                if (Engine.CurrentProject?.EngineSettingsPath is string engineSettingsPath)
+                    engineSettingsAsset.FilePath = engineSettingsPath;
+
+                Engine.Assets.EnsureTracked(engineSettingsAsset.SourceAsset);
+            }
+
             // Save button at the top
             if (Engine.CurrentProject is not null)
             {
@@ -28,7 +39,7 @@ public static partial class EditorImGuiUI
             }
             else
             {
-                ImGui.TextDisabled("No project loaded - settings will not persist.");
+                ImGui.TextDisabled("Sandbox mode - settings are saved globally.");
                 ImGui.Separator();
             }
 
@@ -56,7 +67,7 @@ public static partial class EditorImGuiUI
             }
             else
             {
-                ImGui.TextDisabled("No project loaded - settings will not persist.");
+                ImGui.TextDisabled("Sandbox mode - settings are saved globally.");
                 ImGui.Separator();
             }
 
@@ -83,7 +94,7 @@ public static partial class EditorImGuiUI
             }
             else
             {
-                ImGui.TextDisabled("No project loaded - settings will not persist.");
+                ImGui.TextDisabled("Sandbox mode - settings are saved globally.");
                 ImGui.Separator();
             }
 

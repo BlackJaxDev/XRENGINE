@@ -152,7 +152,7 @@ public static partial class UnitTestingWorld
         public bool AllowShaderPipelines = false;
         public bool RenderMeshBounds = true;
 
-        public ERenderLibrary RenderAPI = ERenderLibrary.OpenGL;
+        public ERenderLibrary RenderAPI = ERenderLibrary.Vulkan;
         public EPhysicsLibrary PhysicsAPI = EPhysicsLibrary.PhysX;
         public ELoopType RecalcChildMatricesType = ELoopType.Asynchronous;
         public bool TickGroupedItemsInParallel = true;
