@@ -77,16 +77,42 @@ namespace XREngine.Rendering.Vulkan
             if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
                 throw new Exception("Failed to begin recording command buffer.");
 
+            CmdBeginLabel(commandBuffer, $"FrameCmd[{imageIndex}]");
+
             EmitPendingMemoryBarriers(commandBuffer);
 
             // Ensure swapchain resources are transitioned appropriately before any rendering.
+            CmdBeginLabel(commandBuffer, "SwapchainBarriers");
             var swapchainBarriers = _barrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
             if (swapchainBarriers.Count > 0)
                 EmitPlannedImageBarriers(commandBuffer, swapchainBarriers);
             else
                 EmitPlannedImageBarriers(commandBuffer, _barrierPlanner.ImageBarriers);
+            CmdEndLabel(commandBuffer);
 
             var ops = DrainFrameOps();
+
+            int clearCount = 0;
+            int drawCount = 0;
+            int blitCount = 0;
+            foreach (var op in ops)
+            {
+                switch (op)
+                {
+                    case ClearOp: clearCount++; break;
+                    case MeshDrawOp: drawCount++; break;
+                    case BlitOp: blitCount++; break;
+                }
+            }
+
+            Debug.RenderingEvery(
+                $"Vulkan.FrameOps.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] FrameOps: total={0} clears={1} draws={2} blits={3}",
+                ops.Length,
+                clearCount,
+                drawCount,
+                blitCount);
 
             bool renderPassActive = false;
             XRFrameBuffer? activeTarget = null;
@@ -94,12 +120,19 @@ namespace XREngine.Rendering.Vulkan
             Framebuffer activeFramebuffer = default;
             Rect2D activeRenderArea = default;
             int activePassIndex = int.MinValue;
+            bool renderPassLabelActive = false;
+            bool passIndexLabelActive = false;
 
             void EndActiveRenderPass()
             {
                 if (!renderPassActive)
                     return;
                 Api!.CmdEndRenderPass(commandBuffer);
+                if (renderPassLabelActive)
+                {
+                    CmdEndLabel(commandBuffer);
+                    renderPassLabelActive = false;
+                }
                 renderPassActive = false;
                 activeTarget = null;
                 activeRenderPass = default;
@@ -112,6 +145,9 @@ namespace XREngine.Rendering.Vulkan
                 // Assumes no active render pass.
                 if (target is null)
                 {
+                    CmdBeginLabel(commandBuffer, "RenderPass:Swapchain");
+                    renderPassLabelActive = true;
+
                     RenderPassBeginInfo renderPassInfo = new()
                     {
                         SType = StructureType.RenderPassBeginInfo,
@@ -144,6 +180,12 @@ namespace XREngine.Rendering.Vulkan
                 if (vkFrameBuffer is null)
                     throw new InvalidOperationException("Failed to resolve Vulkan framebuffer for target.");
 
+                string fboName = string.IsNullOrWhiteSpace(target.Name)
+                    ? $"FBO[{target.GetHashCode()}]"
+                    : target.Name!;
+                CmdBeginLabel(commandBuffer, $"RenderPass:{fboName}");
+                renderPassLabelActive = true;
+
                 RenderPassBeginInfo fboPassInfo = new()
                 {
                     SType = StructureType.RenderPassBeginInfo,
@@ -175,7 +217,11 @@ namespace XREngine.Rendering.Vulkan
             {
                 var barriers = _barrierPlanner.GetBarriersForPass(passIndex);
                 if (barriers.Count > 0)
+                {
+                    CmdBeginLabel(commandBuffer, "PassBarriers");
                     EmitPlannedImageBarriers(commandBuffer, barriers);
+                    CmdEndLabel(commandBuffer);
+                }
             }
 
             foreach (var op in ops)
@@ -184,6 +230,16 @@ namespace XREngine.Rendering.Vulkan
                 {
                     // Barriers are safest outside render passes.
                     EndActiveRenderPass();
+
+                    if (passIndexLabelActive)
+                    {
+                        CmdEndLabel(commandBuffer);
+                        passIndexLabelActive = false;
+                    }
+
+                    CmdBeginLabel(commandBuffer, $"PassIndex={op.PassIndex}");
+                    passIndexLabelActive = true;
+
                     EmitPassBarriers(op.PassIndex);
                     activePassIndex = op.PassIndex;
                 }
@@ -192,7 +248,9 @@ namespace XREngine.Rendering.Vulkan
                 {
                     case BlitOp blit:
                         EndActiveRenderPass();
+                        CmdBeginLabel(commandBuffer, "Blit");
                         RecordBlitOp(commandBuffer, blit);
+                        CmdEndLabel(commandBuffer);
                         break;
 
                     case ClearOp clear:
@@ -222,6 +280,12 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
+            if (passIndexLabelActive)
+            {
+                CmdEndLabel(commandBuffer);
+                passIndexLabelActive = false;
+            }
+
             // Always finish with a swapchain render pass so ImGui/debug overlay can present.
             if (!renderPassActive || activeTarget is not null)
             {
@@ -229,10 +293,41 @@ namespace XREngine.Rendering.Vulkan
                 BeginRenderPassForTarget(null);
             }
 
-            ApplyDynamicState(commandBuffer);
-            RenderDebugTriangle(commandBuffer);
+            // For presentation we want deterministic full-surface state regardless of prior per-viewport scissor.
+            // This also makes resize issues obvious (the clear should cover the entire swapchain extent).
+            Viewport swapViewport = new()
+            {
+                X = 0f,
+                Y = 0f,
+                Width = swapChainExtent.Width,
+                Height = swapChainExtent.Height,
+                MinDepth = 0f,
+                MaxDepth = 1f
+            };
+
+            Rect2D swapScissor = new()
+            {
+                Offset = new Offset2D(0, 0),
+                Extent = swapChainExtent
+            };
+
+            Api!.CmdSetViewport(commandBuffer, 0, 1, &swapViewport);
+            Api!.CmdSetScissor(commandBuffer, 0, 1, &swapScissor);
+
+            if (drawCount == 0 && blitCount == 0)
+            {
+                CmdBeginLabel(commandBuffer, "DebugTriangle");
+                RenderDebugTriangle(commandBuffer);
+                CmdEndLabel(commandBuffer);
+            }
+
+            CmdBeginLabel(commandBuffer, "ImGui");
             RenderImGui(commandBuffer, imageIndex);
+            CmdEndLabel(commandBuffer);
+
             EndActiveRenderPass();
+
+            CmdEndLabel(commandBuffer);
 
             if (Api!.EndCommandBuffer(commandBuffer) != Result.Success)
                 throw new Exception("Failed to record command buffer.");

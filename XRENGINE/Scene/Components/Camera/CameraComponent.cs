@@ -134,7 +134,31 @@ namespace XREngine.Components
         /// Returns true if this camera is actively being used for rendering by any viewport or local player.
         /// </summary>
         [Browsable(false)]
-        public bool IsActivelyRendering => Camera.Viewports.Count > 0 || DefaultRenderTarget is not null;
+        public bool IsActivelyRendering
+        {
+            get
+            {
+                if (DefaultRenderTarget is not null)
+                    return true;
+
+                // Fast path: XRCamera-maintained list.
+                if (Camera.Viewports.Count > 0)
+                    return true;
+
+                // Snapshot restore / play-mode transitions can temporarily desync runtime-only links.
+                // The authoritative source of "is this camera used" is whether any live viewport points at it.
+                foreach (var window in Engine.Windows)
+                {
+                    foreach (var viewport in window.Viewports)
+                    {
+                        if (ReferenceEquals(viewport.CameraComponent, this))
+                            return true;
+                    }
+                }
+
+                return false;
+            }
+        }
 
         /// <summary>
         /// Finds the local player controller that is using this camera for rendering, if any.
@@ -150,6 +174,18 @@ namespace XREngine.Components
                 if (player.Viewport?.CameraComponent == this)
                     return player;
             }
+
+            // Fallback: player.Viewport is runtime-only and can be temporarily null/stale after snapshot restore.
+            // If a viewport is bound to this camera, trust the viewport's AssociatedPlayer.
+            foreach (var window in Engine.Windows)
+            {
+                foreach (var viewport in window.Viewports)
+                {
+                    if (ReferenceEquals(viewport.CameraComponent, this) && viewport.AssociatedPlayer is not null)
+                        return viewport.AssociatedPlayer;
+                }
+            }
+
             return null;
         }
 

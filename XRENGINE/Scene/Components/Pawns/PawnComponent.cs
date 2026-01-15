@@ -292,7 +292,24 @@ namespace XREngine.Components
             => Engine.State.GetOrCreateLocalPlayer(player).ControlledPawn = this;
 
         public CameraComponent? GetCamera()
-            => CameraComponent is not null ? CameraComponent : GetSiblingComponent<CameraComponent>();
+        {
+            // Snapshot restore / play-mode transitions can leave PawnComponent.CameraComponent
+            // pointing at a stale (destroyed) component instance. Prefer a live component.
+            var camera = CameraComponent;
+            if (camera is not null && !camera.IsDestroyed && camera.SceneNode is not null && !camera.SceneNode.IsDestroyed)
+                return camera;
+
+            var siblingCamera = GetSiblingComponent<CameraComponent>();
+            if (siblingCamera is not null && !siblingCamera.IsDestroyed && siblingCamera.SceneNode is not null && !siblingCamera.SceneNode.IsDestroyed)
+                return siblingCamera;
+
+            // Fallback: if we have a non-destroyed reference but it's not fully wired yet,
+            // return it rather than null so callers can still proceed.
+            if (camera is not null && !camera.IsDestroyed)
+                return camera;
+
+            return null;
+        }
 
         public virtual IPawnInputSnapshot? CaptureNetworkInputState()
         {

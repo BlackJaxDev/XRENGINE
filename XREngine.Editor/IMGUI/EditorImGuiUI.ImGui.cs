@@ -1226,6 +1226,23 @@ public static partial class EditorImGuiUI
             if (settingsRoot is null)
                 return;
 
+            if (settingsRoot is XRAsset asset && Engine.Assets is not null)
+            {
+                // Ensure this settings object participates in dirty tracking / Save dropdown.
+                asset.Name ??= title;
+
+                if (Engine.CurrentProject is not null)
+                {
+                    // Give well-known project settings a stable file path so Save works.
+                    if (asset is Engine.Rendering.EngineSettings && Engine.CurrentProject.EngineSettingsPath is string engineSettingsPath)
+                        asset.FilePath = engineSettingsPath;
+                    else if (title == "Build Settings" && Engine.CurrentProject.BuildSettingsPath is string buildSettingsPath)
+                        asset.FilePath = buildSettingsPath;
+                }
+
+                Engine.Assets.EnsureTracked(asset.SourceAsset);
+            }
+
             _showInspector = true;
             SetInspectorStandaloneTarget(settingsRoot, title);
         }

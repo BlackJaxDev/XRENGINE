@@ -10,6 +10,8 @@ namespace XREngine
     public static partial class Engine
     {
         private static ProjectUserSettings? _trackedProjectUserSettings;
+        private const string SandboxFolderName = "Sandbox";
+        private const string SandboxConfigFolderName = "Config";
         /// <summary>
         /// The currently loaded project, if any.
         /// </summary>
@@ -98,22 +100,109 @@ namespace XREngine
         }
 
         /// <summary>
+        /// Loads global settings when running without a project (sandbox mode).
+        /// </summary>
+        public static void LoadSandboxSettings()
+        {
+            if (Assets is null)
+                return;
+
+            LoadSandboxEngineSettings();
+            LoadSandboxUserSettings();
+            LoadSandboxBuildSettings();
+        }
+
+        private static string? GetSandboxConfigDirectory()
+        {
+            string? baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (string.IsNullOrWhiteSpace(baseDir))
+                return null;
+
+            return Path.Combine(baseDir, "XREngine", SandboxFolderName, SandboxConfigFolderName);
+        }
+
+        private static string? GetSandboxEngineSettingsPath()
+        {
+            string? configDir = GetSandboxConfigDirectory();
+            return configDir is null ? null : Path.Combine(configDir, XRProject.EngineSettingsFileName);
+        }
+
+        private static string? GetSandboxUserSettingsPath()
+        {
+            string? configDir = GetSandboxConfigDirectory();
+            return configDir is null ? null : Path.Combine(configDir, XRProject.UserSettingsFileName);
+        }
+
+        private static string? GetSandboxBuildSettingsPath()
+        {
+            string? configDir = GetSandboxConfigDirectory();
+            return configDir is null ? null : Path.Combine(configDir, XRProject.BuildSettingsFileName);
+        }
+
+        /// <summary>
         /// Loads the engine settings from the current project directory.
         /// </summary>
         private static void LoadProjectEngineSettings()
         {
-            if (CurrentProject?.EngineSettingsPath is null || Assets is null)
+            if (Assets is null)
                 return;
 
-            if (File.Exists(CurrentProject.EngineSettingsPath))
+            if (CurrentProject?.EngineSettingsPath is null)
             {
-                var settings = Assets.Load<EngineSettings>(CurrentProject.EngineSettingsPath);
+                LoadSandboxEngineSettings();
+                return;
+            }
+
+            string engineSettingsPath = CurrentProject.EngineSettingsPath;
+
+            if (File.Exists(engineSettingsPath))
+            {
+                var settings = Assets.Load<EngineSettings>(engineSettingsPath);
                 if (settings is not null)
                 {
+                    settings.FilePath = engineSettingsPath;
+                    settings.Name = "Engine Settings";
+                    Assets.EnsureTracked(settings);
                     Rendering.Settings = settings;
                     Debug.Out("Loaded project engine settings.");
                 }
+                return;
             }
+
+            // No file yet: ensure the default settings asset is tracked so edits mark it dirty
+            // and Save/Save All + close prompts work like any other asset.
+            var created = Rendering.Settings ?? new EngineSettings();
+            created.FilePath = engineSettingsPath;
+            created.Name = "Engine Settings";
+            Assets.EnsureTracked(created);
+            Rendering.Settings = created;
+        }
+
+        private static void LoadSandboxEngineSettings()
+        {
+            string? engineSettingsPath = GetSandboxEngineSettingsPath();
+            if (string.IsNullOrWhiteSpace(engineSettingsPath) || Assets is null)
+                return;
+
+            if (File.Exists(engineSettingsPath))
+            {
+                var settings = Assets.Load<EngineSettings>(engineSettingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = engineSettingsPath;
+                    settings.Name = "Engine Settings";
+                    Assets.EnsureTracked(settings);
+                    Rendering.Settings = settings;
+                    Debug.Out("Loaded sandbox engine settings.");
+                }
+                return;
+            }
+
+            var created = Rendering.Settings ?? new EngineSettings();
+            created.FilePath = engineSettingsPath;
+            created.Name = "Engine Settings";
+            Assets.EnsureTracked(created);
+            Rendering.Settings = created;
         }
 
         /// <summary>
@@ -121,8 +210,14 @@ namespace XREngine
         /// </summary>
         private static void LoadProjectUserSettings()
         {
-            if (CurrentProject?.UserSettingsPath is null || Assets is null)
+            if (Assets is null)
                 return;
+
+            if (CurrentProject?.UserSettingsPath is null)
+            {
+                LoadSandboxUserSettings();
+                return;
+            }
 
             string userSettingsPath = CurrentProject.UserSettingsPath;
 
@@ -155,13 +250,53 @@ namespace XREngine
             created.MarkDirty();
         }
 
+        private static void LoadSandboxUserSettings()
+        {
+            string? userSettingsPath = GetSandboxUserSettingsPath();
+            if (string.IsNullOrWhiteSpace(userSettingsPath) || Assets is null)
+                return;
+
+            if (File.Exists(userSettingsPath))
+            {
+                var projectSettings = Assets.Load<ProjectUserSettings>(userSettingsPath);
+                if (projectSettings?.Settings is not null)
+                {
+                    projectSettings.Name = "User Settings";
+                    _trackedProjectUserSettings = projectSettings;
+                    UserSettings = projectSettings.Settings;
+                    Debug.Out("Loaded sandbox user settings.");
+                }
+                return;
+            }
+
+            var created = new ProjectUserSettings(UserSettings)
+            {
+                FilePath = userSettingsPath,
+                Name = "User Settings"
+            };
+
+            string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            Assets.EnsureTracked(created);
+            _trackedProjectUserSettings = created;
+            created.MarkDirty();
+        }
+
         /// <summary>
         /// Loads the build settings from the current project directory.
         /// </summary>
         private static void LoadProjectBuildSettings()
         {
-            if (CurrentProject?.BuildSettingsPath is null || Assets is null)
+            if (Assets is null)
                 return;
+
+            if (CurrentProject?.BuildSettingsPath is null)
+            {
+                LoadSandboxBuildSettings();
+                return;
+            }
 
             if (File.Exists(CurrentProject.BuildSettingsPath))
             {
@@ -176,13 +311,50 @@ namespace XREngine
             }
         }
 
+        private static void LoadSandboxBuildSettings()
+        {
+            string? buildSettingsPath = GetSandboxBuildSettingsPath();
+            if (string.IsNullOrWhiteSpace(buildSettingsPath) || Assets is null)
+                return;
+
+            if (File.Exists(buildSettingsPath))
+            {
+                var settings = Assets.Load<BuildSettings>(buildSettingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = buildSettingsPath;
+                    settings.Name = "Build Settings";
+                    Assets.EnsureTracked(settings);
+                    BuildSettings = settings;
+                    if (GameSettings is not null)
+                        GameSettings.BuildSettings = BuildSettings;
+                    Debug.Out("Loaded sandbox build settings.");
+                }
+                return;
+            }
+
+            var created = BuildSettings ?? new BuildSettings();
+            created.FilePath = buildSettingsPath;
+            created.Name = "Build Settings";
+            Assets.EnsureTracked(created);
+            BuildSettings = created;
+            if (GameSettings is not null)
+                GameSettings.BuildSettings = BuildSettings;
+        }
+
         /// <summary>
         /// Saves the engine settings to the current project directory.
         /// </summary>
         public static void SaveProjectEngineSettings()
         {
-            if (CurrentProject?.ProjectDirectory is null || Assets is null)
+            if (Assets is null)
                 return;
+
+            if (CurrentProject?.ProjectDirectory is null)
+            {
+                SaveSandboxEngineSettings();
+                return;
+            }
 
             var settings = Rendering.Settings;
             if (settings is null)
@@ -201,13 +373,42 @@ namespace XREngine
             Debug.Out("Saved project engine settings.");
         }
 
+        public static void SaveSandboxEngineSettings()
+        {
+            if (Assets is null)
+                return;
+
+            var settings = Rendering.Settings;
+            if (settings is null)
+                return;
+
+            string? settingsPath = GetSandboxEngineSettingsPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            settings.FilePath = settingsPath;
+            settings.Name = "Engine Settings";
+            Assets.Save(settings);
+            Debug.Out("Saved sandbox engine settings.");
+        }
+
         /// <summary>
         /// Saves the user settings to the current project directory.
         /// </summary>
         public static void SaveProjectUserSettings()
         {
-            if (CurrentProject?.ProjectDirectory is null || Assets is null)
+            if (Assets is null)
                 return;
+
+            if (CurrentProject?.ProjectDirectory is null)
+            {
+                SaveSandboxUserSettings();
+                return;
+            }
 
             if (CurrentProject.UserSettingsPath is null)
                 return;
@@ -241,6 +442,42 @@ namespace XREngine
             Debug.Out("Saved project user settings.");
         }
 
+        public static void SaveSandboxUserSettings()
+        {
+            if (Assets is null)
+                return;
+
+            string? userSettingsPath = GetSandboxUserSettingsPath();
+            if (string.IsNullOrWhiteSpace(userSettingsPath))
+                return;
+
+            ProjectUserSettings projectSettings;
+            if (_trackedProjectUserSettings is not null)
+            {
+                projectSettings = _trackedProjectUserSettings;
+                projectSettings.FilePath = userSettingsPath;
+                projectSettings.Name = "User Settings";
+                if (!ReferenceEquals(projectSettings.Settings, UserSettings))
+                    projectSettings.Settings = UserSettings;
+            }
+            else
+            {
+                projectSettings = Assets.GetAssetByPath(userSettingsPath) as ProjectUserSettings
+                    ?? new ProjectUserSettings(UserSettings);
+                projectSettings.FilePath = userSettingsPath;
+                projectSettings.Name = "User Settings";
+                Assets.EnsureTracked(projectSettings);
+                _trackedProjectUserSettings = projectSettings;
+            }
+
+            string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            Assets.Save(projectSettings);
+            Debug.Out("Saved sandbox user settings.");
+        }
+
         /// <summary>
         /// Saves both engine and user settings to the current project directory.
         /// </summary>
@@ -256,8 +493,14 @@ namespace XREngine
         /// </summary>
         public static void SaveProjectBuildSettings()
         {
-            if (CurrentProject?.ProjectDirectory is null || Assets is null)
+            if (Assets is null)
                 return;
+
+            if (CurrentProject?.ProjectDirectory is null)
+            {
+                SaveSandboxBuildSettings();
+                return;
+            }
 
             if (CurrentProject.BuildSettingsPath is null)
                 return;
@@ -273,6 +516,28 @@ namespace XREngine
 
             Assets.Save(settings);
             Debug.Out("Saved project build settings.");
+        }
+
+        public static void SaveSandboxBuildSettings()
+        {
+            if (Assets is null)
+                return;
+
+            var settings = BuildSettings ?? new BuildSettings();
+
+            string? settingsPath = GetSandboxBuildSettingsPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            string? directory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            settings.FilePath = settingsPath;
+            settings.Name = "Build Settings";
+
+            Assets.Save(settings);
+            Debug.Out("Saved sandbox build settings.");
         }
 
         /// <summary>

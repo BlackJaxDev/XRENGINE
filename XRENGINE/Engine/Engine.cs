@@ -801,6 +801,9 @@ namespace XREngine
                 GameSettings = startupSettings;
                 UserSettings = GameSettings.DefaultUserSettings;
 
+                if (CurrentProject is null)
+                    LoadSandboxSettings();
+
                 ConfigureJobManager(GameSettings);
 
                 //Creating windows first is most important, because they will initialize the render context and graphics API.

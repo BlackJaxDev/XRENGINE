@@ -1157,15 +1157,20 @@ namespace XREngine.Rendering
 
         /// <summary>
         /// Updates the camera's aspect ratio to match the viewport dimensions.
-        /// Only applies if the camera uses perspective projection with InheritAspectRatio enabled.
+        /// Applies to perspective cameras with InheritAspectRatio enabled,
+        /// and orthographic cameras with InheritAspectRatio enabled.
         /// Called internally when the viewport resizes or camera changes.
         /// </summary>
         private void SetAspectRatioToCamera()
         {
-            if (ActiveCamera?.Parameters is not XRPerspectiveCameraParameters p || !p.InheritAspectRatio)
-                return;
-
-            p.AspectRatio = (float)_region.Width / _region.Height;
+            if (ActiveCamera?.Parameters is XRPerspectiveCameraParameters p && p.InheritAspectRatio)
+            {
+                p.AspectRatio = (float)_region.Width / _region.Height;
+            }
+            else if (ActiveCamera?.Parameters is XROrthographicCameraParameters o && o.InheritAspectRatio)
+            {
+                o.SetAspectRatio(_region.Width, _region.Height);
+            }
         }
 
         /// <summary>

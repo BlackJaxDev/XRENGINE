@@ -273,6 +273,44 @@ namespace XREngine.Rendering
         public void RegisterController(LocalPlayerController controller, bool autoSizeAllViewports)
             => GetOrAddViewportForPlayer(controller, autoSizeAllViewports).AssociatedPlayer = controller;
 
+        /// <summary>
+        /// Ensures the given controller is registered with this window and has a valid viewport.
+        /// This is more defensive than <see cref="RegisterController"/> and is intended for
+        /// scenarios like snapshot restore where runtime-only references (controller.Viewport,
+        /// viewport.AssociatedPlayer) can become stale or inconsistent.
+        /// </summary>
+        public XRViewport? EnsureControllerRegistered(LocalPlayerController controller, bool autoSizeAllViewports)
+        {
+            if (controller is null)
+                return null;
+
+            // If the controller is holding a stale viewport reference (not owned by this window), drop it.
+            if (controller.Viewport is not null && !Viewports.Contains(controller.Viewport))
+                controller.Viewport = null;
+
+            // Prefer an existing viewport already tied to the same local player index.
+            var existingByIndex = Viewports.FirstOrDefault(vp => vp.AssociatedPlayer?.LocalPlayerIndex == controller.LocalPlayerIndex);
+            if (existingByIndex is not null)
+            {
+                existingByIndex.AssociatedPlayer = controller;
+                controller.Viewport = existingByIndex;  // CRITICAL: bind controller to viewport
+                return existingByIndex;
+            }
+
+            // Otherwise, reuse an unassigned viewport if one exists.
+            var unassigned = Viewports.FirstOrDefault(vp => vp.AssociatedPlayer is null);
+            if (unassigned is not null)
+            {
+                unassigned.AssociatedPlayer = controller;
+                controller.Viewport = unassigned;  // CRITICAL: bind controller to viewport
+                return unassigned;
+            }
+
+            // Fallback: create a viewport for the controller.
+            RegisterController(controller, autoSizeAllViewports);
+            return controller.Viewport;
+        }
+
         public void UnregisterLocalPlayer(ELocalPlayerIndex playerIndex)
         {
             LocalPlayerController? controller = Engine.State.GetLocalPlayer(playerIndex);

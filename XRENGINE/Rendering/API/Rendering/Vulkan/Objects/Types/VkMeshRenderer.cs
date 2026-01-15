@@ -327,7 +327,16 @@ public unsafe partial class VulkanRenderer
 			{
 				string? vsSource = Data.VertexShaderSource;
 				if (string.IsNullOrWhiteSpace(vsSource))
+				{
+					Debug.RenderingWarningEvery(
+						$"Vulkan.MeshRenderer.{GetHashCode()}.MissingVertexShader",
+						TimeSpan.FromSeconds(2),
+						"[Vulkan] MeshRenderer '{0}' cannot render: no vertex shader. Material='{1}' Mesh='{2}'",
+						MeshRenderer?.Name ?? "<unnamed>",
+						material?.Name ?? "<unnamed material>",
+						Mesh?.Name ?? "<unnamed mesh>");
 					return false;
+				}
 
 				shaders.Add(new XRShader(EShaderType.Vertex, vsSource));
 			}
@@ -337,10 +346,28 @@ public unsafe partial class VulkanRenderer
 			_program = Renderer.GenericToAPI<VkRenderProgram>(_generatedProgram);
 
 			if (_program is null)
+			{
+				Debug.RenderingWarningEvery(
+					$"Vulkan.MeshRenderer.{GetHashCode()}.ProgramWrapperNull",
+					TimeSpan.FromSeconds(2),
+					"[Vulkan] MeshRenderer '{0}' cannot render: failed to create VkRenderProgram wrapper.",
+					MeshRenderer?.Name ?? "<unnamed>");
 				return false;
+			}
 
 			_program.Generate();
-			return _program.Link();
+			bool linked = _program.Link();
+			if (!linked)
+			{
+				Debug.RenderingWarningEvery(
+					$"Vulkan.MeshRenderer.{GetHashCode()}.ProgramLinkFailed",
+					TimeSpan.FromSeconds(2),
+					"[Vulkan] MeshRenderer '{0}' program link failed. Program='{1}'",
+					MeshRenderer?.Name ?? "<unnamed>",
+					_generatedProgram?.Name ?? "<unnamed program>");
+			}
+
+			return linked;
 		}
 
 		private void BuildVertexInputState()

@@ -1,8 +1,5 @@
 using System;
-using System.Linq;
 using Silk.NET.Vulkan;
-using XREngine;
-using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
@@ -16,6 +13,12 @@ public unsafe partial class VulkanRenderer
     {
         var (colorLoadOp, colorStoreOp) = ResolveSwapchainColorAttachmentOps();
 
+        // Swapchain images are acquired in PresentSrcKhr layout. If we intend to preserve previous contents
+        // (Load), we must declare that as the initial layout. If we clear/don't-care, we can start from Undefined.
+        ImageLayout colorInitialLayout = colorLoadOp == AttachmentLoadOp.Load
+            ? ImageLayout.PresentSrcKhr
+            : ImageLayout.Undefined;
+
         AttachmentDescription colorAttachment = new()
         {
             Format = swapChainImageFormat,
@@ -23,19 +26,21 @@ public unsafe partial class VulkanRenderer
             LoadOp = colorLoadOp,
             StoreOp = colorStoreOp,
             StencilLoadOp = AttachmentLoadOp.DontCare,
-            InitialLayout = ImageLayout.ColorAttachmentOptimal,
+            InitialLayout = colorInitialLayout,
             FinalLayout = ImageLayout.PresentSrcKhr,
         };
 
+        // Phase 0 correctness: always clear swapchain depth each frame (prevents stale depth causing a black scene).
+        // InitialLayout is Undefined because the depth image is created/recreated with Undefined layout.
         AttachmentDescription depthAttachment = new()
         {
             Format = _swapchainDepthFormat,
             Samples = SampleCountFlags.Count1Bit,
-            LoadOp = AttachmentLoadOp.Load,
-            StoreOp = AttachmentStoreOp.Store,
-            StencilLoadOp = AttachmentLoadOp.Load,
-            StencilStoreOp = AttachmentStoreOp.Store,
-            InitialLayout = ImageLayout.DepthStencilAttachmentOptimal,
+            LoadOp = AttachmentLoadOp.Clear,
+            StoreOp = AttachmentStoreOp.DontCare,
+            StencilLoadOp = AttachmentLoadOp.Clear,
+            StencilStoreOp = AttachmentStoreOp.DontCare,
+            InitialLayout = ImageLayout.Undefined,
             FinalLayout = ImageLayout.DepthStencilAttachmentOptimal,
         };
 
@@ -78,39 +83,8 @@ public unsafe partial class VulkanRenderer
 
     private (AttachmentLoadOp load, AttachmentStoreOp store) ResolveSwapchainColorAttachmentOps()
     {
-        RenderPassResourceUsage? usage = TryGetOutputColorUsage();
-        if (usage is null)
-            return (AttachmentLoadOp.Clear, AttachmentStoreOp.Store);
-
-        return (ToVulkanLoadOp(usage.LoadOp), ToVulkanStoreOp(usage.StoreOp));
-    }
-
-    private static AttachmentLoadOp ToVulkanLoadOp(RenderPassLoadOp op)
-        => op switch
-        {
-            RenderPassLoadOp.Clear => AttachmentLoadOp.Clear,
-            RenderPassLoadOp.DontCare => AttachmentLoadOp.DontCare,
-            _ => AttachmentLoadOp.Load
-        };
-
-    private static AttachmentStoreOp ToVulkanStoreOp(RenderPassStoreOp op)
-        => op switch
-        {
-            RenderPassStoreOp.DontCare => AttachmentStoreOp.DontCare,
-            _ => AttachmentStoreOp.Store
-        };
-
-    private RenderPassResourceUsage? TryGetOutputColorUsage()
-    {
-        var pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
-        var passes = pipeline?.Pipeline?.PassMetadata;
-        if (passes is null)
-            return null;
-
-        return passes
-            .SelectMany(p => p.ResourceUsages)
-            .Where(u => u.ResourceType == RenderPassResourceType.ColorAttachment)
-            .Where(u => string.Equals(u.ResourceName, RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
-            .LastOrDefault();
+        // Phase 0 correctness: always clear swapchain color each frame.
+        // This prevents stale contents / partial clears when the engine only clears viewport regions.
+        return (AttachmentLoadOp.Clear, AttachmentStoreOp.Store);
     }
 }
