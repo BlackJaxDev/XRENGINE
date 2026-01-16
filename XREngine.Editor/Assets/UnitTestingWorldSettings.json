@@ -100,5 +100,6 @@
   "TestAnimation": false,
 
   "AddCharacterIK": false,
-  "CreateUnitBox": false
+  "CreateUnitBox": false,
+  "StartInPlayModeWithoutTransitions": false
 }

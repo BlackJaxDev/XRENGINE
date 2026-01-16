@@ -224,6 +224,7 @@ namespace XREngine.Core.Files
         {
             // Ensure we serialize the *concrete runtime type*.
             // If callers serialize as XRAsset, derived members (e.g., Model meshes/materials) are omitted.
+            EnsureDirectoryExists(filePath);
             using var writer = new StreamWriter(filePath, append: false, Encoding.UTF8);
             defaultSerializer.Serialize(writer, this, GetType());
         }
@@ -238,8 +239,16 @@ namespace XREngine.Core.Files
         public virtual async Task SerializeToAsync(string filePath, ISerializer defaultSerializer)
         {
             // Serializer isn't async; serialize first, then write asynchronously.
+            EnsureDirectoryExists(filePath);
             string yaml = defaultSerializer.Serialize(this, GetType());
             await File.WriteAllTextAsync(filePath, yaml, Encoding.UTF8).ConfigureAwait(false);
+        }
+
+        private static void EnsureDirectoryExists(string filePath)
+        {
+            string? directory = Path.GetDirectoryName(filePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)

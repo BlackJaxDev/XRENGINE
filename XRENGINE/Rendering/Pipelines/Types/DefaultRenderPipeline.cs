@@ -197,7 +197,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     }
 
     private bool EnableTransformIdVisualization
-        => !Stereo && Engine.Rendering.Settings.VisualizeTransformId;
+        => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransformId;
 
     private void HandleRenderingSettingsChanged()
     {
@@ -1131,7 +1131,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         {
             _probeTetraBuffer!.BindTo(program, 1);
 
-            if (Engine.Rendering.Settings.RenderLightProbeTetrahedra)
+            if (Engine.EditorPreferences.Debug.RenderLightProbeTetrahedra)
                 RenderProbeTetrahedra(readyProbes, tetraCount);
         }
     }

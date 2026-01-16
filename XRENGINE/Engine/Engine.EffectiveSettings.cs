@@ -290,6 +290,36 @@ namespace XREngine
             }
 
             /// <summary>
+            /// Gets the effective target render frames per second.
+            /// Resolved from: User Override > Project Setting (no engine default)
+            /// </summary>
+            public static float? TargetFramesPerSecond
+            {
+                get
+                {
+                    if (UserSettings?.TargetFramesPerSecondOverride is { HasOverride: true } userOverride)
+                        return userOverride.Value;
+                    return GameSettings?.TargetFramesPerSecond;
+                }
+            }
+
+            /// <summary>
+            /// Gets the effective target FPS while unfocused.
+            /// Resolved from: User Override > Project Setting; falls back to TargetFramesPerSecond.
+            /// </summary>
+            public static float? UnfocusedTargetFramesPerSecond
+            {
+                get
+                {
+                    if (UserSettings?.UnfocusedTargetFramesPerSecondOverride is { HasOverride: true } userOverride)
+                        return userOverride.Value;
+
+                    var projectValue = GameSettings?.UnfocusedTargetFramesPerSecond;
+                    return projectValue ?? TargetFramesPerSecond;
+                }
+            }
+
+            /// <summary>
             /// Gets the effective fixed frames per second (physics rate).
             /// Resolved from: User Override > Project Setting (no engine default)
             /// </summary>

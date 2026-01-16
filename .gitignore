@@ -390,7 +390,12 @@ generated/
 docs/docfx/_site/
 docs/docfx/api/**
 !docs/docfx/api/index.md
+docs/docfx/apiref/**
 docs/docfx/.cache/
 docs/docfx/obj/
+docs/docfx/logs/
+docs/docfx/.files/
+docs/docfx/**/xrefmap.yml
+docs/docfx/**/xrefmap.json
 docs/docfx/manifest.json
 XREngine.Server/imgui.ini

@@ -38,11 +38,18 @@ namespace XREngine
         private static int _suppressedCleanupRequests;
         private static UserSettings _userSettings = null!;
         private static GameStartupSettings _gameSettings = null!;
+        private static EditorPreferences _globalEditorPreferences = null!;
+        private static EditorPreferencesOverrides _editorPreferencesOverrides = null!;
+        private static EditorPreferences _editorPreferences = null!;
         private static readonly List<IOverrideableSetting> _trackedUserOverrideableSettings = [];
         private static readonly List<IOverrideableSetting> _trackedGameOverrideableSettings = [];
+        private static readonly List<IOverrideableSetting> _trackedEditorOverrideableSettings = [];
+        private static readonly List<IOverrideableSetting> _trackedEditorThemeOverrideableSettings = [];
+        private static readonly List<IOverrideableSetting> _trackedEditorDebugOverrideableSettings = [];
 
         public static XREvent<UserSettings>? UserSettingsChanged;
         public static event Action<BuildSettings>? BuildSettingsChanged;
+        public static event Action<EditorPreferences>? EditorPreferencesChanged;
 
         static IDisposable ExternalProfilingHook(string sampleName) => Profiler.Start(sampleName);
 
@@ -51,6 +58,10 @@ namespace XREngine
             UserSettings = new UserSettings();
             GameSettings = new GameStartupSettings();
             BuildSettings = new BuildSettings();
+            GlobalEditorPreferences = new EditorPreferences();
+            EditorPreferencesOverrides = new EditorPreferencesOverrides();
+            _editorPreferences = new EditorPreferences();
+            UpdateEffectiveEditorPreferences();
 
             // Effective settings depend on these sources; forward changes.
             UserSettingsChanged += _ => EffectiveSettings.NotifyEffectiveSettingsChanged();
@@ -150,7 +161,7 @@ namespace XREngine
                         window.GetHashCode(),
                         ReferenceEquals(window.TargetWorldInstance, worldInstance),
                         window.Viewports.Count,
-                        Engine.Rendering.Settings.ViewportPresentationMode);
+                        Engine.EditorPreferences.ViewportPresentationMode);
 
                     // Ensure the window is targeting the restored world instance.
                     if (!ReferenceEquals(window.TargetWorldInstance, worldInstance))
@@ -301,6 +312,7 @@ namespace XREngine
             }
         }
 
+        [UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "Debug-only reflection for diagnostics; safe in editor builds.")]
         private static void DumpWorldRenderablesOncePerPhase(XRWorldInstance worldInstance, string phase)
         {
             Debug.RenderingEvery(
@@ -641,7 +653,7 @@ namespace XREngine
 
         private static void ApplyTimerSettings()
         {
-            float targetRenderFrequency = UserSettings.TargetFramesPerSecond ?? 0.0f;
+            float targetRenderFrequency = EffectiveSettings.TargetFramesPerSecond ?? 0.0f;
             float targetUpdateFrequency = EffectiveSettings.TargetUpdatesPerSecond ?? 0.0f;
             float fixedUpdateFrequency = EffectiveSettings.FixedFramesPerSecond;
             EVSyncMode vSync = EffectiveSettings.VSync;
@@ -654,14 +666,14 @@ namespace XREngine
         }
 
         private static void TrackOverrideableSettings<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(T settingsRoot, List<IOverrideableSetting> cache)
-        {
-            foreach (var tracked in cache)
-            {
-                if (tracked is IXRNotifyPropertyChanged notify)
-                    notify.PropertyChanged -= HandleOverrideableSettingChanged;
-            }
+            => TrackOverrideableSettings(settingsRoot, cache, HandleOverrideableSettingChanged);
 
-            cache.Clear();
+        private static void TrackOverrideableSettings<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(
+            T settingsRoot,
+            List<IOverrideableSetting> cache,
+            XRPropertyChangedEventHandler handler)
+        {
+            UntrackOverrideableSettings(cache, handler);
 
             var properties = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
             foreach (var property in properties)
@@ -685,8 +697,19 @@ namespace XREngine
                 cache.Add(overrideable);
 
                 if (overrideable is IXRNotifyPropertyChanged notify)
-                    notify.PropertyChanged += HandleOverrideableSettingChanged;
+                    notify.PropertyChanged += handler;
             }
+        }
+
+        private static void UntrackOverrideableSettings(List<IOverrideableSetting> cache, XRPropertyChangedEventHandler handler)
+        {
+            foreach (var tracked in cache)
+            {
+                if (tracked is IXRNotifyPropertyChanged notify)
+                    notify.PropertyChanged -= handler;
+            }
+
+            cache.Clear();
         }
 
         private static void HandleOverrideableSettingChanged(object? sender, IXRPropertyChangedEventArgs e)
@@ -703,6 +726,126 @@ namespace XREngine
         {
             EffectiveSettings.NotifyEffectiveSettingsChanged();
             TrackOverrideableSettings(_gameSettings, _trackedGameOverrideableSettings);
+        }
+
+        private static void HandleGlobalEditorPreferencesChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(EditorPreferences.Theme))
+            {
+                if (e.PreviousValue is EditorThemeSettings previous)
+                    previous.PropertyChanged -= HandleGlobalEditorPreferencesChanged;
+
+                if (e.NewValue is EditorThemeSettings current)
+                    current.PropertyChanged += HandleGlobalEditorPreferencesChanged;
+            }
+
+            if (e.PropertyName == nameof(EditorPreferences.Debug))
+            {
+                if (e.PreviousValue is EditorDebugOptions previous)
+                    previous.PropertyChanged -= HandleGlobalEditorPreferencesChanged;
+
+                if (e.NewValue is EditorDebugOptions current)
+                    current.PropertyChanged += HandleGlobalEditorPreferencesChanged;
+            }
+
+            UpdateEffectiveEditorPreferences();
+        }
+
+        private static void HandleEditorPreferencesOverridesChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(EditorPreferencesOverrides.Theme))
+            {
+                if (e.PreviousValue is EditorThemeOverrides previous)
+                {
+                    previous.PropertyChanged -= HandleEditorPreferencesOverridesChanged;
+                    UntrackOverrideableSettings(_trackedEditorThemeOverrideableSettings, HandleEditorPreferencesOverridesChanged);
+                }
+
+                if (e.NewValue is EditorThemeOverrides current)
+                {
+                    current.PropertyChanged += HandleEditorPreferencesOverridesChanged;
+                    TrackOverrideableSettings(current, _trackedEditorThemeOverrideableSettings, HandleEditorPreferencesOverridesChanged);
+                }
+            }
+
+            if (e.PropertyName == nameof(EditorPreferencesOverrides.Debug))
+            {
+                if (e.PreviousValue is EditorDebugOverrides previous)
+                {
+                    previous.PropertyChanged -= HandleEditorPreferencesOverridesChanged;
+                    UntrackOverrideableSettings(_trackedEditorDebugOverrideableSettings, HandleEditorPreferencesOverridesChanged);
+                }
+
+                if (e.NewValue is EditorDebugOverrides current)
+                {
+                    current.PropertyChanged += HandleEditorPreferencesOverridesChanged;
+                    TrackOverrideableSettings(current, _trackedEditorDebugOverrideableSettings, HandleEditorPreferencesOverridesChanged);
+                }
+            }
+
+            UpdateEffectiveEditorPreferences();
+        }
+
+        private static void AttachEditorPreferencesSubSettings(EditorPreferences preferences)
+        {
+            if (preferences?.Theme is not null)
+                preferences.Theme.PropertyChanged += HandleGlobalEditorPreferencesChanged;
+
+            if (preferences?.Debug is not null)
+                preferences.Debug.PropertyChanged += HandleGlobalEditorPreferencesChanged;
+        }
+
+        private static void DetachEditorPreferencesSubSettings(EditorPreferences preferences)
+        {
+            if (preferences?.Theme is not null)
+                preferences.Theme.PropertyChanged -= HandleGlobalEditorPreferencesChanged;
+
+            if (preferences?.Debug is not null)
+                preferences.Debug.PropertyChanged -= HandleGlobalEditorPreferencesChanged;
+        }
+
+        private static void AttachEditorPreferencesOverridesSubSettings(EditorPreferencesOverrides overrides)
+        {
+            if (overrides?.Theme is not null)
+                overrides.Theme.PropertyChanged += HandleEditorPreferencesOverridesChanged;
+
+            if (overrides?.Debug is not null)
+                overrides.Debug.PropertyChanged += HandleEditorPreferencesOverridesChanged;
+
+            if (overrides is not null)
+                TrackOverrideableSettings(overrides, _trackedEditorOverrideableSettings, HandleEditorPreferencesOverridesChanged);
+
+            if (overrides?.Theme is not null)
+                TrackOverrideableSettings(overrides.Theme, _trackedEditorThemeOverrideableSettings, HandleEditorPreferencesOverridesChanged);
+
+            if (overrides?.Debug is not null)
+                TrackOverrideableSettings(overrides.Debug, _trackedEditorDebugOverrideableSettings, HandleEditorPreferencesOverridesChanged);
+        }
+
+        private static void DetachEditorPreferencesOverridesSubSettings(EditorPreferencesOverrides overrides)
+        {
+            if (overrides?.Theme is not null)
+                overrides.Theme.PropertyChanged -= HandleEditorPreferencesOverridesChanged;
+
+            if (overrides?.Debug is not null)
+                overrides.Debug.PropertyChanged -= HandleEditorPreferencesOverridesChanged;
+
+            UntrackOverrideableSettings(_trackedEditorOverrideableSettings, HandleEditorPreferencesOverridesChanged);
+            UntrackOverrideableSettings(_trackedEditorThemeOverrideableSettings, HandleEditorPreferencesOverridesChanged);
+            UntrackOverrideableSettings(_trackedEditorDebugOverrideableSettings, HandleEditorPreferencesOverridesChanged);
+        }
+
+        private static void UpdateEffectiveEditorPreferences()
+        {
+            _editorPreferences ??= new EditorPreferences();
+            _globalEditorPreferences ??= new EditorPreferences();
+            _editorPreferencesOverrides ??= new EditorPreferencesOverrides();
+
+            _editorPreferences.CopyFrom(_globalEditorPreferences);
+            _editorPreferences.ApplyOverrides(_editorPreferencesOverrides);
+
+            Rendering.ApplyEditorPreferencesChange(null);
+            EditorPreferencesChanged?.Invoke(_editorPreferences);
         }
         /// <summary>
         /// Game-defined settings, such as initial world and libraries.
@@ -733,6 +876,59 @@ namespace XREngine
                 EffectiveSettings.NotifyEffectiveSettingsChanged();
             }
         }
+
+        /// <summary>
+        /// Global editor preferences (base defaults).
+        /// </summary>
+        public static EditorPreferences GlobalEditorPreferences
+        {
+            get => _globalEditorPreferences;
+            set
+            {
+                if (ReferenceEquals(_globalEditorPreferences, value) && value is not null)
+                    return;
+
+                if (_globalEditorPreferences is not null)
+                {
+                    _globalEditorPreferences.PropertyChanged -= HandleGlobalEditorPreferencesChanged;
+                    DetachEditorPreferencesSubSettings(_globalEditorPreferences);
+                }
+
+                _globalEditorPreferences = value ?? new EditorPreferences();
+                _globalEditorPreferences.PropertyChanged += HandleGlobalEditorPreferencesChanged;
+                AttachEditorPreferencesSubSettings(_globalEditorPreferences);
+                UpdateEffectiveEditorPreferences();
+            }
+        }
+
+        /// <summary>
+        /// Project/sandbox-local overrides for editor preferences.
+        /// </summary>
+        public static EditorPreferencesOverrides EditorPreferencesOverrides
+        {
+            get => _editorPreferencesOverrides;
+            set
+            {
+                if (ReferenceEquals(_editorPreferencesOverrides, value) && value is not null)
+                    return;
+
+                if (_editorPreferencesOverrides is not null)
+                {
+                    _editorPreferencesOverrides.PropertyChanged -= HandleEditorPreferencesOverridesChanged;
+                    DetachEditorPreferencesOverridesSubSettings(_editorPreferencesOverrides);
+                }
+
+                _editorPreferencesOverrides = value ?? new EditorPreferencesOverrides();
+                _editorPreferencesOverrides.PropertyChanged += HandleEditorPreferencesOverridesChanged;
+                AttachEditorPreferencesOverridesSubSettings(_editorPreferencesOverrides);
+                UpdateEffectiveEditorPreferences();
+            }
+        }
+
+        /// <summary>
+        /// Effective editor preferences (Global + Project Overrides).
+        /// </summary>
+        public static EditorPreferences EditorPreferences => _editorPreferences;
         /// <summary>
         /// All networking-related functions.
         /// </summary>
@@ -890,10 +1086,10 @@ namespace XREngine
 
             //Set target FPS to unfocused value
             //If in VR, the headset will handle this instead of window focus
-            if (UserSettings.UnfocusedTargetFramesPerSecond is not null && !VRState.IsInVR)
+            if (EffectiveSettings.UnfocusedTargetFramesPerSecond is not null && !VRState.IsInVR)
             {
-                Time.Timer.TargetRenderFrequency = UserSettings.UnfocusedTargetFramesPerSecond.Value;
-                Debug.Out($"Unfocused target FPS set to {UserSettings.UnfocusedTargetFramesPerSecond}.");
+                Time.Timer.TargetRenderFrequency = EffectiveSettings.UnfocusedTargetFramesPerSecond.Value;
+                Debug.Out($"Unfocused target FPS set to {EffectiveSettings.UnfocusedTargetFramesPerSecond}.");
             }
 
             FocusChanged?.Invoke(false);
@@ -914,10 +1110,10 @@ namespace XREngine
 
             //Set target FPS to focused value
             //If in VR, the headset will handle this instead of window focus
-            if (UserSettings.UnfocusedTargetFramesPerSecond is not null && !VRState.IsInVR)
+            if (EffectiveSettings.UnfocusedTargetFramesPerSecond is not null && !VRState.IsInVR)
             {
-                Time.Timer.TargetRenderFrequency = UserSettings.TargetFramesPerSecond ?? 0.0f;
-                Debug.Out($"Focused target FPS set to {UserSettings.TargetFramesPerSecond}.");
+                Time.Timer.TargetRenderFrequency = EffectiveSettings.TargetFramesPerSecond ?? 0.0f;
+                Debug.Out($"Focused target FPS set to {EffectiveSettings.TargetFramesPerSecond}.");
             }
 
             FocusChanged?.Invoke(true);

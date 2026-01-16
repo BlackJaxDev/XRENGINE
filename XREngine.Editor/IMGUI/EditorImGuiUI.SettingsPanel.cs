@@ -9,41 +9,65 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
-        private static void DrawEngineSettingsPanel()
+        private static void DrawGlobalEditorPreferencesPanel()
         {
-            if (!_showEngineSettings) return;
-            if (!ImGui.Begin("Engine Settings", ref _showEngineSettings))
+            if (!_showGlobalEditorPreferences) return;
+            if (!ImGui.Begin("Global Editor Preferences", ref _showGlobalEditorPreferences))
             {
                 ImGui.End();
                 return;
             }
 
-            // Ensure Engine Settings participates in dirty tracking even if no project is loaded yet.
-            if (Engine.Rendering.Settings is XRAsset engineSettingsAsset && Engine.Assets is not null)
+            // Ensure Global Editor Preferences participates in dirty tracking even if no project is loaded yet.
+            if (Engine.GlobalEditorPreferences is XRAsset editorPreferencesAsset && Engine.Assets is not null)
             {
-                engineSettingsAsset.Name ??= "Engine Settings";
-                if (Engine.CurrentProject?.EngineSettingsPath is string engineSettingsPath)
-                    engineSettingsAsset.FilePath = engineSettingsPath;
+                editorPreferencesAsset.Name ??= "Global Editor Preferences";
 
-                Engine.Assets.EnsureTracked(engineSettingsAsset.SourceAsset);
+                Engine.Assets.EnsureTracked(editorPreferencesAsset.SourceAsset);
             }
 
-            // Save button at the top
+            if (ImGui.Button("Save Global Editor Preferences"))
+                Engine.SaveGlobalEditorPreferences();
+            ImGui.Separator();
+
+            DrawSettingsTabContent(Engine.GlobalEditorPreferences, "Global Editor Preferences");
+            ImGui.End();
+        }
+
+        private static void DrawEditorPreferencesOverridesPanel()
+        {
+            if (!_showEditorPreferencesOverrides) return;
+            if (!ImGui.Begin("Editor Preferences Overrides", ref _showEditorPreferencesOverrides))
+            {
+                ImGui.End();
+                return;
+            }
+
+            // Ensure Overrides asset participates in dirty tracking even if no project is loaded yet.
+            if (Engine.EditorPreferencesOverrides is XRAsset overridesAsset && Engine.Assets is not null)
+            {
+                overridesAsset.Name ??= "Editor Preferences Overrides";
+                if (Engine.CurrentProject?.EngineSettingsPath is string engineSettingsPath)
+                    overridesAsset.FilePath = engineSettingsPath;
+
+                Engine.Assets.EnsureTracked(overridesAsset.SourceAsset);
+            }
+
             if (Engine.CurrentProject is not null)
             {
-                if (ImGui.Button("Save Engine Settings"))
-                    Engine.SaveProjectEngineSettings();
+                if (ImGui.Button("Save Editor Preferences Overrides"))
+                    Engine.SaveProjectEditorPreferencesOverrides();
                 ImGui.SameLine();
                 ImGui.TextDisabled($"(Project: {Engine.CurrentProject.ProjectName})");
                 ImGui.Separator();
             }
             else
             {
-                ImGui.TextDisabled("Sandbox mode - settings are saved globally.");
+                ImGui.TextDisabled("Sandbox mode - overrides are saved globally.");
                 ImGui.Separator();
             }
 
-            DrawSettingsTabContent(Engine.Rendering.Settings, "Engine Settings");
+            DrawSettingsTabContent(Engine.EditorPreferencesOverrides, "Editor Preferences Overrides");
             ImGui.End();
         }
 

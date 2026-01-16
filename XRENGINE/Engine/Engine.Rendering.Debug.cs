@@ -160,7 +160,7 @@ namespace XREngine
 
                         float nowTime = Engine.Time.Timer.Time();
                         float lastTime = text.lastUpdatedTime;
-                        if (nowTime - lastTime > Engine.Rendering.Settings.DebugTextMaxLifespan)
+                        if (nowTime - lastTime > Engine.EditorPreferences.Debug.DebugTextMaxLifespan)
                         {
                             if (DebugTexts.TryRemove(hash, out (UIText text, float lastUpdatedTime) item))
                                 TextPool.Release(item.text);

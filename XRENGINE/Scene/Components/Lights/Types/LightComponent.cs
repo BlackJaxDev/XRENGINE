@@ -99,7 +99,7 @@ namespace XREngine.Components.Capture.Lights.Types
             _shadowVolumeRC.Mesh = new XRMeshRenderer(GetWireframeMesh(), mat);
 
             RenderInfo = RenderInfo3D.New(this, _shadowVolumeRC);
-            RenderInfo.IsVisible = Engine.Rendering.Settings.VisualizeDirectionalLightVolumes;
+            RenderInfo.IsVisible = Engine.EditorPreferences.Debug.VisualizeDirectionalLightVolumes;
             RenderInfo.VisibleInLightingProbes = false;
             RenderedObjects = [RenderInfo];
         }
@@ -203,7 +203,7 @@ namespace XREngine.Components.Capture.Lights.Types
             set
             {
                 if (SetField(ref _previewBoundingVolume, value))
-                    RenderInfo.IsVisible = value || Engine.Rendering.Settings.VisualizeDirectionalLightVolumes;
+                    RenderInfo.IsVisible = value || Engine.EditorPreferences.Debug.VisualizeDirectionalLightVolumes;
             }
         }
 

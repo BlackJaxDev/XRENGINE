@@ -28,7 +28,7 @@ namespace XREngine.Rendering
 
         public bool IsActiveForWindow(XRWindow window)
             => Engine.IsEditor &&
-               Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel &&
+               Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel &&
                !window.IsDisposed;
 
         public void InvalidateResources()
@@ -95,7 +95,7 @@ namespace XREngine.Rendering
             int desiredWidth = region.Value.Width;
             int desiredHeight = region.Value.Height;
 
-            int debounceMs = Engine.Rendering.Settings.ScenePanelResizeDebounceMs;
+            int debounceMs = Engine.EditorPreferences.ScenePanelResizeDebounceMs;
             if (debounceMs < 0)
                 debounceMs = 0;
 

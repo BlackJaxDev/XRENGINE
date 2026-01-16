@@ -16,6 +16,7 @@ public unsafe partial class VulkanRenderer
         private readonly List<DescriptorBindingInfo> _descriptorBindings = new();
         private string _entryPoint = "main";
         private PipelineShaderStageCreateInfo _shaderStageCreateInfo;
+        private AutoUniformBlockInfo? _autoUniformBlock;
 
         public override VkObjectType Type => VkObjectType.ShaderModule;
         public override bool IsGenerated => _shaderModule.Handle != 0;
@@ -23,6 +24,7 @@ public unsafe partial class VulkanRenderer
         public PipelineShaderStageCreateInfo ShaderStageCreateInfo => _shaderStageCreateInfo;
         public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _descriptorBindings;
         public ShaderStageFlags StageFlags { get; private set; }
+        public AutoUniformBlockInfo? AutoUniformBlock => _autoUniformBlock;
 
         protected override uint CreateObjectInternal()
         {
@@ -36,10 +38,10 @@ public unsafe partial class VulkanRenderer
 
             try
             {
-                byte[] spirv = VulkanShaderCompiler.Compile(Data, out _entryPoint);
+                byte[] spirv = VulkanShaderCompiler.Compile(Data, out _entryPoint, out _autoUniformBlock, out string? rewrittenSource);
                 StageFlags = ToVulkan(Data.Type);
                 _descriptorBindings.Clear();
-                _descriptorBindings.AddRange(VulkanShaderReflection.ExtractBindings(spirv, StageFlags, Data.Source?.Text));
+                _descriptorBindings.AddRange(VulkanShaderReflection.ExtractBindings(spirv, StageFlags, rewrittenSource ?? Data.Source?.Text));
 
                 ShaderModuleCreateInfo createInfo = new()
                 {
@@ -151,6 +153,7 @@ public unsafe partial class VulkanRenderer
             DestroyShaderResources();
             _descriptorBindings.Clear();
             _entryPoint = "main";
+            _autoUniformBlock = null;
             _bindingId = null;
         }
     }

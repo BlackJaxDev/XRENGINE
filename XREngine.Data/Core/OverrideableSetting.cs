@@ -9,6 +9,7 @@ namespace XREngine.Data.Core
     /// </summary>
     /// <typeparam name="T">The type of the setting value.</typeparam>
     [Serializable]
+    [MemoryPackable(GenerateType.NoGenerate)]
     public partial class OverrideableSetting<T> : XRBase, IMemoryPackable<OverrideableSetting<T>>, IOverrideableSetting
     {
         private bool _hasOverride = false;

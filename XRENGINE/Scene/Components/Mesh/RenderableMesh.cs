@@ -65,7 +65,7 @@ namespace XREngine.Components.Scene.Mesh
         public XRWorldInstance? World => Component.SceneNode.World;
         public LinkedList<RenderableLOD> LODs { get; private set; } = new();
 
-        private bool _renderBounds = Engine.Rendering.Settings.RenderMesh3DBounds;
+        private bool _renderBounds = Engine.EditorPreferences.Debug.RenderMesh3DBounds;
         public bool RenderBounds
         {
             get => _renderBounds;

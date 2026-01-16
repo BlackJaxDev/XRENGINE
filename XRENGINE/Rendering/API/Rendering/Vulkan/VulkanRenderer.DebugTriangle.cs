@@ -57,8 +57,8 @@ public unsafe partial class VulkanRenderer
 		XRShader vs = new(EShaderType.Vertex, vertSource) { Name = "VkDebugTriangle.vs" };
 		XRShader fs = new(EShaderType.Fragment, fragSource) { Name = "VkDebugTriangle.fs" };
 
-		byte[] vsSpv = VulkanShaderCompiler.Compile(vs, out _);
-		byte[] fsSpv = VulkanShaderCompiler.Compile(fs, out _);
+		byte[] vsSpv = VulkanShaderCompiler.Compile(vs, out _, out _, out _);
+		byte[] fsSpv = VulkanShaderCompiler.Compile(fs, out _, out _, out _);
 
 		fixed (byte* vsPtr = vsSpv)
 		fixed (byte* fsPtr = fsSpv)

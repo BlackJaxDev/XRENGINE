@@ -21,15 +21,13 @@ namespace XREngine
         private EEngineQuality _soundQuality = EEngineQuality.Highest;
 
         //Preferred libraries - will use whichever is available if the preferred one is not.
-        private ERenderLibrary _renderLibrary = ERenderLibrary.Vulkan;
+        private ERenderLibrary _renderLibrary = ERenderLibrary.OpenGL;
         private EAudioLibrary _audioLibrary = EAudioLibrary.OpenAL;
         private EPhysicsLibrary _physicsLibrary = EPhysicsLibrary.PhysX;
 
-        private float? _targetFramesPerSecond = 90.0f;
         private IVector2 _windowedResolution = new(1920, 1080);
         private bool _disableAudioOnDefocus = false;
         private float _audioDisableFadeSeconds = 0.5f;
-        private float? _unfocusedTargetFramesPerSecond = null;
         private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
 
         [Category("Display")]
@@ -85,8 +83,14 @@ namespace XREngine
         [Description("Target render frames per second when the app is focused. Null disables the cap (engine default applies).")]
         public float? TargetFramesPerSecond
         {
-            get => _targetFramesPerSecond;
-            set => SetField(ref _targetFramesPerSecond, value);
+            get => _targetFramesPerSecondOverride.HasOverride ? _targetFramesPerSecondOverride.Value : null;
+            set
+            {
+                if (value is null)
+                    _targetFramesPerSecondOverride.ClearOverride();
+                else
+                    _targetFramesPerSecondOverride.SetOverride(value.Value);
+            }
         }
         [Category("Audio")]
         [Description("When enabled, fades audio out while the app is unfocused.")]
@@ -106,8 +110,14 @@ namespace XREngine
         [Description("Optional target FPS while unfocused (e.g. background throttling). Null inherits TargetFramesPerSecond.")]
         public float? UnfocusedTargetFramesPerSecond
         {
-            get => _unfocusedTargetFramesPerSecond;
-            set => SetField(ref _unfocusedTargetFramesPerSecond, value);
+            get => _unfocusedTargetFramesPerSecondOverride.HasOverride ? _unfocusedTargetFramesPerSecondOverride.Value : null;
+            set
+            {
+                if (value is null)
+                    _unfocusedTargetFramesPerSecondOverride.ClearOverride();
+                else
+                    _unfocusedTargetFramesPerSecondOverride.SetOverride(value.Value);
+            }
         }
         [Category("Quality")]
         [Description("Preferred global illumination mode.")]
@@ -157,6 +167,8 @@ namespace XREngine
         // User > Project only (project defines base, user can override)
         private OverrideableSetting<float> _targetUpdatesPerSecondOverride = new();
         private OverrideableSetting<float> _fixedFramesPerSecondOverride = new();
+        private OverrideableSetting<float> _targetFramesPerSecondOverride = new();
+        private OverrideableSetting<float> _unfocusedTargetFramesPerSecondOverride = new();
 
         /// <summary>
         /// User override for the number of job worker threads.
@@ -396,6 +408,30 @@ namespace XREngine
         {
             get => _fixedFramesPerSecondOverride;
             set => SetField(ref _fixedFramesPerSecondOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for target render frames per second.
+        /// Takes precedence over project setting when HasOverride is true.
+        /// </summary>
+        [Category("Performance Overrides")]
+        [Description("User override for target render frames per second.")]
+        public OverrideableSetting<float> TargetFramesPerSecondOverride
+        {
+            get => _targetFramesPerSecondOverride;
+            set => SetField(ref _targetFramesPerSecondOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// User override for target FPS while unfocused.
+        /// Takes precedence over project setting when HasOverride is true.
+        /// </summary>
+        [Category("Performance Overrides")]
+        [Description("User override for target FPS while unfocused.")]
+        public OverrideableSetting<float> UnfocusedTargetFramesPerSecondOverride
+        {
+            get => _unfocusedTargetFramesPerSecondOverride;
+            set => SetField(ref _unfocusedTargetFramesPerSecondOverride, value ?? new());
         }
 
         #endregion

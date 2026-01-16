@@ -73,13 +73,13 @@ namespace XREngine
                 => new();
 
             public static RenderPipeline NewRenderPipeline()
-                => Rendering.Settings.UseDebugOpaquePipeline
+                => Engine.EditorPreferences.Debug.UseDebugOpaquePipeline
                     ? new DebugOpaqueRenderPipeline()
                     : new DefaultRenderPipeline();
 
             public static void ApplyRenderPipelinePreference()
             {
-                bool preferDebug = Rendering.Settings.UseDebugOpaquePipeline;
+                bool preferDebug = Engine.EditorPreferences.Debug.UseDebugOpaquePipeline;
 
                 foreach (XRWindow window in Engine.Windows)
                 {

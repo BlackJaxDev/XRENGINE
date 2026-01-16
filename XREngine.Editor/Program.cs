@@ -93,7 +93,21 @@ internal class Program
             opts.SkipIndirectTailClear = false;
             opts.DisableCountDrawPath = false;
         });
-        Engine.Run(GetEngineSettings(targetWorld), Engine.LoadOrGenerateGameState());
+        var startupSettings = GetEngineSettings(targetWorld);
+        var gameState = Engine.LoadOrGenerateGameState();
+
+        if (UnitTestingWorld.Toggles.StartInPlayModeWithoutTransitions)
+        {
+            Engine.PlayMode.ForcePlayWithoutTransitions = true;
+            void StartPlayOnce()
+            {
+                Time.Timer.PostUpdateFrame -= StartPlayOnce;
+                _ = Engine.PlayMode.EnterPlayModeAsync();
+            }
+            Time.Timer.PostUpdateFrame += StartPlayOnce;
+        }
+
+        Engine.Run(startupSettings, gameState);
     }
 
     /// <summary>
@@ -269,13 +283,13 @@ internal class Program
             ],
             DefaultUserSettings = new UserSettings()
             {
-                TargetFramesPerSecond = renderHz,
                 VSync = EVSyncMode.Off,
                 RenderLibrary = UnitTestingWorld.Toggles.RenderAPI,
                 PhysicsLibrary = UnitTestingWorld.Toggles.PhysicsAPI,
             },
             GPURenderDispatch = UnitTestingWorld.Toggles.GPURenderDispatch,
             TargetUpdatesPerSecond = updateHz,
+            TargetFramesPerSecond = renderHz,
             FixedFramesPerSecond = fixedHz,
             NetworkingType = GameStartupSettings.ENetworkingType.Client,
         };
@@ -290,7 +304,7 @@ internal class Program
         }
 
         // Apply engine settings
-        Engine.Rendering.Settings.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting();
+        Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting();
         Engine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
 
         // Allow overriding networking mode via env var for quick local testing.

@@ -702,11 +702,11 @@ namespace XREngine.Rendering.UI
         {
             base.RenderDebug();
 
-            if (!Engine.Rendering.Settings.RenderMesh2DBounds || Engine.Rendering.State.IsShadowPass)
+            if (!Engine.EditorPreferences.Debug.RenderMesh2DBounds || Engine.Rendering.State.IsShadowPass)
                 return;
             
             var region = AxisAlignedRegion;
-            ColorF4 color = Engine.Rendering.Settings.Bounds2DColor;
+            ColorF4 color = Engine.EditorPreferences.Theme.Bounds2DColor;
 
             Engine.Rendering.Debug.RenderLine(
                 new Vector3(region.TopLeft, 0.0f) + Engine.Rendering.Debug.UIPositionBias,

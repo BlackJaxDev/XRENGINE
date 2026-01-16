@@ -598,7 +598,7 @@ namespace XREngine.Rendering
 
                 bool useScenePanelMode =
                     Engine.IsEditor &&
-                    Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel;
+                    Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel;
                 bool canRenderWindowViewports = !Engine.VRState.IsInVR || Engine.Rendering.Settings.RenderWindowsWhileInVR;
 
                 LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports);
@@ -675,7 +675,7 @@ namespace XREngine.Rendering
                     "[RenderDiag] Window not rendering: Viewports={0}, TargetWorldInstanceNull={1}, PresentationMode={2}, CanRenderWindowViewports={3}",
                     Viewports.Count,
                     TargetWorldInstance is null,
-                    Engine.Rendering.Settings.ViewportPresentationMode,
+                    Engine.EditorPreferences.ViewportPresentationMode,
                     canRenderWindowViewports);
             }
 

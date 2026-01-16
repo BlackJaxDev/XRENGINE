@@ -82,6 +82,16 @@ namespace XREngine
             }
 
             /// <summary>
+            /// If true, entering play mode skips the full edit->play transition and forces simulation on.
+            /// Intended for unit testing or fast startup scenarios.
+            /// </summary>
+            public static bool ForcePlayWithoutTransitions
+            {
+                get => _forcePlayWithoutTransitions;
+                set => _forcePlayWithoutTransitions = value;
+            }
+
+            /// <summary>
             /// The currently active GameMode during play.
             /// </summary>
             public static GameMode? ActiveGameMode => _activeGameMode;
@@ -148,10 +158,7 @@ namespace XREngine
                 }
 
                 if (_forcePlayWithoutTransitions)
-                {
-                    ForcePlayWithoutTransitions();
-                    return Task.CompletedTask;
-                }
+                    return BeginPlayWithoutTransitionsAsync();
 
                 if (State != EPlayModeState.Edit)
                 {
@@ -486,7 +493,7 @@ namespace XREngine
             /// <summary>
             /// Forces the engine into a simulated state without performing edit->play transitions.
             /// </summary>
-            private static async Task ForcePlayWithoutTransitionsAsync()
+            private static async Task BeginPlayWithoutTransitionsAsync()
             {
                 if (_editModeSimulationActive)
                     return;
@@ -513,7 +520,7 @@ namespace XREngine
                 Debug.LogWarning("Play mode transitions are temporarily disabled; running with physics always simulated.");
             }
 
-            private static void ForcePlayWithoutTransitions()
+            private static void BeginPlayWithoutTransitions()
             {
                 if (_editModeSimulationActive)
                     return;

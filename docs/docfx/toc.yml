@@ -1,4 +1,14 @@
 - name: Overview
   href: index.md
-- name: API Surface
-  href: api/index.md
+- name: Guides
+  href: guides.md
+- name: Dependencies
+  href: ../DEPENDENCIES.md
+- name: API Guides
+  href: ../api/engine.md
+- name: Architecture
+  href: ../architecture/README.md
+- name: Features
+  href: ../features/light-volumes.md
+- name: API Reference
+  href: apiref/

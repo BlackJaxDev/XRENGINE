@@ -9,7 +9,7 @@ namespace XREngine
 {
     /// <summary>
     /// Represents an XREngine project file (.xrproj).
-    /// Contains references to engine settings, user settings, and project configuration.
+    /// Contains references to editor preferences, user settings, and project configuration.
     /// The project root (directory containing the .xrproj) must only contain the descriptor file and
     /// the standard project folders: Assets, Intermediate, Build, Packages, Config, and Cache.
     /// </summary>
@@ -166,7 +166,7 @@ namespace XREngine
             : Path.Combine(ProjectDirectory, CacheDirectoryName);
 
         /// <summary>
-        /// Gets the path to the engine settings file for this project.
+        /// Gets the path to the editor preferences file for this project.
         /// </summary>
         public string? EngineSettingsPath => ConfigDirectory is null
             ? null

@@ -69,10 +69,10 @@ namespace XREngine
             /// <param name="userSet"></param>
             public static void Initialize(GameStartupSettings gameSet, UserSettings userSet)
                 => UpdateTimer(
-                    userSet.TargetFramesPerSecond ?? 0.0f,
-                    gameSet.TargetUpdatesPerSecond ?? 0.0f,
-                    gameSet.FixedFramesPerSecond,
-                    userSet.VSync);
+                    EffectiveSettings.TargetFramesPerSecond ?? 0.0f,
+                    EffectiveSettings.TargetUpdatesPerSecond ?? 0.0f,
+                    EffectiveSettings.FixedFramesPerSecond,
+                    EffectiveSettings.VSync);
 
             /// <summary>
             /// Updates the core game engine timer settings.

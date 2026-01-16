@@ -8,7 +8,6 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
-using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.DLSS;
@@ -107,12 +106,6 @@ namespace XREngine
             [MemoryPackable(GenerateType.NoGenerate)]
             public partial class EngineSettings : XRAsset
             {
-                public enum EViewportPresentationMode
-                {
-                    FullViewportBehindImGuiUI,
-                    UseViewportPanel,
-                }
-
                 #region Debug/Logging Settings (moved from UserSettings)
 
                 private bool _enableFrameLogging = true;
@@ -121,9 +114,6 @@ namespace XREngine
                 private bool _enableGpuIndirectDebugLogging = true;
                 private bool _enableGpuIndirectCpuFallback = false;
                 private bool _enableGpuIndirectValidationLogging = false;
-                private bool _useDebugOpaquePipeline = false;
-                private bool _visualizeTransformId = false;
-                private bool _enableThreadAllocationTracking = false;
 
                 /// <summary>
                 /// Whether to enable frame logging for performance profiling.
@@ -189,74 +179,6 @@ namespace XREngine
                 {
                     get => _enableGpuIndirectValidationLogging;
                     set => SetField(ref _enableGpuIndirectValidationLogging, value);
-                }
-
-                /// <summary>
-                /// Whether to use the debug opaque render pipeline for debugging purposes.
-                /// </summary>
-                [Category("Debug")]
-                [Description("Whether to use the debug opaque render pipeline for debugging purposes.")]
-                public bool UseDebugOpaquePipeline
-                {
-                    get => _useDebugOpaquePipeline;
-                    set => SetField(ref _useDebugOpaquePipeline, value);
-                }
-
-                /// <summary>
-                /// Visualizes the per-draw TransformId buffer as a false-color output.
-                /// This is intended for debugging render ID stability and correspondence.
-                /// </summary>
-                [Category("Debug")]
-                [Description("Visualizes the per-draw TransformId buffer as a false-color output.")]
-                public bool VisualizeTransformId
-                {
-                    get => _visualizeTransformId;
-                    set => SetField(ref _visualizeTransformId, value);
-                }
-
-                /// <summary>
-                /// Tracks GC allocations per engine thread/tick using GC.GetAllocatedBytesForCurrentThread().
-                /// Used by the Profiler panel.
-                /// </summary>
-                [Category("Profiling")]
-                [Description("Tracks GC allocations per engine thread/tick using GC.GetAllocatedBytesForCurrentThread(). Used by the Profiler panel.")]
-                public bool EnableThreadAllocationTracking
-                {
-                    get => _enableThreadAllocationTracking;
-                    set => SetField(ref _enableThreadAllocationTracking, value);
-                }
-
-                #endregion
-
-                #region Editor / Viewport Presentation
-
-                private EViewportPresentationMode _viewportPresentationMode = EViewportPresentationMode.FullViewportBehindImGuiUI;
-                private int _scenePanelResizeDebounceMs = 0;
-
-                /// <summary>
-                /// Controls how the main world viewport is presented when Dear ImGui is active.
-                /// - FullViewportBehindImGuiUI: renders the world full-screen behind ImGui.
-                /// - UseViewportPanel: shows a dockable "Scene" panel and constrains scene rendering to that panel.
-                /// </summary>
-                [Category("Editor")]
-                [Description("Controls whether the world renders full-screen behind ImGui UI, or is constrained to the docked Scene panel.")]
-                public EViewportPresentationMode ViewportPresentationMode
-                {
-                    get => _viewportPresentationMode;
-                    set => SetField(ref _viewportPresentationMode, value);
-                }
-
-                /// <summary>
-                /// When using the docked Scene panel presentation mode, resizing the panel can generate many
-                /// intermediate sizes. This debounce delays viewport/FBO resizing until the size has stabilized.
-                /// Set to 0 to disable debouncing.
-                /// </summary>
-                [Category("Editor")]
-                [Description("Debounce in milliseconds for Scene panel resizes (0 disables).")]
-                public int ScenePanelResizeDebounceMs
-                {
-                    get => _scenePanelResizeDebounceMs;
-                    set => SetField(ref _scenePanelResizeDebounceMs, Math.Max(0, value));
                 }
 
                 #endregion
@@ -384,12 +306,6 @@ namespace XREngine
                 private bool _calculateSkinnedBoundsInComputeShader = false;
                 private string _defaultFontFolder = "Roboto";
                 private string _defaultFontFileName = "Roboto-Medium.ttf";
-                private bool _renderTransformDebugInfo = false;
-                private bool _renderMesh3DBounds = false;
-                private bool _renderMesh2DBounds = false;
-                private bool _renderUITransformCoordinate = false;
-                private bool _renderTransformLines = false;
-                private bool _renderTransformPoints = false;
 
                 /// <summary>
                 /// The interval in seconds between full keyframes sent to the network for this transform.
@@ -414,20 +330,6 @@ namespace XREngine
                     get => _timeBetweenReplications;
                     set => SetField(ref _timeBetweenReplications, value);
                 }
-                private bool _renderTransformCapsules = false;
-                private bool _visualizeDirectionalLightVolumes = false;
-                private bool _preview3DWorldOctree = false;
-                private bool _preview2DWorldQuadtree = false;
-                private bool _previewTraces = false;
-                private ColorF4 _quadtreeIntersectedBoundsColor = ColorF4.LightGray;
-                private ColorF4 _quadtreeContainedBoundsColor = ColorF4.Yellow;
-                private ColorF4 _octreeIntersectedBoundsColor = ColorF4.LightGray;
-                private ColorF4 _octreeContainedBoundsColor = ColorF4.Yellow;
-                private ColorF4 _bounds2DColor = ColorF4.LightLavender;
-                private ColorF4 _bounds3DColor = ColorF4.LightLavender;
-                private ColorF4 _transformPointColor = ColorF4.Orange;
-                private ColorF4 _transformLineColor = ColorF4.LightRed;
-                private ColorF4 _transformCapsuleColor = ColorF4.LightOrange;
                 private bool _allowSkinning = true;
                 private bool _allowBlendshapes = true;
                 private bool _remapBlendshapeDeltas = true;
@@ -442,8 +344,6 @@ namespace XREngine
                 private bool _enableSecondaryGpuCompute = false;
                 private bool _allowSecondaryContextSharingFallback = false;
                 private bool _transformCullingIsAxisAligned = true;
-                private bool _renderCullingVolumes = false;
-                private float _debugTextMaxLifespan = 0.0f;
                 private bool _logMissingShaderSamplers = false;
 
                 private bool _cullShadowCollectionByCameraFrusta = true;
@@ -472,39 +372,6 @@ namespace XREngine
                 {
                     get => _cullShadowCollectionByCameraFrusta;
                     set => SetField(ref _cullShadowCollectionByCameraFrusta, value);
-                }
-
-                /// <summary>
-                /// If true, the engine will render the octree for the 3D world.
-                /// </summary>
-                [Category("Performance")]
-                [Description("If true, the engine will render the octree for the 3D world.")]
-                public bool Preview3DWorldOctree
-                {
-                    get => _preview3DWorldOctree;
-                    set => SetField(ref _preview3DWorldOctree, value);
-                }
-
-                /// <summary>
-                /// If true, the engine will render the quadtree for the 2D world.
-                /// </summary>
-                [Category("Performance")]
-                [Description("If true, the engine will render the quadtree for the 2D world.")]
-                public bool Preview2DWorldQuadtree
-                {
-                    get => _preview2DWorldQuadtree;
-                    set => SetField(ref _preview2DWorldQuadtree, value);
-                }
-
-                /// <summary>
-                /// If true, the engine will render physics traces.
-                /// </summary>
-                [Category("Performance")]
-                [Description("If true, the engine will render physics traces.")]
-                public bool PreviewTraces
-                {
-                    get => _previewTraces;
-                    set => SetField(ref _previewTraces, value);
                 }
 
                 /// <summary>
@@ -792,94 +659,6 @@ namespace XREngine
                 }
 
                 /// <summary>
-                /// If true, the engine will render the bounds of each 3D mesh.
-                /// </summary>
-                [Category("Debug")]
-                [Description("If true, the engine will render the bounds of each 3D mesh.")]
-                public bool RenderMesh3DBounds 
-                {
-                    get => _renderMesh3DBounds;
-                    set => SetField(ref _renderMesh3DBounds, value);
-                }
-
-                /// <summary>
-                /// If true, the engine will render the bounds of each UI mesh.
-                /// </summary>
-                [Category("Debug")]
-                [Description("If true, the engine will render the bounds of each UI mesh.")]
-                public bool RenderMesh2DBounds
-                {
-                    get => _renderMesh2DBounds;
-                    set => SetField(ref _renderMesh2DBounds, value);
-                }
-
-                /// <summary>
-                /// If true, the engine will render all transforms in the scene as lines and points.
-                /// </summary>
-                [Category("Debug")]
-                [Description("If true, the engine will render all transforms in the scene as lines and points.")]
-                public bool RenderTransformDebugInfo
-                {
-                    get => _renderTransformDebugInfo;
-                    set => SetField(ref _renderTransformDebugInfo, value);
-                }
-
-                /// <summary>
-                /// If true, the engine will render the coordinate system of UI transforms.
-                /// </summary>
-                [Category("Debug")]
-                [Description("If true, the engine will render the coordinate system of UI transforms.")]
-                public bool RenderUITransformCoordinate
-                {
-                    get => _renderUITransformCoordinate;
-                    set => SetField(ref _renderUITransformCoordinate, value);
-                }
-
-                /// <summary>
-                /// If true, the engine will render all transforms in the scene as lines.
-                /// </summary>
-                [Category("Debug")]
-                [Description("If true, the engine will render all transforms in the scene as lines.")]
-                public bool RenderTransformLines
-                {
-                    get => _renderTransformLines;
-                    set => SetField(ref _renderTransformLines, value);
-                }
-
-                /// <summary>
-                /// If true, the engine will render all transforms in the scene as points.
-                /// </summary>
-                [Category("Debug")]
-                [Description("If true, the engine will render all transforms in the scene as points.")]
-                public bool RenderTransformPoints
-                {
-                    get => _renderTransformPoints;
-                    set => SetField(ref _renderTransformPoints, value);
-                }
-
-                /// <summary>
-                /// If true, the engine will render capsules around transforms for debugging purposes.
-                /// </summary>
-                [Category("Debug")]
-                [Description("If true, the engine will render capsules around transforms for debugging purposes.")]
-                public bool RenderTransformCapsules
-                {
-                    get => _renderTransformCapsules;
-                    set => SetField(ref _renderTransformCapsules, value);
-                }
-
-                /// <summary>
-                /// If true, the engine will visualize the volumes of directional lights.
-                /// </summary>
-                [Category("Performance")]
-                [Description("If true, the engine will visualize the volumes of directional lights.")]
-                public bool VisualizeDirectionalLightVolumes
-                {
-                    get => _visualizeDirectionalLightVolumes;
-                    set => SetField(ref _visualizeDirectionalLightVolumes, value);
-                }
-
-                /// <summary>
                 /// If true, the engine will calculate blendshapes in a compute shader rather than the vertex shader.
                 /// Improves performance because blendshapes are calculated once per vertex in global render pre-pass instead of once per instance in every render pass (like shadow map or light probe passes).
                 /// </summary>
@@ -1030,105 +809,6 @@ namespace XREngine
                 {
                     get => _defaultFontFileName;
                     set => SetField(ref _defaultFontFileName, value);
-                }
-
-                /// <summary>
-                /// The color used to represent quadtree intersected bounds in the engine.
-                /// </summary>
-                [Category("Appearance")]
-                [Description("The color used to represent quadtree intersected bounds in the engine.")]
-                public ColorF4 QuadtreeIntersectedBoundsColor
-                {
-                    get => _quadtreeIntersectedBoundsColor;
-                    set => SetField(ref _quadtreeIntersectedBoundsColor, value);
-                }
-
-                /// <summary>
-                /// The color used to represent quadtree contained bounds in the engine.
-                /// </summary>
-                [Category("Appearance")]
-                [Description("The color used to represent quadtree contained bounds in the engine.")]
-                public ColorF4 QuadtreeContainedBoundsColor
-                {
-                    get => _quadtreeContainedBoundsColor;
-                    set => SetField(ref _quadtreeContainedBoundsColor, value);
-                }
-
-                /// <summary>
-                /// The color used to represent octree intersected bounds in the engine.
-                /// </summary>
-                [Category("Appearance")]
-                [Description("The color used to represent octree intersected bounds in the engine.")]
-                public ColorF4 OctreeIntersectedBoundsColor
-                {
-                    get => _octreeIntersectedBoundsColor;
-                    set => SetField(ref _octreeIntersectedBoundsColor, value);
-                }
-
-                /// <summary>
-                /// The color used to represent octree contained bounds in the engine.
-                /// </summary>
-                [Category("Appearance")]
-                [Description("The color used to represent octree contained bounds in the engine.")]
-                public ColorF4 OctreeContainedBoundsColor
-                {
-                    get => _octreeContainedBoundsColor;
-                    set => SetField(ref _octreeContainedBoundsColor, value);
-                }
-
-                /// <summary>
-                /// The color used to represent 2D bounds in the engine.
-                /// </summary>
-                [Category("Appearance")]
-                [Description("The color used to represent 2D bounds in the engine.")]
-                public ColorF4 Bounds2DColor
-                {
-                    get => _bounds2DColor;
-                    set => SetField(ref _bounds2DColor, value);
-                }
-
-                /// <summary>
-                /// The color used to represent 3D bounds in the engine.
-                /// </summary>
-                [Category("Appearance")]
-                [Description("The color used to represent 3D bounds in the engine.")]
-                public ColorF4 Bounds3DColor
-                {
-                    get => _bounds3DColor;
-                    set => SetField(ref _bounds3DColor, value);
-                }
-
-                /// <summary>
-                /// The color used to represent transform points in the engine.
-                /// </summary>
-                [Category("Appearance")]
-                [Description("The color used to represent transform points in the engine.")]
-                public ColorF4 TransformPointColor
-                {
-                    get => _transformPointColor;
-                    set => SetField(ref _transformPointColor, value);
-                }
-
-                /// <summary>
-                /// The color used to represent transform lines in the engine.
-                /// </summary>
-                [Category("Appearance")]
-                [Description("The color used to represent transform lines in the engine.")]
-                public ColorF4 TransformLineColor
-                {
-                    get => _transformLineColor;
-                    set => SetField(ref _transformLineColor, value);
-                }
-
-                /// <summary>
-                /// The color used to represent transform capsules in the engine.
-                /// </summary>
-                [Category("Appearance")]
-                [Description("The color used to represent transform capsules in the engine.")]
-                public ColorF4 TransformCapsuleColor
-                {
-                    get => _transformCapsuleColor;
-                    set => SetField(ref _transformCapsuleColor, value);
                 }
 
                 /// <summary>
@@ -1312,51 +992,16 @@ namespace XREngine
                     set => SetField(ref _transformCullingIsAxisAligned, value);
                 }
 
-                /// <summary>
-                /// If true, culling volumes will be rendered for debugging purposes.
-                /// </summary>
-                [Category("Debug")]
-                [Description("If true, culling volumes will be rendered for debugging purposes.")]
-                public bool RenderCullingVolumes
-                {
-                    get => _renderCullingVolumes;
-                    set => SetField(ref _renderCullingVolumes, value);
-                }
-
-                /// <summary>
-                /// How long a cache object for text rendering should exist for without receiving any further updates.
-                /// </summary>
-                [Category("Debug")]
-                [Description("How long a cache object for text rendering should exist for without receiving any further updates.")]
-                public float DebugTextMaxLifespan
-                {
-                    get => _debugTextMaxLifespan;
-                    set => SetField(ref _debugTextMaxLifespan, value);
-                }
-                public bool RenderLightProbeTetrahedra { get; set; } = true;
             }
 
             private static void ApplyEngineSettingChange(string? propertyName)
             {
                 bool applyAll = string.IsNullOrEmpty(propertyName);
 
-                if (applyAll || propertyName == nameof(EngineSettings.RenderMesh3DBounds))
-                    ApplyRenderMeshBoundsSetting();
-
-                if (applyAll || propertyName == nameof(EngineSettings.RenderTransformDebugInfo))
-                    ApplyTransformDebugSetting();
-
                 if (applyAll || propertyName == nameof(EngineSettings.UseGpuBvh))
                     Engine.Rendering.ApplyGpuBvhPreference();
 
-                if (applyAll || propertyName == nameof(EngineSettings.ViewportPresentationMode))
-                {
-                    foreach (var window in Engine.Windows)
-                    {
-                        window.InvalidateScenePanelResources();
-                        window.RequestRenderStateRecheck(resetCircuitBreaker: true);
-                    }
-                }
+
 
                 //if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
                 //    || propertyName == nameof(EngineSettings.DlssQuality)
@@ -1369,9 +1014,29 @@ namespace XREngine
                 //}
             }
 
+            public static void ApplyEditorPreferencesChange(string? propertyName)
+            {
+                bool applyAll = string.IsNullOrEmpty(propertyName);
+
+                if (applyAll || propertyName == nameof(EditorDebugOptions.RenderMesh3DBounds))
+                    ApplyRenderMeshBoundsSetting();
+
+                if (applyAll || propertyName == nameof(EditorDebugOptions.RenderTransformDebugInfo))
+                    ApplyTransformDebugSetting();
+
+                if (applyAll || propertyName == nameof(EditorPreferences.ViewportPresentationMode))
+                {
+                    foreach (var window in Engine.Windows)
+                    {
+                        window.InvalidateScenePanelResources();
+                        window.RequestRenderStateRecheck(resetCircuitBreaker: true);
+                    }
+                }
+            }
+
             private static void ApplyRenderMeshBoundsSetting()
             {
-                bool renderBounds = Settings.RenderMesh3DBounds;
+                bool renderBounds = Engine.EditorPreferences.Debug.RenderMesh3DBounds;
 
                 void Apply()
                 {
@@ -1393,7 +1058,7 @@ namespace XREngine
 
             private static void ApplyTransformDebugSetting()
             {
-                bool enable = Settings.RenderTransformDebugInfo;
+                bool enable = Engine.EditorPreferences.Debug.RenderTransformDebugInfo;
 
                 void Apply()
                 {

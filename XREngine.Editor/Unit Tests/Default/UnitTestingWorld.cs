@@ -39,12 +39,13 @@ public static partial class UnitTestingWorld
     public static void ApplyRenderSettingsFromToggles()
     {
         var s = Engine.Rendering.Settings;
-        s.RenderMesh3DBounds = Toggles.RenderMeshBounds;
-        s.RenderTransformDebugInfo = Toggles.RenderTransformDebugInfo;
-        s.RenderTransformLines = Toggles.RenderTransformLines;
-        s.RenderTransformCapsules = Toggles.RenderTransformCapsules;
-        s.RenderTransformPoints = Toggles.RenderTransformPoints;
-        s.RenderCullingVolumes = false;
+        var debug = Engine.EditorPreferences.Debug;
+        debug.RenderMesh3DBounds = Toggles.RenderMeshBounds;
+        debug.RenderTransformDebugInfo = Toggles.RenderTransformDebugInfo;
+        debug.RenderTransformLines = Toggles.RenderTransformLines;
+        debug.RenderTransformCapsules = Toggles.RenderTransformCapsules;
+        debug.RenderTransformPoints = Toggles.RenderTransformPoints;
+        debug.RenderCullingVolumes = false;
         s.RecalcChildMatricesLoopType = Toggles.RecalcChildMatricesType;
         s.TickGroupedItemsInParallel = Toggles.TickGroupedItemsInParallel;
         s.RenderWindowsWhileInVR = Toggles.RenderWindowsWhileInVR;
