@@ -10,6 +10,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Editor;
+using XREngine.Editor.Mcp;
 using XREngine.Native;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -60,6 +61,7 @@ internal class Program
         CodeManager.Instance.CompileOnChange = false;
         JsonConvert.DefaultSettings = DefaultJsonSettings;
         EditorPlayModeController.Initialize();
+        McpServerHost? mcpServer = McpServerHost.TryStartFromArgs(args);
 
         // Determine world mode from command line or environment variable
         EWorldMode worldMode = ResolveWorldMode(args);
@@ -108,6 +110,7 @@ internal class Program
         }
 
         Engine.Run(startupSettings, gameState);
+        mcpServer?.Dispose();
     }
 
     /// <summary>
