@@ -137,7 +137,7 @@ namespace XREngine.Rendering.Info
                 passes.AddCPU(cmd);
             }
 
-            if (Engine.Rendering.Settings.RenderCullingVolumes)
+            if (Engine.EditorPreferences.Debug.RenderCullingVolumes)
                 RenderCullingVolume();
         }
     }

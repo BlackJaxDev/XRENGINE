@@ -50,6 +50,7 @@ public static partial class UnitTestingWorld
         public bool EnableProfilerLogging = true; //Enables Engine.Profiler frame logging even without Dear ImGui.
         public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.
         public bool GPURenderDispatch = false; //Uses GPU render dispatch for rendering instead of CPU culling and issuing draw calls.
+        public bool StartInPlayModeWithoutTransitions = false; //Starts in play mode immediately without the edit->play transition.
 
         //Misc
         public bool Skybox = true; //Adds a skybox to the scene
@@ -152,7 +153,7 @@ public static partial class UnitTestingWorld
         public bool AllowShaderPipelines = false;
         public bool RenderMeshBounds = true;
 
-        public ERenderLibrary RenderAPI = ERenderLibrary.Vulkan;
+        public ERenderLibrary RenderAPI = ERenderLibrary.OpenGL;
         public EPhysicsLibrary PhysicsAPI = EPhysicsLibrary.PhysX;
         public ELoopType RecalcChildMatricesType = ELoopType.Asynchronous;
         public bool TickGroupedItemsInParallel = true;

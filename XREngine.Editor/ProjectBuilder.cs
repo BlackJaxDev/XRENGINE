@@ -239,8 +239,8 @@ internal static class ProjectBuilder
 
         WriteCookedAsset(Engine.GameSettings ?? new GameStartupSettings(), Path.Combine(staging, StartupAssetName));
 
-        if (Engine.Rendering.Settings is not null)
-            WriteCookedAsset(Engine.Rendering.Settings, Path.Combine(staging, XRProject.EngineSettingsFileName));
+        if (Engine.EditorPreferences is not null)
+            WriteCookedAsset(Engine.EditorPreferences, Path.Combine(staging, XRProject.EngineSettingsFileName));
 
         WriteCookedAsset(Engine.UserSettings ?? new UserSettings(), Path.Combine(staging, XRProject.UserSettingsFileName));
 

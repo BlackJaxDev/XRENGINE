@@ -604,7 +604,7 @@ namespace XREngine.Rendering.UI
         {
             base.RenderDebug();
 
-            if (!Engine.Rendering.Settings.RenderUITransformCoordinate || Engine.Rendering.State.IsShadowPass)
+            if (!Engine.EditorPreferences.Debug.RenderUITransformCoordinate || Engine.Rendering.State.IsShadowPass)
                 return;
             
             Vector3 endPoint = RenderTranslation + Engine.Rendering.Debug.UIPositionBias;

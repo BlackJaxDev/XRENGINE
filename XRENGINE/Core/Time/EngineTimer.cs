@@ -204,7 +204,7 @@ namespace XREngine.Timers
             while (IsRunning)
             {
                 long allocStart = 0;
-                if (Engine.Rendering.Settings.EnableThreadAllocationTracking)
+                if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
                     allocStart = GC.GetAllocatedBytesForCurrentThread();
 
                 using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread"))
@@ -271,7 +271,7 @@ namespace XREngine.Timers
                 FixedUpdateManager.LastTimestamp = timestamp;
 
                 long allocStart = 0;
-                if (Engine.Rendering.Settings.EnableThreadAllocationTracking)
+                if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
                     allocStart = GC.GetAllocatedBytesForCurrentThread();
 
                 DispatchFixedUpdate();
@@ -366,7 +366,7 @@ namespace XREngine.Timers
                     using var sample = Engine.Profiler.Start("EngineTimer.DispatchRender");
 
                     long allocStart = 0;
-                    if (Engine.Rendering.Settings.EnableThreadAllocationTracking)
+                    if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
                         allocStart = GC.GetAllocatedBytesForCurrentThread();
 
                     Render.Delta = elapsed;
@@ -450,7 +450,7 @@ namespace XREngine.Timers
                     using var updateIterationSample = Engine.Profiler.Start("EngineTimer.DispatchUpdate.Iteration");
 
                     long allocStart = 0;
-                    if (Engine.Rendering.Settings.EnableThreadAllocationTracking)
+                    if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
                         allocStart = GC.GetAllocatedBytesForCurrentThread();
 
                     Update.Delta = elapsed;

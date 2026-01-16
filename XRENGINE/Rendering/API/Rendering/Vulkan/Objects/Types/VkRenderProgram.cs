@@ -26,6 +26,7 @@ public unsafe partial class VulkanRenderer
         private DescriptorSetLayout[] _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
         private PipelineLayout _pipelineLayout;
         private readonly List<DescriptorBindingInfo> _programDescriptorBindings = new();
+        private readonly Dictionary<string, AutoUniformBlockInfo> _autoUniformBlocks = new(StringComparer.Ordinal);
 
         public override VkObjectType Type => VkObjectType.Program;
         public override bool IsGenerated => true;
@@ -33,6 +34,7 @@ public unsafe partial class VulkanRenderer
         public PipelineLayout PipelineLayout => _pipelineLayout;
         public IReadOnlyList<DescriptorSetLayout> DescriptorSetLayouts => _descriptorSetLayouts;
         public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _programDescriptorBindings;
+        public IReadOnlyDictionary<string, AutoUniformBlockInfo> AutoUniformBlocks => _autoUniformBlocks;
 
         protected override uint CreateObjectInternal() => CacheObject(this);
 
@@ -152,9 +154,18 @@ public unsafe partial class VulkanRenderer
             _descriptorSetLayouts = result.Layouts;
             _programDescriptorBindings.Clear();
             _programDescriptorBindings.AddRange(result.Bindings);
+            _autoUniformBlocks.Clear();
+            foreach (VkShader shader in _shaderCache.Values)
+            {
+                if (shader.AutoUniformBlock is { } block)
+                    _autoUniformBlocks[block.InstanceName] = block;
+            }
 
             CreatePipelineLayout(_descriptorSetLayouts);
         }
+
+        public bool TryGetAutoUniformBlock(string name, out AutoUniformBlockInfo block)
+            => _autoUniformBlocks.TryGetValue(name, out block);
 
         private void CreatePipelineLayout(IReadOnlyList<DescriptorSetLayout> layouts)
         {

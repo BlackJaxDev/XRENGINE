@@ -131,8 +131,6 @@ namespace XREngine
             int reservedThreads = 4; // render + update + fixed-update + collectvisible
             int defaultWorkers = Math.Max(1, Environment.ProcessorCount - reservedThreads);
             int defaultWorkerCap = 16;
-            int defaultQueueLimit = 8192;
-            int defaultQueueWarn = 2048;
             if (defaultWorkers > defaultWorkerCap)
                 defaultWorkers = defaultWorkerCap;
 
@@ -156,10 +154,10 @@ namespace XREngine
                 ],
                 DefaultUserSettings = new UserSettings()
                 {
-                    TargetFramesPerSecond = renderHz,
                     VSync = EVSyncMode.Off,
                 },
                 TargetUpdatesPerSecond = updateHz,
+                TargetFramesPerSecond = renderHz,
                 FixedFramesPerSecond = fixedHz,
             };
         }
@@ -196,7 +194,9 @@ namespace XREngine
             /// <param name="index">Player slot to fetch.</param>
             /// <param name="controllerTypeOverride">Optional controller type to force for this request.</param>
             /// <returns>The resolved local player controller.</returns>
-            public static LocalPlayerController GetOrCreateLocalPlayer(ELocalPlayerIndex index, Type? controllerTypeOverride = null)
+            public static LocalPlayerController GetOrCreateLocalPlayer(
+                ELocalPlayerIndex index,
+                [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type? controllerTypeOverride = null)
             {
                 var existing = LocalPlayers[(int)index];
                 var desiredType = ResolveLocalPlayerControllerType(controllerTypeOverride);

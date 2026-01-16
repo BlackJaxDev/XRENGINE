@@ -10,6 +10,7 @@ using XREngine.Data.Core;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
@@ -127,11 +128,27 @@ public unsafe partial class VulkanRenderer
 		private readonly HashSet<string> _descriptorWarnings = new(StringComparer.OrdinalIgnoreCase);
 		private readonly Dictionary<string, EngineUniformBuffer[]> _engineUniformBuffers = new(StringComparer.Ordinal);
 		private readonly HashSet<string> _engineUniformWarnings = new(StringComparer.Ordinal);
+		private readonly Dictionary<string, AutoUniformBuffer[]> _autoUniformBuffers = new(StringComparer.Ordinal);
+		private readonly HashSet<string> _autoUniformWarnings = new(StringComparer.Ordinal);
 		private const string VertexUniformSuffix = "_VTX";
 
 		private readonly struct EngineUniformBuffer
 		{
 			public EngineUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size)
+			{
+				Buffer = buffer;
+				Memory = memory;
+				Size = size;
+			}
+
+			public Silk.NET.Vulkan.Buffer Buffer { get; }
+			public DeviceMemory Memory { get; }
+			public uint Size { get; }
+		}
+
+		private readonly struct AutoUniformBuffer
+		{
+			public AutoUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size)
 			{
 				Buffer = buffer;
 				Memory = memory;
@@ -685,6 +702,7 @@ public unsafe partial class VulkanRenderer
 				imageIndex = 0;
 
 			UpdateEngineUniformBuffersForDraw(imageIndex, draw);
+			UpdateAutoUniformBuffersForDraw(imageIndex, material, draw);
 
 			DescriptorSet[] sets = _descriptorSets[imageIndex];
 			if (sets.Length == 0)
@@ -928,7 +946,12 @@ public unsafe partial class VulkanRenderer
 			buffer ??= _bufferCache.Values.FirstOrDefault(b => b.Data.Target is EBufferTarget.UniformBuffer or EBufferTarget.ShaderStorageBuffer);
 
 			if (buffer is null)
+			{
+				if (TryResolveAutoUniformBuffer(binding, frameIndex, out bufferInfo))
+					return true;
+
 				return TryResolveEngineUniformBuffer(binding, frameIndex, out bufferInfo);
+			}
 
 			buffer.Generate();
 			if (buffer.BufferHandle is not { } bufferHandle || bufferHandle.Handle == 0)
@@ -1054,6 +1077,37 @@ public unsafe partial class VulkanRenderer
 				return true;
 			}
 
+			private bool TryResolveAutoUniformBuffer(DescriptorBindingInfo binding, int frameIndex, out DescriptorBufferInfo bufferInfo)
+			{
+				bufferInfo = default;
+				if (binding.Name is null || _program is null)
+					return false;
+
+				if (!_program.TryGetAutoUniformBlock(binding.Name, out AutoUniformBlockInfo block))
+					return false;
+
+				uint size = Math.Max(block.Size, 1u);
+				if (!EnsureAutoUniformBuffer(block.InstanceName, size))
+					return false;
+
+				if (!_autoUniformBuffers.TryGetValue(block.InstanceName, out AutoUniformBuffer[]? buffers) || buffers.Length == 0)
+					return false;
+
+				int idx = Math.Clamp(frameIndex, 0, buffers.Length - 1);
+				AutoUniformBuffer target = buffers[idx];
+				if (target.Buffer.Handle == 0)
+					return false;
+
+				bufferInfo = new DescriptorBufferInfo
+				{
+					Buffer = target.Buffer,
+					Offset = 0,
+					Range = size,
+				};
+
+				return true;
+			}
+
 			private bool EnsureEngineUniformBuffer(string name, uint size)
 			{
 				int frames = Renderer.swapChainImages?.Length ?? 1;
@@ -1076,6 +1130,31 @@ public unsafe partial class VulkanRenderer
 				}
 
 				_engineUniformBuffers[name] = buffers;
+				return true;
+			}
+
+			private bool EnsureAutoUniformBuffer(string name, uint size)
+			{
+				int frames = Renderer.swapChainImages?.Length ?? 1;
+				if (_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? existing))
+				{
+					bool valid = existing.Length == frames && existing.All(e => e.Buffer.Handle != 0 && e.Size >= size);
+					if (valid)
+						return true;
+
+					DestroyAutoUniformBuffers(name);
+				}
+
+				AutoUniformBuffer[] buffers = new AutoUniformBuffer[frames];
+				for (int i = 0; i < frames; i++)
+				{
+					if (!CreateHostVisibleBuffer(size, BufferUsageFlags.UniformBufferBit, out var buffer, out var memory))
+						return false;
+
+					buffers[i] = new AutoUniformBuffer(buffer, memory, size);
+				}
+
+				_autoUniformBuffers[name] = buffers;
 				return true;
 			}
 
@@ -1137,6 +1216,436 @@ public unsafe partial class VulkanRenderer
 
 					TryWriteEngineUniform(pair.Key, draw, buffer);
 				}
+			}
+
+			private void UpdateAutoUniformBuffersForDraw(int frameIndex, XRMaterial material, in PendingMeshDraw draw)
+			{
+				if (_program is null || _autoUniformBuffers.Count == 0)
+					return;
+
+				foreach (var pair in _program.AutoUniformBlocks)
+				{
+					string name = pair.Key;
+					AutoUniformBlockInfo block = pair.Value;
+					if (!_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? buffers) || buffers.Length == 0)
+						continue;
+
+					int idx = Math.Clamp(frameIndex, 0, buffers.Length - 1);
+					AutoUniformBuffer buffer = buffers[idx];
+					if (buffer.Buffer.Handle == 0)
+						continue;
+
+					TryWriteAutoUniformBlock(block, buffer, material, draw);
+				}
+			}
+
+			private bool TryWriteAutoUniformBlock(AutoUniformBlockInfo block, AutoUniformBuffer buffer, XRMaterial material, in PendingMeshDraw draw)
+			{
+				void* mapped;
+				if (Api!.MapMemory(Device, buffer.Memory, 0, buffer.Size, 0, &mapped) != Result.Success)
+					return false;
+
+				try
+				{
+					Span<byte> data = new(mapped, (int)buffer.Size);
+					data.Clear();
+
+					foreach (AutoUniformMember member in block.Members)
+					{
+						if (member.Offset + member.Size > buffer.Size)
+							continue;
+
+						if (TryWriteAutoUniformMember(data, member, material, draw))
+							continue;
+					}
+				}
+				finally
+				{
+					Api.UnmapMemory(Device, buffer.Memory);
+				}
+
+				return true;
+			}
+
+			private bool TryWriteAutoUniformMember(Span<byte> data, AutoUniformMember member, XRMaterial material, in PendingMeshDraw draw)
+			{
+				if (member.EngineType is null)
+					return false;
+
+				if (TryResolveEngineUniformValue(member.Name, draw, out object? engineValue, out EShaderVarType engineType))
+					return engineValue is not null && TryWriteAutoUniformValue(data, member, engineValue, engineType);
+
+				ShaderVar? parameter = material.Parameter<ShaderVar>(member.Name);
+				if (parameter is not null)
+				{
+					if (member.IsArray)
+						return TryWriteAutoUniformArray(data, member, parameter);
+
+					return TryWriteAutoUniformValue(data, member, parameter.GenericValue, parameter.TypeName);
+				}
+
+				if (member.IsArray && member.DefaultArrayValues is { Count: > 0 })
+					return TryWriteAutoUniformArrayDefaults(data, member);
+
+				if (member.DefaultValue is { } defaultValue)
+					return TryWriteAutoUniformValue(data, member, defaultValue.Value, defaultValue.Type);
+
+				return false;
+			}
+
+			private bool TryWriteAutoUniformArray(Span<byte> data, AutoUniformMember member, ShaderVar parameter)
+			{
+				if (!member.IsArray || member.ArrayStride == 0 || member.ArrayLength == 0)
+					return false;
+
+				if (parameter.GenericValue is not IUniformableArray array)
+					return false;
+
+				var valuesProp = array.GetType().GetProperty("Values");
+				if (valuesProp?.GetValue(array) is not Array values)
+					return false;
+
+				uint stride = member.ArrayStride;
+				uint baseOffset = member.Offset;
+				int max = (int)Math.Min((uint)values.Length, member.ArrayLength);
+
+				for (int i = 0; i < max; i++)
+				{
+					if (values.GetValue(i) is not ShaderVar element)
+						continue;
+
+					uint elementOffset = baseOffset + (uint)i * stride;
+					AutoUniformMember elementMember = member with { Offset = elementOffset, IsArray = false, ArrayLength = 0, ArrayStride = 0 };
+					TryWriteAutoUniformValue(data, elementMember, element.GenericValue, element.TypeName);
+				}
+
+				return true;
+			}
+
+			private bool TryWriteAutoUniformArrayDefaults(Span<byte> data, AutoUniformMember member)
+			{
+				if (!member.IsArray || member.ArrayStride == 0 || member.ArrayLength == 0)
+					return false;
+
+				if (member.DefaultArrayValues is null || member.DefaultArrayValues.Count == 0)
+					return false;
+
+				uint stride = member.ArrayStride;
+				uint baseOffset = member.Offset;
+				int max = (int)Math.Min((uint)member.DefaultArrayValues.Count, member.ArrayLength);
+
+				for (int i = 0; i < max; i++)
+				{
+					AutoUniformDefaultValue def = member.DefaultArrayValues[i];
+					uint elementOffset = baseOffset + (uint)i * stride;
+					AutoUniformMember elementMember = member with { Offset = elementOffset, IsArray = false, ArrayLength = 0, ArrayStride = 0 };
+					TryWriteAutoUniformValue(data, elementMember, def.Value, def.Type);
+				}
+
+				return true;
+			}
+
+			private bool TryResolveEngineUniformValue(string name, in PendingMeshDraw draw, out object? value, out EShaderVarType type)
+			{
+				value = null;
+				type = EShaderVarType._float;
+				string normalized = NormalizeEngineUniformName(name);
+				XRCamera? camera = Engine.Rendering.State.RenderingCamera;
+				bool stereoPass = Engine.Rendering.State.IsStereoPass;
+				bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+
+				Matrix4x4 prevModelMatrix = draw.PreviousModelMatrix;
+				if (IsApproximatelyIdentity(prevModelMatrix) && !IsApproximatelyIdentity(draw.ModelMatrix))
+					prevModelMatrix = draw.ModelMatrix;
+
+				switch (normalized)
+				{
+					case nameof(EEngineUniform.ModelMatrix):
+						value = draw.ModelMatrix;
+						type = EShaderVarType._mat4;
+						return true;
+					case nameof(EEngineUniform.PrevModelMatrix):
+						value = prevModelMatrix;
+						type = EShaderVarType._mat4;
+						return true;
+					case nameof(EEngineUniform.ViewMatrix):
+						value = camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
+						type = EShaderVarType._mat4;
+						return true;
+					case nameof(EEngineUniform.InverseViewMatrix):
+						value = camera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+						type = EShaderVarType._mat4;
+						return true;
+					case nameof(EEngineUniform.ProjMatrix):
+						value = useUnjittered && camera is not null ? camera.Parameters.GetProjectionMatrix() : camera?.Parameters.GetProjectionMatrix() ?? Matrix4x4.Identity;
+						type = EShaderVarType._mat4;
+						return true;
+					case nameof(EEngineUniform.LeftEyeInverseViewMatrix):
+					case nameof(EEngineUniform.RightEyeInverseViewMatrix):
+						value = camera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+						type = EShaderVarType._mat4;
+						return true;
+					case nameof(EEngineUniform.LeftEyeProjMatrix):
+					case nameof(EEngineUniform.RightEyeProjMatrix):
+						value = camera?.Parameters.GetProjectionMatrix() ?? Matrix4x4.Identity;
+						type = EShaderVarType._mat4;
+						return true;
+					case nameof(EEngineUniform.CameraPosition):
+						value = ToVector4(camera?.Transform.RenderTranslation ?? Vector3.Zero);
+						type = EShaderVarType._vec4;
+						return true;
+					case nameof(EEngineUniform.CameraForward):
+						value = ToVector4(camera?.Transform.RenderForward ?? Vector3.UnitZ);
+						type = EShaderVarType._vec4;
+						return true;
+					case nameof(EEngineUniform.CameraUp):
+						value = ToVector4(camera?.Transform.RenderUp ?? Vector3.UnitY);
+						type = EShaderVarType._vec4;
+						return true;
+					case nameof(EEngineUniform.CameraRight):
+						value = ToVector4(camera?.Transform.RenderRight ?? Vector3.UnitX);
+						type = EShaderVarType._vec4;
+						return true;
+					case nameof(EEngineUniform.CameraNearZ):
+						value = camera?.NearZ ?? 0f;
+						type = EShaderVarType._float;
+						return true;
+					case nameof(EEngineUniform.CameraFarZ):
+						value = camera?.FarZ ?? 0f;
+						type = EShaderVarType._float;
+						return true;
+					case nameof(EEngineUniform.CameraFovX):
+						value = camera?.Parameters is XRPerspectiveCameraParameters persp ? persp.HorizontalFieldOfView : 0f;
+						type = EShaderVarType._float;
+						return true;
+					case nameof(EEngineUniform.CameraFovY):
+						value = camera?.Parameters is XRPerspectiveCameraParameters perspY ? perspY.VerticalFieldOfView : 0f;
+						type = EShaderVarType._float;
+						return true;
+					case nameof(EEngineUniform.CameraAspect):
+						value = camera?.Parameters is XRPerspectiveCameraParameters perspA ? perspA.AspectRatio : 0f;
+						type = EShaderVarType._float;
+						return true;
+					case nameof(EEngineUniform.ScreenWidth):
+					case nameof(EEngineUniform.ScreenHeight):
+						var area = Engine.Rendering.State.RenderArea;
+						value = normalized.Equals(nameof(EEngineUniform.ScreenWidth), StringComparison.Ordinal) ? (float)area.Width : (float)area.Height;
+						type = EShaderVarType._float;
+						return true;
+					case nameof(EEngineUniform.ScreenOrigin):
+						value = new Vector2(0f, 0f);
+						type = EShaderVarType._vec2;
+						return true;
+					case nameof(EEngineUniform.BillboardMode):
+						value = (int)draw.BillboardMode;
+						type = EShaderVarType._int;
+						return true;
+					case nameof(EEngineUniform.VRMode):
+						value = stereoPass ? 1 : 0;
+						type = EShaderVarType._int;
+						return true;
+				}
+
+				return false;
+			}
+
+			private bool TryWriteAutoUniformValue(Span<byte> data, AutoUniformMember member, object value, EShaderVarType valueType)
+			{
+				if (member.EngineType is null)
+					return false;
+
+				if (!AreCompatible(member.EngineType.Value, valueType))
+					return false;
+
+				uint offset = member.Offset;
+				switch (member.EngineType.Value)
+				{
+					case EShaderVarType._float:
+						return TryWriteScalar(data, offset, value, Convert.ToSingle);
+					case EShaderVarType._int:
+						return TryWriteScalar(data, offset, value, Convert.ToInt32);
+					case EShaderVarType._uint:
+						return TryWriteScalar(data, offset, value, Convert.ToUInt32);
+					case EShaderVarType._bool:
+						return TryWriteScalar(data, offset, value, v => Convert.ToBoolean(v) ? 1 : 0);
+					case EShaderVarType._vec2:
+						return TryWriteVector2(data, offset, value);
+					case EShaderVarType._vec3:
+						return TryWriteVector3(data, offset, value);
+					case EShaderVarType._vec4:
+						return TryWriteVector4(data, offset, value);
+					case EShaderVarType._ivec2:
+						return TryWriteIVector2(data, offset, value);
+					case EShaderVarType._ivec3:
+						return TryWriteIVector3(data, offset, value);
+					case EShaderVarType._ivec4:
+						return TryWriteIVector4(data, offset, value);
+					case EShaderVarType._uvec2:
+						return TryWriteUVector2(data, offset, value);
+					case EShaderVarType._uvec3:
+						return TryWriteUVector3(data, offset, value);
+					case EShaderVarType._uvec4:
+						return TryWriteUVector4(data, offset, value);
+					case EShaderVarType._mat4:
+						return TryWriteMatrix4(data, offset, value);
+					default:
+						return false;
+				}
+			}
+
+			private static bool AreCompatible(EShaderVarType expected, EShaderVarType actual)
+			{
+				if (expected == actual)
+					return true;
+
+				return (expected, actual) switch
+				{
+					(EShaderVarType._vec4, EShaderVarType._vec3) => true,
+					(EShaderVarType._vec3, EShaderVarType._vec4) => true,
+					(EShaderVarType._int, EShaderVarType._bool) => true,
+					(EShaderVarType._uint, EShaderVarType._bool) => true,
+					(EShaderVarType._bool, EShaderVarType._int) => true,
+					(EShaderVarType._bool, EShaderVarType._uint) => true,
+					_ => false
+				};
+			}
+
+			private static bool TryWriteScalar<T>(Span<byte> data, uint offset, object value, Func<object, T> converter) where T : unmanaged
+			{
+				try
+				{
+					T converted = converter(value);
+					Unsafe.WriteUnaligned(ref data[(int)offset], converted);
+					return true;
+				}
+				catch
+				{
+					return false;
+				}
+			}
+
+			private static bool TryWriteVector2(Span<byte> data, uint offset, object value)
+			{
+				if (value is Vector2 v)
+				{
+					Unsafe.WriteUnaligned(ref data[(int)offset], v);
+					return true;
+				}
+				return false;
+			}
+
+			private static bool TryWriteVector3(Span<byte> data, uint offset, object value)
+			{
+				if (value is Vector3 v3)
+				{
+					Vector4 v4 = new(v3, 0f);
+					Unsafe.WriteUnaligned(ref data[(int)offset], v4);
+					return true;
+				}
+				if (value is Vector4 v4b)
+				{
+					Unsafe.WriteUnaligned(ref data[(int)offset], v4b);
+					return true;
+				}
+				return false;
+			}
+
+			private static bool TryWriteVector4(Span<byte> data, uint offset, object value)
+			{
+				if (value is Vector4 v)
+				{
+					Unsafe.WriteUnaligned(ref data[(int)offset], v);
+					return true;
+				}
+				if (value is Vector3 v3)
+				{
+					Vector4 v4 = new(v3, 0f);
+					Unsafe.WriteUnaligned(ref data[(int)offset], v4);
+					return true;
+				}
+				return false;
+			}
+
+			private static bool TryWriteIVector2(Span<byte> data, uint offset, object value)
+			{
+				if (value is IVector2 v)
+				{
+					Unsafe.WriteUnaligned(ref data[(int)offset], v);
+					return true;
+				}
+				return false;
+			}
+
+			private static bool TryWriteIVector3(Span<byte> data, uint offset, object value)
+			{
+				if (value is IVector3 v3)
+				{
+					IVector4 v4 = new(v3.X, v3.Y, v3.Z, 0);
+					Unsafe.WriteUnaligned(ref data[(int)offset], v4);
+					return true;
+				}
+				if (value is IVector4 v4b)
+				{
+					Unsafe.WriteUnaligned(ref data[(int)offset], v4b);
+					return true;
+				}
+				return false;
+			}
+
+			private static bool TryWriteIVector4(Span<byte> data, uint offset, object value)
+			{
+				if (value is IVector4 v)
+				{
+					Unsafe.WriteUnaligned(ref data[(int)offset], v);
+					return true;
+				}
+				return false;
+			}
+
+			private static bool TryWriteUVector2(Span<byte> data, uint offset, object value)
+			{
+				if (value is UVector2 v)
+				{
+					Unsafe.WriteUnaligned(ref data[(int)offset], v);
+					return true;
+				}
+				return false;
+			}
+
+			private static bool TryWriteUVector3(Span<byte> data, uint offset, object value)
+			{
+				if (value is UVector3 v3)
+				{
+					UVector4 v4 = new(v3.X, v3.Y, v3.Z, 0);
+					Unsafe.WriteUnaligned(ref data[(int)offset], v4);
+					return true;
+				}
+				if (value is UVector4 v4b)
+				{
+					Unsafe.WriteUnaligned(ref data[(int)offset], v4b);
+					return true;
+				}
+				return false;
+			}
+
+			private static bool TryWriteUVector4(Span<byte> data, uint offset, object value)
+			{
+				if (value is UVector4 v)
+				{
+					Unsafe.WriteUnaligned(ref data[(int)offset], v);
+					return true;
+				}
+				return false;
+			}
+
+			private static bool TryWriteMatrix4(Span<byte> data, uint offset, object value)
+			{
+				if (value is Matrix4x4 m)
+				{
+					Unsafe.WriteUnaligned(ref data[(int)offset], m);
+					return true;
+				}
+				return false;
 			}
 
 			private bool TryWriteEngineUniform(string name, in PendingMeshDraw draw, EngineUniformBuffer buffer)
@@ -1292,12 +1801,46 @@ public unsafe partial class VulkanRenderer
 				_engineUniformBuffers.Clear();
 			}
 
+			private void DestroyAutoUniformBuffers(string? singleName = null)
+			{
+				if (singleName is not null)
+				{
+					if (_autoUniformBuffers.TryGetValue(singleName, out AutoUniformBuffer[]? toDestroy))
+					{
+						foreach (AutoUniformBuffer buf in toDestroy)
+						{
+							if (buf.Buffer.Handle != 0)
+								Api!.DestroyBuffer(Device, buf.Buffer, null);
+							if (buf.Memory.Handle != 0)
+								Api!.FreeMemory(Device, buf.Memory, null);
+						}
+					}
+
+				_autoUniformBuffers.Remove(singleName);
+				return;
+			}
+
+			foreach (AutoUniformBuffer[] buffers in _autoUniformBuffers.Values)
+			{
+				foreach (AutoUniformBuffer buf in buffers)
+				{
+					if (buf.Buffer.Handle != 0)
+						Api!.DestroyBuffer(Device, buf.Buffer, null);
+					if (buf.Memory.Handle != 0)
+						Api!.FreeMemory(Device, buf.Memory, null);
+				}
+			}
+
+			_autoUniformBuffers.Clear();
+		}
+
 		private void DestroyDescriptors()
 		{
 			if (_descriptorSets is not null)
 				_descriptorSets = null;
 
 			DestroyEngineUniformBuffers();
+			DestroyAutoUniformBuffers();
 
 			if (_descriptorPool.Handle != 0)
 			{

@@ -648,7 +648,7 @@ namespace XREngine.Scene.Transforms
             RenderInfo = RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OnTopForward, RenderDebug));
             RenderInfo.Layer = DefaultLayers.GizmosIndex;
             RenderedObjects = GetDebugRenderInfo();
-            DebugRender = Engine.Rendering.Settings.RenderTransformDebugInfo;
+            DebugRender = Engine.EditorPreferences.Debug.RenderTransformDebugInfo;
 
             SetParent(parent, false, EParentAssignmentMode.Immediate);
         }
@@ -1291,21 +1291,22 @@ namespace XREngine.Scene.Transforms
             if (Engine.Rendering.State.IsShadowPass)
                 return;
 
-            var settings = Engine.Rendering.Settings;
+            var debug = Engine.EditorPreferences.Debug;
+            var theme = Engine.EditorPreferences.Theme;
 
-            if (settings.RenderTransformLines)
+            if (debug.RenderTransformLines)
                 Engine.Rendering.Debug.RenderLine(
                     Parent?.RenderTranslation ?? Vector3.Zero,
                     RenderTranslation,
-                    settings.TransformLineColor);
+                    theme.TransformLineColor);
 
-            if (settings.RenderTransformPoints)
+            if (debug.RenderTransformPoints)
                 Engine.Rendering.Debug.RenderPoint(
                     RenderTranslation,
-                    settings.TransformPointColor);
+                    theme.TransformPointColor);
 
-            if (settings.RenderTransformCapsules && Capsule is not null)
-                Engine.Rendering.Debug.RenderCapsule(Capsule.Value, settings.TransformCapsuleColor);
+            if (debug.RenderTransformCapsules && Capsule is not null)
+                Engine.Rendering.Debug.RenderCapsule(Capsule.Value, theme.TransformCapsuleColor);
         }
 
         private Capsule MakeCapsule()

@@ -180,6 +180,7 @@
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />
     <PackageReference Include="System.Text.Json" Version="10.0.1" />
     <PackageReference Include="UltralightNet" Version="1.3.0" />
+    <PackageReference Include="UltralightNet.AppCore" Version="1.3.0" />
     <PackageReference Include="Vecc.YamlDotNet.Analyzers.StaticGenerator" Version="16.3.0" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>

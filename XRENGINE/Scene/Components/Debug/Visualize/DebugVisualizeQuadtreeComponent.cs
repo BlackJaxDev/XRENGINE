@@ -42,8 +42,8 @@ namespace XREngine.Components
                     node.Bounds,
                     false,
                     intersects 
-                        ? Engine.Rendering.Settings.QuadtreeIntersectedBoundsColor
-                        : Engine.Rendering.Settings.QuadtreeContainedBoundsColor);
+                        ? Engine.EditorPreferences.Theme.QuadtreeIntersectedBoundsColor
+                        : Engine.EditorPreferences.Theme.QuadtreeContainedBoundsColor);
         }
     }
 }

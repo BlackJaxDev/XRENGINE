@@ -75,7 +75,7 @@ namespace XREngine.Networking
 
             // Apply engine settings
             Engine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
-            Engine.Rendering.Settings.UseDebugOpaquePipeline = false;
+            Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = false;
 
             _worldDownloader = new WorldDownloadService();
             _instanceManager = new ServerInstanceManager(_worldDownloader);
@@ -486,12 +486,12 @@ namespace XREngine.Networking
                 GPURenderDispatch = UnitTestingWorld.Toggles.GPURenderDispatch,
                 DefaultUserSettings = new UserSettings()
                 {
-                    TargetFramesPerSecond = renderHz,
                     VSync = EVSyncMode.Off,
                     RenderLibrary = UnitTestingWorld.Toggles.RenderAPI,
                     PhysicsLibrary = UnitTestingWorld.Toggles.PhysicsAPI,
                 },
                 TargetUpdatesPerSecond = updateHz,
+                TargetFramesPerSecond = renderHz,
                 FixedFramesPerSecond = fixedHz,
             };
         }

@@ -5,7 +5,7 @@
         {
           "src": "../../",
           "files": [
-            "**/XREngine*.csproj"
+            "XRENGINE.sln"
           ],
           "exclude": [
             "**/bin/**",
@@ -14,9 +14,14 @@
           ]
         }
       ],
-      "dest": "api",
+      "dest": "apiref",
       "filter": "filterConfig.yml",
-      "allowCompilationErrors": true
+      "allowCompilationErrors": true,
+      "properties": {
+        "RunAnalyzersDuringBuild": "true",
+        "EnableNETAnalyzers": "true",
+        "NoWarn": "NU1510"
+      }
     }
   ],
   "build": {
@@ -24,13 +29,27 @@
       {
         "files": [
           "index.md",
+          "guides.md",
           "toc.yml"
         ]
       },
       {
+        "src": "..",
         "files": [
-          "api/**.yml",
-          "api/index.md"
+          "DEPENDENCIES.md",
+          "api/**/*.md",
+          "api/toc.yml",
+          "architecture/**/*.md",
+          "architecture/toc.yml",
+          "features/**/*.md",
+          "features/toc.yml"
+        ]
+      },
+      {
+        "files": [
+          "apiref/**.yml",
+          "apiref/index.md",
+          "apiref/toc.yml"
         ]
       }
     ],
@@ -43,7 +62,7 @@
     ],
     "dest": "_site",
     "globalMetadata": {
-      "_appTitle": "XRENGINE API",
+      "_appTitle": "XRENGINE",
       "_enableSearch": true,
       "_gitContribute": {
         "repo": "https://github.com/BlackJaxDev/XRENGINE",
@@ -59,6 +78,9 @@
     ],
     "styles": [
       "styles/custom.css"
+    ],
+    "scripts": [
+      "styles/custom.js"
     ]
   }
 }

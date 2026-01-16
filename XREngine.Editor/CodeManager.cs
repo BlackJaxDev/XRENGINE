@@ -673,9 +673,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("            return;");
         sb.AppendLine("        }");
         sb.AppendLine();
-        sb.AppendLine($"        var engineSettings = LoadAsset<Engine.Rendering.EngineSettings>(archivePath, \"{escapedEngine}\");");
-        sb.AppendLine("        if (engineSettings is not null)");
-        sb.AppendLine("            Engine.Rendering.Settings = engineSettings;");
+        sb.AppendLine($"        var editorPreferences = LoadAsset<EditorPreferences>(archivePath, \"{escapedEngine}\");");
+        sb.AppendLine("        if (editorPreferences is not null)");
+        sb.AppendLine("            Engine.EditorPreferences = editorPreferences;");
         sb.AppendLine();
         sb.AppendLine($"        var userSettings = LoadAsset<UserSettings>(archivePath, \"{escapedUser}\");");
         sb.AppendLine("        if (userSettings is not null)");

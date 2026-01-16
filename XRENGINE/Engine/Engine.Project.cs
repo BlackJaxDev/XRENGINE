@@ -72,8 +72,9 @@ namespace XREngine
             ConfigureProjectDirectories(project);
             Assets.SyncMetadataWithAssets();
 
-            // Load project-specific engine settings
-            LoadProjectEngineSettings();
+            // Load global editor preferences + project overrides
+            LoadGlobalEditorPreferences();
+            LoadProjectEditorPreferencesOverrides();
 
             // Load project-specific user settings
             LoadProjectUserSettings();
@@ -107,7 +108,8 @@ namespace XREngine
             if (Assets is null)
                 return;
 
-            LoadSandboxEngineSettings();
+            LoadGlobalEditorPreferences();
+            LoadSandboxEditorPreferencesOverrides();
             LoadSandboxUserSettings();
             LoadSandboxBuildSettings();
         }
@@ -121,10 +123,20 @@ namespace XREngine
             return Path.Combine(baseDir, "XREngine", SandboxFolderName, SandboxConfigFolderName);
         }
 
-        private static string? GetSandboxEngineSettingsPath()
+        private static string? GetSandboxEditorPreferencesOverridePath()
         {
             string? configDir = GetSandboxConfigDirectory();
             return configDir is null ? null : Path.Combine(configDir, XRProject.EngineSettingsFileName);
+        }
+
+        private static string? GetGlobalEditorPreferencesPath()
+        {
+            string? baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (string.IsNullOrWhiteSpace(baseDir))
+                return null;
+
+            string configDir = Path.Combine(baseDir, "XREngine", "Global", SandboxConfigFolderName);
+            return Path.Combine(configDir, "editor_preferences_global.asset");
         }
 
         private static string? GetSandboxUserSettingsPath()
@@ -140,69 +152,100 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Loads the engine settings from the current project directory.
+        /// Loads the global editor preferences from the user profile.
         /// </summary>
-        private static void LoadProjectEngineSettings()
+        private static void LoadGlobalEditorPreferences()
+        {
+            if (Assets is null)
+                return;
+
+            string? settingsPath = GetGlobalEditorPreferencesPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            if (File.Exists(settingsPath))
+            {
+                var settings = Assets.Load<EditorPreferences>(settingsPath);
+                if (settings is not null)
+                {
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Global Editor Preferences";
+                    Assets.EnsureTracked(settings);
+                    GlobalEditorPreferences = settings;
+                    Debug.Out("Loaded global editor preferences.");
+                }
+                return;
+            }
+
+            var created = GlobalEditorPreferences ?? new EditorPreferences();
+            created.FilePath = settingsPath;
+            created.Name = "Global Editor Preferences";
+            Assets.EnsureTracked(created);
+            GlobalEditorPreferences = created;
+        }
+
+        /// <summary>
+        /// Loads the editor preference overrides from the current project directory.
+        /// </summary>
+        private static void LoadProjectEditorPreferencesOverrides()
         {
             if (Assets is null)
                 return;
 
             if (CurrentProject?.EngineSettingsPath is null)
             {
-                LoadSandboxEngineSettings();
+                LoadSandboxEditorPreferencesOverrides();
                 return;
             }
 
-            string engineSettingsPath = CurrentProject.EngineSettingsPath;
+            string settingsPath = CurrentProject.EngineSettingsPath;
 
-            if (File.Exists(engineSettingsPath))
+            if (File.Exists(settingsPath))
             {
-                var settings = Assets.Load<EngineSettings>(engineSettingsPath);
+                var settings = Assets.Load<EditorPreferencesOverrides>(settingsPath);
                 if (settings is not null)
                 {
-                    settings.FilePath = engineSettingsPath;
-                    settings.Name = "Engine Settings";
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Editor Preferences Overrides";
                     Assets.EnsureTracked(settings);
-                    Rendering.Settings = settings;
-                    Debug.Out("Loaded project engine settings.");
+                    EditorPreferencesOverrides = settings;
+                    Debug.Out("Loaded project editor preference overrides.");
                 }
                 return;
             }
 
-            // No file yet: ensure the default settings asset is tracked so edits mark it dirty
-            // and Save/Save All + close prompts work like any other asset.
-            var created = Rendering.Settings ?? new EngineSettings();
-            created.FilePath = engineSettingsPath;
-            created.Name = "Engine Settings";
+            var created = EditorPreferencesOverrides ?? new EditorPreferencesOverrides();
+            created.FilePath = settingsPath;
+            created.Name = "Editor Preferences Overrides";
             Assets.EnsureTracked(created);
-            Rendering.Settings = created;
+            EditorPreferencesOverrides = created;
         }
 
-        private static void LoadSandboxEngineSettings()
+        private static void LoadSandboxEditorPreferencesOverrides()
         {
-            string? engineSettingsPath = GetSandboxEngineSettingsPath();
-            if (string.IsNullOrWhiteSpace(engineSettingsPath) || Assets is null)
+            string? settingsPath = GetSandboxEditorPreferencesOverridePath();
+            if (string.IsNullOrWhiteSpace(settingsPath) || Assets is null)
                 return;
 
-            if (File.Exists(engineSettingsPath))
+            if (File.Exists(settingsPath))
             {
-                var settings = Assets.Load<EngineSettings>(engineSettingsPath);
+                var settings = Assets.Load<EditorPreferencesOverrides>(settingsPath);
                 if (settings is not null)
                 {
-                    settings.FilePath = engineSettingsPath;
-                    settings.Name = "Engine Settings";
+                    settings.FilePath = settingsPath;
+                    settings.Name = "Editor Preferences Overrides";
                     Assets.EnsureTracked(settings);
-                    Rendering.Settings = settings;
-                    Debug.Out("Loaded sandbox engine settings.");
+                    EditorPreferencesOverrides = settings;
+                    Debug.Out("Loaded sandbox editor preference overrides.");
                 }
                 return;
             }
 
-            var created = Rendering.Settings ?? new EngineSettings();
-            created.FilePath = engineSettingsPath;
-            created.Name = "Engine Settings";
+            var created = EditorPreferencesOverrides ?? new EditorPreferencesOverrides();
+            created.FilePath = settingsPath;
+            created.Name = "Editor Preferences Overrides";
             Assets.EnsureTracked(created);
-            Rendering.Settings = created;
+            EditorPreferencesOverrides = created;
         }
 
         /// <summary>
@@ -343,20 +386,46 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Saves the engine settings to the current project directory.
+        /// Saves the global editor preferences to the user profile.
         /// </summary>
-        public static void SaveProjectEngineSettings()
+        public static void SaveGlobalEditorPreferences()
+        {
+            if (Assets is null)
+                return;
+
+            var settings = GlobalEditorPreferences;
+            if (settings is null)
+                return;
+
+            string? settingsPath = GetGlobalEditorPreferencesPath();
+            if (string.IsNullOrWhiteSpace(settingsPath))
+                return;
+
+            string? settingsDirectory = Path.GetDirectoryName(settingsPath);
+            if (!string.IsNullOrWhiteSpace(settingsDirectory))
+                Directory.CreateDirectory(settingsDirectory);
+
+            settings.FilePath = settingsPath;
+            settings.Name = "Global Editor Preferences";
+            Assets.Save(settings);
+            Debug.Out("Saved global editor preferences.");
+        }
+
+        /// <summary>
+        /// Saves the editor preference overrides to the current project directory.
+        /// </summary>
+        public static void SaveProjectEditorPreferencesOverrides()
         {
             if (Assets is null)
                 return;
 
             if (CurrentProject?.ProjectDirectory is null)
             {
-                SaveSandboxEngineSettings();
+                SaveSandboxEditorPreferencesOverrides();
                 return;
             }
 
-            var settings = Rendering.Settings;
+            var settings = EditorPreferencesOverrides;
             if (settings is null)
                 return;
 
@@ -369,20 +438,21 @@ namespace XREngine
                 Directory.CreateDirectory(settingsDirectory);
 
             settings.FilePath = settingsPath;
+            settings.Name = "Editor Preferences Overrides";
             Assets.Save(settings);
-            Debug.Out("Saved project engine settings.");
+            Debug.Out("Saved project editor preference overrides.");
         }
 
-        public static void SaveSandboxEngineSettings()
+        public static void SaveSandboxEditorPreferencesOverrides()
         {
             if (Assets is null)
                 return;
 
-            var settings = Rendering.Settings;
+            var settings = EditorPreferencesOverrides;
             if (settings is null)
                 return;
 
-            string? settingsPath = GetSandboxEngineSettingsPath();
+            string? settingsPath = GetSandboxEditorPreferencesOverridePath();
             if (string.IsNullOrWhiteSpace(settingsPath))
                 return;
 
@@ -391,9 +461,9 @@ namespace XREngine
                 Directory.CreateDirectory(settingsDirectory);
 
             settings.FilePath = settingsPath;
-            settings.Name = "Engine Settings";
+            settings.Name = "Editor Preferences Overrides";
             Assets.Save(settings);
-            Debug.Out("Saved sandbox engine settings.");
+            Debug.Out("Saved sandbox editor preference overrides.");
         }
 
         /// <summary>
@@ -483,7 +553,7 @@ namespace XREngine
         /// </summary>
         public static void SaveProjectSettings()
         {
-            SaveProjectEngineSettings();
+            SaveProjectEditorPreferencesOverrides();
             SaveProjectUserSettings();
             SaveProjectBuildSettings();
         }

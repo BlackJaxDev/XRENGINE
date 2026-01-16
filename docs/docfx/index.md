@@ -1,7 +1,24 @@
-# XRENGINE API Reference
+# XRENGINE Documentation
 
-This DocFX site is generated from the C# projects in `XRENGINE.sln` and surfaces XML summaries for every public class, struct, interface, and enum. Use it alongside the hand-written guides in `docs/` to navigate systems and cross-reference types while developing or reviewing changes.
+Welcome to the XRENGINE documentation site. This site contains hand-written guides, architecture documentation, and auto-generated API reference from the C# projects in `XRENGINE.sln`.
 
-- The landing page is kept lightweight; use the left navigation or search to jump directly to namespaces and types.
-- Links to the GitHub repository appear on each page so you can move from documentation to source quickly.
-- The build picks up XML doc comments emitted during compilation; keep summaries up to date to improve the generated reference.
+## Quick Links
+
+### Documentation
+- [API Guides](../api/engine.md) - Engine concepts and usage guides
+- [Architecture](../architecture/README.md) - System design and architecture docs
+- [Features](../features/light-volumes.md) - Feature-specific documentation
+- [Dependencies](../DEPENDENCIES.md) - Third-party dependencies
+
+### Reference
+- [API Reference](apiref/index.md) - Auto-generated API documentation
+- [Guides](guides.md) - Getting started guides
+
+### External
+- [GitHub Repository](https://github.com/BlackJaxDev/XRENGINE)
+
+## Tips
+- Use the left sidebar to browse documentation sections
+- Use the top navigation to switch between docs and API reference
+- Search is indexed across all documentation and API pages
+- Keep XML doc comments up to date for better API reference quality

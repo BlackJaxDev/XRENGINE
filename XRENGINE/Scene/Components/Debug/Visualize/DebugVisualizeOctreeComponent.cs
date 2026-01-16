@@ -77,8 +77,8 @@ namespace XREngine.Components
                     node.Center,
                     false,
                     intersects
-                        ? Engine.Rendering.Settings.OctreeIntersectedBoundsColor
-                        : Engine.Rendering.Settings.OctreeContainedBoundsColor);
+                        ? Engine.EditorPreferences.Theme.OctreeIntersectedBoundsColor
+                        : Engine.EditorPreferences.Theme.OctreeContainedBoundsColor);
         }
     }
 }

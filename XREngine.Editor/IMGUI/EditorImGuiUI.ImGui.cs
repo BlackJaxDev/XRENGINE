@@ -54,7 +54,8 @@ public static partial class EditorImGuiUI
         private static bool _showOpenGLApiObjects;
         private static bool _showOpenGLErrors;
         private static bool _showMissingAssets;
-        private static bool _showEngineSettings;
+        private static bool _showGlobalEditorPreferences;
+        private static bool _showEditorPreferencesOverrides;
         private static bool _showUserSettings;
         private static bool _showBuildSettings;
         private static bool _showStatePanel;
@@ -269,7 +270,7 @@ public static partial class EditorImGuiUI
 
         private static void RenderEditorScenePanelMode()
         {
-            if (Engine.Rendering.Settings.ViewportPresentationMode != Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel)
+            if (Engine.EditorPreferences.ViewportPresentationMode != EditorPreferences.EViewportPresentationMode.UseViewportPanel)
                 return;
 
             if (AbstractRenderer.Current is not { } renderer)
@@ -553,7 +554,8 @@ public static partial class EditorImGuiUI
             DrawOpenGLApiObjectsPanel();
             DrawOpenGLErrorsPanel();
             DrawMissingAssetsPanel();
-            DrawEngineSettingsPanel();
+            DrawGlobalEditorPreferencesPanel();
+            DrawEditorPreferencesOverridesPanel();
             DrawUserSettingsPanel();
             DrawBuildSettingsPanel();
             DrawNetworkingPanel();
@@ -572,7 +574,7 @@ public static partial class EditorImGuiUI
             // Background-mode model spawning on drop.
             // We track the dragged asset path from the Asset Explorer and spawn when the mouse is
             // released over the dockspace region (but not while the Assets window is hovered).
-            if (Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.FullViewportBehindImGuiUI)
+            if (Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.FullViewportBehindImGuiUI)
             {
                 if (!string.IsNullOrWhiteSpace(_assetDragPath) && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
                 {
@@ -614,7 +616,7 @@ public static partial class EditorImGuiUI
 
             bool uiWantsCapture = io.WantCaptureMouse || captureKeyboard;
             bool allowEngineInputThroughScenePanel =
-                Engine.Rendering.Settings.ViewportPresentationMode == Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel &&
+                Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel &&
                 _scenePanelInteracting;
 
             Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughScenePanel && Engine.PlayMode.State != EPlayModeState.EnteringPlay && !Engine.PlayMode.IsPlaying);
@@ -854,8 +856,11 @@ public static partial class EditorImGuiUI
                 }
 
                 ImGui.Separator();
-                if (ImGui.MenuItem("Engine Settings"))
-                    OpenSettingsInInspector(Engine.Rendering.Settings, "Engine Settings");
+                if (ImGui.MenuItem("Global Editor Preferences"))
+                    OpenSettingsInInspector(Engine.GlobalEditorPreferences, "Global Editor Preferences");
+
+                if (ImGui.MenuItem("Editor Preferences Overrides"))
+                    OpenSettingsInInspector(Engine.EditorPreferencesOverrides, "Editor Preferences Overrides");
 
                 if (ImGui.MenuItem("User Settings"))
                     OpenSettingsInInspector(Engine.UserSettings, "User Settings");
@@ -1178,9 +1183,9 @@ public static partial class EditorImGuiUI
                 return;
 
             var colors = ImGui.GetStyle().Colors;
-            var mode = Engine.Rendering.Settings.ViewportPresentationMode;
+            var mode = Engine.EditorPreferences.ViewportPresentationMode;
 
-            if (mode == Engine.Rendering.EngineSettings.EViewportPresentationMode.FullViewportBehindImGuiUI)
+            if (mode == EditorPreferences.EViewportPresentationMode.FullViewportBehindImGuiUI)
             {
                 var windowBg = _imguiBaseWindowBg.Value;
                 windowBg.W = MathF.Min(windowBg.W, 0.70f);

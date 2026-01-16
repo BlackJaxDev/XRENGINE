@@ -17,7 +17,7 @@ public static partial class EditorImGuiUI
 
     private static void DrawScenePanel()
     {
-        if (Engine.Rendering.Settings.ViewportPresentationMode != Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel)
+        if (Engine.EditorPreferences.ViewportPresentationMode != EditorPreferences.EViewportPresentationMode.UseViewportPanel)
         {
             _scenePanelInteracting = false;
             _scenePanelRenderRegion = null;
@@ -101,7 +101,7 @@ public static partial class EditorImGuiUI
             if (!Engine.IsEditor)
                 return null;
 
-            if (Engine.Rendering.Settings.ViewportPresentationMode != Engine.Rendering.EngineSettings.EViewportPresentationMode.UseViewportPanel)
+            if (Engine.EditorPreferences.ViewportPresentationMode != EditorPreferences.EViewportPresentationMode.UseViewportPanel)
                 return null;
 
             if (_scenePanelHookedWindow is not null && !ReferenceEquals(window, _scenePanelHookedWindow))

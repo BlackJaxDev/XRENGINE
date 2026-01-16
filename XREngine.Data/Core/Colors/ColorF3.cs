@@ -1,9 +1,11 @@
 ﻿using Extensions;
+using MemoryPack;
 using System.ComponentModel;
 using System.Drawing;
 using System.Globalization;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Data.Colors
 {
@@ -13,6 +15,8 @@ namespace XREngine.Data.Colors
     {
         public float R, G, B;
 
+        [YamlIgnore]
+        [MemoryPackIgnore]
         [Browsable(false)]
         public string HexCode
         {
@@ -136,6 +140,8 @@ namespace XREngine.Data.Colors
         public void ReadFromString(string str)
             => this = new ColorF3(str);
 
+        [YamlIgnore]
+        [MemoryPackIgnore]
         [Browsable(false)]
         public Color Color 
         {

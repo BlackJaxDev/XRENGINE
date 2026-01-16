@@ -44,7 +44,7 @@ namespace XREngine.VRClient
                 Console.In.ReadLine();
             }
             else
-                Engine.VRState.IninitializeClient(settings.ActionManifest, settings.VRManifest);
+                Engine.VRState.IninitializeClient(settings.ActionManifest, settings.VRManifest).GetAwaiter().GetResult();
 
             // Run the game
             // We don't need to load a game state because this app only sends inputs to the game and receives renders
@@ -110,8 +110,8 @@ namespace XREngine.VRClient
             string wmiQueryString = $"SELECT ProcessId, ExecutablePath FROM Win32_Process WHERE ProcessId = {processId}";
             using var searcher = new ManagementObjectSearcher(wmiQueryString);
             using var results = searcher.Get();
-            ManagementObject mo = results.Cast<ManagementObject>().FirstOrDefault();
-            return mo != null ? (string)mo["ExecutablePath"] : null;
+            ManagementObject? mo = results.Cast<ManagementObject>().FirstOrDefault();
+            return mo is not null ? (string?)mo["ExecutablePath"] : null;
         }
 
         private static VRGameStartupSettings<TActionCategory, TGameAction> GenerateGameSettings<TActionCategory, TGameAction>()
@@ -157,10 +157,10 @@ namespace XREngine.VRClient
                 UseIntegerWeightingIdsOverride = new XREngine.Data.Core.OverrideableSetting<bool>(true, true),
                 DefaultUserSettings = new UserSettings()
                 {
-                    TargetFramesPerSecond = render,
                     VSync = EVSyncMode.Off,
                 },
                 TargetUpdatesPerSecond = update,
+                TargetFramesPerSecond = render,
                 ActionManifest = new ActionManifest<TActionCategory, TGameAction>()
                 {
                     Actions = GetActions<TActionCategory, TGameAction>(),

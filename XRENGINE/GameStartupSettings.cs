@@ -25,6 +25,8 @@ namespace XREngine
         private string _texturesFolder = "";
         private float? _targetUpdatesPerSecond = 90.0f;
         private float _fixedFramesPerSecond = 90.0f;
+        private float? _targetFramesPerSecond = 90.0f;
+        private float? _unfocusedTargetFramesPerSecond = null;
         private bool _runVRInPlace = true;
         private bool _gpuRenderDispatch = false;
 
@@ -181,6 +183,22 @@ namespace XREngine
         {
             get => _targetUpdatesPerSecond;
             set => SetField(ref _targetUpdatesPerSecond, value);
+        }
+
+        [Category("Time")]
+        [Description("Target render frames per second. Null disables the cap (engine default applies).")]
+        public float? TargetFramesPerSecond
+        {
+            get => _targetFramesPerSecond;
+            set => SetField(ref _targetFramesPerSecond, value);
+        }
+
+        [Category("Time")]
+        [Description("Optional target FPS while unfocused. Null inherits TargetFramesPerSecond.")]
+        public float? UnfocusedTargetFramesPerSecond
+        {
+            get => _unfocusedTargetFramesPerSecond;
+            set => SetField(ref _unfocusedTargetFramesPerSecond, value);
         }
 
         [Category("Time")]

@@ -92,9 +92,9 @@ public static partial class EditorImGuiUI
             ImGui.Separator();
             if (ImGui.CollapsingHeader("Thread Allocations", ImGuiTreeNodeFlags.DefaultOpen))
             {
-                bool enabled = Engine.Rendering.Settings.EnableThreadAllocationTracking;
+                bool enabled = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
                 if (ImGui.Checkbox("Enable thread allocation tracking", ref enabled))
-                    Engine.Rendering.Settings.EnableThreadAllocationTracking = enabled;
+                    Engine.EditorPreferences.Debug.EnableThreadAllocationTracking = enabled;
 
                 ImGui.TextDisabled("Uses GC.GetAllocatedBytesForCurrentThread() deltas per tick/frame.");
 

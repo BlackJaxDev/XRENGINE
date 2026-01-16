@@ -1,11 +1,16 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Numerics;
 using Silk.NET.Core.Native;
 using Silk.NET.Shaderc;
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
 
@@ -19,16 +24,747 @@ public readonly record struct DescriptorBindingInfo(
     uint Count,
     string Name);
 
+public readonly record struct AutoUniformMember(
+    string Name,
+    string GlslType,
+    EShaderVarType? EngineType,
+    bool IsArray,
+    uint ArrayLength,
+    uint ArrayStride,
+    uint Offset,
+    uint Size,
+    AutoUniformDefaultValue? DefaultValue,
+    IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues);
+
+public readonly record struct AutoUniformDefaultValue(
+    EShaderVarType Type,
+    object Value);
+
+public sealed record AutoUniformBlockInfo(
+    string BlockName,
+    string InstanceName,
+    uint Set,
+    uint Binding,
+    uint Size,
+    IReadOnlyList<AutoUniformMember> Members,
+    EShaderType ShaderType);
+
+internal readonly record struct AutoUniformRewriteResult(
+    string Source,
+    AutoUniformBlockInfo? BlockInfo);
+
+internal static class VulkanShaderAutoUniforms
+{
+    private static readonly Regex UniformStatementRegex = new(
+        @"\buniform\b\s+(?<statement>[^;]+);",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex ArrayRegex = new(@"\[(?<size>\d+)\]", RegexOptions.Compiled);
+
+    private static readonly Regex LayoutQualifierRegex = new(
+        @"layout\s*\((?<qualifiers>[^)]*)\)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly HashSet<string> OpaqueTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "sampler1D",
+        "sampler2D",
+        "sampler3D",
+        "samplerCube",
+        "sampler2DArray",
+        "samplerCubeArray",
+        "sampler1DShadow",
+        "sampler2DShadow",
+        "samplerCubeShadow",
+        "sampler2DArrayShadow",
+        "samplerCubeArrayShadow",
+        "samplerBuffer",
+        "image1D",
+        "image2D",
+        "image3D",
+        "imageCube",
+        "image2DArray",
+        "imageCubeArray",
+        "imageBuffer",
+        "iimage1D",
+        "iimage2D",
+        "iimage3D",
+        "iimageCube",
+        "iimage2DArray",
+        "iimageCubeArray",
+        "iimageBuffer",
+        "uimage1D",
+        "uimage2D",
+        "uimage3D",
+        "uimageCube",
+        "uimage2DArray",
+        "uimageCubeArray",
+        "uimageBuffer",
+        "subpassInput",
+        "subpassInputMS",
+        "atomic_uint"
+    };
+
+    private static readonly Dictionary<string, EShaderVarType> GlslTypeMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["bool"] = EShaderVarType._bool,
+        ["bvec2"] = EShaderVarType._bvec2,
+        ["bvec3"] = EShaderVarType._bvec3,
+        ["bvec4"] = EShaderVarType._bvec4,
+        ["int"] = EShaderVarType._int,
+        ["ivec2"] = EShaderVarType._ivec2,
+        ["ivec3"] = EShaderVarType._ivec3,
+        ["ivec4"] = EShaderVarType._ivec4,
+        ["uint"] = EShaderVarType._uint,
+        ["uvec2"] = EShaderVarType._uvec2,
+        ["uvec3"] = EShaderVarType._uvec3,
+        ["uvec4"] = EShaderVarType._uvec4,
+        ["float"] = EShaderVarType._float,
+        ["vec2"] = EShaderVarType._vec2,
+        ["vec3"] = EShaderVarType._vec3,
+        ["vec4"] = EShaderVarType._vec4,
+        ["double"] = EShaderVarType._double,
+        ["dvec2"] = EShaderVarType._dvec2,
+        ["dvec3"] = EShaderVarType._dvec3,
+        ["dvec4"] = EShaderVarType._dvec4,
+        ["mat3"] = EShaderVarType._mat3,
+        ["mat4"] = EShaderVarType._mat4
+    };
+
+    public static AutoUniformRewriteResult Rewrite(string source, EShaderType shaderType)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            return new AutoUniformRewriteResult(source, null);
+
+        List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues)> members = new();
+        StringBuilder output = new(source.Length + 256);
+
+        int lastIndex = 0;
+        foreach (Match match in UniformStatementRegex.Matches(source))
+        {
+            if (!match.Success)
+                continue;
+
+            string statement = match.Groups["statement"].Value;
+            if (statement.IndexOf('{') >= 0)
+                continue; // uniform block
+
+            if (!TryExtractTypeAndDeclarators(statement, out string glslType, out string declarators))
+                continue;
+
+            if (IsOpaque(glslType))
+                continue;
+
+            foreach (string declarator in SplitDeclarators(declarators))
+            {
+                if (!TryParseDeclarator(declarator, out string name, out bool isArray, out uint arrayLength, out string? defaultExpression))
+                    continue;
+
+                AutoUniformDefaultValue? defaultValue = null;
+                IReadOnlyList<AutoUniformDefaultValue>? defaultArrayValues = null;
+                if (!string.IsNullOrWhiteSpace(defaultExpression))
+                {
+                    if (isArray && TryParseDefaultArray(glslType, defaultExpression!, arrayLength, out var parsedArray))
+                        defaultArrayValues = parsedArray;
+                    else if (TryParseDefaultValue(glslType, defaultExpression!, out var parsed))
+                        defaultValue = parsed;
+                }
+
+                members.Add((glslType, name, isArray, arrayLength, defaultValue, defaultArrayValues));
+            }
+
+            output.Append(source, lastIndex, match.Index - lastIndex);
+            lastIndex = match.Index + match.Length;
+        }
+
+        output.Append(source, lastIndex, source.Length - lastIndex);
+        string rewritten = output.ToString();
+
+        if (members.Count == 0)
+            return new AutoUniformRewriteResult(rewritten, null);
+
+        string blockName = GetAutoUniformBlockName(shaderType);
+        string instanceName = blockName;
+
+        if (!TryComputeBlockLayout(members, out var layoutMembers, out uint blockSize))
+            return new AutoUniformRewriteResult(rewritten, null);
+
+        uint binding = FindNextBinding(rewritten);
+        uint set = 0;
+
+        foreach (var member in layoutMembers)
+        {
+            rewritten = Regex.Replace(
+                rewritten,
+                $@"\b{Regex.Escape(member.Name)}\b",
+                $"{instanceName}.{member.Name}");
+        }
+
+        string block = BuildUniformBlock(blockName, instanceName, set, binding, layoutMembers);
+        rewritten = InsertAfterVersion(rewritten, block);
+
+        AutoUniformBlockInfo blockInfo = new(
+            blockName,
+            instanceName,
+            set,
+            binding,
+            blockSize,
+            layoutMembers,
+            shaderType);
+
+        return new AutoUniformRewriteResult(rewritten, blockInfo);
+    }
+
+    private static string BuildUniformBlock(string blockName, string instanceName, uint set, uint binding, IReadOnlyList<AutoUniformMember> members)
+    {
+        StringBuilder builder = new();
+        builder.AppendLine($"layout(set = {set}, binding = {binding}, std140) uniform {blockName}");
+        builder.AppendLine("{");
+        foreach (var member in members)
+        {
+            if (member.IsArray && member.ArrayLength > 0)
+                builder.AppendLine($"    {member.GlslType} {member.Name}[{member.ArrayLength}];");
+            else
+                builder.AppendLine($"    {member.GlslType} {member.Name};");
+        }
+        builder.AppendLine($"}} {instanceName};");
+        return builder.ToString();
+    }
+
+    private static string InsertAfterVersion(string source, string block)
+    {
+        using StringReader reader = new(source);
+        StringBuilder builder = new(source.Length + block.Length + 16);
+        bool inserted = false;
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            builder.AppendLine(line);
+            if (!inserted && line.TrimStart().StartsWith("#version", StringComparison.OrdinalIgnoreCase))
+            {
+                builder.AppendLine(block);
+                inserted = true;
+            }
+        }
+
+        if (!inserted)
+        {
+            return block + Environment.NewLine + source;
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool TryExtractTypeAndDeclarators(string statement, out string glslType, out string declarators)
+    {
+        glslType = string.Empty;
+        declarators = string.Empty;
+
+        string trimmed = statement.Trim();
+        if (trimmed.Length == 0)
+            return false;
+
+        string withoutLayout = LayoutQualifierRegex.Replace(trimmed, string.Empty).Trim();
+        string[] tokens = withoutLayout.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length < 2)
+            return false;
+
+        glslType = tokens[0];
+        declarators = withoutLayout[glslType.Length..].Trim();
+        return true;
+    }
+
+    private static IEnumerable<string> SplitDeclarators(string declarators)
+    {
+        if (string.IsNullOrWhiteSpace(declarators))
+            yield break;
+
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < declarators.Length; i++)
+        {
+            char c = declarators[i];
+            if (c == '[')
+                depth++;
+            else if (c == ']')
+                depth = Math.Max(0, depth - 1);
+            else if (c == ',' && depth == 0)
+            {
+                if (i > start)
+                    yield return declarators[start..i];
+                start = i + 1;
+            }
+        }
+
+        if (start < declarators.Length)
+            yield return declarators[start..];
+    }
+
+    private static bool TryParseDeclarator(string declarator, out string name, out bool isArray, out uint arrayLength, out string? defaultExpression)
+    {
+        name = string.Empty;
+        isArray = false;
+        arrayLength = 0;
+        defaultExpression = null;
+
+        if (string.IsNullOrWhiteSpace(declarator))
+            return false;
+
+        string trimmed = declarator.Trim();
+        int equals = trimmed.IndexOf('=');
+        if (equals >= 0)
+        {
+            defaultExpression = trimmed[(equals + 1)..].Trim();
+            trimmed = trimmed[..equals].Trim();
+        }
+
+        Match arrayMatch = ArrayRegex.Match(trimmed);
+        if (arrayMatch.Success && uint.TryParse(arrayMatch.Groups["size"].Value, out uint size))
+        {
+            isArray = true;
+            arrayLength = size;
+            trimmed = ArrayRegex.Replace(trimmed, string.Empty);
+        }
+
+        string[] tokens = trimmed.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0)
+            return false;
+
+        name = tokens[^1];
+        return !string.IsNullOrWhiteSpace(name);
+    }
+
+    private static bool IsOpaque(string glslType)
+    {
+        if (OpaqueTypes.Contains(glslType))
+            return true;
+
+        return glslType.StartsWith("sampler", StringComparison.OrdinalIgnoreCase)
+            || glslType.StartsWith("image", StringComparison.OrdinalIgnoreCase)
+            || glslType.StartsWith("subpass", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static uint FindNextBinding(string source)
+    {
+        uint max = 0;
+        foreach (Match match in LayoutQualifierRegex.Matches(source))
+        {
+            if (!match.Success)
+                continue;
+
+            string qualifiers = match.Groups["qualifiers"].Value;
+            if (!TryParseQualifier(qualifiers, "binding", out uint value))
+                continue;
+
+            if (value >= max)
+                max = value + 1;
+        }
+
+        return max;
+    }
+
+    private static bool TryParseQualifier(string qualifiers, string key, out uint value)
+    {
+        value = 0;
+        if (string.IsNullOrWhiteSpace(qualifiers))
+            return false;
+
+        string[] parts = qualifiers.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (string part in parts)
+        {
+            int equals = part.IndexOf('=');
+            if (equals < 0)
+                continue;
+
+            string qualifierKey = part[..equals].Trim();
+            if (!qualifierKey.Equals(key, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            string rawValue = part[(equals + 1)..].Trim();
+            if (uint.TryParse(rawValue, out value))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string GetAutoUniformBlockName(EShaderType type)
+        => $"XREngine_AutoUniforms_{type}";
+
+    private static bool TryComputeBlockLayout(
+        List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues)> members,
+        out List<AutoUniformMember> layoutMembers,
+        out uint blockSize)
+    {
+        layoutMembers = new List<AutoUniformMember>(members.Count);
+        blockSize = 0;
+        uint offset = 0;
+
+        foreach (var member in members)
+        {
+            if (!TryGetStd140Info(member.GlslType, member.IsArray, member.ArrayLength, out uint alignment, out uint size, out uint arrayStride, out EShaderVarType? engineType))
+                return false;
+
+            offset = Align(offset, alignment);
+            layoutMembers.Add(new AutoUniformMember(member.Name, member.GlslType, engineType, member.IsArray, member.ArrayLength, arrayStride, offset, size, member.DefaultValue, member.DefaultArrayValues));
+            offset += size;
+        }
+
+        blockSize = Align(offset, 16);
+        return true;
+    }
+
+    private static uint Align(uint value, uint alignment)
+        => alignment == 0 ? value : (uint)((value + alignment - 1) / alignment * alignment);
+
+    private static bool TryGetStd140Info(string glslType, bool isArray, uint arrayLength, out uint alignment, out uint size, out uint arrayStride, out EShaderVarType? engineType)
+    {
+        alignment = 0;
+        size = 0;
+        arrayStride = 0;
+        engineType = GlslTypeMap.TryGetValue(glslType, out var mapped) ? mapped : null;
+
+        if (!TryGetStd140Base(glslType, out uint baseAlignment, out uint baseSize))
+            return false;
+
+        if (!isArray)
+        {
+            alignment = baseAlignment;
+            size = baseSize;
+            return true;
+        }
+
+        if (arrayLength == 0)
+            return false;
+
+        uint stride = Math.Max(baseAlignment, 16u);
+        alignment = stride;
+        arrayStride = stride;
+        size = stride * arrayLength;
+        return true;
+    }
+
+    private static bool TryParseDefaultValue(string glslType, string expression, out AutoUniformDefaultValue value)
+    {
+        value = default;
+        string trimmed = expression.Trim().TrimEnd(';');
+
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return false;
+
+        string lowerType = glslType.ToLowerInvariant();
+        switch (lowerType)
+        {
+            case "float":
+                if (TryParseFloat(trimmed, out float f))
+                {
+                    value = new AutoUniformDefaultValue(EShaderVarType._float, f);
+                    return true;
+                }
+                return false;
+            case "int":
+                if (int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out int i))
+                {
+                    value = new AutoUniformDefaultValue(EShaderVarType._int, i);
+                    return true;
+                }
+                return false;
+            case "uint":
+                if (uint.TryParse(trimmed.TrimEnd('u', 'U'), NumberStyles.Integer, CultureInfo.InvariantCulture, out uint u))
+                {
+                    value = new AutoUniformDefaultValue(EShaderVarType._uint, u);
+                    return true;
+                }
+                return false;
+            case "bool":
+                if (bool.TryParse(trimmed, out bool b))
+                {
+                    value = new AutoUniformDefaultValue(EShaderVarType._bool, b ? 1 : 0);
+                    return true;
+                }
+                if (int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out int bi))
+                {
+                    value = new AutoUniformDefaultValue(EShaderVarType._bool, bi != 0 ? 1 : 0);
+                    return true;
+                }
+                return false;
+            case "vec2":
+                if (TryParseVector(trimmed, "vec2", 2, out float[] v2))
+                {
+                    value = new AutoUniformDefaultValue(EShaderVarType._vec2, new Vector2(v2[0], v2[1]));
+                    return true;
+                }
+                return false;
+            case "vec3":
+                if (TryParseVector(trimmed, "vec3", 3, out float[] v3))
+                {
+                    value = new AutoUniformDefaultValue(EShaderVarType._vec3, new Vector3(v3[0], v3[1], v3[2]));
+                    return true;
+                }
+                return false;
+            case "vec4":
+                if (TryParseVector(trimmed, "vec4", 4, out float[] v4))
+                {
+                    value = new AutoUniformDefaultValue(EShaderVarType._vec4, new Vector4(v4[0], v4[1], v4[2], v4[3]));
+                    return true;
+                }
+                return false;
+            case "mat4":
+                if (TryParseMatrix(trimmed, "mat4", 4, out Matrix4x4 m4))
+                {
+                    value = new AutoUniformDefaultValue(EShaderVarType._mat4, m4);
+                    return true;
+                }
+                return false;
+        }
+
+        return false;
+    }
+
+    private static bool TryParseDefaultArray(string glslType, string expression, uint arrayLength, out IReadOnlyList<AutoUniformDefaultValue> values)
+    {
+        values = Array.Empty<AutoUniformDefaultValue>();
+        if (arrayLength == 0)
+            return false;
+
+        string trimmed = expression.Trim().TrimEnd(';');
+        if (trimmed.Length == 0)
+            return false;
+
+        string inner;
+        if (trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            int end = trimmed.LastIndexOf('}');
+            if (end <= 0)
+                return false;
+            inner = trimmed[1..end];
+        }
+        else
+        {
+            string ctor = glslType + "[]";
+            if (!trimmed.StartsWith(ctor, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            int start = trimmed.IndexOf('(');
+            int end = trimmed.LastIndexOf(')');
+            if (start < 0 || end <= start)
+                return false;
+            inner = trimmed[(start + 1)..end];
+        }
+
+        List<AutoUniformDefaultValue> parsed = new();
+        foreach (string item in SplitArrayElements(inner))
+        {
+            if (TryParseDefaultValue(glslType, item, out var value))
+                parsed.Add(value);
+        }
+
+        if (parsed.Count == 1 && arrayLength > 1)
+        {
+            AutoUniformDefaultValue single = parsed[0];
+            parsed.Clear();
+            for (int i = 0; i < arrayLength; i++)
+                parsed.Add(single);
+        }
+
+        values = parsed;
+        return parsed.Count > 0;
+    }
+
+    private static IEnumerable<string> SplitArrayElements(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            yield break;
+
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < source.Length; i++)
+        {
+            char c = source[i];
+            if (c == '(' || c == '{')
+                depth++;
+            else if (c == ')' || c == '}')
+                depth = Math.Max(0, depth - 1);
+            else if (c == ',' && depth == 0)
+            {
+                if (i > start)
+                    yield return source[start..i].Trim();
+                start = i + 1;
+            }
+        }
+
+        if (start < source.Length)
+            yield return source[start..].Trim();
+    }
+
+    private static bool TryParseFloat(string raw, out float value)
+    {
+        string sanitized = raw.Trim();
+        if (sanitized.EndsWith('f') || sanitized.EndsWith('F'))
+            sanitized = sanitized[..^1];
+
+        return float.TryParse(sanitized, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+    }
+
+    private static bool TryParseVector(string expression, string constructor, int length, out float[] values)
+    {
+        values = Array.Empty<float>();
+        if (!expression.StartsWith(constructor, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        int start = expression.IndexOf('(');
+        int end = expression.LastIndexOf(')');
+        if (start < 0 || end <= start)
+            return false;
+
+        string inner = expression[(start + 1)..end];
+        string[] parts = inner.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+            return false;
+
+        float[] parsed = new float[length];
+        if (parts.Length == 1 && TryParseFloat(parts[0], out float scalar))
+        {
+            for (int i = 0; i < length; i++)
+                parsed[i] = scalar;
+            values = parsed;
+            return true;
+        }
+
+        for (int i = 0; i < length; i++)
+        {
+            if (i < parts.Length && TryParseFloat(parts[i], out float component))
+                parsed[i] = component;
+            else
+                parsed[i] = 0f;
+        }
+
+        values = parsed;
+        return true;
+    }
+
+    private static bool TryParseMatrix(string expression, string constructor, int dimension, out Matrix4x4 value)
+    {
+        value = Matrix4x4.Identity;
+        if (!expression.StartsWith(constructor, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        int start = expression.IndexOf('(');
+        int end = expression.LastIndexOf(')');
+        if (start < 0 || end <= start)
+            return false;
+
+        string inner = expression[(start + 1)..end];
+        string[] parts = inner.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+            return false;
+
+        if (parts.Length == 1 && TryParseFloat(parts[0], out float scalar))
+        {
+            value = new Matrix4x4(
+                scalar, 0, 0, 0,
+                0, scalar, 0, 0,
+                0, 0, scalar, 0,
+                0, 0, 0, scalar);
+            return true;
+        }
+
+        if (parts.Length < dimension * dimension)
+            return false;
+
+        float[] vals = new float[dimension * dimension];
+        for (int i = 0; i < vals.Length; i++)
+        {
+            if (!TryParseFloat(parts[i], out float component))
+                return false;
+            vals[i] = component;
+        }
+
+        value = new Matrix4x4(
+            vals[0], vals[1], vals[2], vals[3],
+            vals[4], vals[5], vals[6], vals[7],
+            vals[8], vals[9], vals[10], vals[11],
+            vals[12], vals[13], vals[14], vals[15]);
+        return true;
+    }
+
+    private static bool TryGetStd140Base(string glslType, out uint alignment, out uint size)
+    {
+        alignment = 0;
+        size = 0;
+
+        switch (glslType.ToLowerInvariant())
+        {
+            case "bool":
+            case "int":
+            case "uint":
+            case "float":
+                alignment = 4;
+                size = 4;
+                return true;
+            case "double":
+                alignment = 8;
+                size = 8;
+                return true;
+            case "vec2":
+            case "ivec2":
+            case "uvec2":
+            case "bvec2":
+                alignment = 8;
+                size = 8;
+                return true;
+            case "dvec2":
+                alignment = 16;
+                size = 16;
+                return true;
+            case "vec3":
+            case "vec4":
+            case "ivec3":
+            case "ivec4":
+            case "uvec3":
+            case "uvec4":
+            case "bvec3":
+            case "bvec4":
+                alignment = 16;
+                size = 16;
+                return true;
+            case "dvec3":
+            case "dvec4":
+                alignment = 32;
+                size = 32;
+                return true;
+            case "mat3":
+                alignment = 16;
+                size = 48;
+                return true;
+            case "mat4":
+                alignment = 16;
+                size = 64;
+                return true;
+            default:
+                return false;
+        }
+    }
+}
+
 internal static class VulkanShaderCompiler
 {
     private static readonly Shaderc ShadercApi = Shaderc.GetApi();
 
-    public static unsafe byte[] Compile(XRShader shader, out string entryPoint)
+    public static unsafe byte[] Compile(
+        XRShader shader,
+        out string entryPoint,
+        out AutoUniformBlockInfo? autoUniformBlock,
+        out string? rewrittenSource)
     {
         entryPoint = "main";
         string source = shader.Source?.Text ?? string.Empty;
         if (string.IsNullOrWhiteSpace(source))
             throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' does not contain GLSL source code.");
+
+        AutoUniformRewriteResult rewrite = VulkanShaderAutoUniforms.Rewrite(source, shader.Type);
+        rewrittenSource = rewrite.Source;
+        autoUniformBlock = rewrite.BlockInfo;
 
         Compiler* compiler = ShadercApi.CompilerInitialize();
         if (compiler is null)
@@ -44,7 +780,7 @@ internal static class VulkanShaderCompiler
         ShadercApi.CompileOptionsSetSourceLanguage(options, SourceLanguage.Glsl);
         ShadercApi.CompileOptionsSetOptimizationLevel(options, OptimizationLevel.Performance);
 
-        byte[] sourceBytes = Encoding.UTF8.GetBytes(source);
+        byte[] sourceBytes = Encoding.UTF8.GetBytes(rewrittenSource);
         byte[] nameBytes = GetNullTerminatedUtf8(shader.Name ?? $"Shader_{shader.GetHashCode():X8}");
         byte[] entryPointBytes = GetNullTerminatedUtf8(entryPoint);
 
