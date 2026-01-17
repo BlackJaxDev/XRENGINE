@@ -17,6 +17,8 @@ namespace XREngine
         private EditorDebugOverrides _debug = new();
         private OverrideableSetting<EditorPreferences.EViewportPresentationMode> _viewportPresentationModeOverride = new();
         private OverrideableSetting<int> _scenePanelResizeDebounceMsOverride = new();
+        private OverrideableSetting<bool> _mcpServerEnabledOverride = new();
+        private OverrideableSetting<int> _mcpServerPortOverride = new();
 
         [Category("Theme Overrides")]
         [Description("Overrides for editor theme and colors.")]
@@ -48,6 +50,22 @@ namespace XREngine
         {
             get => _scenePanelResizeDebounceMsOverride;
             set => SetField(ref _scenePanelResizeDebounceMsOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for MCP server enabled state.")]
+        public OverrideableSetting<bool> McpServerEnabledOverride
+        {
+            get => _mcpServerEnabledOverride;
+            set => SetField(ref _mcpServerEnabledOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for MCP server port.")]
+        public OverrideableSetting<int> McpServerPortOverride
+        {
+            get => _mcpServerPortOverride;
+            set => SetField(ref _mcpServerPortOverride, value ?? new());
         }
     }
 

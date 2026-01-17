@@ -15,15 +15,36 @@ namespace XREngine.Editor.Mcp
 {
     public sealed partial class EditorMcpActions
     {
-        [XRMCP]
-        [DisplayName("capture_viewport_screenshot")]
+        /// <summary>
+        /// Captures a screenshot from a viewport or camera and saves it to disk.
+        /// Useful for providing visual context to AI assistants or for debugging.
+        /// </summary>
+        /// <param name="context">The MCP tool execution context.</param>
+        /// <param name="cameraNodeId">Optional: target a specific camera by its scene node GUID.</param>
+        /// <param name="windowIndex">Window index to capture from (default: 0).</param>
+        /// <param name="viewportIndex">Viewport index within the window (default: 0).</param>
+        /// <param name="outputDir">Output directory for the screenshot. Defaults to "McpCaptures" in the working directory.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>
+        /// A response containing:
+        /// <list type="bullet">
+        /// <item><description><c>path</c> - The absolute file path where the screenshot was saved</description></item>
+        /// </list>
+        /// </returns>
+        /// <remarks>
+        /// The screenshot is saved as a PNG file with a timestamp-based filename.
+        /// If a camera node ID is provided, the viewport associated with that camera is used.
+        /// Otherwise, the viewport is selected by window and viewport index.
+        /// </remarks>
+        [XRMcp]
+        [McpName("capture_viewport_screenshot")]
         [Description("Capture a screenshot from a viewport or camera for LLM context.")]
         public static async Task<McpToolResponse> CaptureViewportScreenshotAsync(
             McpToolContext context,
-            [DisplayName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
-            [DisplayName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
-            [DisplayName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
-            [DisplayName("output_dir"), Description("Optional directory to write the screenshot into.")] string? outputDir = null,
+            [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
+            [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
+            [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
+            [McpName("output_dir"), Description("Optional directory to write the screenshot into.")] string? outputDir = null,
             CancellationToken token = default)
         {
             var viewport = ResolveViewport(context.WorldInstance, cameraNodeId, windowIndex, viewportIndex);

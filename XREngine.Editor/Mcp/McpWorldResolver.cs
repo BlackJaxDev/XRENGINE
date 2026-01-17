@@ -1,5 +1,4 @@
 using XREngine.Rendering;
-using static XREngine.Engine;
 
 namespace XREngine.Editor.Mcp
 {
@@ -7,7 +6,7 @@ namespace XREngine.Editor.Mcp
     {
         public static XRWorldInstance? TryGetActiveWorldInstance()
         {
-            foreach (var window in Windows)
+            foreach (var window in Engine.Windows)
             {
                 var instance = window?.TargetWorldInstance;
                 if (instance is not null)

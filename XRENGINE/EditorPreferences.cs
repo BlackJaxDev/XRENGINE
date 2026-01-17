@@ -23,6 +23,8 @@ namespace XREngine
         private int _scenePanelResizeDebounceMs = 0;
         private EditorThemeSettings _theme = new();
         private EditorDebugOptions _debug = new();
+        private bool _mcpServerEnabled = false;
+        private int _mcpServerPort = 5467;
 
         [Category("Theme")]
         [Description("Theme and color customization for editor visuals.")]
@@ -62,6 +64,29 @@ namespace XREngine
             set => SetField(ref _scenePanelResizeDebounceMs, Math.Max(0, value));
         }
 
+        /// <summary>
+        /// Whether the MCP (Model Context Protocol) server is enabled.
+        /// When enabled, AI assistants and external tools can interact with the editor via HTTP.
+        /// </summary>
+        [Category("MCP Server")]
+        [Description("Enable the MCP server to allow AI assistants and external tools to interact with the editor.")]
+        public bool McpServerEnabled
+        {
+            get => _mcpServerEnabled;
+            set => SetField(ref _mcpServerEnabled, value);
+        }
+
+        /// <summary>
+        /// The port number for the MCP server.
+        /// </summary>
+        [Category("MCP Server")]
+        [Description("The port number for the MCP server (default: 5467).")]
+        public int McpServerPort
+        {
+            get => _mcpServerPort;
+            set => SetField(ref _mcpServerPort, Math.Max(1, Math.Min(65535, value)));
+        }
+
         public void CopyFrom(EditorPreferences source)
         {
             if (source is null)
@@ -71,6 +96,8 @@ namespace XREngine
             Debug.CopyFrom(source.Debug);
             ViewportPresentationMode = source.ViewportPresentationMode;
             ScenePanelResizeDebounceMs = source.ScenePanelResizeDebounceMs;
+            McpServerEnabled = source.McpServerEnabled;
+            McpServerPort = source.McpServerPort;
         }
 
         public void ApplyOverrides(EditorPreferencesOverrides overrides)
@@ -86,6 +113,12 @@ namespace XREngine
 
             if (overrides.ScenePanelResizeDebounceMsOverride is { HasOverride: true } debounceOverride)
                 ScenePanelResizeDebounceMs = Math.Max(0, debounceOverride.Value);
+
+            if (overrides.McpServerEnabledOverride is { HasOverride: true } mcpEnabledOverride)
+                McpServerEnabled = mcpEnabledOverride.Value;
+
+            if (overrides.McpServerPortOverride is { HasOverride: true } mcpPortOverride)
+                McpServerPort = Math.Max(1, Math.Min(65535, mcpPortOverride.Value));
         }
     }
 

@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using XREngine.Components;
 using XREngine.Scene;
@@ -8,6 +9,13 @@ namespace XREngine.Rendering
     {
         public class RootNodeCollection : IReadOnlyList<SceneNode>
         {
+            private readonly XRWorldInstance _world;
+
+            public RootNodeCollection(XRWorldInstance world)
+            {
+                _world = world ?? throw new ArgumentNullException(nameof(world));
+            }
+
             public Action<XRComponent>? ComponentCacheAction { get; set; }
             public Action<XRComponent>? ComponentUncacheAction { get; set; }
             public Action<SceneNode>? NodeCacheAction { get; set; }
@@ -33,12 +41,17 @@ namespace XREngine.Rendering
 
                 _rootNodes.Remove(node);
                 UncacheComponents(node);
+
+                if (node.Transform?.Parent is null && ReferenceEquals(node.World, _world))
+                    node.World = null;
             }
 
             public void Add(SceneNode node)
             {
                 if (node is null)
                     return;
+
+                node.World = _world;
 
                 _rootNodes.Add(node);
                 CacheComponents(node);
