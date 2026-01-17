@@ -56,7 +56,7 @@ namespace XREngine.Rendering
         protected AbstractPhysicsScene _physicsScene;
         public AbstractPhysicsScene PhysicsScene => _physicsScene;
 
-        protected RootNodeCollection _rootNodes = [];
+        protected RootNodeCollection _rootNodes;
         public RootNodeCollection RootNodes => _rootNodes;
         public Lights3DCollection Lights { get; }
 
@@ -279,6 +279,7 @@ namespace XREngine.Rendering
         {
             _visualScene = visualScene;
             _physicsScene = physicsScene;
+            _rootNodes = new RootNodeCollection(this);
             Lights = new Lights3DCollection(this);
 
             TickLists = [];

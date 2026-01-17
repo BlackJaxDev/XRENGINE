@@ -1,2 +1,23 @@
-- name: Light Volumes
-  href: light-volumes.md
+- name: Global Illumination
+  href: gi/global-illumination.md
+  items:
+    - name: Light Probes
+      href: gi/light-probes.md
+    - name: Light Volumes
+      href: gi/light-volumes.md
+    - name: Radiance Cascades
+      href: gi/radiance-cascades.md
+    - name: Surfel GI
+      href: gi/surfel-gi.md
+    - name: ReSTIR GI
+      href: gi/restir-gi.md
+    - name: Voxel Cone Tracing
+      href: gi/voxel-cone-tracing.md
+    - name: Ambient Occlusion
+      href: gi/ambient-occlusion.md
+
+- name: MCP Server
+  href: mcp-server.md
+
+- name: Voice MCP Bridge
+  href: voice-mcp-bridge.md

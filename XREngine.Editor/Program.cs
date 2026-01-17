@@ -61,7 +61,6 @@ internal class Program
         CodeManager.Instance.CompileOnChange = false;
         JsonConvert.DefaultSettings = DefaultJsonSettings;
         EditorPlayModeController.Initialize();
-        McpServerHost? mcpServer = McpServerHost.TryStartFromArgs(args);
 
         // Determine world mode from command line or environment variable
         EWorldMode worldMode = ResolveWorldMode(args);
@@ -98,6 +97,9 @@ internal class Program
         var startupSettings = GetEngineSettings(targetWorld);
         var gameState = Engine.LoadOrGenerateGameState();
 
+        // Initialize MCP server after preferences are loaded
+        McpServerHost.Initialize(args);
+
         if (UnitTestingWorld.Toggles.StartInPlayModeWithoutTransitions)
         {
             Engine.PlayMode.ForcePlayWithoutTransitions = true;
@@ -110,7 +112,7 @@ internal class Program
         }
 
         Engine.Run(startupSettings, gameState);
-        mcpServer?.Dispose();
+        McpServerHost.Shutdown();
     }
 
     /// <summary>

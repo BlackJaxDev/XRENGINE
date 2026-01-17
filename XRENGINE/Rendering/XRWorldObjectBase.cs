@@ -199,7 +199,7 @@ namespace XREngine
         public float TimeBetweenReplications
         {
             get => _timeBetweenReplicationsOverride ?? Engine.EffectiveSettings.TimeBetweenReplications;
-            set => _timeBetweenReplicationsOverride = value;
+            set => SetField(ref _timeBetweenReplicationsOverride, value);
         }
 
         private float? _timeBetweenReplicationsOverride = null;

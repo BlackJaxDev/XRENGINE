@@ -1,79 +1,155 @@
 using System;
+using System.ComponentModel;
 using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.Json;
 using XREngine;
+using XREngine.Data.Core;
 
 namespace XREngine.Editor.Mcp
 {
     public sealed class McpServerHost : IDisposable
     {
-        private readonly HttpListener _listener;
-        private readonly CancellationTokenSource _cts = new();
+        private static McpServerHost? _instance;
+        private static readonly object _lock = new();
+
+        private HttpListener? _listener;
+        private CancellationTokenSource? _cts;
         private readonly JsonSerializerOptions _serializerOptions = new()
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         };
 
         private Task? _listenerTask;
+        private int _port;
 
-        private McpServerHost(string prefix)
+        private McpServerHost()
         {
-            _listener = new HttpListener();
-            _listener.Prefixes.Add(prefix);
-            Prefix = prefix;
         }
 
-        public string Prefix { get; }
+        public string? Prefix { get; private set; }
+        public bool IsRunning => _listener?.IsListening ?? false;
 
-        public static McpServerHost? TryStartFromArgs(string[] args)
+        /// <summary>
+        /// Gets the singleton MCP server instance.
+        /// </summary>
+        public static McpServerHost Instance
         {
-            bool enabled = args.Any(arg => string.Equals(arg, "--mcp", StringComparison.OrdinalIgnoreCase) ||
-                                           string.Equals(arg, "--mcp-server", StringComparison.OrdinalIgnoreCase));
-            string? envEnabled = Environment.GetEnvironmentVariable("XRE_MCP_ENABLE");
-            if (!enabled && !string.Equals(envEnabled, "1", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(envEnabled, "true", StringComparison.OrdinalIgnoreCase))
+            get
             {
-                return null;
+                if (_instance is null)
+                {
+                    lock (_lock)
+                    {
+                        _instance ??= new McpServerHost();
+                    }
+                }
+                return _instance;
             }
-
-            int port = 5467;
-            if (TryReadPort(args, out var parsedPort))
-                port = parsedPort;
-            else if (int.TryParse(Environment.GetEnvironmentVariable("XRE_MCP_PORT"), out var envPort))
-                port = envPort;
-
-            string prefix = $"http://localhost:{port}/mcp/";
-            var host = new McpServerHost(prefix);
-            host.Start();
-            return host;
         }
 
-        public void Start()
+        /// <summary>
+        /// Initialize the MCP server and subscribe to preference changes.
+        /// Call this once during editor startup.
+        /// </summary>
+        public static void Initialize(string[] args)
         {
+            // Check for command-line override to force enable
+            bool cliEnabled = args.Any(arg => string.Equals(arg, "--mcp", StringComparison.OrdinalIgnoreCase) ||
+                                              string.Equals(arg, "--mcp-server", StringComparison.OrdinalIgnoreCase));
+            int? cliPort = TryReadPort(args, out var parsedPort) ? parsedPort : null;
+
+            // Subscribe to preference changes
+            Engine.EditorPreferences.PropertyChanged += Instance.OnPreferencesChanged;
+
+            // Apply CLI overrides if specified
+            if (cliEnabled)
+                Engine.EditorPreferences.McpServerEnabled = true;
+            if (cliPort.HasValue)
+                Engine.EditorPreferences.McpServerPort = cliPort.Value;
+
+            // Start if enabled in preferences (or via CLI)
+            Instance.UpdateServerState();
+        }
+
+        private void OnPreferencesChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (e.PropertyName is nameof(EditorPreferences.McpServerEnabled) or nameof(EditorPreferences.McpServerPort))
+                UpdateServerState();
+        }
+
+        private void UpdateServerState()
+        {
+            var prefs = Engine.EditorPreferences;
+            bool shouldRun = prefs.McpServerEnabled;
+            int desiredPort = prefs.McpServerPort;
+
+            if (shouldRun)
+            {
+                // If already running on correct port, do nothing
+                if (IsRunning && _port == desiredPort)
+                    return;
+
+                // Stop if running on different port
+                if (IsRunning)
+                    Stop();
+
+                Start(desiredPort);
+            }
+            else
+            {
+                if (IsRunning)
+                    Stop();
+            }
+        }
+
+        public void Start(int port)
+        {
+            if (IsRunning)
+                return;
+
+            _port = port;
+            Prefix = $"http://localhost:{port}/mcp/";
+            _cts = new CancellationTokenSource();
+            _listener = new HttpListener();
+            _listener.Prefixes.Add(Prefix);
             _listener.Start();
             _listenerTask = Task.Run(() => ListenLoopAsync(_cts.Token));
-            Debug.Out($"[MCP] Listening on {Prefix}");
+            Debug.Out($"[MCP] Server started on {Prefix}");
         }
 
-        public void Dispose()
+        public void Stop()
         {
-            _cts.Cancel();
+            if (!IsRunning)
+                return;
+
+            Debug.Out("[MCP] Server stopping...");
+            _cts?.Cancel();
             try
             {
-                _listener.Stop();
-                _listener.Close();
+                _listener?.Stop();
+                _listener?.Close();
             }
             catch
             {
                 // ignored
             }
+            _listener = null;
+            _cts = null;
+            Prefix = null;
+            Debug.Out("[MCP] Server stopped.");
+        }
+
+        public void Dispose()
+        {
+            Engine.EditorPreferences.PropertyChanged -= OnPreferencesChanged;
+            Stop();
         }
 
         private async Task ListenLoopAsync(CancellationToken token)
         {
-            while (!token.IsCancellationRequested)
+            while (!token.IsCancellationRequested && _listener is not null)
             {
                 HttpListenerContext? context = null;
                 try
@@ -250,5 +326,14 @@ namespace XREngine.Editor.Mcp
         }
 
         private readonly record struct McpError(int Code, string Message);
+
+        /// <summary>
+        /// Shuts down the MCP server. Call during editor shutdown.
+        /// </summary>
+        public static void Shutdown()
+        {
+            _instance?.Dispose();
+            _instance = null;
+        }
     }
 }

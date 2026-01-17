@@ -657,8 +657,7 @@ namespace XREngine.Scene.Transforms
         {
             // Deserialization may replace the EventList while property notifications are suppressed.
             // Re-attach invariants that are normally installed via property change callbacks.
-            if (_children is null)
-                _children = new EventList<TransformBase>() { ThreadSafe = true };
+            _children ??= new EventList<TransformBase>() { ThreadSafe = true };
 
             _children.ThreadSafe = true;
             _children.PostAnythingAdded -= ChildAdded;
@@ -669,8 +668,7 @@ namespace XREngine.Scene.Transforms
             // Ensure this transform appears in its parent's child list.
             if (_parent is not null)
             {
-                if (_parent._children is null)
-                    _parent._children = new EventList<TransformBase>() { ThreadSafe = true };
+                _parent._children ??= new EventList<TransformBase>() { ThreadSafe = true };
 
                 _parent._children.ThreadSafe = true;
                 _parent._children.PostAnythingAdded -= _parent.ChildAdded;
@@ -1148,8 +1146,7 @@ namespace XREngine.Scene.Transforms
                     }
                     else
                         Depth = 0;
-                    if (SceneNode is not null)
-                        SceneNode.World = World;
+                    SceneNode?.World = World;
                     MarkWorldModified();
                     break;
                 case nameof(SceneNode):

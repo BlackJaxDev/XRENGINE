@@ -168,7 +168,7 @@ namespace XREngine.Editor.Mcp
 
                     foreach (var method in type.GetMethods(flags))
                     {
-                        if (method.GetCustomAttribute<XRMCPAttribute>() is not null)
+                        if (method.GetCustomAttribute<XRMcpAttribute>() is not null)
                             yield return method;
                     }
                 }
@@ -180,7 +180,7 @@ namespace XREngine.Editor.Mcp
             if (!IsSupportedReturnType(method.ReturnType))
                 return null;
 
-            string toolName = method.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName ?? method.Name;
+            string toolName = method.GetCustomAttribute<McpNameAttribute>()?.Name ?? method.Name;
             string toolDescription = method.GetCustomAttribute<DescriptionAttribute>()?.Description ?? method.Name;
 
             var parameters = method.GetParameters();
@@ -192,7 +192,7 @@ namespace XREngine.Editor.Mcp
                 if (IsInjectedParameter(parameter))
                     continue;
 
-                string propertyName = parameter.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName ?? parameter.Name ?? "param";
+                string propertyName = parameter.GetCustomAttribute<McpNameAttribute>()?.Name ?? parameter.Name ?? "param";
                 string? description = parameter.GetCustomAttribute<DescriptionAttribute>()?.Description;
                 properties[propertyName] = BuildParameterSchema(parameter.ParameterType, propertyName, description);
 
@@ -312,7 +312,7 @@ namespace XREngine.Editor.Mcp
 
         private static bool TryGetArgument(JsonElement arguments, ParameterInfo parameter, out JsonElement value)
         {
-            string? displayName = parameter.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName;
+            string? displayName = parameter.GetCustomAttribute<McpNameAttribute>()?.Name;
             if (!string.IsNullOrWhiteSpace(displayName) && arguments.TryGetProperty(displayName, out value))
                 return true;
 

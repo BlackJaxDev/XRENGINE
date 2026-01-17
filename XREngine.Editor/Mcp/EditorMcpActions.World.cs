@@ -8,8 +8,21 @@ namespace XREngine.Editor.Mcp
 {
     public sealed partial class EditorMcpActions
     {
-        [XRMCP]
-        [DisplayName("list_worlds")]
+        /// <summary>
+        /// Lists all active world instances and their associated scenes.
+        /// </summary>
+        /// <param name="context">The MCP tool execution context.</param>
+        /// <returns>
+        /// A response containing an array of worlds, each with:
+        /// <list type="bullet">
+        /// <item><description><c>id</c> - The world's unique GUID</description></item>
+        /// <item><description><c>name</c> - The world's display name</description></item>
+        /// <item><description><c>scenes</c> - Array of scenes with id and name</description></item>
+        /// <item><description><c>playState</c> - Current play state (e.g., "Playing", "Stopped")</description></item>
+        /// </list>
+        /// </returns>
+        [XRMcp]
+        [McpName("list_worlds")]
         [Description("List active world instances and their scenes.")]
         public static Task<McpToolResponse> ListWorldsAsync(
             McpToolContext context)
