@@ -94,7 +94,7 @@ The default render pipeline integrates GI through dedicated render passes:
 3. **GI Composite Pass** - Blends GI results into the forward target
 4. **Post-Process** - Applies AO and other effects
 
-Each GI mode has its own composite FBO and texture targets managed by <xref:XREngine.Rendering.Pipelines.Types.DefaultRenderPipeline>.
+Each GI mode has its own composite FBO and texture targets managed by <xref:XREngine.Rendering.DefaultRenderPipeline>.
 
 ## Performance Considerations
 

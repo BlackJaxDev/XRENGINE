@@ -372,6 +372,16 @@ namespace XREngine.Rendering
 
         private void Window_Closing()
         {
+            if (!_isDisposing && !_isDisposed && Engine.WindowCloseRequested is not null)
+            {
+                var decision = Engine.WindowCloseRequested.Invoke(this);
+                if (decision != Engine.WindowCloseRequestResult.Allow)
+                {
+                    if (TryCancelCloseRequest())
+                        return;
+                }
+            }
+
             try
             {
                 Dispose();
@@ -380,6 +390,28 @@ namespace XREngine.Rendering
             {
                 Engine.RemoveWindow(this);
             }
+        }
+
+        private bool TryCancelCloseRequest()
+        {
+            try
+            {
+                if (Window is null)
+                    return false;
+
+                var prop = Window.GetType().GetProperty("IsClosing");
+                if (prop is { CanWrite: true })
+                {
+                    prop.SetValue(Window, false);
+                    return true;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            return false;
         }
 
         private void OnFocusChanged(bool focused)

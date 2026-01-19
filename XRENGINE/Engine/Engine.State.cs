@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using XREngine.Core.Files;
 using XREngine.Input;
 using XREngine.Native;
+using XREngine.Rendering;
 
 namespace XREngine
 {
@@ -18,6 +19,22 @@ namespace XREngine
         /// This is set at startup and does not change during runtime.
         /// </summary>
         public static bool IsEditor { get; internal set; } = true;
+
+        /// <summary>
+        /// Result for window close requests.
+        /// </summary>
+        public enum WindowCloseRequestResult
+        {
+            Allow,
+            Defer,
+            Cancel,
+        }
+
+        /// <summary>
+        /// Optional hook invoked when a window is about to close. Return Allow to proceed,
+        /// Defer or Cancel to keep the window open.
+        /// </summary>
+        public static Func<XRWindow, WindowCloseRequestResult>? WindowCloseRequested;
         
         /// <summary>
         /// Whether the game is currently playing (simulation running).

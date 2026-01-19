@@ -67,14 +67,42 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
         public readonly HashSet<XRMesh> AttemptedBvhBuilds = new();
         public readonly Dictionary<RenderableMesh, RenderInfo.DelPreRenderCallback> MeshHandlers = new();
+        private readonly Dictionary<RenderableMesh, SkinnedBvhCacheEntry> _skinnedBvhCache = new();
         private readonly object _handlersLock = new();
+        private readonly object _skinnedCacheLock = new();
 
         public void LockHandlers(Action<Dictionary<RenderableMesh, RenderInfo.DelPreRenderCallback>> action)
         {
             lock (_handlersLock)
                 action(MeshHandlers);
         }
+
+        public void UpdateSkinnedBvhCache(RenderableMesh mesh, BVH<Triangle> tree, Matrix4x4 localToWorld)
+        {
+            lock (_skinnedCacheLock)
+                _skinnedBvhCache[mesh] = new SkinnedBvhCacheEntry(tree, localToWorld);
+        }
+
+        public bool TryGetSkinnedBvhCache(RenderableMesh mesh, out SkinnedBvhCacheEntry entry)
+        {
+            lock (_skinnedCacheLock)
+                return _skinnedBvhCache.TryGetValue(mesh, out entry);
+        }
+
+        public void RemoveSkinnedBvhCache(RenderableMesh mesh)
+        {
+            lock (_skinnedCacheLock)
+                _skinnedBvhCache.Remove(mesh);
+        }
+
+        public void ClearSkinnedBvhCache()
+        {
+            lock (_skinnedCacheLock)
+                _skinnedBvhCache.Clear();
+        }
     }
+
+    private readonly record struct SkinnedBvhCacheEntry(BVH<Triangle> Tree, Matrix4x4 LocalToWorld);
 
     private static readonly ConditionalWeakTable<ModelComponent, ImpostorState> s_impostorStates = new();
     private static readonly ConditionalWeakTable<ModelComponent, BvhPreviewState> s_bvhPreviewStates = new();
@@ -231,6 +259,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 {
                     mesh.RenderInfo.CollectedForRenderCallback -= handler;
                     handlers.Remove(mesh);
+                    state.RemoveSkinnedBvhCache(mesh);
                 }
             }
         });
@@ -248,6 +277,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
             handlers.Clear();
         });
+
+        state.ClearSkinnedBvhCache();
     }
 
     private static void RenderBvhPreviewForMesh(RenderableMesh mesh, RenderCommand command, XRCamera? camera, BvhPreviewState state)
@@ -271,11 +302,22 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     private static void RenderMeshTree(RenderableMesh mesh, IVolume? frustum, BvhPreviewState state)
     {
         bool skinned = mesh.IsSkinned;
-        BVH<Triangle>? tree;
+        BVH<Triangle>? tree = null;
+        Matrix4x4 meshMatrix = Matrix4x4.Identity;
 
         if (skinned)
         {
             tree = mesh.GetSkinnedBvh();
+            if (tree is not null)
+            {
+                meshMatrix = mesh.SkinnedBvhLocalToWorldMatrix;
+                state.UpdateSkinnedBvhCache(mesh, tree, meshMatrix);
+            }
+            else if (state.TryGetSkinnedBvhCache(mesh, out var cached))
+            {
+                tree = cached.Tree;
+                meshMatrix = cached.LocalToWorld;
+            }
         }
         else
         {
@@ -287,6 +329,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 xrMesh.GenerateBVH();
                 tree = xrMesh.BVHTree;
             }
+
+            meshMatrix = mesh.Component.Transform.RenderMatrix;
         }
 
         var root = tree?._rootBVH;
@@ -297,7 +341,6 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         nodeStack.Clear();
         nodeStack.Push(root);
 
-        Matrix4x4 meshMatrix = skinned ? mesh.SkinnedBvhLocalToWorldMatrix : mesh.Component.Transform.RenderMatrix;
         Matrix4x4 rotationScaleMatrix = meshMatrix;
         rotationScaleMatrix.Translation = Vector3.Zero;
 

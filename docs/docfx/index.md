@@ -7,11 +7,11 @@ Welcome to the XRENGINE documentation site. This site contains hand-written guid
 ### Documentation
 - [API Guides](../api/engine.md) - Engine concepts and usage guides
 - [Architecture](../architecture/README.md) - System design and architecture docs
-- [Features](../features/light-volumes.md) - Feature-specific documentation
+- [Features](../features/gi/light-volumes.md) - Feature-specific documentation
 - [Dependencies](../DEPENDENCIES.md) - Third-party dependencies
 
 ### Reference
-- [API Reference](apiref/index.md) - Auto-generated API documentation
+- [API Reference](api/index.md) - Auto-generated API documentation
 - [Guides](guides.md) - Getting started guides
 
 ### External

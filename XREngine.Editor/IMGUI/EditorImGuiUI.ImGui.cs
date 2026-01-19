@@ -10,6 +10,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading.Tasks;
 using ImGuiNET;
 using XREngine;
 using XREngine.Components;
@@ -194,6 +195,16 @@ public static partial class EditorImGuiUI
         private static bool _assetDragInProgress;
         private static string? _assetDragPath;
 
+        private const string ClosePromptPopupId = "CloseWithUnsavedChanges";
+        private static bool _closePromptOpen;
+        private static bool _closePromptRequested;
+        private static bool _closePromptSaving;
+        private static string? _closePromptSaveError;
+        private static XRWindow? _closePromptWindow;
+        private static XRWindow? _closePromptBypassWindow;
+        private static readonly List<XRAsset> _closePromptAssets = [];
+        private static readonly Dictionary<Guid, bool> _closePromptSelections = [];
+
         private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameDisplaySnapshot;
         private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameWindowSnapshot;
         private static float _worstFrameDisplayMs;
@@ -225,6 +236,7 @@ public static partial class EditorImGuiUI
             Engine.Time.Timer.UpdateFrame += ProcessQueuedSceneEdits;
             Engine.Time.Timer.UpdateFrame += EnsureScenePanelWindowHooked;
             Selection.SelectionChanged += HandleSceneSelectionChanged;
+            Engine.WindowCloseRequested = HandleWindowCloseRequested;
         }
 
         private static XRWindow? _scenePanelHookedWindow;
@@ -565,6 +577,7 @@ public static partial class EditorImGuiUI
             DrawScenePanel();
             DrawInspectorPanel();
             DrawAssetExplorerPanel();
+            DrawClosePromptDialog();
 
             // Tool windows
             UI.Tools.ShaderLockingWindow.Instance.Render();
@@ -620,6 +633,225 @@ public static partial class EditorImGuiUI
                 _scenePanelInteracting;
 
             Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughScenePanel && Engine.PlayMode.State != EPlayModeState.EnteringPlay && !Engine.PlayMode.IsPlaying);
+        }
+
+        private static Engine.WindowCloseRequestResult HandleWindowCloseRequested(XRWindow window)
+        {
+            if (!Engine.IsEditor)
+                return Engine.WindowCloseRequestResult.Allow;
+
+            if (_closePromptBypassWindow == window)
+            {
+                _closePromptBypassWindow = null;
+                return Engine.WindowCloseRequestResult.Allow;
+            }
+
+            if (_closePromptOpen)
+                return Engine.WindowCloseRequestResult.Defer;
+
+            var assets = Engine.Assets;
+            if (assets is null)
+                return Engine.WindowCloseRequestResult.Allow;
+
+            var dirtyAssets = assets.DirtyAssets.Values.ToArray();
+            if (dirtyAssets.Length == 0)
+                return Engine.WindowCloseRequestResult.Allow;
+
+            BeginClosePrompt(window, dirtyAssets);
+            return Engine.WindowCloseRequestResult.Defer;
+        }
+
+        private static void BeginClosePrompt(XRWindow window, XRAsset[] dirtyAssets)
+        {
+            _closePromptWindow = window;
+            _closePromptAssets.Clear();
+            _closePromptSelections.Clear();
+
+            foreach (var asset in dirtyAssets
+                .OrderBy(static a => UnitTestingWorld.UserInterface.GetAssetDisplayName(a), StringComparer.OrdinalIgnoreCase))
+            {
+                _closePromptAssets.Add(asset);
+                _closePromptSelections[asset.ID] = true;
+            }
+
+            _closePromptSaveError = null;
+            _closePromptSaving = false;
+            _closePromptRequested = true;
+            _closePromptOpen = true;
+        }
+
+        private static void DrawClosePromptDialog()
+        {
+            if (!_closePromptOpen)
+                return;
+
+            if (_closePromptRequested)
+            {
+                ImGui.OpenPopup(ClosePromptPopupId);
+                _closePromptRequested = false;
+            }
+
+            bool keepOpen = _closePromptOpen;
+            if (!ImGui.BeginPopupModal(ClosePromptPopupId, ref keepOpen, ImGuiWindowFlags.AlwaysAutoResize))
+            {
+                if (!keepOpen)
+                    CancelClosePrompt();
+                return;
+            }
+
+            ImGui.TextUnformatted("You have unsaved changes. Select which files to save before closing.");
+            ImGui.Separator();
+
+            var listSize = new Vector2(520, MathF.Min(300, 22 + (_closePromptAssets.Count * 22)));
+            if (ImGui.BeginChild("##UnsavedList", listSize, ImGuiChildFlags.Border))
+            {
+                foreach (var asset in _closePromptAssets)
+                {
+                    string label = UnitTestingWorld.UserInterface.GetAssetDisplayName(asset);
+                    bool selected = _closePromptSelections.TryGetValue(asset.ID, out var value) ? value : true;
+                    if (ImGui.Checkbox(label, ref selected))
+                        _closePromptSelections[asset.ID] = selected;
+
+                    if (!string.IsNullOrWhiteSpace(asset.FilePath))
+                    {
+                        ImGui.SameLine();
+                        ImGui.TextDisabled(Path.GetFileName(asset.FilePath));
+                    }
+                }
+            }
+            ImGui.EndChild();
+
+            if (ImGui.Button("Select All"))
+            {
+                foreach (var asset in _closePromptAssets)
+                    _closePromptSelections[asset.ID] = true;
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Select None"))
+            {
+                foreach (var asset in _closePromptAssets)
+                    _closePromptSelections[asset.ID] = false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(_closePromptSaveError))
+            {
+                ImGui.Spacing();
+                ImGui.TextColored(new Vector4(1f, 0.35f, 0.35f, 1f), _closePromptSaveError);
+            }
+
+            ImGui.Separator();
+
+            if (_closePromptSaving)
+            {
+                ImGui.TextUnformatted("Saving selected assets...");
+            }
+            else
+            {
+                bool canSave = _closePromptSelections.Values.Any(static value => value);
+                if (!canSave)
+                    ImGui.BeginDisabled();
+
+                if (ImGui.Button("Save Selected and Close"))
+                    BeginSaveSelectedAndClose();
+
+                if (!canSave)
+                    ImGui.EndDisabled();
+
+                ImGui.SameLine();
+                if (ImGui.Button("Don't Save and Close"))
+                    ClosePromptAndCloseWindow();
+
+                ImGui.SameLine();
+                if (ImGui.Button("Cancel"))
+                    CancelClosePrompt();
+            }
+
+            ImGui.EndPopup();
+
+            if (!keepOpen)
+                CancelClosePrompt();
+        }
+
+        private static void BeginSaveSelectedAndClose()
+        {
+            if (_closePromptSaving)
+                return;
+
+            var assets = Engine.Assets;
+            if (assets is null)
+            {
+                ClosePromptAndCloseWindow();
+                return;
+            }
+
+            _closePromptSaving = true;
+            _closePromptSaveError = null;
+
+            var selectedAssets = _closePromptAssets
+                .Where(a => _closePromptSelections.TryGetValue(a.ID, out var selected) && selected)
+                .ToArray();
+
+            _ = SaveSelectedAssetsAndCloseAsync(assets, selectedAssets);
+        }
+
+        private static async Task SaveSelectedAssetsAndCloseAsync(AssetManager assets, XRAsset[] selectedAssets)
+        {
+            string? error = null;
+            try
+            {
+                foreach (var asset in selectedAssets)
+                    await assets.SaveAsync(asset).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+            }
+
+            Engine.EnqueueMainThreadTask(() =>
+            {
+                _closePromptSaving = false;
+                _closePromptSaveError = error;
+                if (string.IsNullOrWhiteSpace(error))
+                    ClosePromptAndCloseWindow();
+            });
+        }
+
+        private static void ClosePromptAndCloseWindow()
+        {
+            var window = _closePromptWindow;
+            ResetClosePromptState();
+
+            if (window?.Window is null)
+                return;
+
+            _closePromptBypassWindow = window;
+            Engine.EnqueueMainThreadTask(() =>
+            {
+                try
+                {
+                    window.Window.Close();
+                }
+                catch
+                {
+                    // ignored
+                }
+            });
+        }
+
+        private static void CancelClosePrompt()
+        {
+            ResetClosePromptState();
+        }
+
+        private static void ResetClosePromptState()
+        {
+            _closePromptOpen = false;
+            _closePromptRequested = false;
+            _closePromptSaving = false;
+            _closePromptSaveError = null;
+            _closePromptWindow = null;
+            _closePromptAssets.Clear();
+            _closePromptSelections.Clear();
         }
 
         private static void SuppressUnexpectedImGuiDebugWindows()

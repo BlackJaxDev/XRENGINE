@@ -42,6 +42,6 @@ High-level notes on how the engine stages work, render, and synchronize data acr
 - `Config/`: persistent project + engine settings, including `engine_settings.asset` and per-user overrides.
 
 ## Further Reading
-- [Job System](job-system.md)
+- [Job System](../api/job-system.md)
 - [Networking Overview](networking-overview.md)
 - [Editor Undo System](undo-system.md)

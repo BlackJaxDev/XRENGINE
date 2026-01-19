@@ -193,7 +193,7 @@ For each pixel:
 
 - <xref:XREngine.Rendering.Pipelines.Commands.VPRC_SurfelGIPass> - Main GI compute pass
 - <xref:XREngine.Rendering.Pipelines.Commands.VPRC_SurfelDebugVisualization> - Debug overlay
-- <xref:XREngine.Rendering.Pipelines.Types.SurfelDebugRenderPipeline> - Debug pipeline
+- <xref:XREngine.Rendering.SurfelDebugRenderPipeline> - Debug pipeline
 
 ## See Also
 

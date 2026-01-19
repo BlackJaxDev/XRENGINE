@@ -174,7 +174,7 @@ Notes:
 | XREngine.csproj | runtimes\win-x64\native\avfilter.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/binary-item-XREngine.csproj-runtimes_win-x64_native_avfilter.dll.txt) |  | PreserveNewest |
 | XREngine.csproj | runtimes\win-x64\native\avformat.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/binary-item-XREngine.csproj-runtimes_win-x64_native_avformat.dll.txt) |  | PreserveNewest |
 | XREngine.csproj | runtimes\win-x64\native\avutil.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/binary-item-XREngine.csproj-runtimes_win-x64_native_avutil.dll.txt) |  | PreserveNewest |
-| XREngine.csproj | runtimes\win-x64\native\lib_coacd.dll | SarahWeiii (CoACD) | [MIT (see Build/Submodules/CoACD/LICENSE)](../Build/Submodules/CoACD/LICENSE) |  | PreserveNewest |
+| XREngine.csproj | runtimes\win-x64\native\lib_coacd.dll | SarahWeiii (CoACD) | [MIT](licenses/submodules/CoACD-MIT.txt) |  | PreserveNewest |
 | XREngine.csproj | runtimes\win-x64\native\libmagicphysx.dll | MagicPhysX | [(unknown)](licenses/unknown/binary-item-XREngine.csproj-runtimes_win-x64_native_libmagicphysx.dll.txt) |  | PreserveNewest |
 | XREngine.csproj | runtimes\win-x64\native\postproc.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/binary-item-XREngine.csproj-runtimes_win-x64_native_postproc.dll.txt) |  | PreserveNewest |
 | XREngine.csproj | runtimes\win-x64\native\rive.dll | (unknown) | [(unknown)](licenses/unknown/binary-item-XREngine.csproj-runtimes_win-x64_native_rive.dll.txt) |  | PreserveNewest |
@@ -199,7 +199,7 @@ Notes:
 | XRENGINE/openvr_api.dll | openvr_api.dll | Valve (OpenVR/SteamVR) | [(unknown)](licenses/unknown/checked-binary-openvr_api.dll.txt) |
 | XRENGINE/OVRLipSync.dll | OVRLipSync.dll | Meta/Oculus (OVR LipSync) | [(unknown)](licenses/unknown/checked-binary-OVRLipSync.dll.txt) |
 | XRENGINE/postproc-58.dll | postproc-58.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-postproc-58.dll.txt) |
-| XRENGINE/runtimes/win-x64/native/lib_coacd.dll | lib_coacd.dll | SarahWeiii (CoACD) | [MIT (see Build/Submodules/CoACD/LICENSE)](../Build/Submodules/CoACD/LICENSE) |
+| XRENGINE/runtimes/win-x64/native/lib_coacd.dll | lib_coacd.dll | SarahWeiii (CoACD) | [MIT](licenses/submodules/CoACD-MIT.txt) |
 | XRENGINE/runtimes/win-x64/native/libmagicphysx.dll | libmagicphysx.dll | MagicPhysX | [(unknown)](licenses/unknown/checked-binary-libmagicphysx.dll.txt) |
 | XRENGINE/swresample-5.dll | swresample-5.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-swresample-5.dll.txt) |
 | XRENGINE/swscale-8.dll | swscale-8.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-swscale-8.dll.txt) |

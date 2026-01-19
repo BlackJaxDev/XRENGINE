@@ -9,6 +9,6 @@
 - name: Architecture
   href: ../architecture/README.md
 - name: Features
-  href: ../features/light-volumes.md
+  href: ../features/gi/light-volumes.md
 - name: API Reference
-  href: apiref/
+  href: api/index.md

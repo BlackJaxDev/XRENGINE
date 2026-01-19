@@ -180,7 +180,7 @@ Engine.UserSettings.GlobalIlluminationMode = EGlobalIlluminationMode.LightVolume
 ## API Reference
 
 - <xref:XREngine.Components.Lights.LightVolumeComponent> - Volume component
-- <xref:XREngine.Rendering.GI.LightVolumeRegistry> - Volume registration
+- `LightVolumeRegistry` - Volume registration
 - <xref:XREngine.Rendering.Pipelines.Commands.VPRC_LightVolumesPass> - Render pass
 
 ## See Also

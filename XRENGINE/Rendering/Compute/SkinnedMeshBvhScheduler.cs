@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using SimpleScene.Util.ssBVH;
 using XREngine;
@@ -19,6 +20,19 @@ namespace XREngine.Rendering.Compute;
 internal sealed class SkinnedMeshBvhScheduler
 {
     public static SkinnedMeshBvhScheduler Instance { get; } = new();
+
+    private sealed record LeafRef(BVHNode<Triangle> Node, int[] TriangleIndices);
+
+    private sealed class SkinnedBvhRefitCache
+    {
+        public BVH<Triangle>? Tree;
+        public IReadOnlyList<IndexTriangle>? Triangles;
+        public List<LeafRef> LeafRefs = [];
+        public int VertexCount;
+        public int TriangleCount;
+    }
+
+    private readonly ConditionalWeakTable<RenderableMesh, SkinnedBvhRefitCache> _cpuRefitCaches = new();
 
     private SkinnedMeshBvhScheduler()
     {
@@ -62,7 +76,7 @@ internal sealed class SkinnedMeshBvhScheduler
         }
 
         Engine.Jobs.Schedule(
-            GenerateBvhJob(triangles, localizedPositions, version, boundsResult, tcs),
+            GenerateBvhJob(mesh, triangles, localizedPositions, version, boundsResult, tcs),
             error: ex => tcs.TrySetException(ex),
             canceled: () => tcs.TrySetCanceled()
         );
@@ -98,7 +112,7 @@ internal sealed class SkinnedMeshBvhScheduler
             }
 
             Engine.Jobs.Schedule(
-                GenerateBvhJob(triangles, positions, version, boundsResult, tcs),
+                GenerateBvhJob(mesh, triangles, positions, version, boundsResult, tcs),
                 error: ex => tcs.TrySetException(ex),
                 canceled: () => tcs.TrySetCanceled()
             );
@@ -110,19 +124,24 @@ internal sealed class SkinnedMeshBvhScheduler
     }
 
     private static IEnumerable GenerateBvhJob(
+        RenderableMesh mesh,
         IReadOnlyList<IndexTriangle> triangles,
         IReadOnlyList<Vector3> positions,
         int version,
         SkinnedMeshBoundsCalculator.Result boundsResult,
         TaskCompletionSource<Result> tcs)
     {
-        var task = Task.Run(() => BuildBvh(triangles, positions));
+        var task = Task.Run(() => BuildBvh(mesh, triangles, positions));
         yield return task;
         tcs.TrySetResult(new Result(version, task.Result, boundsResult));
     }
 
-    private static BVH<Triangle>? BuildBvh(IReadOnlyList<IndexTriangle> triangles, IReadOnlyList<Vector3> positions)
+    private static BVH<Triangle>? BuildBvh(RenderableMesh mesh, IReadOnlyList<IndexTriangle> triangles, IReadOnlyList<Vector3> positions)
     {
+        if (Engine.Rendering.Settings.UseSkinnedBvhRefitOptimize
+            && TryRefitSkinnedBvh(mesh, triangles, positions, out var refitTree))
+            return refitTree;
+
         var worldTriangles = new List<Triangle>(triangles.Count);
         int vertexCount = positions.Count;
 
@@ -139,11 +158,215 @@ internal sealed class SkinnedMeshBvhScheduler
         }
 
         return worldTriangles.Count > 0
-                ? new BVH<Triangle>(new TriangleAdapter(), worldTriangles)
+                ? CacheSkinnedBvh(mesh, triangles, positions, new BVH<Triangle>(new TriangleAdapter(), worldTriangles))
             : null;
     }
 
-            internal readonly record struct Result(int Version, BVH<Triangle>? Tree, SkinnedMeshBoundsCalculator.Result Bounds)
+    private static bool TryRefitSkinnedBvh(
+        RenderableMesh mesh,
+        IReadOnlyList<IndexTriangle> triangles,
+        IReadOnlyList<Vector3> positions,
+        out BVH<Triangle>? tree)
+    {
+        tree = null;
+        if (!Instance._cpuRefitCaches.TryGetValue(mesh, out var cache))
+            return false;
+
+        if (cache.Tree is null || cache.LeafRefs.Count == 0)
+            return false;
+
+        if (cache.TriangleCount != triangles.Count || cache.VertexCount != positions.Count)
+            return false;
+
+        if (!UpdateLeafTriangles(cache.LeafRefs, triangles, positions))
+            return false;
+
+        RefitInternalNodes(cache.Tree._rootBVH);
+
+        if (Engine.Rendering.Settings.UseSkinnedBvhRefitOptimize)
+            OptimizeTree(cache.Tree, cache.LeafRefs);
+
+        tree = cache.Tree;
+        return true;
+    }
+
+    private static BVH<Triangle> CacheSkinnedBvh(
+        RenderableMesh mesh,
+        IReadOnlyList<IndexTriangle> triangles,
+        IReadOnlyList<Vector3> positions,
+        BVH<Triangle> tree)
+    {
+        if (!Engine.Rendering.Settings.UseSkinnedBvhRefitOptimize)
+            return tree;
+
+        var cache = Instance._cpuRefitCaches.GetValue(mesh, _ => new SkinnedBvhRefitCache());
+        if (!TryBuildLeafRefs(tree, triangles, positions, out var leafRefs))
+            return tree;
+
+        cache.Tree = tree;
+        cache.Triangles = triangles;
+        cache.LeafRefs = leafRefs;
+        cache.VertexCount = positions.Count;
+        cache.TriangleCount = triangles.Count;
+        return tree;
+    }
+
+    private static bool TryBuildLeafRefs(
+        BVH<Triangle> tree,
+        IReadOnlyList<IndexTriangle> triangles,
+        IReadOnlyList<Vector3> positions,
+        out List<LeafRef> leafRefs)
+    {
+        leafRefs = [];
+        int vertexCount = positions.Count;
+
+        var triangleMap = new Dictionary<Triangle, Stack<int>>();
+        for (int i = 0; i < triangles.Count; i++)
+        {
+            var tri = triangles[i];
+            if (tri.Point0 >= vertexCount || tri.Point1 >= vertexCount || tri.Point2 >= vertexCount)
+                continue;
+
+            var triangle = new Triangle(
+                positions[tri.Point0],
+                positions[tri.Point1],
+                positions[tri.Point2]);
+
+            if (!triangleMap.TryGetValue(triangle, out var list))
+            {
+                list = new Stack<int>();
+                triangleMap[triangle] = list;
+            }
+
+            list.Push(i);
+        }
+
+        var stack = new Stack<BVHNode<Triangle>>();
+        stack.Push(tree._rootBVH);
+        while (stack.Count > 0)
+        {
+            var node = stack.Pop();
+            if (node.left is not null)
+                stack.Push(node.left);
+            if (node.right is not null)
+                stack.Push(node.right);
+
+            if (!node.IsLeaf || node.gobjects is null)
+                continue;
+
+            var indices = new int[node.gobjects.Count];
+            for (int i = 0; i < node.gobjects.Count; i++)
+            {
+                var tri = node.gobjects[i];
+                if (!triangleMap.TryGetValue(tri, out var list) || list.Count == 0)
+                    return false;
+
+                indices[i] = list.Pop();
+            }
+
+            leafRefs.Add(new LeafRef(node, indices));
+        }
+
+        return leafRefs.Count > 0;
+    }
+
+    private static bool UpdateLeafTriangles(
+        List<LeafRef> leafRefs,
+        IReadOnlyList<IndexTriangle> triangles,
+        IReadOnlyList<Vector3> positions)
+    {
+        int vertexCount = positions.Count;
+        foreach (var leafRef in leafRefs)
+        {
+            var node = leafRef.Node;
+            var gobjects = node.gobjects;
+            if (gobjects is null || gobjects.Count != leafRef.TriangleIndices.Length)
+                return false;
+
+            Vector3 min = new(float.PositiveInfinity);
+            Vector3 max = new(float.NegativeInfinity);
+
+            for (int i = 0; i < leafRef.TriangleIndices.Length; i++)
+            {
+                int triIndex = leafRef.TriangleIndices[i];
+                if ((uint)triIndex >= (uint)triangles.Count)
+                    return false;
+
+                var tri = triangles[triIndex];
+                if (tri.Point0 >= vertexCount || tri.Point1 >= vertexCount || tri.Point2 >= vertexCount)
+                    return false;
+
+                var updated = new Triangle(
+                    positions[tri.Point0],
+                    positions[tri.Point1],
+                    positions[tri.Point2]);
+
+                gobjects[i] = updated;
+
+                min = Vector3.Min(min, updated.A);
+                min = Vector3.Min(min, updated.B);
+                min = Vector3.Min(min, updated.C);
+
+                max = Vector3.Max(max, updated.A);
+                max = Vector3.Max(max, updated.B);
+                max = Vector3.Max(max, updated.C);
+            }
+
+            node.box = new AABB(min, max);
+        }
+
+        return true;
+    }
+
+    private static void RefitInternalNodes(BVHNode<Triangle> root)
+    {
+        var stack = new Stack<BVHNode<Triangle>>();
+        var postOrder = new List<BVHNode<Triangle>>();
+        stack.Push(root);
+
+        while (stack.Count > 0)
+        {
+            var node = stack.Pop();
+            postOrder.Add(node);
+            if (node.left is not null)
+                stack.Push(node.left);
+            if (node.right is not null)
+                stack.Push(node.right);
+        }
+
+        for (int i = postOrder.Count - 1; i >= 0; i--)
+        {
+            var node = postOrder[i];
+            if (node.IsLeaf)
+                continue;
+
+            if (node.left is null || node.right is null)
+                continue;
+
+            AABB box = node.left.box;
+            box.ExpandToInclude(node.right.box);
+            node.box = box;
+        }
+    }
+
+    private static void OptimizeTree(BVH<Triangle> tree, List<LeafRef> leafRefs)
+    {
+        if (tree.LEAF_OBJ_MAX != 1)
+            return;
+
+        tree._refitNodes.Clear();
+        for (int i = 0; i < leafRefs.Count; i++)
+        {
+            var parent = leafRefs[i].Node.parent;
+            if (parent is not null)
+                tree._refitNodes.Add(parent);
+        }
+
+        if (tree._refitNodes.Count > 0)
+            tree.Optimize();
+    }
+
+    internal readonly record struct Result(int Version, BVH<Triangle>? Tree, SkinnedMeshBoundsCalculator.Result Bounds)
     {
         public bool HasTree => Tree is not null;
 
