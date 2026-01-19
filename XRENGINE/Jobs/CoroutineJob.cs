@@ -22,5 +22,12 @@ namespace XREngine
                 yield return WaitForNextDispatch.Instance;
             }
         }
+
+        internal override string GetProfilerLabel()
+        {
+            var method = _tick.Method;
+            string typeName = method.DeclaringType?.Name ?? "<static>";
+            return $"{GetType().Name}:{typeName}.{method.Name}";
+        }
     }
 }

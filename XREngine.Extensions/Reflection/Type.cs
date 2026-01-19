@@ -43,7 +43,7 @@ namespace Extensions
         public static bool IsAssignableFrom(this Type type, Type other) => other.IsAssignableTo(type);
         public static bool IsAssignableTo(this Type type, Type other) => other.IsAssignableFrom(type);
 
-        public static object? PtrToStructure(this Type type, IntPtr address)
+        public static object? PtrToStructure([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicFields | DynamicallyAccessedMemberTypes.NonPublicFields)] this Type type, IntPtr address)
             => Marshal.PtrToStructure(address, type);
 
         public static object? CreateInstance([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] this Type type)
@@ -61,7 +61,7 @@ namespace Extensions
             return obj is null ? default : (T)obj;
         }
 
-        public static bool HasCustomAttribute<T>(this Type type) where T : Attribute
+        public static bool HasCustomAttribute<T>([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] this Type type) where T : Attribute
             => type.GetCustomAttribute<T>() != null;
 
         public static object ParseEnum(this Type type, string value)
@@ -149,14 +149,14 @@ namespace Extensions
             };
         }
 
-        public static T? GetCustomAttributeExt<T>(this Type type) where T : Attribute
+        public static T? GetCustomAttributeExt<T>([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] this Type type) where T : Attribute
         {
             T[] types = type.GetCustomAttributesExt<T>();
             if (types.Length > 0)
                 return types[0];
             return null;
         }
-        public static T[] GetCustomAttributesExt<T>(this Type type) where T : Attribute
+        public static T[] GetCustomAttributesExt<T>([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] this Type type) where T : Attribute
         {
             List<T> list = new();
             Type? t = type;
@@ -167,7 +167,7 @@ namespace Extensions
             }
             return list.ToArray();
         }
-        public static MemberInfo[] GetMembersExt(this Type type, BindingFlags bindingAttr)
+        public static MemberInfo[] GetMembersExt([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] this Type type, BindingFlags bindingAttr)
         {
             bindingAttr &= ~BindingFlags.FlattenHierarchy;
             bindingAttr |= BindingFlags.DeclaredOnly;

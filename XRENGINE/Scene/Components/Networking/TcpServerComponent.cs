@@ -400,33 +400,33 @@ namespace XREngine.Components
         }
 
         private void DispatchStarted()
-            => RunOnMainThread(() => Started?.Invoke(this));
+            => RunOnMainThread(() => Started?.Invoke(this), "TcpServerComponent.Started");
 
         private void DispatchStopped()
-            => RunOnMainThread(() => Stopped?.Invoke(this));
+            => RunOnMainThread(() => Stopped?.Invoke(this), "TcpServerComponent.Stopped");
 
         private void DispatchClientConnected(TcpServerClient client)
-            => RunOnMainThread(() => ClientConnected?.Invoke(this, client));
+            => RunOnMainThread(() => ClientConnected?.Invoke(this, client), "TcpServerComponent.ClientConnected");
 
         private void DispatchClientDisconnected(TcpServerClient client, Exception? reason)
-            => RunOnMainThread(() => ClientDisconnected?.Invoke(this, client, reason));
+            => RunOnMainThread(() => ClientDisconnected?.Invoke(this, client, reason), "TcpServerComponent.ClientDisconnected");
 
         private void DispatchClientData(TcpServerClient client, ReadOnlyMemory<byte> payload)
         {
-            RunOnMainThread(() => ClientDataReceived?.Invoke(this, client, payload));
+            RunOnMainThread(() => ClientDataReceived?.Invoke(this, client, payload), "TcpServerComponent.ClientDataReceived");
             if (_dispatchTextMessages)
             {
                 string text = _textEncoding.GetString(payload.Span);
-                RunOnMainThread(() => ClientTextReceived?.Invoke(this, client, text));
+                RunOnMainThread(() => ClientTextReceived?.Invoke(this, client, text), "TcpServerComponent.ClientTextReceived");
             }
         }
 
         private void DispatchServerError(Exception ex)
-            => RunOnMainThread(() => ServerError?.Invoke(this, ex));
+            => RunOnMainThread(() => ServerError?.Invoke(this, ex), "TcpServerComponent.ServerError");
 
-        private static void RunOnMainThread(Action action)
+        private static void RunOnMainThread(Action action, string reason)
         {
-            if (!Engine.InvokeOnMainThread(action))
+            if (!Engine.InvokeOnMainThread(action, reason))
                 action();
         }
 

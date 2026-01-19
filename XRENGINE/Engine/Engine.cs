@@ -520,6 +520,15 @@ namespace XREngine
             => Jobs.Schedule(new ActionJob(task), JobPriority.Normal, JobAffinity.MainThread);
 
         /// <summary>
+        /// These tasks will be executed on the main thread, and usually are rendering tasks.
+        /// Adds a profiler label for the task.
+        /// </summary>
+        /// <param name="task"></param>
+        /// <param name="reason"></param>
+        public static void EnqueueMainThreadTask(Action task, string reason)
+            => Jobs.Schedule(new LabeledActionJob(task, reason), JobPriority.Normal, JobAffinity.MainThread);
+
+        /// <summary>
         /// Enqueues a task to run on the engine update thread.
         /// Use this for work that must not run on the render thread (e.g. play-mode transitions).
         /// </summary>
@@ -556,16 +565,25 @@ namespace XREngine
         /// </summary>
         /// <param name="task"></param>
         /// <returns></returns>
-        public static bool InvokeOnMainThread(Action task, bool executeNowIfAlreadyMainThread = false)
+        public static bool InvokeOnMainThread(Action task, string reason, bool executeNowIfAlreadyMainThread = false)
         {
             if (IsRenderThread)
             {
                 if (executeNowIfAlreadyMainThread)
+                {
+                    //Debug.Out($"[MainThreadInvoke] {reason} (inline)");
+                    //using var scope = Engine.Profiler.Start($"MainThreadInvoke.Immediate.{reason}");
                     task();
+                }
+                else
+                {
+                    //Debug.Out($"[MainThreadInvoke] {reason} (already on render thread; caller will execute)");
+                }
                 return false;
             }
-
-            EnqueueMainThreadTask(task);
+    
+            Debug.Out($"[MainThreadInvoke] {reason} (queued)");
+            EnqueueMainThreadTask(task, reason);
             return true;
         }
 
@@ -1020,7 +1038,7 @@ namespace XREngine
 
                 //Attach event callbacks for processing async and main thread tasks
                 Time.Timer.SwapBuffers += SwapBuffers;
-                //Time.Timer.RenderFrame += DequeueMainThreadTasks;
+                Time.Timer.RenderFrame += DequeueMainThreadTasks;
                 success = true;
             }
             catch (Exception e)
@@ -1377,10 +1395,10 @@ namespace XREngine
 
         private static void ProcessPendingMainThreadWork()
         {
-            //using var scope = Engine.Profiler.Start();
+            using var scope = Engine.Profiler.Start("MainThreadJobs.Dispatch");
 
             // Execute main-thread-affinity jobs scheduled via the job system
-            //Jobs.ProcessMainThreadJobs();
+            Jobs.ProcessMainThreadJobs();
         }
 
         public static void CreateWindows(List<GameWindowStartupSettings> windows)

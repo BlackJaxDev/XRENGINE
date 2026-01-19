@@ -55,7 +55,7 @@ namespace XREngine.Rendering.OpenGL
 
         protected virtual void DataPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            Engine.InvokeOnMainThread(() => UpdateProperty(e.PropertyName), true);
+            Engine.InvokeOnMainThread(() => UpdateProperty(e.PropertyName), "GLTexture.UpdateProperty", true);
         }
 
         private void UpdateProperty(string? propertyName)
@@ -99,7 +99,7 @@ namespace XREngine.Rendering.OpenGL
             => Data.WidthHeightDepth;
 
         protected virtual void SetParameters()
-            => Engine.InvokeOnMainThread(SetParametersInternal, true);
+            => Engine.InvokeOnMainThread(SetParametersInternal, "GLTexture.SetParameters", true);
 
         private void SetParametersInternal()
         {

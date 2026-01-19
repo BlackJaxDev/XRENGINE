@@ -78,6 +78,9 @@ namespace XREngine
         public event Action<Job>? Canceled;
         public event Action<Job, Exception>? Faulted;
 
+        internal virtual string GetProfilerLabel()
+            => GetType().Name;
+
         public abstract IEnumerable Process();
 
         protected void SetResult(object? result)

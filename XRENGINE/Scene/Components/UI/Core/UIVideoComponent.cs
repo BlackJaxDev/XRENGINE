@@ -618,7 +618,7 @@ namespace XREngine.Rendering.UI
         }
 
         private void StartFlyleafPipeline()
-            => Engine.InvokeOnMainThread(StartFlyleafPipelineOnMainThread, true);
+            => Engine.InvokeOnMainThread(StartFlyleafPipelineOnMainThread, "UIVideoComponent.StartFlyleafPipeline", true);
 
         private void StartFlyleafPipelineOnMainThread()
         {
@@ -713,7 +713,7 @@ namespace XREngine.Rendering.UI
         }
 
         private void StopFlyleafPipeline()
-            => Engine.InvokeOnMainThread(StopFlyleafPipelineOnMainThread, true);
+            => Engine.InvokeOnMainThread(StopFlyleafPipelineOnMainThread, "UIVideoComponent.StopFlyleafPipeline", true);
 
         private void StopFlyleafPipelineOnMainThread()
         {
@@ -740,11 +740,11 @@ namespace XREngine.Rendering.UI
             if (video.Width <= 0 || video.Height <= 0)
                 return;
 
-            Engine.InvokeOnMainThread(() => WidthHeight = new IVector2(video.Width, video.Height), true);
+            Engine.InvokeOnMainThread(() => WidthHeight = new IVector2(video.Width, video.Height), "UIVideoComponent.UpdateVideoSize", true);
         }
 
         private void PresentFlyleafFrame()
-            => Engine.InvokeOnMainThread(PresentFlyleafFrameOnMainThread, true);
+            => Engine.InvokeOnMainThread(PresentFlyleafFrameOnMainThread, "UIVideoComponent.PresentFlyleafFrame", true);
 
         private void PresentFlyleafFrameOnMainThread()
         {
@@ -873,7 +873,7 @@ namespace XREngine.Rendering.UI
             if (tex is null)
                 return;
 
-            if (Engine.InvokeOnMainThread(() => UploadFrameToTexturePBO(frame)))
+            if (Engine.InvokeOnMainThread(() => UploadFrameToTexturePBO(frame), "UIVideoComponent.UploadFrameToTexture"))
                 return;
 
             _currentPboIndex = (_currentPboIndex + 1) % _pboBuffers.Length;

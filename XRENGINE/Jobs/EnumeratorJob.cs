@@ -33,6 +33,13 @@ namespace XREngine
         public override IEnumerable Process()
             => _routineFactory();
 
+        internal override string GetProfilerLabel()
+        {
+            var method = _routineFactory.Method;
+            string typeName = method.DeclaringType?.Name ?? "<static>";
+            return $"{GetType().Name}:{typeName}.{method.Name}";
+        }
+
         private void HookCallbacks(
             Action<float>? progress,
             Action? completed,

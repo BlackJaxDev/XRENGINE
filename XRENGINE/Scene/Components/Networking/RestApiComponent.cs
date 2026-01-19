@@ -546,7 +546,7 @@ namespace XREngine.Components
             if (handler is null)
                 return;
 
-            RunOnMainThread(() => handler(this, request));
+            RunOnMainThread(() => handler(this, request), "RestApiComponent.RequestStarted");
         }
 
         /// <summary>
@@ -558,7 +558,7 @@ namespace XREngine.Components
             if (handler is null)
                 return;
 
-            RunOnMainThread(() => handler(this, response));
+            RunOnMainThread(() => handler(this, response), "RestApiComponent.RequestCompleted");
         }
 
         /// <summary>
@@ -570,7 +570,7 @@ namespace XREngine.Components
             if (handler is null)
                 return;
 
-            RunOnMainThread(() => handler(this, request, ex));
+            RunOnMainThread(() => handler(this, request, ex), "RestApiComponent.RequestFailed");
         }
 
         /// <summary>
@@ -582,7 +582,7 @@ namespace XREngine.Components
             if (handler is null)
                 return;
 
-            RunOnMainThread(() => handler(this, key, payload));
+            RunOnMainThread(() => handler(this, key, payload), "RestApiComponent.PayloadReceived");
         }
 
         /// <summary>
@@ -626,9 +626,9 @@ namespace XREngine.Components
         /// <summary>
         /// Ensures callbacks fire on the engine's main thread immediately if already there.
         /// </summary>
-        private static void RunOnMainThread(Action action)
+        private static void RunOnMainThread(Action action, string reason)
         {
-            Engine.InvokeOnMainThread(action, true);
+            Engine.InvokeOnMainThread(action, reason, true);
         }
     }
 

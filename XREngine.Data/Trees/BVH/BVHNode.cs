@@ -287,7 +287,7 @@ namespace SimpleScene.Util.ssBVH
         }
 
         [DebuggerBrowsable(DebuggerBrowsableState.Never)]
-        private static List<Rot> EachRot => new((Rot[])Enum.GetValues(typeof(Rot)));
+        private static List<Rot> EachRot => new(Enum.GetValues<Rot>());
 
         private static BVH<GO> RequireBVH(ISSBVHNodeAdaptor<GO> adaptor)
             => adaptor.BVH ?? throw new InvalidOperationException("Adaptor must be bound to a BVH instance.");
@@ -466,7 +466,7 @@ namespace SimpleScene.Util.ssBVH
         }
 
         [DebuggerBrowsable(DebuggerBrowsableState.Never)]
-        private static List<Axis> EachAxis => new((Axis[])Enum.GetValues(typeof(Axis)));
+        private static List<Axis> EachAxis => new(Enum.GetValues<Axis>());
 
         internal class SplitAxisOpt : IComparable<SplitAxisOpt>
         {

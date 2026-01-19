@@ -19,8 +19,9 @@ namespace Unity
         public static UnityAnimationClip? Load3rdPartyStatic(string filePath)
         {
             // Load the Unity animation clip from the specified file path
-            //IDeserializer deserializer = new StaticDeserializerBuilder(new UnityStaticContext()).WithTagMapping(new TagName("tag:unity3d.com,2011:74"), typeof(Wrapper)).Build();
-            IDeserializer deserializer = new DeserializerBuilder().WithTagMapping(new TagName("tag:unity3d.com,2011:74"), typeof(Wrapper)).Build();
+            IDeserializer deserializer = new StaticDeserializerBuilder(new UnityStaticContext())
+                .WithTagMapping(new TagName("tag:unity3d.com,2011:74"), typeof(Wrapper))
+                .Build();
             return deserializer.Deserialize<Wrapper>(File.ReadAllText(filePath)).Clip;
         }
 

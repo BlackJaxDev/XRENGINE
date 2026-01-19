@@ -151,9 +151,11 @@ namespace System.Collections.Generic
             {
                 if (_array.IndexInRangeArrayT(index))
                 {
+                    T oldValue = _array[index];
                     PreSet?.Invoke();
                     _array[index] = value;
                     PostSet?.Invoke();
+                    ItemChanged?.Invoke(value, oldValue, index);
                     if (!_multiChange)
                         CollectionChanged?.Invoke(this, new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Replace));
                     else

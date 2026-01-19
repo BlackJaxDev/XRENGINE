@@ -330,4 +330,4 @@ See `SpeechToTextExample.cs` for comprehensive examples of:
 
 ## License
 
-This component is part of XRENGINE and follows the same license terms. 
+This component is part of XRENGINE and follows the same license terms.

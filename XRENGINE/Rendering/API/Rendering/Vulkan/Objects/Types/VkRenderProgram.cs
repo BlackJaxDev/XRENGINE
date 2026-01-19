@@ -90,7 +90,7 @@ public unsafe partial class VulkanRenderer
 
         private void OnLinkRequested(XRRenderProgram program)
         {
-            if (Engine.InvokeOnMainThread(() => OnLinkRequested(program)))
+            if (Engine.InvokeOnMainThread(() => OnLinkRequested(program), "VkRenderProgram.LinkRequested"))
                 return;
 
             if (!Link())
@@ -99,7 +99,7 @@ public unsafe partial class VulkanRenderer
 
         private void OnUseRequested(XRRenderProgram program)
         {
-            if (Engine.InvokeOnMainThread(() => OnUseRequested(program)))
+            if (Engine.InvokeOnMainThread(() => OnUseRequested(program), "VkRenderProgram.UseRequested"))
                 return;
 
             if (!IsLinked)

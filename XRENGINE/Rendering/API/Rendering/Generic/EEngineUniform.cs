@@ -42,6 +42,7 @@ namespace XREngine.Rendering
         CameraAspect,
         CameraNearZ,
         CameraFarZ,
+        DepthMode,
         CameraPosition,
         //CameraForward,
         //CameraUp,

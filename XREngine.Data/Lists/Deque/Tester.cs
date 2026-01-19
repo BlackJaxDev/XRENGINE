@@ -216,7 +216,7 @@ namespace DequeTest
 
             PopulateDequePushBack(deque);
             
-            object[] array = deque.ToArray();
+            object?[] array = deque.ToArray();
             int i = 0;
 
             foreach(object obj in deque)

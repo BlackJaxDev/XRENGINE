@@ -1066,7 +1066,7 @@ namespace XREngine
                     }
                 }
 
-                Engine.InvokeOnMainThread(() => Apply(), true);
+                EnqueueSwapTask(Apply);
             }
 
             private static void ApplyTransformDebugSetting()
@@ -1084,7 +1084,7 @@ namespace XREngine
                     }
                 }
 
-                Engine.InvokeOnMainThread(() => Apply(), true);
+                EnqueueSwapTask(Apply);
             }
         }
     }

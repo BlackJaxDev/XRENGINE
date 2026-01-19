@@ -359,20 +359,20 @@ namespace XREngine.Components
         }
 
         private void DispatchConnected()
-            => RunOnMainThread(() => Connected?.Invoke(this));
+            => RunOnMainThread(() => Connected?.Invoke(this), "WebSocketClientComponent.Connected");
 
         private void DispatchDisconnected(WebSocketCloseStatus? status, string? reason)
-            => RunOnMainThread(() => Disconnected?.Invoke(this, status, reason));
+            => RunOnMainThread(() => Disconnected?.Invoke(this, status, reason), "WebSocketClientComponent.Disconnected");
 
         private void DispatchMessage(WebSocketMessage message)
-            => RunOnMainThread(() => MessageReceived?.Invoke(this, message));
+            => RunOnMainThread(() => MessageReceived?.Invoke(this, message), "WebSocketClientComponent.MessageReceived");
 
         private void DispatchError(Exception ex)
-            => RunOnMainThread(() => ConnectionError?.Invoke(this, ex));
+            => RunOnMainThread(() => ConnectionError?.Invoke(this, ex), "WebSocketClientComponent.ConnectionError");
 
-        private static void RunOnMainThread(Action action)
+        private static void RunOnMainThread(Action action, string reason)
         {
-            if (!Engine.InvokeOnMainThread(action))
+            if (!Engine.InvokeOnMainThread(action, reason))
                 action();
         }
     }

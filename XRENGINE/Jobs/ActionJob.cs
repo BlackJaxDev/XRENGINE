@@ -21,5 +21,12 @@ namespace XREngine
             _action();
             yield break;
         }
+
+        internal override string GetProfilerLabel()
+        {
+            var method = _action.Method;
+            string typeName = method.DeclaringType?.Name ?? "<static>";
+            return $"{GetType().Name}:{typeName}.{method.Name}";
+        }
     }
 }

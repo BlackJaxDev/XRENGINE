@@ -27,6 +27,7 @@ uniform mat4 view;
 uniform mat4 projection;
 uniform ivec2 screenSize;
 uniform int lightCount;
+uniform int DepthMode;
 
 shared uint minDepthInt;
 shared uint maxDepthInt;
@@ -60,6 +61,8 @@ void main()
 	{
 		vec2 uv = vec2(location) / vec2(screenSize);
 		float depth = texture(depthMap, uv).r;
+		if (DepthMode == 1)
+			depth = 1.0 - depth;
 
 		// Linearize depth (same approach as the original unused shader)
 		depthLinear = (0.5 * projection[3][2]) / (depth + 0.5 * projection[2][2] - 0.5);

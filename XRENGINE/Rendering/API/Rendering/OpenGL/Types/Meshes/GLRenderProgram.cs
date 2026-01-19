@@ -233,7 +233,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void UseRequested(XRRenderProgram program)
             {
-                if (Engine.InvokeOnMainThread(() => UseRequested(program)))
+                if (Engine.InvokeOnMainThread(() => UseRequested(program), "GLRenderProgram.UseRequested"))
                     return;
 
                 if (!IsLinked)
@@ -247,7 +247,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void LinkRequested(XRRenderProgram program)
             {
-                if (Engine.InvokeOnMainThread(() => LinkRequested(program)))
+                if (Engine.InvokeOnMainThread(() => LinkRequested(program), "GLRenderProgram.LinkRequested"))
                     return;
 
                 if (!Link())
@@ -800,7 +800,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void Relink()
             {
-                if (Engine.InvokeOnMainThread(Relink))
+                if (Engine.InvokeOnMainThread(Relink, "GLRenderProgram.Relink"))
                     return;
 
                 //Programs can't be relinked; destroy and recreate.

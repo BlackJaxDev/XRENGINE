@@ -433,27 +433,27 @@ namespace XREngine.Components
         }
 
         private void DispatchConnected()
-            => RunOnMainThread(() => Connected?.Invoke(this));
+            => RunOnMainThread(() => Connected?.Invoke(this), "TcpClientComponent.Connected");
 
         private void DispatchDisconnected(Exception? ex)
-            => RunOnMainThread(() => Disconnected?.Invoke(this, ex));
+            => RunOnMainThread(() => Disconnected?.Invoke(this, ex), "TcpClientComponent.Disconnected");
 
         private void DispatchData(ReadOnlyMemory<byte> payload)
         {
-            RunOnMainThread(() => DataReceived?.Invoke(this, payload));
+            RunOnMainThread(() => DataReceived?.Invoke(this, payload), "TcpClientComponent.DataReceived");
             if (_dispatchTextMessages)
             {
                 string text = _textEncoding.GetString(payload.Span);
-                RunOnMainThread(() => TextReceived?.Invoke(this, text));
+                RunOnMainThread(() => TextReceived?.Invoke(this, text), "TcpClientComponent.TextReceived");
             }
         }
 
         private void DispatchError(Exception ex)
-            => RunOnMainThread(() => ConnectionError?.Invoke(this, ex));
+            => RunOnMainThread(() => ConnectionError?.Invoke(this, ex), "TcpClientComponent.ConnectionError");
 
-        private static void RunOnMainThread(Action action)
+        private static void RunOnMainThread(Action action, string reason)
         {
-            if (!Engine.InvokeOnMainThread(action))
+            if (!Engine.InvokeOnMainThread(action, reason))
                 action();
         }
     }

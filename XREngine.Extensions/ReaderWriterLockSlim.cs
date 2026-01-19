@@ -4,7 +4,7 @@
     {
         private sealed class ReadLockToken : IDisposable
         {
-            private ReaderWriterLockSlim _sync;
+            private ReaderWriterLockSlim? _sync;
             public ReadLockToken(ReaderWriterLockSlim sync)
             {
                 _sync = sync;
@@ -21,7 +21,7 @@
         }
         private sealed class WriteLockToken : IDisposable
         {
-            private ReaderWriterLockSlim _sync;
+            private ReaderWriterLockSlim? _sync;
             public WriteLockToken(ReaderWriterLockSlim sync)
             {
                 _sync = sync;

@@ -7,29 +7,19 @@ namespace XREngine.Components
     /// <summary>
     /// Text-to-speech provider using Google Cloud Text-to-Speech API.
     /// </summary>
-    public class GoogleTTSProvider : ITTSProvider
+    /// <remarks>
+    /// Creates a new Google Cloud TTS provider.
+    /// </remarks>
+    /// <param name="apiKey">Google Cloud API key.</param>
+    /// <param name="defaultLanguage">Default language code (e.g., "en-US").</param>
+    public class GoogleTTSProvider(string apiKey, string defaultLanguage = "en-US") : ITTSProvider
     {
-        private readonly string _apiKey;
-        private readonly HttpClient _httpClient;
-        private readonly string _defaultLanguage;
-
+        private readonly HttpClient _httpClient = new();
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
-
-        /// <summary>
-        /// Creates a new Google Cloud TTS provider.
-        /// </summary>
-        /// <param name="apiKey">Google Cloud API key.</param>
-        /// <param name="defaultLanguage">Default language code (e.g., "en-US").</param>
-        public GoogleTTSProvider(string apiKey, string defaultLanguage = "en-US")
-        {
-            _apiKey = apiKey;
-            _defaultLanguage = defaultLanguage;
-            _httpClient = new HttpClient();
-        }
 
         public async Task<TTSResult> SynthesizeAsync(string text, string? voice = null, CancellationToken cancellationToken = default)
         {
@@ -40,8 +30,8 @@ namespace XREngine.Components
                     Input = new GoogleTTSInput { Text = text },
                     Voice = new GoogleTTSVoice
                     {
-                        LanguageCode = _defaultLanguage,
-                        Name = voice ?? $"{_defaultLanguage}-Standard-A"
+                        LanguageCode = defaultLanguage,
+                        Name = voice ?? $"{defaultLanguage}-Standard-A"
                     },
                     AudioConfig = new GoogleTTSAudioConfig
                     {
@@ -54,7 +44,7 @@ namespace XREngine.Components
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
                 var response = await _httpClient.PostAsync(
-                    $"https://texttospeech.googleapis.com/v1/text:synthesize?key={_apiKey}",
+                    $"https://texttospeech.googleapis.com/v1/text:synthesize?key={apiKey}",
                     content,
                     cancellationToken);
 
@@ -92,7 +82,7 @@ namespace XREngine.Components
             try
             {
                 var response = await _httpClient.GetAsync(
-                    $"https://texttospeech.googleapis.com/v1/voices?key={_apiKey}",
+                    $"https://texttospeech.googleapis.com/v1/voices?key={apiKey}",
                     cancellationToken);
 
                 if (!response.IsSuccessStatusCode)

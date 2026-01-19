@@ -2465,16 +2465,16 @@ public static partial class EditorImGuiUI
                 {
                     entry.Texture = tex;
                     entry.RequestInFlight = false;
-                }),
+                }, "Asset Explorer: Preview ready"),
                 onError: ex => Engine.InvokeOnMainThread(() =>
                 {
                     Debug.LogException(ex, $"Texture preview job failed for '{entry.Path}'.");
                     entry.RequestInFlight = false;
-                }),
+                }, "Asset Explorer: Preview failed"),
                 onCanceled: () => Engine.InvokeOnMainThread(() =>
                 {
                     entry.RequestInFlight = false;
-                }));
+                }, "Asset Explorer: Preview canceled"));
         }
 
         private static bool TryGetTexturePreviewHandle(XRTexture2D texture, float maxEdge, out nint handle, out Vector2 displaySize)

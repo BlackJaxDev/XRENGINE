@@ -1040,6 +1040,19 @@ namespace XREngine.Rendering
             if (_pbo is null)
                 return;
 
+            if (!Engine.IsRenderThread || AbstractRenderer.Current is null || !AbstractRenderer.Current.Active)
+            {
+                Engine.AddMainThreadCoroutine(() =>
+                {
+                    if (AbstractRenderer.Current is null || !AbstractRenderer.Current.Active)
+                        return false;
+
+                    LoadFromPBO(mipIndex);
+                    return true;
+                });
+                return;
+            }
+
             if (Mipmaps is null || mipIndex < 0 || mipIndex >= Mipmaps.Length)
                 return;
 

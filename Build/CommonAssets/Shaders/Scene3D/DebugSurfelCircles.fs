@@ -110,11 +110,19 @@ bool TryLoadWorldMatrix(uint commandIndex, out mat4 M)
     if (base + 15u >= culledFloatCount)
         return false;
 
-    vec4 c0 = vec4(culled[base+0], culled[base+4], culled[base+8],  culled[base+12]);
-    vec4 c1 = vec4(culled[base+1], culled[base+5], culled[base+9],  culled[base+13]);
-    vec4 c2 = vec4(culled[base+2], culled[base+6], culled[base+10], culled[base+14]);
-    vec4 c3 = vec4(culled[base+3], culled[base+7], culled[base+11], culled[base+15]);
-    M = mat4(c0, c1, c2, c3);
+    // GPU command buffer stores matrices in row-major order (matching System.Numerics.Matrix4x4).
+    // GLSL mat4 constructor takes columns, so we read rows and construct columns.
+    vec4 r0 = vec4(culled[base+0],  culled[base+1],  culled[base+2],  culled[base+3]);
+    vec4 r1 = vec4(culled[base+4],  culled[base+5],  culled[base+6],  culled[base+7]);
+    vec4 r2 = vec4(culled[base+8],  culled[base+9],  culled[base+10], culled[base+11]);
+    vec4 r3 = vec4(culled[base+12], culled[base+13], culled[base+14], culled[base+15]);
+    // Transpose: mat4 takes columns, so column i = (r0[i], r1[i], r2[i], r3[i])
+    M = mat4(
+        vec4(r0.x, r1.x, r2.x, r3.x),
+        vec4(r0.y, r1.y, r2.y, r3.y),
+        vec4(r0.z, r1.z, r2.z, r3.z),
+        vec4(r0.w, r1.w, r2.w, r3.w)
+    );
     return true;
 }
 
@@ -160,6 +168,8 @@ void main()
     uint n = min(count, maxPerCell);
     float minDist = 1e10;
     vec3 nearestColor = vec3(0.0);
+    uint nearestIdx = 0u;
+    float nearestRadius = 1.0;
     bool foundSurfel = false;
 
     for (uint i = 0u; i < n; ++i)
@@ -189,8 +199,10 @@ void main()
             if (dist < minDist)
             {
                 minDist = dist;
+                nearestIdx = idx;
                 // Color by surfel index for unique identification
                 nearestColor = HashColor(idx);
+                nearestRadius = sRadius;
                 foundSurfel = true;
             }
         }
@@ -199,7 +211,7 @@ void main()
     if (foundSurfel)
     {
         // Draw surfel as colored circle with edge highlight
-        float edgeFactor = minDist / surfels[indices[cell * maxPerCell]].posRadius.w;
+        float edgeFactor = minDist / nearestRadius;
         float edgeHighlight = smoothstep(0.8, 1.0, edgeFactor);
         vec3 finalColor = mix(nearestColor, vec3(1.0), edgeHighlight * 0.3);
         

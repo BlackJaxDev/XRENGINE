@@ -239,7 +239,7 @@ namespace XREngine.Rendering.OpenGL
                 if (Data.ActivelyMapping.Contains(this))
                     return;
 
-                if (Engine.InvokeOnMainThread(PushData))
+                if (Engine.InvokeOnMainThread(PushData, "GLDataBuffer.PushData"))
                     return;
 
                 // Track VRAM deallocation of previous buffer if any
@@ -289,7 +289,7 @@ namespace XREngine.Rendering.OpenGL
                 if (Data.ActivelyMapping.Contains(this))
                     return;
 
-                if (Engine.InvokeOnMainThread(() => PushSubData(offset, length)))
+                if (Engine.InvokeOnMainThread(() => PushSubData(offset, length), "GLDataBuffer.PushSubData"))
                     return;
                 
                 if (!IsGenerated)
@@ -327,7 +327,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (Data.ActivelyMapping.Contains(this))
                     return;
-                if (Engine.InvokeOnMainThread(Flush))
+                if (Engine.InvokeOnMainThread(Flush, "GLDataBuffer.Flush"))
                     return;
                 Api.FlushMappedNamedBufferRange(BindingId, 0, Data.Length);
             }
@@ -336,7 +336,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (Data.ActivelyMapping.Contains(this))
                     return;
-                if (Engine.InvokeOnMainThread(() => FlushRange(offset, length)))
+                if (Engine.InvokeOnMainThread(() => FlushRange(offset, length), "GLDataBuffer.FlushRange"))
                     return;
                 Api.FlushMappedNamedBufferRange(BindingId, offset, length);
             }
@@ -366,7 +366,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                if (Engine.InvokeOnMainThread(MapBufferData))
+                if (Engine.InvokeOnMainThread(MapBufferData, "GLDataBuffer.MapBufferData"))
                     return;
 
                 // Insert a client-mapped buffer barrier before mapping to ensure visibility of GPU writes to persistently mapped buffers
@@ -433,7 +433,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!Data.ActivelyMapping.Contains(this))
                     return;
 
-                if (Engine.InvokeOnMainThread(UnmapBufferData))
+                if (Engine.InvokeOnMainThread(UnmapBufferData, "GLDataBuffer.UnmapBufferData"))
                     return;
 
                 if (IsGpuBufferLoggingEnabled())
@@ -495,7 +495,7 @@ namespace XREngine.Rendering.OpenGL
                 if (bindingID == InvalidBindingId)
                     return;
 
-                if (Engine.InvokeOnMainThread(() => SetUniformBlockName(program, blockName)))
+                if (Engine.InvokeOnMainThread(() => SetUniformBlockName(program, blockName), "GLDataBuffer.SetUniformBlockName"))
                     return;
 
                 Bind();
@@ -508,7 +508,7 @@ namespace XREngine.Rendering.OpenGL
                 if (blockIndex == uint.MaxValue)
                     return;
 
-                if (Engine.InvokeOnMainThread(() => SetBlockIndex(blockIndex)))
+                if (Engine.InvokeOnMainThread(() => SetBlockIndex(blockIndex), "GLDataBuffer.SetBlockIndex"))
                     return;
 
                 Bind();
@@ -535,14 +535,14 @@ namespace XREngine.Rendering.OpenGL
 
             public void Bind()
             {
-                if (Engine.InvokeOnMainThread(Bind))
+                if (Engine.InvokeOnMainThread(Bind, "GLDataBuffer.Bind"))
                     return;
 
                 Api.BindBuffer(ToGLEnum(Data.Target), BindingId);
             }
             public void Unbind()
             {
-                if (Engine.InvokeOnMainThread(Unbind))
+                if (Engine.InvokeOnMainThread(Unbind, "GLDataBuffer.Unbind"))
                     return;
 
                 Api.BindBuffer(ToGLEnum(Data.Target), 0);
