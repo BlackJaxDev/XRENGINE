@@ -134,7 +134,7 @@ probe.TargetMipLevel = 0; // Request full resolution
 
 When multiple probes exist in a scene, the renderer automatically builds a Delaunay triangulation to interpolate between the nearest probes. This provides smooth transitions without manual blend weight configuration.
 
-The triangulation is managed by <xref:XREngine.Rendering.Lights3DCollection> and updated when probes are added, removed, or moved.
+The triangulation is managed by <xref:XREngine.Scene.Lights3DCollection> and updated when probes are added, removed, or moved.
 
 ## Real-Time Capture
 
@@ -185,7 +185,7 @@ Preview modes:
 
 - <xref:XREngine.Components.Capture.Lights.LightProbeComponent> - Main probe component
 - <xref:XREngine.Components.Capture.LightProbeGridSpawnerComponent> - Grid spawner
-- <xref:XREngine.Rendering.Lights3DCollection.LightProbeCell> - Triangulation cell
+- <xref:XREngine.Scene.Lights3DCollection.LightProbeCell> - Triangulation cell
 
 ## See Also
 

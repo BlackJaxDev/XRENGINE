@@ -185,7 +185,7 @@ cascadeTexture.WWrap = ETexWrapMode.ClampToBorder;
 - **Compute (stereo):** `Build/CommonAssets/Shaders/Compute/RadianceCascades/RadianceCascadesStereo.comp`
 - **Composite:** `Build/CommonAssets/Shaders/Scene3D/RadianceCascadeComposite.fs`
 - **Component:** <xref:XREngine.Components.Lights.RadianceCascadeComponent>
-- **Registry:** <xref:XREngine.Rendering.GI.RadianceCascadeRegistry>
+- **Registry:** `RadianceCascadeRegistry`
 - **Render Pass:** <xref:XREngine.Rendering.Pipelines.Commands.VPRC_RadianceCascadesPass>
 
 ## Current Limitations

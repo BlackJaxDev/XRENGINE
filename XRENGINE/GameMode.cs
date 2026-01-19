@@ -22,7 +22,7 @@ namespace XREngine
         protected Type? _defaultPlayerControllerClass = typeof(LocalPlayerController);
         protected Type? _defaultPlayerPawnClass = typeof(FlyingCameraPawnComponent);
 
-        [get: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+        [property: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
         public Type? PlayerControllerClass => _defaultPlayerControllerClass;
         public Type? PlayerPawnClass => _defaultPlayerPawnClass;
 

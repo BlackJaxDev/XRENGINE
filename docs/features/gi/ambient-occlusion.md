@@ -205,4 +205,4 @@ if (usingRadianceCascades || usingReSTIR)
 ## See Also
 
 - [Global Illumination Overview](global-illumination.md)
-- [Post-Processing](../architecture/post-processing.md) - Other camera effects
+- Post-Processing (coming soon) - Other camera effects

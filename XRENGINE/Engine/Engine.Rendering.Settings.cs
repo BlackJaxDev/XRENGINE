@@ -295,6 +295,7 @@ namespace XREngine
                 private uint _bvhLeafMaxPrims = 4u;
                 private EBvhMode _bvhMode = EBvhMode.Morton;
                 private bool _bvhRefitOnlyWhenStable = true;
+                private bool _useSkinnedBvhRefitOptimize = false;
                 private uint _raycastBufferSize = 1024u;
                 private bool _enableGpuBvhTimingQueries = false;
 
@@ -763,6 +764,18 @@ namespace XREngine
                 {
                     get => _bvhRefitOnlyWhenStable;
                     set => SetField(ref _bvhRefitOnlyWhenStable, value);
+                }
+
+                /// <summary>
+                /// When enabled, CPU skinned-mesh BVH updates will attempt to refit and optimize existing trees
+                /// instead of rebuilding from scratch. Falls back to full rebuild when refit is not possible.
+                /// </summary>
+                [Category("BVH")]
+                [Description("When enabled, CPU skinned-mesh BVH updates will attempt to refit and optimize existing trees instead of rebuilding from scratch. Falls back to full rebuild when refit is not possible.")]
+                public bool UseSkinnedBvhRefitOptimize
+                {
+                    get => _useSkinnedBvhRefitOptimize;
+                    set => SetField(ref _useSkinnedBvhRefitOptimize, value);
                 }
 
                 /// <summary>

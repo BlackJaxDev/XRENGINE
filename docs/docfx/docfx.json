@@ -29,20 +29,23 @@
       {
         "files": [
           "index.md",
-          "guides.md",
-          "toc.yml"
+            "guides.md",
+            "toc.yml",
+            "api/index.md"
         ]
       },
       {
         "src": "..",
         "files": [
           "DEPENDENCIES.md",
+            "README.md",
           "api/**/*.md",
           "api/toc.yml",
           "architecture/**/*.md",
           "architecture/toc.yml",
-          "features/**/*.md",
-          "features/toc.yml"
+            "features/**/*.md",
+            "features/toc.yml",
+            "work/**/*.md"
         ]
       },
       {
@@ -58,6 +61,18 @@
         "files": [
           "styles/**"
         ]
+        },
+        {
+          "src": "..",
+          "files": [
+            "licenses/**"
+          ]
+        },
+        {
+          "src": "../..",
+          "files": [
+            "LICENSE"
+          ]
       }
     ],
     "dest": "_site",

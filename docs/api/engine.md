@@ -557,9 +557,9 @@ public static class Engine
 ```
 
 ## Related Documentation
-- [Component System](../components.md)
-- [Scene System](../scene.md)
-- [Rendering System](../rendering.md)
-- [Physics System](../physics.md)
-- [Animation System](../animation.md)
-- [VR Development](../vr-development.md) 
+- [Component System](components.md)
+- [Scene System](scene.md)
+- [Rendering System](rendering.md)
+- [Physics System](physics.md)
+- [Animation System](animation.md)
+- [VR Development](vr-development.md) 

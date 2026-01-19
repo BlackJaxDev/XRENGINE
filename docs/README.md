@@ -6,7 +6,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Architecture Overview](architecture/README.md)
 - [Play Mode Architecture](architecture/play-mode-architecture.md)
 - [Load Balancer](architecture/load-balancer.md)
-- [Job System](architecture/job-system.md)
+- [Job System](api/job-system.md)
 - [Networking Overview](architecture/networking-overview.md)
 - [Editor Undo System](architecture/undo-system.md)
 
@@ -24,7 +24,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 ## Rendering
 - [CoACD Integration](architecture/CoACD.md)
 - [GPU Render Pass Pipeline](work/design/gpu-render-pass-pipeline.md)
-- [Light Volumes](features/light-volumes.md)
+- [Light Volumes](features/gi/light-volumes.md)
 - [Secondary GPU Context](architecture/secondary-gpu-context.md)
 
 ## Physics and Simulation
