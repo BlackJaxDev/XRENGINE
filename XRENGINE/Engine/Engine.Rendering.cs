@@ -145,7 +145,7 @@ namespace XREngine
                     }
                 }
 
-                Engine.InvokeOnMainThread(() => Apply(), true);
+                Engine.InvokeOnMainThread(() => Apply(), "Engine.Rendering.ApplyGpuRenderDispatchPreference", true);
             }
 
             public static void ApplyGpuBvhPreference()
@@ -158,7 +158,7 @@ namespace XREngine
                         worldInstance?.ApplyGpuBvhPreference(useGpuBvh);
                 }
 
-                Engine.InvokeOnMainThread(() => Apply(), true);
+                Engine.InvokeOnMainThread(() => Apply(), "Engine.Rendering.ApplyGpuBvhPreference", true);
             }
 
             public static void ApplyNvidiaDlssPreference()
@@ -177,7 +177,7 @@ namespace XREngine
                     }
                 }
 
-                Engine.InvokeOnMainThread(() => Apply(), true);
+                Engine.InvokeOnMainThread(() => Apply(), "Engine.Rendering.ApplyNvidiaDlssPreference", true);
             }
 
             public static void ApplyIntelXessPreference()
@@ -196,7 +196,7 @@ namespace XREngine
                     }
                 }
 
-                Engine.InvokeOnMainThread(() => Apply(), true);
+                Engine.InvokeOnMainThread(() => Apply(), "Engine.Rendering.ApplyIntelXessPreference", true);
             }
 
             internal static void ApplyGpuRenderDispatchToPipeline(RenderPipeline pipeline, bool useGpu)

@@ -3467,7 +3467,7 @@ void main()
             {
                 case ERenderParamUsage.Enabled:
                     Api.Enable(EnableCap.DepthTest);
-                    Api.DepthFunc(ToGLEnum(r.DepthTest.Function));
+                    Api.DepthFunc(ToGLEnum(Engine.Rendering.State.MapDepthComparison(r.DepthTest.Function)));
                     Api.DepthMask(r.DepthTest.UpdateDepth);
                     break;
 

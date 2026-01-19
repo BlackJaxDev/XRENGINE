@@ -1,19 +1,20 @@
 using System;
 using System.Collections;
-using System.Collections.Generic;
 
 namespace XREngine
 {
     /// <summary>
-    /// Simple job that executes a single action.
+    /// Simple job that executes a single action with a profiler-friendly label.
     /// </summary>
-    internal sealed class ActionJob : Job
+    internal sealed class LabeledActionJob : Job
     {
         private readonly Action _action;
+        private readonly string _label;
 
-        public ActionJob(Action action)
+        public LabeledActionJob(Action action, string label)
         {
             _action = action ?? throw new ArgumentNullException(nameof(action));
+            _label = string.IsNullOrWhiteSpace(label) ? "MainThreadInvoke" : label.Trim();
         }
 
         public override IEnumerable Process()
@@ -23,10 +24,6 @@ namespace XREngine
         }
 
         internal override string GetProfilerLabel()
-        {
-            var method = _action.Method;
-            string typeName = method.DeclaringType?.Name ?? "<static>";
-            return $"{GetType().Name}:{typeName}.{method.Name}";
-        }
+            => $"Invoke:{_label}";
     }
 }

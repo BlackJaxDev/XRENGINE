@@ -7,40 +7,27 @@ namespace XREngine.Components
     /// <summary>
     /// Text-to-speech provider using Amazon Polly via REST API.
     /// </summary>
-    public class AmazonPollyTTSProvider : ITTSProvider
+    /// <remarks>
+    /// Creates a new Amazon Polly TTS provider.
+    /// </remarks>
+    /// <param name="accessKeyId">AWS Access Key ID.</param>
+    /// <param name="secretAccessKey">AWS Secret Access Key.</param>
+    /// <param name="region">AWS region (e.g., "us-east-1").</param>
+    /// <param name="engine">Voice engine: "standard" or "neural".</param>
+    public class AmazonPollyTTSProvider(string accessKeyId, string secretAccessKey, string region = "us-east-1", string engine = "neural") : ITTSProvider
     {
-        private readonly string _accessKeyId;
-        private readonly string _secretAccessKey;
-        private readonly string _region;
-        private readonly HttpClient _httpClient;
-        private readonly string _defaultEngine;
-
-        /// <summary>
-        /// Creates a new Amazon Polly TTS provider.
-        /// </summary>
-        /// <param name="accessKeyId">AWS Access Key ID.</param>
-        /// <param name="secretAccessKey">AWS Secret Access Key.</param>
-        /// <param name="region">AWS region (e.g., "us-east-1").</param>
-        /// <param name="engine">Voice engine: "standard" or "neural".</param>
-        public AmazonPollyTTSProvider(string accessKeyId, string secretAccessKey, string region = "us-east-1", string engine = "neural")
-        {
-            _accessKeyId = accessKeyId;
-            _secretAccessKey = secretAccessKey;
-            _region = region;
-            _defaultEngine = engine;
-            _httpClient = new HttpClient();
-        }
+        private readonly HttpClient _httpClient = new();
 
         public async Task<TTSResult> SynthesizeAsync(string text, string? voice = null, CancellationToken cancellationToken = default)
         {
             try
             {
                 var voiceId = voice ?? "Joanna";
-                var endpoint = $"https://polly.{_region}.amazonaws.com/v1/speech";
+                var endpoint = $"https://polly.{region}.amazonaws.com/v1/speech";
                 
                 var requestBody = new
                 {
-                    Engine = _defaultEngine,
+                    Engine = engine,
                     OutputFormat = "pcm",
                     SampleRate = "24000",
                     Text = text,
@@ -123,16 +110,16 @@ namespace XREngine.Components
 
             // Create string to sign
             var algorithm = "AWS4-HMAC-SHA256";
-            var credentialScope = $"{dateStamp}/{_region}/polly/aws4_request";
+            var credentialScope = $"{dateStamp}/{region}/polly/aws4_request";
             var stringToSign = $"{algorithm}\n{amzDate}\n{credentialScope}\n{canonicalRequestHash}";
 
             // Calculate signature
-            var signingKey = GetSignatureKey(_secretAccessKey, dateStamp, _region, "polly");
+            var signingKey = GetSignatureKey(secretAccessKey, dateStamp, region, "polly");
             var signature = ComputeHmacSha256(signingKey, stringToSign);
             var signatureHex = BitConverter.ToString(signature).Replace("-", "").ToLowerInvariant();
 
             // Create authorization header
-            var authorization = $"{algorithm} Credential={_accessKeyId}/{credentialScope}, SignedHeaders={signedHeaders}, Signature={signatureHex}";
+            var authorization = $"{algorithm} Credential={accessKeyId}/{credentialScope}, SignedHeaders={signedHeaders}, Signature={signatureHex}";
             request.Headers.Add("Authorization", authorization);
 
             return request;
@@ -140,9 +127,8 @@ namespace XREngine.Components
 
         private static string ComputeSha256Hash(string input)
         {
-            using var sha256 = System.Security.Cryptography.SHA256.Create();
-            var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(input));
-            return BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
+            var bytes = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(input));
+            return Convert.ToHexStringLower(bytes);
         }
 
         private static byte[] ComputeHmacSha256(byte[] key, string data)

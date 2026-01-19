@@ -213,10 +213,10 @@ namespace XREngine.Rendering
             return Matrix4x4.CreatePerspectiveOffCenter(xMin, xMax, yMin, yMax, nearZ, farZ);
         }
 
-        public Matrix4x4 GetNormalizedProjectionSlice(float nearDepth, float farDepth)
+        public Matrix4x4 GetNormalizedProjectionSlice(float nearDepth, float farDepth, bool reversedZ = false)
         {
-            float nearZ = XRMath.DepthToDistance(nearDepth, NearZ, FarZ);
-            float farZ = XRMath.DepthToDistance(farDepth, NearZ, FarZ);
+            float nearZ = XRMath.DepthToDistance(nearDepth, NearZ, FarZ, reversedZ);
+            float farZ = XRMath.DepthToDistance(farDepth, NearZ, FarZ, reversedZ);
             return GetProjectionSlice(nearZ, farZ);
         }
 

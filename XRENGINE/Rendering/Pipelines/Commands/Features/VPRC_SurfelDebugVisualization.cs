@@ -9,6 +9,8 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// </summary>
 public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
 {
+    private const uint CulledCommandFloats = 48u;
+
     public enum EVisualizationMode
     {
         /// <summary>
@@ -188,6 +190,9 @@ public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
         surfelPass.GridCountsBuffer?.BindTo(_debugProgram, 3u);
         surfelPass.GridIndicesBuffer?.BindTo(_debugProgram, 4u);
 
+        // Bind command buffer (optional) for world-matrix reconstruction in debug shaders
+        BindCulledCommandsIfAvailable(_debugProgram);
+
         // Set uniforms
         _debugProgram.Uniform("resolution", new Data.Vectors.IVector2((int)width, (int)height));
         _debugProgram.Uniform("invProjMatrix", invProj);
@@ -205,6 +210,25 @@ public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
         uint groupsX = (width + 15u) / 16u;
         uint groupsY = (height + 15u) / 16u;
         _debugProgram.DispatchCompute(groupsX, groupsY, 1u, EMemoryBarrierMask.ShaderImageAccess);
+    }
+
+    private void BindCulledCommandsIfAvailable(XRRenderProgram program)
+    {
+        var scene = ActivePipelineInstance.RenderState.Scene;
+        var gpuScene = scene?.GPUCommands;
+        XRDataBuffer? commands = gpuScene is null ? null : gpuScene.AllLoadedCommandsBuffer;
+        if (commands is null)
+        {
+            program.Uniform("hasCulledCommands", false);
+            program.Uniform("culledFloatCount", 0u);
+            program.Uniform("culledCommandFloats", CulledCommandFloats);
+            return;
+        }
+
+        commands.BindTo(program, 5u);
+        program.Uniform("hasCulledCommands", true);
+        program.Uniform("culledFloatCount", commands.ElementCount * CulledCommandFloats);
+        program.Uniform("culledCommandFloats", CulledCommandFloats);
     }
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)

@@ -457,7 +457,7 @@ public unsafe partial class VulkanRenderer
 
         private void OnPushDataRequested()
         {
-            if (Engine.InvokeOnMainThread(OnPushDataRequested))
+            if (Engine.InvokeOnMainThread(OnPushDataRequested, "VkTexture2D.PushData"))
                 return;
 
             PushTextureData();
@@ -465,7 +465,7 @@ public unsafe partial class VulkanRenderer
 
         private void OnGenerateMipmapsRequested()
         {
-            if (Engine.InvokeOnMainThread(OnGenerateMipmapsRequested))
+            if (Engine.InvokeOnMainThread(OnGenerateMipmapsRequested, "VkTexture2D.GenerateMipmaps"))
                 return;
 
             GenerateMipmapsGPU();

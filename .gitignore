@@ -399,3 +399,4 @@ docs/docfx/**/xrefmap.yml
 docs/docfx/**/xrefmap.json
 docs/docfx/manifest.json
 XREngine.Server/imgui.ini
+XREngine.Editor/McpCaptures/

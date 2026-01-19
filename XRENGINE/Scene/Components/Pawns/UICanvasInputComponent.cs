@@ -316,7 +316,8 @@ namespace XREngine.Components
                             XRMath.DistanceToDepth(
                                 canvasTransform.CameraDrawSpaceDistance,
                                 camera.NearZ,
-                                camera.FarZ));
+                                camera.FarZ,
+                                camera.IsReversedDepth));
 
                         //Transform the world coord to the canvas' local space
                         Matrix4x4 worldToLocal = canvasTransform.InverseWorldMatrix;

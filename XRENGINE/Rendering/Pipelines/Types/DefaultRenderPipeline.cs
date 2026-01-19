@@ -207,7 +207,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             CommandChain = GenerateCommandChain();
             foreach (var instance in Instances)
                 instance.DestroyCache();
-        }, true);
+        }, "DefaultRenderPipeline: Rendering settings changed", true);
     }
 
     private void ApplyAntiAliasingResolutionHint()

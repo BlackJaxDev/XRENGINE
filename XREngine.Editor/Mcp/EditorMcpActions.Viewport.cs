@@ -51,37 +51,87 @@ namespace XREngine.Editor.Mcp
             if (viewport is null)
                 return new McpToolResponse("No viewport found to capture.", isError: true);
 
-            if (AbstractRenderer.Current is null)
-                return new McpToolResponse("No active renderer available for screenshot capture.", isError: true);
-
             string folder = outputDir ?? Path.Combine(Environment.CurrentDirectory, "McpCaptures");
             string fileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png";
             string path = Path.Combine(folder, fileName);
 
             Utility.EnsureDirPathExists(path);
 
-            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-            AbstractRenderer.Current.GetScreenshotAsync(viewport.Region, false, (img, _) =>
+            static void BeginCapture(AbstractRenderer renderer, XRViewport viewport, string path, TaskCompletionSource<string> tcs)
             {
-                if (img is null)
+                renderer.GetScreenshotAsync(viewport.Region, false, (img, _) =>
                 {
-                    tcs.TrySetException(new InvalidOperationException("Screenshot capture returned null."));
+                    if (img is null)
+                    {
+                        tcs.TrySetException(new InvalidOperationException("Screenshot capture returned null."));
+                        return;
+                    }
+
+                    try
+                    {
+                        img.Flip();
+                        img.Write(path);
+                        tcs.TrySetResult(path);
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.TrySetException(ex);
+                    }
+                });
+            }
+
+            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Action? deferredHandler = null;
+
+            var window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+            if (window is null)
+                return new McpToolResponse("No window found to capture from.", isError: true);
+
+            void ScheduleCaptureOnRenderThread()
+            {
+                if (AbstractRenderer.Current is not null)
+                {
+                    BeginCapture(AbstractRenderer.Current, viewport, path, tcs);
                     return;
                 }
 
-                try
+                int captureStarted = 0;
+                deferredHandler = () =>
                 {
-                    img.Flip();
-                    img.Write(path);
-                    tcs.TrySetResult(path);
-                }
-                catch (Exception ex)
+                    var renderer = AbstractRenderer.Current;
+                    if (renderer is null)
+                        return;
+
+                    if (Interlocked.CompareExchange(ref captureStarted, 1, 0) != 0)
+                        return;
+
+                    window.RenderViewportsCallback -= deferredHandler;
+                    BeginCapture(renderer, viewport, path, tcs);
+                };
+
+                window.RenderViewportsCallback += deferredHandler;
+            }
+
+            if (Engine.IsRenderThread)
+            {
+                ScheduleCaptureOnRenderThread();
+            }
+            else
+            {
+                Engine.InvokeOnMainThread(ScheduleCaptureOnRenderThread, "MCP: Capture viewport screenshot", executeNowIfAlreadyMainThread: true);
+            }
+
+            using var reg = token.Register(() =>
+            {
+                if (deferredHandler is not null)
                 {
-                    tcs.TrySetException(ex);
+                    var window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+                    window?.RenderViewportsCallback -= deferredHandler;
                 }
+
+                tcs.TrySetCanceled(token);
             });
 
-            using var reg = token.Register(() => tcs.TrySetCanceled(token));
             try
             {
                 string savedPath = await tcs.Task;

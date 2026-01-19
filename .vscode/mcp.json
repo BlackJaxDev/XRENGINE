@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "xrengine": {
+      "type": "http",
+      "url": "http://localhost:5467/mcp/"
+    }
+  }
+}

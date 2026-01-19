@@ -1,6 +1,6 @@
 # XREngine Warning Remediation Checklist
 
-_Last refreshed: 2025-11-22_
+_Last refreshed: 2026-01-19_
 
 ## Usage
 - Check off items as warnings are eliminated; keep counts updated after each build.

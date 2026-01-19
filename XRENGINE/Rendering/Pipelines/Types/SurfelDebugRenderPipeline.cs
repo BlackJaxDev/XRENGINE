@@ -97,7 +97,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
                     CommandChain = GenerateCommandChain();
                     foreach (var instance in Instances)
                         instance.DestroyCache();
-                }, true);
+                }, "SurfelDebugRenderPipeline: Visualization mode changed", true);
             }
         }
     }

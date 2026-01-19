@@ -136,7 +136,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// Converts DepthHitNormalizedViewportPoint's depth Z-value to a distance based on the camera's near and far planes.
     /// </summary>
     [Browsable(false)]
-    public float LastHitDistance => XRMath.DepthToDistance(DepthHitNormalizedViewportPoint.HasValue ? DepthHitNormalizedViewportPoint.Value.Z : 0.0f, NearZ, FarZ);
+    public float LastHitDistance
+        => XRMath.DepthToDistance(
+            DepthHitNormalizedViewportPoint.HasValue ? DepthHitNormalizedViewportPoint.Value.Z : 0.0f,
+            NearZ,
+            FarZ,
+            GetCamera()?.Camera?.IsReversedDepth ?? false);
 
     /// <summary>
     /// The near Z distance of the camera's frustum.

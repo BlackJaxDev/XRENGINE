@@ -146,7 +146,7 @@ public class UISvgComponent : UIMaterialComponent
 
         _needsRasterize = false;
 
-        if (!Engine.InvokeOnMainThread(RasterizeAndApply))
+        if (!Engine.InvokeOnMainThread(RasterizeAndApply, "UISvgComponent.Rasterize"))
             RasterizeAndApply();
     }
 

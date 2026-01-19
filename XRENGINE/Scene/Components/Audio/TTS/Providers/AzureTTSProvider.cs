@@ -8,12 +8,15 @@ namespace XREngine.Components
     /// <summary>
     /// Text-to-speech provider using Azure Cognitive Services Speech API.
     /// </summary>
-    public class AzureTTSProvider : ITTSProvider
+    /// <remarks>
+    /// Creates a new Azure TTS provider.
+    /// </remarks>
+    /// <param name="apiKey">Azure Speech API subscription key.</param>
+    /// <param name="region">Azure region (e.g., "eastus", "westeurope").</param>
+    /// <param name="defaultLanguage">Default language code (e.g., "en-US").</param>
+    public class AzureTTSProvider(string apiKey, string region, string defaultLanguage = "en-US") : ITTSProvider
     {
-        private readonly string _apiKey;
-        private readonly string _region;
-        private readonly HttpClient _httpClient;
-        private readonly string _defaultLanguage;
+        private readonly HttpClient _httpClient = new HttpClient();
         private string? _accessToken;
         private DateTime _tokenExpiry = DateTime.MinValue;
 
@@ -23,32 +26,18 @@ namespace XREngine.Components
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
 
-        /// <summary>
-        /// Creates a new Azure TTS provider.
-        /// </summary>
-        /// <param name="apiKey">Azure Speech API subscription key.</param>
-        /// <param name="region">Azure region (e.g., "eastus", "westeurope").</param>
-        /// <param name="defaultLanguage">Default language code (e.g., "en-US").</param>
-        public AzureTTSProvider(string apiKey, string region, string defaultLanguage = "en-US")
-        {
-            _apiKey = apiKey;
-            _region = region;
-            _defaultLanguage = defaultLanguage;
-            _httpClient = new HttpClient();
-        }
-
         public async Task<TTSResult> SynthesizeAsync(string text, string? voice = null, CancellationToken cancellationToken = default)
         {
             try
             {
                 await EnsureTokenAsync(cancellationToken);
 
-                var voiceName = voice ?? $"{_defaultLanguage}-JennyNeural";
-                var ssml = $@"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{_defaultLanguage}'>
+                var voiceName = voice ?? $"{defaultLanguage}-JennyNeural";
+                var ssml = $@"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{defaultLanguage}'>
                     <voice name='{voiceName}'>{EscapeXml(text)}</voice>
                 </speak>";
 
-                using var request = new HttpRequestMessage(HttpMethod.Post, $"https://{_region}.tts.speech.microsoft.com/cognitiveservices/v1");
+                using var request = new HttpRequestMessage(HttpMethod.Post, $"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1");
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
                 request.Headers.Add("X-Microsoft-OutputFormat", "raw-24khz-16bit-mono-pcm");
                 request.Content = new StringContent(ssml, Encoding.UTF8, "application/ssml+xml");
@@ -82,7 +71,7 @@ namespace XREngine.Components
                 await EnsureTokenAsync(cancellationToken);
 
                 using var request = new HttpRequestMessage(HttpMethod.Get,
-                    $"https://{_region}.tts.speech.microsoft.com/cognitiveservices/voices/list");
+                    $"https://{region}.tts.speech.microsoft.com/cognitiveservices/voices/list");
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
 
                 var response = await _httpClient.SendAsync(request, cancellationToken);
@@ -120,8 +109,8 @@ namespace XREngine.Components
                 return;
 
             using var request = new HttpRequestMessage(HttpMethod.Post,
-                $"https://{_region}.api.cognitive.microsoft.com/sts/v1.0/issueToken");
-            request.Headers.Add("Ocp-Apim-Subscription-Key", _apiKey);
+                $"https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken");
+            request.Headers.Add("Ocp-Apim-Subscription-Key", apiKey);
 
             var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();

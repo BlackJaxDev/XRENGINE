@@ -320,27 +320,27 @@ namespace XREngine.Components
         }
 
         private void DispatchBound(IPEndPoint endPoint)
-            => RunOnMainThread(() => Bound?.Invoke(this, endPoint));
+            => RunOnMainThread(() => Bound?.Invoke(this, endPoint), "UdpSocketComponent.Bound");
 
         private void DispatchUnbound()
-            => RunOnMainThread(() => Unbound?.Invoke(this));
+            => RunOnMainThread(() => Unbound?.Invoke(this), "UdpSocketComponent.Unbound");
 
         private void DispatchDatagram(UdpDatagram datagram)
         {
-            RunOnMainThread(() => DatagramReceived?.Invoke(this, datagram));
+            RunOnMainThread(() => DatagramReceived?.Invoke(this, datagram), "UdpSocketComponent.DatagramReceived");
             if (_dispatchTextMessages)
             {
                 string text = _textEncoding.GetString(datagram.Payload.Span);
-                RunOnMainThread(() => TextReceived?.Invoke(this, text, datagram.RemoteEndPoint));
+                RunOnMainThread(() => TextReceived?.Invoke(this, text, datagram.RemoteEndPoint), "UdpSocketComponent.TextReceived");
             }
         }
 
         private void DispatchSocketError(Exception ex)
-            => RunOnMainThread(() => SocketError?.Invoke(this, ex));
+            => RunOnMainThread(() => SocketError?.Invoke(this, ex), "UdpSocketComponent.SocketError");
 
-        private static void RunOnMainThread(Action action)
+        private static void RunOnMainThread(Action action, string reason)
         {
-            if (!Engine.InvokeOnMainThread(action))
+            if (!Engine.InvokeOnMainThread(action, reason))
                 action();
         }
     }

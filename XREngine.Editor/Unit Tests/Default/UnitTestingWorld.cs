@@ -34,6 +34,7 @@ public static partial class UnitTestingWorld
     private static void OnWindowAddedForEmulatedVRStereoPreview(XRWindow window)
         => Engine.InvokeOnMainThread(
             () => Engine.VRState.InitRenderEmulated(window),
+            "UnitTestingWorld: Init emulated VR stereo",
             executeNowIfAlreadyMainThread: true);
 
     public static void ApplyRenderSettingsFromToggles()

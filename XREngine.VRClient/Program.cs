@@ -107,6 +107,9 @@ namespace XREngine.VRClient
 
         private static string? GetMainModuleFilepath(int processId)
         {
+            if (!OperatingSystem.IsWindows())
+                return null;
+
             string wmiQueryString = $"SELECT ProcessId, ExecutablePath FROM Win32_Process WHERE ProcessId = {processId}";
             using var searcher = new ManagementObjectSearcher(wmiQueryString);
             using var results = searcher.Get();

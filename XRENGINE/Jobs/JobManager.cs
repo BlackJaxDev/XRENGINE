@@ -759,7 +759,10 @@ namespace XREngine
             while (processed < remaining && TryDequeueWithAging(_pendingMainThreadByPriority, JobAffinity.MainThread, out var job, out var bucket))
             {
                 RecordWait(job, bucket);
-                ExecuteJob(job);
+                using (Engine.Profiler.Start($"MainThreadJobs.{job.Priority}.{job.GetProfilerLabel()}"))
+                {
+                    ExecuteJob(job);
+                }
                 processed++;
             }
         }

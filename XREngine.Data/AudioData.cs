@@ -159,7 +159,7 @@ namespace XREngine.Data
         {
             using WaveFileReader reader = new(filePath);
             byte[] bytes = new byte[reader.Length];
-            reader.Read(bytes, 0, bytes.Length);
+            ReadExactly(reader, bytes);
             switch (reader.WaveFormat.BitsPerSample)
             {
                 case 8:
@@ -182,6 +182,18 @@ namespace XREngine.Data
             }
             _frequency = reader.WaveFormat.SampleRate;
             _channelCount = reader.WaveFormat.Channels;
+        }
+
+        private static void ReadExactly(Stream stream, byte[] buffer)
+        {
+            int totalRead = 0;
+            while (totalRead < buffer.Length)
+            {
+                int bytesRead = stream.Read(buffer, totalRead, buffer.Length - totalRead);
+                if (bytesRead == 0)
+                    throw new EndOfStreamException($"Stream ended early: expected {buffer.Length} bytes, got {totalRead} bytes.");
+                totalRead += bytesRead;
+            }
         }
 
         /// <summary>

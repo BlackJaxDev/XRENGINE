@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using MemoryPack;
 using SixLabors.ImageSharp.PixelFormats;
@@ -168,11 +169,11 @@ namespace XREngine.Data
             s.Position = 0;
             DataSource source = new((uint)s.Length);
             byte* ptr = (byte*)source.Address;
-            s.Read(new Span<byte>(ptr, (int)source.Length));
+            ReadExactly(s, new Span<byte>(ptr, (int)source.Length));
             return source;
         }
 
-        public static DataSource FromStruct<T>(T structObj) where T : struct
+        public static DataSource FromStruct<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] T>(T structObj) where T : struct
         {
             var size = Marshal.SizeOf<T>();
             DataSource source = new((uint)size);
@@ -180,7 +181,7 @@ namespace XREngine.Data
             return source;
         }
 
-        public T ToStruct<T>() where T : struct
+        public T ToStruct<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] T>() where T : struct
         {
             return Marshal.PtrToStructure<T>(Address);
         }
@@ -198,6 +199,18 @@ namespace XREngine.Data
         }
 
         #endregion
+
+        private static void ReadExactly(Stream stream, Span<byte> buffer)
+        {
+            int totalRead = 0;
+            while (totalRead < buffer.Length)
+            {
+                int bytesRead = stream.Read(buffer[totalRead..]);
+                if (bytesRead == 0)
+                    throw new EndOfStreamException($"Stream ended early: expected {buffer.Length} bytes, got {totalRead} bytes.");
+                totalRead += bytesRead;
+            }
+        }
 
         private sealed class DataSourceFormatter : MemoryPackFormatter<DataSource>
         {

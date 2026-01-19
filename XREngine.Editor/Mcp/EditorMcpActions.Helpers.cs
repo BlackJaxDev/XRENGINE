@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Rendering;
@@ -11,6 +12,8 @@ namespace XREngine.Editor.Mcp
 {
     public sealed partial class EditorMcpActions
     {
+        private static readonly ConditionalWeakTable<SceneNode, HashSet<string>> NodeTags = [];
+
         private static bool TryGetNodeById(XRWorldInstance world, string nodeId, out SceneNode? node, out string? error)
         {
             node = null;
@@ -92,6 +95,50 @@ namespace XREngine.Editor.Mcp
             return targetWorld.Scenes.FirstOrDefault();
         }
 
+        private static bool TryResolveScene(XRWorldInstance world, string? sceneIdOrName, out XRScene? scene, out string? error)
+        {
+            scene = null;
+            error = null;
+
+            var targetWorld = world.TargetWorld;
+            if (targetWorld is null)
+            {
+                error = "No active world found.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(sceneIdOrName))
+            {
+                scene = targetWorld.Scenes.FirstOrDefault();
+                if (scene is null)
+                {
+                    error = "No scenes are available in the active world.";
+                    return false;
+                }
+                return true;
+            }
+
+            if (Guid.TryParse(sceneIdOrName, out var guid))
+            {
+                scene = targetWorld.Scenes.FirstOrDefault(x => x.ID == guid);
+                if (scene is null)
+                {
+                    error = $"Scene '{sceneIdOrName}' not found.";
+                    return false;
+                }
+                return true;
+            }
+
+            scene = targetWorld.Scenes.FirstOrDefault(x => string.Equals(x.Name, sceneIdOrName, StringComparison.OrdinalIgnoreCase));
+            if (scene is null)
+            {
+                error = $"Scene '{sceneIdOrName}' not found.";
+                return false;
+            }
+
+            return true;
+        }
+
         private static IEnumerable<SceneNode> GetChildren(SceneNode node)
         {
             foreach (var childTransform in node.Transform.Children)
@@ -101,6 +148,58 @@ namespace XREngine.Editor.Mcp
                     yield return childNode;
             }
         }
+
+        private static IEnumerable<SceneNode> EnumerateHierarchy(SceneNode root)
+        {
+            yield return root;
+
+            foreach (var child in GetChildren(root))
+            {
+                foreach (var descendant in EnumerateHierarchy(child))
+                    yield return descendant;
+            }
+        }
+
+        private static SceneNode? GetHierarchyRoot(SceneNode node)
+        {
+            TransformBase? transform = node.Transform;
+            while (transform?.Parent is TransformBase parent)
+                transform = parent;
+            return transform?.SceneNode;
+        }
+
+        private static XRScene? FindSceneForNode(SceneNode node, XRWorldInstance world)
+        {
+            var targetWorld = world.TargetWorld;
+            if (targetWorld is null)
+                return null;
+
+            SceneNode? root = GetHierarchyRoot(node);
+            if (root is null)
+                return null;
+
+            foreach (var scene in targetWorld.Scenes)
+            {
+                if (scene.RootNodes.Contains(root))
+                    return scene;
+            }
+
+            return null;
+        }
+
+        private static HashSet<string> GetOrCreateTags(SceneNode node)
+        {
+            if (!NodeTags.TryGetValue(node, out var tags))
+            {
+                tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                NodeTags.Add(node, tags);
+            }
+
+            return tags;
+        }
+
+        private static IReadOnlyCollection<string> GetTags(SceneNode node)
+            => NodeTags.TryGetValue(node, out var tags) ? tags : Array.Empty<string>();
 
         private static string BuildNodePath(SceneNode node)
         {

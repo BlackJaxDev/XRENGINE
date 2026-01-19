@@ -45,10 +45,9 @@ public static partial class EditorImGuiUI
         public bool HasLayout;
     }
 
-    private sealed class GraphNodeId
+    private sealed class GraphNodeId(int id)
     {
-        public GraphNodeId(int id) => Id = id;
-        public int Id { get; }
+        public int Id { get; } = id;
     }
 
     private static readonly ConditionalWeakTable<object, GraphNodeId> _graphNodeIds = new();

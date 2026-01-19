@@ -88,7 +88,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (Data.ActivelyMapping.Contains(this))
                     return;
-                if (Engine.InvokeOnMainThread(PushData))
+                if (Engine.InvokeOnMainThread(PushData, "VkDataBuffer.PushData"))
                     return;
 
                 // Determine usage and memory flags
@@ -151,7 +151,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (Data.ActivelyMapping.Contains(this))
                     return;
-                if (Engine.InvokeOnMainThread(() => PushSubData(offset, length)))
+                if (Engine.InvokeOnMainThread(() => PushSubData(offset, length), "VkDataBuffer.PushSubData"))
                     return;
                 if (_vkBuffer == null || _vkMemory == null)
                     PushData();
@@ -182,7 +182,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (Data.ActivelyMapping.Contains(this))
                     return;
-                if (Engine.InvokeOnMainThread(Flush))
+                if (Engine.InvokeOnMainThread(Flush, "VkDataBuffer.Flush"))
                     return;
                 // Only needed for non-coherent memory
                 if ((_lastMemProps & MemoryPropertyFlags.HostCoherentBit) == 0)
@@ -192,7 +192,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (Data.ActivelyMapping.Contains(this))
                     return;
-                if (Engine.InvokeOnMainThread(() => FlushRange(offset, length)))
+                if (Engine.InvokeOnMainThread(() => FlushRange(offset, length), "VkDataBuffer.FlushRange"))
                     return;
                 if ((_lastMemProps & MemoryPropertyFlags.HostCoherentBit) == 0)
                     Renderer.FlushBuffer(_vkMemory, (ulong)offset, (ulong)length);
@@ -227,7 +227,7 @@ namespace XREngine.Rendering.Vulkan
                     Debug.LogWarning($"Buffer {GetDescribingName()} is resizable and cannot be mapped.");
                     return;
                 }
-                if (Engine.InvokeOnMainThread(MapBufferData))
+                if (Engine.InvokeOnMainThread(MapBufferData, "VkDataBuffer.MapBufferData"))
                     return;
                 MapToClientSide();
             }
@@ -279,7 +279,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (!Data.ActivelyMapping.Contains(this))
                     return;
-                if (Engine.InvokeOnMainThread(UnmapBufferData))
+                if (Engine.InvokeOnMainThread(UnmapBufferData, "VkDataBuffer.UnmapBufferData"))
                     return;
                 if (_persistentMappedPtr != null)
                 {

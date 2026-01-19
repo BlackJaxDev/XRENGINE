@@ -148,5 +148,93 @@ namespace XREngine.Editor.Mcp
 
             return Task.FromResult(new McpToolResponse($"Property or field '{propertyName}' not found on '{componentType.Name}'.", isError: true));
         }
+
+        /// <summary>
+        /// Retrieves a property or field value from a component by name.
+        /// The component can be identified by ID, instance name, or type name.
+        /// </summary>
+        /// <param name="context">The MCP tool execution context.</param>
+        /// <param name="nodeId">The GUID of the scene node that owns the component.</param>
+        /// <param name="propertyName">The name of the property or field to retrieve (case-insensitive).</param>
+        /// <param name="componentId">Optional: target component by its GUID.</param>
+        /// <param name="componentName">Optional: target component by its instance name.</param>
+        /// <param name="componentTypeName">Optional: target component by its type name.</param>
+        /// <returns>The property or field value for the requested component.</returns>
+        /// <remarks>
+        /// At least one of <paramref name="componentId"/>, <paramref name="componentName"/>,
+        /// or <paramref name="componentTypeName"/> must be provided to identify the target component.
+        /// </remarks>
+        [XRMcp]
+        [McpName("get_component_property")]
+        [Description("Get a component property or field value by name.")]
+        public static Task<McpToolResponse> GetComponentPropertyAsync(
+            McpToolContext context,
+            [McpName("node_id"), Description("Scene node ID that owns the component.")] string nodeId,
+            [McpName("property_name"), Description("Property or field name to read.")] string propertyName,
+            [McpName("component_id"), Description("Optional component ID to target.")] string? componentId = null,
+            [McpName("component_name"), Description("Optional component instance name to target.")] string? componentName = null,
+            [McpName("component_type"), Description("Optional component type name to target.")] string? componentTypeName = null)
+        {
+            if (string.IsNullOrWhiteSpace(componentId) && string.IsNullOrWhiteSpace(componentName) && string.IsNullOrWhiteSpace(componentTypeName))
+                return Task.FromResult(new McpToolResponse("Provide component_id, component_name, or component_type to target a component.", isError: true));
+
+            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var nodeError))
+                return Task.FromResult(new McpToolResponse(nodeError ?? "Scene node not found.", isError: true));
+
+            XRComponent? component = FindComponent(node!, componentId, componentName, componentTypeName, out var compError);
+            if (component is null)
+                return Task.FromResult(new McpToolResponse(compError ?? "Component not found on the specified node.", isError: true));
+
+            var componentType = component.GetType();
+            var bindingFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.IgnoreCase;
+            var property = componentType.GetProperty(propertyName, bindingFlags);
+            if (property is not null && property.CanRead)
+            {
+                var value = property.GetValue(component);
+                return Task.FromResult(new McpToolResponse($"Retrieved property '{property.Name}' on '{componentType.Name}'.", new { value }));
+            }
+
+            var field = componentType.GetField(propertyName, bindingFlags);
+            if (field is not null)
+            {
+                var value = field.GetValue(component);
+                return Task.FromResult(new McpToolResponse($"Retrieved field '{field.Name}' on '{componentType.Name}'.", new { value }));
+            }
+
+            return Task.FromResult(new McpToolResponse($"Property or field '{propertyName}' not found on '{componentType.Name}'.", isError: true));
+        }
+
+        /// <summary>
+        /// Removes a component from a scene node by id, name, or type.
+        /// </summary>
+        /// <param name="context">The MCP tool execution context.</param>
+        /// <param name="nodeId">The GUID of the scene node that owns the component.</param>
+        /// <param name="componentId">Optional: target component by its GUID.</param>
+        /// <param name="componentName">Optional: target component by its instance name.</param>
+        /// <param name="componentTypeName">Optional: target component by its type name.</param>
+        /// <returns>A confirmation message indicating the component was removed.</returns>
+        [XRMcp]
+        [McpName("remove_component")]
+        [Description("Remove a component from a scene node.")]
+        public static Task<McpToolResponse> RemoveComponentAsync(
+            McpToolContext context,
+            [McpName("node_id"), Description("Scene node ID that owns the component.")] string nodeId,
+            [McpName("component_id"), Description("Optional component ID to target.")] string? componentId = null,
+            [McpName("component_name"), Description("Optional component instance name to target.")] string? componentName = null,
+            [McpName("component_type"), Description("Optional component type name to target.")] string? componentTypeName = null)
+        {
+            if (string.IsNullOrWhiteSpace(componentId) && string.IsNullOrWhiteSpace(componentName) && string.IsNullOrWhiteSpace(componentTypeName))
+                return Task.FromResult(new McpToolResponse("Provide component_id, component_name, or component_type to target a component.", isError: true));
+
+            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var nodeError))
+                return Task.FromResult(new McpToolResponse(nodeError ?? "Scene node not found.", isError: true));
+
+            XRComponent? component = FindComponent(node!, componentId, componentName, componentTypeName, out var compError);
+            if (component is null)
+                return Task.FromResult(new McpToolResponse(compError ?? "Component not found on the specified node.", isError: true));
+
+            component.Destroy();
+            return Task.FromResult(new McpToolResponse($"Removed component '{component.ID}' from '{nodeId}'."));
+        }
     }
 }

@@ -52,7 +52,7 @@ public class TestRenderPipeline : RenderPipeline
                     ClearColor(new ColorF4(0.0f, 0.0f, 0.0f, 1.0f));
                     Clear(true, true, true);
                     DepthFunc(EComparison.Less);
-                    ClearDepth(1.0f);
+                    ClearDepth(Engine.Rendering.State.GetDefaultDepthClearValue());
                     AllowDepthWrite(true);
                 };
                 c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
@@ -69,7 +69,7 @@ public class TestRenderPipeline : RenderPipeline
                     ClearColor(new ColorF4(0.0f, 0.0f, 0.0f, 1.0f));
                     Clear(true, true, true);
                     DepthFunc(EComparison.Less);
-                    ClearDepth(1.0f);
+                    ClearDepth(Engine.Rendering.State.GetDefaultDepthClearValue());
                     AllowDepthWrite(true);
                 };
                 c.Add<VPRC_RenderQuadFBO>().FrameBufferName = InternalResFBOName;

@@ -432,7 +432,11 @@ namespace XREngine.Rendering.UI
                 case ECanvasDrawSpace.Camera:
                     if (CameraSpaceCamera is not null)
                     {
-                        float depth = XRMath.DistanceToDepth(CameraDrawSpaceDistance, CameraSpaceCamera.NearZ, CameraSpaceCamera.FarZ);
+                        float depth = XRMath.DistanceToDepth(
+                            CameraDrawSpaceDistance,
+                            CameraSpaceCamera.NearZ,
+                            CameraSpaceCamera.FarZ,
+                            CameraSpaceCamera.IsReversedDepth);
                         var bottomLeft = CameraSpaceCamera.NormalizedViewportToWorldCoordinate(Vector2.Zero, depth);
                         return Matrix4x4.CreateWorld(bottomLeft, -CameraSpaceCamera.Transform.WorldForward, CameraSpaceCamera.Transform.WorldUp);
                     }

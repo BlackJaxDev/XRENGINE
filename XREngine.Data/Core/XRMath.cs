@@ -558,6 +558,17 @@ namespace XREngine.Data.Core
             float zLinear = 2.0f * nearZ * farZ / (farZ + nearZ - depthSample * (farZ - nearZ));
             return zLinear;
         }
+
+        /// <summary>
+        /// Converts nonlinear normalized depth to linear distance, with optional reversed-Z handling.
+        /// </summary>
+        public static float DepthToDistance(float depth, float nearZ, float farZ, bool reversedZ)
+        {
+            if (reversedZ)
+                depth = 1.0f - depth;
+
+            return DepthToDistance(depth, nearZ, farZ);
+        }
         /// <summary>
         /// Converts a linear distance value between nearZ and farZ
         /// to nonlinear normalized depth between 0.0f and 1.0f.
@@ -567,6 +578,15 @@ namespace XREngine.Data.Core
             float nonLinearDepth = (farZ + nearZ - 2.0f * nearZ * farZ / z.ClampMin(0.001f)) / (farZ - nearZ);
             nonLinearDepth = (nonLinearDepth + 1.0f) / 2.0f;
             return nonLinearDepth;
+        }
+
+        /// <summary>
+        /// Converts linear distance to nonlinear normalized depth, with optional reversed-Z handling.
+        /// </summary>
+        public static float DistanceToDepth(float z, float nearZ, float farZ, bool reversedZ)
+        {
+            float depth = DistanceToDepth(z, nearZ, farZ);
+            return reversedZ ? 1.0f - depth : depth;
         }
 
         public static Vector3 JacobiMethod(Matrix4x4 inputMatrix, Vector3 expectedOutcome, int iterations)

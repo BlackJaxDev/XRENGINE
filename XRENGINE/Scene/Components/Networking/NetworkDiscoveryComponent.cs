@@ -235,7 +235,7 @@ namespace XREngine.Components
                 }
             }
 
-            bool enqueued = Engine.InvokeOnMainThread(ConnectAction, true);
+            bool enqueued = Engine.InvokeOnMainThread(ConnectAction, "NetworkDiscoveryComponent.ConnectToAnnouncement", true);
             if (!enqueued && cancellationToken.IsCancellationRequested)
                 tcs.TrySetCanceled(cancellationToken);
 
@@ -265,7 +265,7 @@ namespace XREngine.Components
                 }
             }
 
-            bool enqueued = Engine.InvokeOnMainThread(StartAction, true);
+            bool enqueued = Engine.InvokeOnMainThread(StartAction, "NetworkDiscoveryComponent.StartServer", true);
             if (!enqueued && cancellationToken.IsCancellationRequested)
                 tcs.TrySetCanceled(cancellationToken);
 
@@ -467,7 +467,7 @@ namespace XREngine.Components
                     EndpointDiscovered?.Invoke(this, announcement);
                 else
                     EndpointUpdated?.Invoke(this, announcement);
-            });
+            }, "NetworkDiscoveryComponent.HandleDatagram");
         }
 
         private void SweepExpired(DateTimeOffset now)
@@ -480,7 +480,7 @@ namespace XREngine.Components
                 if (_discovered.TryRemove(kvp.Key, out DiscoveredEndpoint expired))
                 {
                     var announcement = expired.Announcement;
-                    RunOnMainThread(() => EndpointExpired?.Invoke(this, announcement));
+                    RunOnMainThread(() => EndpointExpired?.Invoke(this, announcement), "NetworkDiscoveryComponent.EndpointExpired");
                 }
             }
         }
@@ -506,9 +506,9 @@ namespace XREngine.Components
         private void Tick()
             => SweepExpired(DateTimeOffset.UtcNow);
 
-        private static void RunOnMainThread(Action action)
+        private static void RunOnMainThread(Action action, string reason)
         {
-            if (!Engine.InvokeOnMainThread(action))
+            if (!Engine.InvokeOnMainThread(action, reason))
                 action();
         }
 

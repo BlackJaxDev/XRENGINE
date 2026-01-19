@@ -23,6 +23,12 @@ namespace XREngine.Audio
             set => SetField(ref _enabled, value);
         }
 
+        public float GainScale
+        {
+            get => _gainScale;
+            set => SetField(ref _gainScale, value);
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -40,6 +46,12 @@ namespace XREngine.Audio
                     Debug.WriteLine($"Audio {(Enabled ? "enabled" : "disabled")} for {_listeners.Count} listeners.");
                     foreach (var listener in _listeners)
                         listener.Enabled = Enabled;
+                    break;
+                }
+                case nameof(GainScale):
+                {
+                    foreach (var listener in _listeners)
+                        listener.GainScale = GainScale;
                     break;
                 }
             }

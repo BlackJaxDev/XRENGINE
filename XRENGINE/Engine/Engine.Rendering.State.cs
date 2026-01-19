@@ -431,6 +431,9 @@ namespace XREngine
                 /// <param name="stencil">If true and stencil attachment exists, clears it.</param>
                 public static void ClearByBoundFBO(bool color = true, bool depth = true, bool stencil = true)
                 {
+                    if (depth)
+                        ClearDepth(GetDefaultDepthClearValue());
+
                     var boundFBO = XRFrameBuffer.BoundForWriting;
                     if (boundFBO is not null)
                     {
@@ -563,7 +566,38 @@ namespace XREngine
                 /// </summary>
                 /// <param name="always">The comparison function (Less, LessEqual, Greater, Always, etc.).</param>
                 public static void DepthFunc(EComparison always)
-                    => AbstractRenderer.Current?.DepthFunc(always);
+                    => AbstractRenderer.Current?.DepthFunc(MapDepthComparison(always));
+
+                /// <summary>
+                /// Returns the active depth mode for the current render pipeline camera.
+                /// Defaults to Normal if no camera is active.
+                /// </summary>
+                public static XRCamera.EDepthMode GetDepthMode()
+                    => RenderingPipelineState?.SceneCamera?.DepthMode ?? XRCamera.EDepthMode.Normal;
+
+                /// <summary>
+                /// Returns the default depth clear value for the active camera.
+                /// </summary>
+                public static float GetDefaultDepthClearValue()
+                    => RenderingPipelineState?.SceneCamera?.GetDepthClearValue() ?? 1.0f;
+
+                /// <summary>
+                /// Maps a depth comparison function based on the current depth mode.
+                /// </summary>
+                public static EComparison MapDepthComparison(EComparison comparison)
+                {
+                    if (GetDepthMode() != XRCamera.EDepthMode.Reversed)
+                        return comparison;
+
+                    return comparison switch
+                    {
+                        EComparison.Less => EComparison.Greater,
+                        EComparison.Lequal => EComparison.Gequal,
+                        EComparison.Greater => EComparison.Less,
+                        EComparison.Gequal => EComparison.Lequal,
+                        _ => comparison
+                    };
+                }
 
                 /// <summary>
                 /// Attempts to calculate the dot luminance (average brightness) of a 2D texture.

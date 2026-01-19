@@ -105,6 +105,52 @@ namespace XREngine.Rendering
         #region Fields
 
         /// <summary>
+        /// Determines how depth values are encoded in the depth buffer.
+        /// Normal uses near=0, far=1. Reversed uses near=1, far=0 for improved precision.
+        /// </summary>
+        public enum EDepthMode
+        {
+            Normal = 0,
+            Reversed = 1
+        }
+
+        private EDepthMode _depthMode = EDepthMode.Normal;
+
+        /// <summary>
+        /// Controls whether this camera uses normal or reversed Z depth.
+        /// Default is Normal to preserve existing behavior.
+        /// </summary>
+        public EDepthMode DepthMode
+        {
+            get => _depthMode;
+            set => SetField(ref _depthMode, value);
+        }
+
+        /// <summary>
+        /// True if this camera is using reversed Z depth.
+        /// </summary>
+        public bool IsReversedDepth
+            => DepthMode == EDepthMode.Reversed;
+
+        /// <summary>
+        /// Returns the default depth clear value for this camera's depth mode.
+        /// </summary>
+        public float GetDepthClearValue()
+            => IsReversedDepth ? 0.0f : 1.0f;
+
+        /// <summary>
+        /// Returns the depth buffer value for the near plane.
+        /// </summary>
+        public float GetNearDepthValue()
+            => IsReversedDepth ? 1.0f : 0.0f;
+
+        /// <summary>
+        /// Returns the depth buffer value for the far plane.
+        /// </summary>
+        public float GetFarDepthValue()
+            => IsReversedDepth ? 0.0f : 1.0f;
+
+        /// <summary>
         /// The transform that defines this camera's position and orientation in world space.
         /// Used to calculate view matrices and camera direction vectors.
         /// </summary>
@@ -457,9 +503,23 @@ namespace XREngine.Rendering
         /// </summary>
         /// <returns>The base projection matrix.</returns>
         private Matrix4x4 GetBaseProjectionMatrix()
-            => _obliqueNearClippingPlane != null
+        {
+            Matrix4x4 projection = _obliqueNearClippingPlane != null
                 ? _obliqueProjectionMatrix
                 : Parameters.GetProjectionMatrix();
+
+            return ApplyDepthModeToProjection(projection, DepthMode);
+        }
+
+        private static Matrix4x4 ApplyDepthModeToProjection(Matrix4x4 projection, EDepthMode depthMode)
+        {
+            if (depthMode == EDepthMode.Normal)
+                return projection;
+
+            Matrix4x4 zFlip = Matrix4x4.Identity;
+            zFlip.M33 = -1.0f;
+            return Matrix4x4.Multiply(projection, zFlip);
+        }
 
         /// <summary>
         /// Applies the current jitter offset to a projection matrix.
@@ -1094,8 +1154,10 @@ namespace XREngine.Rendering
         /// <returns>A segment from near plane to far plane through the screen point.</returns>
         public Segment GetWorldSegment(Vector2 normalizedScreenPoint)
         {
-            Vector3 start = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, 0.0f);
-            Vector3 end = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, 1.0f);
+            float nearDepth = GetNearDepthValue();
+            float farDepth = GetFarDepthValue();
+            Vector3 start = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, nearDepth);
+            Vector3 end = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, farDepth);
             return new Segment(start, end);
         }
 
@@ -1107,8 +1169,10 @@ namespace XREngine.Rendering
         /// <returns>A ray from near plane through the screen point into the scene.</returns>
         public Ray GetWorldRay(Vector2 normalizedScreenPoint)
         {
-            Vector3 start = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, 0.0f);
-            Vector3 end = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, 1.0f);
+            float nearDepth = GetNearDepthValue();
+            float farDepth = GetFarDepthValue();
+            Vector3 start = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, nearDepth);
+            Vector3 end = NormalizedViewportToWorldCoordinate(normalizedScreenPoint, farDepth);
             return new Ray(start, end - start);
         }
 
@@ -1226,6 +1290,7 @@ namespace XREngine.Rendering
             program.Uniform(EEngineUniform.CameraForward.ToString(), tfm.RenderForward);
             program.Uniform(EEngineUniform.CameraUp.ToString(), tfm.RenderUp);
             program.Uniform(EEngineUniform.CameraRight.ToString(), tfm.RenderRight);
+            program.Uniform(EEngineUniform.DepthMode.ToString(), (int)DepthMode);
 
             Parameters.SetUniforms(program);
         }
@@ -1314,9 +1379,7 @@ namespace XREngine.Rendering
         {
             float nearZ = NearZ;
             float farZ = FarZ;
-            float depthSample = 2.0f * depth - 1.0f;
-            float zLinear = 2.0f * nearZ * farZ / (farZ + nearZ - depthSample * (farZ - nearZ));
-            return zLinear;
+            return XRMath.DepthToDistance(depth, nearZ, farZ, IsReversedDepth);
         }
         /// <summary>
         /// Converts a linear distance value between nearZ and farZ
@@ -1326,9 +1389,7 @@ namespace XREngine.Rendering
         {
             float nearZ = NearZ;
             float farZ = FarZ;
-            float nonLinearDepth = (farZ + nearZ - 2.0f * nearZ * farZ / z.ClampMin(0.001f)) / (farZ - nearZ);
-            nonLinearDepth = (nonLinearDepth + 1.0f) / 2.0f;
-            return nonLinearDepth;
+            return XRMath.DistanceToDepth(z, nearZ, farZ, IsReversedDepth);
         }
 
         #endregion

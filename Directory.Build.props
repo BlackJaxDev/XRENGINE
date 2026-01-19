@@ -1,5 +1,13 @@
 <Project>
   <PropertyGroup>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <WpfTemporaryProjectAdditionalProperties>$(WpfTemporaryProjectAdditionalProperties);AllowUnsafeBlocks=true</WpfTemporaryProjectAdditionalProperties>
+    <AdditionalCscArguments>$(AdditionalCscArguments) /unsafe</AdditionalCscArguments>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('_wpftmp'))">
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AdditionalCscArguments>$(AdditionalCscArguments) /unsafe</AdditionalCscArguments>
   </PropertyGroup>
 </Project>

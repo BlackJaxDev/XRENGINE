@@ -1,4 +1,6 @@
 ﻿using Extensions;
+
+#pragma warning disable CS8981 // Type name only contains lower-cased ascii characters
 using System.Runtime.InteropServices;
 
 namespace XREngine.Data;
@@ -24,3 +26,5 @@ public unsafe struct bshort
 
     public VoidPtr Address { get { fixed (void* p = &this) return p; } }
 }
+
+#pragma warning restore CS8981 // Type name only contains lower-cased ascii characters

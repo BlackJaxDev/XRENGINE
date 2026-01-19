@@ -757,7 +757,7 @@ internal static class ImGuiAssetUtilities
                 Path,
                 seedTexture,
                 maxPreviewSize,
-                onFinished: tex => Engine.InvokeOnMainThread(() => _previewTexture = tex),
+                    onFinished: tex => Engine.InvokeOnMainThread(() => _previewTexture = tex, "Asset preview texture ready"),
                 onError: ex => Debug.LogException(ex, $"Texture preview job failed for '{Path}'."));
         }
 
@@ -794,18 +794,18 @@ internal static class ImGuiAssetUtilities
                         UpdateDisplayNameFromAsset();
                         FlushAssignments(_asset);
                         _loadingAsset = false;
-                    }),
+                    }, "Asset texture load finished"),
                     onError: ex => Engine.InvokeOnMainThread(() =>
                     {
                         Debug.LogException(ex, $"Texture import job failed for '{Path}'.");
                         FlushAssignments(null);
                         _loadingAsset = false;
-                    }),
+                    }, "Asset texture load failed"),
                     onCanceled: () => Engine.InvokeOnMainThread(() =>
                     {
                         FlushAssignments(null);
                         _loadingAsset = false;
-                    }));
+                    }, "Asset texture load canceled"));
             }
             else
             {

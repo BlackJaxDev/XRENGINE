@@ -15,7 +15,7 @@ namespace XREngine.Maths
         private readonly FloatingPoint[] center, centerToAff, centerToPoint, lambdas;
         private FloatingPoint distToAff, distToAffSquare;
         private FloatingPoint squaredRadius, radius;
-        private readonly Subspan support;
+        private readonly Subspan? support;
         private int stopper;
 
         public Miniball(IPointSet pts)
@@ -30,6 +30,8 @@ namespace XREngine.Maths
             support = InitBall();
             Compute();
         }
+        private Subspan Support
+            => support ?? throw new InvalidOperationException("Miniball is empty.");
         public bool IsEmpty => size == 0;
         public FloatingPoint Radius => radius;
         public FloatingPoint SquaredRadius => squaredRadius;
@@ -38,7 +40,7 @@ namespace XREngine.Maths
 
         private static FloatingPoint Sqr(FloatingPoint x) => x * x;
         
-        private Subspan InitBall()
+        private Subspan? InitBall()
         {
             //assert size > 0;
 
@@ -73,12 +75,12 @@ namespace XREngine.Maths
         }
         private void ComputeDistToAff()
         {
-            distToAffSquare = support.ShortestVectorToSpan(center, centerToAff);
+            distToAffSquare = Support.ShortestVectorToSpan(center, centerToAff);
             distToAff = (FloatingPoint)Math.Sqrt(distToAffSquare);
         }
         private void UpdateRadius()
         {
-            int any = support.AnyMember();
+            int any = Support.AnyMember();
             squaredRadius = 0;
             for (int i = 0; i < dim; ++i)
                 squaredRadius += Sqr(S.Coord(any, i) - center[i]);
@@ -110,7 +112,7 @@ namespace XREngine.Maths
                  * Note: the following line is currently needed because of point sets like schnartz, see
                  * MiniballTest.
                  */
-                support.Size== dim + 1)
+                Support.Size== dim + 1)
                 {
                     // We are closer than Eps * radius_square, so we try a drop
                     if (!SuccessfulDrop())
@@ -138,7 +140,7 @@ namespace XREngine.Maths
                     UpdateRadius();
 
                     // and add stopper to support
-                    support.Add(stopper);
+                    Support.Add(stopper);
                     // if (log) debug("adding global point #" + stopper);
 
                     // No obstacle on our way into the affine hull
@@ -165,12 +167,12 @@ namespace XREngine.Maths
         bool SuccessfulDrop()
         {
             // Find coefficients of the affine combination of center
-            support.FindAffineCoefficients(center, lambdas);
+            Support.FindAffineCoefficients(center, lambdas);
 
             // find a non-positive coefficient
             int smallest = 0;
             FloatingPoint minimum = 1;
-            for (int i = 0; i < support.Size; ++i)
+            for (int i = 0; i < Support.Size; ++i)
                 if (lambdas[i] < minimum)
                 {
                     minimum = lambdas[i];
@@ -181,7 +183,7 @@ namespace XREngine.Maths
             if (minimum <= 0)
             {
                 // if (log) debug("removing local point #" + smallest);
-                support.Remove(smallest);
+                Support.Remove(smallest);
                 return true;
             }
             return false;
@@ -194,7 +196,7 @@ namespace XREngine.Maths
 
             // ... but one of the points in S might hinder us
             for (int j = 0; j < size; ++j)
-                if (!support.IsMember(j))
+                if (!Support.IsMember(j))
                 {
                     // Compute vector centerToPoint from center to the point S[j]:
                     for (int i = 0; i < dim; ++i)
@@ -233,11 +235,14 @@ namespace XREngine.Maths
             FloatingPoint max_overlength = 0; // for all-points-in-ball check
             FloatingPoint min_underlength = 0; // for all-boundary-points-on-boundary
             FloatingPoint ball_error;
-            FloatingPoint qr_error = support.RepresentationError();
+            if (size == 0)
+                return new Quality(0, 0, 0, 0, iteration, 0);
+
+            FloatingPoint qr_error = Support.RepresentationError();
 
             // Center really in convex hull?
-            support.FindAffineCoefficients(center, lambdas);
-            for (int k = 0; k < support.Size; ++k)
+            Support.FindAffineCoefficients(center, lambdas);
+            for (int k = 0; k < Support.Size; ++k)
                 if (lambdas[k] <= min_lambda) min_lambda = lambdas[k];
 
             // All points in ball, all support points really on boundary?
@@ -256,10 +261,10 @@ namespace XREngine.Maths
                 if (ball_error > max_overlength) max_overlength = ball_error;
 
                 // check for boundary violations
-                if (support.IsMember(k)) if (ball_error < min_underlength) min_underlength = ball_error;
+                if (Support.IsMember(k)) if (ball_error < min_underlength) min_underlength = ball_error;
             }
 
-            return new Quality(qr_error, min_lambda, max_overlength / radius, Math.Abs(min_underlength / radius), iteration, support.Size);
+            return new Quality(qr_error, min_lambda, max_overlength / radius, Math.Abs(min_underlength / radius), iteration, Support.Size);
         }
         //public String toString()
         //{
