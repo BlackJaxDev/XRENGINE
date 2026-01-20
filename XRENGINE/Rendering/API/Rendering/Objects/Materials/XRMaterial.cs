@@ -9,6 +9,7 @@ using Color = System.Drawing.Color;
 
 namespace XREngine.Rendering
 {
+    [XRAssetInspector("XREngine.Editor.AssetEditors.XRMaterialInspector")]
     public class XRMaterial : XRMaterialBase
     {
         [Browsable(false)]
