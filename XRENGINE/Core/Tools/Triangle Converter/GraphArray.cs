@@ -8,8 +8,8 @@ namespace XREngine.TriangleConverter
 {
     public class GraphArray<T> : IEnumerable
     {
-        protected List<Node> _nodes;
-        protected List<Arc> _arcs;
+        protected List<Node> _nodes = new();
+        protected List<Arc> _arcs = new();
 
 	    public class Arc
         {
@@ -29,7 +29,7 @@ namespace XREngine.TriangleConverter
             public uint _begin;
             public uint _end;
 
-            public T _elem;
+            public T _elem = default!;
             private bool _marker;
 
             public Node(GraphArray<T> graph)
@@ -38,16 +38,21 @@ namespace XREngine.TriangleConverter
                 _begin = uint.MaxValue;
                 _end = uint.MaxValue;
                 _marker = false;
+                _elem = default!;
             }
         }
 
-	    public GraphArray(){ }
+	    public GraphArray()
+        {
+            _nodes = new List<Node>();
+            _arcs = new List<Arc>();
+        }
 	    public GraphArray(uint numNodes)
         {
             _nodes = new List<Node>();
+            _arcs = new List<Arc>();
             for (int i = 0; i < numNodes; i++)
                 _nodes.Add(new Node(this));
-            _arcs = new List<Arc>();
         }
 
 	    //Node related member functions

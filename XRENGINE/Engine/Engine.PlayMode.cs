@@ -187,7 +187,11 @@ namespace XREngine
                         // IMPORTANT: play mode should run from a deserialized copy of the world state.
                         // This forces a clean object graph and ensures physics bodies are constructed from deserialized scene data.
                         _editModeSnapshot?.Restore();
-                        PostSnapshotRestore?.Invoke(targetWorld);
+                        if (targetWorld is not null)
+                        {
+                            var restoredTarget = targetWorld;
+                            PostSnapshotRestore?.Invoke(restoredTarget);
+                        }
                     }
 
                     // Step 2: Reload gameplay assemblies if configured
@@ -313,7 +317,10 @@ namespace XREngine
                     // Rebind runtime rendering after snapshot restore (same as entering play mode).
                     // This ensures viewports/cameras/world bindings are properly wired after deserialization.
                     if (restoredWorld is not null)
-                        PostSnapshotRestore?.Invoke(restoredWorld);
+                    {
+                        var restoredTarget = restoredWorld;
+                        PostSnapshotRestore?.Invoke(restoredTarget);
+                    }
 
                     State = EPlayModeState.Edit;
                     PostExitPlay?.Invoke();

@@ -116,9 +116,17 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
             if (!resources.TryReadPositions(xrMesh.VertexCount, out Vector3[] worldPositions))
                 return false;
 
-            if (!resources.TryReadBounds(out var bounds))
-                bounds = CalculateBounds(worldPositions);
-            result = new Result(worldPositions, bounds);
+            // Use root bone's world matrix as the basis for skinned mesh bounds.
+            // Bounds are calculated in root bone local space.
+            Matrix4x4 basis = mesh.RootBone?.RenderMatrix ?? mesh.Component.Transform.RenderMatrix;
+            Matrix4x4 invBasis = Matrix4x4.Invert(basis, out var inv) ? inv : Matrix4x4.Identity;
+
+            var localPositions = new Vector3[worldPositions.Length];
+            for (int i = 0; i < worldPositions.Length; i++)
+                localPositions[i] = Vector3.Transform(worldPositions[i], invBasis);
+
+            var bounds = CalculateBounds(localPositions);
+            result = new Result(localPositions, bounds, basis);
             return true;
         }
     }

@@ -8,6 +8,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Numerics;
 using System.Text;
+using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
@@ -327,13 +328,29 @@ namespace XREngine
                 UdpReceiver = udpClient;
             }
 
-            private readonly ConcurrentDictionary<ushort, byte[]> _mustAck = new();
+            private readonly record struct PendingAckPacket(Guid OwnerId, byte[] Bytes);
 
-            private void EnqueueBroadcast(ushort sequenceNum, byte[] bytes, bool resendOnFailedAck)
+            private readonly ConcurrentDictionary<ushort, PendingAckPacket> _mustAck = new();
+
+            private void EnqueueBroadcast(ushort sequenceNum, byte[] bytes, bool resendOnFailedAck, Guid ownerId)
             {
                 UdpSendQueue.Enqueue((sequenceNum, bytes));
                 if (resendOnFailedAck)
-                    _mustAck[sequenceNum] = bytes;
+                    _mustAck[sequenceNum] = new PendingAckPacket(ownerId, bytes);
+            }
+
+            private static bool ShouldResendRequiredPacket(Guid ownerId)
+            {
+                if (ownerId == Guid.Empty)
+                    return true;
+
+                if (!XRObjectBase.ObjectsCache.TryGetValue(ownerId, out XRObjectBase? obj))
+                    return false;
+
+                if (obj is XRComponent component)
+                    return component.IsActiveInHierarchy;
+
+                return true;
             }
             
             private float _maxRoundTripSec = 1.0f;
@@ -467,10 +484,13 @@ namespace XREngine
                         continue;
                     
                     _rttBuffer.TryRemove(key, out _);
-                    if (_mustAck.TryRemove(key, out byte[]? bytes))
+                    if (_mustAck.TryRemove(key, out PendingAckPacket pending))
                     {
-                        Debug.Out($"Required packet sequence {key} failed to return, resending...");
-                        EnqueueBroadcast(key, bytes!, true);
+                        if (ShouldResendRequiredPacket(pending.OwnerId))
+                        {
+                            Debug.Out($"Required packet sequence {key} failed to return, resending...");
+                            EnqueueBroadcast(key, pending.Bytes, true, pending.OwnerId);
+                        }
                     }
                     //else
                     //    Debug.Out($"Packet sequence {key} failed to return, but was not required.");
@@ -683,7 +703,7 @@ namespace XREngine
                     int offset = HeaderLen;
                     SetGuidAndData(id, data, allData, ref offset);
                 }
-                EnqueueBroadcast(seq, allData, resendOnFailedAck);
+                EnqueueBroadcast(seq, allData, resendOnFailedAck, id);
             }
 
             private static byte EncodeFlags(bool compress, EBroadcastType type)

@@ -1014,17 +1014,21 @@ namespace XREngine
                 if (applyAll || propertyName == nameof(EngineSettings.UseGpuBvh))
                     Engine.Rendering.ApplyGpuBvhPreference();
 
+                if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
+                    || propertyName == nameof(EngineSettings.DlssQuality)
+                    || propertyName == nameof(EngineSettings.DlssCustomScale)
+                    || propertyName == nameof(EngineSettings.DlssSharpness)
+                    || propertyName == nameof(EngineSettings.DlssEnableFrameSmoothing)
+                    || propertyName == nameof(EngineSettings.DlssFrameSmoothingStrength))
+                {
+                    Engine.Rendering.ApplyNvidiaDlssPreference();
+                }
 
-
-                //if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
-                //    || propertyName == nameof(EngineSettings.DlssQuality)
-                //    || propertyName == nameof(EngineSettings.DlssCustomScale)
-                //    || propertyName == nameof(EngineSettings.DlssSharpness)
-                //    || propertyName == nameof(EngineSettings.DlssEnableFrameSmoothing)
-                //    || propertyName == nameof(EngineSettings.DlssFrameSmoothingStrength))
-                //{
-                //    Engine.ApplyNvidiaDlssPreference();
-                //}
+                if (applyAll || propertyName == nameof(EngineSettings.EnableIntelXess)
+                    || propertyName == nameof(EngineSettings.XessQuality))
+                {
+                    Engine.Rendering.ApplyIntelXessPreference();
+                }
             }
 
             public static void ApplyEditorPreferencesChange(string? propertyName)

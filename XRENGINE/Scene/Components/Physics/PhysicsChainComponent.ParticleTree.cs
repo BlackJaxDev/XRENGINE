@@ -29,7 +29,7 @@ public partial class PhysicsChainComponent
         public List<Particle> Particles
         {
             get => _particles;
-            set => SetFieldUnchecked(ref _particles, value);
+            set => SetFieldUnchecked(ref _particles, value ?? []);
         }
 
         private Vector3 _restGravity;

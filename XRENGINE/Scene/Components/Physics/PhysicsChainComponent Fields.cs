@@ -54,7 +54,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     private AnimationCurve? _elasticityDistrib = null;
 
     private float _stiffness = 0.1f;
-    public AnimationCurve? _stiffnessDistrib = null;
+    private AnimationCurve? _stiffnessDistrib = null;
 
     private float _inert = 0.0f;
     private AnimationCurve? _inertDistrib = null;

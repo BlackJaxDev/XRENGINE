@@ -46,6 +46,7 @@ namespace XREngine
         private static readonly List<IOverrideableSetting> _trackedEditorOverrideableSettings = [];
         private static readonly List<IOverrideableSetting> _trackedEditorThemeOverrideableSettings = [];
         private static readonly List<IOverrideableSetting> _trackedEditorDebugOverrideableSettings = [];
+        private static readonly Dictionary<IOverrideableSetting, string> _overrideableSettingPropertyMap = new();
 
         public static XREvent<UserSettings>? UserSettingsChanged;
         public static event Action<BuildSettings>? BuildSettingsChanged;
@@ -64,9 +65,7 @@ namespace XREngine
             UpdateEffectiveEditorPreferences();
 
             // Effective settings depend on these sources; forward changes.
-            UserSettingsChanged += _ => EffectiveSettings.NotifyEffectiveSettingsChanged();
-            Rendering.SettingsChanged += EffectiveSettings.NotifyEffectiveSettingsChanged;
-            EffectiveSettings.EffectiveSettingsChanged += ApplyEffectiveSettingsRuntime;
+            // Individual effective settings updates are handled per-property.
 
             Time.Timer.PostUpdateFrame += Timer_PostUpdateFrame;
 
@@ -582,6 +581,7 @@ namespace XREngine
                 return false;
             }
     
+            LogMainThreadInvoke(reason, MainThreadInvokeMode.Queued);
             Debug.Out($"[MainThreadInvoke] {reason} (queued)");
             EnqueueMainThreadTask(task, reason);
             return true;
@@ -637,25 +637,14 @@ namespace XREngine
 
         private static void OnUserSettingsChanged()
         {
-            Rendering.ApplyGlobalIlluminationModePreference();
+            ApplyEffectiveSettingsForProperty(null);
             UserSettingsChanged?.Invoke(_userSettings);
         }
 
         private static void HandleUserSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            switch (e.PropertyName)
-            {
-                case nameof(UserSettings.GlobalIlluminationMode):
-                    Rendering.ApplyGlobalIlluminationModePreference();
-                    break;
-                case null:
-                case "":
-                    Rendering.ApplyGlobalIlluminationModePreference();
-                    break;
-            }
-
             TrackOverrideableSettings(_userSettings, _trackedUserOverrideableSettings);
-            EffectiveSettings.NotifyEffectiveSettingsChanged();
+            ApplyEffectiveSettingsForProperty(e.PropertyName);
         }
 
         private static void ApplyEffectiveSettingsRuntime()
@@ -667,6 +656,53 @@ namespace XREngine
             Rendering.ApplyNvidiaDlssPreference();
             Rendering.ApplyIntelXessPreference();
             ApplyTimerSettings();
+        }
+
+        private static void ApplyEffectiveSettingsForProperty(string? propertyName)
+        {
+            if (string.IsNullOrWhiteSpace(propertyName))
+            {
+                ApplyEffectiveSettingsRuntime();
+                return;
+            }
+
+            if (propertyName == nameof(UserSettings.GlobalIlluminationMode)
+                || propertyName == nameof(UserSettings.GlobalIlluminationModeOverride))
+            {
+                Rendering.ApplyGlobalIlluminationModePreference();
+            }
+            else if (propertyName == nameof(GameStartupSettings.GPURenderDispatch)
+                || propertyName == nameof(UserSettings.GPURenderDispatchOverride))
+            {
+                Rendering.ApplyGpuRenderDispatchPreference();
+            }
+            else if (propertyName == nameof(GameStartupSettings.UseGpuBvhOverride))
+            {
+                Rendering.ApplyGpuBvhPreference();
+            }
+            else if (propertyName == nameof(UserSettings.EnableNvidiaDlssOverride)
+                || propertyName == nameof(UserSettings.DlssQualityOverride))
+            {
+                Rendering.ApplyNvidiaDlssPreference();
+            }
+            else if (propertyName == nameof(UserSettings.EnableIntelXessOverride)
+                || propertyName == nameof(UserSettings.XessQualityOverride))
+            {
+                Rendering.ApplyIntelXessPreference();
+            }
+            else if (propertyName == nameof(UserSettings.VSync)
+                || propertyName == nameof(UserSettings.VSyncOverride)
+                || propertyName == nameof(UserSettings.TargetUpdatesPerSecondOverride)
+                || propertyName == nameof(UserSettings.TargetFramesPerSecondOverride)
+                || propertyName == nameof(UserSettings.UnfocusedTargetFramesPerSecondOverride)
+                || propertyName == nameof(UserSettings.FixedFramesPerSecondOverride)
+                || propertyName == nameof(GameStartupSettings.TargetUpdatesPerSecond)
+                || propertyName == nameof(GameStartupSettings.TargetFramesPerSecond)
+                || propertyName == nameof(GameStartupSettings.UnfocusedTargetFramesPerSecond)
+                || propertyName == nameof(GameStartupSettings.FixedFramesPerSecond))
+            {
+                ApplyTimerSettings();
+            }
         }
 
         private static void ApplyTimerSettings()
@@ -713,6 +749,7 @@ namespace XREngine
                     continue;
 
                 cache.Add(overrideable);
+                _overrideableSettingPropertyMap[overrideable] = property.Name;
 
                 if (overrideable is IXRNotifyPropertyChanged notify)
                     notify.PropertyChanged += handler;
@@ -725,6 +762,8 @@ namespace XREngine
             {
                 if (tracked is IXRNotifyPropertyChanged notify)
                     notify.PropertyChanged -= handler;
+
+                _overrideableSettingPropertyMap.Remove(tracked);
             }
 
             cache.Clear();
@@ -732,7 +771,8 @@ namespace XREngine
 
         private static void HandleOverrideableSettingChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            EffectiveSettings.NotifyEffectiveSettingsChanged();
+            if (sender is IOverrideableSetting setting && _overrideableSettingPropertyMap.TryGetValue(setting, out var propertyName))
+                ApplyEffectiveSettingsForProperty(propertyName);
         }
 
         private static void HandleBuildSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
@@ -742,8 +782,8 @@ namespace XREngine
 
         private static void HandleGameSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            EffectiveSettings.NotifyEffectiveSettingsChanged();
             TrackOverrideableSettings(_gameSettings, _trackedGameOverrideableSettings);
+            ApplyEffectiveSettingsForProperty(e.PropertyName);
         }
 
         private static void HandleGlobalEditorPreferencesChanged(object? sender, IXRPropertyChangedEventArgs e)
@@ -891,7 +931,7 @@ namespace XREngine
                 TrackOverrideableSettings(_gameSettings, _trackedGameOverrideableSettings);
                 BuildSettingsChanged?.Invoke(_gameSettings.BuildSettings);
 
-                EffectiveSettings.NotifyEffectiveSettingsChanged();
+                ApplyEffectiveSettingsForProperty(null);
             }
         }
 

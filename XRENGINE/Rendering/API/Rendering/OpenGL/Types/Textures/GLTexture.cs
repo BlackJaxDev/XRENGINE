@@ -55,37 +55,77 @@ namespace XREngine.Rendering.OpenGL
 
         protected virtual void DataPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            Engine.InvokeOnMainThread(() => UpdateProperty(e.PropertyName), "GLTexture.UpdateProperty", true);
+            QueuePropertyUpdate(e.PropertyName);
         }
 
-        private void UpdateProperty(string? propertyName)
+        [Flags]
+        private enum TexturePropertyUpdateMask
         {
-            switch (propertyName)
+            None = 0,
+            MinLOD = 1 << 0,
+            MaxLOD = 1 << 1,
+            LargestMipmapLevel = 1 << 2,
+            SmallestAllowedMipmapLevel = 1 << 3,
+            All = MinLOD | MaxLOD | LargestMipmapLevel | SmallestAllowedMipmapLevel
+        }
+
+        private int _pendingPropertyUpdates;
+        private int _propertyUpdateQueued;
+
+        private void QueuePropertyUpdate(string? propertyName)
+        {
+            TexturePropertyUpdateMask mask = propertyName switch
             {
-                case nameof(XRTexture.MinLOD):
-                    {
-                        int param = Data.MinLOD;
-                        Api.TextureParameterI(BindingId, TextureParameterName.TextureMinLod, ref param);
-                        break;
-                    }
-                case nameof(XRTexture.MaxLOD):
-                    {
-                        int param = Data.MaxLOD;
-                        Api.TextureParameterI(BindingId, TextureParameterName.TextureMaxLod, ref param);
-                        break;
-                    }
-                case nameof(XRTexture.LargestMipmapLevel):
-                    {
-                        int param = Data.LargestMipmapLevel;
-                        Api.TextureParameterI(BindingId, TextureParameterName.TextureBaseLevel, ref param);
-                        break;
-                    }
-                case nameof(XRTexture.SmallestAllowedMipmapLevel):
-                    {
-                        int param = Data.SmallestAllowedMipmapLevel;
-                        Api.TextureParameterI(BindingId, TextureParameterName.TextureMaxLevel, ref param);
-                        break;
-                    }
+                null => TexturePropertyUpdateMask.All,
+                "" => TexturePropertyUpdateMask.All,
+                nameof(XRTexture.MinLOD) => TexturePropertyUpdateMask.MinLOD,
+                nameof(XRTexture.MaxLOD) => TexturePropertyUpdateMask.MaxLOD,
+                nameof(XRTexture.LargestMipmapLevel) => TexturePropertyUpdateMask.LargestMipmapLevel,
+                nameof(XRTexture.SmallestAllowedMipmapLevel) => TexturePropertyUpdateMask.SmallestAllowedMipmapLevel,
+                _ => TexturePropertyUpdateMask.None
+            };
+
+            if (mask == TexturePropertyUpdateMask.None)
+                return;
+
+            Interlocked.Or(ref _pendingPropertyUpdates, (int)mask);
+
+            if (Interlocked.Exchange(ref _propertyUpdateQueued, 1) == 1)
+                return;
+
+            Engine.InvokeOnMainThread(FlushPropertyUpdates, "GLTexture.UpdateProperty", true);
+        }
+
+        private void FlushPropertyUpdates()
+        {
+            Interlocked.Exchange(ref _propertyUpdateQueued, 0);
+            TexturePropertyUpdateMask mask = (TexturePropertyUpdateMask)Interlocked.Exchange(ref _pendingPropertyUpdates, 0);
+
+            if (mask == TexturePropertyUpdateMask.None)
+                return;
+
+            if (mask.HasFlag(TexturePropertyUpdateMask.MinLOD))
+            {
+                int param = Data.MinLOD;
+                Api.TextureParameterI(BindingId, TextureParameterName.TextureMinLod, ref param);
+            }
+
+            if (mask.HasFlag(TexturePropertyUpdateMask.MaxLOD))
+            {
+                int param = Data.MaxLOD;
+                Api.TextureParameterI(BindingId, TextureParameterName.TextureMaxLod, ref param);
+            }
+
+            if (mask.HasFlag(TexturePropertyUpdateMask.LargestMipmapLevel))
+            {
+                int param = Data.LargestMipmapLevel;
+                Api.TextureParameterI(BindingId, TextureParameterName.TextureBaseLevel, ref param);
+            }
+
+            if (mask.HasFlag(TexturePropertyUpdateMask.SmallestAllowedMipmapLevel))
+            {
+                int param = Data.SmallestAllowedMipmapLevel;
+                Api.TextureParameterI(BindingId, TextureParameterName.TextureMaxLevel, ref param);
             }
         }
 

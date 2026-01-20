@@ -71,8 +71,8 @@ public partial class XRMesh
             uint offset = TexCoordOffset.Value + texCoordIndex * 8u;
             InterleavedVertexBuffer?.SetVector2AtOffset(index * InterleavedStride + offset, value);
         }
-        else
-            TexCoordBuffers?[(int)texCoordIndex].SetVector2(index, value);
+        else if (TexCoordBuffers is not null && texCoordIndex < TexCoordBuffers.Length)
+            TexCoordBuffers[(int)texCoordIndex].SetVector2(index, value);
     }
     public Vector2 GetTexCoord(uint index, uint texCoordIndex)
     {
@@ -81,6 +81,8 @@ public partial class XRMesh
             uint offset = TexCoordOffset.Value + texCoordIndex * 8u;
             return InterleavedVertexBuffer?.GetVector2AtOffset(index * InterleavedStride + offset) ?? Vector2.Zero;
         }
-        return Interleaved ? Vector2.Zero : (TexCoordBuffers?[(int)texCoordIndex].GetVector2(index) ?? Vector2.Zero);
+        if (!Interleaved && TexCoordBuffers is not null && texCoordIndex < TexCoordBuffers.Length)
+            return TexCoordBuffers[(int)texCoordIndex].GetVector2(index);
+        return Vector2.Zero;
     }
 }
