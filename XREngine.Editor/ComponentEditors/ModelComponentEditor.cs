@@ -109,6 +109,12 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static readonly ConditionalWeakTable<ModelComponent, ImpostorState> s_impostorStates = new();
     private static readonly ConditionalWeakTable<ModelComponent, BvhPreviewState> s_bvhPreviewStates = new();
+    private static readonly ConditionalWeakTable<SubMesh, SubMeshMaterialState> s_submeshMaterialStates = new();
+
+    private sealed class SubMeshMaterialState
+    {
+        public bool LinkMaterialsAcrossLods = true;
+    }
 
     public void DrawInspector(XRComponent component, HashSet<object> visited)
     {
@@ -1560,6 +1566,61 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         return renderPass.ToString(CultureInfo.InvariantCulture);
     }
 
+    private static void DrawSubmeshMaterialControls(int submeshIndex, SubMesh subMesh)
+    {
+        var state = s_submeshMaterialStates.GetValue(subMesh, _ => new SubMeshMaterialState());
+        var sharedMaterial = GetSharedMaterialCandidate(subMesh, out bool isMixed);
+
+        ImGui.SeparatorText($"Material Defaults (Submesh {submeshIndex})");
+
+        bool linkMaterials = state.LinkMaterialsAcrossLods;
+        if (ImGui.Checkbox("Link materials across LODs", ref linkMaterials))
+            state.LinkMaterialsAcrossLods = linkMaterials;
+
+        if (!linkMaterials)
+        {
+            ImGui.TextDisabled("Per-LOD materials enabled.");
+            return;
+        }
+
+        ImGui.TextUnformatted("Shared Material");
+        ImGuiAssetUtilities.DrawAssetField("SharedMaterial", sharedMaterial, asset => ApplySharedMaterial(subMesh, asset), AssetFieldOptions.ForMaterials());
+
+        if (isMixed)
+            ImGui.TextDisabled("LOD materials differ. Assign a shared material to sync them.");
+    }
+
+    private static XRMaterialBase? GetSharedMaterialCandidate(SubMesh subMesh, out bool isMixed)
+    {
+        isMixed = false;
+        XRMaterialBase? shared = null;
+        bool hasValue = false;
+
+        foreach (var lod in subMesh.LODs)
+        {
+            if (!hasValue)
+            {
+                shared = lod.Material;
+                hasValue = true;
+                continue;
+            }
+
+            if (!ReferenceEquals(shared, lod.Material))
+            {
+                isMixed = true;
+                break;
+            }
+        }
+
+        return shared;
+    }
+
+    private static void ApplySharedMaterial(SubMesh subMesh, XRMaterialBase? material)
+    {
+        foreach (var lod in subMesh.LODs)
+            lod.Material = material;
+    }
+
     private static string FormatRenderCommandLabel(RenderableMesh? runtimeMesh)
     {
         if (runtimeMesh is null)
@@ -1584,6 +1645,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             return;
 
         ImGui.SeparatorText($"LOD Details (Submesh {submeshIndex})");
+        DrawSubmeshMaterialControls(submeshIndex, subMesh);
 
         foreach (var entry in lodEntries)
             DrawLodEditor(modelComponent, submeshIndex, subMesh, entry, runtimeMesh);
@@ -1665,7 +1727,34 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             ImGui.TableSetColumnIndex(0);
             ImGui.TextUnformatted("Asset Material");
             ImGui.TableSetColumnIndex(1);
-            ImGuiAssetUtilities.DrawAssetField("AssetMaterial", lod.Material, asset => lod.Material = asset, AssetFieldOptions.ForMaterials());
+            var materialState = s_submeshMaterialStates.GetValue(subMesh, _ => new SubMeshMaterialState());
+            if (materialState.LinkMaterialsAcrossLods)
+            {
+                XRMaterialBase? sharedMaterial = GetSharedMaterialCandidate(subMesh, out _);
+                bool hasOverride = !ReferenceEquals(lod.Material, sharedMaterial);
+                bool overrideMaterial = hasOverride;
+                if (ImGui.Checkbox("Override##AssetMaterial", ref overrideMaterial))
+                {
+                    if (!overrideMaterial && !ReferenceEquals(lod.Material, sharedMaterial))
+                        lod.Material = sharedMaterial;
+                }
+
+                ImGui.SameLine();
+                if (overrideMaterial)
+                {
+                    ImGuiAssetUtilities.DrawAssetField("AssetMaterial", lod.Material, asset => lod.Material = asset, AssetFieldOptions.ForMaterials());
+                }
+                else
+                {
+                    ImGui.BeginDisabled();
+                    ImGuiAssetUtilities.DrawAssetField("SharedMaterial", sharedMaterial, _ => { }, AssetFieldOptions.ForMaterials(), allowClear: false, allowCreateOrReplace: false);
+                    ImGui.EndDisabled();
+                }
+            }
+            else
+            {
+                ImGuiAssetUtilities.DrawAssetField("AssetMaterial", lod.Material, asset => lod.Material = asset, AssetFieldOptions.ForMaterials());
+            }
 
             ImGui.EndTable();
         }
