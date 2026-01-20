@@ -1,6 +1,9 @@
 using ImGuiNET;
+using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using SimpleScene.Util.ssBVH;
@@ -176,6 +179,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         if (model.Meshes.Count == 0)
             return;
 
+        DrawUnifiedBlendshapeControls(modelComponent);
+
         if (!ImGui.CollapsingHeader("Submeshes", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
@@ -189,6 +194,93 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         }
         DrawImpostorUtilities(modelComponent, model);
         DrawBvhPreviewUtilities(modelComponent);
+    }
+
+    private static void DrawUnifiedBlendshapeControls(ModelComponent modelComponent)
+    {
+        var runtimeMeshes = modelComponent.Meshes;
+        if (runtimeMeshes.Count == 0)
+            return;
+
+        var blendshapeValues = new Dictionary<string, List<float>>(StringComparer.InvariantCultureIgnoreCase);
+        var displayNames = new Dictionary<string, string>(StringComparer.InvariantCultureIgnoreCase);
+
+        foreach (RenderableMesh runtimeMesh in runtimeMeshes)
+        {
+            foreach (var lod in runtimeMesh.LODs)
+            {
+                XRMeshRenderer? renderer = lod.Renderer;
+                XRMesh? mesh = renderer?.Mesh;
+                if (mesh is null || !mesh.HasBlendshapes)
+                    continue;
+
+                uint blendshapeCount = mesh.BlendshapeCount;
+                for (uint i = 0; i < blendshapeCount; i++)
+                {
+                    string name = mesh.BlendshapeNames[(int)i];
+                    if (!blendshapeValues.TryGetValue(name, out var values))
+                    {
+                        values = new List<float>();
+                        blendshapeValues[name] = values;
+                        displayNames[name] = name;
+                    }
+
+                    values.Add(renderer.GetBlendshapeWeight(i));
+                }
+            }
+        }
+
+        if (blendshapeValues.Count == 0)
+            return;
+
+        if (!ImGui.CollapsingHeader("Blendshapes (All LODs)", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        if (ImGui.BeginTable("Blendshapes_All", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+        {
+            ImGui.TableSetupColumn("Blendshape", ImGuiTableColumnFlags.WidthStretch, 0.5f);
+            ImGui.TableSetupColumn("Weight (%)", ImGuiTableColumnFlags.WidthStretch, 0.5f);
+            ImGui.TableHeadersRow();
+
+            foreach (var entry in blendshapeValues.OrderBy(pair => displayNames.TryGetValue(pair.Key, out var name) ? name : pair.Key, StringComparer.InvariantCultureIgnoreCase))
+            {
+                string key = entry.Key;
+                List<float> values = entry.Value;
+                if (values.Count == 0)
+                    continue;
+
+                string displayName = displayNames.TryGetValue(key, out var name) ? name : key;
+
+                float firstValue = values[0];
+                bool hasMixedValues = values.Skip(1).Any(value => MathF.Abs(value - firstValue) > 0.0001f);
+
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted(displayName);
+
+                ImGui.TableSetColumnIndex(1);
+                ImGui.PushID($"BlendGlobal_{key}");
+                float pctValue = hasMixedValues ? values.Average() : firstValue;
+                ImGui.SetNextItemWidth(-1f);
+                if (hasMixedValues)
+                {
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.TextDisabled("Mixed");
+                    ImGui.SameLine();
+                }
+
+                if (ImGui.SliderFloat("##Pct", ref pctValue, 0.0f, 100.0f, "%.1f%%"))
+                {
+                    modelComponent.SetBlendShapeWeight(key, pctValue);
+                    PushBlendshapeWeightsToGpu(modelComponent, key);
+                }
+                ImGui.PopID();
+            }
+
+            ImGui.EndTable();
+        }
+
+        ImGui.Spacing();
     }
 
     private static void DrawBvhPreviewUtilities(ModelComponent modelComponent)
@@ -552,11 +644,10 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             return;
         }
 
-        if (ImGui.BeginTable($"Blendshapes_{submeshIndex}_{lodIndex}", 3, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+        if (ImGui.BeginTable($"Blendshapes_{submeshIndex}_{lodIndex}", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
         {
-            ImGui.TableSetupColumn("Blendshape", ImGuiTableColumnFlags.WidthStretch, 0.4f);
-            ImGui.TableSetupColumn("Weight (%)", ImGuiTableColumnFlags.WidthStretch, 0.3f);
-            ImGui.TableSetupColumn("Normalized", ImGuiTableColumnFlags.WidthStretch, 0.3f);
+            ImGui.TableSetupColumn("Blendshape", ImGuiTableColumnFlags.WidthStretch, 0.5f);
+            ImGui.TableSetupColumn("Weight (%)", ImGuiTableColumnFlags.WidthStretch, 0.5f);
             ImGui.TableHeadersRow();
 
             for (uint i = 0; i < blendshapeCount; i++)
@@ -564,7 +655,6 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 string name = mesh.BlendshapeNames[(int)i];
 
                 float percent = renderer.GetBlendshapeWeight(i);
-                float normalized = renderer.GetBlendshapeWeightNormalized(i);
 
                 ImGui.TableNextRow();
 
@@ -581,21 +671,19 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                     renderer.PushBlendshapeWeightsToGPU();
                 }
                 ImGui.PopID();
-
-                ImGui.TableSetColumnIndex(2);
-                ImGui.PushID($"BlendNorm_{submeshIndex}_{lodIndex}_{i}");
-                float normValue = normalized;
-                ImGui.SetNextItemWidth(-1f);
-                if (ImGui.SliderFloat("##Norm", ref normValue, 0.0f, 1.0f, "%.3f"))
-                {
-                    modelComponent.SetBlendShapeWeightNormalized(name, normValue);
-                    renderer.PushBlendshapeWeightsToGPU();
-                }
-                ImGui.PopID();
             }
 
             ImGui.EndTable();
         }
+    }
+
+    private static void PushBlendshapeWeightsToGpu(ModelComponent modelComponent, string blendshapeName, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
+    {
+        bool HasMatchingBlendshape(XRMeshRenderer x)
+            => (x?.Mesh?.HasBlendshapes ?? false) && Array.Exists(x.Mesh!.BlendshapeNames, name => string.Equals(name, blendshapeName, comp));
+
+        foreach (var renderer in modelComponent.GetAllRenderersWhere(HasMatchingBlendshape))
+            renderer.PushBlendshapeWeightsToGPU();
     }
 
     private static void DrawMaterialControls(int submeshIndex, int lodIndex, SubMeshLOD lod, RenderableMesh.RenderableLOD? runtimeLOD)

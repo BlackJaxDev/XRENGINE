@@ -394,15 +394,100 @@ namespace XREngine.Rendering
 
         private bool TryCancelCloseRequest()
         {
+            if (Window is null)
+                return false;
+
+            var windowType = Window.GetType();
+
+            if (TrySetBoolProperty(windowType, Window, "IsClosing", false))
+                return true;
+            if (TrySetBoolProperty(windowType, Window, "ShouldClose", false))
+                return true;
+            if (TrySetBoolProperty(windowType, Window, "CloseRequested", false))
+                return true;
+
+            if (TrySetBoolField(windowType, Window, "_isClosing", false))
+                return true;
+            if (TrySetBoolField(windowType, Window, "_shouldClose", false))
+                return true;
+            if (TrySetBoolField(windowType, Window, "_closeRequested", false))
+                return true;
+
+            if (TryInvokeBoolSetter(windowType, Window, "SetShouldClose", false))
+                return true;
+            if (TryInvokeBoolSetter(windowType, Window, "SetCloseRequested", false))
+                return true;
+            if (TryInvokeParameterless(windowType, Window, "CancelClose"))
+                return true;
+
+            return false;
+        }
+
+        private static bool TrySetBoolProperty(Type type, object instance, string name, bool value)
+        {
             try
             {
-                if (Window is null)
-                    return false;
-
-                var prop = Window.GetType().GetProperty("IsClosing");
-                if (prop is { CanWrite: true })
+                var prop = type.GetProperty(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+                if (prop is { CanWrite: true } && prop.PropertyType == typeof(bool))
                 {
-                    prop.SetValue(Window, false);
+                    prop.SetValue(instance, value);
+                    return true;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            return false;
+        }
+
+        private static bool TrySetBoolField(Type type, object instance, string name, bool value)
+        {
+            try
+            {
+                var field = type.GetField(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+                if (field is not null && field.FieldType == typeof(bool))
+                {
+                    field.SetValue(instance, value);
+                    return true;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            return false;
+        }
+
+        private static bool TryInvokeBoolSetter(Type type, object instance, string name, bool value)
+        {
+            try
+            {
+                var method = type.GetMethod(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic, null, new[] { typeof(bool) }, null);
+                if (method is not null)
+                {
+                    method.Invoke(instance, new object[] { value });
+                    return true;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            return false;
+        }
+
+        private static bool TryInvokeParameterless(Type type, object instance, string name)
+        {
+            try
+            {
+                var method = type.GetMethod(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+                if (method is not null)
+                {
+                    method.Invoke(instance, null);
                     return true;
                 }
             }

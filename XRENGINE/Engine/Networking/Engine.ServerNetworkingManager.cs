@@ -43,6 +43,9 @@ namespace XREngine
             /// Run on the server - receives from clients
             /// </summary>
             /// <param name="udpPort"></param>
+
+            private void HandlePlayerLeave(PlayerLeaveNotice leave, IPEndPoint sender)
+                => HandlePlayerLeave(leave);
             protected void StartUdpReceiver(int udpPort)
             {
                 UdpClient listener = new();
@@ -69,24 +72,29 @@ namespace XREngine
                 switch (change.Type)
                 {
                     case EStateChangeType.PlayerJoin:
-                        if (StateChangePayloadSerializer.TryDeserialize<PlayerJoinRequest>(change.Data, out var join) && sender is not null)
-                            HandlePlayerJoin(join, sender);
+                        if (!StateChangePayloadSerializer.TryDeserialize<PlayerJoinRequest>(change.Data, out var join) || join is null || sender is null)
+                            break;
+                        HandlePlayerJoin(join, sender);
                         break;
                     case EStateChangeType.PlayerInputSnapshot:
-                        if (StateChangePayloadSerializer.TryDeserialize<PlayerInputSnapshot>(change.Data, out var snapshot))
-                            HandlePlayerInputSnapshot(snapshot);
+                        if (!StateChangePayloadSerializer.TryDeserialize<PlayerInputSnapshot>(change.Data, out var snapshot) || snapshot is null)
+                            break;
+                        HandlePlayerInputSnapshot(snapshot);
                         break;
                     case EStateChangeType.PlayerTransformUpdate:
-                        if (StateChangePayloadSerializer.TryDeserialize<PlayerTransformUpdate>(change.Data, out var transformUpdate))
-                            HandlePlayerTransformUpdate(transformUpdate);
+                        if (!StateChangePayloadSerializer.TryDeserialize<PlayerTransformUpdate>(change.Data, out var transformUpdate) || transformUpdate is null)
+                            break;
+                        HandlePlayerTransformUpdate(transformUpdate);
                         break;
                     case EStateChangeType.PlayerLeave:
-                        if (StateChangePayloadSerializer.TryDeserialize<PlayerLeaveNotice>(change.Data, out var leave) && sender is not null)
-                            HandlePlayerLeave(leave);
+                        if (!StateChangePayloadSerializer.TryDeserialize<PlayerLeaveNotice>(change.Data, out var leave) || leave is null || sender is null)
+                            break;
+                        HandlePlayerLeave(leave);
                         break;
                     case EStateChangeType.Heartbeat:
-                        if (StateChangePayloadSerializer.TryDeserialize<PlayerHeartbeat>(change.Data, out var hb) && sender is not null)
-                            HandleHeartbeat(hb, sender);
+                        if (!StateChangePayloadSerializer.TryDeserialize<PlayerHeartbeat>(change.Data, out var hb) || hb is null || sender is null)
+                            break;
+                        HandleHeartbeat(hb, sender);
                         break;
                 }
             }

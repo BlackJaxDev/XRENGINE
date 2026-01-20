@@ -34,6 +34,7 @@ namespace XREngine.Components.Scene.Mesh
         private bool _skinnedBoundsDirty = true;
         private bool _skinnedBvhDirty = true;
         private bool _hasSkinnedBounds;
+        private bool _skinnedBoundsAreWorldSpace;
         private AABB _skinnedLocalBounds;
         private Vector3[]? _skinnedVertexPositions;
         private int _skinnedVertexCount;
@@ -190,8 +191,14 @@ namespace XREngine.Components.Scene.Mesh
             {
                 if (!EnsureSkinnedBounds())
                 {
+                    // Fallback to bind-pose bounds when GPU skinned bounds fail.
+                    // For skinned meshes, the bind-pose bounds are in mesh-local space (before any import rotation).
+                    // We should NOT transform by Component.Transform because that includes import rotation
+                    // which would double-rotate the bounds. Instead, use identity for world-space aligned bounds
+                    // OR transform bind-pose through the root bone which has the correct hierarchy.
                     RenderInfo.LocalCullingVolume = _bindPoseBounds;
-                    RenderInfo.CullingOffsetMatrix = Component.Transform.RenderMatrix;
+                    // Use root bone if available (it includes proper hierarchy), otherwise component transform
+                    RenderInfo.CullingOffsetMatrix = RootBone?.RenderMatrix ?? Component.Transform.RenderMatrix;
                 }
             }
             else
@@ -248,10 +255,21 @@ namespace XREngine.Components.Scene.Mesh
             }
         }
 
+        /// <summary>
+        /// Returns the matrix used to transform skinned mesh bounds from world space to local space.
+        /// For skinned meshes, this is the root bone's world matrix (bounds are in root bone local space).
+        /// For non-skinned meshes, this is the component's world matrix.
+        /// </summary>
         private Matrix4x4 GetSkinnedBasisMatrix()
         {
-            var ownerTransform = Component?.Transform;
-            return RootBone?.RenderMatrix ?? ownerTransform?.RenderMatrix ?? Matrix4x4.Identity;
+            // Skinned mesh bounds should be calculated in root bone local space.
+            // The root bone's world matrix transforms from root bone local to world space.
+            // Its inverse transforms from world space to root bone local space.
+            if (RootBone is not null)
+                return RootBone.RenderMatrix;
+            
+            // Fallback to component transform if no root bone
+            return Component?.Transform.RenderMatrix ?? Matrix4x4.Identity;
         }
 
         internal SkinnedMeshBoundsCalculator.Result EnsureLocalBounds(SkinnedMeshBoundsCalculator.Result result)
@@ -349,6 +367,7 @@ namespace XREngine.Components.Scene.Mesh
             _skinnedBoundsDirty = true;
             _skinnedBvhDirty = true;
             _hasSkinnedBounds = false;
+            _skinnedBoundsAreWorldSpace = false;
             Interlocked.Increment(ref _skinnedBvhVersion);
         }
 
@@ -357,22 +376,19 @@ namespace XREngine.Components.Scene.Mesh
             if (!IsSkinned)
                 return false;
 
-            bool useGpu = Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
-
-            // Never compute skinned bounds on CPU (too expensive for crowds).
-            // If GPU bounds are disabled (or fail), callers should fall back to bind-pose bounds.
-            if (!useGpu)
-                return false;
-
-            if (!TryComputeSkinnedBoundsOnGpu(out SkinnedMeshBoundsCalculator.Result gpuResult))
-                return false;
-
             lock (_skinnedDataLock)
             {
                 if (!_skinnedBoundsDirty && _hasSkinnedBounds)
                     return true;
 
-                return ApplySkinnedBoundsResult(gpuResult, markBvhDirty: true);
+                bool useGpu = Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
+
+                // Try GPU path first if enabled
+                if (useGpu && TryComputeSkinnedBoundsOnGpu(out SkinnedMeshBoundsCalculator.Result gpuResult))
+                    return ApplySkinnedBoundsResult(gpuResult, markBvhDirty: true);
+
+                // Fall back to CPU path for debugging or when GPU fails
+                return TryComputeSkinnedBoundsOnCpuLocked();
             }
         }
 
@@ -387,12 +403,14 @@ namespace XREngine.Components.Scene.Mesh
             if (_skinnedVertexCount == 0)
             {
                 _hasSkinnedBounds = false;
+                _skinnedBoundsAreWorldSpace = false;
                 return false;
             }
 
             _skinnedLocalBounds = result.Bounds;
             _skinnedBoundsDirty = false;
             _hasSkinnedBounds = true;
+            _skinnedBoundsAreWorldSpace = result.IsWorldSpace;
             if (markBvhDirty)
                 _skinnedBvhDirty = true;
 
@@ -400,6 +418,8 @@ namespace XREngine.Components.Scene.Mesh
             if (RenderInfo is not null)
             {
                 RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
+                // Bounds are in root bone local space. Use the basis (root bone world matrix)
+                // to transform them to world space for culling.
                 RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
             }
             return true;
@@ -694,24 +714,26 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         /// <summary>
-        /// Updates the culling offset matrix for skinned meshes.
+        /// Updates the culling offset matrix for skinned meshes when the root bone moves.
         /// </summary>
-        /// <param name="rootBone"></param>
         private void RootBone_WorldMatrixChanged(TransformBase rootBone, Matrix4x4 renderMatrix)
         {
             if (RenderInfo is null)
                 return;
 
             SetSkinnedRootRenderMatrix(renderMatrix);
+            
+            // Skinned bounds are calculated in root bone local space.
+            // When the root bone moves, update the CullingOffsetMatrix to transform bounds to world space.
             RenderInfo.CullingOffsetMatrix = renderMatrix;
+            
             if (!IsSkinned)
                 return;
         }
 
         /// <summary>
-        /// Updates the culling offset matrix for non-skinned meshes.
+        /// Updates the culling offset matrix for non-skinned meshes when the component moves.
         /// </summary>
-        /// <param name="component"></param>
         private void Component_WorldMatrixChanged(TransformBase component, Matrix4x4 renderMatrix)
         {
             //using var timer = Engine.Profiler.Start();
@@ -719,6 +741,7 @@ namespace XREngine.Components.Scene.Mesh
             bool hasSkinning = (CurrentLOD?.Value?.Renderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
+                // For skinned meshes without a root bone, use the component transform as the basis.
                 if (RootBone is null && RenderInfo is not null)
                 {
                     SetSkinnedRootRenderMatrix(renderMatrix);
@@ -733,7 +756,9 @@ namespace XREngine.Components.Scene.Mesh
             if (_rc is not null)
                 _rc.WorldMatrix = renderMatrix;
 
-            if (RenderInfo is not null/* && !hasSkinning*/)
+            // For static meshes, bounds are in mesh-local (component-local) space.
+            // CullingOffsetMatrix transforms from component local to world space.
+            if (RenderInfo is not null)
                 RenderInfo.CullingOffsetMatrix = renderMatrix;
         }
     }

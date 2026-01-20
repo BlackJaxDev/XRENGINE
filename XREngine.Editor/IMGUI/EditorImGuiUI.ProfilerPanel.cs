@@ -28,6 +28,11 @@ public static partial class EditorImGuiUI
         private static int _fpsDropSpikeLastSortColumn = -1;
         private static ImGuiSortDirection _fpsDropSpikeLastSortDirection = ImGuiSortDirection.None;
 
+        private static bool _profilerPaused;
+        private static Engine.CodeProfiler.ProfilerFrameSnapshot? _lastProfilerHierarchySnapshot;
+        private static float _lastProfilerHierarchyFrameMs;
+        private static bool _lastProfilerHierarchyUsingWorstWindowSample;
+
         private static void DrawProfilerPanel()
         {
             if (!_showProfiler) return;
@@ -49,22 +54,39 @@ public static partial class EditorImGuiUI
             float hierarchyFrameMs = 0.0f;
             bool showingWorstWindowSample = false;
 
-            if (frameSnapshot is not null && frameSnapshot.Threads.Count > 0)
+            bool paused = _profilerPaused;
+            if (ImGui.Checkbox("Pause Profiler", ref paused))
+                _profilerPaused = paused;
+
+            if (_profilerPaused)
             {
-                UpdateWorstFrameStatistics(frameSnapshot);
-                snapshotForDisplay = GetSnapshotForHierarchy(frameSnapshot, out hierarchyFrameMs, out showingWorstWindowSample);
-                UpdateProfilerThreadCache(frameSnapshot.Threads);
-                UpdateRootMethodCache(frameSnapshot, history);
-                UpdateFpsDropSpikeLog(frameSnapshot, history);
-                _lastProfilerCaptureTime = frameSnapshot.FrameTime;
+                snapshotForDisplay = _lastProfilerHierarchySnapshot;
+                hierarchyFrameMs = _lastProfilerHierarchyFrameMs;
+                showingWorstWindowSample = _lastProfilerHierarchyUsingWorstWindowSample;
             }
             else
             {
-                UpdateProfilerThreadCache(Array.Empty<Engine.CodeProfiler.ProfilerThreadSnapshot>());
+                if (frameSnapshot is not null && frameSnapshot.Threads.Count > 0)
+                {
+                    UpdateWorstFrameStatistics(frameSnapshot);
+                    snapshotForDisplay = GetSnapshotForHierarchy(frameSnapshot, out hierarchyFrameMs, out showingWorstWindowSample);
+                    UpdateProfilerThreadCache(frameSnapshot.Threads);
+                    UpdateRootMethodCache(frameSnapshot, history);
+                    UpdateFpsDropSpikeLog(frameSnapshot, history);
+                    _lastProfilerCaptureTime = frameSnapshot.FrameTime;
+
+                    _lastProfilerHierarchySnapshot = snapshotForDisplay;
+                    _lastProfilerHierarchyFrameMs = hierarchyFrameMs;
+                    _lastProfilerHierarchyUsingWorstWindowSample = showingWorstWindowSample;
+                }
+                else
+                {
+                    UpdateProfilerThreadCache(Array.Empty<Engine.CodeProfiler.ProfilerThreadSnapshot>());
+                }
             }
 
             var nowUtc = DateTime.UtcNow;
-            if (nowUtc - _lastProfilerUIUpdate > TimeSpan.FromSeconds(_profilerUpdateIntervalSeconds))
+            if (!_profilerPaused && nowUtc - _lastProfilerUIUpdate > TimeSpan.FromSeconds(_profilerUpdateIntervalSeconds))
             {
                 UpdateDisplayValues();
                 _lastProfilerUIUpdate = nowUtc;
@@ -203,6 +225,58 @@ public static partial class EditorImGuiUI
                     }
 
                     ImGui.EndTable();
+                }
+            }
+
+            ImGui.Separator();
+            if (ImGui.CollapsingHeader("Main Thread Invokes", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                var invokes = Engine.GetMainThreadInvokeLogSnapshot();
+                ImGui.Text($"Total invokes: {invokes.Count:N0}");
+
+                if (invokes.Count == 0)
+                {
+                    ImGui.TextDisabled("No main thread invokes recorded yet.");
+                }
+                else
+                {
+                    float rowHeight = ImGui.GetTextLineHeightWithSpacing();
+                    float estimatedHeight = MathF.Min(20, invokes.Count) * rowHeight + rowHeight * 2;
+
+                    if (ImGui.BeginTable("ProfilerMainThreadInvokes", 5,
+                        ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY,
+                        new Vector2(-1.0f, estimatedHeight)))
+                    {
+                        ImGui.TableSetupColumn("#", ImGuiTableColumnFlags.WidthFixed, 60f);
+                        ImGui.TableSetupColumn("Timestamp", ImGuiTableColumnFlags.WidthFixed, 185f);
+                        ImGui.TableSetupColumn("Mode", ImGuiTableColumnFlags.WidthFixed, 110f);
+                        ImGui.TableSetupColumn("Thread", ImGuiTableColumnFlags.WidthFixed, 60f);
+                        ImGui.TableSetupColumn("Reason", ImGuiTableColumnFlags.WidthStretch);
+                        ImGui.TableHeadersRow();
+
+                        for (int i = 0; i < invokes.Count; i++)
+                        {
+                            var entry = invokes[i];
+                            ImGui.TableNextRow();
+
+                            ImGui.TableSetColumnIndex(0);
+                            ImGui.Text(entry.Sequence.ToString());
+
+                            ImGui.TableSetColumnIndex(1);
+                            ImGui.Text(entry.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff"));
+
+                            ImGui.TableSetColumnIndex(2);
+                            ImGui.Text(entry.Mode.ToString());
+
+                            ImGui.TableSetColumnIndex(3);
+                            ImGui.Text(entry.CallerThreadId.ToString());
+
+                            ImGui.TableSetColumnIndex(4);
+                            ImGui.TextWrapped(entry.Reason);
+                        }
+
+                        ImGui.EndTable();
+                    }
                 }
             }
 
