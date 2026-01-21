@@ -31,7 +31,7 @@ public unsafe partial class OpenXRAPI
     /// Creates an OpenXR session using OpenGL graphics binding.
     /// </summary>
     /// <exception cref="Exception">Thrown when session creation fails.</exception>
-    private void CreateOpenGLSession(OpenGLRenderer renderer)
+    internal void CreateOpenGLSession(OpenGLRenderer renderer)
     {
         if (Window is null)
             throw new Exception("Window is null");
@@ -190,7 +190,7 @@ public unsafe partial class OpenXRAPI
                 Next = &glBinding
             };
 
-            var r = Api.CreateSession(_instance, ref createInfo, ref _session);
+            var r = CheckResult(Api.CreateSession(_instance, ref createInfo, ref _session), "xrCreateSession");
             attemptResults.Add($"{tag}: {r} (HDC=0x{(nuint)candidateHdc:X}, HGLRC=0x{(nuint)candidateHglrc:X})");
             lastResult = r;
             if (r == Result.Success)
@@ -222,7 +222,7 @@ public unsafe partial class OpenXRAPI
     /// </summary>
     /// <param name="renderer">The OpenGL renderer to use.</param>
     /// <exception cref="Exception">Thrown when swapchain creation fails.</exception>
-    private unsafe void InitializeOpenGLSwapchains(OpenGLRenderer renderer)
+    internal unsafe void InitializeOpenGLSwapchains(OpenGLRenderer renderer)
     {
         if (_gl is null)
             throw new Exception("OpenGL context not initialized for OpenXR");

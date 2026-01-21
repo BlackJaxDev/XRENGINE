@@ -13,7 +13,7 @@ public unsafe partial class OpenXRAPI
     /// Creates an OpenXR session using Vulkan graphics binding.
     /// </summary>
     /// <exception cref="Exception">Thrown when session creation fails.</exception>
-    private void CreateVulkanSession()
+    internal void CreateVulkanSession()
     {
         if (Window is null)
             throw new Exception("Window is null");
@@ -69,7 +69,7 @@ public unsafe partial class OpenXRAPI
             SystemId = _systemId,
             Next = &vkBinding
         };
-        var result = Api.CreateSession(_instance, ref createInfo, ref _session);
+        var result = CheckResult(Api.CreateSession(_instance, ref createInfo, ref _session), "xrCreateSession");
         if (result != Result.Success)
             throw new Exception($"Failed to create session: {result}");
     }
@@ -77,7 +77,7 @@ public unsafe partial class OpenXRAPI
     /// <summary>
     /// Initializes Vulkan swapchains for stereo rendering
     /// </summary>
-    private unsafe void InitializeVulkanSwapchains(VulkanRenderer renderer)
+    internal unsafe void InitializeVulkanSwapchains(VulkanRenderer renderer)
     {
         // Get view configuration
         var viewConfigType = ViewConfigurationType.PrimaryStereo;

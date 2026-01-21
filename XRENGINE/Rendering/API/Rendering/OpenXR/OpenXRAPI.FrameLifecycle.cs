@@ -58,7 +58,7 @@ public unsafe partial class OpenXRAPI
                 LayerCount = 0,
                 Layers = null
             };
-            var endResult = Api.EndFrame(_session, in frameEndInfoNoLayers);
+            var endResult = CheckResult(Api.EndFrame(_session, in frameEndInfoNoLayers), "xrEndFrame");
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers) => {endResult}");
 
@@ -96,7 +96,7 @@ public unsafe partial class OpenXRAPI
                 LayerCount = 0,
                 Layers = null
             };
-            var endResult = Api.EndFrame(_session, in frameEndInfoNoLayers);
+            var endResult = CheckResult(Api.EndFrame(_session, in frameEndInfoNoLayers), "xrEndFrame");
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers; eye failure) => {endResult}");
 
@@ -126,7 +126,7 @@ public unsafe partial class OpenXRAPI
             Layers = layers
         };
 
-        var endFrameResult = Api.EndFrame(_session, in frameEndInfo);
+        var endFrameResult = CheckResult(Api.EndFrame(_session, in frameEndInfo), "xrEndFrame");
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
             Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(layer) => {endFrameResult}");
 
@@ -149,7 +149,7 @@ public unsafe partial class OpenXRAPI
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         try
         {
-            var acquireResult = Api.AcquireSwapchainImage(_swapchains[viewIndex], in acquireInfo, ref imageIndex);
+            var acquireResult = CheckResult(Api.AcquireSwapchainImage(_swapchains[viewIndex], in acquireInfo, ref imageIndex), "xrAcquireSwapchainImage");
             if (acquireResult != Result.Success)
                 return false;
             acquired = true;
@@ -166,7 +166,7 @@ public unsafe partial class OpenXRAPI
                 Timeout = long.MaxValue
             };
 
-            var waitResult = Api.WaitSwapchainImage(_swapchains[viewIndex], in waitInfo);
+            var waitResult = CheckResult(Api.WaitSwapchainImage(_swapchains[viewIndex], in waitInfo), "xrWaitSwapchainImage");
             if (waitResult != Result.Success)
                 return false;
 
@@ -224,7 +224,7 @@ public unsafe partial class OpenXRAPI
             if (acquired)
             {
                 var releaseInfo = new SwapchainImageReleaseInfo { Type = StructureType.SwapchainImageReleaseInfo };
-                var releaseResult = Api.ReleaseSwapchainImage(_swapchains[viewIndex], in releaseInfo);
+                var releaseResult = CheckResult(Api.ReleaseSwapchainImage(_swapchains[viewIndex], in releaseInfo), "xrReleaseSwapchainImage");
                 if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                     Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Release => {releaseResult}");
             }
