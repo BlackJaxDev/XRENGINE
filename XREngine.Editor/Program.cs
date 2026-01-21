@@ -2,6 +2,7 @@
 using Newtonsoft.Json.Converters;
 using System;
 using System.Diagnostics;
+using EngineDebug = XREngine.Debug;
 using System.Linq;
 using System.Numerics;
 using System.Text;
@@ -65,7 +66,7 @@ internal class Program
 
         //ConsoleHelper.EnsureConsoleAttached();
         Undo.Initialize();
-        Debug.Out("XREngine Editor starting...");
+        EngineDebug.Out("XREngine Editor starting...");
         EditorFileDropHandler.Initialize();
         RenderInfo2D.ConstructorOverride = RenderInfo2DConstructor;
         RenderInfo3D.ConstructorOverride = RenderInfo3DConstructor;
@@ -86,12 +87,12 @@ internal class Program
         if (worldMode == EWorldMode.UnitTesting)
         {
             targetWorld = UnitTestingWorld.CreateSelectedWorld(true, false);
-            Debug.Out("Loading Unit Testing World...");
+            EngineDebug.Out("Loading Unit Testing World...");
         }
         else
         {
             targetWorld = CreateDefaultEmptyWorld();
-            Debug.Out("Loading Default Empty World...");
+            EngineDebug.Out("Loading Default Empty World...");
         }
 
         GPURenderPassCollection.ConfigureIndirectDebug(opts =>
@@ -198,7 +199,7 @@ internal class Program
 
         s_startupStopwatch?.Stop();
         var elapsed = s_startupStopwatch?.Elapsed.TotalMilliseconds ?? 0;
-        Debug.Out($"{messagePrefix} in {elapsed:F0} ms.");
+        EngineDebug.Out($"{messagePrefix} in {elapsed:F0} ms.");
         window.PostRenderViewportsCallback -= OnStartupPostRenderViewports;
         Engine.Windows.PostAdded -= OnStartupWindowAdded;
     }
@@ -223,7 +224,7 @@ internal class Program
         if (!string.IsNullOrWhiteSpace(worldModeEnv) &&
             Enum.TryParse<EWorldMode>(worldModeEnv, true, out var mode))
         {
-            Debug.Out($"World mode set to {mode} via XRE_WORLD_MODE environment variable.");
+            EngineDebug.Out($"World mode set to {mode} via XRE_WORLD_MODE environment variable.");
             return mode;
         }
 
@@ -355,7 +356,7 @@ internal class Program
 
         int primaryX = NativeMethods.GetSystemMetrics(0);
         int primaryY = NativeMethods.GetSystemMetrics(1);
-        Debug.Out("Primary monitor size: {0}x{1}", primaryX, primaryY);
+        EngineDebug.Out("Primary monitor size: {0}x{1}", primaryX, primaryY);
 
         var settings = new VRGameStartupSettings<EVRActionCategory, EVRGameAction>()
         {
@@ -393,7 +394,7 @@ internal class Program
         if (!string.IsNullOrWhiteSpace(windowTitleOverride) && settings.StartupWindows.Count > 0)
         {
             settings.StartupWindows[0].WindowTitle = windowTitleOverride;
-            Debug.Out($"Window title overridden to '{windowTitleOverride}' via XRE_WINDOW_TITLE.");
+            EngineDebug.Out($"Window title overridden to '{windowTitleOverride}' via XRE_WINDOW_TITLE.");
         }
 
         // Apply engine settings
@@ -406,7 +407,7 @@ internal class Program
             Enum.TryParse<GameStartupSettings.ENetworkingType>(netOverride, true, out var mode))
         {
             settings.NetworkingType = mode;
-            Debug.Out($"Networking mode overridden to {mode} via XRE_NET_MODE.");
+            EngineDebug.Out($"Networking mode overridden to {mode} via XRE_NET_MODE.");
         }
 
         // Allow overriding UDP ports to support multi-instance local testing.
@@ -414,17 +415,17 @@ internal class Program
         if (TryGetIntEnv("XRE_UDP_CLIENT_RECEIVE_PORT", out int udpClientReceivePort))
         {
             settings.UdpClientRecievePort = udpClientReceivePort;
-            Debug.Out($"UDP client receive port overridden to {udpClientReceivePort} via XRE_UDP_CLIENT_RECEIVE_PORT.");
+            EngineDebug.Out($"UDP client receive port overridden to {udpClientReceivePort} via XRE_UDP_CLIENT_RECEIVE_PORT.");
         }
         if (TryGetIntEnv("XRE_UDP_SERVER_SEND_PORT", out int udpServerSendPort))
         {
             settings.UdpServerSendPort = udpServerSendPort;
-            Debug.Out($"UDP server send port overridden to {udpServerSendPort} via XRE_UDP_SERVER_SEND_PORT.");
+            EngineDebug.Out($"UDP server send port overridden to {udpServerSendPort} via XRE_UDP_SERVER_SEND_PORT.");
         }
         if (TryGetIntEnv("XRE_UDP_MULTICAST_PORT", out int udpMulticastPort))
         {
             settings.UdpMulticastPort = udpMulticastPort;
-            Debug.Out($"UDP multicast port overridden to {udpMulticastPort} via XRE_UDP_MULTICAST_PORT.");
+            EngineDebug.Out($"UDP multicast port overridden to {udpMulticastPort} via XRE_UDP_MULTICAST_PORT.");
         }
 
         if (UnitTestingWorld.Toggles.VRPawn && (!UnitTestingWorld.Toggles.EmulatedVRPawn || UnitTestingWorld.Toggles.PreviewVRStereoViews))
@@ -464,7 +465,7 @@ internal class Program
                 mode == UnitTestingWorld.StaticModelMaterialMode.ForwardPlusUberShader)
             {
                 if (useDebug)
-                    Debug.Out($"[UnitTestingWorld] ForceDebugOpaquePipeline disabled because StaticModelMaterialMode={mode} requires DefaultRenderPipeline.");
+                    EngineDebug.Out($"[UnitTestingWorld] ForceDebugOpaquePipeline disabled because StaticModelMaterialMode={mode} requires DefaultRenderPipeline.");
                 useDebug = false;
             }
         }

@@ -1569,7 +1569,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
     private static void DrawSubmeshMaterialControls(int submeshIndex, SubMesh subMesh)
     {
         var state = s_submeshMaterialStates.GetValue(subMesh, _ => new SubMeshMaterialState());
-        var sharedMaterial = GetSharedMaterialCandidate(subMesh, out bool isMixed);
+        XRMaterial? sharedMaterial = GetSharedMaterialCandidate(subMesh, out bool isMixed);
 
         ImGui.SeparatorText($"Material Defaults (Submesh {submeshIndex})");
 
@@ -1590,10 +1590,10 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             ImGui.TextDisabled("LOD materials differ. Assign a shared material to sync them.");
     }
 
-    private static XRMaterialBase? GetSharedMaterialCandidate(SubMesh subMesh, out bool isMixed)
+    private static XRMaterial? GetSharedMaterialCandidate(SubMesh subMesh, out bool isMixed)
     {
         isMixed = false;
-        XRMaterialBase? shared = null;
+        XRMaterial? shared = null;
         bool hasValue = false;
 
         foreach (var lod in subMesh.LODs)
@@ -1615,7 +1615,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         return shared;
     }
 
-    private static void ApplySharedMaterial(SubMesh subMesh, XRMaterialBase? material)
+    private static void ApplySharedMaterial(SubMesh subMesh, XRMaterial? material)
     {
         foreach (var lod in subMesh.LODs)
             lod.Material = material;
@@ -1730,7 +1730,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             var materialState = s_submeshMaterialStates.GetValue(subMesh, _ => new SubMeshMaterialState());
             if (materialState.LinkMaterialsAcrossLods)
             {
-                XRMaterialBase? sharedMaterial = GetSharedMaterialCandidate(subMesh, out _);
+                XRMaterial? sharedMaterial = GetSharedMaterialCandidate(subMesh, out _);
                 bool hasOverride = !ReferenceEquals(lod.Material, sharedMaterial);
                 bool overrideMaterial = hasOverride;
                 if (ImGui.Checkbox("Override##AssetMaterial", ref overrideMaterial))

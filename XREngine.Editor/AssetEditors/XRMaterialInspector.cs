@@ -7,12 +7,13 @@ using System.Text.RegularExpressions;
 using XREngine.Editor;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Editor.AssetEditors;
 
-public sealed class XRMaterialInspector : IXRAssetInspector
+public sealed partial class XRMaterialInspector : IXRAssetInspector
 {
     private const float TexturePreviewMaxEdge = 96.0f;
     private const float TexturePreviewFallbackEdge = 64.0f;
