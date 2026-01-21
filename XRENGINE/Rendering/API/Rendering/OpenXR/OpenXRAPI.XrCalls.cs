@@ -17,7 +17,7 @@ public unsafe partial class OpenXRAPI
             Type = StructureType.SystemGetInfo,
             FormFactor = FormFactor.HeadMountedDisplay
         };
-        var result = Api.GetSystem(_instance, in systemGetInfo, ref _systemId);
+        var result = CheckResult(Api.GetSystem(_instance, in systemGetInfo, ref _systemId), "xrGetSystem");
         if (result != Result.Success)
         {
             throw new Exception($"Failed to get system: {result}");
@@ -38,7 +38,7 @@ public unsafe partial class OpenXRAPI
         };
 
         Space space = default;
-        if (Api.CreateReferenceSpace(_session, in spaceCreateInfo, ref space) != Result.Success)
+        if (CheckResult(Api.CreateReferenceSpace(_session, in spaceCreateInfo, ref space), "xrCreateReferenceSpace") != Result.Success)
             throw new Exception("Failed to create reference space");
 
         _appSpace = space;
@@ -51,7 +51,7 @@ public unsafe partial class OpenXRAPI
     private bool BeginFrame()
     {
         var frameBeginInfo = new FrameBeginInfo { Type = StructureType.FrameBeginInfo };
-        if (Api.BeginFrame(_session, in frameBeginInfo) != Result.Success)
+        if (CheckResult(Api.BeginFrame(_session, in frameBeginInfo), "xrBeginFrame") != Result.Success)
         {
             Debug.LogWarning("Failed to begin OpenXR frame.");
             return false;
@@ -68,7 +68,7 @@ public unsafe partial class OpenXRAPI
     {
         var frameWaitInfo = new FrameWaitInfo { Type = StructureType.FrameWaitInfo };
         frameState = new FrameState { Type = StructureType.FrameState };
-        if (Api.WaitFrame(_session, in frameWaitInfo, ref frameState) != Result.Success)
+        if (CheckResult(Api.WaitFrame(_session, in frameWaitInfo, ref frameState), "xrWaitFrame") != Result.Success)
         {
             Debug.LogWarning("Failed to wait for OpenXR frame.");
             return false;
@@ -97,7 +97,7 @@ public unsafe partial class OpenXRAPI
         fixed (View* viewsPtr = _views)
         {
             var viewsSpan = new Span<View>(viewsPtr, (int)_viewCount);
-            if (Api.LocateView(_session, &viewLocateInfo, &viewState, &viewCountOutput, viewsSpan) != Result.Success)
+            if (CheckResult(Api.LocateView(_session, &viewLocateInfo, &viewState, &viewCountOutput, viewsSpan), "xrLocateViews") != Result.Success)
             {
                 Debug.LogWarning("Failed to locate OpenXR views.");
                 return false;
@@ -169,6 +169,9 @@ public unsafe partial class OpenXRAPI
     /// </summary>
     private void PollEvents()
     {
+        if (_instance.Handle == 0)
+            return;
+
         // OpenXR requires the input buffer's Type be set to EventDataBuffer.
         // The runtime then overwrites the same memory with the specific event struct.
         var eventData = new EventDataBuffer
@@ -182,7 +185,7 @@ public unsafe partial class OpenXRAPI
             var result = Api.PollEvent(_instance, ref eventData);
             if (result == Result.EventUnavailable)
                 break;
-            if (result != Result.Success)
+            if (CheckResult(result, "xrPollEvent") != Result.Success)
             {
                 Debug.LogWarning($"xrPollEvent failed: {result}");
                 break;
@@ -206,7 +209,7 @@ public unsafe partial class OpenXRAPI
                                 PrimaryViewConfigurationType = ViewConfigurationType.PrimaryStereo
                             };
 
-                            var beginResult = Api.BeginSession(_session, in beginInfo);
+                            var beginResult = CheckResult(Api.BeginSession(_session, in beginInfo), "xrBeginSession");
                             Debug.Out($"xrBeginSession: {beginResult}");
                             if (beginResult == Result.Success)
                             {
@@ -216,13 +219,16 @@ public unsafe partial class OpenXRAPI
                         }
                         else if (_sessionState == SessionState.Stopping)
                         {
-                            var endResult = Api.EndSession(_session);
+                            var endResult = CheckResult(Api.EndSession(_session), "xrEndSession");
                             Debug.Out($"xrEndSession: {endResult}");
                             _sessionBegun = false;
                         }
                         else if (_sessionState == SessionState.Exiting || _sessionState == SessionState.LossPending)
                         {
                             _sessionBegun = false;
+                            MarkRuntimeLoss(_sessionState == SessionState.LossPending
+                                ? OpenXrRuntimeLossReason.SessionLossPending
+                                : OpenXrRuntimeLossReason.SessionExiting);
                         }
                     }
                     break;
@@ -242,6 +248,8 @@ public unsafe partial class OpenXRAPI
     /// </summary>
     protected void CleanUp()
     {
+        DisableRuntimeMonitoring();
+
         if (Window is not null && _deferredOpenGlInit is not null)
             Window.RenderViewportsCallback -= _deferredOpenGlInit;
         _deferredOpenGlInit = null;
@@ -250,27 +258,7 @@ public unsafe partial class OpenXRAPI
         _openXrLeftViewport?.Camera = null;
         _openXrRightViewport?.Camera = null;
 
-        // Cleanup swapchains
-        for (int i = 0; i < _viewCount; i++)
-        {
-            if (_swapchainFramebuffers[i] is not null && _gl is not null)
-                foreach (var fbo in _swapchainFramebuffers[i])
-                    _gl.DeleteFramebuffer(fbo);
-
-            if (_swapchainImagesGL[i] != null)
-                Marshal.FreeHGlobal((nint)_swapchainImagesGL[i]);
-            if (_swapchains[i].Handle != 0)
-                Api.DestroySwapchain(_swapchains[i]);
-        }
-
-        // Cleanup input action sets/spaces (must be done before destroying the session).
-        DestroyInput();
-
-        if (_appSpace.Handle != 0)
-            Api.DestroySpace(_appSpace);
-
-        if (_session.Handle != 0)
-            Api.DestroySession(_session);
+        TearDownSessionResources(true);
 
         if (_gl is not null)
         {
@@ -299,8 +287,42 @@ public unsafe partial class OpenXRAPI
         {
             // Best-effort cleanup.
         }
+    }
 
-        DestroyValidationLayers();
-        DestroyInstance();
+    internal void CleanupSwapchains()
+    {
+        for (int i = 0; i < _viewCount; i++)
+        {
+            if (_swapchainFramebuffers[i] is not null && _gl is not null)
+                foreach (var fbo in _swapchainFramebuffers[i])
+                    _gl.DeleteFramebuffer(fbo);
+
+            if (_swapchainImagesGL[i] != null)
+            {
+                Marshal.FreeHGlobal((nint)_swapchainImagesGL[i]);
+                _swapchainImagesGL[i] = null;
+            }
+
+            if (_swapchainImagesVK[i] != null)
+            {
+                Marshal.FreeHGlobal((nint)_swapchainImagesVK[i]);
+                _swapchainImagesVK[i] = null;
+            }
+
+            if (_swapchainImagesDX[i] != null)
+            {
+                Marshal.FreeHGlobal((nint)_swapchainImagesDX[i]);
+                _swapchainImagesDX[i] = null;
+            }
+
+            if (_swapchains[i].Handle != 0)
+                Api.DestroySwapchain(_swapchains[i]);
+
+            _swapchainFramebuffers[i] = null;
+            _swapchainImageCounts[i] = 0;
+            _swapchains[i] = default;
+        }
+
+        _viewCount = 0;
     }
 }

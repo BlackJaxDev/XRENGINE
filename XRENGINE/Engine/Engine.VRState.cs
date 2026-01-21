@@ -45,6 +45,7 @@ namespace XREngine
 
             private static OpenXRAPI? _openXRApi = null;
             public static OpenXRAPI? OpenXRApi => _openXRApi;
+            public static event Action<bool>? OpenXRSessionRunningChanged;
 
             private static VR? _openVRApi = null;
             public static VR OpenVRApi => _openVRApi ??= new VR();
@@ -73,6 +74,9 @@ namespace XREngine
 
             private static bool _vrCallbacksInstalled;
             private static bool _vrCallbacksStereo;
+            private static bool _openXrRuntimeMonitoring;
+            private static bool _openXrUpdateHooked;
+            private static bool _openXrSessionRunning;
 
             private static void InitRenderCallbacks(XRWindow window)
             {
@@ -288,11 +292,18 @@ namespace XREngine
 
                     _openXRApi ??= new OpenXRAPI();
                     _openXRApi.Window = window;
-                    _activeRuntime = VRRuntime.OpenXR;
-                    IsInVR = true;
+                    _openXRApi.EnableRuntimeMonitoring();
+                    _openXrRuntimeMonitoring = true;
+                    _openXrSessionRunning = false;
+                    DeactivateOpenXRRuntime();
 
-                    // Ensure VRState owns the engine callback hooks for OpenXR as well.
-                    InitRenderCallbacks(window);
+                    if (!_openXrUpdateHooked)
+                    {
+                        Time.Timer.PreUpdateFrame += UpdateOpenXRRuntime;
+                        _openXrUpdateHooked = true;
+                    }
+
+                    // Render callbacks will be installed once the OpenXR session is actually running.
                     return true;
                 }
                 catch (Exception ex)
@@ -300,6 +311,43 @@ namespace XREngine
                     Debug.LogWarning($"Failed to initialize OpenXR: {ex.Message}");
                     return false;
                 }
+            }
+
+            private static void UpdateOpenXRRuntime()
+            {
+                if (!_openXrRuntimeMonitoring || _openXRApi is null)
+                    return;
+
+                _openXRApi.UpdateRuntimeState();
+                bool running = _openXRApi.IsSessionRunning;
+                if (running == _openXrSessionRunning)
+                    return;
+
+                _openXrSessionRunning = running;
+                if (running)
+                    ActivateOpenXRRuntime();
+                else
+                    DeactivateOpenXRRuntime();
+
+                OpenXRSessionRunningChanged?.Invoke(running);
+            }
+
+            private static void ActivateOpenXRRuntime()
+            {
+                if (_openXRApi?.Window is null)
+                    return;
+
+                _activeRuntime = VRRuntime.OpenXR;
+                IsInVR = true;
+                InitRenderCallbacks(_openXRApi.Window);
+            }
+
+            private static void DeactivateOpenXRRuntime()
+            {
+                if (_activeRuntime == VRRuntime.OpenXR)
+                    _activeRuntime = VRRuntime.None;
+
+                IsInVR = false;
             }
 
             private static void DisableOpenVRRuntimeState()

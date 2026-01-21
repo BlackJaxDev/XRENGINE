@@ -61,6 +61,7 @@ internal class Program
         CodeManager.Instance.CompileOnChange = false;
         JsonConvert.DefaultSettings = DefaultJsonSettings;
         EditorPlayModeController.Initialize();
+        EditorOpenXrPawnSwitcher.Initialize();
 
         // Determine world mode from command line or environment variable
         EWorldMode worldMode = ResolveWorldMode(args);
