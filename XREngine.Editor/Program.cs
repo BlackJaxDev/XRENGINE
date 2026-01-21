@@ -18,6 +18,7 @@ using XREngine.Native;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;
@@ -163,6 +164,12 @@ internal class Program
         if (viewport is null)
             return;
 
+        if (renderer is VulkanRenderer)
+        {
+            StopStartupTimer(window, "Editor startup first frame (Vulkan fallback)");
+            return;
+        }
+
         if (Interlocked.CompareExchange(ref s_captureInFlight, 1, 0) != 0)
             return;
 
@@ -174,20 +181,25 @@ internal class Program
                 if (!success || luminance <= nonBlackThreshold)
                     return;
 
-                if (Interlocked.CompareExchange(ref s_startupTimerStopped, 1, 0) == 0)
-                {
-                    s_startupStopwatch?.Stop();
-                    var elapsed = s_startupStopwatch?.Elapsed.TotalMilliseconds ?? 0;
-                    Debug.Out($"Editor startup first non-black frame in {elapsed:F0} ms.");
-                    window.PostRenderViewportsCallback -= OnStartupPostRenderViewports;
-                    Engine.Windows.PostAdded -= OnStartupWindowAdded;
-                }
+                StopStartupTimer(window, "Editor startup first non-black frame");
             }
             finally
             {
                 Interlocked.Exchange(ref s_captureInFlight, 0);
             }
         });
+    }
+
+    private static void StopStartupTimer(XRWindow window, string messagePrefix)
+    {
+        if (Interlocked.CompareExchange(ref s_startupTimerStopped, 1, 0) != 0)
+            return;
+
+        s_startupStopwatch?.Stop();
+        var elapsed = s_startupStopwatch?.Elapsed.TotalMilliseconds ?? 0;
+        Debug.Out($"{messagePrefix} in {elapsed:F0} ms.");
+        window.PostRenderViewportsCallback -= OnStartupPostRenderViewports;
+        Engine.Windows.PostAdded -= OnStartupWindowAdded;
     }
 
     /// <summary>
