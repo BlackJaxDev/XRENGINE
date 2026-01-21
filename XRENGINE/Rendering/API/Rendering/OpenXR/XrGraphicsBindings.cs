@@ -27,7 +27,7 @@ internal sealed class VulkanXrGraphicsBinding : IXrGraphicsBinding
 
     public bool TryCreateSession(OpenXRAPI api, AbstractRenderer renderer)
     {
-        api.CreateVulkanSession((VulkanRenderer)renderer);
+        api.CreateVulkanSession();
         return true;
     }
 
