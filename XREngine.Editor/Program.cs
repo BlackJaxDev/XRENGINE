@@ -1,8 +1,11 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using System;
+using System.Diagnostics;
+using System.Linq;
 using System.Numerics;
 using System.Text;
+using System.Threading;
 using XREngine;
 using XREngine.Components;
 using XREngine.Components.Lights;
@@ -15,6 +18,7 @@ using XREngine.Native;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;
@@ -23,6 +27,12 @@ using static XREngine.Rendering.XRWorldInstance;
 internal class Program
 {
     private const string UnitTestingWorldSettingsFileName = "UnitTestingWorldSettings.json";
+    private static readonly object s_startupTimerLock = new();
+    private static Stopwatch? s_startupStopwatch;
+    private static XRWindow? s_startupWindow;
+    private static int s_startupWindowHooked;
+    private static int s_captureInFlight;
+    private static int s_startupTimerStopped;
 
     /// <summary>
     /// Determines which world to load on startup.
@@ -47,6 +57,7 @@ internal class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        StartEditorStartupTimer();
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
         if (TryHandleCommandLine(args))
@@ -114,6 +125,82 @@ internal class Program
 
         Engine.Run(startupSettings, gameState);
         McpServerHost.Shutdown();
+    }
+
+    private static void StartEditorStartupTimer()
+    {
+        lock (s_startupTimerLock)
+        {
+            if (s_startupStopwatch is not null)
+                return;
+
+            s_startupStopwatch = Stopwatch.StartNew();
+            Engine.Windows.PostAdded += OnStartupWindowAdded;
+        }
+    }
+
+    private static void OnStartupWindowAdded(XRWindow window)
+    {
+        if (Interlocked.CompareExchange(ref s_startupWindowHooked, 1, 0) != 0)
+            return;
+
+        s_startupWindow = window;
+        window.PostRenderViewportsCallback += OnStartupPostRenderViewports;
+    }
+
+    private static void OnStartupPostRenderViewports()
+    {
+        if (Volatile.Read(ref s_startupTimerStopped) != 0)
+            return;
+
+        var window = s_startupWindow;
+        if (window is null)
+            return;
+
+        var renderer = AbstractRenderer.Current;
+        if (renderer is null)
+            return;
+
+        var viewport = window.Viewports.FirstOrDefault();
+        if (viewport is null)
+            return;
+
+        if (renderer is VulkanRenderer)
+        {
+            StopStartupTimer(window, "Editor startup first frame (Vulkan fallback)");
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref s_captureInFlight, 1, 0) != 0)
+            return;
+
+        renderer.CalcDotLuminanceFrontAsync(viewport.Region, false, (success, luminance) =>
+        {
+            try
+            {
+                const float nonBlackThreshold = 0.0001f;
+                if (!success || luminance <= nonBlackThreshold)
+                    return;
+
+                StopStartupTimer(window, "Editor startup first non-black frame");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref s_captureInFlight, 0);
+            }
+        });
+    }
+
+    private static void StopStartupTimer(XRWindow window, string messagePrefix)
+    {
+        if (Interlocked.CompareExchange(ref s_startupTimerStopped, 1, 0) != 0)
+            return;
+
+        s_startupStopwatch?.Stop();
+        var elapsed = s_startupStopwatch?.Elapsed.TotalMilliseconds ?? 0;
+        Debug.Out($"{messagePrefix} in {elapsed:F0} ms.");
+        window.PostRenderViewportsCallback -= OnStartupPostRenderViewports;
+        Engine.Windows.PostAdded -= OnStartupWindowAdded;
     }
 
     /// <summary>

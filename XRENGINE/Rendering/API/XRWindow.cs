@@ -43,6 +43,7 @@ namespace XREngine.Rendering
         public static event Action<XRWindow, bool>? AnyWindowFocusChanged;
         public event Action<XRWindow, bool>? FocusChanged;
         public event Action? RenderViewportsCallback;
+        public event Action? PostRenderViewportsCallback;
 
         #endregion
 
@@ -739,6 +740,11 @@ namespace XREngine.Rendering
 
                 // Allow the renderer to perform any per-window end-of-frame work (e.g., Vulkan acquire/submit/present).
                 Renderer.RenderWindow(delta);
+
+                using (var postViewportsSample = Engine.Profiler.Start("XRWindow.PostRenderViewportsCallback"))
+                {
+                    PostRenderViewportsCallback?.Invoke();
+                }
 
                 // Successful frame: clear circuit breaker state.
                 _consecutiveRenderFailures = 0;
