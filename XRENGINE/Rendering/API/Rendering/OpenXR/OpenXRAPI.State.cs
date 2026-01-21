@@ -3,6 +3,7 @@ using Silk.NET.OpenXR;
 using System;
 using System.Diagnostics;
 using System.Numerics;
+using System.Threading;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Scene.Transforms;
@@ -11,6 +12,29 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public unsafe partial class OpenXRAPI
 {
+    public enum OpenXrRuntimeState
+    {
+        DesktopOnly,
+        XrInstanceReady,
+        XrSystemReady,
+        SessionCreated,
+        SessionRunning,
+        SessionStopping,
+        SessionLost,
+        RecreatePending
+    }
+
+    public enum OpenXrRuntimeLossReason
+    {
+        None,
+        SessionExiting,
+        SessionLossPending,
+        SessionLostError,
+        InstanceLostError,
+        RuntimeUnavailable,
+        ShutdownRequested
+    }
+
     public enum OpenXrPoseTiming
     {
         Predicted,
@@ -293,6 +317,17 @@ public unsafe partial class OpenXRAPI
     /// Current state of the OpenXR session.
     /// </summary>
     private SessionState _sessionState = SessionState.Unknown;
+    private OpenXrRuntimeState _runtimeState = OpenXrRuntimeState.DesktopOnly;
+    private OpenXrRuntimeLossReason _runtimeLossReason = OpenXrRuntimeLossReason.None;
+    private DateTime _nextProbeUtc = DateTime.MinValue;
+    private TimeSpan _probeInterval = TimeSpan.FromSeconds(1.5);
+    private int _runtimeLossPending;
+    private int _sessionRunning;
+    private bool _runtimeMonitoringEnabled;
+    private IXrGraphicsBinding? _graphicsBinding;
+
+    public OpenXrRuntimeState RuntimeState => _runtimeState;
+    public bool IsSessionRunning => Volatile.Read(ref _sessionRunning) != 0;
 
     /// <summary>
     /// Configuration information for each view (eye).
@@ -330,6 +365,18 @@ public unsafe partial class OpenXRAPI
     private readonly SwapchainImageD3D12KHR*[] _swapchainImagesDX = new SwapchainImageD3D12KHR*[2];
 
     #endregion
+
+    internal bool TryGetGl(out GL gl)
+    {
+        if (_gl is not null)
+        {
+            gl = _gl;
+            return true;
+        }
+
+        gl = null!;
+        return false;
+    }
 
     #region Pipeline helpers
 
