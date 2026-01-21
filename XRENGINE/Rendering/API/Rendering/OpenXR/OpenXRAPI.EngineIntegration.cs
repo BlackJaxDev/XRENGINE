@@ -1,8 +1,6 @@
 using Silk.NET.OpenXR;
 using XREngine;
 using XREngine.Rendering;
-using XREngine.Rendering.OpenGL;
-using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.API.Rendering.OpenXR;
 
@@ -64,45 +62,7 @@ public unsafe partial class OpenXRAPI
     /// </summary>
     protected void Initialize()
     {
-        CreateInstance();
-        SetupDebugMessenger();
-        CreateSystem();
-        switch (Window?.Renderer)
-        {
-            case OpenGLRenderer renderer:
-                // OpenGL session creation must happen on the same thread that owns the current GL context.
-                // Attempting to MakeCurrent here can fail if the editor render thread is already using it.
-                if (_deferredOpenGlInit is not null)
-                    Window.RenderViewportsCallback -= _deferredOpenGlInit;
-
-                _deferredOpenGlInit = () =>
-                {
-                    if (Window is null)
-                        return;
-
-                    // Run once.
-                    Window.RenderViewportsCallback -= _deferredOpenGlInit;
-                    _deferredOpenGlInit = null;
-
-                    CreateOpenGLSession(renderer);
-                    CreateReferenceSpace();
-                    InitializeOpenGLSwapchains(renderer);
-                    EnsureInputCreated();
-                };
-
-                Window.RenderViewportsCallback += _deferredOpenGlInit;
-                break;
-            case VulkanRenderer renderer:
-                CreateVulkanSession();
-                CreateReferenceSpace();
-                InitializeVulkanSwapchains(renderer);
-                EnsureInputCreated();
-                break;
-            //case D3D12Renderer renderer:
-            //    throw new NotImplementedException("DirectX 12 renderer not implemented");
-            default:
-                throw new Exception("Unsupported renderer");
-        }
+        EnableRuntimeMonitoring();
     }
 
     private void HookEngineTimerEvents()
