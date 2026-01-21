@@ -13,8 +13,9 @@ public unsafe partial class OpenXRAPI
     internal void EnableRuntimeMonitoring()
     {
         _runtimeMonitoringEnabled = true;
-        _runtimeState = OpenXrRuntimeState.DesktopOnly;
+        SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
         _runtimeLossReason = OpenXrRuntimeLossReason.None;
+        Interlocked.Exchange(ref _runtimeLossPending, 0);
         _sessionBegun = false;
         _sessionState = SessionState.Unknown;
         _nextProbeUtc = DateTime.UtcNow;
@@ -123,12 +124,27 @@ public unsafe partial class OpenXRAPI
 
     private void TryCreateSessionAndSwapchains(AbstractRenderer renderer)
     {
-        _graphicsBinding ??= renderer switch
+        IXrGraphicsBinding? selectedBinding = renderer switch
         {
             VulkanRenderer => new VulkanXrGraphicsBinding(),
             OpenGLRenderer => new OpenGLXrGraphicsBinding(),
             _ => null
         };
+
+        if (selectedBinding is null)
+        {
+            Debug.LogWarning("OpenXR: no compatible graphics binding for the active renderer.");
+            ScheduleProbeRetry();
+            TearDownSessionResources(true);
+            return;
+        }
+
+        if (_graphicsBinding is null
+            || !_graphicsBinding.IsCompatible(renderer)
+            || _graphicsBinding.GetType() != selectedBinding.GetType())
+        {
+            _graphicsBinding = selectedBinding;
+        }
 
         if (_graphicsBinding is null || !_graphicsBinding.IsCompatible(renderer))
         {
