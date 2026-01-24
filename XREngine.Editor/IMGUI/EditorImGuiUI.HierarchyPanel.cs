@@ -1,4 +1,5 @@
 using ImGuiNET;
+using System.Linq;
 using System.Numerics;
 using System.Text;
 using XREngine.Rendering;
@@ -202,7 +203,7 @@ public static partial class EditorImGuiUI
             fullFlags |= ImGuiTreeNodeFlags.Selected;
         bool nodeOpen = ImGui.TreeNodeEx("##TreeNode", fullFlags);
         if (!isRenaming && ImGui.IsItemClicked(ImGuiMouseButton.Left))
-            Selection.SceneNode = node;
+            UpdateHierarchySelection(node);
         ImGui.OpenPopupOnItemClick("Context", ImGuiPopupFlags.MouseButtonRight);
 
         if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
@@ -277,6 +278,61 @@ public static partial class EditorImGuiUI
         return nodeOpen;
     }
 
+    private static void UpdateHierarchySelection(SceneNode node)
+    {
+        var io = ImGui.GetIO();
+        if (io.KeyCtrl)
+        {
+            ToggleNodeSelection(node);
+            return;
+        }
+
+        if (io.KeyAlt)
+        {
+            RemoveNodeFromSelection(node);
+            return;
+        }
+
+        if (io.KeyShift)
+        {
+            AddNodeToSelection(node);
+            return;
+        }
+
+        Selection.SceneNodes = [node];
+    }
+
+    private static void AddNodeToSelection(SceneNode node)
+    {
+        var existing = Selection.SceneNodes;
+        if (existing.Contains(node))
+            return;
+
+        Selection.SceneNodes = [node, .. existing];
+    }
+
+    private static void ToggleNodeSelection(SceneNode node)
+    {
+        var existing = Selection.SceneNodes;
+        if (existing.Contains(node))
+        {
+            Selection.SceneNodes = [.. existing.Where(n => n != node)];
+        }
+        else
+        {
+            Selection.SceneNodes = [node, .. existing];
+        }
+    }
+
+    private static void RemoveNodeFromSelection(SceneNode node)
+    {
+        var existing = Selection.SceneNodes;
+        if (!existing.Contains(node))
+            return;
+
+        Selection.SceneNodes = [.. existing.Where(n => n != node)];
+    }
+
     private static void BeginHierarchyNodeRename(SceneNode node)
     {
         _nodePendingRename = node;
@@ -288,8 +344,8 @@ public static partial class EditorImGuiUI
     {
         if (node == _nodePendingRename)
             _nodePendingRename = null;
-        if (node == _nodePendingAddComponent)
-            _nodePendingAddComponent = null;
+        if (_nodesPendingAddComponent?.Contains(node) == true)
+            _nodesPendingAddComponent = null;
 
         var tfm = node.Transform;
         var parentTransform = tfm.Parent;
