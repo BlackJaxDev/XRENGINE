@@ -82,7 +82,7 @@ public static partial class EditorImGuiUI
         private static float _lastProfilerCaptureTime;
 
         private static SceneNode? _nodePendingRename;
-        private static SceneNode? _nodePendingAddComponent;
+        private static IReadOnlyList<SceneNode>? _nodesPendingAddComponent;
         private static string _componentPickerSearch = string.Empty;
         private static string? _componentPickerError;
 
