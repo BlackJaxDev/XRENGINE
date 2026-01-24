@@ -421,6 +421,25 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// </summary>
     private readonly HashSet<XRMaterial> _currentSelectionHighlightMaterials = [];
 
+    private const float SelectionDragThresholdPixels = 6.0f;
+    private bool _selectionDragActive = false;
+    private Vector2? _selectionDragStartInternal = null;
+    private Vector2? _selectionDragEndInternal = null;
+
+    private bool _rectangleSelectContainsOnly = false;
+    /// <summary>
+    /// When enabled, rectangle selection only includes objects fully contained within the selection frustum.
+    /// When disabled, objects intersecting the frustum are also selected.
+    /// </summary>
+    [Category("Selection")]
+    [DisplayName("Rectangle Select Contains Only")]
+    [Description("When enabled, rectangle selection only includes objects fully contained within the selection frustum.")]
+    public bool RectangleSelectContainsOnly
+    {
+        get => _rectangleSelectContainsOnly;
+        set => SetField(ref _rectangleSelectContainsOnly, value);
+    }
+
     private PhysxScene.PhysxQueryFilter _physxQueryFilter = new();
     [Category("Raycasting")]
     public PhysxScene.PhysxQueryFilter PhysxQueryFilter
@@ -1047,6 +1066,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp))
             comp?.MouseMove(_lastRaycastSegment, cam.Camera, LeftClickPressed);
 
+        UpdateSelectionDrag(vp);
+
         if (AllowWorldPicking)
         {
             var octreeResults = GetOctreePickResultDict();
@@ -1515,6 +1536,59 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             _arcballRotationPosition = null;
     }
 
+    protected override void OnLeftClick(bool pressed)
+    {
+        base.OnLeftClick(pressed);
+
+        if (!AllowWorldPicking)
+            return;
+
+        if (pressed)
+        {
+            if (IsHoveringUI())
+                return;
+
+            if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null && tfmComp.Highlighted)
+                return;
+
+            if (!ShiftPressed)
+            {
+                Select();
+                return;
+            }
+
+            var vp = Viewport;
+            if (vp is null)
+                return;
+
+            _selectionDragActive = true;
+            _selectionDragStartInternal = GetCursorInternalCoordinatePosition(vp);
+            _selectionDragEndInternal = _selectionDragStartInternal;
+            return;
+        }
+
+        if (!_selectionDragActive)
+            return;
+
+        var viewport = Viewport;
+        if (viewport is null)
+        {
+            ResetSelectionDrag();
+            return;
+        }
+
+        if (IsHoveringUI())
+        {
+            ResetSelectionDrag();
+            return;
+        }
+
+        if (!TryFinalizeRectangleSelection(viewport))
+            Select();
+
+        ResetSelectionDrag();
+    }
+
     protected override void MouseRotate(float x, float y)
     {
         if (_arcballRotationPosition is not null)
@@ -1715,7 +1789,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     public override void RegisterInput(InputInterface input)
     {
         base.RegisterInput(input);
-        input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Pressed, Select);
         input.RegisterKeyEvent(EKey.F12, EButtonInputType.Pressed, TakeScreenshot);
         input.RegisterKeyEvent(EKey.Number1, EButtonInputType.Pressed, SetTransformTranslation);
         input.RegisterKeyEvent(EKey.Number2, EButtonInputType.Pressed, SetTransformRotation);
@@ -1856,5 +1929,165 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 meshHit = default;
                 return false;
         }
+    }
+
+    private void UpdateSelectionDrag(XRViewport vp)
+    {
+        if (!_selectionDragActive || !LeftClickPressed)
+            return;
+
+        _selectionDragEndInternal = GetCursorInternalCoordinatePosition(vp);
+    }
+
+    private bool TryFinalizeRectangleSelection(XRViewport vp)
+    {
+        if (!TryGetSelectionDragRect(vp, out Vector2 minUv, out Vector2 maxUv, out float dragDistance))
+            return false;
+
+        if (dragDistance < SelectionDragThresholdPixels)
+            return false;
+
+        if (!TryBuildSelectionFrustum(vp, minUv, maxUv, out Frustum frustum))
+            return false;
+
+        var selectedNodes = CollectFrustumSelection(frustum, RectangleSelectContainsOnly);
+        ApplyRectangleSelection(selectedNodes);
+        return true;
+    }
+
+    private bool TryGetSelectionDragRect(XRViewport vp, out Vector2 minUv, out Vector2 maxUv, out float dragDistance)
+    {
+        minUv = Vector2.Zero;
+        maxUv = Vector2.Zero;
+        dragDistance = 0.0f;
+
+        if (!_selectionDragStartInternal.HasValue || !_selectionDragEndInternal.HasValue)
+            return false;
+
+        var startInternal = _selectionDragStartInternal.Value;
+        var endInternal = _selectionDragEndInternal.Value;
+        dragDistance = Vector2.Distance(startInternal, endInternal);
+
+        var startUv = ClampNormalizedViewport(vp.NormalizeInternalCoordinate(startInternal));
+        var endUv = ClampNormalizedViewport(vp.NormalizeInternalCoordinate(endInternal));
+
+        minUv = Vector2.Min(startUv, endUv);
+        maxUv = Vector2.Max(startUv, endUv);
+        return true;
+    }
+
+    private static Vector2 ClampNormalizedViewport(Vector2 uv)
+    {
+        const float epsilon = 1e-4f;
+        return Vector2.Clamp(uv, Vector2.Zero, Vector2.One - new Vector2(epsilon));
+    }
+
+    private bool TryBuildSelectionFrustum(XRViewport vp, Vector2 minUv, Vector2 maxUv, out Frustum frustum)
+    {
+        frustum = default;
+        var camera = GetCamera()?.Camera;
+        if (camera is null)
+            return false;
+
+        float nearDepth = camera.GetNearDepthValue();
+        float farDepth = camera.GetFarDepthValue();
+
+        Vector3 nearBottomLeft = vp.NormalizedViewportToWorldCoordinate(new Vector2(minUv.X, minUv.Y), nearDepth);
+        Vector3 nearBottomRight = vp.NormalizedViewportToWorldCoordinate(new Vector2(maxUv.X, minUv.Y), nearDepth);
+        Vector3 nearTopLeft = vp.NormalizedViewportToWorldCoordinate(new Vector2(minUv.X, maxUv.Y), nearDepth);
+        Vector3 nearTopRight = vp.NormalizedViewportToWorldCoordinate(new Vector2(maxUv.X, maxUv.Y), nearDepth);
+
+        Vector3 farBottomLeft = vp.NormalizedViewportToWorldCoordinate(new Vector2(minUv.X, minUv.Y), farDepth);
+        Vector3 farBottomRight = vp.NormalizedViewportToWorldCoordinate(new Vector2(maxUv.X, minUv.Y), farDepth);
+        Vector3 farTopLeft = vp.NormalizedViewportToWorldCoordinate(new Vector2(minUv.X, maxUv.Y), farDepth);
+        Vector3 farTopRight = vp.NormalizedViewportToWorldCoordinate(new Vector2(maxUv.X, maxUv.Y), farDepth);
+
+        frustum = new Frustum(
+            nearBottomLeft, nearBottomRight, nearTopLeft, nearTopRight,
+            farBottomLeft, farBottomRight, farTopLeft, farTopRight);
+        return true;
+    }
+
+    private List<SceneNode> CollectFrustumSelection(Frustum frustum, bool containsOnly)
+    {
+        var selectedNodes = new HashSet<SceneNode>();
+        var scene = World?.VisualScene as VisualScene3D;
+        if (scene is null)
+            return [];
+
+        void AddSelection(RenderInfo3D renderable)
+        {
+            switch (renderable.Owner)
+            {
+                case XRComponent comp when comp.SceneNode is not null:
+                    selectedNodes.Add(comp.SceneNode);
+                    break;
+                case TransformBase tfm when tfm.SceneNode is not null:
+                    selectedNodes.Add(tfm.SceneNode);
+                    break;
+            }
+        }
+
+        bool IntersectionTest(RenderInfo3D item, IVolume? volume, bool onlyContaining)
+            => item.Intersects(volume, onlyContaining);
+
+        scene.RenderTree.CollectVisible(frustum, containsOnly, AddSelection, IntersectionTest);
+
+        if (selectedNodes.Count == 0 && scene.Renderables.Count > 0)
+        {
+            foreach (var renderable in scene.Renderables)
+            {
+                if (!renderable.ShouldRender || !renderable.Intersects(frustum, containsOnly))
+                    continue;
+
+                AddSelection(renderable);
+            }
+        }
+
+        return [.. selectedNodes];
+    }
+
+    private void ApplyRectangleSelection(IReadOnlyCollection<SceneNode> nodes)
+    {
+        var input = LocalInput;
+        var kbd = input?.Keyboard;
+        bool ctrl = kbd is not null && (kbd.GetKeyState(EKey.ControlLeft, EButtonInputType.Pressed) || kbd.GetKeyState(EKey.ControlRight, EButtonInputType.Pressed));
+        bool alt = kbd is not null && (kbd.GetKeyState(EKey.AltLeft, EButtonInputType.Pressed) || kbd.GetKeyState(EKey.AltRight, EButtonInputType.Pressed));
+        bool shift = kbd is not null && (kbd.GetKeyState(EKey.ShiftLeft, EButtonInputType.Pressed) || kbd.GetKeyState(EKey.ShiftRight, EButtonInputType.Pressed));
+
+        if (!ctrl && !alt && !shift)
+        {
+            Selection.SceneNodes = nodes.Count > 0 ? [.. nodes] : [];
+            return;
+        }
+
+        var selectionSet = new HashSet<SceneNode>(Selection.SceneNodes);
+        if (ctrl)
+        {
+            foreach (var node in nodes)
+            {
+                if (!selectionSet.Add(node))
+                    selectionSet.Remove(node);
+            }
+        }
+        else if (alt)
+        {
+            foreach (var node in nodes)
+                selectionSet.Remove(node);
+        }
+        else if (shift)
+        {
+            foreach (var node in nodes)
+                selectionSet.Add(node);
+        }
+
+        Selection.SceneNodes = [.. selectionSet];
+    }
+
+    private void ResetSelectionDrag()
+    {
+        _selectionDragActive = false;
+        _selectionDragStartInternal = null;
+        _selectionDragEndInternal = null;
     }
 }
