@@ -84,62 +84,61 @@ namespace XREngine.Scene
         [Category("Physics")]
         [Description("Default linear damping applied to new rigid bodies.")]
         public float DefaultLinearDamping
-    {
-      get => _defaultLinearDamping;
- set => SetField(ref _defaultLinearDamping, Math.Max(0.0f, value));
-    }
+        {
+            get => _defaultLinearDamping;
+            set => SetField(ref _defaultLinearDamping, Math.Max(0.0f, value));
+        }
 
         private float _defaultAngularDamping = 0.05f;
-   /// <summary>
-     /// Default angular damping applied to new rigid bodies.
+        /// <summary>
+        /// Default angular damping applied to new rigid bodies.
         /// Higher values slow down rotational movement over time.
         /// </summary>
         [Category("Physics")]
-      [Description("Default angular damping applied to new rigid bodies.")]
+        [Description("Default angular damping applied to new rigid bodies.")]
         public float DefaultAngularDamping
- {
-          get => _defaultAngularDamping;
-     set => SetField(ref _defaultAngularDamping, Math.Max(0.0f, value));
- }
+        {
+            get => _defaultAngularDamping;
+            set => SetField(ref _defaultAngularDamping, Math.Max(0.0f, value));
+        }
 
-private float _defaultFriction = 0.5f;
+        private float _defaultFriction = 0.5f;
         /// <summary>
         /// Default friction coefficient for new physics materials.
         /// </summary>
         [Category("Physics")]
         [Description("Default friction coefficient for new physics materials.")]
         public float DefaultFriction
-  {
-     get => _defaultFriction;
-      set => SetField(ref _defaultFriction, Math.Clamp(value, 0.0f, 1.0f));
+        {
+            get => _defaultFriction;
+            set => SetField(ref _defaultFriction, Math.Clamp(value, 0.0f, 1.0f));
         }
 
- private float _defaultRestitution = 0.0f;
+        private float _defaultRestitution = 0.0f;
         /// <summary>
         /// Default restitution (bounciness) for new physics materials.
-      /// 0 = no bounce, 1 = perfect bounce.
+        /// 0 = no bounce, 1 = perfect bounce.
         /// </summary>
         [Category("Physics")]
         [Description("Default restitution (bounciness) for new physics materials.")]
-     public float DefaultRestitution
+        public float DefaultRestitution
         {
             get => _defaultRestitution;
-  set => SetField(ref _defaultRestitution, Math.Clamp(value, 0.0f, 1.0f));
-    }
+            set => SetField(ref _defaultRestitution, Math.Clamp(value, 0.0f, 1.0f));
+        }
 
         private bool _enableContinuousCollision = true;
         /// <summary>
         /// Whether to use continuous collision detection for fast-moving objects.
         /// Prevents tunneling through thin walls at the cost of performance.
         /// </summary>
-     [Category("Physics")]
+        [Category("Physics")]
         [Description("Whether to use continuous collision detection for fast-moving objects.")]
-    public bool EnableContinuousCollision
-     {
+        public bool EnableContinuousCollision
+        {
             get => _enableContinuousCollision;
-    set => SetField(ref _enableContinuousCollision, value);
-}
-
+            set => SetField(ref _enableContinuousCollision, value);
+        }
         #endregion
 
         #region Time Settings
@@ -147,13 +146,13 @@ private float _defaultFriction = 0.5f;
         private GameMode? _defaultGameMode;
         /// <summary>
         /// Overrides the default game mode specified by the game.
-/// </summary>
+        /// </summary>
         [Category("Gameplay")]
         [MemoryPackIgnore]
-      public GameMode? DefaultGameMode
- {
-    get => _defaultGameMode;
-        set => SetField(ref _defaultGameMode, value);
+        public GameMode? DefaultGameMode
+        {
+            get => _defaultGameMode;
+            set => SetField(ref _defaultGameMode, value);
         }
 
         private float _timeDilation = 1.0f;
@@ -162,18 +161,18 @@ private float _defaultFriction = 0.5f;
         /// A value of 2 will make the game 2x faster,
         /// while a value of 0.5 will make it 2x slower.
         /// </summary>
-      [Category("Time")]
+        [Category("Time")]
         [Description(
-       "How fast the game moves. " +
+            "How fast the game moves. " +
             "A value of 2 will make the game 2x faster, " +
-        "while a value of 0.5 will make it 2x slower.")]
+            "while a value of 0.5 will make it 2x slower.")]
         public float TimeDilation
-      {
+        {
             get => _timeDilation;
-  set => SetField(ref _timeDilation, Math.Max(0.0f, value));
-    }
+            set => SetField(ref _timeDilation, Math.Max(0.0f, value));
+        }
 
-   #endregion
+        #endregion
 
         #region World Bounds
 
@@ -604,67 +603,64 @@ get => _previewOctrees;
         /// <summary>
         /// Creates a deep copy of these world settings.
         /// </summary>
-        public WorldSettings Clone()
+        public WorldSettings Clone() => new()
         {
- return new WorldSettings
-   {
-              // Physics
-     Gravity = Gravity,
-       PhysicsTimestep = PhysicsTimestep,
-     PhysicsSubsteps = PhysicsSubsteps,
-      DefaultLinearDamping = DefaultLinearDamping,
-      DefaultAngularDamping = DefaultAngularDamping,
-       DefaultFriction = DefaultFriction,
-   DefaultRestitution = DefaultRestitution,
-     EnableContinuousCollision = EnableContinuousCollision,
+            // Physics
+            Gravity = Gravity,
+            PhysicsTimestep = PhysicsTimestep,
+            PhysicsSubsteps = PhysicsSubsteps,
+            DefaultLinearDamping = DefaultLinearDamping,
+            DefaultAngularDamping = DefaultAngularDamping,
+            DefaultFriction = DefaultFriction,
+            DefaultRestitution = DefaultRestitution,
+            EnableContinuousCollision = EnableContinuousCollision,
 
-      // Time
-     DefaultGameMode = DefaultGameMode,
+            // Time
+            DefaultGameMode = DefaultGameMode,
             TimeDilation = TimeDilation,
 
-     // Bounds
-  Bounds = Bounds,
+            // Bounds
+            Bounds = Bounds,
 
-      // Environment
-     SkyboxTexture = SkyboxTexture,
-          SkyboxTexturePath = SkyboxTexturePath,
-                SkyboxRotation = SkyboxRotation,
-        SkyboxIntensity = SkyboxIntensity,
-      RenderSkybox = RenderSkybox,
-    ClearColor = ClearColor,
+            // Environment
+            SkyboxTexture = SkyboxTexture,
+            SkyboxTexturePath = SkyboxTexturePath,
+            SkyboxRotation = SkyboxRotation,
+            SkyboxIntensity = SkyboxIntensity,
+            RenderSkybox = RenderSkybox,
+            ClearColor = ClearColor,
 
-                // Lighting
-         AmbientLightColor = AmbientLightColor,
-   AmbientLightIntensity = AmbientLightIntensity,
-        EnvironmentLightingIntensity = EnvironmentLightingIntensity,
-   ReflectionIntensity = ReflectionIntensity,
-   LightProbeResolution = LightProbeResolution,
-        AutoCaptureLightProbes = AutoCaptureLightProbes,
+            // Lighting
+            AmbientLightColor = AmbientLightColor,
+            AmbientLightIntensity = AmbientLightIntensity,
+            EnvironmentLightingIntensity = EnvironmentLightingIntensity,
+            ReflectionIntensity = ReflectionIntensity,
+            LightProbeResolution = LightProbeResolution,
+            AutoCaptureLightProbes = AutoCaptureLightProbes,
 
-      // Fog
-                EnableFog = EnableFog,
-    FogColor = FogColor,
-    FogDensity = FogDensity,
+            // Fog
+            EnableFog = EnableFog,
+            FogColor = FogColor,
+            FogDensity = FogDensity,
             FogStartDistance = FogStartDistance,
-        FogEndDistance = FogEndDistance,
-              FogMode = FogMode,
-                FogHeightFalloff = FogHeightFalloff,
- FogBaseHeight = FogBaseHeight,
+            FogEndDistance = FogEndDistance,
+            FogMode = FogMode,
+            FogHeightFalloff = FogHeightFalloff,
+            FogBaseHeight = FogBaseHeight,
 
-         // Audio
-                SpeedOfSound = SpeedOfSound,
-    DopplerFactor = DopplerFactor,
-   DefaultAudioAttenuation = DefaultAudioAttenuation,
-          MasterVolume = MasterVolume,
+            // Audio
+            SpeedOfSound = SpeedOfSound,
+            DopplerFactor = DopplerFactor,
+            DefaultAudioAttenuation = DefaultAudioAttenuation,
+            MasterVolume = MasterVolume,
 
-     // Debug
-    PreviewWorldBounds = PreviewWorldBounds,
-        PreviewOctrees = PreviewOctrees,
+            // Debug
+            PreviewWorldBounds = PreviewWorldBounds,
+            PreviewOctrees = PreviewOctrees,
             PreviewQuadtrees = PreviewQuadtrees,
-    PreviewPhysics = PreviewPhysics,
-             PreviewLightProbes = PreviewLightProbes,
-    };
-      }
+            PreviewPhysics = PreviewPhysics,
+            PreviewLightProbes = PreviewLightProbes,
+        };
 
         /// <summary>
         /// Linearly interpolates between two world settings.
