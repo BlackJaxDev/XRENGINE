@@ -32,7 +32,7 @@ namespace XREngine.Data.Trees
 	/// <summary>
 	/// GPU-managed octree that keeps a flat node buffer updated through compute shaders without a CPU mirror.
 	/// </summary>
-	public class OctreeGPU<T> : OctreeBase, I3DRenderTree<T>, IDisposable where T : class, IOctreeItem
+	public class OctreeGPU<T> : OctreeBase, I3DRenderTree<T>, IGpuBvhProvider, IDisposable where T : class, IOctreeItem
 	{
 		private bool _disposed;
 
@@ -217,6 +217,14 @@ namespace XREngine.Data.Trees
 
 		public XRDataBuffer? BvhRangeBuffer => _bvhRangeBuffer;
 		public XRDataBuffer? BvhCounterBuffer => _bvhCounterBuffer;
+		public XRDataBuffer? MortonBuffer => _mortonBuffer;
+
+		// IGpuBvhProvider implementation
+		XRDataBuffer? IGpuBvhProvider.BvhNodeBuffer => _bvhNodeBuffer;
+		XRDataBuffer? IGpuBvhProvider.BvhRangeBuffer => _bvhRangeBuffer;
+		XRDataBuffer? IGpuBvhProvider.BvhMortonBuffer => _mortonBuffer;
+		uint IGpuBvhProvider.BvhNodeCount => _lastBvhNodeCount;
+		bool IGpuBvhProvider.IsBvhReady => _useBvh && _bvhNodeBuffer is not null && _lastBvhNodeCount > 0;
 
 		public IReadOnlyCollection<T> DirtyItems => _dirtyItems;
 
@@ -1205,15 +1213,30 @@ namespace XREngine.Data.Trees
 		{
 			// Match both plain const declarations and GLSL specialization constants
 			// e.g., "const uint MAX_LEAF_PRIMITIVES = 1u;" or "layout (constant_id = 0) const uint MAX_LEAF_PRIMITIVES = 1u;"
+			// Also match uniform declarations (OpenGL-compatible version)
 			string patched = Regex.Replace(
 				source,
 				@"(layout\s*\(\s*constant_id\s*=\s*\d+\s*\)\s*)?const\s+uint\s+MAX_LEAF_PRIMITIVES\s*=\s*[0-9]+u?\s*;",
 				$"const uint MAX_LEAF_PRIMITIVES = {maxLeafPrimitives}u;",
 				RegexOptions.CultureInvariant);
 
+			// For uniform declarations, replace with const for compile-time optimization
+			patched = Regex.Replace(
+				patched,
+				@"uniform\s+uint\s+MAX_LEAF_PRIMITIVES\s*;",
+				$"const uint MAX_LEAF_PRIMITIVES = {maxLeafPrimitives}u;",
+				RegexOptions.CultureInvariant);
+
 			patched = Regex.Replace(
 				patched,
 				@"(layout\s*\(\s*constant_id\s*=\s*\d+\s*\)\s*)?const\s+uint\s+BVH_MODE\s*=\s*[0-9]+u?\s*;",
+				$"const uint BVH_MODE = {(mode == BvhBuildMode.MortonPlusSah ? 1u : 0u)}u;",
+				RegexOptions.CultureInvariant);
+
+			// For uniform declarations, replace with const for compile-time optimization
+			patched = Regex.Replace(
+				patched,
+				@"uniform\s+uint\s+BVH_MODE\s*;",
 				$"const uint BVH_MODE = {(mode == BvhBuildMode.MortonPlusSah ? 1u : 0u)}u;",
 				RegexOptions.CultureInvariant);
 

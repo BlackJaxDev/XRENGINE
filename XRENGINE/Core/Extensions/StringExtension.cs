@@ -4,9 +4,9 @@ namespace Extensions
 {
     public static class StringExtension
     {
-        public static T ParseAs<T>(this string value)
-            => (T)value.ParseAs(typeof(T));
-        public static object ParseAs(this string value, Type t)
+        public static T? ParseAs<T>(this string value)
+            => (T?)value.ParseAs(typeof(T));
+        public static object? ParseAs(this string value, Type t)
         {
             if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(Nullable<>))
             {
@@ -17,11 +17,14 @@ namespace Extensions
             }
             if (t.GetInterface(nameof(ISerializableString)) != null)
             {
-                ISerializableString o = (ISerializableString)Activator.CreateInstance(t);
-                o.ReadFromString(value);
-                return o;
+                if (Activator.CreateInstance(t) is ISerializableString o)
+                {
+                    o.ReadFromString(value);
+                    return o;
+                }
+                return null;
             }
-            if (string.Equals(t.BaseType.Name, "Enum", StringComparison.InvariantCulture))
+            if (t.BaseType is not null && string.Equals(t.BaseType.Name, "Enum", StringComparison.InvariantCulture))
                 return Enum.Parse(t, value);
             return t.Name switch
             {

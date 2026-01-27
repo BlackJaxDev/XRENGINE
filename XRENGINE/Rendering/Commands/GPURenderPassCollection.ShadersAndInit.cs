@@ -3,8 +3,6 @@ using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
-using XREngine.Rendering.OpenGL;
-using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
 namespace XREngine.Rendering.Commands
 {
@@ -140,6 +138,7 @@ namespace XREngine.Rendering.Commands
             //HiZSoACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderHiZSoACulling.comp", EShaderType.Compute));
             //_gatherProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderGather.comp", EShaderType.Compute));
             _copyCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderCopyCommands.comp", EShaderType.Compute));
+            _bvhFrustumCullProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Scene3D/RenderPipeline/bvh_frustum_cull.comp", EShaderType.Compute));
 
             Dbg("GenerateShaders complete","Lifecycle");
         }
@@ -153,7 +152,11 @@ namespace XREngine.Rendering.Commands
                 {
                     uint max = scene.AllocatedMaxCommandCount;
                     if (_initialized)
+                    {
                         VerifyBufferLengths(scene, max);
+                        // Ensure EBO is synced with atlas (handles dynamic mesh adds/removes)
+                        EnsureAtlasSynced(scene);
+                    }
                     else
                         Initialize(scene, max);
                 }
@@ -228,6 +231,10 @@ namespace XREngine.Rendering.Commands
 
             return buf;
         }
+
+        private GPUScene? _subscribedScene;
+        private uint _lastAtlasVersion;
+
         private void MakeIndirectRenderer(GPUScene scene)
         {
             scene.EnsureAtlasBuffers();
@@ -237,37 +244,7 @@ namespace XREngine.Rendering.Commands
             var defVer = _indirectRenderer.GetDefaultVersion();
             defVer.Generate();
 
-            //TODO: move indices into the XRMeshRenderer or XRMesh, no need to make again and again per api wrapper
-            //That will avoid this bandaid situation
-            var rend = AbstractRenderer.Current as OpenGLRenderer;
-            if (rend?.TryGetAPIRenderObject(defVer, out var obj) ?? false)
-            {
-                GLMeshRenderer? r = obj as GLMeshRenderer;
-                if (r is not null)
-                {
-                    GLDataBuffer? indexBuffer = null;
-                    IndexSize elementSize = IndexSize.FourBytes;
-
-                    XRDataBuffer? atlasIndexBuffer = scene.AtlasIndices;
-
-                    if (atlasIndexBuffer is not null)
-                        indexBuffer = rend.GenericToAPI<GLDataBuffer>(atlasIndexBuffer);
-                    else
-                    {
-                        var buf = GetIndexBuffer(scene, out elementSize);
-                        if (buf is not null)
-                        {
-                            atlasIndexBuffer = buf;
-                            indexBuffer = rend.GenericToAPI<GLDataBuffer>(buf);
-                        }
-                    }
-
-                    if (indexBuffer is null)
-                        Debug.LogWarning("Indirect renderer created without an index buffer; indirect draws will be skipped.");
-                    else
-                        r.SetTriangleIndexBuffer(indexBuffer, elementSize);
-                }
-            }
+            SyncIndirectRendererIndexBuffer(scene);
 
             if (scene.AtlasPositions is not null)
                 _indirectRenderer.Buffers.Add(ECommonBufferType.Position.ToString(), scene.AtlasPositions);
@@ -282,6 +259,90 @@ namespace XREngine.Rendering.Commands
             {
                 string binding = $"{ECommonBufferType.TexCoord}{0}";
                 _indirectRenderer.Buffers.Add(binding, scene.AtlasUV0);
+            }
+
+            // Subscribe to atlas rebuild events for EBO sync
+            SubscribeToAtlasEvents(scene);
+        }
+
+        /// <summary>
+        /// Subscribes to the scene's AtlasRebuilt event to keep the indirect renderer's EBO in sync.
+        /// </summary>
+        private void SubscribeToAtlasEvents(GPUScene scene)
+        {
+            if (_subscribedScene == scene)
+                return;
+
+            // Unsubscribe from previous scene
+            if (_subscribedScene is not null)
+                _subscribedScene.AtlasRebuilt -= OnAtlasRebuilt;
+
+            _subscribedScene = scene;
+            _lastAtlasVersion = scene.AtlasVersion;
+            scene.AtlasRebuilt += OnAtlasRebuilt;
+        }
+
+        /// <summary>
+        /// Called when the GPUScene atlas is rebuilt. Syncs the indirect renderer's index buffer.
+        /// </summary>
+        private void OnAtlasRebuilt(GPUScene scene)
+        {
+            if (_indirectRenderer is null)
+                return;
+
+            Dbg($"AtlasRebuilt event - syncing EBO (version {scene.AtlasVersion})", "Buffers");
+            SyncIndirectRendererIndexBuffer(scene);
+            _lastAtlasVersion = scene.AtlasVersion;
+        }
+
+        /// <summary>
+        /// Syncs the indirect renderer's index buffer with the scene's atlas index buffer.
+        /// Call this after atlas rebuild or when the index buffer may have changed.
+        /// </summary>
+        private void SyncIndirectRendererIndexBuffer(GPUScene scene)
+        {
+            if (_indirectRenderer is null)
+                return;
+
+            var renderer = AbstractRenderer.Current;
+            if (renderer is null)
+                return;
+
+            IndexSize elementSize = scene.AtlasIndexElementSize;
+            XRDataBuffer? atlasIndexBuffer = scene.AtlasIndices;
+
+            if (atlasIndexBuffer is null)
+            {
+                atlasIndexBuffer = GetIndexBuffer(scene, out elementSize);
+            }
+
+            if (atlasIndexBuffer is null)
+            {
+                Debug.LogWarning("Indirect renderer EBO sync failed: no index buffer available.");
+                return;
+            }
+
+            if (renderer.TrySyncMeshRendererIndexBuffer(_indirectRenderer, atlasIndexBuffer, elementSize))
+            {
+                Dbg($"EBO synced: indexCount={scene.AtlasIndexCount}, elementSize={elementSize}", "Buffers");
+            }
+            else
+            {
+                Debug.LogWarning("Indirect renderer EBO sync failed: TrySyncMeshRendererIndexBuffer returned false.");
+            }
+        }
+
+        /// <summary>
+        /// Checks if the atlas has been rebuilt since last sync and updates if needed.
+        /// Call this before rendering to ensure EBO is current.
+        /// </summary>
+        public void EnsureAtlasSynced(GPUScene scene)
+        {
+            if (scene.AtlasVersion != _lastAtlasVersion)
+            {
+                Dbg($"Atlas version mismatch (current={scene.AtlasVersion}, last={_lastAtlasVersion}) - syncing", "Buffers");
+                SyncIndirectRendererIndexBuffer(scene);
+                _lastAtlasVersion = scene.AtlasVersion;
             }
         }
 

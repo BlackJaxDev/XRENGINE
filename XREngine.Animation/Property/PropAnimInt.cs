@@ -45,9 +45,13 @@ namespace XREngine.Animation
             : base(second, inValue, outValue, inTangent, outTangent, type) { }
         
         public override int LerpOut(VectorKeyframe<int>? next, float diff, float span)
-            => (int)Interp.Lerp(OutValue, next.InValue, span.IsZero() ? 0.0f : diff / span);
+            => next is null || span.IsZero()
+                ? OutValue
+                : (int)Interp.Lerp(OutValue, next.InValue, diff / span);
         public override int LerpVelocityOut(VectorKeyframe<int>? next, float diff, float span)
-            => span.IsZero() ? 0 : (int)((next.InValue - OutValue) / (diff / span));
+            => next is null || span.IsZero()
+                ? 0
+                : (int)((next.InValue - OutValue) / (diff / span));
 
         public override int LerpIn(VectorKeyframe<int>? prev, float diff, float span)
             => (int)Interp.Lerp(prev?.OutValue ?? InValue, InValue, span.IsZero() ? 0.0f : diff / span);
@@ -55,26 +59,47 @@ namespace XREngine.Animation
             => span.IsZero() ? 0 : (int)((InValue - (prev?.OutValue ?? InValue)) / (diff / span));
 
         public override int CubicBezierOut(VectorKeyframe<int>? next, float diff, float span)
-            => (int)Interp.CubicBezier(OutValue, OutValue + OutTangent * span, next.InValue + next.InTangent * span, next.InValue, span.IsZero() ? 0.0f : diff / span);
+            => next is null || span.IsZero()
+                ? OutValue
+                : (int)Interp.CubicBezier(OutValue, OutValue + OutTangent * span, next.InValue + next.InTangent * span, next.InValue, diff / span);
         public override int CubicBezierVelocityOut(VectorKeyframe<int>? next, float diff, float span)
-            => (int)Interp.CubicBezierVelocity(OutValue, OutValue + OutTangent * span, next.InValue + next.InTangent * span, next.InValue, span.IsZero() ? 0.0f : diff / span);
+            => next is null || span.IsZero()
+                ? 0
+                : (int)Interp.CubicBezierVelocity(OutValue, OutValue + OutTangent * span, next.InValue + next.InTangent * span, next.InValue, diff / span);
         public override int CubicBezierAccelerationOut(VectorKeyframe<int>? next, float diff, float span)
-            => (int)Interp.CubicBezierAcceleration(OutValue, OutValue + OutTangent * span, next.InValue + next.InTangent * span, next.InValue, span.IsZero() ? 0.0f : diff / span);
+            => next is null || span.IsZero()
+                ? 0
+                : (int)Interp.CubicBezierAcceleration(OutValue, OutValue + OutTangent * span, next.InValue + next.InTangent * span, next.InValue, diff / span);
 
 
         public override int CubicBezierIn(VectorKeyframe<int>? prev, float diff, float span)
         {
-            return (int)Interp.CubicBezier(prev?.OutValue ?? InValue, prev?.OutValue + prev?.OutTangent * span ?? InValue, InValue + InTangent * span, InValue, span.IsZero() ? 0.0f : diff / span);
+            if (span.IsZero())
+                return InValue;
+
+            int prevOut = prev?.OutValue ?? InValue;
+            int prevTan = prev?.OutTangent ?? 0;
+            return (int)Interp.CubicBezier(prevOut, prevOut + prevTan * span, InValue + InTangent * span, InValue, diff / span);
         }
 
         public override int CubicBezierVelocityIn(VectorKeyframe<int>? prev, float diff, float span)
         {
-            return (int)Interp.CubicBezierVelocity(prev?.OutValue ?? InValue, prev?.OutValue + prev?.OutTangent * span ?? InValue, InValue + InTangent * span, InValue, span.IsZero() ? 0.0f : diff / span);
+            if (span.IsZero())
+                return 0;
+
+            int prevOut = prev?.OutValue ?? InValue;
+            int prevTan = prev?.OutTangent ?? 0;
+            return (int)Interp.CubicBezierVelocity(prevOut, prevOut + prevTan * span, InValue + InTangent * span, InValue, diff / span);
         }
 
         public override int CubicBezierAccelerationIn(VectorKeyframe<int>? prev, float diff, float span)
         {
-            return (int)Interp.CubicBezierAcceleration(prev?.OutValue ?? InValue, prev?.OutValue + prev?.OutTangent * span ?? InValue, InValue + InTangent * span, InValue, span.IsZero() ? 0.0f : diff / span);
+            if (span.IsZero())
+                return 0;
+
+            int prevOut = prev?.OutValue ?? InValue;
+            int prevTan = prev?.OutTangent ?? 0;
+            return (int)Interp.CubicBezierAcceleration(prevOut, prevOut + prevTan * span, InValue + InTangent * span, InValue, diff / span);
         }
 
         public override int LerpValues(int a, int b, float t)
@@ -110,9 +135,9 @@ namespace XREngine.Animation
             float span;
             if (next is null)
             {
-                if (OwningTrack != null && OwningTrack.FirstKey != this)
+                if (OwningTrack?.FirstKey is VectorKeyframe<int> first && first != this)
                 {
-                    next = (VectorKeyframe<int>)OwningTrack.FirstKey;
+                    next = first;
                     span = OwningTrack.LengthInSeconds - Second + next.Second;
                 }
                 else
@@ -120,6 +145,10 @@ namespace XREngine.Animation
             }
             else
                 span = next.Second - Second;
+
+            if (span.IsZero())
+                return;
+
             OutTangent = (int)((next.InValue - OutValue) / span);
         }
         public override void MakeInLinear()
@@ -128,9 +157,9 @@ namespace XREngine.Animation
             float span;
             if (prev is null)
             {
-                if (OwningTrack != null && OwningTrack.LastKey != this)
+                if (OwningTrack?.LastKey is VectorKeyframe<int> last && last != this)
                 {
-                    prev = (VectorKeyframe<int>)OwningTrack.LastKey;
+                    prev = last;
                     span = OwningTrack.LengthInSeconds - prev.Second + Second;
                 }
                 else
@@ -138,6 +167,10 @@ namespace XREngine.Animation
             }
             else
                 span = Second - prev.Second;
+
+            if (span.IsZero())
+                return;
+
             InTangent = (int)(-(InValue - prev.OutValue) / span);
         }
 

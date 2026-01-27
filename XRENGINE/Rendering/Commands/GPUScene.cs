@@ -1,3 +1,40 @@
+// =====================================================================================
+// GPUScene.cs - GPU-Resident Scene Data Management
+// =====================================================================================
+// 
+// PURPOSE:
+// This class manages all GPU-resident scene data for indirect rendering, including:
+//   - Render commands converted to a GPU-friendly format (GPUIndirectRenderCommand)
+//   - A unified mesh atlas containing all vertex/index data for bindless rendering
+//   - Material and mesh ID mappings for GPU lookups
+//   - Optional internal BVH for GPU-based culling
+//
+// THREADING MODEL:
+// GPUScene uses double-buffering to safely coordinate between two threads:
+//
+//   1. UPDATE/COLLECT THREAD: Writes to "Updating" buffers
+//      - Add() and Remove() modify _updatingCommandsBuffer and _updatingCommandCount
+//      - These operations occur during the Update or PreCollectVisible phases
+//
+//   2. RENDER THREAD: Reads from "AllLoaded" buffers  
+//      - Rendering reads from _allLoadedCommandsBuffer and _totalCommandCount
+//      - These are stable snapshots that don't change during rendering
+//
+// BUFFER SWAP SEQUENCE:
+//   PreCollectVisible (sequential) -> CollectVisible (parallel) -> SwapBuffers -> Render
+//
+//   During SwapBuffers(), the updating buffer contents are copied to the render buffer,
+//   making the latest scene state visible to the render thread safely.
+//
+// KEY COMPONENTS:
+//   - Command Buffers: Double-buffered GPUIndirectRenderCommand storage
+//   - Mesh Atlas: Unified vertex/index data for all scene meshes
+//   - MeshData Buffer: Per-mesh metadata (index offsets, vertex offsets)
+//   - ID Maps: Material and mesh ID assignment for GPU lookups
+//   - BVH Provider: Optional internal BVH for GPU-based frustum/occlusion culling
+//
+// =====================================================================================
+
 using Extensions;
 using System;
 using System.Collections.Concurrent;
@@ -10,17 +47,43 @@ using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Trees;
 using XREngine.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Meshlets;
 
 namespace XREngine.Rendering.Commands
 {
     /// <summary>
-    /// Holds all commands for the current scene, which the GPU will cull and render using <see cref="GPURenderPassCollection"/>."/>
+    /// Manages GPU-resident scene data for indirect rendering.
     /// </summary>
-    public class GPUScene : XRBase
+    /// <remarks>
+    /// <para>
+    /// This class holds all render commands converted to a GPU-friendly format, along with
+    /// unified mesh atlas data, material/mesh ID mappings, and optional BVH structures for
+    /// GPU-based culling.
+    /// </para>
+    /// <para>
+    /// <b>Threading Model:</b> Uses double-buffering to safely coordinate between the
+    /// update/collect thread (which writes to updating buffers) and the render thread
+    /// (which reads from all-loaded buffers). Call <see cref="SwapCommandBuffers"/> during
+    /// the swap phase to synchronize state between threads.
+    /// </para>
+    /// <para><b>Memory Layout:</b></para>
+    /// <list type="bullet">
+    /// <item><description>Command Buffer: Array of <see cref="GPUIndirectRenderCommand"/> structures (48 floats each)</description></item>
+    /// <item><description>Mesh Atlas: Unified vertex attributes (positions, normals, tangents, UVs) and index data</description></item>
+    /// <item><description>MeshData Buffer: Per-mesh metadata mapping mesh IDs to atlas offsets</description></item>
+    /// </list>
+    /// </remarks>
+    public class GPUScene : XRBase, IGpuBvhProvider
     {
+        #region Internal Types
+
+        /// <summary>
+        /// Internal structure for tracking mesh index/vertex information.
+        /// </summary>
         private struct MeshInfo
         {
             public uint IndexCount;
@@ -31,45 +94,137 @@ namespace XREngine.Rendering.Commands
             //public Matrix4x4 Transform;
         }
 
-        // --- Mesh Atlas State ----------------------------------------------------
-        // Consolidated (batched) vertex + index data for all meshes referenced by commands.
-        // Currently linear appended; future optimization could bin by vertex format / material.
-        private XRDataBuffer? _atlasPositions;     // Position vec3
-        private XRDataBuffer? _atlasNormals;       // Normal vec3
-        private XRDataBuffer? _atlasTangents;      // Tangent vec4
-        private XRDataBuffer? _atlasUV0;           // UV0 vec2
-        private XRDataBuffer? _atlasIndices;       // Element indices
-        private bool _atlasDirty = false;          // Indicates atlas rebuild needed after adds/removes
-        private int _atlasVertexCount = 0;        // Running vertex count for packing
-        private int _atlasIndexCount = 0;         // Running index count for packing
+        #endregion
+
+        #region Mesh Atlas State
+
+        // -------------------------------------------------------------------------
+        // Mesh Atlas: Consolidated vertex + index data for all meshes referenced by commands.
+        // Meshes are linearly appended; future optimization could bin by vertex format/material.
+        // -------------------------------------------------------------------------
+
+        /// <summary>Atlas buffer containing position vec3 data for all meshes.</summary>
+        private XRDataBuffer? _atlasPositions;
+
+        /// <summary>Atlas buffer containing normal vec3 data for all meshes.</summary>
+        private XRDataBuffer? _atlasNormals;
+
+        /// <summary>Atlas buffer containing tangent vec4 data for all meshes.</summary>
+        private XRDataBuffer? _atlasTangents;
+
+        /// <summary>Atlas buffer containing UV0 vec2 data for all meshes.</summary>
+        private XRDataBuffer? _atlasUV0;
+
+        /// <summary>Atlas buffer containing element indices.</summary>
+        private XRDataBuffer? _atlasIndices;
+
+        /// <summary>Flag indicating atlas needs rebuild after adds/removes.</summary>
+        private bool _atlasDirty = false;
+
+        /// <summary>Running vertex count for atlas packing.</summary>
+        private int _atlasVertexCount = 0;
+
+        /// <summary>Running index count for atlas packing.</summary>
+        private int _atlasIndexCount = 0;
+
+        /// <summary>Maps each mesh to its offsets within the atlas (firstVertex, firstIndex, indexCount).</summary>
         private readonly Dictionary<XRMesh, (int firstVertex, int firstIndex, int indexCount)> _atlasMeshOffsets = [];
+
+        /// <summary>Version number incremented on each atlas rebuild for change detection.</summary>
+        private uint _atlasVersion = 0;
+
+        /// <summary>Current index element type (u8/u16/u32) used in atlas index buffer.</summary>
+        private IndexSize _atlasIndexElementSize = IndexSize.FourBytes;
+
+        /// <summary>List of triangle indices for indirect rendering.</summary>
         private readonly List<IndexTriangle> _indirectFaceIndices = [];
 
-        public List<IndexTriangle> IndirectFaceIndices => _indirectFaceIndices;
-        public int AtlasVertexCount => _atlasVertexCount;
+        #endregion
 
-        public XRDataBuffer? AtlasPositions => _atlasPositions;
-        public XRDataBuffer? AtlasNormals => _atlasNormals;
-        public XRDataBuffer? AtlasTangents => _atlasTangents;
-        public XRDataBuffer? AtlasUV0 => _atlasUV0;
-        public XRDataBuffer? AtlasIndices => _atlasIndices;
+        #region Mesh Atlas Properties
 
         /// <summary>
-        /// Maps XRMaterial -> ID and reverse ID -> XRMaterial to resolve materials during rendering.
+        /// Raised after the atlas GPU buffers have been rebuilt (EBO updated).
+        /// Listeners should re-bind their VAO index buffers.
         /// </summary>
-        private readonly ConcurrentDictionary<XRMaterial, uint> _materialIDMap = new();
-        private readonly ConcurrentDictionary<uint, XRMaterial> _idToMaterial = new();
-        private readonly ConcurrentDictionary<uint, XRMesh> _idToMesh = new();
-        private uint _nextMaterialID = 1;
-        private int _materialDebugLogBudget = 16;
-        private int _commandBuildLogBudget = 12;
-        private int _commandRoundtripLogBudget = 8;
-        private int _commandRoundtripMismatchLogBudget = 4;
-        private bool _useGpuBvh = Engine.EffectiveSettings.UseGpuBvh;
+        public event Action<GPUScene>? AtlasRebuilt;
 
+        /// <summary>Gets the list of triangle indices for indirect rendering.</summary>
+        public List<IndexTriangle> IndirectFaceIndices => _indirectFaceIndices;
+
+        /// <summary>Gets the current total vertex count in the atlas.</summary>
+        public int AtlasVertexCount => _atlasVertexCount;
+
+        /// <summary>Gets the current total index count in the atlas.</summary>
+        public int AtlasIndexCount => _atlasIndexCount;
+
+        /// <summary>Gets the version number incremented on each atlas rebuild. Use for change detection.</summary>
+        public uint AtlasVersion => _atlasVersion;
+
+        /// <summary>Gets the index element size used in the atlas index buffer (u8, u16, or u32).</summary>
+        public IndexSize AtlasIndexElementSize => _atlasIndexElementSize;
+
+        /// <summary>Gets the atlas buffer containing position data.</summary>
+        public XRDataBuffer? AtlasPositions => _atlasPositions;
+
+        /// <summary>Gets the atlas buffer containing normal data.</summary>
+        public XRDataBuffer? AtlasNormals => _atlasNormals;
+
+        /// <summary>Gets the atlas buffer containing tangent data.</summary>
+        public XRDataBuffer? AtlasTangents => _atlasTangents;
+
+        /// <summary>Gets the atlas buffer containing UV0 data.</summary>
+        public XRDataBuffer? AtlasUV0 => _atlasUV0;
+
+        /// <summary>Gets the atlas buffer containing index data.</summary>
+        public XRDataBuffer? AtlasIndices => _atlasIndices;
+
+        #endregion
+
+        #region Material and Mesh ID Mapping
+
+        // -------------------------------------------------------------------------
+        // Material/Mesh ID Maps: Concurrent dictionaries for thread-safe ID assignment.
+        // IDs start at 1 (0 is reserved/invalid).
+        // -------------------------------------------------------------------------
+
+        /// <summary>Maps XRMaterial instances to unique GPU IDs.</summary>
+        private readonly ConcurrentDictionary<XRMaterial, uint> _materialIDMap = new();
+
+        /// <summary>Reverse mapping from material ID to XRMaterial instance.</summary>
+        private readonly ConcurrentDictionary<uint, XRMaterial> _idToMaterial = new();
+
+        /// <summary>Reverse mapping from mesh ID to XRMesh instance.</summary>
+        private readonly ConcurrentDictionary<uint, XRMesh> _idToMesh = new();
+
+        /// <summary>Next material ID to assign (incremented atomically).</summary>
+        private uint _nextMaterialID = 1;
+
+        #endregion
+
+        #region Debug Logging
+
+        // -------------------------------------------------------------------------
+        // Debug Logging: Budget-limited logging to prevent log spam during heavy operations.
+        // -------------------------------------------------------------------------
+
+        /// <summary>Remaining log entries for material assignment debug output.</summary>
+        private int _materialDebugLogBudget = 16;
+
+        /// <summary>Remaining log entries for command build debug output.</summary>
+        private int _commandBuildLogBudget = 12;
+
+        /// <summary>Remaining log entries for command roundtrip verification output.</summary>
+        private int _commandRoundtripLogBudget = 8;
+
+        /// <summary>Remaining log entries for command roundtrip mismatch warnings.</summary>
+        private int _commandRoundtripMismatchLogBudget = 4;
+
+        /// <summary>Checks if GPU scene logging is enabled in settings.</summary>
         private static bool IsGpuSceneLoggingEnabled()
             => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
+        /// <summary>Logs a message if GPU scene logging is enabled.</summary>
         private static void SceneLog(string message, params object[] args)
         {
             if (!IsGpuSceneLoggingEnabled())
@@ -78,6 +233,7 @@ namespace XREngine.Rendering.Commands
             Debug.Out(message, args);
         }
 
+        /// <summary>Logs a formatted message if GPU scene logging is enabled.</summary>
         private static void SceneLog(FormattableString message)
         {
             if (!IsGpuSceneLoggingEnabled())
@@ -86,26 +242,22 @@ namespace XREngine.Rendering.Commands
             Debug.Out(message.ToString());
         }
 
-        /// <summary>
-        /// Exposes a read-only view of the current material ID map (ID -> XRMaterial).
-        /// </summary>
-        public IReadOnlyDictionary<uint, XRMaterial> MaterialMap => _idToMaterial;
+        #endregion
 
-        /// <summary>
-        /// Attempts to get a material by its ID.
-        /// </summary>
-        public bool TryGetMaterial(uint id, out XRMaterial? material)
-        {
-            bool ok = _idToMaterial.TryGetValue(id, out var mat);
-            material = ok ? mat : null;
-            return ok;
-        }
+        #region BVH Configuration
 
-        /// <summary>
-        /// Marks the atlas as dirty so it will be rebuilt before next render if needed.
-        /// </summary>
-        private void MarkAtlasDirty()
-            => _atlasDirty = true;
+        // -------------------------------------------------------------------------
+        // BVH Configuration: Settings for GPU-accelerated hierarchical culling.
+        // -------------------------------------------------------------------------
+
+        /// <summary>Whether to use GPU BVH traversal for culling.</summary>
+        private bool _useGpuBvh = Engine.EffectiveSettings.UseGpuBvh;
+
+        /// <summary>External BVH provider for GPU-accelerated culling (optional).</summary>
+        private IGpuBvhProvider? _externalBvhProvider;
+
+        /// <summary>Whether to use the internal command-based BVH.</summary>
+        private bool _useInternalBvh = false;
 
         /// <summary>
         /// Indicates whether the GPU BVH traversal path should be used when available.
@@ -124,7 +276,68 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// Ensure atlas buffers exist (minimal allocation on first use).
+        /// Gets or sets the BVH provider for GPU-accelerated culling.
+        /// When set, the BVH culling path will use the provider's buffers for traversal.
+        /// If null and UseGpuBvh is true, falls back to internal command BVH.
+        /// </summary>
+        public IGpuBvhProvider? BvhProvider
+        {
+            get => _externalBvhProvider ?? (_useInternalBvh ? this as IGpuBvhProvider : null);
+            set => _externalBvhProvider = value;
+        }
+
+        /// <summary>
+        /// Enables or disables the internal command-based BVH.
+        /// When enabled, GPUScene builds a BVH over command bounding spheres.
+        /// </summary>
+        public bool UseInternalBvh
+        {
+            get => _useInternalBvh;
+            set
+            {
+                if (!SetField(ref _useInternalBvh, value))
+                    return;
+
+                if (value)
+                    MarkBvhDirty();
+            }
+        }
+
+        #endregion
+
+        #region Material ID API
+
+        /// <summary>
+        /// Exposes a read-only view of the current material ID map (ID -> XRMaterial).
+        /// </summary>
+        public IReadOnlyDictionary<uint, XRMaterial> MaterialMap => _idToMaterial;
+
+        /// <summary>
+        /// Attempts to get a material by its ID.
+        /// </summary>
+        /// <param name="id">The material ID to look up.</param>
+        /// <param name="material">The material if found; null otherwise.</param>
+        /// <returns>True if the material was found; false otherwise.</returns>
+        public bool TryGetMaterial(uint id, out XRMaterial? material)
+        {
+            bool ok = _idToMaterial.TryGetValue(id, out var mat);
+            material = ok ? mat : null;
+            return ok;
+        }
+
+        #endregion
+
+        #region Atlas Management
+
+        /// <summary>
+        /// Marks the atlas as dirty so it will be rebuilt before next render if needed.
+        /// </summary>
+        private void MarkAtlasDirty()
+            => _atlasDirty = true;
+
+        /// <summary>
+        /// Ensures atlas buffers exist with minimal allocation on first use.
+        /// Creates position, normal, tangent, UV0, and index buffers.
         /// </summary>
         public void EnsureAtlasBuffers()
         {
@@ -170,8 +383,15 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>
         /// Incrementally appends mesh geometry into atlas client-side buffers.
-        /// For now we only pack index offsets (MeshDataBuffer keeps logical mapping). Vertex packing TODO.
         /// </summary>
+        /// <remarks>
+        /// For now we only pack index offsets (MeshDataBuffer keeps logical mapping). 
+        /// Full vertex packing is a future optimization.
+        /// </remarks>
+        /// <param name="mesh">The mesh to append to the atlas.</param>
+        /// <param name="meshLabel">Debug label for the mesh.</param>
+        /// <param name="failureReason">Reason for failure if the method returns false.</param>
+        /// <returns>True if the mesh was successfully appended; false otherwise.</returns>
         private bool AppendMeshToAtlas(XRMesh mesh, string meshLabel, out string? failureReason)
         {
             failureReason = null;
@@ -360,6 +580,11 @@ namespace XREngine.Rendering.Commands
                 {
                     _atlasIndexCount = requiredIndices;
 
+                    // Determine optimal index element size based on vertex count
+                    // Note: For simplicity and MDI compatibility, we always use u32 indices.
+                    // Future optimization: use u16 when _atlasVertexCount < 65536
+                    _atlasIndexElementSize = IndexSize.FourBytes;
+
                     if (!TryPrepareAtlasIndexBuffer(requiredIndices))
                     {
                         Debug.LogWarning("[GPUScene] Failed to prepare atlas index buffer; skipping atlas upload to avoid memory corruption.");
@@ -397,6 +622,17 @@ namespace XREngine.Rendering.Commands
             UpdateMeshDataBufferFromAtlas();
 
             _atlasDirty = false;
+            _atlasVersion++;
+
+            // Notify listeners that atlas was rebuilt (EBO may have changed)
+            try
+            {
+                AtlasRebuilt?.Invoke(this);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[GPUScene] AtlasRebuilt event handler failed: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -421,6 +657,13 @@ namespace XREngine.Rendering.Commands
             MeshDataBuffer.PushSubData();
         }
 
+        #endregion
+
+        #region Lifecycle Methods
+
+        /// <summary>
+        /// Initializes the GPU scene, creating all required buffers.
+        /// </summary>
         public void Initialize()
         {
             _meshDataBuffer?.Destroy();
@@ -428,14 +671,22 @@ namespace XREngine.Rendering.Commands
 
             _allLoadedCommandsBuffer?.Destroy();
             _allLoadedCommandsBuffer = MakeCommandsInputBuffer();
+            
+            _updatingCommandsBuffer?.Destroy();
+            _updatingCommandsBuffer = MakeCommandsInputBuffer();
         }
 
+        /// <summary>
+        /// Destroys the GPU scene and releases all resources.
+        /// </summary>
         public void Destroy()
         {
             _meshDataBuffer?.Destroy();
             _meshDataBuffer = null;
             _allLoadedCommandsBuffer?.Destroy();
             _allLoadedCommandsBuffer = null;
+            _updatingCommandsBuffer?.Destroy();
+            _updatingCommandsBuffer = null;
             _meshIDMap.Clear();
             _materialIDMap.Clear();
             _idToMaterial.Clear();
@@ -443,6 +694,7 @@ namespace XREngine.Rendering.Commands
             _nextMeshID = 1;
             _nextMaterialID = 1;
             _totalCommandCount = 0;
+            _updatingCommandCount = 0;
             _bounds = new AABB();
             _meshlets.Clear();
             _commandIndicesPerMeshCommand.Clear();
@@ -450,6 +702,76 @@ namespace XREngine.Rendering.Commands
             _meshToIndexRemap.Clear();
         }
 
+        #endregion
+
+        #region Double-Buffered Command Buffer Management
+
+        // -------------------------------------------------------------------------
+        // Double-Buffered Command Buffer:
+        // - _updatingCommandsBuffer: Written by Add/Remove on update/collect threads
+        // - _allLoadedCommandsBuffer: Read by render thread
+        // - SwapCommandBuffers() copies updating -> render during the swap phase
+        // -------------------------------------------------------------------------
+        
+        /// <summary>
+        /// Swaps the updating command buffer with the render command buffer.
+        /// Call this from the swap buffers callback to make newly added/removed commands visible to the render thread.
+        /// </summary>
+        /// <remarks>
+        /// This method copies data from the updating buffer to the render buffer, ensuring the render
+        /// thread always reads a consistent snapshot while the update thread can continue modifying
+        /// the updating buffer.
+        /// </remarks>
+        public void SwapCommandBuffers()
+        {
+            using (_lock.EnterScope())
+            {
+                // Copy the updating buffer data to the render buffer
+                // This ensures the render buffer has the latest commands while keeping
+                // the updating buffer's indices consistent with _commandIndexLookup
+                if (_updatingCommandsBuffer is not null && _allLoadedCommandsBuffer is not null)
+                {
+                    // Ensure render buffer has sufficient capacity
+                    if (_allLoadedCommandsBuffer.ElementCount < _updatingCommandsBuffer.ElementCount)
+                        _allLoadedCommandsBuffer.Resize(_updatingCommandsBuffer.ElementCount);
+                    
+                    // Copy command data from updating to render buffer
+                    if (_updatingCommandCount > 0)
+                    {
+                        uint elementCount = _updatingCommandCount.ClampMax(_updatingCommandsBuffer.ElementCount);
+                        uint elementSize = _updatingCommandsBuffer.ElementSize;
+                        if (elementSize == 0)
+                            elementSize = (uint)(CommandFloatCount * sizeof(float));
+
+                        uint byteCount = elementCount * elementSize;
+
+                        if (_updatingCommandsBuffer.TryGetAddress(out var src) &&
+                            _allLoadedCommandsBuffer.TryGetAddress(out var dst))
+                        {
+                            Memory.Move(dst, src, byteCount);
+                            _allLoadedCommandsBuffer.PushSubData(0, byteCount);
+                        }
+                        else
+                        {
+                            // Fallback: copy via struct array to avoid componentCount mismatch
+                            var commands = _updatingCommandsBuffer.GetDataArrayRawAtIndex<GPUIndirectRenderCommand>(0, (int)elementCount);
+                            _allLoadedCommandsBuffer.SetDataArrayRawAtIndex(0, commands);
+                            _allLoadedCommandsBuffer.PushSubData(0, byteCount);
+                        }
+                    }
+                }
+                
+                // Update the render count to match the updating count
+                TotalCommandCount = _updatingCommandCount;
+                
+                // Mark BVH dirty since command buffer changed
+                MarkBvhDirty();
+            }
+        }
+
+        /// <summary>
+        /// Creates a new command buffer for storing GPU indirect render commands.
+        /// </summary>
         private static XRDataBuffer MakeCommandsInputBuffer()
         {
             var buffer = new XRDataBuffer(
@@ -457,7 +779,7 @@ namespace XREngine.Rendering.Commands
                 EBufferTarget.ShaderStorageBuffer,
                 MinCommandCount,
                 EComponentType.Float,
-                CommandFloatCount, // 32 floats (128 bytes)
+                CommandFloatCount, // 48 floats (192 bytes) per command
                 false,
                 false)
             {
@@ -465,11 +787,12 @@ namespace XREngine.Rendering.Commands
                 DisposeOnPush = false,
                 Resizable = true
             };
-            //buffer.Generate();
             return buffer;
         }
 
-        private const uint MinMeshDataEntries = 16; // start with small capacity; grows with highest flattened submesh ID
+        /// <summary>
+        /// Creates a new mesh data buffer for storing per-mesh metadata.
+        /// </summary>
         private static XRDataBuffer MakeMeshDataBuffer()
         {
             var buffer = new XRDataBuffer(
@@ -484,88 +807,169 @@ namespace XREngine.Rendering.Commands
                 Usage = EBufferUsage.DynamicCopy,
                 DisposeOnPush = false
             };
-            //buffer.Generate();
             return buffer;
         }
 
-        /// <summary>
-        /// The initial size of the command buffer. It will grow or shrink as needed at powers of two.
-        /// </summary>
+        #endregion
+
+        #region Command Buffer Constants
+
+        /// <summary>The initial size of the command buffer. It will grow or shrink as needed at powers of two.</summary>
         public const uint MinCommandCount = 8;
-        public const int CommandFloatCount = 48; // Updated: command with PrevWorldMatrix (192 bytes)
-        public const uint VisibleCountComponents = 3; // [visible draws, visible instances, overflow marker]
+
+        /// <summary>Number of float components per GPU command (192 bytes).</summary>
+        public const int CommandFloatCount = 48;
+
+        /// <summary>Number of components in the visible count buffer.</summary>
+        public const uint VisibleCountComponents = 3;
+
+        /// <summary>Index for visible draw count in the visible count buffer.</summary>
         public const uint VisibleCountDrawIndex = 0;
+
+        /// <summary>Index for visible instance count in the visible count buffer.</summary>
         public const uint VisibleCountInstanceIndex = 1;
+
+        /// <summary>Index for overflow marker in the visible count buffer.</summary>
         public const uint VisibleCountOverflowIndex = 2;
 
+        /// <summary>Minimum capacity for mesh data entries buffer.</summary>
+        private const uint MinMeshDataEntries = 16;
+
+        #endregion
+
+        #region Command Buffer State
+
+        // -------------------------------------------------------------------------
+        // Command Buffer State: Buffers, counts, and tracking structures
+        // -------------------------------------------------------------------------
+
+        /// <summary>Maps XRMesh instances to unique GPU IDs.</summary>
         private readonly ConcurrentDictionary<XRMesh, uint> _meshIDMap = new();
+
+        /// <summary>Next mesh ID to assign (incremented atomically).</summary>
         private uint _nextMeshID = 1;
+
+        /// <summary>Lock for thread-safe access to command buffers.</summary>
         private readonly Lock _lock = new();
+
+        /// <summary>Debug labels for meshes (for logging/debugging).</summary>
         private readonly ConcurrentDictionary<XRMesh, string> _meshDebugLabels = new();
+
+        /// <summary>Meshes that failed GPU validation with their error messages.</summary>
         private readonly ConcurrentDictionary<XRMesh, string> _unsupportedMeshMessages = new();
 
+        /// <summary>Buffer storing per-mesh metadata (index/vertex offsets).</summary>
         private XRDataBuffer? _meshDataBuffer;
+
         /// <summary>
-        /// This buffer stores mesh index and vertex data for all submeshes used in this scene, in reference to the global VAO.
-        /// Layout per entry (uint4): [IndexCount, FirstIndex, FirstVertex, Flags]. There are currently no flags defined.
+        /// Buffer storing mesh index and vertex data for all submeshes in reference to the global VAO.
+        /// Layout per entry (uint4): [IndexCount, FirstIndex, FirstVertex, Flags].
         /// </summary>
         public XRDataBuffer MeshDataBuffer => _meshDataBuffer ??= MakeMeshDataBuffer();
 
+        /// <summary>
+        /// Per-mesh metadata entry stored in MeshDataBuffer.
+        /// </summary>
         public struct MeshDataEntry
         {
+            /// <summary>Number of indices in this submesh.</summary>
             public uint IndexCount;
+
+            /// <summary>First index offset in the atlas index buffer.</summary>
             public uint FirstIndex;
+
+            /// <summary>First vertex offset in the atlas vertex buffers.</summary>
             public uint FirstVertex;
+
+            /// <summary>Base instance for instanced rendering (usually 0).</summary>
             public uint BaseInstance;
         }
 
+        /// <summary>Render buffer - read by the render thread. Contains stable command data.</summary>
         private XRDataBuffer? _allLoadedCommandsBuffer;
+
+        /// <summary>Updating buffer - written by Add/Remove operations. Swapped to render buffer.</summary>
+        private XRDataBuffer? _updatingCommandsBuffer;
+
         /// <summary>
-        /// This buffer holds all commands that are relevant to this scene.
-        /// A render pipeline will take these and execute them with GPU culling using <see cref="GPURenderPassCollection"/>."/>
+        /// Gets the render command buffer containing all commands for this scene.
+        /// This buffer is read by the render thread and updated via <see cref="SwapCommandBuffers"/>.
         /// </summary>
         public XRDataBuffer AllLoadedCommandsBuffer => _allLoadedCommandsBuffer ??= MakeCommandsInputBuffer();
+        
+        /// <summary>
+        /// Gets the updating command buffer being written to by Add/Remove operations.
+        /// Swapped with AllLoadedCommandsBuffer via <see cref="SwapCommandBuffers"/>.
+        /// </summary>
+        private XRDataBuffer UpdatingCommandsBuffer => _updatingCommandsBuffer ??= MakeCommandsInputBuffer();
 
+        /// <summary>Collection of meshlets for meshlet-based rendering.</summary>
         private readonly MeshletCollection _meshlets = new();
+
+        /// <summary>Gets the meshlet collection for this scene.</summary>
         public MeshletCollection Meshlets => _meshlets;
 
+        /// <summary>Bounding box encompassing all scene geometry.</summary>
         private AABB _bounds;
+
+        /// <summary>Gets or sets the bounding box encompassing all scene geometry.</summary>
         public AABB Bounds
         {
             get => _bounds;
             set => SetField(ref _bounds, value);
         }
 
+        /// <summary>Command count for the render buffer (read by render thread).</summary>
         private uint _totalCommandCount = 0;
+
+        /// <summary>Command count for the updating buffer (written by Add/Remove).</summary>
+        private uint _updatingCommandCount = 0;
+
         /// <summary>
-        /// The literal amount of commands currently in the buffer.
-        /// Each command represents one submesh - a single <see cref="IRenderCommandMesh"> may produce multiple commands if it has multiple submeshes.
+        /// Gets the number of commands currently in the render buffer.
+        /// Each command represents one submesh - a single <see cref="IRenderCommandMesh"/> 
+        /// may produce multiple commands if it has multiple submeshes.
         /// </summary>
         public uint TotalCommandCount
         {
             get => _totalCommandCount;
             private set => SetField(ref _totalCommandCount, value);
         }
-
+        
         /// <summary>
-        /// The amount of commands the buffer can currently hold without resizing.
+        /// Gets or sets the command count for the updating buffer.
+        /// This count is swapped to TotalCommandCount during <see cref="SwapCommandBuffers"/>.
         /// </summary>
+        private uint UpdatingCommandCount
+        {
+            get => _updatingCommandCount;
+            set => _updatingCommandCount = value;
+        }
+
+        /// <summary>Gets the current allocated capacity of the command buffer.</summary>
         public uint AllocatedMaxCommandCount => AllLoadedCommandsBuffer.ElementCount;
 
-        /// <summary>
-        /// Tracks all GPU command indices produced per mesh command (multi-submesh support).
-        /// </summary>
+        /// <summary>Maps mesh commands to their GPU command indices (for multi-submesh support).</summary>
         private readonly Dictionary<IRenderCommandMesh, List<uint>> _commandIndicesPerMeshCommand = [];
 
+        #endregion
+
+        #region Add/Remove Commands
+
         /// <summary>
-        /// Adds a render command to the collection.
+        /// Adds a render command to the GPU scene.
         /// </summary>
+        /// <remarks>
+        /// This method writes to the updating buffer. Call <see cref="SwapCommandBuffers"/> 
+        /// to make the changes visible to the render thread.
+        /// </remarks>
+        /// <param name="renderInfo">The render info containing commands to add.</param>
         public void Add(RenderInfo renderInfo)
         {
             if (renderInfo is null || renderInfo.RenderCommands.Count == 0)
                 return;
 
-            if (_totalCommandCount == uint.MaxValue)
+            if (UpdatingCommandCount == uint.MaxValue)
             {
                 Debug.LogWarning($"Command buffer full. Cannot add more commands.");
                 return;
@@ -573,7 +977,7 @@ namespace XREngine.Rendering.Commands
 
             using (_lock.EnterScope())
             {
-                uint startCommandCount = _totalCommandCount;
+                uint startCommandCount = UpdatingCommandCount;
                 bool anyAdded = false;
                 SceneLog($"Adding commands for {renderInfo.Owner?.GetType().Name ?? "<null>"}");
                 for (int i = 0; i < renderInfo.RenderCommands.Count; i++)
@@ -585,10 +989,18 @@ namespace XREngine.Rendering.Commands
                         continue; // Only mesh commands supported
                     }
 
+                    // Skip commands that opt out of GPU indirect dispatch (e.g., skybox, fullscreen effects)
+                    var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
+                    if (material?.RenderOptions?.ExcludeFromGpuIndirect == true)
+                    {
+                        SceneLog($"Skipping mesh command due to ExcludeFromGpuIndirect flag. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
+                        continue;
+                    }
+
                     var subMeshes = meshCmd.Mesh?.GetMeshes();
                     if (subMeshes is null || subMeshes.Length == 0)
                     {
-                        SceneLog($"Skipping adding mesh command with no submeshes. Mesh={(meshCmd.Mesh != null ? "present" : "null")} SubMeshes={(subMeshes != null ? $"empty array (length {subMeshes.Length})" : "null")}");
+                        SceneLog($"Skipping mesh command with no submeshes. Renderable={ResolveOwnerLabel(renderInfo.Owner)} Mesh={(meshCmd.Mesh != null ? "present" : "null")} SubMeshes={(subMeshes != null ? $"empty array (length {subMeshes.Length})" : "null")}");
                         if (meshCmd.Mesh != null)
                         {
                             SceneLog($"  Mesh details: Name={meshCmd.Mesh.Mesh?.Name ?? "<null>"}, Submeshes.Count={meshCmd.Mesh.Submeshes.Count}");
@@ -597,7 +1009,7 @@ namespace XREngine.Rendering.Commands
                     }
 
                     // Ensure we have enough space for ALL submeshes of this command
-                    VerifyCommandBufferSize(_totalCommandCount + (uint)subMeshes.Length);
+                    VerifyUpdatingBufferSize(UpdatingCommandCount + (uint)subMeshes.Length);
 
                     if (!_commandIndicesPerMeshCommand.TryGetValue(meshCmd, out var indices))
                     {
@@ -610,14 +1022,14 @@ namespace XREngine.Rendering.Commands
                         (XRMesh? mesh, XRMaterial? mat) = subMeshes[subMeshIndex];
                         if (mesh is null)
                         {
-                            SceneLog($"Skipping adding mesh command submesh {subMeshIndex} due to null mesh.");
+                            SceneLog($"Skipping mesh command submesh {subMeshIndex} due to null mesh. Renderable={ResolveOwnerLabel(renderInfo.Owner)} Command={meshCmd.GetType().Name}");
                             continue;
                         }
 
                         XRMaterial? m = meshCmd.MaterialOverride ?? mat;
                         if (m is null)
                         {
-                            SceneLog($"Skipping adding mesh command submesh {subMeshIndex} due to null material.");
+                            SceneLog($"Skipping mesh command submesh {subMeshIndex} due to null material. Renderable={ResolveOwnerLabel(renderInfo.Owner)} Mesh={mesh.Name ?? "<unnamed>"}");
                             continue;
                         }
 
@@ -650,13 +1062,13 @@ namespace XREngine.Rendering.Commands
                             continue;
                         }
 
-                        uint index = _totalCommandCount++;
+                        uint index = UpdatingCommandCount++;
                         if (meshCmd.GPUCommandIndex == uint.MaxValue || indices.Count == 0)
                             meshCmd.GPUCommandIndex = index; // Store first index for legacy single-index usage
 
                         indices.Add(index);
                         _commandIndexLookup.Add(index, (meshCmd, subMeshIndex));
-                        AllLoadedCommandsBuffer.SetDataRawAtIndex(index, gpuCommand.Value);
+                        UpdatingCommandsBuffer.SetDataRawAtIndex(index, gpuCommand.Value);
 
                         if (IsGpuSceneLoggingEnabled())
                         {
@@ -665,7 +1077,7 @@ namespace XREngine.Rendering.Commands
                                 SceneLog($"[GPUScene/Build] idx={index} mesh={gpuCommand.Value.MeshID} material={gpuCommand.Value.MaterialID} pass={gpuCommand.Value.RenderPass} instances={gpuCommand.Value.InstanceCount}");
                             }
 
-                            GPUIndirectRenderCommand roundTrip = AllLoadedCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(index);
+                            GPUIndirectRenderCommand roundTrip = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(index);
                             bool matches = roundTrip.MeshID == gpuCommand.Value.MeshID
                                 && roundTrip.MaterialID == gpuCommand.Value.MaterialID
                                 && roundTrip.RenderPass == gpuCommand.Value.RenderPass;
@@ -696,15 +1108,19 @@ namespace XREngine.Rendering.Commands
                 {
                     // Upload only the newly appended command range.
                     // Pushing the full buffer can hitch when high-detail meshes/submeshes stream in later.
-                    uint addedCount = _totalCommandCount - startCommandCount;
-                    uint elementSize = AllLoadedCommandsBuffer.ElementSize;
+                    uint addedCount = UpdatingCommandCount - startCommandCount;
+                    uint elementSize = UpdatingCommandsBuffer.ElementSize;
                     if (elementSize == 0)
                         elementSize = (uint)(CommandFloatCount * sizeof(float));
 
                     uint byteOffset = startCommandCount * elementSize;
                     uint byteCount = addedCount * elementSize;
-                    AllLoadedCommandsBuffer.PushSubData((int)byteOffset, byteCount);
-                    SceneLog($"GPUScene.Add: Added commands, total now {_totalCommandCount} in CommandsInputBuffer");
+                    UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+                    SceneLog($"GPUScene.Add: Added commands, total now {UpdatingCommandCount} in UpdatingCommandsBuffer");
+
+                    // Mark BVH dirty so it gets rebuilt before next cull pass
+                    if (_useInternalBvh)
+                        MarkBvhDirty();
                 }
                 RebuildAtlasIfDirty();
             }
@@ -851,6 +1267,13 @@ namespace XREngine.Rendering.Commands
         private readonly Dictionary<XRMesh, uint> _meshToIndexRemap = []; // retained for future reverse lookups (unused by atlas sizing)
         private bool _meshDataDirty = false; // tracks pending GPU upload for mesh metadata
 
+        /// <summary>
+        /// Attempts to get the mesh data entry for a given mesh ID.
+        /// If the mesh hasn't been added to the atlas yet, attempts to hydrate it.
+        /// </summary>
+        /// <param name="meshID">The mesh ID to look up.</param>
+        /// <param name="entry">The mesh data entry if found.</param>
+        /// <returns>True if the entry was found or successfully created; false otherwise.</returns>
         public bool TryGetMeshDataEntry(uint meshID, out MeshDataEntry entry)
         {
             entry = default;
@@ -869,7 +1292,10 @@ namespace XREngine.Rendering.Commands
             if (_idToMesh.TryGetValue(meshID, out var mesh) && mesh is not null)
             {
                 if (_unsupportedMeshMessages.ContainsKey(mesh))
+                {
+                    SceneLog($"TryGetMeshDataEntry: meshID={meshID} already marked unsupported (mesh={mesh.Name ?? "<unnamed>"}).");
                     return false;
+                }
 
                 string meshLabel = _meshDebugLabels.TryGetValue(mesh, out var storedLabel)
                     ? storedLabel
@@ -878,6 +1304,7 @@ namespace XREngine.Rendering.Commands
                 if (!AddSubmeshToAtlas(mesh, meshID, meshLabel, out var hydrationFailure))
                 {
                     hydrationFailure ??= "atlas registration failed during lookup";
+                    SceneLog($"TryGetMeshDataEntry: meshID={meshID} atlas hydration failed for '{meshLabel}' reason={hydrationFailure}.");
                     RecordUnsupportedMesh(mesh, meshLabel, hydrationFailure);
                     return false;
                 }
@@ -893,10 +1320,14 @@ namespace XREngine.Rendering.Commands
             }
 
             entry = default;
+            SceneLog($"TryGetMeshDataEntry: meshID={meshID} missing mesh data entry after hydration attempt.");
             return false;
         }
 
-        // Ensures MeshDataBuffer has capacity for at least requiredEntries elements (each element is uint4 for a flattened submesh).
+        /// <summary>
+        /// Ensures MeshDataBuffer has capacity for at least the specified number of entries.
+        /// </summary>
+        /// <param name="requiredEntries">Minimum number of entries needed.</param>
         private void EnsureMeshDataCapacity(uint requiredEntries)
         {
             var buffer = MeshDataBuffer; // lazy create
@@ -908,9 +1339,17 @@ namespace XREngine.Rendering.Commands
             buffer.Resize(newCapacity);
         }
 
+        /// <summary>
+        /// Removes a render command from the GPU scene.
+        /// </summary>
+        /// <remarks>
+        /// This method modifies the updating buffer. Call <see cref="SwapCommandBuffers"/> 
+        /// to make the changes visible to the render thread.
+        /// </remarks>
+        /// <param name="info">The render info containing commands to remove.</param>
         public void Remove(RenderInfo info)
         {
-            if (info is null || info.RenderCommands.Count == 0 || _totalCommandCount == 0)
+            if (info is null || info.RenderCommands.Count == 0 || UpdatingCommandCount == 0)
                 return;
 
             using (_lock.EnterScope())
@@ -936,25 +1375,31 @@ namespace XREngine.Rendering.Commands
                 }
 
                 // Resize once after batch removals
-                VerifyCommandBufferSize(_totalCommandCount);
+                VerifyUpdatingBufferSize(UpdatingCommandCount);
                 if (anyRemoved)
-                    AllLoadedCommandsBuffer.PushSubData();
+                {
+                    UpdatingCommandsBuffer.PushSubData();
+
+                    // Mark BVH dirty so it gets rebuilt before next cull pass
+                    if (_useInternalBvh)
+                        MarkBvhDirty();
+                }
             }
         }
 
         private void RemoveCommandAtIndex(uint targetIndex)
         {
-            if (targetIndex >= _totalCommandCount)
+            if (targetIndex >= UpdatingCommandCount)
             {
-                Debug.LogWarning($"Invalid command index {targetIndex} for removal. Total commands: {_totalCommandCount}");
+                Debug.LogWarning($"Invalid command index {targetIndex} for removal. Total commands: {UpdatingCommandCount}");
                 return;
             }
 
-            uint lastIndex = _totalCommandCount - 1;
+            uint lastIndex = UpdatingCommandCount - 1;
             if (targetIndex < lastIndex)
             {
-                GPUIndirectRenderCommand lastCommand = AllLoadedCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(lastIndex);
-                AllLoadedCommandsBuffer.SetDataRawAtIndex(targetIndex, lastCommand);
+                GPUIndirectRenderCommand lastCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(lastIndex);
+                UpdatingCommandsBuffer.SetDataRawAtIndex(targetIndex, lastCommand);
 
                 RemoveSubmeshFromAtlasAt(targetIndex);
 
@@ -980,7 +1425,7 @@ namespace XREngine.Rendering.Commands
             }
 
             _commandIndexLookup.Remove(targetIndex);
-            --_totalCommandCount;
+            --UpdatingCommandCount;
         }
 
         private void RemoveSubmeshFromAtlasAt(uint targetIndex)
@@ -1000,6 +1445,43 @@ namespace XREngine.Rendering.Commands
                 return;
             
             RemoveSubmeshFromAtlas(mesh);
+        }
+
+        //TODO: Optimize to avoid frequent resizes (eg, remove and add right after each other at the boundary)
+        private void VerifyUpdatingBufferSize(uint requiredSize)
+        {
+            uint currentCapacity = UpdatingCommandsBuffer.ElementCount;
+            uint nextPowerOfTwo = XRMath.NextPowerOfTwo(requiredSize).ClampMin(MinCommandCount);
+            if (nextPowerOfTwo == currentCapacity)
+                return;
+
+            SceneLog($"Resizing updating command buffer from {currentCapacity} to {nextPowerOfTwo}.");
+            UpdatingCommandsBuffer.Resize(nextPowerOfTwo);
+            uint newCapacity = UpdatingCommandsBuffer.ElementCount;
+            if (newCapacity > currentCapacity)
+                ZeroUpdatingCommandRange(currentCapacity, newCapacity - currentCapacity);
+        }
+
+        private void ZeroUpdatingCommandRange(uint startIndex, uint count)
+        {
+            if (count == 0)
+                return;
+
+            var blank = default(GPUIndirectRenderCommand);
+            uint end = startIndex + count;
+            for (uint i = startIndex; i < end; ++i)
+                UpdatingCommandsBuffer.SetDataRawAtIndex(i, blank);
+
+            uint elementSize = UpdatingCommandsBuffer.ElementSize;
+            if (elementSize == 0)
+                elementSize = (uint)(CommandFloatCount * sizeof(float));
+
+            uint byteOffset = startIndex * elementSize;
+            uint byteCount = count * elementSize;
+            UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+
+            if (IsGpuSceneLoggingEnabled())
+                SceneLog($"Zeroed updating command buffer range [{startIndex}, {end}) ({byteCount} bytes)");
         }
 
         //TODO: Optimize to avoid frequent resizes (eg, remove and add right after each other at the boundary)
@@ -1039,6 +1521,19 @@ namespace XREngine.Rendering.Commands
                 SceneLog($"Zeroed command buffer range [{startIndex}, {end}) ({byteCount} bytes)");
         }
 
+        #endregion
+
+        #region Command Conversion
+
+        /// <summary>
+        /// Converts a render command to a GPU-friendly format.
+        /// </summary>
+        /// <param name="renderInfo">The parent render info.</param>
+        /// <param name="command">The mesh render command to convert.</param>
+        /// <param name="mesh">The mesh to render.</param>
+        /// <param name="material">The material to use.</param>
+        /// <param name="submeshLocalIndex">The submesh index within the mesh renderer.</param>
+        /// <returns>The GPU command, or null if conversion failed.</returns>
         private GPUIndirectRenderCommand? ConvertToGPUCommand(RenderInfo renderInfo, IRenderCommandMesh command, XRMesh? mesh, XRMaterial? material, uint submeshLocalIndex)
         {
             if (mesh is null || material is null)
@@ -1120,6 +1615,12 @@ namespace XREngine.Rendering.Commands
             return label;
         }
 
+        /// <summary>
+        /// Validates that a mesh can be used with GPU rendering.
+        /// </summary>
+        /// <param name="mesh">The mesh to validate.</param>
+        /// <param name="reason">The reason for failure if validation fails.</param>
+        /// <returns>True if the mesh is valid for GPU rendering; false otherwise.</returns>
         private bool ValidateMeshForGpu(XRMesh mesh, out string reason)
         {
             if (mesh.VertexCount <= 0)
@@ -1153,6 +1654,9 @@ namespace XREngine.Rendering.Commands
             return true;
         }
 
+        /// <summary>
+        /// Records that a mesh is unsupported for GPU rendering and logs a warning.
+        /// </summary>
         private void RecordUnsupportedMesh(XRMesh mesh, string meshLabel, string reason)
         {
             if (string.IsNullOrWhiteSpace(reason))
@@ -1175,6 +1679,9 @@ namespace XREngine.Rendering.Commands
                 Debug.LogWarning(message);
         }
 
+        /// <summary>
+        /// Resolves a human-readable label for a renderable owner.
+        /// </summary>
         private static string ResolveOwnerLabel(IRenderable? owner)
         {
             if (owner is null)
@@ -1196,13 +1703,19 @@ namespace XREngine.Rendering.Commands
             return owner.GetType().Name;
         }
 
+        #endregion
+
+        #region Mesh/Material ID Management
+
         /// <summary>
         /// Gets or creates a unique mesh ID for the given mesh.
-        /// Incremental IDs start at 1. Returns true if the mesh was already known, false if newly added.
         /// </summary>
-        /// <param name="mesh"></param>
-        /// <param name="index"></param>
-        /// <returns></returns>
+        /// <remarks>
+        /// Incremental IDs start at 1 (0 is reserved/invalid).
+        /// </remarks>
+        /// <param name="mesh">The mesh to get an ID for.</param>
+        /// <param name="index">The assigned mesh ID.</param>
+        /// <returns>True if the mesh was already known; false if newly added.</returns>
         private bool GetOrCreateMeshID(XRMesh? mesh, out uint index)
         {
             index = uint.MaxValue;
@@ -1217,11 +1730,13 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>
         /// Gets or creates a unique material ID for the given material.
-        /// Incremental IDs start at 1. Returns true if the material was already known, false if newly added.
         /// </summary>
-        /// <param name="material"></param>
-        /// <param name="index"></param>
-        /// <returns></returns>
+        /// <remarks>
+        /// Incremental IDs start at 1 (0 is reserved/invalid).
+        /// </remarks>
+        /// <param name="material">The material to get an ID for.</param>
+        /// <param name="index">The assigned material ID.</param>
+        /// <returns>True if the material was already known; false if newly added.</returns>
         private bool GetOrCreateMaterialID(XRMaterial? material, out uint index)
         {
             index = uint.MaxValue;
@@ -1246,5 +1761,373 @@ namespace XREngine.Rendering.Commands
             }
             return contains;
         }
+
+        #endregion
+
+        #region IGpuBvhProvider Implementation
+
+        // -------------------------------------------------------------------------
+        // BVH Implementation: Provides GPU-accessible BVH for hierarchical culling.
+        // The internal BVH is built over command bounding spheres.
+        // -------------------------------------------------------------------------
+
+        /// <summary>BVH node buffer containing the tree structure.</summary>
+        private XRDataBuffer? _bvhNodeBuffer;
+
+        /// <summary>BVH range buffer mapping nodes to primitive ranges.</summary>
+        private XRDataBuffer? _bvhRangeBuffer;
+
+        /// <summary>BVH morton buffer containing morton codes and object IDs.</summary>
+        private XRDataBuffer? _bvhMortonBuffer;
+
+        /// <summary>Flag indicating the BVH needs to be rebuilt.</summary>
+        private bool _bvhDirty = false;
+
+        /// <summary>Flag indicating the BVH has been built and is ready for use.</summary>
+        private bool _bvhReady = false;
+
+        /// <summary>Total number of nodes in the BVH.</summary>
+        private uint _bvhNodeCount = 0;
+
+        /// <inheritdoc/>
+        XRDataBuffer? IGpuBvhProvider.BvhNodeBuffer => _useInternalBvh ? _bvhNodeBuffer : null;
+
+        /// <inheritdoc/>
+        XRDataBuffer? IGpuBvhProvider.BvhRangeBuffer => _useInternalBvh ? _bvhRangeBuffer : null;
+
+        /// <inheritdoc/>
+        XRDataBuffer? IGpuBvhProvider.BvhMortonBuffer => _useInternalBvh ? _bvhMortonBuffer : null;
+
+        /// <inheritdoc/>
+        uint IGpuBvhProvider.BvhNodeCount => _useInternalBvh ? _bvhNodeCount : 0u;
+
+        /// <inheritdoc/>
+        bool IGpuBvhProvider.IsBvhReady => _useInternalBvh && _bvhReady && !_bvhDirty;
+
+        /// <summary>
+        /// Marks the internal BVH as needing a rebuild.
+        /// </summary>
+        public void MarkBvhDirty()
+        {
+            _bvhDirty = true;
+        }
+
+        /// <summary>
+        /// Rebuilds the internal command BVH if it's dirty and enabled.
+        /// This builds a simple CPU-side BVH and uploads to GPU buffers.
+        /// </summary>
+        public void RebuildBvhIfDirty()
+        {
+            if (!_useInternalBvh || !_bvhDirty)
+                return;
+
+            RebuildInternalBvh();
+            _bvhDirty = false;
+        }
+
+        private void RebuildInternalBvh()
+        {
+            uint commandCount = _totalCommandCount;
+            if (commandCount == 0)
+            {
+                _bvhReady = false;
+                _bvhNodeCount = 0;
+                return;
+            }
+
+            // TODO: For now, build a trivial flat "BVH" where each command is a leaf
+            // This provides the basic structure for the shader to work with
+            // A proper hierarchical BVH can be added later for better culling efficiency
+
+            // Layout: morton objects map 1:1 to command indices
+            // Leaf count = command count, internal nodes = leaf count - 1
+            uint leafCount = commandCount;
+            uint internalCount = leafCount > 0 ? leafCount - 1u : 0u;
+            uint nodeCount = leafCount + internalCount;
+
+            EnsureBvhBuffers(nodeCount, commandCount);
+
+            // Build morton codes (trivial: just use command index as morton code)
+            // In a proper implementation, we'd compute spatial morton codes
+            BuildTrivialMortonBuffer(commandCount);
+
+            // Build BVH node structure
+            BuildTrivialBvhNodes(nodeCount, leafCount);
+
+            // Build range buffer (each leaf points to one primitive)
+            BuildTrivialRangeBuffer(leafCount);
+
+            // Upload buffers
+            _bvhNodeBuffer?.PushSubData();
+            _bvhRangeBuffer?.PushSubData();
+            _bvhMortonBuffer?.PushSubData();
+
+            _bvhNodeCount = nodeCount;
+            _bvhReady = true;
+
+            if (IsGpuSceneLoggingEnabled())
+                SceneLog($"[GPUScene] Built internal BVH with {nodeCount} nodes for {commandCount} commands");
+        }
+
+        private void EnsureBvhBuffers(uint nodeCount, uint primitiveCount)
+        {
+            // Node buffer: header (4 scalars) + nodes (20 scalars each)
+            uint nodeScalars = GpuBvhLayout.NodeScalarCapacity(Math.Max(nodeCount, 1u));
+            if (_bvhNodeBuffer is null)
+            {
+                _bvhNodeBuffer = new XRDataBuffer(
+                    "GPUScene_BvhNodes",
+                    EBufferTarget.ShaderStorageBuffer,
+                    nodeScalars,
+                    EComponentType.Float,
+                    1,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true
+                };
+            }
+            else if (_bvhNodeBuffer.ElementCount < nodeScalars)
+            {
+                _bvhNodeBuffer.Resize(nodeScalars, false, true);
+            }
+
+            // Range buffer: 2 uints per node (start, count)
+            uint rangeScalars = GpuBvhLayout.RangeScalarCapacity(Math.Max(nodeCount, 1u));
+            if (_bvhRangeBuffer is null)
+            {
+                _bvhRangeBuffer = new XRDataBuffer(
+                    "GPUScene_BvhRanges",
+                    EBufferTarget.ShaderStorageBuffer,
+                    rangeScalars,
+                    EComponentType.UInt,
+                    1,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true
+                };
+            }
+            else if (_bvhRangeBuffer.ElementCount < rangeScalars)
+            {
+                _bvhRangeBuffer.Resize(rangeScalars, false, true);
+            }
+
+            // Morton buffer: 2 uints per primitive (morton code, object id)
+            uint mortonScalars = primitiveCount * 2;
+            if (_bvhMortonBuffer is null)
+            {
+                _bvhMortonBuffer = new XRDataBuffer(
+                    "GPUScene_BvhMorton",
+                    EBufferTarget.ShaderStorageBuffer,
+                    Math.Max(mortonScalars, 2u),
+                    EComponentType.UInt,
+                    1,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true
+                };
+            }
+            else if (_bvhMortonBuffer.ElementCount < mortonScalars)
+            {
+                _bvhMortonBuffer.Resize(Math.Max(mortonScalars, 2u), false, true);
+            }
+        }
+
+        private void BuildTrivialMortonBuffer(uint commandCount)
+        {
+            if (_bvhMortonBuffer is null)
+                return;
+
+            // Each entry: [mortonCode, objectId]
+            // For trivial implementation, mortonCode = objectId = command index
+            uint[] mortonData = new uint[commandCount * 2];
+            for (uint i = 0; i < commandCount; i++)
+            {
+                mortonData[i * 2] = i;     // morton code (trivial: just index)
+                mortonData[i * 2 + 1] = i; // object ID = command index
+            }
+            _bvhMortonBuffer.SetDataRaw(mortonData, (int)(commandCount * 2));
+        }
+
+        private void BuildTrivialBvhNodes(uint nodeCount, uint leafCount)
+        {
+            if (_bvhNodeBuffer is null || nodeCount == 0)
+                return;
+
+            // BVH node layout per bvh_nodes.glslinc:
+
+            // Header: 
+            //  nodeCount (uint), 
+            //  rootIndex (uint), 
+            //  nodeStrideScalars (uint), 
+            //  maxLeafPrimitives (uint)
+
+            // Each node: 
+            //  minBounds (vec3), 
+            //  leftChild (uint), 
+            //  maxBounds (vec3), 
+            //  rightChild (uint),
+            //  parentIndex (uint), 
+            //  isLeaf (uint),
+            //  primitiveStart (uint), 
+            //  primitiveCount (uint),
+            //  unused (4 floats)
+
+            const int headerScalars = 4;
+            const int nodeStride = 20; // floats per node
+            int totalScalars = headerScalars + (int)nodeCount * nodeStride;
+
+            float[] nodeData = new float[totalScalars];
+
+            // Header
+            nodeData[0] = BitConverter.Int32BitsToSingle((int)nodeCount);
+            nodeData[1] = BitConverter.Int32BitsToSingle((int)(leafCount > 0 ? leafCount - 1 : 0)); // root = first internal node (or 0 if no internals)
+            nodeData[2] = BitConverter.Int32BitsToSingle(nodeStride);
+            nodeData[3] = BitConverter.Int32BitsToSingle(1); // maxLeafPrimitives = 1
+
+            // For trivial implementation, create flat leaf nodes
+            // Each leaf covers one command
+            for (int i = 0; i < (int)leafCount; i++)
+            {
+                int baseOffset = headerScalars + i * nodeStride;
+
+                // Get command bounds from the command buffer
+                var (minB, maxB) = GetCommandBounds((uint)i);
+
+                // minBounds
+                nodeData[baseOffset + 0] = minB.X;
+                nodeData[baseOffset + 1] = minB.Y;
+                nodeData[baseOffset + 2] = minB.Z;
+                // leftChild (invalid for leaf)
+                nodeData[baseOffset + 3] = BitConverter.Int32BitsToSingle(-1);
+                // maxBounds
+                nodeData[baseOffset + 4] = maxB.X;
+                nodeData[baseOffset + 5] = maxB.Y;
+                nodeData[baseOffset + 6] = maxB.Z;
+                // rightChild (invalid for leaf)
+                nodeData[baseOffset + 7] = BitConverter.Int32BitsToSingle(-1);
+                // parentIndex
+                nodeData[baseOffset + 8] = BitConverter.Int32BitsToSingle((int)(leafCount > 1 ? (int)leafCount + (i / 2) : -1));
+                // isLeaf
+                nodeData[baseOffset + 9] = BitConverter.Int32BitsToSingle(1);
+                // primitiveStart = index in morton buffer
+                nodeData[baseOffset + 10] = BitConverter.Int32BitsToSingle(i);
+                // primitiveCount = 1
+                nodeData[baseOffset + 11] = BitConverter.Int32BitsToSingle(1);
+                // unused padding
+                nodeData[baseOffset + 12] = 0;
+                nodeData[baseOffset + 13] = 0;
+                nodeData[baseOffset + 14] = 0;
+                nodeData[baseOffset + 15] = 0;
+                nodeData[baseOffset + 16] = 0;
+                nodeData[baseOffset + 17] = 0;
+                nodeData[baseOffset + 18] = 0;
+                nodeData[baseOffset + 19] = 0;
+            }
+
+            // Build internal nodes (simple bottom-up pairing)
+            int internalStart = (int)leafCount;
+            int internalCount = (int)leafCount - 1;
+            for (int i = 0; i < internalCount && leafCount > 1; i++)
+            {
+                int baseOffset = headerScalars + (internalStart + i) * nodeStride;
+                int leftIdx = i * 2;
+                int rightIdx = i * 2 + 1;
+
+                if (rightIdx >= (int)nodeCount)
+                    rightIdx = leftIdx;
+
+                // Compute combined bounds
+                var (leftMin, leftMax) = GetNodeBounds(nodeData, (uint)leftIdx, (uint)headerScalars, (uint)nodeStride);
+                var (rightMin, rightMax) = GetNodeBounds(nodeData, (uint)rightIdx, (uint)headerScalars, (uint)nodeStride);
+
+                Vector3 minB = Vector3.Min(leftMin, rightMin);
+                Vector3 maxB = Vector3.Max(leftMax, rightMax);
+
+                // minBounds
+                nodeData[baseOffset + 0] = minB.X;
+                nodeData[baseOffset + 1] = minB.Y;
+                nodeData[baseOffset + 2] = minB.Z;
+                // leftChild
+                nodeData[baseOffset + 3] = BitConverter.Int32BitsToSingle(leftIdx);
+                // maxBounds
+                nodeData[baseOffset + 4] = maxB.X;
+                nodeData[baseOffset + 5] = maxB.Y;
+                nodeData[baseOffset + 6] = maxB.Z;
+                // rightChild
+                nodeData[baseOffset + 7] = BitConverter.Int32BitsToSingle(rightIdx);
+                // parentIndex
+                nodeData[baseOffset + 8] = BitConverter.Int32BitsToSingle(i / 2 + internalStart / 2);
+                // isLeaf
+                nodeData[baseOffset + 9] = BitConverter.Int32BitsToSingle(0);
+                // primitiveStart (unused for internal)
+                nodeData[baseOffset + 10] = 0;
+                // primitiveCount (unused for internal)
+                nodeData[baseOffset + 11] = 0;
+            }
+
+            _bvhNodeBuffer.SetDataRaw(nodeData, totalScalars);
+        }
+
+        private (Vector3 min, Vector3 max) GetNodeBounds(float[] nodeData, uint nodeIndex, uint headerScalars, uint nodeStride)
+        {
+            int baseOffset = (int)(headerScalars + nodeIndex * nodeStride);
+            if (baseOffset + 7 >= nodeData.Length)
+                return (Vector3.Zero, Vector3.Zero);
+
+            return (
+                new Vector3(nodeData[baseOffset], nodeData[baseOffset + 1], nodeData[baseOffset + 2]),
+                new Vector3(nodeData[baseOffset + 4], nodeData[baseOffset + 5], nodeData[baseOffset + 6])
+            );
+        }
+
+        private (Vector3 min, Vector3 max) GetCommandBounds(uint commandIndex)
+        {
+            // Command layout: bounding sphere at offset 32-35 (center xyz, radius)
+            const int commandFloats = 48;
+            const int boundsOffset = 32;
+
+            if (_allLoadedCommandsBuffer is null)
+                return (Vector3.Zero, Vector3.Zero);
+
+            int baseIdx = (int)(commandIndex * commandFloats + boundsOffset);
+            
+            // Read from client-side buffer
+            _allLoadedCommandsBuffer.GetDataRaw(out float[] data, false);
+            if (data is null || baseIdx + 4 > data.Length)
+                return (Vector3.Zero, Vector3.Zero);
+
+            Vector3 center = new(data[baseIdx], data[baseIdx + 1], data[baseIdx + 2]);
+            float radius = data[baseIdx + 3];
+
+            // Convert sphere to AABB
+            Vector3 radiusVec = new(radius, radius, radius);
+            return (center - radiusVec, center + radiusVec);
+        }
+
+        private void BuildTrivialRangeBuffer(uint leafCount)
+        {
+            if (_bvhRangeBuffer is null)
+                return;
+
+            // Each leaf has range [start, count] pointing into morton buffer
+            uint[] rangeData = new uint[leafCount * 2];
+            for (uint i = 0; i < leafCount; i++)
+            {
+                rangeData[i * 2] = i;     // start
+                rangeData[i * 2 + 1] = 1; // count
+            }
+            _bvhRangeBuffer.SetDataRaw(rangeData, (int)(leafCount * 2));
+        }
+
+        #endregion
     }
 }

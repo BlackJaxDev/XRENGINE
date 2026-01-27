@@ -89,7 +89,7 @@ namespace XREngine.Rendering
                 };
 
                 if (parent is not null)
-                    tfm.SetParent(parent, false, true);
+                    tfm.SetParent(parent, false, EParentAssignmentMode.Immediate);
 
                 tfm.RecalculateMatrices();
                 cameras[i] = new(tfm, p);

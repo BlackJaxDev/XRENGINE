@@ -42,8 +42,6 @@ namespace XREngine.Core.Tools.Unity
                 {
                     string? path = anim.path;
                     string? correctedPath = null;
-                    object[] methodArguments = [];
-                    EAnimationMemberType memberType = EAnimationMemberType.Property;
                     switch (anim.attrib)
                     {
                         case string s when s.StartsWith("blendShape."):
@@ -51,7 +49,6 @@ namespace XREngine.Core.Tools.Unity
                                 path += $".{s[11..]}";
                             else
                                 path = $"{s[11..]}";
-                            memberType = EAnimationMemberType.Method;
                             correctedPath = "";
                             break;
                         case string s when s.StartsWith("material."):
@@ -59,7 +56,6 @@ namespace XREngine.Core.Tools.Unity
                                 path += $".{s[9..]}";
                             else
                                 path = $"{s[9..]}";
-                            memberType = EAnimationMemberType.Method;
                             correctedPath = "material";
                             break;
                         case "RootT.x":

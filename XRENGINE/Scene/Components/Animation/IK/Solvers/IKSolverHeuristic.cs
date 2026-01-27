@@ -125,7 +125,7 @@ namespace XREngine.Components.Animation
             {
                 for (int i = 0; i < _bones.Length - 1; i++)
                 {
-                    float l = (_bones[i]._transform.WorldTranslation - _bones[i + 1]._transform.WorldTranslation).Length();
+                    float l = (_bones[i]._transform!.WorldTranslation - _bones[i + 1]._transform!.WorldTranslation).Length();
                     if (l == 0)
                     {
                         message = "Bone " + i + " length is zero.";

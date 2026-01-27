@@ -36,9 +36,9 @@ namespace XREngine.TriangleConverter
         private uint _MinStripSize;
         private bool _BackwardSearch;
         private bool _FirstRun;
-        private ushort[] _Nodes;
-        private int[] _ImpTable;
-        private List<ushort> _CurrentNodes;
+        private ushort[] _Nodes = [];
+        private int[] _ImpTable = [];
+        private List<ushort> _CurrentNodes = [];
 
         public TriStripper(uint[] TriIndices, ushort[] NodeIds, int[] ImpTable)
         {

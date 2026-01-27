@@ -81,7 +81,7 @@ namespace XREngine.Scene.Prefabs
             if (parent is not null)
             {
                 if (maintainWorldTransform)
-                    clone.Transform.SetParent(parent.Transform, true, now: true);
+                    clone.Transform.SetParent(parent.Transform, true, EParentAssignmentMode.Immediate);
                 else
                     clone.Parent = parent;
             }

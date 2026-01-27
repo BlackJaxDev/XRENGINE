@@ -54,7 +54,7 @@ public class DearImGuiComponent : UIComponent, IRenderable
             return;
 
         var viewport = Engine.Rendering.State.RenderingViewport;
-        renderer.TryRenderImGui(viewport, UserInterfaceCanvas, Engine.Rendering.State.RenderingCamera, OnDraw);
+        renderer.TryRenderImGui(viewport, UserInterfaceCanvas, Engine.Rendering.State.RenderingCamera, OnDraw, allowMultipleInFrame: true);
     }
 
     protected virtual void OnDraw()

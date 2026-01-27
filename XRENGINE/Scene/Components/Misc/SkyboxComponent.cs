@@ -350,6 +350,9 @@ namespace XREngine.Components.Scene.Mesh
                 },
                 // Skybox fragment shaders reconstruct view rays, so they require camera matrices.
                 RequiredEngineUniforms = EUniformRequirements.Camera,
+                // Skybox uses a specialized vertex shader that outputs clip-space positions directly.
+                // GPU indirect dispatch would replace it with a model-matrix-based shader, breaking rendering.
+                ExcludeFromGpuIndirect = true,
             };
 
             _material = new XRMaterial(tex is not null ? [tex] : [], vertexShader, fragmentShader)

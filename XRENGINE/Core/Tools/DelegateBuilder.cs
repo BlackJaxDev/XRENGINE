@@ -9,7 +9,7 @@ namespace XREngine.Core.Tools
         {
             var queueMissingParams = new Queue<object>(missingParamValues);
 
-            var dgtMi = typeof(T).GetMethod("Invoke");
+            var dgtMi = typeof(T).GetMethod("Invoke") ?? throw new InvalidOperationException($"Type {typeof(T)} does not have an Invoke method");
             var dgtRet = dgtMi.ReturnType;
             var dgtParams = dgtMi.GetParameters();
 
@@ -33,7 +33,7 @@ namespace XREngine.Core.Tools
             }
             else
             {
-                var paramThis = Expression.Convert(paramsOfDelegate[0], method.DeclaringType);
+                var paramThis = Expression.Convert(paramsOfDelegate[0], method.DeclaringType ?? throw new InvalidOperationException("Method has no declaring type"));
 
                 var paramsToPass = methodParams
                     .Select((p, i) => CreateParam(paramsOfDelegate, i + 1, p, queueMissingParams))

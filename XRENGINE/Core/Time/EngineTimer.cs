@@ -89,6 +89,11 @@ namespace XREngine.Timers
         public XREvent? UpdateFrame;
         public XREvent? PostUpdateFrame;
         /// <summary>
+        /// Subscribe to this event to execute logic sequentially on the collect visible thread before parallel collection.
+        /// Use this for processing pending operations that must complete before parallel viewport collection.
+        /// </summary>
+        public XREvent? PreCollectVisible;
+        /// <summary>
         /// Subscribe to this event to execute logic on the render thread right before buffers are swapped.
         /// </summary>
         public XREvent? CollectVisible;
@@ -403,6 +408,7 @@ namespace XREngine.Timers
                 float elapsed = (timestamp - Collect.LastTimestamp).Clamp(0.0f, 1.0f);
                 Collect.Delta = elapsed;
                 Collect.LastTimestamp = timestamp;
+                PreCollectVisible?.Invoke();
                 CollectVisible?.InvokeParallel();
                 //(CollectVisible?.InvokeAsync() ?? Task.CompletedTask).Wait();
                 timestamp = Time();

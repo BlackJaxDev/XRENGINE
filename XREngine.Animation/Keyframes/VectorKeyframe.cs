@@ -23,6 +23,12 @@ namespace XREngine.Animation
             : this(second, inoutValue, inoutValue, inoutTangent, inoutTangent, type) { }
         public VectorKeyframe(float second, T inValue, T outValue, T inTangent, T outTangent, EVectorInterpType type) : base()
         {
+            _interpolateOut = StepOut;
+            _interpolateVelocityOut = StepVelocityOut;
+            _interpolateAccelerationOut = StepAccelerationOut;
+            _interpolateIn = StepIn;
+            _interpolateVelocityIn = StepVelocityIn;
+            _interpolateAccelerationIn = StepAccelerationIn;
             Second = second;
             InValue = inValue;
             OutValue = outValue;
@@ -33,13 +39,13 @@ namespace XREngine.Animation
 
         protected delegate T DelInterpolate(VectorKeyframe<T>? other, float timeOffset, float timeSpan);
         protected EVectorInterpType _interpolationTypeOut;
-        protected DelInterpolate _interpolateOut;
-        protected DelInterpolate _interpolateVelocityOut;
-        protected DelInterpolate _interpolateAccelerationOut;
+        protected DelInterpolate _interpolateOut = (_, _, _) => new();
+        protected DelInterpolate _interpolateVelocityOut = (_, _, _) => new();
+        protected DelInterpolate _interpolateAccelerationOut = (_, _, _) => new();
         protected EVectorInterpType _interpolationTypeIn;
-        protected DelInterpolate _interpolateIn;
-        protected DelInterpolate _interpolateVelocityIn;
-        protected DelInterpolate _interpolateAccelerationIn;
+        protected DelInterpolate _interpolateIn = (_, _, _) => new();
+        protected DelInterpolate _interpolateVelocityIn = (_, _, _) => new();
+        protected DelInterpolate _interpolateAccelerationIn = (_, _, _) => new();
 
         [Browsable(false)]
         public override Type ValueType => typeof(T);

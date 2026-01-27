@@ -30,23 +30,14 @@ public static partial class EditorImGuiUI
 
         try
         {
-            prefab = assets.Load<XRPrefabSource>(path);
-            if (prefab is not null)
-                return true;
-
             if (!TryResolveConcreteAssetTypeFromHeader(path, out var concreteType))
                 return false;
 
             if (!typeof(XRPrefabSource).IsAssignableFrom(concreteType))
                 return false;
 
-            if (assets.Load(path, concreteType) is XRPrefabSource concretePrefab)
-            {
-                prefab = concretePrefab;
-                return true;
-            }
-
-            return false;
+            prefab = assets.Load(path, concreteType) as XRPrefabSource;
+            return prefab is not null && prefab.RootNode is not null;
         }
         catch
         {
@@ -97,6 +88,48 @@ public static partial class EditorImGuiUI
         catch
         {
             model = null;
+            return false;
+        }
+    }
+
+    private static bool TryLoadMaterialAsset(string path, out XRMaterial? material)
+    {
+        material = null;
+
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        var assets = Engine.Assets;
+        if (assets is null)
+            return false;
+
+        // Spec: dragging the material xrasset (native .asset).
+        if (!string.Equals(Path.GetExtension(path), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        try
+        {
+            material = assets.Load<XRMaterial>(path);
+            if (material is not null)
+                return true;
+
+            if (!TryResolveConcreteAssetTypeFromHeader(path, out var concreteType))
+                return false;
+
+            if (!typeof(XRMaterial).IsAssignableFrom(concreteType))
+                return false;
+
+            if (assets.Load(path, concreteType) is XRMaterial concreteMaterial)
+            {
+                material = concreteMaterial;
+                return true;
+            }
+
+            return false;
+        }
+        catch
+        {
+            material = null;
             return false;
         }
     }

@@ -3,11 +3,11 @@ using System.ComponentModel;
 
 namespace XREngine.Animation
 {
-    public abstract class PropAnimKeyframed<T> : BasePropAnimKeyframed, IEnumerable<T> where T : Keyframe, new()
+    public abstract class PropAnimKeyframed<TKeyframe> : BasePropAnimKeyframed, IEnumerable<TKeyframe> where TKeyframe : Keyframe, new()
     {
         public delegate T2 DelGetValue<T2>(float second);
 
-        protected KeyframeTrack<T> _keyframes = [];
+        protected KeyframeTrack<TKeyframe> _keyframes = [];
 
         public PropAnimKeyframed()
             : this(0.0f, false) { }
@@ -56,7 +56,7 @@ namespace XREngine.Animation
         protected override BaseKeyframeTrack InternalKeyframes => Keyframes;
 
         [Category("Keyframed Property Animation")]
-        public KeyframeTrack<T> Keyframes
+        public KeyframeTrack<TKeyframe> Keyframes
         {
             get => _keyframes;
             set => SetField(ref _keyframes, value);
@@ -72,7 +72,7 @@ namespace XREngine.Animation
             }
             return change;
         }
-        protected override void OnPropertyChanged<T1>(string? propName, T1 prev, T1 field)
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
             if (propName == nameof(Keyframes))
@@ -83,10 +83,10 @@ namespace XREngine.Animation
         /// Appends the keyframes of the given animation to the end of this one.
         /// Basically, where this animation currently ends is where the given will begin, all in one animation.
         /// </summary>
-        public void Append(PropAnimKeyframed<T> other)
+        public void Append(PropAnimKeyframed<TKeyframe> other)
             => Keyframes.Append(other.Keyframes);
 
-        public IEnumerator<T> GetEnumerator() => ((IEnumerable<T>)Keyframes).GetEnumerator();
-        IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable<T>)Keyframes).GetEnumerator();
+        public IEnumerator<TKeyframe> GetEnumerator() => ((IEnumerable<TKeyframe>)Keyframes).GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable<TKeyframe>)Keyframes).GetEnumerator();
     }
 }

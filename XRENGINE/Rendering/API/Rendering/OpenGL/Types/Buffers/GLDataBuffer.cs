@@ -297,6 +297,21 @@ namespace XREngine.Rendering.OpenGL
                 else
                 {
                     uint lastPushed = _lastPushedLength;
+                    uint dataLength = Data.Length;
+
+                    // If the client-side buffer has grown beyond what we've allocated on the GPU,
+                    // we need to reallocate the GPU buffer first.
+                    if (dataLength > lastPushed)
+                    {
+                        // Reallocate GPU buffer to match client-side size, then do the sub-data update.
+                        PushData();
+                        lastPushed = _lastPushedLength;
+                        
+                        // After PushData, all data is already on the GPU, so we can return.
+                        // But only if the requested range is within the new buffer.
+                        if (offset + length <= lastPushed)
+                            return;
+                    }
 
                     // If resizable buffer was grown and we never (re)allocated on the GPU, fall back to full PushData.
                     // Also do this if caller is pushing the whole buffer starting at 0.

@@ -425,14 +425,14 @@ namespace XREngine.Scene
                 transform.Clear();
 
             if (flags.HasFlag(ETransformSetFlags.RetainCurrentParent))
-                transform.SetParent(_transform?.Parent, flags.HasFlag(ETransformSetFlags.RetainWorldTransform), true);
+                transform.SetParent(_transform?.Parent, flags.HasFlag(ETransformSetFlags.RetainWorldTransform), EParentAssignmentMode.Immediate);
 
             if (flags.HasFlag(ETransformSetFlags.RetainCurrentChildren) && _transform is not null)
             {
                 bool maintainWorldTransform = flags.HasFlag(ETransformSetFlags.RetainedChildrenMaintainWorldTransform);
                 var copy = _transform.Children.ToArray();
                 foreach (var child in copy)
-                    transform.AddChild(child, maintainWorldTransform, true);
+                    transform.AddChild(child, maintainWorldTransform, EParentAssignmentMode.Immediate);
             }
 
             Transform = transform;

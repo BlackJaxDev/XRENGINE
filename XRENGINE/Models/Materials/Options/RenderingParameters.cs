@@ -24,6 +24,7 @@ namespace XREngine.Rendering.Models.Materials
         private bool _writeRed = true;
         private EUniformRequirements _requiredEngineUniforms = EUniformRequirements.None;
         private BlendMode? _blendModeAllDrawBuffers;
+        private bool _excludeFromGpuIndirect;
 
         [Browsable(false)]
         public bool HasBlending => (BlendModesPerDrawBuffer?.Values.Any(x => x.Enabled == ERenderParamUsage.Enabled) ?? false) || BlendModeAllDrawBuffers?.Enabled == ERenderParamUsage.Enabled;
@@ -127,6 +128,20 @@ namespace XREngine.Rendering.Models.Materials
         {
             get => _blendModeAllDrawBuffers;
             set => SetField(ref _blendModeAllDrawBuffers, value);
+        }
+
+        /// <summary>
+        /// When true, this material will be rendered using the CPU path even when GPU indirect dispatch is enabled.
+        /// Use this for materials that require specialized vertex shaders (e.g., skybox, fullscreen effects)
+        /// that cannot use the standard GPU indirect vertex shader which transforms positions via model matrices.
+        /// </summary>
+        [Category("GPU Dispatch")]
+        [DisplayName("Exclude From GPU Indirect")]
+        [Description("Forces CPU rendering path for materials with specialized vertex shaders that cannot use GPU indirect dispatch.")]
+        public bool ExcludeFromGpuIndirect
+        {
+            get => _excludeFromGpuIndirect;
+            set => SetField(ref _excludeFromGpuIndirect, value);
         }
     }
 }

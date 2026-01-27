@@ -52,7 +52,7 @@ namespace XREngine.Components
         /// <summary>
         /// Gets the camera component attached to this pawn.
         /// </summary>
-        protected CameraComponent? CameraComponent => GetSiblingComponent<CameraComponent>();
+        protected new CameraComponent? CameraComponent => GetSiblingComponent<CameraComponent>();
 
         /// <summary>
         /// Returns true if the camera is currently using orthographic projection.

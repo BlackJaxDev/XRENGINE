@@ -187,8 +187,8 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
 
     private XRRenderProgram? _mainPhysicsProgram;
     private XRRenderProgram? _skipUpdateParticlesProgram;
-    private XRShader _mainPhysicsShader;
-    private XRShader _skipUpdateParticlesShader;
+    private XRShader? _mainPhysicsShader;
+    private XRShader? _skipUpdateParticlesShader;
 
     private XRDataBuffer? _particlesBuffer;
     private XRDataBuffer? _particleTreesBuffer;
@@ -439,7 +439,8 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
 
     private void DispatchMainPhysics(float timeVar, bool applyObjectMove)
     {
-        if (_mainPhysicsProgram == null || _particlesBuffer == null)
+        if (_mainPhysicsProgram == null || _particlesBuffer == null ||
+            _particleTreesBuffer == null || _transformMatricesBuffer == null || _collidersBuffer == null)
             return;
 
         // Set uniforms
@@ -467,13 +468,13 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
 
     private void DispatchSkipUpdateParticles()
     {
-        if (_skipUpdateParticlesProgram == null || _particlesBuffer == null)
+        if (_skipUpdateParticlesProgram == null || _particlesBuffer == null || _transformMatricesBuffer == null)
             return;
 
         // Set uniforms
         _skipUpdateParticlesProgram.Uniform("ObjectMove", new Vector4(_objectMove.X, _objectMove.Y, _objectMove.Z, 0));
         _skipUpdateParticlesProgram.Uniform("Weight", _weight);
-        
+
         // Bind buffers
         _skipUpdateParticlesProgram.BindBuffer(_particlesBuffer, 0);
         _skipUpdateParticlesProgram.BindBuffer(_transformMatricesBuffer, 2);
@@ -1018,7 +1019,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
 
     public float Weight => _weight;
 
-    public RenderInfo[] RenderedObjects { get; }
+    public RenderInfo[] RenderedObjects { get; } = [];
 
     #endregion
 }

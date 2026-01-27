@@ -479,7 +479,7 @@ namespace XREngine
             {
                 return innerDeserializer.Deserialize(reader, expectedType, nestedObjectDeserializer, out value, rootDeserializer);
             }
-            catch (NotSupportedException ex)
+            catch (NotSupportedException)
             {
                 throw;
             }

@@ -12,6 +12,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Shaders.Generator;
+using static XREngine.Rendering.GpuDispatchLogger;
 
 namespace XREngine.Rendering
 {
@@ -43,20 +44,49 @@ namespace XREngine.Rendering
     private static bool IsGpuIndirectLoggingEnabled()
         => Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
+    /// <summary>
+    /// Logs a GPU indirect debugging message using the new structured logger.
+    /// Falls back to legacy Debug.Out if needed.
+    /// </summary>
     private static void GpuDebug(string message, params object[] args)
     {
-        if (!IsGpuIndirectLoggingEnabled())
+        if (!IsEnabled(LogCategory.Draw, LogLevel.Debug))
             return;
 
-        Debug.Out(message, args);
+        Log(LogCategory.Draw, LogLevel.Debug, string.Format(message, args));
     }
 
+    /// <summary>
+    /// Logs a GPU indirect debugging message with FormattableString support.
+    /// </summary>
     private static void GpuDebug(FormattableString message)
     {
-        if (!IsGpuIndirectLoggingEnabled())
+        if (!IsEnabled(LogCategory.Draw, LogLevel.Debug))
             return;
 
-        Debug.Out(message.ToString());
+        Log(LogCategory.Draw, LogLevel.Debug, message.ToString());
+    }
+
+    /// <summary>
+    /// Logs a GPU indirect debugging message for a specific category.
+    /// </summary>
+    private static void GpuDebug(LogCategory category, string message, params object[] args)
+    {
+        if (!IsEnabled(category, LogLevel.Debug))
+            return;
+
+        Log(category, LogLevel.Debug, string.Format(message, args));
+    }
+
+    /// <summary>
+    /// Logs a GPU indirect debugging warning for a specific category.
+    /// </summary>
+    private static void GpuWarn(LogCategory category, string message, params object[] args)
+    {
+        if (!IsEnabled(category, LogLevel.Warning))
+            return;
+
+        Log(category, LogLevel.Warning, string.Format(message, args));
     }
 
         public HybridRenderingManager()
@@ -130,14 +160,14 @@ namespace XREngine.Rendering
 
         private static void LogIndirectPath(bool useCount, uint drawCountOrMax, uint stride, uint? offset = null)
         {
-            if (!IsGpuIndirectLoggingEnabled())
+            if (!IsEnabled(LogCategory.Draw, LogLevel.Info))
                 return;
 
             string path = useCount ? "IndirectCount" : (offset.HasValue ? "IndirectWithOffset" : "Indirect");
             string msg = offset.HasValue
                 ? $"GPU-Indirect path={path} count/max={drawCountOrMax} stride={stride} byteOffset={offset.Value}"
                 : $"GPU-Indirect path={path} count/max={drawCountOrMax} stride={stride}";
-            GpuDebug("{0}", msg);
+            Log(LogCategory.Draw, LogLevel.Info, msg);
         }
 
         //private static bool TryReadDrawCount(XRDataBuffer? parameterBuffer, out uint drawCount)
@@ -176,6 +206,7 @@ namespace XREngine.Rendering
         private static void DispatchRenderIndirect(
             XRDataBuffer? indirectDrawBuffer,
             XRMeshRenderer? vaoRenderer,
+            XRDataBuffer? culledCommandsBuffer,
             uint drawCount,
             uint maxCommands,
             XRDataBuffer? parameterBuffer,
@@ -183,129 +214,124 @@ namespace XREngine.Rendering
             XRCamera? camera,
             Matrix4x4 modelMatrix)
         {
-            bool logGpu = IsGpuIndirectLoggingEnabled();
-            if (logGpu)
-            {
-                GpuDebug("=== DispatchRenderIndirect START ===");
-                GpuDebug("Parameters: drawCount={0}, maxCommands={1}", drawCount, maxCommands);
-                GpuDebug("graphicsProgram={0}", graphicsProgram != null ? "present" : "NULL");
-                GpuDebug("camera={0}", camera != null ? "present" : "null");
-            }
+            using var timing = BeginTiming("DispatchRenderIndirect");
+            bool logGpu = IsEnabled(LogCategory.Draw, LogLevel.Debug);
+            
+            LogDispatchStart("RenderIndirect", drawCount, maxCommands);
+            GpuDebug(LogCategory.Draw, "graphicsProgram={0}, camera={1}", 
+                graphicsProgram != null ? "present" : "NULL",
+                camera != null ? "present" : "null");
             
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
             {
-                Debug.LogWarning("No active renderer found for indirect draw.");
+                Warn(LogCategory.Draw, "No active renderer found for indirect draw.");
                 return;
             }
 
             if (indirectDrawBuffer is null || maxCommands == 0)
             {
-                Debug.LogWarning($"Invalid dispatch state: buffer={(indirectDrawBuffer != null ? "present" : "null")}, maxCommands={maxCommands}");
+                Warn(LogCategory.Draw, "Invalid dispatch state: buffer={0}, maxCommands={1}",
+                    indirectDrawBuffer != null ? "present" : "null", maxCommands);
                 return;
             }
 
             // Bind graphics program for rendering (vertex/fragment shaders)
             if (graphicsProgram is not null)
             {
-                if (logGpu)
-                    GpuDebug("Binding graphics program...");
+                LogShaderBind(graphicsProgram.GetType().Name);
                 graphicsProgram.Use();
-                if (logGpu)
-                    GpuDebug("Graphics program bound successfully");
+
+                // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader at binding=0
+                culledCommandsBuffer?.BindTo(graphicsProgram, 0);
                 
                 if (camera is not null)
                 {
-                    if (logGpu)
-                        GpuDebug("Setting engine uniforms...");
+                    GpuDebug(LogCategory.Uniforms, "Setting engine uniforms...");
                     renderer.SetEngineUniforms(graphicsProgram, camera);
-                    if (logGpu)
-                        GpuDebug("Engine uniforms set");
                 }
                 else
                 {
-                    Debug.LogWarning("No camera provided for uniforms!");
+                    Warn(LogCategory.Draw, "No camera provided for uniforms!");
                 }
 
-                bool isIdentity = Matrix4x4.Equals(modelMatrix, Matrix4x4.Identity);
+                LogUniformMatrix(EEngineUniform.ModelMatrix.ToString(), modelMatrix);
                 graphicsProgram.Uniform(EEngineUniform.ModelMatrix.ToString(), modelMatrix);
-                if (logGpu)
-                {
-                    if (!isIdentity)
-                        GpuDebug("Model matrix translation=({0:F3},{1:F3},{2:F3})", modelMatrix.M41, modelMatrix.M42, modelMatrix.M43);
-                    else
-                        GpuDebug("Model matrix uniform set to identity");
-                }
             }
             else
             {
-                Debug.LogWarning("No graphics program bound for indirect rendering. Rendering WILL FAIL.");
+                Error(LogCategory.Draw, "No graphics program bound for indirect rendering. Rendering WILL FAIL.");
                 return; // Don't proceed without a program
             }
 
             // Bind the provided VAO (if any)
             var version = vaoRenderer?.GetDefaultVersion();
-            if (logGpu)
-                GpuDebug("Binding VAO: version={0}", version != null ? "present" : "null");
+            LogVAOBind(vaoRenderer?.GetType().Name, version != null);
             renderer.BindVAOForRenderer(version);
 
             // Configure VAO attributes for the bound program
             if (graphicsProgram is not null && vaoRenderer is not null)
             {
-                if (logGpu)
-                    GpuDebug("Configuring VAO attributes for program...");
+                GpuDebug(LogCategory.VAO, "Configuring VAO attributes for program...");
                 renderer.ConfigureVAOAttributesForProgram(graphicsProgram, version);
-                if (logGpu)
-                    GpuDebug("VAO attributes configured");
             }
 
             // Validate element buffer presence (required for *ElementsIndirect* variants)
             if (!renderer.ValidateIndexedVAO(version))
             {
-                Debug.LogWarning("Indirect draw aborted: no index (element) buffer bound to VAO. Skipping MultiDrawElementsIndirect.");
+                Warn(LogCategory.VAO, "Indirect draw aborted: no index (element) buffer bound to VAO. Skipping MultiDrawElementsIndirect.");
                 renderer.BindVAOForRenderer(null);
                 return;
             }
+            
             if (logGpu)
-                GpuDebug("VAO validation passed - index buffer present");
+            {
+                // Enhanced diagnostics: log VAO details and index buffer info
+                if (renderer.TryGetIndexBufferInfo(version, out var indexSize, out var indexCount))
+                {
+                    LogVAOValidation(true, indexSize, indexCount);
+                }
+                else
+                {
+                    LogVAOValidation(true);
+                }
+            }
 
-            if (logGpu)
-                GpuDebug("Binding indirect draw buffer...");
+            LogBufferBind("IndirectDrawBuffer", "DrawIndirect");
             renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
 
             uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
             bool parameterReady = parameterBuffer is not null && EnsureParameterBufferReady(parameterBuffer);
             bool useCount = parameterReady && !DebugSettings.DisableCountDrawPath && renderer.SupportsIndirectCountDraw();
 
-            if (logGpu)
-                GpuDebug("Draw mode: useCount={0}, stride={1}", useCount, stride);
+            GpuDebug(LogCategory.Draw, "Draw mode: useCount={0}, stride={1}", useCount, stride);
 
             if (DebugSettings.ValidateBufferLayouts)
+            {
                 ValidateIndirectBufferState(indirectDrawBuffer, maxCommands, stride);
+                LogIndirectBufferValidation(indirectDrawBuffer, maxCommands, stride);
+            }
 
             try
             {
                 if (useCount)
                 {
-                    if (logGpu)
-                        GpuDebug("Using MultiDrawElementsIndirectCount path");
+                    LogBufferBind("ParameterBuffer", "Parameter");
                     renderer.BindParameterBuffer(parameterBuffer!);
+                    
+                    GpuDebug(LogCategory.Sync, "Issuing memory barrier (ClientMappedBuffer | Command)");
                     renderer.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
-                    LogIndirectPath(true, maxCommands, stride);
+                    
+                    LogMultiDrawIndirect(true, maxCommands, stride);
                     renderer.MultiDrawElementsIndirectCount(maxCommands, stride);
-                    if (logGpu)
-                        GpuDebug("MultiDrawElementsIndirectCount issued");
                 }
                 else
                 {
                     if (drawCount == 0)
                         drawCount = maxCommands;
-                    if (logGpu)
-                        GpuDebug("Using MultiDrawElementsIndirect path with count={0}", drawCount);
-                    LogIndirectPath(false, drawCount, stride);
+                    
+                    LogMultiDrawIndirect(false, drawCount, stride);
                     renderer.MultiDrawElementsIndirect(drawCount, stride);
-                    if (logGpu)
-                        GpuDebug("MultiDrawElementsIndirect issued");
                 }
 
                 LogGLErrors(renderer, useCount ? "MultiDrawElementsIndirectCount" : "MultiDrawElementsIndirect");
@@ -313,16 +339,17 @@ namespace XREngine.Rendering
             finally
             {
                 if (useCount)
+                {
+                    LogBufferUnbind("ParameterBuffer", "Parameter");
                     renderer.UnbindParameterBuffer();
+                }
 
+                LogBufferUnbind("IndirectDrawBuffer", "DrawIndirect");
                 renderer.UnbindDrawIndirectBuffer();
                 renderer.BindVAOForRenderer(null);
-                if (logGpu)
-                    GpuDebug("Cleanup complete");
             }
             
-            if (logGpu)
-                GpuDebug("=== DispatchRenderIndirect END ===");
+            LogDispatchEnd("RenderIndirect", true);
         }
 
         private static void DumpGpuIndirectArguments(
@@ -332,10 +359,10 @@ namespace XREngine.Rendering
             XRDataBuffer? parameterBuffer,
             uint visibleCount)
         {
-            if (!IsGpuIndirectLoggingEnabled())
+            if (!IsEnabled(LogCategory.Buffers, LogLevel.Debug))
                 return;
 
-            GpuDebug("[GPUIndirect] dump invoked tick={0}", Environment.TickCount64);
+            Log(LogCategory.Buffers, LogLevel.Debug, "Dump invoked tick={0}", Environment.TickCount64);
             XRDataBuffer? drawCountBuffer = renderPasses.DrawCountBuffer ?? parameterBuffer;
             XRDataBuffer? culledCountBuffer = renderPasses.CulledCountBuffer;
             XRDataBuffer culledCommandBuffer = renderPasses.CulledSceneToRenderBuffer;
@@ -515,7 +542,7 @@ namespace XREngine.Rendering
             GPUScene scene,
             uint visibleCount)
         {
-            if (!IsGpuIndirectLoggingEnabled() || !DebugSettings.DumpIndirectArguments || visibleCount == 0)
+            if (!IsEnabled(LogCategory.Culling, LogLevel.Debug) || !DebugSettings.DumpIndirectArguments || visibleCount == 0)
                 return;
 
             XRDataBuffer culledBuffer = renderPasses.CulledSceneToRenderBuffer;
@@ -534,7 +561,7 @@ namespace XREngine.Rendering
 
                 if (!ptr.IsValid)
                 {
-                    GpuDebug("[GPUIndirect] Failed to map culled buffer for inspection.");
+                    Warn(LogCategory.Culling, "Failed to map culled buffer for inspection.");
                     return;
                 }
 
@@ -550,7 +577,7 @@ namespace XREngine.Rendering
                     {
                         var cmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(basePtr + (int)(i * stride));
                         var sb = new StringBuilder();
-                        sb.Append($"[GPUIndirect] visible[{i}] mesh={cmd.MeshID} submesh={cmd.SubmeshID & 0xFFFF} material={cmd.MaterialID} instances={cmd.InstanceCount} pass={cmd.RenderPass}");
+                        sb.Append($"visible[{i}] mesh={cmd.MeshID} submesh={cmd.SubmeshID & 0xFFFF} material={cmd.MaterialID} instances={cmd.InstanceCount} pass={cmd.RenderPass}");
                         Vector3 translation = cmd.WorldMatrix.Translation;
                         sb.Append($" | worldPos=({translation.X:F3},{translation.Y:F3},{translation.Z:F3})");
                         if (scene.TryGetMeshDataEntry(cmd.MeshID, out GPUScene.MeshDataEntry meshEntry))
@@ -562,13 +589,13 @@ namespace XREngine.Rendering
                             sb.Append(" | meshData=<missing>");
                         }
 
-                        GpuDebug(sb.ToString());
+                        Log(LogCategory.Culling, LogLevel.Debug, sb.ToString());
                     }
                 }
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[GPUIndirect] Failed to dump culled command data: {ex.Message}");
+                Error(LogCategory.Culling, "Failed to dump culled command data", ex);
             }
             finally
             {
@@ -678,6 +705,14 @@ namespace XREngine.Rendering
                 Debug.LogWarning("Indirect draw aborted: no element buffer bound to VAO.");
                 renderer.BindVAOForRenderer(null);
                 return;
+            }
+            
+            // Enhanced diagnostics for batched path
+            bool logGpu = IsGpuIndirectLoggingEnabled();
+            if (logGpu && renderer.TryGetIndexBufferInfo(version, out var indexSize, out var indexCount))
+            {
+                GpuDebug("  Batch VAO: indexElementSize={0}, indexCount={1}, batchOffset={2}, batchDrawCount={3}", 
+                    indexSize, indexCount, drawOffset, drawCount);
             }
 
             renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
@@ -911,6 +946,7 @@ namespace XREngine.Rendering
                 DispatchRenderIndirect(
                     indirectDrawBuffer,
                     vaoRenderer,
+                    culledBuffer,
                     built,
                     built,
                     null,
@@ -1048,6 +1084,7 @@ namespace XREngine.Rendering
             DispatchRenderIndirect(
                 indirectDrawBuffer,
                 vaoRenderer,
+                culledBuffer,
                 visibleCount,
                 maxDrawAllowed,
                 parameterBuffer,

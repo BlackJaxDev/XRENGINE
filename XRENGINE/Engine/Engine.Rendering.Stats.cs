@@ -93,6 +93,9 @@ namespace XREngine
                 /// </summary>
                 public static void BeginFrame()
                 {
+                    // Notify GPU dispatch logger of new frame for logging context
+                    GpuDispatchLogger.BeginFrame();
+                    
                     _lastFrameDrawCalls = _drawCalls;
                     _lastFrameTrianglesRendered = _trianglesRendered;
                     _lastFrameMultiDrawCalls = _multiDrawCalls;

@@ -338,7 +338,7 @@ void main()
             float velLength = vel.Length();
             float t = 1.0f / (1.0f + 0.5f * (velLength * velLength));
             Vertex pos = new(val);
-            pos.ColorSets.Add(new Vector4(Vector3.Lerp(Vector3.UnitZ, Vector3.UnitX, t), 1.0f));
+            (pos.ColorSets ??= []).Add(new Vector4(Vector3.Lerp(Vector3.UnitZ, Vector3.UnitX, t), 1.0f));
             splinePoints.Add(pos);
             velocity.Add(new VertexLine(pos, new Vertex(pos.Position + vel.Normalized() * velocityScale)));
         }

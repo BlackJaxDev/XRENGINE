@@ -81,7 +81,7 @@ public sealed class RenderPipelinePostProcessSchema(
     public IReadOnlyDictionary<string, PostProcessStageDescriptor> StagesByKey { get; } = stages ?? new Dictionary<string, PostProcessStageDescriptor>(StringComparer.Ordinal);
     public IReadOnlyList<PostProcessCategoryDescriptor> Categories { get; } = categories ?? Array.Empty<PostProcessCategoryDescriptor>();
 
-    public bool TryGetStage(string key, out PostProcessStageDescriptor descriptor)
+    public bool TryGetStage(string key, out PostProcessStageDescriptor? descriptor)
         => StagesByKey.TryGetValue(key, out descriptor);
 
     public bool IsEmpty => StagesByKey.Count == 0;

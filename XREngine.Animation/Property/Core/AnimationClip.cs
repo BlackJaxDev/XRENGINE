@@ -427,18 +427,6 @@ namespace XREngine.Animation
                 //}
             }
 
-            static void ConstrainAndLerpFloat(float fps, PropAnimFloat anim)
-            {
-                anim.ConstrainKeyframedFPS = true;
-                anim.BakedFramesPerSecond = fps;
-                anim.LerpConstrainedFPS = true;
-            }
-            static void ConstrainAndLerpQuat(float fps, PropAnimQuaternion anim)
-            {
-                anim.ConstrainKeyframedFPS = true;
-                anim.BakedFramesPerSecond = fps;
-                anim.LerpConstrainedFPS = true;
-            }
         }
 
         private static void PopulateVMDAnimation(

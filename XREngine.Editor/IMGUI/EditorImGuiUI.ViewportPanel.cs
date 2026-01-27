@@ -3,9 +3,11 @@ using Silk.NET.Maths;
 using System;
 using System.Numerics;
 using XREngine;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Picking;
 
 namespace XREngine.Editor;
 
@@ -183,7 +185,9 @@ public static partial class EditorImGuiUI
                 string? path = ImGuiAssetUtilities.GetPathFromPayload(payload);
                 if (!string.IsNullOrWhiteSpace(path))
                 {
-                    if (TryLoadPrefabAsset(path, out var prefab))
+                    if (TryLoadMaterialAsset(path, out var material))
+                        EnqueueSceneEdit(() => TryApplyMaterialDropToHoveredSubmesh(world, material!));
+                    else if (TryLoadPrefabAsset(path, out var prefab))
                         EnqueueSceneEdit(() => SpawnPrefabNode(world, parent: null, prefab!));
                     else if (TryLoadModelAsset(path, out var model))
                         EnqueueSceneEdit(() => SpawnModelNode(world, parent: null, model!, path));
@@ -192,5 +196,46 @@ public static partial class EditorImGuiUI
         }
 
         ImGui.EndDragDropTarget();
+    }
+
+    private static bool TryApplyMaterialDropToHoveredSubmesh(XRWorldInstance world, XRMaterial material)
+    {
+        _ = world;
+
+        var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
+        if (player?.ControlledPawn is not EditorFlyingCameraPawnComponent pawn)
+        {
+            Debug.LogWarning("No editor camera pawn available to apply dropped material.");
+            return false;
+        }
+
+        if (!pawn.TryGetLastMeshHit(out MeshPickResult meshHit))
+        {
+            Debug.LogWarning("No mesh under the cursor to apply the dropped material.");
+            return false;
+        }
+
+        if (meshHit.Component is ModelComponent modelComponent)
+        {
+            if (modelComponent.TryGetSourceSubMesh(meshHit.Mesh, out var subMesh))
+            {
+                foreach (var lod in subMesh.LODs)
+                    lod.Material = material;
+                return true;
+            }
+
+            Debug.LogWarning("Unable to resolve submesh for the hovered model.");
+            return false;
+        }
+
+        var renderer = meshHit.Mesh.CurrentLODRenderer ?? meshHit.Mesh.LODs.First?.Value.Renderer;
+        if (renderer is not null)
+        {
+            renderer.Material = material;
+            return true;
+        }
+
+        Debug.LogWarning("Hovered mesh has no renderer material to replace.");
+        return false;
     }
 }

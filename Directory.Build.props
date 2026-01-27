@@ -4,6 +4,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <WpfTemporaryProjectAdditionalProperties>$(WpfTemporaryProjectAdditionalProperties);AllowUnsafeBlocks=true</WpfTemporaryProjectAdditionalProperties>
     <AdditionalCscArguments>$(AdditionalCscArguments) /unsafe</AdditionalCscArguments>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <Nullable>disable</Nullable>
   </PropertyGroup>
 
   <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('_wpftmp'))">

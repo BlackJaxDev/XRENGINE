@@ -292,6 +292,8 @@ namespace XREngine
         private float _debugTextMaxLifespan;
         private bool _enableThreadAllocationTracking;
         private bool _useDebugOpaquePipeline;
+        private bool _forceGpuPassthroughCulling = true;
+        private bool _allowGpuCpuFallback = false;
 
         [Category("Debug")]
         [Description("If true, the engine will render the bounds of each 3D mesh.")]
@@ -421,6 +423,22 @@ namespace XREngine
             set => SetField(ref _useDebugOpaquePipeline, value);
         }
 
+        [Category("GPU Rendering")]
+        [Description("When true, GPU culling uses passthrough mode (copies all commands without frustum culling). When false, uses actual GPU frustum culling.")]
+        public bool ForceGpuPassthroughCulling
+        {
+            get => _forceGpuPassthroughCulling;
+            set => SetField(ref _forceGpuPassthroughCulling, value);
+        }
+
+        [Category("GPU Rendering")]
+        [Description("When true, allows CPU fallback rendering when GPU indirect rendering produces zero visible commands. Useful for debugging GPU rendering issues.")]
+        public bool AllowGpuCpuFallback
+        {
+            get => _allowGpuCpuFallback;
+            set => SetField(ref _allowGpuCpuFallback, value);
+        }
+
         [Category("Profiling")]
         [Description("Tracks GC allocations per engine thread/tick using GC.GetAllocatedBytesForCurrentThread(). Used by the Profiler panel.")]
         public bool EnableThreadAllocationTracking
@@ -451,6 +469,8 @@ namespace XREngine
             DebugTextMaxLifespan = source.DebugTextMaxLifespan;
             EnableThreadAllocationTracking = source.EnableThreadAllocationTracking;
             UseDebugOpaquePipeline = source.UseDebugOpaquePipeline;
+            ForceGpuPassthroughCulling = source.ForceGpuPassthroughCulling;
+            AllowGpuCpuFallback = source.AllowGpuCpuFallback;
         }
 
         public void ApplyOverrides(EditorDebugOverrides overrides)
@@ -492,6 +512,10 @@ namespace XREngine
                 EnableThreadAllocationTracking = alloc.Value;
             if (overrides.UseDebugOpaquePipelineOverride is { HasOverride: true } debugOpaque)
                 UseDebugOpaquePipeline = debugOpaque.Value;
+            if (overrides.ForceGpuPassthroughCullingOverride is { HasOverride: true } passthrough)
+                ForceGpuPassthroughCulling = passthrough.Value;
+            if (overrides.AllowGpuCpuFallbackOverride is { HasOverride: true } cpuFallback)
+                AllowGpuCpuFallback = cpuFallback.Value;
         }
     }
 }

@@ -48,6 +48,21 @@ namespace XREngine.Components.Scene.Mesh
 
         private IReadOnlyDictionary<SubMesh, RenderableMesh> MeshLinks => _meshLinks;
 
+        public bool TryGetSourceSubMesh(RenderableMesh renderable, [NotNullWhen(true)] out SubMesh? subMesh)
+        {
+            subMesh = null;
+            foreach (var kvp in _meshLinks)
+            {
+                if (ReferenceEquals(kvp.Value, renderable))
+                {
+                    subMesh = kvp.Key;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
             bool change = base.OnPropertyChanging(propName, field, @new);

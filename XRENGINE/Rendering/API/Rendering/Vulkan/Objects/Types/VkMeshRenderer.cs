@@ -54,6 +54,15 @@ public unsafe partial class VulkanRenderer
 		bool StencilBit,
 		bool LinearFilter) : FrameOp(PassIndex, null);
 
+	internal sealed record IndirectDrawOp(
+		int PassIndex,
+		VkDataBuffer IndirectBuffer,
+		VkDataBuffer? ParameterBuffer,
+		uint DrawCount,
+		uint Stride,
+		nuint ByteOffset,
+		bool UseCount) : FrameOp(PassIndex, null);
+
 	internal void EnqueueFrameOp(FrameOp op)
 	{
 		using (_frameOpsLock.EnterScope())

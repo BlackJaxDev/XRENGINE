@@ -1085,7 +1085,6 @@ namespace XREngine.Rendering.UI
 
             // Set options for low latency streaming
             AVDictionary* options = stackalloc AVDictionary[1];
-            string timeout = "5000000"; // 5 sec timeout
 
             bool hls = streamUrl.EndsWith(".m3u8");
 

@@ -9,7 +9,7 @@
     }
     public class UITreeItemTransform : UIBoundableTransform
     {
-        public UITreeTransform OwningTreeComponent { get; set; }
+        public UITreeTransform? OwningTreeComponent { get; set; }
         public int TreeDepth { get; set; }
 
         public UITreeItemTransform()

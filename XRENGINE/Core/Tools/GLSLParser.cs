@@ -55,7 +55,8 @@ public class GLSLManager
 
     public void Parse(string text)
     {
-        RawSource = text ?? string.Empty;
+        text ??= string.Empty;
+        RawSource = text;
         Uniforms = [];
         In = [];
         Out = [];

@@ -4,9 +4,9 @@ namespace System
 {
     public class Remapper
     {
-        internal object _source;
-        internal int[] _impTable;
-        internal int[] _remapTable;
+        internal object? _source;
+        internal int[] _impTable = [];
+        internal int[] _remapTable = [];
 
         /// <summary>
         /// Contains the indices of all first appearances.

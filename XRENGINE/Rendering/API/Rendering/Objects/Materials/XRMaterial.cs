@@ -221,19 +221,19 @@ namespace XREngine.Rendering
         }
 
         public static XRMaterial CreateUnlitAlphaTextureMaterialForward(XRTexture2D texture)
-            => new([texture], ShaderHelper.UnlitAlphaTextureFragForward()) { RenderPass = (int)EDefaultRenderPass.TransparentForward };
+            => new([texture], ShaderHelper.UnlitAlphaTextureFragForward()!) { RenderPass = (int)EDefaultRenderPass.TransparentForward };
 
         public static XRMaterial CreateUnlitTextureMaterialForward(XRTexture texture)
-            => new([texture], ShaderHelper.UnlitTextureFragForward()) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            => new([texture], ShaderHelper.UnlitTextureFragForward()!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
         public static XRMaterial CreateUnlitTextureMaterialForward()
-            => new(ShaderHelper.UnlitTextureFragForward()) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            => new(ShaderHelper.UnlitTextureFragForward()!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
         public static XRMaterial CreateLitTextureMaterial(bool deferred = true)
-            => new(deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward()) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            => new((deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
         public static XRMaterial CreateLitTextureMaterial(XRTexture2D texture, bool deferred = true)
-            => new([texture], deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward()) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            => new([texture], (deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
         public static XRMaterial CreateLitTextureSilhouettePOMMaterial(
             XRTexture2D albedo,
@@ -298,7 +298,7 @@ namespace XREngine.Rendering
         }
 
         public static XRMaterial CreateUnlitColorMaterialForward(ColorF4 color)
-            => new([new ShaderVector4(color, "MatColor")], ShaderHelper.UnlitColorFragForward()) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            => new([new ShaderVector4(color, "MatColor")], ShaderHelper.UnlitColorFragForward()!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
 
         public static XRMaterial CreateLitColorMaterial(bool deferred = true)
             => CreateLitColorMaterial(Color.DarkTurquoise, deferred);

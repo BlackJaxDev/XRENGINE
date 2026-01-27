@@ -291,7 +291,7 @@ namespace XREngine.Rendering.OpenGL
             try
             {
                 int flags = api.GetInteger(GLEnum.ContextFlags);
-                isDebugContext = ((ContextFlagMask)flags).HasFlag(ContextFlagMask.ContextFlagDebugBit);
+                isDebugContext = ((ContextFlagMask)flags).HasFlag(ContextFlagMask.DebugBit);
             }
             catch
             {
@@ -3051,6 +3051,55 @@ void main()
             return (glMesh.TriangleIndicesBuffer?.Data?.ElementCount > 0) ||
                    (glMesh.LineIndicesBuffer?.Data?.ElementCount > 0) ||
                    (glMesh.PointIndicesBuffer?.Data?.ElementCount > 0);
+        }
+
+        public override bool TryGetIndexBufferInfo(XRMeshRenderer.BaseVersion? version, out IndexSize indexElementSize, out uint indexCount)
+        {
+            indexElementSize = IndexSize.FourBytes;
+            indexCount = 0;
+
+            var glMesh = version != null ? GenericToAPI<GLMeshRenderer>(version) : ActiveMeshRenderer;
+            if (glMesh is null)
+                return false;
+
+            // Check buffers in priority order: triangles, lines, points
+            if (glMesh.TriangleIndicesBuffer?.Data?.ElementCount > 0)
+            {
+                indexElementSize = glMesh.TrianglesElementType;
+                indexCount = glMesh.TriangleIndicesBuffer.Data.ElementCount;
+                return true;
+            }
+
+            if (glMesh.LineIndicesBuffer?.Data?.ElementCount > 0)
+            {
+                indexElementSize = glMesh.LineIndicesElementType;
+                indexCount = glMesh.LineIndicesBuffer.Data.ElementCount;
+                return true;
+            }
+
+            if (glMesh.PointIndicesBuffer?.Data?.ElementCount > 0)
+            {
+                indexElementSize = glMesh.PointIndicesElementType;
+                indexCount = glMesh.PointIndicesBuffer.Data.ElementCount;
+                return true;
+            }
+
+            return false;
+        }
+
+        public override bool TrySyncMeshRendererIndexBuffer(XRMeshRenderer meshRenderer, XRDataBuffer indexBuffer, IndexSize elementSize)
+        {
+            var version = meshRenderer.GetDefaultVersion();
+            var glMesh = GenericToAPI<GLMeshRenderer>(version);
+            if (glMesh is null)
+                return false;
+
+            var glIndexBuffer = GenericToAPI<GLDataBuffer>(indexBuffer);
+            if (glIndexBuffer is null)
+                return false;
+
+            glMesh.SetTriangleIndexBuffer(glIndexBuffer, elementSize);
+            return true;
         }
 
         public override void BindDrawIndirectBuffer(XRDataBuffer buffer)

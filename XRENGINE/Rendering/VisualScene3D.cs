@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
@@ -33,6 +33,7 @@ namespace XREngine.Scene
         public VisualScene3D()
         {
             GPUCommands.UseGpuBvh = _useGpuBvhActive;
+            GPUCommands.UseInternalBvh = _useGpuBvhActive; // Enable internal command BVH for GPU culling
             if (_useGpuBvhActive)
                 BvhRaycasts.WarmShaders();
             else
@@ -81,16 +82,12 @@ namespace XREngine.Scene
             IVolume? collectionVolumeOverride,
             bool collectMirrors)
         {
-            //ProcessPendingRenderableOperations();
-
             XRCamera? cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
             IVolume? collectionVolume = collectionVolumeOverride ?? (cullWithFrustum ? cullingCamera?.WorldFrustum() : null);
             CollectRenderedItems(meshRenderCommands, collectionVolume, camera, collectMirrors);
         }
         public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera, bool collectMirrors)
         {
-            //ProcessPendingRenderableOperations();
-
             bool IntersectionTest(RenderInfo3D item, IVolume? cullingVolume, bool containsOnly)
                 => item.AllowRender(cullingVolume, commands, camera, containsOnly, collectMirrors);
 
@@ -109,7 +106,7 @@ namespace XREngine.Scene
         public IReadOnlyList<RenderInfo3D> Renderables => _renderables;
         private readonly List<RenderInfo3D> _renderables = [];
         private readonly HashSet<RenderInfo3D> _renderableSet = [];
-        private readonly ConcurrentQueue<(RenderInfo3D renderable, bool add)> _pendingRenderableOperations = new(); // staged until GlobalPreRender runs on the render thread
+        private readonly ConcurrentQueue<(RenderInfo3D renderable, bool add)> _pendingRenderableOperations = new(); // staged until PreCollectVisible runs on the collect visible thread
         private bool IsGpuCulling => _isGpuDispatchActive;
         private readonly HashSet<RenderableMesh> _skinnedMeshes = new();
         private uint _lastGpuVisibleDraws;
@@ -129,10 +126,15 @@ namespace XREngine.Scene
         public void RemoveRenderable(RenderInfo3D renderable)
             => _pendingRenderableOperations.Enqueue((renderable, false));
 
+        public override void GlobalCollectVisible()
+        {
+            base.GlobalCollectVisible();
+            ProcessPendingRenderableOperations();
+        }
+
         public override void GlobalPreRender()
         {
             base.GlobalPreRender();
-            ProcessPendingRenderableOperations();
             if (_useGpuBvhActive)
                 BvhRaycasts.ProcessDispatches();
         }
@@ -193,6 +195,7 @@ namespace XREngine.Scene
 
             _useGpuBvhActive = useGpuBvh;
             GPUCommands.UseGpuBvh = useGpuBvh;
+            GPUCommands.UseInternalBvh = useGpuBvh; // Sync internal BVH with UseGpuBvh
 
             if (useGpuBvh)
             {
@@ -261,7 +264,8 @@ namespace XREngine.Scene
 
         private void CollectRenderedItemsGpu(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera, bool collectMirrors)
         {
-            foreach (var renderable in _renderables)
+            var snapshot = _renderables.ToArray();
+            foreach (var renderable in snapshot)
             {
                 if (renderable.AllowRender(collectionVolume, commands, camera, false, collectMirrors))
                     renderable.CollectCommands(commands, camera);
