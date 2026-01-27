@@ -87,6 +87,13 @@ namespace XREngine.Rendering
         /// </summary>
         [YamlIgnore]
         public List<IApiDataBuffer> ActivelyMapping { get; } = [];
+
+        /// <summary>
+        /// Returns true if this buffer is currently mapped by any API wrapper.
+        /// Use this instead of directly checking API-specific wrappers like GLDataBuffer.
+        /// </summary>
+        [YamlIgnore]
+        public bool IsMapped => ActivelyMapping.Count > 0;
         
         private bool _padEndingToVec4 = true;
         public bool PadEndingToVec4

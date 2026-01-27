@@ -584,6 +584,7 @@ namespace XREngine.Rendering
             Time.Timer.PostUpdateFrame += PostUpdate;
             Time.Timer.FixedUpdate += FixedUpdate;
             Time.Timer.SwapBuffers += GlobalSwapBuffers;
+            Time.Timer.PreCollectVisible += PreCollectVisible;
             Time.Timer.CollectVisible += GlobalCollectVisible;
             //Time.Timer.PostUpdateFrame += ProcessTransformQueue;
         }
@@ -595,8 +596,16 @@ namespace XREngine.Rendering
             Time.Timer.PostUpdateFrame -= PostUpdate;
             Time.Timer.FixedUpdate -= FixedUpdate;
             Time.Timer.SwapBuffers -= GlobalSwapBuffers;
+            Time.Timer.PreCollectVisible -= PreCollectVisible;
             Time.Timer.CollectVisible -= GlobalCollectVisible;
             //Time.Timer.PostUpdateFrame -= ProcessTransformQueue;
+        }
+
+        private void PreCollectVisible()
+        {
+            using var profilerScope = Engine.Profiler.Start("WorldInstance.PreCollectVisible");
+            
+            VisualScene.GlobalCollectVisible();
         }
 
         public void GlobalCollectVisible()

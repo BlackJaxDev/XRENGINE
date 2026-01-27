@@ -18,17 +18,25 @@ namespace XREngine.Animation
         public Vector2Keyframe(float second, Vector2 inoutValue, Vector2 inTangent, Vector2 outTangent, EVectorInterpType type)
             : this(second, inoutValue, inoutValue, inTangent, outTangent, type) { }
 
-        public override Vector2 LerpOut(VectorKeyframe<Vector2>? next, float diff, float span)
-          => Interp.Lerp(OutValue, next.InValue, span.IsZero() ? 0.0f : diff / span);
-        public override Vector2 LerpVelocityOut(VectorKeyframe<Vector2>? next, float diff, float span)
-            => span.IsZero() ? Vector2.Zero : (next.InValue - OutValue) / (diff / span);
+                public override Vector2 LerpOut(VectorKeyframe<Vector2>? next, float diff, float span)
+                    => next is null || span.IsZero()
+                                ? OutValue
+                                : Interp.Lerp(OutValue, next.InValue, diff / span);
+                public override Vector2 LerpVelocityOut(VectorKeyframe<Vector2>? next, float diff, float span)
+                        => next is null || span.IsZero() ? Vector2.Zero : (next.InValue - OutValue) / (diff / span);
 
         public override Vector2 CubicBezierOut(VectorKeyframe<Vector2>? next, float diff, float span)
-            => Interp.CubicBezier(OutValue, OutValue + OutTangent * span, next.InValue + next.InTangent * span, next.InValue, span.IsZero() ? 0.0f : diff / span);
+            => next is null || span.IsZero()
+                ? OutValue
+                : Interp.CubicBezier(OutValue, OutValue + OutTangent * span, next.InValue + next.InTangent * span, next.InValue, diff / span);
         public override Vector2 CubicBezierVelocityOut(VectorKeyframe<Vector2>? next, float diff, float span)
-            => Interp.CubicBezierVelocity(OutValue, OutValue + OutTangent * span, next.InValue + next.InTangent * span, next.InValue, span.IsZero() ? 0.0f : diff / span);
+            => next is null || span.IsZero()
+                ? Vector2.Zero
+                : Interp.CubicBezierVelocity(OutValue, OutValue + OutTangent * span, next.InValue + next.InTangent * span, next.InValue, diff / span);
         public override Vector2 CubicBezierAccelerationOut(VectorKeyframe<Vector2>? next, float diff, float span)
-            => Interp.CubicBezierAcceleration(OutValue, OutValue + OutTangent * span, next.InValue + next.InTangent * span, next.InValue, span.IsZero() ? 0.0f : diff / span);
+            => next is null || span.IsZero()
+                ? Vector2.Zero
+                : Interp.CubicBezierAcceleration(OutValue, OutValue + OutTangent * span, next.InValue + next.InTangent * span, next.InValue, diff / span);
 
         public override string WriteToString()
         {
@@ -52,9 +60,9 @@ namespace XREngine.Animation
             float span;
             if (next is null)
             {
-                if (OwningTrack != null && OwningTrack.FirstKey != this)
+                if (OwningTrack?.FirstKey is VectorKeyframe<Vector2> first && first != this)
                 {
-                    next = (VectorKeyframe<Vector2>)OwningTrack.FirstKey;
+                    next = first;
                     span = OwningTrack.LengthInSeconds - Second + next.Second;
                 }
                 else
@@ -62,6 +70,10 @@ namespace XREngine.Animation
             }
             else
                 span = next.Second - Second;
+
+            if (span.IsZero())
+                return;
+
             OutTangent = (next.InValue - OutValue) / span;
         }
 
@@ -71,9 +83,9 @@ namespace XREngine.Animation
             float span;
             if (prev is null)
             {
-                if (OwningTrack != null && OwningTrack.LastKey != this)
+                if (OwningTrack?.LastKey is VectorKeyframe<Vector2> last && last != this)
                 {
-                    prev = (VectorKeyframe<Vector2>)OwningTrack.LastKey;
+                    prev = last;
                     span = OwningTrack.LengthInSeconds - prev.Second + Second;
                 }
                 else
@@ -81,6 +93,10 @@ namespace XREngine.Animation
             }
             else
                 span = Second - prev.Second;
+
+            if (span.IsZero())
+                return;
+
             InTangent = (InValue - prev.OutValue) / span;
         }
 
@@ -265,33 +281,29 @@ namespace XREngine.Animation
         }
 
         public override Vector2 LerpIn(VectorKeyframe<Vector2>? prev, float diff, float span)
-        {
-            throw new NotImplementedException();
-        }
+            => prev is null || span.IsZero()
+                ? InValue
+                : Interp.Lerp(prev.OutValue, InValue, diff / span);
 
         public override Vector2 LerpVelocityIn(VectorKeyframe<Vector2>? prev, float diff, float span)
-        {
-            throw new NotImplementedException();
-        }
+            => prev is null || span.IsZero() ? Vector2.Zero : (InValue - prev.OutValue) / (diff / span);
 
         public override Vector2 CubicBezierIn(VectorKeyframe<Vector2>? prev, float diff, float span)
-        {
-            throw new NotImplementedException();
-        }
+            => prev is null || span.IsZero()
+                ? InValue
+                : Interp.CubicBezier(prev.OutValue, prev.OutValue + prev.OutTangent * span, InValue + InTangent * span, InValue, diff / span);
 
         public override Vector2 CubicBezierVelocityIn(VectorKeyframe<Vector2>? prev, float diff, float span)
-        {
-            throw new NotImplementedException();
-        }
+            => prev is null || span.IsZero()
+                ? Vector2.Zero
+                : Interp.CubicBezierVelocity(prev.OutValue, prev.OutValue + prev.OutTangent * span, InValue + InTangent * span, InValue, diff / span);
 
         public override Vector2 CubicBezierAccelerationIn(VectorKeyframe<Vector2>? prev, float diff, float span)
-        {
-            throw new NotImplementedException();
-        }
+            => prev is null || span.IsZero()
+                ? Vector2.Zero
+                : Interp.CubicBezierAcceleration(prev.OutValue, prev.OutValue + prev.OutTangent * span, InValue + InTangent * span, InValue, diff / span);
 
         public override Vector2 LerpValues(Vector2 a, Vector2 b, float t)
-        {
-            throw new NotImplementedException();
-        }
+            => Vector2.Lerp(a, b, t);
     }
 }

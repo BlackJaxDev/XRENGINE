@@ -143,8 +143,14 @@ namespace XREngine.Rendering.Commands
 
             foreach (var cmd in list)
             {
-                if (skipGpuCommands && cmd is IRenderCommandMesh)
-                    continue;
+                if (skipGpuCommands && cmd is IRenderCommandMesh meshCmd)
+                {
+                    // Skip mesh commands that should go through GPU dispatch,
+                    // but still render meshes that explicitly exclude themselves from GPU indirect.
+                    var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
+                    if (material?.RenderOptions?.ExcludeFromGpuIndirect != true)
+                        continue;
+                }
                 cmd?.Render();
             }
         }

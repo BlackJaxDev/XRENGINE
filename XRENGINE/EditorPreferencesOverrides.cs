@@ -168,6 +168,8 @@ namespace XREngine
         private OverrideableSetting<float> _debugTextMaxLifespanOverride = new();
         private OverrideableSetting<bool> _enableThreadAllocationTrackingOverride = new();
         private OverrideableSetting<bool> _useDebugOpaquePipelineOverride = new();
+        private OverrideableSetting<bool> _forceGpuPassthroughCullingOverride = new();
+        private OverrideableSetting<bool> _allowGpuCpuFallbackOverride = new();
 
         public OverrideableSetting<bool> RenderMesh3DBoundsOverride
         {
@@ -269,6 +271,18 @@ namespace XREngine
         {
             get => _useDebugOpaquePipelineOverride;
             set => SetField(ref _useDebugOpaquePipelineOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ForceGpuPassthroughCullingOverride
+        {
+            get => _forceGpuPassthroughCullingOverride;
+            set => SetField(ref _forceGpuPassthroughCullingOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> AllowGpuCpuFallbackOverride
+        {
+            get => _allowGpuCpuFallbackOverride;
+            set => SetField(ref _allowGpuCpuFallbackOverride, value ?? new());
         }
     }
 }

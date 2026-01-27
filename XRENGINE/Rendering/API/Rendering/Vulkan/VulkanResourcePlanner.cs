@@ -36,10 +36,10 @@ internal sealed class VulkanResourcePlanner
         BuildPlan();
     }
 
-    public bool TryGetTextureDescriptor(string name, out TextureResourceDescriptor descriptor)
+    public bool TryGetTextureDescriptor(string name, out TextureResourceDescriptor? descriptor)
         => _textures.TryGetValue(name, out descriptor);
 
-    public bool TryGetFrameBufferDescriptor(string name, out FrameBufferResourceDescriptor descriptor)
+    public bool TryGetFrameBufferDescriptor(string name, out FrameBufferResourceDescriptor? descriptor)
         => _frameBuffers.TryGetValue(name, out descriptor);
 
     private void BuildPlan()

@@ -61,6 +61,7 @@ namespace XREngine.Scene
         {
             using var sample = Engine.Profiler.Start("VisualScene.GlobalSwapBuffers");
             GenericRenderTree.Swap();
+            GPUCommands.SwapCommandBuffers();
         }
 
         public void Initialize()

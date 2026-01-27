@@ -25,7 +25,6 @@ public unsafe partial class VulkanRenderer
     {
         AttachmentDescription[] descriptions = new AttachmentDescription[signature.Length];
         int colorCount = 0;
-        bool hasDepthAttachment = false;
 
         for (int i = 0; i < signature.Length; i++)
         {
@@ -34,8 +33,6 @@ public unsafe partial class VulkanRenderer
 
             if (attachment.Role == AttachmentRole.Color)
                 colorCount++;
-            else
-                hasDepthAttachment = true;
         }
 
         AttachmentReference[] colorRefs = colorCount > 0

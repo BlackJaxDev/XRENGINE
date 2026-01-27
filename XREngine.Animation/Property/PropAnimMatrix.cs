@@ -78,13 +78,13 @@ namespace XREngine.Animation
         public override Type ValueType => typeof(Matrix4x4);
 
         [Browsable(false)]
-        public new MatrixKeyframe Next
+        public new MatrixKeyframe? Next
         {
             get => _next as MatrixKeyframe;
             set => _next = value;
         }
         [Browsable(false)]
-        public new MatrixKeyframe Prev
+        public new MatrixKeyframe? Prev
         {
             get => _prev as MatrixKeyframe;
             set => _prev = value;
@@ -92,17 +92,24 @@ namespace XREngine.Animation
 
         public Matrix4x4 Interpolate(float second)
         {
-            if (_prev == this || _next == this)
+            var prev = Prev;
+            var next = Next;
+
+            if (prev is null || next is null || prev == this || next == this)
                 return Value;
 
-            if (second < Second && _prev.Second > Second)
-                return Prev.Interpolate(second);
+            if (second < Second && prev.Second > Second)
+                return prev.Interpolate(second);
 
-            if (second > _next.Second && _next.Second > Second)
-                return Next.Interpolate(second);
+            if (second > next.Second && next.Second > Second)
+                return next.Interpolate(second);
 
-            float time = (second - Second) / (_next.Second - second);
-            return Matrix4x4.Lerp(Value, Next.Value, time);
+            float denom = next.Second - second;
+            if (denom.IsZero())
+                return next.Value;
+
+            float time = (second - Second) / denom;
+            return Matrix4x4.Lerp(Value, next.Value, time);
         }
 
         public override void ReadFromString(string str)

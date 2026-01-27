@@ -393,10 +393,10 @@ public static partial class EditorImGuiUI
                 bool mixed = !allActive && !allInactive;
                 bool active = allActive;
                 if (mixed)
-                    ImGui.PushItemFlag(ImGuiItemFlags.MixedValue, true);
+                    ImGui.PushStyleVar(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * 0.6f);
                 bool toggled = ImGui.Checkbox("##SceneNodeActiveSelfMulti", ref active);
                 if (mixed)
-                    ImGui.PopItemFlag();
+                    ImGui.PopStyleVar();
                 if (toggled)
                 {
                     foreach (var node in nodes)
@@ -411,10 +411,10 @@ public static partial class EditorImGuiUI
                 bool mixed = !allActive && !allInactive;
                 bool active = allActive;
                 if (mixed)
-                    ImGui.PushItemFlag(ImGuiItemFlags.MixedValue, true);
+                    ImGui.PushStyleVar(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * 0.6f);
                 bool toggled = ImGui.Checkbox("##SceneNodeActiveInHierarchyMulti", ref active);
                 if (mixed)
-                    ImGui.PopItemFlag();
+                    ImGui.PopStyleVar();
                 if (toggled)
                 {
                     foreach (var node in nodes)
@@ -1159,10 +1159,10 @@ public static partial class EditorImGuiUI
                 bool mixed = !allActive && !allInactive;
                 bool active = allActive;
                 if (mixed)
-                    ImGui.PushItemFlag(ImGuiItemFlags.MixedValue, true);
+                    ImGui.PushStyleVar(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * 0.6f);
                 bool toggled = ImGui.Checkbox("##ComponentActiveMulti", ref active);
                 if (mixed)
-                    ImGui.PopItemFlag();
+                    ImGui.PopStyleVar();
                 if (toggled)
                 {
                     foreach (var component in componentList)

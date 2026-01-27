@@ -40,8 +40,8 @@ namespace XREngine.Rendering.Models.Materials
     }
     public class ShaderArrayValueHandler<T> : IUniformableArray<T> where T : ShaderVar
     {
-        public int Length => Values.Length;
-        public T[] Values { get; set; }
+        public int Length => Values?.Length ?? 0;
+        public T[]? Values { get; set; }
 
         public ShaderArrayValueHandler()
         {

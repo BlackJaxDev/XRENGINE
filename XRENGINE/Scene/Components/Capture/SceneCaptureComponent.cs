@@ -278,7 +278,7 @@ namespace XREngine.Components.Lights
                     continue;
 
                 if (!ReferenceEquals(faceTransform.Parent, probeTransform))
-                    faceTransform.SetParent(probeTransform, false, true);
+                    faceTransform.SetParent(probeTransform, false, EParentAssignmentMode.Immediate);
 
                 faceTransform.Translation = Vector3.Zero;
                 faceTransform.Rotation = FaceRotationOffsets[i];

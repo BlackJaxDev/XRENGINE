@@ -550,6 +550,7 @@ public static partial class EditorImGuiUI
             string label = entry.IsDirectory ? $"[DIR] {entry.Name}" : entry.Name;
             bool activated = ImGui.Selectable(label, isSelected, selectableFlags);
             bool hovered = ImGui.IsItemHovered();
+            bool suppressActivation = ImGui.IsMouseDragging(ImGuiMouseButton.Left);
 
             if (hovered)
                 ImGui.SetTooltip(entry.Path);
@@ -561,7 +562,7 @@ public static partial class EditorImGuiUI
 
             if (entry.IsDirectory)
             {
-                if (activated || (hovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left)))
+                if (!suppressActivation && (activated || (hovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))))
                 {
                     state.CurrentDirectory = entry.Path;
                     ClearAssetExplorerSelection(state);
@@ -569,12 +570,12 @@ public static partial class EditorImGuiUI
                     return true;
                 }
             }
-            else if (activated)
+            else if (activated && !suppressActivation)
             {
                 SetAssetExplorerSelection(state, entry.Path);
             }
 
-            if (!entry.IsDirectory && hovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+            if (!entry.IsDirectory && hovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left) && !suppressActivation)
             {
                 HandleAssetExplorerFileActivation(state, entry);
             }
@@ -678,6 +679,7 @@ public static partial class EditorImGuiUI
             bool leftClicked = ImGui.IsItemClicked(ImGuiMouseButton.Left);
             bool rightClicked = ImGui.IsItemClicked(ImGuiMouseButton.Right);
             bool doubleClicked = hovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left);
+            bool suppressActivation = ImGui.IsMouseDragging(ImGuiMouseButton.Left);
 
             if (hovered)
                 ImGui.SetTooltip(entry.Path);
@@ -691,7 +693,7 @@ public static partial class EditorImGuiUI
 
             if (entry.IsDirectory)
             {
-                if (doubleClicked)
+                if (doubleClicked && !suppressActivation)
                 {
                     state.CurrentDirectory = entry.Path;
                     ClearAssetExplorerSelection(state);
@@ -699,12 +701,12 @@ public static partial class EditorImGuiUI
                     directoryChanged = true;
                 }
             }
-            else if (leftClicked)
+            else if (leftClicked && !suppressActivation)
             {
                 Debug.Out($"[AssetExplorer] Left click on file: {entry.Path}");
                 SetAssetExplorerSelection(state, entry.Path);
             }
-            else if (!entry.IsDirectory && doubleClicked)
+            else if (!entry.IsDirectory && doubleClicked && !suppressActivation)
             {
                 Debug.Out($"[AssetExplorer] Double click on file: {entry.Path}");
                 HandleAssetExplorerFileActivation(state, entry);

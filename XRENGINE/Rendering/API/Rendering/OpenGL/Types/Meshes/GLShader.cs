@@ -1,4 +1,5 @@
 using Extensions;
+using System.IO;
 using Silk.NET.OpenGL;
 using XREngine.Data.Core;
 
@@ -57,6 +58,51 @@ namespace XREngine.Rendering.OpenGL
             public EShaderType Mode => Data.Type;
 
             public string? LocalIncludeDirectoryPath { get; set; } = null;
+
+            private static string? GetEngineShaderRoot()
+                => string.IsNullOrWhiteSpace(Engine.Assets?.EngineAssetsPath)
+                    ? null
+                    : Path.Combine(Engine.Assets!.EngineAssetsPath, "Shaders");
+
+            private static string? GetGameShaderRoot()
+                => string.IsNullOrWhiteSpace(Engine.Assets?.GameAssetsPath)
+                    ? null
+                    : Path.Combine(Engine.Assets!.GameAssetsPath, "Shaders");
+
+            private static string? FindIncludeInShaderRoots(string includePath)
+            {
+                if (string.IsNullOrWhiteSpace(includePath))
+                    return null;
+
+                bool hasDirectory = includePath.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) >= 0;
+                string?[] roots = [GetEngineShaderRoot(), GetGameShaderRoot()];
+
+                foreach (string? root in roots)
+                {
+                    if (string.IsNullOrWhiteSpace(root))
+                        continue;
+
+                    if (hasDirectory)
+                    {
+                        string candidate = Path.Combine(root, includePath);
+                        if (File.Exists(candidate))
+                            return candidate;
+                        continue;
+                    }
+
+                    try
+                    {
+                        foreach (string candidate in Directory.EnumerateFiles(root, includePath, SearchOption.AllDirectories))
+                            return candidate;
+                    }
+                    catch
+                    {
+                        // Ignore IO errors; fall through to other roots.
+                    }
+                }
+
+                return null;
+            }
 
             public bool IsCompiled
             {
@@ -238,8 +284,8 @@ namespace XREngine.Rendering.OpenGL
                                 string?[] dirCheckPaths = 
                                 [
                                     LocalIncludeDirectoryPath,
-                                    //File?.DirectoryPath,
-                                    //Engine.Game?.DirectoryPath
+                                    GetEngineShaderRoot(),
+                                    GetGameShaderRoot()
                                 ];
                                 foreach (string? dirPath in dirCheckPaths)
                                 {
@@ -251,6 +297,12 @@ namespace XREngine.Rendering.OpenGL
                                             break;
                                     }
                                 }
+                                if (!valid)
+                                {
+                                    fullPath = FindIncludeInShaderRoots(includePath);
+                                    valid = !string.IsNullOrWhiteSpace(fullPath);
+                                }
+
                                 includePath = !valid ? Path.GetFullPath(includePath) : fullPath ?? string.Empty;
                             }
                             if (resolvedPaths.Contains(includePath))

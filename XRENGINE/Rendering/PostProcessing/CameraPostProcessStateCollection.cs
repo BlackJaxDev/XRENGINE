@@ -45,7 +45,7 @@ public sealed class CameraPostProcessStateCollection
         }
     }
 
-    public bool TryGetState(Guid pipelineId, out PipelinePostProcessState state)
+    public bool TryGetState(Guid pipelineId, out PipelinePostProcessState? state)
     {
         lock (_pipelinesSync)
             return _pipelines.TryGetValue(pipelineId, out state);
@@ -104,7 +104,7 @@ public sealed class PipelinePostProcessState
         }
     }
 
-    public bool TryGetStage(string stageKey, out PostProcessStageState state)
+    public bool TryGetStage(string stageKey, out PostProcessStageState? state)
     {
         lock (_stagesSync)
             return _stages.TryGetValue(stageKey, out state);
@@ -215,7 +215,7 @@ public sealed class PostProcessStageState : IDisposable
         return false;
     }
 
-    public T GetValue<T>(string parameterName, T fallback = default)
+    public T? GetValue<T>(string parameterName, T? fallback = default)
     {
         if (!_values.TryGetValue(parameterName, out var raw) || raw is null)
             return fallback;

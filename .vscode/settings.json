@@ -1,3 +1,3 @@
 {
-    "cmake.sourceDirectory": "C:/Users/DavidEddy/Documents/XRENGINE/Build/Dependencies/CoACD/sources/spdlog/example"
+    "cmake.sourceDirectory": "${workspaceFolder}/Build/Dependencies/CoACD/sources/spdlog/example"
 }

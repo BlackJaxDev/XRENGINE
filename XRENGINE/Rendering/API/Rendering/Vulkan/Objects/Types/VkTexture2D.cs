@@ -350,7 +350,7 @@ public unsafe partial class VulkanRenderer
             return new AttachmentViewKey(baseMip, 1, 0, 1, ImageViewType.Type2D, AspectFlags);
         }
 
-        protected void TransitionImageLayout(ImageLayout oldLayout, ImageLayout newLayout)
+        internal void TransitionImageLayout(ImageLayout oldLayout, ImageLayout newLayout)
         {
             AssembleTransitionImageLayout(oldLayout, newLayout, out ImageMemoryBarrier barrier, out PipelineStageFlags src, out PipelineStageFlags dst);
             using var scope = Renderer.NewCommandScope();

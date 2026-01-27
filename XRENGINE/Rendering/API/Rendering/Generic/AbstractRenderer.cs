@@ -7,6 +7,7 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Components;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -192,6 +193,14 @@ namespace XREngine.Rendering
         }
 
         public bool TryRenderImGui(XRViewport? viewport, UICanvasComponent? canvas, XRCamera? camera, Action draw)
+            => TryRenderImGui(viewport, canvas, camera, draw, allowMultipleInFrame: false);
+
+        public bool TryRenderImGui(
+            XRViewport? viewport,
+            UICanvasComponent? canvas,
+            XRCamera? camera,
+            Action draw,
+            bool allowMultipleInFrame)
         {
             if (!SupportsImGui)
                 return false;
@@ -207,7 +216,7 @@ namespace XREngine.Rendering
                 return false;
 
             float timestamp = Engine.Time.Timer.Render.LastTimestamp;
-            if (MathF.Abs(timestamp - _lastImGuiTimestamp) <= float.Epsilon)
+            if (!allowMultipleInFrame && MathF.Abs(timestamp - _lastImGuiTimestamp) <= float.Epsilon)
                 return false;
 
             _lastImGuiTimestamp = timestamp;
@@ -597,6 +606,25 @@ namespace XREngine.Rendering
         /// Implementations should check triangle/line/point element buffers according to active primitive.
         /// </summary>
         public abstract bool ValidateIndexedVAO(XRMeshRenderer.BaseVersion? version);
+
+        /// <summary>
+        /// Returns true if an index (element) buffer is bound, and outputs the index element type.
+        /// </summary>
+        /// <param name="version">The mesh renderer version to check, or null to check the currently bound VAO.</param>
+        /// <param name="indexElementSize">The size of each index element (u8, u16, or u32).</param>
+        /// <param name="indexCount">The number of indices in the element buffer.</param>
+        /// <returns>True if an index buffer is bound and valid.</returns>
+        public abstract bool TryGetIndexBufferInfo(XRMeshRenderer.BaseVersion? version, out IndexSize indexElementSize, out uint indexCount);
+
+        /// <summary>
+        /// Syncs the mesh renderer's triangle index buffer with the provided data buffer.
+        /// Used for indirect rendering to share the atlas index buffer across all indirect draws.
+        /// </summary>
+        /// <param name="meshRenderer">The mesh renderer whose index buffer should be updated.</param>
+        /// <param name="indexBuffer">The index buffer containing triangle indices.</param>
+        /// <param name="elementSize">The size of each index element (u16 or u32).</param>
+        /// <returns>True if the sync was successful.</returns>
+        public abstract bool TrySyncMeshRendererIndexBuffer(XRMeshRenderer meshRenderer, XRDataBuffer indexBuffer, IndexSize elementSize);
 
         /// <summary>
         /// Ensures vertex attributes and buffer bindings for the active program are configured on the VAO for the given mesh renderer version.

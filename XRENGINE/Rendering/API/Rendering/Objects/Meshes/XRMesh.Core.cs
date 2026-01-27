@@ -7,8 +7,6 @@ using XREngine.Core.Files;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Core;
-using XREngine.Data.Geometry;
-using XREngine.Data.Rendering;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 using Matrix4x4 = System.Numerics.Matrix4x4;
@@ -138,9 +136,9 @@ public partial class XRMesh : XRAsset
     [MemoryPackIgnore]
     public XRDataBuffer? TangentsBuffer { get; internal set; }
     [MemoryPackIgnore]
-    public XRDataBuffer[]? ColorBuffers { get; internal set; } = [];
+    public XRDataBuffer?[]? ColorBuffers { get; internal set; } = [];
     [MemoryPackIgnore]
-    public XRDataBuffer[]? TexCoordBuffers { get; internal set; } = [];
+    public XRDataBuffer?[]? TexCoordBuffers { get; internal set; } = [];
     [MemoryPackIgnore]
     public XRDataBuffer? InterleavedVertexBuffer { get; private set; }
 

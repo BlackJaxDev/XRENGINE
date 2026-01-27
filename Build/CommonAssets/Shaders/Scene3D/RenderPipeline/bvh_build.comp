@@ -9,8 +9,9 @@
 #define OVERFLOW_QUEUE 4u
 #define OVERFLOW_BVH 8u
 
-layout (constant_id = 0) const uint MAX_LEAF_PRIMITIVES = 1u; // number of primitives per leaf
-layout (constant_id = 1) const uint BVH_MODE = 0u; // 0 = Morton-only, 1 = Morton + SAH refinement
+// Note: Using uniforms instead of Vulkan-specific specialization constants for OpenGL compatibility.
+uniform uint MAX_LEAF_PRIMITIVES; // number of primitives per leaf (default 1)
+uniform uint BVH_MODE;            // 0 = Morton-only, 1 = Morton + SAH refinement
 
 #include "bvh_nodes.glslinc"
 

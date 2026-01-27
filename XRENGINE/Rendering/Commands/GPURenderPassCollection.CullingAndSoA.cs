@@ -7,18 +7,21 @@ using System.Text;
 using System.Threading;
 using XREngine;
 using XREngine.Data;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Compute;
-using XREngine.Rendering.OpenGL;
-using static XREngine.Rendering.OpenGL.OpenGLRenderer;
+using static XREngine.Rendering.GpuDispatchLogger;
 
 namespace XREngine.Rendering.Commands
 {
     public sealed partial class GPURenderPassCollection
     {
+        private const uint ComputeWorkGroupSize = 256;
+
         // Set true to bypass GPU frustum/flag culling and treat all commands as visible (debug only)
-        public bool ForcePassthroughCulling { get; set; } = true;
+        // Now reads from Editor Preferences instead of hardcoded value
+        public bool ForcePassthroughCulling => Engine.EditorPreferences?.Debug?.ForceGpuPassthroughCulling ?? true;
 
         private int _culledSanitizerLogBudget = 8;
         private int _passthroughFallbackLogBudget = 4;
@@ -38,6 +41,22 @@ namespace XREngine.Rendering.Commands
         private const uint PassFilterDebugMaxSamples = 32;
 
         /// <summary>
+        /// Resets all log budgets to their initial values. Call periodically (e.g., per-scene or per-frame) to restore logging.
+        /// </summary>
+        public void ResetLogBudgets()
+        {
+            _culledSanitizerLogBudget = 8;
+            _passthroughFallbackLogBudget = 4;
+            _passthroughFallbackForceLogBudget = 2;
+            _cpuFallbackRejectLogBudget = 6;
+            _cpuFallbackDetailLogBudget = 8;
+            _sanitizerDetailLogBudget = 4;
+            _sanitizerSampleLogBudget = 12;
+            _copyAtomicOverflowLogBudget = 4;
+            _filteredCountLogBudget = 6;
+        }
+
+        /// <summary>
         /// Reads unsigned integer values from a mapped buffer into the specified span.
         /// </summary>
         /// <remarks>If the buffer is not mapped, the method logs a warning and sets all elements of the
@@ -48,7 +67,7 @@ namespace XREngine.Rendering.Commands
         /// <exception cref="Exception">Thrown if the buffer's mapped address is null.</exception>
         private unsafe void ReadUints(XRDataBuffer buf, Span<uint> values)
         {
-            if (buf.APIWrappers.FirstOrDefault() is GLDataBuffer firstApiWrapper && !firstApiWrapper.IsMapped)
+            if (!buf.IsMapped)
             {
                 Debug.LogWarning($"{FormatDebugPrefix("Buffers")} ReadUints failed - buffer not mapped");
                 for (int i = 0; i < values.Length; i++)
@@ -60,7 +79,7 @@ namespace XREngine.Rendering.Commands
 
             var addr = buf.GetMappedAddresses().FirstOrDefault();
             if (addr == IntPtr.Zero)
-                throw new Exception("ReadUints failed - null pointer");
+                throw new InvalidOperationException("ReadUints failed - buffer mapped address is null");
 
             uint* ptr = (uint*)addr.Pointer;
             for (int i = 0; i < values.Length; i++)
@@ -89,10 +108,7 @@ namespace XREngine.Rendering.Commands
         /// <exception cref="Exception">Thrown if the buffer's mapped address is null.</exception>
         private unsafe void WriteUints(XRDataBuffer buf, ReadOnlySpan<uint> values)
         {
-            var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
-            bool isMapped = glWrapper?.IsMapped ?? false;
-
-            if (!isMapped)
+            if (!buf.IsMapped)
             {
                 for (uint i = 0; i < values.Length; i++)
                     buf.SetDataRawAtIndex(i, values[(int)i]);
@@ -106,7 +122,7 @@ namespace XREngine.Rendering.Commands
 
             var addr = buf.GetMappedAddresses().FirstOrDefault();
             if (addr == IntPtr.Zero)
-                throw new Exception("WriteUints failed - null pointer");
+                throw new InvalidOperationException("WriteUints failed - buffer mapped address is null");
 
             uint* ptr = (uint*)addr.Pointer;
             for (int i = 0; i < values.Length; i++)
@@ -127,18 +143,14 @@ namespace XREngine.Rendering.Commands
         /// <exception cref="Exception">Thrown if the mapped memory address is null.</exception>
         private unsafe uint ReadUIntAt(XRDataBuffer buf, uint index)
         {
-            var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
-            bool isMapped = glWrapper?.IsMapped ?? false;
             bool mappedTemporarily = false;
 
             try
             {
-                if (!isMapped)
+                if (!buf.IsMapped)
                 {
                     buf.MapBufferData();
-                    glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
-                    isMapped = glWrapper?.IsMapped ?? false;
-                    if (!isMapped)
+                    if (!buf.IsMapped)
                         return buf.GetDataRawAtIndex<uint>(index);
                     mappedTemporarily = true;
                 }
@@ -147,7 +159,7 @@ namespace XREngine.Rendering.Commands
 
                 var addr = buf.GetMappedAddresses().FirstOrDefault();
                 if (addr == IntPtr.Zero)
-                    throw new Exception("ReadUIntAt failed - null pointer");
+                    throw new InvalidOperationException("ReadUIntAt failed - buffer mapped address is null");
 
                 return ((uint*)addr.Pointer)[index];
             }
@@ -170,10 +182,7 @@ namespace XREngine.Rendering.Commands
         /// <exception cref="Exception">Thrown if the buffer's mapped address is null.</exception>
         private unsafe void WriteUIntAt(XRDataBuffer buf, uint index, uint value)
         {
-            var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
-            bool isMapped = glWrapper?.IsMapped ?? false;
-
-            if (!isMapped)
+            if (!buf.IsMapped)
             {
                 buf.SetDataRawAtIndex(index, value);
                 int byteOffset = checked((int)(index * sizeof(uint)));
@@ -186,7 +195,7 @@ namespace XREngine.Rendering.Commands
 
             var addr = buf.GetMappedAddresses().FirstOrDefault();
             if (addr == IntPtr.Zero)
-                throw new Exception("WriteUIntAt failed - null pointer");
+                throw new InvalidOperationException("WriteUIntAt failed - buffer mapped address is null");
 
             ((uint*)addr.Pointer)[index] = value;
 
@@ -201,18 +210,14 @@ namespace XREngine.Rendering.Commands
         /// <exception cref="Exception">Thrown if the buffer is mapped but the mapped address is a null pointer.</exception>
     private unsafe uint ReadUInt(XRDataBuffer buf)
         {
-            var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
-            bool isMapped = glWrapper?.IsMapped ?? false;
             bool mappedTemporarily = false;
 
             try
             {
-                if (!isMapped)
+                if (!buf.IsMapped)
                 {
                     buf.MapBufferData();
-                    glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
-                    isMapped = glWrapper?.IsMapped ?? false;
-                    if (!isMapped)
+                    if (!buf.IsMapped)
                         return buf.GetDataRawAtIndex<uint>(0);
                     mappedTemporarily = true;
                 }
@@ -221,7 +226,7 @@ namespace XREngine.Rendering.Commands
 
                 var addr = buf.GetMappedAddresses().FirstOrDefault();
                 if (addr == IntPtr.Zero)
-                    throw new Exception("ReadUInt failed - null pointer");
+                    throw new InvalidOperationException("ReadUInt failed - buffer mapped address is null");
 
                 return *((uint*)addr.Pointer);
             }
@@ -237,14 +242,10 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         /// <param name="buf">The <see cref="XRDataBuffer"/> to which the value will be written. The buffer must be mapped.</param>
         /// <param name="value">The unsigned integer value to write to the buffer.</param>
-        /// <returns></returns>
-        /// <exception cref="Exception"></exception>
-    private unsafe uint WriteUInt(XRDataBuffer buf, uint value)
+        /// <exception cref="InvalidOperationException">Thrown if the buffer is mapped but the mapped address is null.</exception>
+        private unsafe void WriteUInt(XRDataBuffer buf, uint value)
         {
-            var glWrapper = buf.APIWrappers.FirstOrDefault() as GLDataBuffer;
-            bool isMapped = glWrapper?.IsMapped ?? false;
-
-            if (!isMapped)
+            if (!buf.IsMapped)
             {
                 buf.SetDataRawAtIndex(0, value);
                 buf.PushSubData(0, (uint)sizeof(uint));
@@ -256,20 +257,18 @@ namespace XREngine.Rendering.Commands
 
                 var addr = buf.GetMappedAddresses().FirstOrDefault();
                 if (addr == IntPtr.Zero)
-                    throw new Exception("WriteUInt failed - null pointer");
+                    throw new InvalidOperationException("WriteUInt failed - buffer mapped address is null");
 
-                *((uint*)addr.Pointer) = value;
+                *(uint*)addr.Pointer = value;
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
             }
 
-            if (IndirectDebug.LogCountBufferWrites && (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging))
+            if (IndirectDebug.LogCountBufferWrites && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
             {
                 string label = buf.AttributeName ?? buf.Target.ToString();
                 Debug.Out($"{FormatDebugPrefix("Indirect")} [Indirect/Count] {label} <= {value}");
             }
-
-            return value;
         }
 
         private void ResetVisibleCounters()
@@ -337,7 +336,7 @@ namespace XREngine.Rendering.Commands
 
         private unsafe void DumpPassFilterDebug(uint sampleCount)
         {
-            if (! (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging))
+            if (!Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
                 return;
 
             if (_passFilterDebugBuffer is null || sampleCount == 0)
@@ -398,7 +397,13 @@ namespace XREngine.Rendering.Commands
 
         public void Cull(GPUScene gpuCommands, XRCamera? camera)
         {
+            using var timing = BeginTiming("GPURenderPassCollection.Cull");
+            
+            LogCullingStart("Cull", gpuCommands.TotalCommandCount);
             Dbg("Cull invoked","Culling");
+
+            // Rebuild internal BVH if dirty (before we try to use it)
+            gpuCommands.RebuildBvhIfDirty();
 
             //Early out if no commands
             uint numCommands = gpuCommands.TotalCommandCount;
@@ -407,14 +412,26 @@ namespace XREngine.Rendering.Commands
                 VisibleCommandCount = 0;
                 VisibleInstanceCount = 0;
                 Dbg("Cull: no commands","Culling");
+                Log(LogCategory.Culling, LogLevel.Debug, "Cull: no commands - early exit");
                 return;
             }
 
             // Passthrough path (testing) & copy all input commands to culled buffer and mark all visible
-            //if (ForcePassthroughCulling)
+            if (ForcePassthroughCulling)
+            {
+                Log(LogCategory.Culling, LogLevel.Debug, "Using passthrough culling path (forced)");
                 PassthroughCull(gpuCommands, numCommands);
-            //else
-            //    Cull(gpuCommands, camera, numCommands);
+            }
+            else if (ShouldUseBvhCulling(gpuCommands))
+            {
+                Log(LogCategory.Culling, LogLevel.Debug, "Using BVH culling path");
+                BvhCull(gpuCommands, camera, numCommands);
+            }
+            else
+            {
+                Log(LogCategory.Culling, LogLevel.Debug, "Using frustum culling path");
+                FrustumCull(gpuCommands, camera, numCommands);
+            }
 
             bool sanitizerOk = true;
             if (VisibleCommandCount > 0)
@@ -425,62 +442,382 @@ namespace XREngine.Rendering.Commands
                 ResetVisibleCounters();
 
                 string reason = _skipGpuSubmissionReason ?? "command corruption detected";
-                Debug.LogWarning($"{FormatDebugPrefix("Culling")} Skipping GPU submission: {reason}");
+                Warn(LogCategory.Culling, "Skipping GPU submission: {0}", reason);
                 return;
             }
 
+            LogCullingResult("Cull", numCommands, VisibleCommandCount, VisibleInstanceCount);
+
             if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
-                Debug.Out($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands ({VisibleInstanceCount} instances) in CulledSceneToRenderBuffer");
+                XREngine.Debug.Out($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands ({VisibleInstanceCount} instances) in CulledSceneToRenderBuffer");
         }
 
-        //private void Cull(GPUScene gpuCommands, XRCamera? camera, uint numCommands)
-        //{
-        //    if (_cullingComputeShader is null || camera is null)
-        //        return;
-            
-        //    var planes = camera.WorldFrustum().Planes.Select(x => x.AsVector4()).ToArray();
-        //    if (planes.Length >= 6)
-        //        _cullingComputeShader.Uniform("FrustumPlanes", planes);
-        //    _cullingComputeShader.Uniform("MaxRenderDistance", camera.FarZ);
-        //    _cullingComputeShader.Uniform("CameraLayerMask", unchecked((uint)0xFFFFFFFF));
-        //    _cullingComputeShader.Uniform("CurrentRenderPass", RenderPass);
-        //    _cullingComputeShader.Uniform("InputCommandCount", (int)numCommands);
-        //    _cullingComputeShader.Uniform("MaxCulledCommands", (int)CulledSceneToRenderBuffer.ElementCount);
-        //    _cullingComputeShader.Uniform("DisabledFlagsMask", 0u);
-        //    _cullingComputeShader.Uniform("CameraPosition", camera.Transform.WorldTranslation);
+        /// <summary>
+        /// GPU frustum culling mode – performs actual frustum culling on the GPU using the existing culling compute shader.
+        /// </summary>
+        /// <remarks>
+        /// Uses the GPURenderCulling.comp shader to perform per-command frustum sphere tests.
+        /// Commands outside the camera frustum are rejected before being appended to the culled buffer.
+        /// </remarks>
+        private void FrustumCull(GPUScene scene, XRCamera? camera, uint numCommands)
+        {
+            _skipGpuSubmissionThisPass = false;
+            _skipGpuSubmissionReason = null;
 
-        //    _cullingComputeShader.BindBuffer(gpuCommands.CommandsInputBuffer, 0);
-        //    _cullingComputeShader.BindBuffer(CulledSceneToRenderBuffer, 1);
-        //    if (_culledCountBuffer is not null)
-        //        _cullingComputeShader.BindBuffer(_culledCountBuffer, 2);
-        //    if (_cullingOverflowFlagBuffer is not null)
-        //        _cullingComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 3);
-        //    if (_statsBuffer != null)
-        //        _cullingComputeShader.BindBuffer(_statsBuffer, 8);
+            // Fall back to passthrough if we don't have the required resources
+            if (CulledSceneToRenderBuffer is null || _cullingComputeShader is null || _culledCountBuffer is null || camera is null)
+            {
+                Dbg("FrustumCull: missing resources, falling back to passthrough", "Culling");
+                PassthroughCull(scene, numCommands);
+                return;
+            }
 
-        //    (uint x, uint y, uint z) = ComputeDispatch.ForCommands(numCommands);
-        //    _cullingComputeShader.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
-        //    Dbg($"Cull dispatched groups={x} cmds={numCommands}", "Culling");
+            XRDataBuffer src = scene.AllLoadedCommandsBuffer;
+            XRDataBuffer dst = CulledSceneToRenderBuffer;
 
-        //    if (_culledCountBuffer is not null)
-        //    {
-        //        try
-        //        {
-        //            VisibleCommandCount = ReadUInt(_culledCountBuffer); // existing helper
-        //            Dbg($"Cull visible={VisibleCommandCount}", "Culling");
-        //        }
-        //        catch
-        //        {
-        //            VisibleCommandCount = CulledSceneToRenderBuffer.ElementCount;
-        //            Dbg("Cull readback failed - fallback", "Culling");
-        //        }
-        //    }
-        //    else
-        //        VisibleCommandCount = CulledSceneToRenderBuffer.ElementCount;
-        //}
+            uint capacity = CulledSceneToRenderBuffer.ElementCount;
+            uint inputCount = Math.Min(numCommands, capacity);
+
+            if (inputCount == 0)
+            {
+                ResetVisibleCounters();
+                Dbg("FrustumCull: no commands", "Culling");
+                return;
+            }
+
+            bool debugLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+
+            if (IndirectDebug.ProbeSourceCommandsBeforeCopy)
+                DumpSourceCommandProbe(scene, inputCount);
+
+            // Reset counters before dispatch
+            ResetVisibleCounters();
+            if (_cullingOverflowFlagBuffer is not null)
+                WriteUInt(_cullingOverflowFlagBuffer, 0u);
+
+            // Extract frustum planes from camera
+            Frustum? frustumNullable = camera.WorldFrustum();
+            if (frustumNullable is null)
+            {
+                Dbg("FrustumCull: no frustum available, falling back to passthrough", "Culling");
+                PassthroughCull(scene, numCommands);
+                return;
+            }
+            Frustum frustum = frustumNullable.Value;
+
+            // Get frustum planes (6 planes: near, far, left, right, top, bottom)
+            // Each plane is stored as vec4(normal.xyz, d) where the plane equation is: dot(normal, point) + d = 0
+            Vector4[] planeData = ExtractFrustumPlanesAsVec4(frustum);
+
+            // Set uniforms for the culling shader
+            _cullingComputeShader.Uniform("FrustumPlanes", planeData);
+            _cullingComputeShader.Uniform("MaxRenderDistance", camera.FarZ * camera.FarZ); // squared distance
+            _cullingComputeShader.Uniform("CameraLayerMask", uint.MaxValue); // TODO: get from camera
+            _cullingComputeShader.Uniform("CurrentRenderPass", RenderPass);
+            _cullingComputeShader.Uniform("InputCommandCount", (int)inputCount);
+            _cullingComputeShader.Uniform("MaxCulledCommands", (int)capacity);
+            _cullingComputeShader.Uniform("DisabledFlagsMask", 0u);
+            _cullingComputeShader.Uniform("CameraPosition", camera.Transform?.WorldTranslation ?? System.Numerics.Vector3.Zero);
+
+            // Bind buffers
+            _cullingComputeShader.BindBuffer(src, 0);
+            _cullingComputeShader.BindBuffer(dst, 1);
+            _cullingComputeShader.BindBuffer(_culledCountBuffer, 2);
+            if (_cullingOverflowFlagBuffer is not null)
+                _cullingComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 3);
+            if (_statsBuffer is not null)
+                _cullingComputeShader.BindBuffer(_statsBuffer, 8);
+
+            // Dispatch compute shader
+            (uint x, uint y, uint z) = ComputeDispatch.ForCommands(inputCount);
+            {
+                using var cullTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Cull, inputCount);
+                _cullingComputeShader.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            }
+
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+
+            // Check for overflow
+            if (_cullingOverflowFlagBuffer is not null)
+            {
+                uint overflowCount = ReadUInt(_cullingOverflowFlagBuffer);
+                if (overflowCount > 0)
+                {
+                    if (_copyAtomicOverflowLogBudget > 0)
+                    {
+                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} Frustum cull overflow: {overflowCount} commands exceeded capacity {capacity}.");
+                        _copyAtomicOverflowLogBudget--;
+                    }
+                }
+            }
+
+            // Read back visible counts
+            UpdateVisibleCountersFromBuffer();
+            uint visibleCount = VisibleCommandCount;
+
+            if (debugLoggingEnabled)
+            {
+                Debug.Out($"{FormatDebugPrefix("Culling")} FrustumCull: {inputCount} input -> {visibleCount} visible ({VisibleInstanceCount} instances)");
+            }
+
+            // Handle CPU fallback if GPU produced no results
+            bool allowCpuFallback = Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback 
+                ?? Engine.EffectiveSettings.EnableGpuIndirectCpuFallback;
+
+            if (visibleCount == 0 && RenderPass >= 0 && allowCpuFallback)
+            {
+                uint cpuRecovered = CpuCopyCommandsForPass(scene, inputCount, commit: true, out uint cpuInstanceCount);
+                if (cpuRecovered > 0)
+                {
+                    visibleCount = cpuRecovered;
+                    WriteVisibleCounters(cpuRecovered, cpuInstanceCount);
+                    if (_passthroughFallbackLogBudget > 0)
+                    {
+                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU frustum cull returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
+                        _passthroughFallbackLogBudget--;
+                    }
+                }
+            }
+
+            VisibleCommandCount = Math.Min(visibleCount, inputCount);
+            Dbg($"FrustumCull complete: visible={VisibleCommandCount} instances={VisibleInstanceCount}", "Culling");
+
+            // Update stats buffer
+            if (_statsBuffer is not null)
+            {
+                ReadOnlySpan<uint> statSeed = stackalloc uint[]
+                {
+                    inputCount,
+                    VisibleCommandCount,
+                    0u,
+                    0u,
+                    0u
+                };
+                WriteUints(_statsBuffer, statSeed);
+            }
+        }
 
         /// <summary>
-        /// Culling passthrough mode � copy all input commands to culled buffer and mark all visible.
+        /// Extracts frustum planes from a Frustum object into a Vector4 array for GPU upload.
+        /// Each plane is stored as vec4(normal.xyz, d) where the plane equation is: dot(normal, point) + d = 0
+        /// </summary>
+        private static Vector4[] ExtractFrustumPlanesAsVec4(Frustum frustum)
+        {
+            IReadOnlyList<System.Numerics.Plane> planes = frustum.Planes;
+            Vector4[] result = new Vector4[6];
+            for (int i = 0; i < 6 && i < planes.Count; i++)
+            {
+                var plane = planes[i];
+                result[i] = new Vector4(plane.Normal.X, plane.Normal.Y, plane.Normal.Z, plane.D);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Determines whether BVH-accelerated culling should be used based on availability and settings.
+        /// </summary>
+        private bool ShouldUseBvhCulling(GPUScene scene)
+        {
+            // Check if BVH culling is enabled in settings
+            if (!scene.UseGpuBvh)
+                return false;
+
+            // Check if we have the BVH culling shader
+            if (_bvhFrustumCullProgram is null)
+                return false;
+
+            // Check if the scene has a valid BVH provider
+            var provider = scene.BvhProvider;
+            if (provider is null || !provider.IsBvhReady)
+                return false;
+
+            return true;
+        }
+
+        /// <summary>
+        /// BVH-accelerated frustum culling mode – traverses the GPU BVH hierarchy to quickly reject
+        /// large portions of the scene before testing individual commands.
+        /// </summary>
+        /// <remarks>
+        /// This path uses the bvh_frustum_cull.comp shader which traverses the BVH bottom-up from leaves,
+        /// rejecting entire subtrees that fall outside the frustum before testing individual command spheres.
+        /// </remarks>
+        private void BvhCull(GPUScene scene, XRCamera? camera, uint numCommands)
+        {
+            _skipGpuSubmissionThisPass = false;
+            _skipGpuSubmissionReason = null;
+
+            var bvhProvider = scene.BvhProvider;
+
+            // Validate prerequisites
+            if (CulledSceneToRenderBuffer is null ||
+                _bvhFrustumCullProgram is null || 
+                _culledCountBuffer is null || 
+                camera is null || 
+                bvhProvider is null || 
+                !bvhProvider.IsBvhReady)
+            {
+                Dbg("BvhCull: missing resources, falling back to FrustumCull", "Culling");
+                FrustumCull(scene, camera, numCommands);
+                return;
+            }
+
+            XRDataBuffer? bvhNodes = bvhProvider.BvhNodeBuffer;
+            XRDataBuffer? bvhRanges = bvhProvider.BvhRangeBuffer;
+            XRDataBuffer? bvhMorton = bvhProvider.BvhMortonBuffer;
+
+            if (bvhNodes is null || bvhRanges is null || bvhMorton is null)
+            {
+                Dbg("BvhCull: BVH buffers not ready, falling back to FrustumCull", "Culling");
+                FrustumCull(scene, camera, numCommands);
+                return;
+            }
+
+            XRDataBuffer src = scene.AllLoadedCommandsBuffer;
+            XRDataBuffer dst = CulledSceneToRenderBuffer;
+
+            uint capacity = CulledSceneToRenderBuffer.ElementCount;
+            uint inputCount = Math.Min(numCommands, capacity);
+
+            if (inputCount == 0)
+            {
+                ResetVisibleCounters();
+                Dbg("BvhCull: no commands", "Culling");
+                return;
+            }
+
+            bool debugLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+
+            if (IndirectDebug.ProbeSourceCommandsBeforeCopy)
+                DumpSourceCommandProbe(scene, inputCount);
+
+            // Reset counters before dispatch
+            ResetVisibleCounters();
+            if (_cullingOverflowFlagBuffer is not null)
+                WriteUInt(_cullingOverflowFlagBuffer, 0u);
+
+            // Extract frustum planes from camera
+            Frustum? frustumNullable = camera.WorldFrustum();
+            if (frustumNullable is null)
+            {
+                Dbg("BvhCull: no frustum available, falling back to FrustumCull", "Culling");
+                FrustumCull(scene, camera, numCommands);
+                return;
+            }
+
+            // Get frustum planes
+            Frustum frustum = frustumNullable.Value;
+            Vector4[] planeData = ExtractFrustumPlanesAsVec4(frustum);
+
+            // Set uniforms for the BVH culling shader
+            _bvhFrustumCullProgram.Uniform("FrustumPlanes", planeData);
+            _bvhFrustumCullProgram.Uniform("UseClusterPlanes", 0u);
+            _bvhFrustumCullProgram.Uniform("UseClusterPlaneBuffer", 0u);
+            _bvhFrustumCullProgram.Uniform("ClusterPlaneOffset", 0u);
+            _bvhFrustumCullProgram.Uniform("ClusterPlaneStride", 0u);
+            _bvhFrustumCullProgram.Uniform("MaxRenderDistance", camera.FarZ * camera.FarZ); // squared distance
+            uint mask = unchecked((uint)camera.CullingMask.Value);
+            _bvhFrustumCullProgram.Uniform("CameraLayerMask", mask);
+            _bvhFrustumCullProgram.Uniform("CurrentRenderPass", RenderPass);
+            _bvhFrustumCullProgram.Uniform("InputCommandCount", (int)inputCount);
+            _bvhFrustumCullProgram.Uniform("MaxCulledCommands", (int)capacity);
+            _bvhFrustumCullProgram.Uniform("DisabledFlagsMask", 0u);
+            _bvhFrustumCullProgram.Uniform("CameraPosition", camera.Transform?.WorldTranslation ?? Vector3.Zero);
+            _bvhFrustumCullProgram.Uniform("StatsEnabled", _statsBuffer is not null ? 1u : 0u);
+            _bvhFrustumCullProgram.Uniform("OverflowDebugEnabled", 0u);
+            _bvhFrustumCullProgram.Uniform("ENABLE_CPU_GPU_COMPARE", 0u); // OpenGL-compatible uniform (was Vulkan specialization constant)
+
+            // Bind command buffers (same as linear culling)
+            _bvhFrustumCullProgram.BindBuffer(src, 0);
+            _bvhFrustumCullProgram.BindBuffer(dst, 1);
+            _bvhFrustumCullProgram.BindBuffer(_culledCountBuffer, 2);
+            if (_cullingOverflowFlagBuffer is not null)
+                _bvhFrustumCullProgram.BindBuffer(_cullingOverflowFlagBuffer, 3);
+
+            // Bind BVH buffers
+            _bvhFrustumCullProgram.BindBuffer(bvhNodes, 4);
+            _bvhFrustumCullProgram.BindBuffer(bvhRanges, 5);
+            _bvhFrustumCullProgram.BindBuffer(bvhMorton, 6);
+
+            // Bind optional buffers
+            if (_statsBuffer is not null)
+                _bvhFrustumCullProgram.BindBuffer(_statsBuffer, 8);
+
+            // Dispatch based on leaf count (each thread processes one leaf)
+            // BVH has (N+1)/2 leaves for N nodes
+            uint nodeCount = bvhProvider.BvhNodeCount;
+            uint leafCount = (nodeCount + 1u) / 2u;
+            (uint x, uint y, uint z) = ComputeDispatch.ForCommands(Math.Max(leafCount, 1u));
+
+            {
+                using var cullTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Cull, inputCount);
+                _bvhFrustumCullProgram.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            }
+
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+
+            // Check for overflow
+            if (_cullingOverflowFlagBuffer is not null)
+            {
+                uint overflowCount = ReadUInt(_cullingOverflowFlagBuffer);
+                if (overflowCount > 0)
+                {
+                    if (_copyAtomicOverflowLogBudget > 0)
+                    {
+                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} BVH cull overflow: {overflowCount} commands exceeded capacity {capacity}.");
+                        _copyAtomicOverflowLogBudget--;
+                    }
+                }
+            }
+
+            // Read back visible counts
+            UpdateVisibleCountersFromBuffer();
+            uint visibleCount = VisibleCommandCount;
+
+            if (debugLoggingEnabled)
+            {
+                Debug.Out($"{FormatDebugPrefix("Culling")} BvhCull: {inputCount} input -> {visibleCount} visible ({VisibleInstanceCount} instances) [BVH nodes={nodeCount}, leaves={leafCount}]");
+            }
+
+            // Handle CPU fallback if GPU produced no results
+            bool allowCpuFallback = Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback 
+                ?? Engine.EffectiveSettings.EnableGpuIndirectCpuFallback;
+
+            if (visibleCount == 0 && RenderPass >= 0 && allowCpuFallback)
+            {
+                uint cpuRecovered = CpuCopyCommandsForPass(scene, inputCount, commit: true, out uint cpuInstanceCount);
+                if (cpuRecovered > 0)
+                {
+                    visibleCount = cpuRecovered;
+                    WriteVisibleCounters(cpuRecovered, cpuInstanceCount);
+                    if (_passthroughFallbackLogBudget > 0)
+                    {
+                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU BVH cull returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
+                        _passthroughFallbackLogBudget--;
+                    }
+                }
+            }
+
+            VisibleCommandCount = Math.Min(visibleCount, inputCount);
+            Dbg($"BvhCull complete: visible={VisibleCommandCount} instances={VisibleInstanceCount}", "Culling");
+
+            // Update stats buffer
+            if (_statsBuffer is not null)
+            {
+                ReadOnlySpan<uint> statSeed = stackalloc uint[]
+                {
+                    inputCount,
+                    VisibleCommandCount,
+                    0u,
+                    0u,
+                    0u
+                };
+                WriteUints(_statsBuffer, statSeed);
+            }
+        }
+
+        /// <summary>
+        /// Culling passthrough mode – copy all input commands to culled buffer and mark all visible.
         /// </summary>
         /// <param name="scene"></param>
         /// <param name="numCommands"></param>
@@ -542,16 +879,16 @@ namespace XREngine.Rendering.Commands
             _copyCommandsProgram.Uniform("OutputCapacity", capacity);
             int boundsCheckEnabled = (IndirectDebug.ValidateCopyCommandAtomicBounds && _cullingOverflowFlagBuffer is not null) ? 1 : 0;
             _copyCommandsProgram.Uniform("BoundsCheckEnabled", boundsCheckEnabled);
-            _copyCommandsProgram?.BindBuffer(src, 0);
-            _copyCommandsProgram?.BindBuffer(dst, 1);
-            _copyCommandsProgram?.BindBuffer(_culledCountBuffer, 2);
+            _copyCommandsProgram.BindBuffer(src, 0);
+            _copyCommandsProgram.BindBuffer(dst, 1);
+            _copyCommandsProgram.BindBuffer(_culledCountBuffer, 2);
             if (_cullingOverflowFlagBuffer is not null)
-                _copyCommandsProgram?.BindBuffer(_cullingOverflowFlagBuffer, 4);
+                _copyCommandsProgram.BindBuffer(_cullingOverflowFlagBuffer, 4);
 
             (uint x, uint y, uint z) = ComputeDispatch.ForCommands(copyCount);
             {
                 using var cullTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Cull, copyCount);
-                _copyCommandsProgram?.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+                _copyCommandsProgram.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             }
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
@@ -582,7 +919,9 @@ namespace XREngine.Rendering.Commands
                 Debug.Out($"{FormatDebugPrefix("Culling")} Copy shader reported filteredCount={filteredCount} (copyCount={copyCount})");
                 _filteredCountLogBudget--;
             }
-            bool allowCpuFallback = Engine.EffectiveSettings.EnableGpuIndirectCpuFallback;
+            // Check EditorPreferences first for debugging, fall back to EffectiveSettings for production
+            bool allowCpuFallback = Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback 
+                ?? Engine.EffectiveSettings.EnableGpuIndirectCpuFallback;
             if (!allowCpuFallback && debugLoggingEnabled)
             {
                 // allowCpuFallback = true;
@@ -614,7 +953,7 @@ namespace XREngine.Rendering.Commands
                 {
                     if (_passthroughFallbackLogBudget > 0)
                     {
-                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU pass filter returned 0 for pass {RenderPass}; CPU fallback disabled (set Engine.Rendering.Settings.EnableGpuIndirectCpuFallback to true to allow recovery).");
+                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU pass filter returned 0 for pass {RenderPass}; CPU fallback disabled (set EditorPreferences.Debug.AllowGpuCpuFallback to true to allow recovery).");
                         _passthroughFallbackLogBudget--;
                     }
                     if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
@@ -857,8 +1196,7 @@ namespace XREngine.Rendering.Commands
             _extractSoAComputeShader.BindBuffer(spheres, 1);
             _extractSoAComputeShader.BindBuffer(meta, 2);
 
-            uint groupSize = 256;
-            uint groups = (count + groupSize - 1) / groupSize;
+            uint groups = (count + ComputeWorkGroupSize - 1) / ComputeWorkGroupSize;
             _extractSoAComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
 
             Dbg($"ExtractSoA dispatched groups={groups} count={count}", "SoA");
@@ -1127,6 +1465,12 @@ namespace XREngine.Rendering.Commands
                 return false;
             }
 
+            if (cmd.MeshID == 0u || cmd.MeshID == uint.MaxValue)
+            {
+                reason = "mesh-sentinel";
+                return false;
+            }
+
             if (!scene.TryGetMeshDataEntry(cmd.MeshID, out GPUScene.MeshDataEntry entry) || entry.IndexCount == 0)
             {
                 reason = "mesh-metadata-missing";
@@ -1338,40 +1682,13 @@ namespace XREngine.Rendering.Commands
             if (_statsBuffer != null)
                 shader.BindBuffer(_statsBuffer, 8);
 
-            uint groupSize = 256;
-            uint groups = (count + groupSize - 1) / groupSize;
+            uint groups = (count + ComputeWorkGroupSize - 1) / ComputeWorkGroupSize;
             shader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
 
             UpdateVisibleCountersFromBuffer();
 
             Dbg($"SoACull visible={VisibleCommandCount} instances={VisibleInstanceCount}","SoA");
         }
-
-        //private void GatherCulled(GPUScene scene)
-        //{
-        //    Dbg("GatherCulled begin","SoA");
-
-        //    if (_gatherProgram is null || _soaIndexList is null || CulledSceneToRenderBuffer is null || _culledCountBuffer is null)
-        //        return;
-
-        //    uint count = VisibleCommandCount;
-        //    if (count == 0)
-        //        return;
-
-        //    _gatherProgram.BindBuffer(scene.CommandsInputBuffer, 0);
-        //    _gatherProgram.BindBuffer(_soaIndexList, 1);
-        //    _gatherProgram.BindBuffer(CulledSceneToRenderBuffer, 2);
-        //    _gatherProgram.BindBuffer(_culledCountBuffer, 3);
-
-        //    uint groupSize = 256;
-        //    uint groups = (count + groupSize - 1) / groupSize;
-        //    if (groups == 0)
-        //        groups = 1;
-
-        //    _gatherProgram.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
-
-        //    Dbg($"GatherCulled dispatched groups={groups} count={count}","SoA");
-        //}
 
         public void DebugDraw(XRCamera camera, GPUScene scene)
         {
@@ -1394,8 +1711,7 @@ namespace XREngine.Rendering.Commands
             _debugDrawProgram.BindBuffer(scene.AllLoadedCommandsBuffer, 1);
             _debugDrawProgram.BindBuffer(_culledCountBuffer, 2);
 
-            uint groupSize = 256;
-            uint numGroups = (count + groupSize - 1) / groupSize;
+            uint numGroups = (count + ComputeWorkGroupSize - 1) / ComputeWorkGroupSize;
             _debugDrawProgram.DispatchCompute(numGroups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
             Dbg($"DebugDraw dispatched groups={numGroups} count={count}","Stats");

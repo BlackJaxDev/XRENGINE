@@ -49,7 +49,7 @@ namespace XREngine.Components
                 var responseJson = await response.Content.ReadAsStringAsync();
                 var result = JsonSerializer.Deserialize<GoogleSTTResponse>(responseJson);
 
-                if (result?.Results?.Length > 0)
+                if (result?.Results?.Length > 0 && result.Results[0].Alternatives?.Length > 0)
                 {
                     var transcript = result.Results[0].Alternatives[0];
                     return new STTResult

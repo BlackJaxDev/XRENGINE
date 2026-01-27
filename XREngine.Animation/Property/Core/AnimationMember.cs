@@ -323,11 +323,14 @@ namespace XREngine.Animation
             if (parentObj is null || MemberNotFound)
                 return null;
             
-            _methodCache ??= parentObj.GetType()?.GetMethod(_memberName, BindingFlag, [.. MethodArguments.Select(x => x.GetType())]);
+            var argumentTypes = MethodArguments.Select(x => x?.GetType() ?? typeof(object)).ToArray();
+            _methodCache ??= parentObj.GetType()?.GetMethod(_memberName, BindingFlag, argumentTypes);
 
             MemberNotFound = _methodCache is null;
 
-            DefaultValue = MethodArguments[AnimatedMethodArgumentIndex];
+            DefaultValue = AnimatedMethodArgumentIndex >= 0 && AnimatedMethodArgumentIndex < MethodArguments.Length
+                ? MethodArguments[AnimatedMethodArgumentIndex]
+                : null;
             return Cache(_methodCache?.Invoke(parentObj, MethodArguments));
         }
         internal object? InitializeProperty(object? parentObj)

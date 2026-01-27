@@ -38,7 +38,7 @@
 
   "AddEditorUI": false,
   "TransformTool": false,
-  "DearImGuiUI": false,
+  "DearImGuiUI": true,
   "EnableProfilerLogging": true,
   "RiveUI": false,
   "VideoStreaming": false,

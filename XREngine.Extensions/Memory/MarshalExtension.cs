@@ -40,10 +40,9 @@ namespace XREngine.Extensions
             Marshal.Copy(array, 0, ptr, array.Length);
             return new CoTaskMemoryHandle(ptr);
         }
-        private static IntPtr AllocArrayCoTaskMem<T>(T[] array)
+        private static IntPtr AllocArrayCoTaskMem<T>(T[] array) where T : struct
         {
-            var type = typeof(T);
-            var size = Marshal.SizeOf(type) * array.Length;
+            var size = Marshal.SizeOf<T>() * array.Length;
             return Marshal.AllocCoTaskMem(size);
         }
     }

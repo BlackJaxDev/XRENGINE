@@ -3,7 +3,6 @@ using System.ComponentModel;
 
 namespace XREngine.Animation
 {
-    //TODO: fix nullables
     public abstract class PropAnimLerpable<TValue, TValueKey> : PropAnimKeyframed<TValueKey>
         where TValue : unmanaged
         where TValueKey : LerpableKeyframe<TValue>, new()
@@ -92,6 +91,9 @@ namespace XREngine.Animation
         public TValue GetValue(float second) => _getValue(second);
         public TValue GetValueBakedBySecond(float second)
         {
+            if (_baked is null || _baked.Length == 0)
+                return DefaultValue;
+
             float frameTime = second * BakedFramesPerSecond;
             int frame = (int)frameTime;
             if (LerpConstrainedFPS)
@@ -137,7 +139,7 @@ namespace XREngine.Animation
         /// <param name="frame">The frame to get a value for.</param>
         /// <returns>The value at the specified frame.</returns>
         public TValue GetValueBakedByFrame(int frame)
-            => _baked.IndexInRangeArray(frame)
+            => _baked is not null && _baked.IndexInRangeArray(frame)
                 ? _baked[frame.Clamp(0, _baked.Length - 1)]
                 : new TValue();
 
@@ -184,7 +186,7 @@ namespace XREngine.Animation
                 second = floorSec;
             }
 
-            return Keyframes.First.Interpolate(second);
+            return Keyframes.First?.Interpolate(second) ?? DefaultValue;
         }
         [Category(AnimCategory)]
         public override float CurrentTime
@@ -231,13 +233,13 @@ namespace XREngine.Animation
                 {
                     prevKf.Interpolate(floorSec,
                         out _prevKeyframe,
-                        out LerpableKeyframe<TValue> _,
+                        out LerpableKeyframe<TValue>? _,
                         out float _,
                         out TValue floorPosition);
 
                     prevKf.Interpolate(ceilSec,
-                       out LerpableKeyframe<TValue> _,
-                       out LerpableKeyframe<TValue> _,
+                       out LerpableKeyframe<TValue>? _,
+                       out LerpableKeyframe<TValue>? _,
                        out float _,
                        out TValue ceilPosition);
 
@@ -250,7 +252,7 @@ namespace XREngine.Animation
             prevKf.Interpolate(
                 second,
                 out _prevKeyframe,
-                out LerpableKeyframe<TValue> _,
+                out LerpableKeyframe<TValue>? _,
                 out float _,
                 out TValue pos);
 
@@ -319,13 +321,13 @@ namespace XREngine.Animation
             }
         }
 
-        public new LerpableKeyframe<T> Next
+        public new LerpableKeyframe<T>? Next
         {
             get => _next as LerpableKeyframe<T>;
             //set => _next = value;
         }
 
-        public new LerpableKeyframe<T> Prev
+        public new LerpableKeyframe<T>? Prev
         {
             get => _prev as LerpableKeyframe<T>;
             //set => _prev = value;
@@ -334,7 +336,7 @@ namespace XREngine.Animation
         /// <summary>
         /// Interpolates from this keyframe to the next using a normalized time value (0.0f - 1.0f)
         /// </summary>
-        public T InterpolateNextNormalized(float time) => _interpolate(this, Next, time);
+        public T InterpolateNextNormalized(float time) => Next is { } next ? _interpolate(this, next, time) : OutValue;
 
         /// <summary>
         /// Interpolates from this keyframe to the next using a normalized time value (0.0f - 1.0f)
@@ -352,9 +354,8 @@ namespace XREngine.Animation
                 {
                     //This is the last keyframe
 
-                    if (OwningTrack.FirstKey != this)
+                    if (OwningTrack?.FirstKey is LerpableKeyframe<T> first && first != this)
                     {
-                        LerpableKeyframe<T> first = (LerpableKeyframe<T>)OwningTrack.FirstKey;
                         span = OwningTrack.LengthInSeconds - Second + first.Second;
                         diff = desiredSecond - Second;
                         key1 = this;
@@ -368,7 +369,7 @@ namespace XREngine.Animation
                 else if (desiredSecond < Next.Second)
                 {
                     //Within two keyframes, interpolate regularly
-                    span = _next.Second - Second;
+                    span = Next.Second - Second;
                     diff = desiredSecond - Second;
                     key1 = this;
                     key2 = Next;
@@ -385,9 +386,8 @@ namespace XREngine.Animation
 
                 //This is the first keyframe
 
-                if (OwningTrack.LastKey != this)
+                if (OwningTrack?.LastKey is LerpableKeyframe<T> last && last != this)
                 {
-                    LerpableKeyframe<T> last = (LerpableKeyframe<T>)OwningTrack.LastKey;
                     span = OwningTrack.LengthInSeconds - last.Second + Second;
                     diff = OwningTrack.LengthInSeconds - last.Second + desiredSecond;
                     key1 = last;
@@ -404,8 +404,8 @@ namespace XREngine.Animation
         }
         public T Interpolate(
             float desiredSecond,
-            out LerpableKeyframe<T> prevKey,
-            out LerpableKeyframe<T> nextKey,
+            out LerpableKeyframe<T>? prevKey,
+            out LerpableKeyframe<T>? nextKey,
             out float normalizedTime)
         {
             prevKey = this;
@@ -420,9 +420,8 @@ namespace XREngine.Animation
                 {
                     //This is the last keyframe
 
-                    if (OwningTrack.FirstKey != this)
+                    if (OwningTrack?.FirstKey is LerpableKeyframe<T> first && first != this)
                     {
-                        LerpableKeyframe<T> first = (LerpableKeyframe<T>)OwningTrack.FirstKey;
                         span = OwningTrack.LengthInSeconds - Second + first.Second;
                         diff = desiredSecond - Second;
                         key1 = this;
@@ -437,7 +436,7 @@ namespace XREngine.Animation
                 else if (desiredSecond < Next.Second)
                 {
                     //Within two keyframes, interpolate regularly
-                    span = _next.Second - Second;
+                    span = Next.Second - Second;
                     diff = desiredSecond - Second;
                     key1 = this;
                     key2 = Next;
@@ -454,9 +453,8 @@ namespace XREngine.Animation
 
                 //This is the first keyframe
 
-                if (OwningTrack.LastKey != this)
+                if (OwningTrack?.LastKey is LerpableKeyframe<T> last && last != this)
                 {
-                    LerpableKeyframe<T> last = (LerpableKeyframe<T>)OwningTrack.LastKey;
                     span = OwningTrack.LengthInSeconds - last.Second + Second;
                     diff = OwningTrack.LengthInSeconds - last.Second + desiredSecond;
                     key1 = last;
@@ -474,8 +472,8 @@ namespace XREngine.Animation
         }
         public void Interpolate(
             float desiredSecond,
-            out LerpableKeyframe<T> prevKey,
-            out LerpableKeyframe<T> nextKey,
+            out LerpableKeyframe<T>? prevKey,
+            out LerpableKeyframe<T>? nextKey,
             out float normalizedTime,
             out T position)
         {
@@ -491,9 +489,8 @@ namespace XREngine.Animation
                 {
                     //This is the last keyframe
 
-                    if (OwningTrack.FirstKey != this)
+                    if (OwningTrack?.FirstKey is LerpableKeyframe<T> first && first != this)
                     {
-                        LerpableKeyframe<T> first = (LerpableKeyframe<T>)OwningTrack.FirstKey;
                         span = OwningTrack.LengthInSeconds - Second + first.Second;
                         diff = desiredSecond - Second;
                         key1 = this;
@@ -509,7 +506,7 @@ namespace XREngine.Animation
                 else if (desiredSecond < Next.Second)
                 {
                     //Within two keyframes, interpolate regularly
-                    span = _next.Second - Second;
+                    span = Next.Second - Second;
                     diff = desiredSecond - Second;
                     key1 = this;
                     key2 = Next;
@@ -540,9 +537,8 @@ namespace XREngine.Animation
 
                 //This is the first keyframe
 
-                if (OwningTrack.LastKey != this)
+                if (OwningTrack?.LastKey is LerpableKeyframe<T> last && last != this)
                 {
-                    LerpableKeyframe<T> last = (LerpableKeyframe<T>)OwningTrack.LastKey;
                     span = OwningTrack.LengthInSeconds - last.Second + Second;
                     diff = OwningTrack.LengthInSeconds - last.Second + desiredSecond;
                     key1 = last;

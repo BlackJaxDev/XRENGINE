@@ -277,6 +277,13 @@ namespace XREngine.Rendering.Vulkan
 
                         drawOp.Draw.Renderer.RecordDraw(commandBuffer, drawOp.Draw, activeRenderPass);
                         break;
+
+                    case IndirectDrawOp indirectOp:
+                        EndActiveRenderPass();
+                        CmdBeginLabel(commandBuffer, "IndirectDraw");
+                        RecordIndirectDrawOp(commandBuffer, indirectOp);
+                        CmdEndLabel(commandBuffer);
+                        break;
                 }
             }
 
@@ -470,6 +477,75 @@ namespace XREngine.Rendering.Vulkan
                 destination.AccessMask,
                 PipelineStageFlags.TransferBit,
                 destination.StageMask);
+        }
+
+        private void RecordIndirectDrawOp(CommandBuffer commandBuffer, IndirectDrawOp op)
+        {
+            var indirectBuffer = op.IndirectBuffer.BufferHandle;
+            if (indirectBuffer is null || !indirectBuffer.HasValue)
+            {
+                Debug.LogWarning("RecordIndirectDrawOp: Invalid indirect buffer.");
+                return;
+            }
+
+            // Emit memory barrier to ensure indirect buffer data is visible
+            MemoryBarrier memoryBarrier = new()
+            {
+                SType = StructureType.MemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit,
+                DstAccessMask = AccessFlags.IndirectCommandReadBit,
+            };
+
+            Api!.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
+                PipelineStageFlags.DrawIndirectBit,
+                DependencyFlags.None,
+                1,
+                &memoryBarrier,
+                0,
+                null,
+                0,
+                null);
+
+            // Calculate the byte offset into the indirect buffer
+            ulong bufferOffset = op.ByteOffset;
+
+            if (op.UseCount && _supportsDrawIndirectCount && _khrDrawIndirectCount is not null)
+            {
+                // Use VK_KHR_draw_indirect_count path
+                var parameterBuffer = op.ParameterBuffer?.BufferHandle;
+                if (parameterBuffer is null || !parameterBuffer.HasValue)
+                {
+                    Debug.LogWarning("RecordIndirectDrawOp: Invalid parameter buffer for count draw.");
+                    return;
+                }
+
+                // The parameter buffer contains the draw count at offset 0 (uint)
+                _khrDrawIndirectCount.CmdDrawIndexedIndirectCount(
+                    commandBuffer,
+                    indirectBuffer.Value,
+                    bufferOffset,
+                    parameterBuffer.Value,
+                    0, // Offset into parameter buffer where count is stored
+                    op.DrawCount,
+                    op.Stride);
+            }
+            else
+            {
+                // Standard indirect draw - issue one draw per command in the buffer
+                // Vulkan's vkCmdDrawIndexedIndirect can only do one draw at a time, 
+                // so we need to loop for multi-draw semantics
+                for (uint i = 0; i < op.DrawCount; i++)
+                {
+                    Api!.CmdDrawIndexedIndirect(
+                        commandBuffer,
+                        indirectBuffer.Value,
+                        bufferOffset + (i * op.Stride),
+                        1,
+                        op.Stride);
+                }
+            }
         }
 
         private void ApplyDynamicState(CommandBuffer commandBuffer)

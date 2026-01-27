@@ -1430,7 +1430,7 @@ public class LandscapeComponent : XRComponent, IRenderable
 
     private void DispatchLODSelection(Vector3 cameraPosition)
     {
-        if (_lodProgram is null || _chunksBuffer is null)
+        if (_lodProgram is null || _chunksBuffer is null || _terrainParamsBuffer is null)
             return;
 
         // Set uniforms
@@ -1451,11 +1451,12 @@ public class LandscapeComponent : XRComponent, IRenderable
 
     private void DispatchCulling(Vector3 cameraPosition)
     {
-        if (_cullingProgram is null || _chunksBuffer is null || _visibleChunksBuffer is null)
+        if (_cullingProgram is null || _chunksBuffer is null || _visibleChunksBuffer is null ||
+            _terrainParamsBuffer is null || _chunkCountBuffer is null || _indirectDrawBuffer is null)
             return;
 
         // Reset visible chunk count
-        _chunkCountBuffer?.SetDataRaw(new uint[] { 0 });
+        _chunkCountBuffer.SetDataRaw(new uint[] { 0 });
 
         // Get frustum planes from camera
         var frustumPlanes = GetFrustumPlanes();

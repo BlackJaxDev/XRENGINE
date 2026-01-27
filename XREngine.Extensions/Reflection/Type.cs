@@ -134,7 +134,7 @@ namespace Extensions
                 }
             }
         }
-        public static bool FitsConstraints(this Type type, EGenericVarianceFlag gvf, ETypeConstraintFlag tcf)
+        public static bool FitsConstraints([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] this Type type, EGenericVarianceFlag gvf, ETypeConstraintFlag tcf)
         {
             if (gvf != EGenericVarianceFlag.None)
                 throw new Exception();
@@ -142,8 +142,8 @@ namespace Extensions
             return tcf switch
             {
                 ETypeConstraintFlag.Class => type.IsClass,
-                ETypeConstraintFlag.NewClass => type.IsClass && type.GetConstructor(Array.Empty<Type>()) != null,
-                ETypeConstraintFlag.NewStructOrClass => type.GetConstructor(Array.Empty<Type>()) != null,
+                ETypeConstraintFlag.NewClass => type.IsClass && type.GetConstructor(Type.EmptyTypes) != null,
+                ETypeConstraintFlag.NewStructOrClass => type.GetConstructor(Type.EmptyTypes) != null,
                 ETypeConstraintFlag.Struct => type.IsValueType,
                 _ => true,
             };

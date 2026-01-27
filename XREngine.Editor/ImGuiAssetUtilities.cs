@@ -150,14 +150,17 @@ internal static class ImGuiAssetUtilities
         if (ImGui.BeginDragDropTarget())
         {
             var payload = ImGui.AcceptDragDropPayload(AssetPayloadType);
-            if (payload.Data != IntPtr.Zero && payload.DataSize > 0)
+            unsafe
             {
-                string? path = GetPathFromPayload(payload);
-                if (!string.IsNullOrEmpty(path))
+                if ((IntPtr)payload.NativePtr != IntPtr.Zero && payload.Data != IntPtr.Zero && payload.DataSize > 0)
                 {
-                    var asset = LoadAssetFromPath<TAsset>(path);
-                    if (asset is not null)
-                        assign(asset);
+                    string? path = GetPathFromPayload(payload);
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        var asset = LoadAssetFromPath<TAsset>(path);
+                        if (asset is not null)
+                            assign(asset);
+                    }
                 }
             }
             ImGui.EndDragDropTarget();

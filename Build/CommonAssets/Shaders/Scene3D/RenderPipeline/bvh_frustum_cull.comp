@@ -9,7 +9,8 @@
 layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 // Optional comparison path (CPU vs GPU result verification).
-layout (constant_id = 0) const uint ENABLE_CPU_GPU_COMPARE = 0u;
+// Note: Using uniform instead of Vulkan-specific specialization constant for OpenGL compatibility.
+uniform uint ENABLE_CPU_GPU_COMPARE; // = 0u default, set to 1u to enable CPU/GPU comparison
 
 #define PLANES_PER_FRUSTUM 6u
 #define INVALID_INDEX 0xFFFFFFFFu

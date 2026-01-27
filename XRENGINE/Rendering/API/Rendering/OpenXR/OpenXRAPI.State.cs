@@ -347,7 +347,7 @@ public unsafe partial class OpenXRAPI
     /// <summary>
     /// OpenGL framebuffer handles for each swapchain image.
     /// </summary>
-    private readonly uint[][] _swapchainFramebuffers = new uint[2][];
+    private readonly uint[]?[] _swapchainFramebuffers = new uint[]?[2];
 
     /// <summary>
     /// Number of swapchain images per view.

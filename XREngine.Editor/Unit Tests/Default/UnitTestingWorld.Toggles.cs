@@ -46,7 +46,7 @@ public static partial class UnitTestingWorld
         public bool PreviewVRStereoViews = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI (requires VRPawn).
         public bool VideoStreaming = false; //Adds a video streaming component to the scene for testing video streaming.
         public bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.
-        public bool DearImGuiUI = false; //Adds a Dear ImGui overlay to the scene for testing immediate-mode UI.
+        public bool DearImGuiUI = true; //Adds a Dear ImGui overlay to the scene for testing immediate-mode UI.
         public bool EnableProfilerLogging = true; //Enables Engine.Profiler frame logging even without Dear ImGui.
         public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.
         public bool GPURenderDispatch = false; //Uses GPU render dispatch for rendering instead of CPU culling and issuing draw calls.

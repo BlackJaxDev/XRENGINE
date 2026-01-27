@@ -603,7 +603,7 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         /// <param name="localRotation"></param>
         /// <returns></returns>
-        public Quaternion TransformRotation(Quaternion localRotation)
+        public new Quaternion TransformRotation(Quaternion localRotation)
         {
             // Get the parent's world rotation. If no parent exists, returns Quaternion.Identity
             Quaternion parentWorldRotation = ParentWorldRotation;
@@ -617,7 +617,7 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         /// <param name="worldRotation"></param>
         /// <returns></returns>
-        public Quaternion InverseTransformRotation(Quaternion worldRotation)
+        public new Quaternion InverseTransformRotation(Quaternion worldRotation)
         {
             // Get the parent's world rotation. If no parent exists, returns Quaternion.Identity
             Quaternion parentWorldRotation = ParentWorldRotation;

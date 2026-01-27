@@ -23,8 +23,8 @@ namespace XREngine.Rendering.Models.Materials
 
         public ShaderBVector3() : this(new BoolVector3(), NoName) { }
         public ShaderBVector3(BoolVector3 defaultValue, string name)
-            : this(defaultValue, name, null) { }
-        public ShaderBVector3(BoolVector3 defaultValue, string name, IShaderVarOwner owner) 
+            : this(defaultValue, name, null!) { }
+        public ShaderBVector3(BoolVector3 defaultValue, string name, IShaderVarOwner? owner) 
             : base(name, owner)
         {
             _value = defaultValue;

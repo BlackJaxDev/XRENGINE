@@ -62,7 +62,7 @@
 
   "ModelsToImport": [
     {
-      "Enabled": false,
+      "Enabled": true,
       "Kind": "Animated",
       "Path": "misc\\jax2026.fbx",
       "ImportFlags": "Triangulate, FlipUVs",
@@ -75,7 +75,7 @@
       }
     },
     {
-      "Enabled": true,
+      "Enabled": false,
       "Kind": "Static",
       "Path": "Models\\Sponza2\\Sponza.obj",
       "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",
@@ -94,7 +94,7 @@
   "FaceTracking": false,
   "AnimationClipVMD": false,
   "AnimationClipAnim": true,
-  "AnimClipPath": "Assets\\Walks\\Basic Walk.anim",
+  "AnimClipPath": "Assets\\Walks\\Sexy Walk.anim",
   "AnimLooped": true,
   "IKTest": false,
   "TestAnimation": false,

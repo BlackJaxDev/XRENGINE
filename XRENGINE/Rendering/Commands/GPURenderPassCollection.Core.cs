@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using XREngine;
@@ -7,6 +8,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Materials;
+using static XREngine.Rendering.GpuDispatchLogger;
 
 namespace XREngine.Rendering.Commands
 {
@@ -16,8 +18,26 @@ namespace XREngine.Rendering.Commands
     /// </summary>
     public sealed partial class GPURenderPassCollection : XRBase, IDisposable
     {
+        /// <summary>
+        /// Expected stride for DrawElementsIndirectCommand (5 uints = 20 bytes).
+        /// This must match the OpenGL spec and the shader's DRAW_COMMAND_UINTS.
+        /// </summary>
+        private const uint ExpectedIndirectCommandStride = 20;
+        
         private static readonly uint _indirectCommandStride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
         private static readonly uint _indirectCommandComponentCount = _indirectCommandStride / sizeof(uint);
+
+        static GPURenderPassCollection()
+        {
+            // Static assertion: DrawElementsIndirectCommand must be exactly 20 bytes (5 uints)
+            // to match OpenGL spec and shader layout. Struct packing issues will cause MDI failures.
+            if (_indirectCommandStride != ExpectedIndirectCommandStride)
+            {
+                throw new InvalidOperationException(
+                    $"DrawElementsIndirectCommand struct size mismatch! Expected {ExpectedIndirectCommandStride} bytes, got {_indirectCommandStride}. " +
+                    $"Check [StructLayout(Pack = 1)] attribute and field types.");
+            }
+        }
 
         // Verbose debug infra (shared across partials)
         private static volatile bool _verbose = true;
@@ -129,6 +149,11 @@ namespace XREngine.Rendering.Commands
             "Lifecycle",
             "Buffers",
             "Culling",
+            "Draw",
+            "VAO",
+            "Shaders",
+            "Timing",
+            "Validation",
             "Sorting",
             "Indirect",
             "SoA",
@@ -185,7 +210,32 @@ namespace XREngine.Rendering.Commands
                 enabled = _debugCategories.Contains(cat) || _debugCategories.Contains("All");
 
             if (enabled)
-                Debug.Out($"{FormatDebugPrefix(cat)} {msg}");
+            {
+                // Use the new structured logger for richer output
+                var category = MapCategoryToLogCategory(cat);
+                Log(category, LogLevel.Debug, $"{FormatDebugPrefix(cat)} {msg}");
+            }
+        }
+
+        private static LogCategory MapCategoryToLogCategory(string cat)
+        {
+            return cat.ToLowerInvariant() switch
+            {
+                "lifecycle" => LogCategory.Lifecycle,
+                "buffers" => LogCategory.Buffers,
+                "culling" => LogCategory.Culling,
+                "sorting" => LogCategory.Sorting,
+                "indirect" => LogCategory.Indirect,
+                "soa" => LogCategory.Buffers | LogCategory.Culling,
+                "materials" => LogCategory.Materials,
+                "stats" => LogCategory.Stats,
+                "draw" => LogCategory.Draw,
+                "vao" => LogCategory.VAO,
+                "shaders" => LogCategory.Shaders,
+                "timing" => LogCategory.Timing,
+                "validation" => LogCategory.Validation,
+                _ => LogCategory.Lifecycle
+            };
         }
 
         private string FormatDebugPrefix(string cat)
@@ -274,6 +324,7 @@ namespace XREngine.Rendering.Commands
         public XRRenderProgram? _resetCountersComputeShader;
         public XRRenderProgram? _debugDrawProgram;
         private XRRenderProgram? _copyCommandsProgram; // new: passthrough copy
+        private XRRenderProgram? _bvhFrustumCullProgram; // BVH-accelerated frustum culling
 
         // Renderer used to issue indirect multi-draw calls
         public XRMeshRenderer? _indirectRenderer;

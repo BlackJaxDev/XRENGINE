@@ -74,10 +74,10 @@ internal sealed class VulkanResourceAllocator
         }
     }
 
-    public bool TryGetPhysicalGroup(VulkanAliasGroupKey key, out VulkanPhysicalImageGroup group)
+    public bool TryGetPhysicalGroup(VulkanAliasGroupKey key, out VulkanPhysicalImageGroup? group)
         => _physicalGroups.TryGetValue(key, out group);
 
-    public bool TryGetPhysicalGroupForResource(string resourceName, out VulkanPhysicalImageGroup group)
+    public bool TryGetPhysicalGroupForResource(string resourceName, out VulkanPhysicalImageGroup? group)
         => _resourceToPhysicalGroup.TryGetValue(resourceName, out group);
 
     public bool TryGetImage(string resourceName, out Image image)

@@ -762,7 +762,9 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
 
     private void DispatchSpawnShader(uint spawnCount)
     {
-        if (_spawnProgram is null || _particlesBuffer is null)
+        if (_spawnProgram is null || _particlesBuffer is null ||
+            _deadListBuffer is null || _aliveListBuffer is null ||
+            _countersBuffer is null || _emitterParamsBuffer is null)
             return;
 
         // Update random seed
@@ -789,7 +791,9 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
 
     private void DispatchUpdateShader()
     {
-        if (_updateProgram is null || _particlesBuffer is null)
+        if (_updateProgram is null || _particlesBuffer is null ||
+            _deadListBuffer is null || _aliveListBuffer is null ||
+            _countersBuffer is null || _emitterParamsBuffer is null)
             return;
 
         // Set module-specific uniforms

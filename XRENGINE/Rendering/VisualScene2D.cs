@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Components;
@@ -61,6 +61,8 @@ namespace XREngine.Scene
         /// <param name="camera"></param>
         public void CollectRenderedItems(RenderCommandCollection commands, BoundingRectangleF? collectionVolume, XRCamera? camera)
         {
+            // Ensure pending UI renderables are flushed even when GlobalCollectVisible isn't called
+            // (e.g., screen-space UI path).
             ProcessPendingRenderableOperations();
 
             bool IntersectionTest(RenderInfo2D item, BoundingRectangleF cullingVolume, bool containsOnly)
@@ -85,7 +87,7 @@ namespace XREngine.Scene
         public IReadOnlyList<RenderInfo2D> Renderables => _renderables;
         private readonly List<RenderInfo2D> _renderables = [];
         private readonly HashSet<RenderInfo2D> _renderableSet = [];
-        private readonly ConcurrentQueue<(RenderInfo2D renderable, bool add)> _pendingRenderableOperations = new(); // staged until GlobalPreRender runs on the render thread
+        private readonly ConcurrentQueue<(RenderInfo2D renderable, bool add)> _pendingRenderableOperations = new(); // staged until PreCollectVisible runs on the collect visible thread
 
         public void AddRenderable(RenderInfo2D renderable)
             => _pendingRenderableOperations.Enqueue((renderable, true));
@@ -93,10 +95,15 @@ namespace XREngine.Scene
         public void RemoveRenderable(RenderInfo2D renderable)
             => _pendingRenderableOperations.Enqueue((renderable, false));
 
+        public override void GlobalCollectVisible()
+        {
+            base.GlobalCollectVisible();
+            ProcessPendingRenderableOperations();
+        }
+
         public override void GlobalPreRender()
         {
             base.GlobalPreRender();
-            ProcessPendingRenderableOperations();
         }
 
         public override IEnumerator<RenderInfo> GetEnumerator()
