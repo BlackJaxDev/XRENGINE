@@ -50,6 +50,7 @@ namespace XREngine.Rendering.Info
         private AABB? _localCullingVolume;
         private Matrix4x4 _cullingMatrix = Matrix4x4.Identity;
         private OctreeNodeBase? _octreeNode;
+        private Box? _lastQueuedWorldBounds;
         private bool _receivesShadows = true;
         private bool _castsShadows = true;
         private bool _visibleInLightingProbes = true;
@@ -180,10 +181,7 @@ namespace XREngine.Rendering.Info
                     break;
                 case nameof(CullingOffsetMatrix):
                 case nameof(LocalCullingVolume):
-                    //using (var t = Engine.Profiler.Start("QueueItemMoved"))
-                    {
-                        OctreeNode?.QueueItemMoved(this);
-                    }
+                    TryQueueOctreeMove();
                     break;
             }
         }
@@ -195,6 +193,35 @@ namespace XREngine.Rendering.Info
                 return;
 
             Engine.Rendering.Debug.RenderBox(box.Value.HalfExtents, box.Value.Center, CullingOffsetMatrix, false, ColorF4.Red);
+        }
+
+        private void TryQueueOctreeMove()
+        {
+            if (OctreeNode is null)
+                return;
+
+            var worldBounds = ((IOctreeItem)this).WorldCullingVolume;
+            if (worldBounds is null)
+                return;
+
+            if (_lastQueuedWorldBounds.HasValue && BoxNearlyEqual(_lastQueuedWorldBounds.Value, worldBounds.Value))
+            {
+                Engine.Rendering.Stats.RecordOctreeSkippedMove();
+                return;
+            }
+
+            _lastQueuedWorldBounds = worldBounds.Value;
+            OctreeNode.QueueItemMoved(this);
+        }
+
+        private static bool BoxNearlyEqual(in Box a, in Box b, float epsilon = 1e-4f)
+        {
+            return MathF.Abs(a.LocalCenter.X - b.LocalCenter.X) <= epsilon &&
+                   MathF.Abs(a.LocalCenter.Y - b.LocalCenter.Y) <= epsilon &&
+                   MathF.Abs(a.LocalCenter.Z - b.LocalCenter.Z) <= epsilon &&
+                   MathF.Abs(a.LocalHalfExtents.X - b.LocalHalfExtents.X) <= epsilon &&
+                   MathF.Abs(a.LocalHalfExtents.Y - b.LocalHalfExtents.Y) <= epsilon &&
+                   MathF.Abs(a.LocalHalfExtents.Z - b.LocalHalfExtents.Z) <= epsilon;
         }
     }
 }

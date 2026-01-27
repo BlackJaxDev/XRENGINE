@@ -1089,6 +1089,19 @@ namespace XREngine.Scene.Transforms
             WorldMatrixChanged?.Invoke(this, worldMatrix);
         }
 
+        internal bool ShouldEnqueueRenderMatrix(Matrix4x4 matrix)
+        {
+            lock (_renderMatrixEnqueueLock)
+            {
+                if (_hasLastEnqueuedRenderMatrix && MatrixEqual(_lastEnqueuedRenderMatrix, matrix))
+                    return false;
+
+                _lastEnqueuedRenderMatrix = matrix;
+                _hasLastEnqueuedRenderMatrix = true;
+                return true;
+            }
+        }
+
         protected virtual void OnInverseLocalMatrixChanged(Matrix4x4 localInverseMatrix)
             => InverseLocalMatrixChanged?.Invoke(this, localInverseMatrix);
 
@@ -1098,8 +1111,52 @@ namespace XREngine.Scene.Transforms
         protected virtual void OnRenderMatrixChanged()
         {
             _inverseRenderMatrixDirty = true;
-            RenderMatrixChanged?.Invoke(this, RenderMatrix);
+            var handlers = RenderMatrixChanged;
+            Engine.Rendering.Stats.RecordRenderMatrixChange(handlers);
+            handlers?.Invoke(this, RenderMatrix);
         }
+
+        private static bool MatrixEqual(in Matrix4x4 a, in Matrix4x4 b)
+        {
+            return a.M11 == b.M11 &&
+                   a.M12 == b.M12 &&
+                   a.M13 == b.M13 &&
+                   a.M14 == b.M14 &&
+                   a.M21 == b.M21 &&
+                   a.M22 == b.M22 &&
+                   a.M23 == b.M23 &&
+                   a.M24 == b.M24 &&
+                   a.M31 == b.M31 &&
+                   a.M32 == b.M32 &&
+                   a.M33 == b.M33 &&
+                   a.M34 == b.M34 &&
+                   a.M41 == b.M41 &&
+                   a.M42 == b.M42 &&
+                   a.M43 == b.M43 &&
+                   a.M44 == b.M44;
+        }
+
+/*
+        private static bool MatrixNearlyEqual(in Matrix4x4 a, in Matrix4x4 b, float epsilon = 1e-5f)
+        {
+            return MathF.Abs(a.M11 - b.M11) <= epsilon &&
+                   MathF.Abs(a.M12 - b.M12) <= epsilon &&
+                   MathF.Abs(a.M13 - b.M13) <= epsilon &&
+                   MathF.Abs(a.M14 - b.M14) <= epsilon &&
+                   MathF.Abs(a.M21 - b.M21) <= epsilon &&
+                   MathF.Abs(a.M22 - b.M22) <= epsilon &&
+                   MathF.Abs(a.M23 - b.M23) <= epsilon &&
+                   MathF.Abs(a.M24 - b.M24) <= epsilon &&
+                   MathF.Abs(a.M31 - b.M31) <= epsilon &&
+                   MathF.Abs(a.M32 - b.M32) <= epsilon &&
+                   MathF.Abs(a.M33 - b.M33) <= epsilon &&
+                   MathF.Abs(a.M34 - b.M34) <= epsilon &&
+                   MathF.Abs(a.M41 - b.M41) <= epsilon &&
+                   MathF.Abs(a.M42 - b.M42) <= epsilon &&
+                   MathF.Abs(a.M43 - b.M43) <= epsilon &&
+                   MathF.Abs(a.M44 - b.M44) <= epsilon;
+        }
+*/
 
         #endregion
 
@@ -1484,6 +1541,14 @@ namespace XREngine.Scene.Transforms
             => Parent is null || !Matrix4x4.Invert(Parent.WorldMatrix, out Matrix4x4 inverted)
                 ? InverseWorldMatrix
                 : inverted * InverseWorldMatrix;
+
+        #endregion
+
+        #region Render Matrix Enqueue Tracking
+
+        private readonly object _renderMatrixEnqueueLock = new();
+        private Matrix4x4 _lastEnqueuedRenderMatrix;
+        private bool _hasLastEnqueuedRenderMatrix;
 
         #endregion
 

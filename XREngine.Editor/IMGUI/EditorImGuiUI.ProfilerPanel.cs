@@ -32,6 +32,8 @@ public static partial class EditorImGuiUI
         private static Engine.CodeProfiler.ProfilerFrameSnapshot? _lastProfilerHierarchySnapshot;
         private static float _lastProfilerHierarchyFrameMs;
         private static bool _lastProfilerHierarchyUsingWorstWindowSample;
+        private static float _profilerRootHierarchyMinMs;
+        private static float _profilerRootHierarchyMaxMs;
 
         private static void DrawProfilerPanel()
         {
@@ -173,6 +175,81 @@ public static partial class EditorImGuiUI
 
                 ImGui.Text($"  Bandwidth: {fboBandwidthMB:F2} MB/frame");
                 ImGui.Text($"  FBO Binds: {fboBindCount:N0}");
+
+                ImGui.Separator();
+                ImGui.Text("Render Matrix Updates:");
+
+                bool enableRenderMatrixStats = Engine.Rendering.Stats.EnableRenderMatrixStats;
+                if (ImGui.Checkbox("Enable render-matrix stats", ref enableRenderMatrixStats))
+                    Engine.Rendering.Stats.EnableRenderMatrixStats = enableRenderMatrixStats;
+
+                bool enableRenderMatrixListeners = Engine.Rendering.Stats.EnableRenderMatrixListenerTracking;
+                if (ImGui.Checkbox("Enable render-matrix listener tracking", ref enableRenderMatrixListeners))
+                    Engine.Rendering.Stats.EnableRenderMatrixListenerTracking = enableRenderMatrixListeners;
+
+                if (!Engine.Rendering.Stats.RenderMatrixStatsReady)
+                {
+                    ImGui.TextDisabled("  Waiting for stats...");
+                }
+                else
+                {
+                    ImGui.Text($"  Applied (swap): {Engine.Rendering.Stats.RenderMatrixApplied:N0}");
+                    ImGui.Text($"  SetRenderMatrix calls: {Engine.Rendering.Stats.RenderMatrixSetCalls:N0}");
+                    if (Engine.Rendering.Stats.EnableRenderMatrixListenerTracking)
+                        ImGui.Text($"  Listener invocations: {Engine.Rendering.Stats.RenderMatrixListenerInvocations:N0}");
+                    else
+                        ImGui.TextDisabled("  Listener invocations: (enable tracking)");
+
+                    if (Engine.Rendering.Stats.EnableRenderMatrixListenerTracking)
+                    {
+                        var listenerCounts = Engine.Rendering.Stats.GetRenderMatrixListenerSnapshot();
+                        if (listenerCounts.Length == 0)
+                        {
+                            ImGui.TextDisabled("  No listener samples captured yet.");
+                        }
+                        else
+                        {
+                            Array.Sort(listenerCounts, (a, b) => b.Value.CompareTo(a.Value));
+                            ImGui.Text("  Top listener types:");
+
+                            if (ImGui.BeginTable("RenderMatrixListenerStats", 2, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+                            {
+                                ImGui.TableSetupColumn("Listener");
+                                ImGui.TableSetupColumn("Count");
+                                ImGui.TableHeadersRow();
+
+                                int maxRows = Math.Min(listenerCounts.Length, 10);
+                                for (int i = 0; i < maxRows; i++)
+                                {
+                                    ImGui.TableNextRow();
+                                    ImGui.TableSetColumnIndex(0); ImGui.Text(listenerCounts[i].Key);
+                                    ImGui.TableSetColumnIndex(1); ImGui.Text(listenerCounts[i].Value.ToString());
+                                }
+
+                                ImGui.EndTable();
+                            }
+                        }
+                    }
+                }
+
+                ImGui.Separator();
+                ImGui.Text("Octree Commands:");
+
+                bool enableOctreeStats = Engine.Rendering.Stats.EnableOctreeStats;
+                if (ImGui.Checkbox("Enable octree stats", ref enableOctreeStats))
+                    Engine.Rendering.Stats.EnableOctreeStats = enableOctreeStats;
+
+                if (!Engine.Rendering.Stats.OctreeStatsReady)
+                {
+                    ImGui.TextDisabled("  Waiting for stats...");
+                }
+                else
+                {
+                    ImGui.Text($"  Add: {Engine.Rendering.Stats.OctreeAddCount:N0}");
+                    ImGui.Text($"  Move: {Engine.Rendering.Stats.OctreeMoveCount:N0}");
+                    ImGui.Text($"  Remove: {Engine.Rendering.Stats.OctreeRemoveCount:N0}");
+                    ImGui.Text($"  Skipped: {Engine.Rendering.Stats.OctreeSkippedMoveCount:N0}");
+                }
             }
 
             if (ImGui.CollapsingHeader("BVH GPU Metrics", ImGuiTreeNodeFlags.DefaultOpen))
@@ -428,14 +505,24 @@ public static partial class EditorImGuiUI
             ImGui.SameLine();
             ImGui.SetNextItemWidth(100);
             ImGui.DragFloat("Persistence (s)", ref _profilerPersistenceSeconds, 0.1f, 0.5f, 10.0f);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(90);
+            ImGui.DragFloat("Root Min ms", ref _profilerRootHierarchyMinMs, 0.05f, 0.0f, 1000.0f);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(90);
+            ImGui.DragFloat("Root Max ms", ref _profilerRootHierarchyMaxMs, 0.05f, 0.0f, 1000.0f);
 
             ImGui.Separator();
 
             // Group graphs by root method name
             if (ImGui.CollapsingHeader("Root Method Graphs", ImGuiTreeNodeFlags.DefaultOpen))
             {
+                float minRootMs = Math.Max(0.0f, _profilerRootHierarchyMinMs);
+                float maxRootMs = _profilerRootHierarchyMaxMs;
+                bool hasMaxRootMs = maxRootMs > 0.0f;
                 var rootMethodAggregates = _profilerRootMethodCache.Values
                     .Where(rm => rm.DisplayTotalTimeMs >= 0.1f || (nowUtc - rm.LastSeen).TotalSeconds < _profilerPersistenceSeconds)
+                    .Where(rm => rm.DisplayTotalTimeMs >= minRootMs && (!hasMaxRootMs || rm.DisplayTotalTimeMs <= maxRootMs))
                     .OrderBy(static rm => rm.Name)
                     .ToList();
 
@@ -477,8 +564,12 @@ public static partial class EditorImGuiUI
             ImGui.Text("Hierarchy by Root Method");
 
             // Create single hierarchy table
+            float minHierarchyMs = Math.Max(0.0f, _profilerRootHierarchyMinMs);
+            float maxHierarchyMs = _profilerRootHierarchyMaxMs;
+            bool hasMaxHierarchyMs = maxHierarchyMs > 0.0f;
             var rootMethods = _profilerRootMethodCache.Values
                 .Where(rm => rm.DisplayTotalTimeMs >= 0.1f || (DateTime.UtcNow - rm.LastSeen).TotalSeconds < _profilerPersistenceSeconds)
+                .Where(rm => rm.DisplayTotalTimeMs >= minHierarchyMs && (!hasMaxHierarchyMs || rm.DisplayTotalTimeMs <= maxHierarchyMs))
                 .AsEnumerable();
                 
             if (_profilerSortByTime)

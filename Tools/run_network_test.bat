@@ -6,8 +6,9 @@ REM  XREngine Network Testing Script
 REM  Launches two editor instances for server<->client networking tests.
 REM ============================================================================
 
-REM Ensure commands run from the repository root
-cd /d "%~dp0"
+REM Change to repository root (parent of Tools directory)
+set "REPO_ROOT=%~dp0.."
+cd /d "%REPO_ROOT%"
 
 echo ============================================================
 echo   XREngine Network Test Launcher
@@ -31,13 +32,13 @@ if not exist "XREngine.Editor\bin\Debug\net8.0\XREngine.Editor.dll" (
 )
 
 echo Starting Server instance...
-start "XRE Server" cmd /c "cd /d "%~dp0XREngine.Editor" && set XRE_NET_MODE=Server && dotnet run --project XREngine.Editor.csproj --no-build"
+start "XRE Server" cmd /c "cd /d "%REPO_ROOT%\XREngine.Editor" && set XRE_NET_MODE=Server && dotnet run --project XREngine.Editor.csproj --no-build"
 
 REM Give the server a moment to start up
 timeout /t 3 /nobreak > nul
 
 echo Starting Client instance...
-start "XRE Client" cmd /c "cd /d "%~dp0XREngine.Editor" && set XRE_NET_MODE=Client && dotnet run --project XREngine.Editor.csproj --no-build"
+start "XRE Client" cmd /c "cd /d "%REPO_ROOT%\XREngine.Editor" && set XRE_NET_MODE=Client && dotnet run --project XREngine.Editor.csproj --no-build"
 
 echo.
 echo ============================================================

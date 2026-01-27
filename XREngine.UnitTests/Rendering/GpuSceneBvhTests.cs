@@ -195,6 +195,19 @@ public class GpuSceneBvhTests
         source.ShouldNotBeNullOrEmpty();
     }
 
+    [Test]
+    public void BvhCommandAabbShader_Loads_Successfully()
+    {
+        // Act
+        string source = LoadShaderSource("Scene3D/RenderPipeline/bvh_aabb_from_commands.comp");
+
+        // Assert
+        source.ShouldNotBeNullOrEmpty();
+        source.ShouldContain("COMMAND_FLOATS");
+        source.ShouldContain("BOUNDS_OFFSET");
+        source.ShouldContain("AABBs");
+    }
+
     #endregion
 
     #region BVH Data Structure Tests

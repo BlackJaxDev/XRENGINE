@@ -1,6 +1,9 @@
 @echo off
 setlocal
 
+REM Change to repository root (parent of Tools directory)
+cd /d "%~dp0.."
+
 REM Restore tools and serve DocFX site on port 8080
 dotnet tool restore
 if errorlevel 1 (

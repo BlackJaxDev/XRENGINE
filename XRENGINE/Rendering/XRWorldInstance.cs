@@ -622,8 +622,14 @@ namespace XREngine.Rendering
             //var arr = ArrayPool<(TransformBase tfm, Matrix4x4 renderMatrix)>.Shared.Rent(_pushToRenderSnapshot.Count);
             //await Task.WhenAll(_pushToRenderSnapshot.Select(x => x.tfm.SetRenderMatrix(x.renderMatrix, false)));
             //_pushToRenderSnapshot.Clear();
+            int applied = 0;
             while (_pushToRenderSnapshot.TryDequeue(out (TransformBase tfm, Matrix4x4 renderMatrix) item))
+            {
                 item.tfm.SetRenderMatrix(item.renderMatrix, false);
+                applied++;
+            }
+
+            Engine.Rendering.Stats.RecordRenderMatrixApplied(applied);
         }
 
         private void GlobalSwapBuffers()
@@ -637,15 +643,23 @@ namespace XREngine.Rendering
                 ApplyRenderMatrixChanges();
             }
 
+            RenderableMesh.ProcessPendingRenderMatrixUpdates();
+
             using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.VisualScene"))
             {
                 VisualScene.GlobalSwapBuffers();
             }
+            
+            // Swap octree stats after octree commands are consumed.
+            Engine.Rendering.Stats.SwapOctreeStats();
             //PhysicsScene.SwapDebugBuffers();
             using (Engine.Profiler.Start("WorldInstance.GlobalSwapBuffers.Lights"))
             {
                 Lights.SwapBuffers();
             }
+
+            // Swap render-matrix stats after all SwapBuffers work is done.
+            Engine.Rendering.Stats.SwapRenderMatrixStats();
         }
 
         /// <summary>
@@ -713,6 +727,9 @@ namespace XREngine.Rendering
 
         public void EnqueueRenderTransformChange(TransformBase transform, Matrix4x4 worldMatrix)
         {
+            if (!transform.ShouldEnqueueRenderMatrix(worldMatrix))
+                return;
+
             _pushToRenderWrite.Enqueue((transform, worldMatrix));
             AnyTransformWorldMatrixChanged?.Invoke(this, transform, worldMatrix);
         }

@@ -1,5 +1,6 @@
 using Extensions;
 using MemoryPack;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -13,6 +14,7 @@ using XREngine.Data.Vectors;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.Shaders.Generator;
+using XREngine.Scene.Transforms;
 using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 using static XREngine.Rendering.XRMesh;
 
@@ -349,6 +351,15 @@ namespace XREngine.Rendering
         private RenderBone[]? _bones;
         [MemoryPackIgnore]
         public RenderBone[]? Bones => _bones;
+
+        [MemoryPackIgnore]
+        private Dictionary<TransformBase, RenderBone>? _boneByTransform;
+        [MemoryPackIgnore]
+        private List<uint>? _dirtyBoneIndices;
+        [MemoryPackIgnore]
+        private bool[]? _dirtyBoneFlags;
+        [MemoryPackIgnore]
+        private Matrix4x4[]? _dirtyBoneMatrices;
 
         #region Mesh Deformation
 
@@ -724,6 +735,16 @@ namespace XREngine.Rendering
 
         private void ResetDrivableBuffers()
         {
+            if (_boneByTransform is not null)
+            {
+                foreach (var pair in _boneByTransform)
+                    pair.Key.RenderMatrixChanged -= BoneTransformRenderMatrixChanged;
+                _boneByTransform.Clear();
+            }
+            _dirtyBoneIndices?.Clear();
+            _dirtyBoneFlags = null;
+            _dirtyBoneMatrices = null;
+
             _bones = null;
 
             BoneMatricesBuffer?.Destroy();
@@ -919,13 +940,18 @@ namespace XREngine.Rendering
             BoneInvBindMatricesBuffer.Set(0, Matrix4x4.Identity);
 
             _bones = new RenderBone[boneCount];
+            _boneByTransform = new Dictionary<TransformBase, RenderBone>((int)boneCount);
+            _dirtyBoneIndices = new List<uint>((int)boneCount);
+            _dirtyBoneFlags = new bool[boneCount + 1];
+            _dirtyBoneMatrices = new Matrix4x4[boneCount + 1];
             for (int i = 0; i < _bones.Length; i++)
             {
                 var (tfm, invBindWorldMtx) = Mesh!.UtilizedBones[i];
                 uint boneIndex = (uint)i + 1u;
 
                 var rb = new RenderBone(tfm, invBindWorldMtx, boneIndex);
-                rb.RenderTransformUpdated += BoneRenderTransformUpdated;
+                _boneByTransform[tfm] = rb;
+                tfm.RenderMatrixChanged += BoneTransformRenderMatrixChanged;
                 _bones[i] = rb;
 
                 BoneMatricesBuffer.Set(boneIndex, tfm.WorldMatrix);
@@ -939,33 +965,24 @@ namespace XREngine.Rendering
         private bool _bonesInvalidated = false;
         private bool _blendshapesInvalidated = false;
 
-        private unsafe void BoneRenderTransformUpdated(RenderBone bone, Matrix4x4 renderMatrix)
+        private void BoneTransformRenderMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
             if (BoneMatricesBuffer is null)
                 return;
 
-            //using var timer = Engine.Profiler.Start();
-            //float* boneBuf = (float*)BoneMatricesBuffer.Address;
-            //uint index = bone.Index * 16u;
-            //boneBuf[index + 0] = bone.Transform.RenderMatrix.M11;
-            //boneBuf[index + 1] = bone.Transform.RenderMatrix.M12;
-            //boneBuf[index + 2] = bone.Transform.RenderMatrix.M13;
-            //boneBuf[index + 3] = bone.Transform.RenderMatrix.M14;
-            //boneBuf[index + 4] = bone.Transform.RenderMatrix.M21;
-            //boneBuf[index + 5] = bone.Transform.RenderMatrix.M22;
-            //boneBuf[index + 6] = bone.Transform.RenderMatrix.M23;
-            //boneBuf[index + 7] = bone.Transform.RenderMatrix.M24;
-            //boneBuf[index + 8] = bone.Transform.RenderMatrix.M31;
-            //boneBuf[index + 9] = bone.Transform.RenderMatrix.M32;
-            //boneBuf[index + 10] = bone.Transform.RenderMatrix.M33;
-            //boneBuf[index + 11] = bone.Transform.RenderMatrix.M34;
-            //boneBuf[index + 12] = bone.Transform.RenderMatrix.M41;
-            //boneBuf[index + 13] = bone.Transform.RenderMatrix.M42;
-            //boneBuf[index + 14] = bone.Transform.RenderMatrix.M43;
-            //boneBuf[index + 15] = bone.Transform.RenderMatrix.M44;
-            //if (bone.Transform.Name == "Hair_1_3")
-            //    Debug.Out("");
-            BoneMatricesBuffer?.Set(bone.Index, renderMatrix);
+            if (_boneByTransform is null || !_boneByTransform.TryGetValue(transform, out var bone))
+                return;
+
+            if (_dirtyBoneFlags is null || _dirtyBoneIndices is null || _dirtyBoneMatrices is null)
+                return;
+
+            int index = (int)bone.Index;
+            _dirtyBoneMatrices[index] = renderMatrix;
+            if (!_dirtyBoneFlags[index])
+            {
+                _dirtyBoneFlags[index] = true;
+                _dirtyBoneIndices.Add(bone.Index);
+            }
             _bonesInvalidated = true;
         }
 
@@ -975,7 +992,19 @@ namespace XREngine.Rendering
             if (BoneMatricesBuffer is null || !_bonesInvalidated)
                 return;
 
+            if (_dirtyBoneIndices is null || _dirtyBoneFlags is null || _dirtyBoneMatrices is null)
+                return;
+
             _bonesInvalidated = false;
+
+            foreach (var index in _dirtyBoneIndices)
+            {
+                int i = (int)index;
+                BoneMatricesBuffer.Set(index, _dirtyBoneMatrices[i]);
+                _dirtyBoneFlags[i] = false;
+            }
+            _dirtyBoneIndices.Clear();
+
             BoneMatricesBuffer.PushSubData();
         }
         public void PushBlendshapeWeightsToGPU()

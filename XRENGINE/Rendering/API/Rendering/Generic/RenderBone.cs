@@ -19,7 +19,6 @@ namespace XREngine.Rendering
             get => _index;
             set => SetField(ref _index, value);
         }
-        public event Action<RenderBone, Matrix4x4>? RenderTransformUpdated;
         public TransformBase Transform
         {
             get => _transform;
@@ -32,7 +31,6 @@ namespace XREngine.Rendering
             Index = index;
             InvBindMatrix = invBindMtx;
             _transform = source;
-            _transform.RenderMatrixChanged += OnRenderTransformChanged;
         }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
@@ -43,7 +41,6 @@ namespace XREngine.Rendering
                 switch (propName)
                 {
                     case nameof(Transform):
-                        Transform.RenderMatrixChanged -= OnRenderTransformChanged;
                         break;
                 }
             }
@@ -55,7 +52,6 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(Transform):
-                    Transform.RenderMatrixChanged += OnRenderTransformChanged;
                     break;
             }
         }
@@ -77,7 +73,5 @@ namespace XREngine.Rendering
             set => SetField(ref _targetWeights, value);
         }
         
-        public void OnRenderTransformChanged(TransformBase tfm, Matrix4x4 renderMatrix)
-            => RenderTransformUpdated?.Invoke(this, renderMatrix);
     }
 }

@@ -1,0 +1,41 @@
+#version 460
+
+// Builds per-command AABBs from GPUScene command buffer (bounding sphere at offsets 32-35)
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+const uint COMMAND_FLOATS = 48u;
+const uint BOUNDS_OFFSET = 32u;
+
+layout(std430, binding = 0) readonly buffer Commands
+{
+    float commands[];
+};
+
+struct Aabb
+{
+    vec4 minBounds;
+    vec4 maxBounds;
+};
+
+layout(std430, binding = 1) buffer AABBs
+{
+    Aabb aabbs[];
+};
+
+uniform uint numCommands;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= numCommands)
+        return;
+
+    uint base = gid * COMMAND_FLOATS + BOUNDS_OFFSET;
+    vec3 center = vec3(commands[base + 0u], commands[base + 1u], commands[base + 2u]);
+    float radius = commands[base + 3u];
+    vec3 r = vec3(radius);
+
+    aabbs[gid].minBounds = vec4(center - r, 0.0);
+    aabbs[gid].maxBounds = vec4(center + r, 0.0);
+}

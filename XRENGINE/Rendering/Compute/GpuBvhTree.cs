@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Data;
@@ -28,20 +30,37 @@ public sealed class GpuBvhTree : IDisposable
     private bool _disposed;
     private readonly object _syncRoot = new();
 
+    private const uint OverflowFlagBinding = 8u;
+    private const uint OverflowMortonBit = 1u;
+    private const uint OverflowNodeBit = 1u << 1;
+    private const uint OverflowQueueBit = 1u << 2;
+    private const uint OverflowBvhBit = 1u << 3;
+
     // Buffer storage
     private XRDataBuffer? _nodeBuffer;
     private XRDataBuffer? _rangeBuffer;
     private XRDataBuffer? _mortonBuffer;
     private XRDataBuffer? _counterBuffer;
     private XRDataBuffer? _aabbBuffer;
+    private XRDataBuffer? _overflowFlagBuffer;
 
     // Shader programs
     private XRShader? _buildShader;
     private XRShader? _refitShader;
     private XRShader? _refineShader;
+    private XRShader? _mortonShader;
+    private XRShader? _smallSortShader;
+    private XRShader? _padShader;
+    private XRShader? _tileSortShader;
+    private XRShader? _mergeShader;
     private XRRenderProgram? _buildProgram;
     private XRRenderProgram? _refitProgram;
     private XRRenderProgram? _refineProgram;
+    private XRRenderProgram? _mortonProgram;
+    private XRRenderProgram? _smallSortProgram;
+    private XRRenderProgram? _padProgram;
+    private XRRenderProgram? _tileSortProgram;
+    private XRRenderProgram? _mergeProgram;
 
     // State tracking
     private uint _lastNodeCount;
@@ -144,6 +163,7 @@ public sealed class GpuBvhTree : IDisposable
             _aabbBuffer = aabbBuffer;
             EnsurePrograms();
             EnsureBuffers(primitiveCount);
+            ResetOverflowFlagBuffer();
 
             Vector3 sceneMin = sceneBounds.Min;
             Vector3 sceneMax = sceneBounds.Max;
@@ -169,6 +189,9 @@ public sealed class GpuBvhTree : IDisposable
             // Refit bounds
             DispatchRefit();
 
+            if (ConsumeOverflowFlag(primitiveCount, _lastNodeCount))
+                return;
+
             _lastPrimitiveCount = primitiveCount;
             _isDirty = false;
         }
@@ -187,6 +210,7 @@ public sealed class GpuBvhTree : IDisposable
         {
             EnsurePrograms();
             DispatchRefit();
+            ConsumeOverflowFlag(_lastPrimitiveCount, _lastNodeCount);
         }
     }
 
@@ -212,6 +236,11 @@ public sealed class GpuBvhTree : IDisposable
         _buildProgram ??= CreateProgram(ref _buildShader, "Scene3D/RenderPipeline/bvh_build.comp");
         _refitProgram ??= CreateProgram(ref _refitShader, "Scene3D/RenderPipeline/bvh_refit.comp");
         _refineProgram ??= CreateProgram(ref _refineShader, "Scene3D/RenderPipeline/bvh_sah_refine.comp");
+        _mortonProgram ??= CreateProgram(ref _mortonShader, "Scene3D/RenderPipeline/OctreeGeneration/morton_codes.comp");
+        _smallSortProgram ??= CreateProgram(ref _smallSortShader, "Scene3D/RenderPipeline/OctreeGeneration/sort_morton.comp");
+        _padProgram ??= CreateProgram(ref _padShader, "Scene3D/RenderPipeline/OctreeGeneration/pad_morton.comp");
+        _tileSortProgram ??= CreateProgram(ref _tileSortShader, "Scene3D/RenderPipeline/OctreeGeneration/sort_morton_tiles.comp");
+        _mergeProgram ??= CreateProgram(ref _mergeShader, "Scene3D/RenderPipeline/OctreeGeneration/merge_morton.comp");
     }
 
     private void ResetPrograms()
@@ -222,6 +251,16 @@ public sealed class GpuBvhTree : IDisposable
         _buildShader = null;
         _refitShader = null;
         _refineShader = null;
+        _mortonProgram = null;
+        _smallSortProgram = null;
+        _padProgram = null;
+        _tileSortProgram = null;
+        _mergeProgram = null;
+        _mortonShader = null;
+        _smallSortShader = null;
+        _padShader = null;
+        _tileSortShader = null;
+        _mergeShader = null;
     }
 
     private void EnsureBuffers(uint primitiveCount)
@@ -238,6 +277,7 @@ public sealed class GpuBvhTree : IDisposable
         EnsureBuffer(ref _rangeBuffer, "GpuBvhTree.Ranges", rangeScalars, 7);
         EnsureBuffer(ref _mortonBuffer, "GpuBvhTree.Morton", mortonScalars, null);
         EnsureBuffer(ref _counterBuffer, "GpuBvhTree.Counters", Math.Max(nodeCount, 1u), 11);
+        EnsureOverflowFlagBuffer();
     }
 
     private static void EnsureBuffer(ref XRDataBuffer? buffer, string name, uint scalarCount, uint? bindingIndex)
@@ -277,16 +317,163 @@ public sealed class GpuBvhTree : IDisposable
 
     private void DispatchMortonCodes(uint primitiveCount, Vector3 sceneMin, Vector3 sceneMax)
     {
-        // Morton code generation is typically done by the OctreeGPU pipeline
-        // For now, we assume the morton buffer is populated externally or use a simple fallback
-        // TODO: Add morton_codes.comp dispatch here if needed
+        if (_mortonProgram is null || _mortonBuffer is null || _aabbBuffer is null)
+            return;
+
+        var program = _mortonProgram;
+        program.BindBuffer(_aabbBuffer, 0);
+        program.BindBuffer(_mortonBuffer, 1);
+        program.Uniform("sceneMin", sceneMin);
+        program.Uniform("sceneMax", sceneMax);
+        program.Uniform("numObjects", primitiveCount);
+        program.Uniform("mortonCapacity", GetMortonCapacity());
+        if (_overflowFlagBuffer is not null)
+            program.BindBuffer(_overflowFlagBuffer, OverflowFlagBinding);
+        program.DispatchCompute(ComputeGroups(primitiveCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
     }
 
     private void SortMortonCodes(uint primitiveCount)
     {
-        // Morton code sorting - use bitonic/radix sort
-        // For now, assume sorted externally or use simple GPU sort
-        // TODO: Add sorting passes here
+        if (primitiveCount <= 1 || _mortonBuffer is null)
+            return;
+
+        if (primitiveCount <= 1024)
+        {
+            var program = _smallSortProgram;
+            if (program is null)
+                return;
+            program.BindBuffer(_mortonBuffer, 1);
+            program.Uniform("numObjects", primitiveCount);
+            program.DispatchCompute(1u, 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+            return;
+        }
+
+        uint paddedCount = Math.Max(1024u, NextPowerOfTwo(primitiveCount));
+        var padProgram = _padProgram;
+        if (padProgram is null)
+            return;
+        padProgram.BindBuffer(_mortonBuffer, 1);
+        padProgram.Uniform("numObjects", primitiveCount);
+        padProgram.Uniform("paddedCount", paddedCount);
+        padProgram.DispatchCompute(ComputeGroups(paddedCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+
+        var tileProgram = _tileSortProgram;
+        if (tileProgram is null)
+            return;
+        tileProgram.BindBuffer(_mortonBuffer, 1);
+        tileProgram.Uniform("paddedCount", paddedCount);
+        tileProgram.DispatchCompute(Math.Max(1u, paddedCount / 1024u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+
+        var mergeProgram = _mergeProgram;
+        if (mergeProgram is null)
+            return;
+        mergeProgram.BindBuffer(_mortonBuffer, 1);
+        mergeProgram.Uniform("paddedCount", paddedCount);
+        for (uint k = 2048u; k <= paddedCount; k <<= 1)
+        {
+            mergeProgram.Uniform("K", k);
+            for (uint j = k >> 1; j > 0; j >>= 1)
+            {
+                mergeProgram.Uniform("J", j);
+                mergeProgram.DispatchCompute(ComputeGroups(paddedCount, 256u), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
+            }
+        }
+    }
+
+    private uint GetMortonCapacity()
+        => _mortonBuffer is null ? 0u : _mortonBuffer.ElementCount / 2u;
+
+    private void EnsureOverflowFlagBuffer()
+    {
+        if (_overflowFlagBuffer is not null)
+            return;
+
+        _overflowFlagBuffer = new XRDataBuffer("GpuBvhTree.OverflowFlag", EBufferTarget.ShaderStorageBuffer, 1, EComponentType.UInt, 1, false, true)
+        {
+            Usage = EBufferUsage.DynamicDraw,
+            Resizable = false,
+            DisposeOnPush = false,
+            PadEndingToVec4 = true,
+            ShouldMap = false
+        };
+        _overflowFlagBuffer.SetBlockIndex(OverflowFlagBinding);
+        _overflowFlagBuffer.SetDataRaw(new uint[] { 0u }, 1);
+        _overflowFlagBuffer.PushSubData();
+    }
+
+    private void ResetOverflowFlagBuffer()
+    {
+        EnsureOverflowFlagBuffer();
+        if (_overflowFlagBuffer is null)
+            return;
+
+        if (_overflowFlagBuffer.ClientSideSource is null)
+            _overflowFlagBuffer.SetDataRaw(new uint[] { 0u }, 1);
+        else
+            _overflowFlagBuffer.SetDataRawAtIndex(0, 0u);
+        _overflowFlagBuffer.PushSubData();
+    }
+
+    private bool ConsumeOverflowFlag(uint primitiveCount, uint nodeCount)
+    {
+        if (_overflowFlagBuffer is null)
+            return false;
+
+        uint flags = ReadUInt(_overflowFlagBuffer);
+        if (flags == 0u)
+            return false;
+
+        Debug.LogWarning($"[GpuBvhTree] Overflow detected while building BVH ({DescribeOverflow(flags, primitiveCount, nodeCount)}). Falling back to non-BVH culling.");
+        _lastNodeCount = 0;
+        _lastPrimitiveCount = 0;
+        _isDirty = true;
+        return true;
+    }
+
+    private static string DescribeOverflow(uint flags, uint primitiveCount, uint nodeCount)
+    {
+        List<string> reasons = new();
+        if ((flags & OverflowMortonBit) != 0)
+            reasons.Add($"morton capacity exceeded (primitives={primitiveCount})");
+        if ((flags & OverflowNodeBit) != 0)
+            reasons.Add($"node capacity exceeded (nodes={nodeCount})");
+        if ((flags & OverflowQueueBit) != 0)
+            reasons.Add("queue capacity exceeded");
+        if ((flags & OverflowBvhBit) != 0)
+            reasons.Add("BVH build overflow");
+
+        return reasons.Count == 0
+            ? "unknown overflow"
+            : string.Join(", ", reasons);
+    }
+
+    private static unsafe uint ReadUInt(XRDataBuffer buf)
+    {
+        bool mappedTemporarily = false;
+
+        try
+        {
+            if (!buf.IsMapped)
+            {
+                buf.MapBufferData();
+                if (!buf.IsMapped)
+                    return buf.GetDataRawAtIndex<uint>(0);
+                mappedTemporarily = true;
+            }
+
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
+
+            var addr = buf.GetMappedAddresses().FirstOrDefault();
+            if (addr == IntPtr.Zero)
+                throw new InvalidOperationException("ReadUInt failed - buffer mapped address is null");
+
+            return *((uint*)addr.Pointer);
+        }
+        finally
+        {
+            if (mappedTemporarily)
+                buf.UnmapBufferData();
+        }
     }
 
     private void DispatchBuild(uint primitiveCount)
@@ -304,6 +491,8 @@ public sealed class GpuBvhTree : IDisposable
         program.BindBuffer(_mortonBuffer!, 1);
         program.BindBuffer(_nodeBuffer, 2);
         program.BindBuffer(_rangeBuffer, 3);
+        if (_overflowFlagBuffer is not null)
+            program.BindBuffer(_overflowFlagBuffer, OverflowFlagBinding);
         program.Uniform("numPrimitives", primitiveCount);
         program.Uniform("nodeScalarCapacity", _nodeBuffer.ElementCount);
         program.Uniform("rangeScalarCapacity", _rangeBuffer.ElementCount);
@@ -346,6 +535,8 @@ public sealed class GpuBvhTree : IDisposable
         program.BindBuffer(_mortonBuffer!, 1);
         program.BindBuffer(_nodeBuffer, 2);
         program.BindBuffer(_rangeBuffer, 3);
+        if (_overflowFlagBuffer is not null)
+            program.BindBuffer(_overflowFlagBuffer, OverflowFlagBinding);
         
         // Set BVH configuration uniforms (OpenGL-compatible replacement for Vulkan specialization constants)
         program.Uniform("MAX_LEAF_PRIMITIVES", _maxLeafPrimitives);
@@ -365,6 +556,8 @@ public sealed class GpuBvhTree : IDisposable
         program.BindBuffer(_nodeBuffer, 2);
         program.BindBuffer(_rangeBuffer, 3);
         program.BindBuffer(_counterBuffer, 11);
+        if (_overflowFlagBuffer is not null)
+            program.BindBuffer(_overflowFlagBuffer, OverflowFlagBinding);
         program.Uniform("debugValidation", 0u);
         
         // Set BVH configuration uniforms (OpenGL-compatible replacement for Vulkan specialization constants)
@@ -400,11 +593,32 @@ public sealed class GpuBvhTree : IDisposable
         _rangeBuffer?.Dispose();
         _mortonBuffer?.Dispose();
         _counterBuffer?.Dispose();
+        _overflowFlagBuffer?.Dispose();
+
+        _buildShader?.Destroy();
+        _refitShader?.Destroy();
+        _refineShader?.Destroy();
+        _mortonShader?.Destroy();
+        _smallSortShader?.Destroy();
+        _padShader?.Destroy();
+        _tileSortShader?.Destroy();
+        _mergeShader?.Destroy();
+
+        _buildProgram?.Destroy();
+        _refitProgram?.Destroy();
+        _refineProgram?.Destroy();
+        _mortonProgram?.Destroy();
+        _smallSortProgram?.Destroy();
+        _padProgram?.Destroy();
+        _tileSortProgram?.Destroy();
+        _mergeProgram?.Destroy();
 
         _nodeBuffer = null;
         _rangeBuffer = null;
         _mortonBuffer = null;
         _counterBuffer = null;
+        _overflowFlagBuffer = null;
+        _aabbBuffer = null;
     }
 }
 

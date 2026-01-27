@@ -52,6 +52,7 @@ namespace XREngine.Rendering.Commands
             {
                 Log(LogCategory.Lifecycle, LogLevel.Debug, "Render early-out - visible=0");
                 Dbg("Render early-out - visible=0", "Lifecycle");
+                PostRenderDiagnostics();
                 return;
             }
 
