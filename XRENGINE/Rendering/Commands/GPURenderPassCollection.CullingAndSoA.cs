@@ -649,6 +649,9 @@ namespace XREngine.Rendering.Commands
 
             var bvhProvider = scene.BvhProvider;
 
+            // Ensure GPU BVH/AABB data is up-to-date before culling
+            scene.PrepareBvhForCulling(numCommands);
+
             // Validate prerequisites
             if (CulledSceneToRenderBuffer is null ||
                 _bvhFrustumCullProgram is null || 

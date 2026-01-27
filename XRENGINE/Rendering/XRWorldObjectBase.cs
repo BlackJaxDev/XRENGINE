@@ -287,8 +287,8 @@ namespace XREngine
         /// Tells the engine to replicate this object to the network.
         /// </summary>
         /// <param name="udp"></param>
-        public void EnqueueSelfReplication(bool compress, bool resendOnFailedAck)
-            => Engine.Networking?.ReplicateObject(this, compress, resendOnFailedAck);
+        public void EnqueueSelfReplication(bool compress, bool resendOnFailedAck, float maxAckWaitSec = 5.0f)
+            => Engine.Networking?.ReplicateObject(this, compress, resendOnFailedAck, maxAckWaitSec);
         /// <summary>
         /// Tells the engine to replicate a specific property to the network.
         /// </summary>
@@ -296,16 +296,16 @@ namespace XREngine
         /// <param name="propName"></param>
         /// <param name="value"></param>
         /// <param name="udp"></param>
-        public void EnqueuePropertyReplication<T>(string? propName, T value, bool compress, bool resendOnFailedAck)
-            => Engine.Networking?.ReplicatePropertyUpdated(this, propName, value, compress, resendOnFailedAck);
+        public void EnqueuePropertyReplication<T>(string? propName, T value, bool compress, bool resendOnFailedAck, float maxAckWaitSec = 5.0f)
+            => Engine.Networking?.ReplicatePropertyUpdated(this, propName, value, compress, resendOnFailedAck, maxAckWaitSec);
         /// <summary>
         /// Tells the engine to replicate some data to the network.
         /// </summary>
         /// <param name="id"></param>
         /// <param name="data"></param>
         /// <param name="udp"></param>
-        public void EnqueueDataReplication(string id, byte[] data, bool compress, bool resendOnFailedAck)
-            => Engine.Networking?.ReplicateData(this, data, id, compress, resendOnFailedAck);
+        public void EnqueueDataReplication(string id, byte[] data, bool compress, bool resendOnFailedAck, float maxAckWaitSec = 5.0f)
+            => Engine.Networking?.ReplicateData(this, data, id, compress, resendOnFailedAck, maxAckWaitSec);
 
         /// <summary>
         /// Called by data replication to receive generic data from the network.

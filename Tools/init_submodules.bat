@@ -2,8 +2,8 @@
 echo Initializing XRENGINE repository submodules...
 echo.
 
-REM Change to the repository root directory
-cd /d "%~dp0"
+REM Change to repository root (parent of Tools directory)
+cd /d "%~dp0.."
 
 REM Synchronize local config with .gitmodules in case remote URLs changed
 echo Syncing submodule configuration...
@@ -28,7 +28,3 @@ echo Submodules initialized and updated successfully!
 echo.
 echo Submodule status:
 git submodule status
-
-echo.
-echo Repository is ready for development.
-pause

@@ -2,7 +2,8 @@
 setlocal
 
 REM Compile third-party submodules for a given configuration/platform.
-set "REPO_ROOT=%~dp0"
+REM Change to repository root (parent of Tools directory)
+set "REPO_ROOT=%~dp0.."
 pushd "%REPO_ROOT%" >nul 2>&1
 
 set "CONFIG=%~1"
@@ -181,7 +182,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-set "RIVESHARP_CSPROJ=%REPO_ROOT%Build\Submodules\rive-sharp\RiveSharp\RiveSharp.csproj"
+set "RIVESHARP_CSPROJ=%REPO_ROOT%\Build\Submodules\rive-sharp\RiveSharp\RiveSharp.csproj"
 if not exist "%RIVESHARP_CSPROJ%" (
     echo ERROR: RiveSharp project file not found at "%RIVESHARP_CSPROJ%".
     exit /b 1
@@ -201,13 +202,13 @@ for /f "delims=" %%I in ('where premake5 2^>nul') do (
     set "PREMAKE_EXE=%%I"
     goto premake_found
 )
-if exist "%REPO_ROOT%Build\Tools\premake5.exe" (
-    set "PREMAKE_EXE=%REPO_ROOT%Build\Tools\premake5.exe"
+if exist "%REPO_ROOT%\Build\Tools\premake5.exe" (
+    set "PREMAKE_EXE=%REPO_ROOT%\Build\Tools\premake5.exe"
     goto premake_found
 )
 
 echo Premake not found. Installing local copy...
-set "PREMAKE_DIR=%REPO_ROOT%Build\Tools"
+set "PREMAKE_DIR=%REPO_ROOT%\Build\Tools"
 if not exist "%PREMAKE_DIR%" mkdir "%PREMAKE_DIR%"
 
 set "PREMAKE_ZIP=%PREMAKE_DIR%\premake.zip"
@@ -249,7 +250,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-set "RIVE_NATIVE_DIR=%REPO_ROOT%Build\Submodules\rive-sharp\native"
+set "RIVE_NATIVE_DIR=%REPO_ROOT%\Build\Submodules\rive-sharp\native"
 if not exist "%RIVE_NATIVE_DIR%" (
     echo WARNING: Rive native directory not found. Skipping native build.
     exit /b 0

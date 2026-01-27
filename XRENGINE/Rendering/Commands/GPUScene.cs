@@ -52,6 +52,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Meshlets;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Commands
 {
@@ -687,6 +688,14 @@ namespace XREngine.Rendering.Commands
             _allLoadedCommandsBuffer = null;
             _updatingCommandsBuffer?.Destroy();
             _updatingCommandsBuffer = null;
+            _commandAabbBuffer?.Destroy();
+            _commandAabbBuffer = null;
+            _commandAabbProgram?.Destroy();
+            _commandAabbProgram = null;
+            _commandAabbShader?.Destroy();
+            _commandAabbShader = null;
+            _gpuBvhTree?.Dispose();
+            _gpuBvhTree = null;
             _meshIDMap.Clear();
             _materialIDMap.Clear();
             _idToMaterial.Clear();
@@ -700,6 +709,10 @@ namespace XREngine.Rendering.Commands
             _commandIndicesPerMeshCommand.Clear();
             _commandIndexLookup.Clear();
             _meshToIndexRemap.Clear();
+            _bvhReady = false;
+            _bvhDirty = false;
+            _bvhNodeCount = 0;
+            _bvhPrimitiveCount = 0;
         }
 
         #endregion
@@ -763,9 +776,16 @@ namespace XREngine.Rendering.Commands
                 
                 // Update the render count to match the updating count
                 TotalCommandCount = _updatingCommandCount;
-                
-                // Mark BVH dirty since command buffer changed
-                MarkBvhDirty();
+
+                // Update BVH
+                if (_useInternalBvh)
+                {
+                    bool canRefit = _bvhReady && !_bvhDirty && _gpuBvhTree is not null && _bvhPrimitiveCount == _updatingCommandCount;
+                    if (canRefit)
+                        _bvhRefitPending = true;
+                    else
+                        MarkBvhDirty();
+                }
             }
         }
 
@@ -1772,13 +1792,15 @@ namespace XREngine.Rendering.Commands
         // -------------------------------------------------------------------------
 
         /// <summary>BVH node buffer containing the tree structure.</summary>
-        private XRDataBuffer? _bvhNodeBuffer;
+        private GpuBvhTree? _gpuBvhTree;
 
         /// <summary>BVH range buffer mapping nodes to primitive ranges.</summary>
-        private XRDataBuffer? _bvhRangeBuffer;
+        private XRDataBuffer? _commandAabbBuffer;
 
         /// <summary>BVH morton buffer containing morton codes and object IDs.</summary>
-        private XRDataBuffer? _bvhMortonBuffer;
+        private XRShader? _commandAabbShader;
+
+        private XRRenderProgram? _commandAabbProgram;
 
         /// <summary>Flag indicating the BVH needs to be rebuilt.</summary>
         private bool _bvhDirty = false;
@@ -1789,20 +1811,26 @@ namespace XREngine.Rendering.Commands
         /// <summary>Total number of nodes in the BVH.</summary>
         private uint _bvhNodeCount = 0;
 
-        /// <inheritdoc/>
-        XRDataBuffer? IGpuBvhProvider.BvhNodeBuffer => _useInternalBvh ? _bvhNodeBuffer : null;
+        /// <summary>Total number of primitives currently represented by the BVH.</summary>
+        private uint _bvhPrimitiveCount = 0;
+
+        /// <summary>Flag indicating a BVH refit is pending on the render thread.</summary>
+        private volatile bool _bvhRefitPending = false;
 
         /// <inheritdoc/>
-        XRDataBuffer? IGpuBvhProvider.BvhRangeBuffer => _useInternalBvh ? _bvhRangeBuffer : null;
+        XRDataBuffer? IGpuBvhProvider.BvhNodeBuffer => _useInternalBvh ? _gpuBvhTree?.NodeBuffer : null;
 
         /// <inheritdoc/>
-        XRDataBuffer? IGpuBvhProvider.BvhMortonBuffer => _useInternalBvh ? _bvhMortonBuffer : null;
+        XRDataBuffer? IGpuBvhProvider.BvhRangeBuffer => _useInternalBvh ? _gpuBvhTree?.RangeBuffer : null;
+
+        /// <inheritdoc/>
+        XRDataBuffer? IGpuBvhProvider.BvhMortonBuffer => _useInternalBvh ? _gpuBvhTree?.MortonBuffer : null;
 
         /// <inheritdoc/>
         uint IGpuBvhProvider.BvhNodeCount => _useInternalBvh ? _bvhNodeCount : 0u;
 
         /// <inheritdoc/>
-        bool IGpuBvhProvider.IsBvhReady => _useInternalBvh && _bvhReady && !_bvhDirty;
+        bool IGpuBvhProvider.IsBvhReady => _useInternalBvh && _bvhReady && !_bvhDirty && _bvhNodeCount > 0;
 
         /// <summary>
         /// Marks the internal BVH as needing a rebuild.
@@ -1828,304 +1856,127 @@ namespace XREngine.Rendering.Commands
         private void RebuildInternalBvh()
         {
             uint commandCount = _totalCommandCount;
-            if (commandCount == 0)
+            if (commandCount == 0 || _allLoadedCommandsBuffer is null)
             {
                 _bvhReady = false;
                 _bvhNodeCount = 0;
+                _bvhPrimitiveCount = 0;
+                _gpuBvhTree?.Clear();
                 return;
             }
 
-            // TODO: For now, build a trivial flat "BVH" where each command is a leaf
-            // This provides the basic structure for the shader to work with
-            // A proper hierarchical BVH can be added later for better culling efficiency
+            EnsureGpuBvhResources(commandCount);
+            DispatchCommandAabbBuild(commandCount);
 
-            // Layout: morton objects map 1:1 to command indices
-            // Leaf count = command count, internal nodes = leaf count - 1
-            uint leafCount = commandCount;
-            uint internalCount = leafCount > 0 ? leafCount - 1u : 0u;
-            uint nodeCount = leafCount + internalCount;
+            _gpuBvhTree!.Build(_commandAabbBuffer!, commandCount, _bounds);
 
-            EnsureBvhBuffers(nodeCount, commandCount);
-
-            // Build morton codes (trivial: just use command index as morton code)
-            // In a proper implementation, we'd compute spatial morton codes
-            BuildTrivialMortonBuffer(commandCount);
-
-            // Build BVH node structure
-            BuildTrivialBvhNodes(nodeCount, leafCount);
-
-            // Build range buffer (each leaf points to one primitive)
-            BuildTrivialRangeBuffer(leafCount);
-
-            // Upload buffers
-            _bvhNodeBuffer?.PushSubData();
-            _bvhRangeBuffer?.PushSubData();
-            _bvhMortonBuffer?.PushSubData();
-
-            _bvhNodeCount = nodeCount;
-            _bvhReady = true;
+            _bvhNodeCount = _gpuBvhTree.NodeCount;
+            _bvhPrimitiveCount = _gpuBvhTree.PrimitiveCount;
+            _bvhReady = _bvhNodeCount > 0 && _bvhPrimitiveCount == commandCount;
 
             if (IsGpuSceneLoggingEnabled())
-                SceneLog($"[GPUScene] Built internal BVH with {nodeCount} nodes for {commandCount} commands");
+                SceneLog($"[GPUScene] Built internal BVH with {_bvhNodeCount} nodes for {commandCount} commands");
         }
 
-        private void EnsureBvhBuffers(uint nodeCount, uint primitiveCount)
+        private void RefitInternalBvh(uint commandCount)
         {
-            // Node buffer: header (4 scalars) + nodes (20 scalars each)
-            uint nodeScalars = GpuBvhLayout.NodeScalarCapacity(Math.Max(nodeCount, 1u));
-            if (_bvhNodeBuffer is null)
+            if (_gpuBvhTree is null || _allLoadedCommandsBuffer is null || _commandAabbBuffer is null)
+                return;
+
+            if (commandCount == 0 || _bvhPrimitiveCount == 0)
+                return;
+
+            DispatchCommandAabbBuild(commandCount);
+            _gpuBvhTree.Refit();
+
+            _bvhNodeCount = _gpuBvhTree.NodeCount;
+            _bvhPrimitiveCount = _gpuBvhTree.PrimitiveCount;
+            _bvhReady = _bvhNodeCount > 0 && _bvhPrimitiveCount == commandCount;
+        }
+
+        public void PrepareBvhForCulling(uint commandCount)
+        {
+            if (!_useInternalBvh)
+                return;
+
+            if (commandCount == 0 || _allLoadedCommandsBuffer is null)
             {
-                _bvhNodeBuffer = new XRDataBuffer(
-                    "GPUScene_BvhNodes",
+                _bvhReady = false;
+                _bvhNodeCount = 0;
+                _bvhPrimitiveCount = 0;
+                _gpuBvhTree?.Clear();
+                return;
+            }
+
+            if (_bvhDirty || !_bvhReady || _bvhPrimitiveCount != commandCount || _gpuBvhTree is null)
+            {
+                RebuildInternalBvh();
+                _bvhDirty = false;
+                _bvhRefitPending = false;
+                return;
+            }
+
+            if (_bvhRefitPending)
+            {
+                RefitInternalBvh(commandCount);
+                _bvhRefitPending = false;
+            }
+        }
+
+        private void EnsureGpuBvhResources(uint commandCount)
+        {
+            _gpuBvhTree ??= new GpuBvhTree();
+            EnsureCommandAabbBuffer(commandCount);
+            EnsureCommandAabbProgram();
+        }
+
+        private void EnsureCommandAabbBuffer(uint commandCount)
+        {
+            if (_commandAabbBuffer is null)
+            {
+                _commandAabbBuffer = new XRDataBuffer(
+                    "GPUScene_CommandAabbs",
                     EBufferTarget.ShaderStorageBuffer,
-                    nodeScalars,
+                    commandCount,
                     EComponentType.Float,
-                    1,
+                    8,
                     false,
                     true)
                 {
                     Usage = EBufferUsage.DynamicCopy,
+                    Resizable = true,
                     DisposeOnPush = false,
-                    Resizable = true
+                    PadEndingToVec4 = true,
+                    ShouldMap = false
                 };
             }
-            else if (_bvhNodeBuffer.ElementCount < nodeScalars)
+            else if (_commandAabbBuffer.ElementCount < commandCount)
             {
-                _bvhNodeBuffer.Resize(nodeScalars, false, true);
-            }
-
-            // Range buffer: 2 uints per node (start, count)
-            uint rangeScalars = GpuBvhLayout.RangeScalarCapacity(Math.Max(nodeCount, 1u));
-            if (_bvhRangeBuffer is null)
-            {
-                _bvhRangeBuffer = new XRDataBuffer(
-                    "GPUScene_BvhRanges",
-                    EBufferTarget.ShaderStorageBuffer,
-                    rangeScalars,
-                    EComponentType.UInt,
-                    1,
-                    false,
-                    true)
-                {
-                    Usage = EBufferUsage.DynamicCopy,
-                    DisposeOnPush = false,
-                    Resizable = true
-                };
-            }
-            else if (_bvhRangeBuffer.ElementCount < rangeScalars)
-            {
-                _bvhRangeBuffer.Resize(rangeScalars, false, true);
-            }
-
-            // Morton buffer: 2 uints per primitive (morton code, object id)
-            uint mortonScalars = primitiveCount * 2;
-            if (_bvhMortonBuffer is null)
-            {
-                _bvhMortonBuffer = new XRDataBuffer(
-                    "GPUScene_BvhMorton",
-                    EBufferTarget.ShaderStorageBuffer,
-                    Math.Max(mortonScalars, 2u),
-                    EComponentType.UInt,
-                    1,
-                    false,
-                    true)
-                {
-                    Usage = EBufferUsage.DynamicCopy,
-                    DisposeOnPush = false,
-                    Resizable = true
-                };
-            }
-            else if (_bvhMortonBuffer.ElementCount < mortonScalars)
-            {
-                _bvhMortonBuffer.Resize(Math.Max(mortonScalars, 2u), false, true);
+                _commandAabbBuffer.Resize(commandCount, false, true);
             }
         }
 
-        private void BuildTrivialMortonBuffer(uint commandCount)
+        private void EnsureCommandAabbProgram()
         {
-            if (_bvhMortonBuffer is null)
+            if (_commandAabbProgram is not null)
                 return;
 
-            // Each entry: [mortonCode, objectId]
-            // For trivial implementation, mortonCode = objectId = command index
-            uint[] mortonData = new uint[commandCount * 2];
-            for (uint i = 0; i < commandCount; i++)
-            {
-                mortonData[i * 2] = i;     // morton code (trivial: just index)
-                mortonData[i * 2 + 1] = i; // object ID = command index
-            }
-            _bvhMortonBuffer.SetDataRaw(mortonData, (int)(commandCount * 2));
+            _commandAabbShader ??= ShaderHelper.LoadEngineShader("Scene3D/RenderPipeline/bvh_aabb_from_commands.comp", EShaderType.Compute);
+            _commandAabbProgram = new XRRenderProgram(true, false, _commandAabbShader);
         }
 
-        private void BuildTrivialBvhNodes(uint nodeCount, uint leafCount)
+        private void DispatchCommandAabbBuild(uint commandCount)
         {
-            if (_bvhNodeBuffer is null || nodeCount == 0)
+            if (_commandAabbProgram is null || _allLoadedCommandsBuffer is null || _commandAabbBuffer is null)
                 return;
 
-            // BVH node layout per bvh_nodes.glslinc:
+            var program = _commandAabbProgram;
+            program.BindBuffer(_allLoadedCommandsBuffer, 0);
+            program.BindBuffer(_commandAabbBuffer, 1);
+            program.Uniform("numCommands", commandCount);
 
-            // Header: 
-            //  nodeCount (uint), 
-            //  rootIndex (uint), 
-            //  nodeStrideScalars (uint), 
-            //  maxLeafPrimitives (uint)
-
-            // Each node: 
-            //  minBounds (vec3), 
-            //  leftChild (uint), 
-            //  maxBounds (vec3), 
-            //  rightChild (uint),
-            //  parentIndex (uint), 
-            //  isLeaf (uint),
-            //  primitiveStart (uint), 
-            //  primitiveCount (uint),
-            //  unused (4 floats)
-
-            const int headerScalars = 4;
-            const int nodeStride = 20; // floats per node
-            int totalScalars = headerScalars + (int)nodeCount * nodeStride;
-
-            float[] nodeData = new float[totalScalars];
-
-            // Header
-            nodeData[0] = BitConverter.Int32BitsToSingle((int)nodeCount);
-            nodeData[1] = BitConverter.Int32BitsToSingle((int)(leafCount > 0 ? leafCount - 1 : 0)); // root = first internal node (or 0 if no internals)
-            nodeData[2] = BitConverter.Int32BitsToSingle(nodeStride);
-            nodeData[3] = BitConverter.Int32BitsToSingle(1); // maxLeafPrimitives = 1
-
-            // For trivial implementation, create flat leaf nodes
-            // Each leaf covers one command
-            for (int i = 0; i < (int)leafCount; i++)
-            {
-                int baseOffset = headerScalars + i * nodeStride;
-
-                // Get command bounds from the command buffer
-                var (minB, maxB) = GetCommandBounds((uint)i);
-
-                // minBounds
-                nodeData[baseOffset + 0] = minB.X;
-                nodeData[baseOffset + 1] = minB.Y;
-                nodeData[baseOffset + 2] = minB.Z;
-                // leftChild (invalid for leaf)
-                nodeData[baseOffset + 3] = BitConverter.Int32BitsToSingle(-1);
-                // maxBounds
-                nodeData[baseOffset + 4] = maxB.X;
-                nodeData[baseOffset + 5] = maxB.Y;
-                nodeData[baseOffset + 6] = maxB.Z;
-                // rightChild (invalid for leaf)
-                nodeData[baseOffset + 7] = BitConverter.Int32BitsToSingle(-1);
-                // parentIndex
-                nodeData[baseOffset + 8] = BitConverter.Int32BitsToSingle((int)(leafCount > 1 ? (int)leafCount + (i / 2) : -1));
-                // isLeaf
-                nodeData[baseOffset + 9] = BitConverter.Int32BitsToSingle(1);
-                // primitiveStart = index in morton buffer
-                nodeData[baseOffset + 10] = BitConverter.Int32BitsToSingle(i);
-                // primitiveCount = 1
-                nodeData[baseOffset + 11] = BitConverter.Int32BitsToSingle(1);
-                // unused padding
-                nodeData[baseOffset + 12] = 0;
-                nodeData[baseOffset + 13] = 0;
-                nodeData[baseOffset + 14] = 0;
-                nodeData[baseOffset + 15] = 0;
-                nodeData[baseOffset + 16] = 0;
-                nodeData[baseOffset + 17] = 0;
-                nodeData[baseOffset + 18] = 0;
-                nodeData[baseOffset + 19] = 0;
-            }
-
-            // Build internal nodes (simple bottom-up pairing)
-            int internalStart = (int)leafCount;
-            int internalCount = (int)leafCount - 1;
-            for (int i = 0; i < internalCount && leafCount > 1; i++)
-            {
-                int baseOffset = headerScalars + (internalStart + i) * nodeStride;
-                int leftIdx = i * 2;
-                int rightIdx = i * 2 + 1;
-
-                if (rightIdx >= (int)nodeCount)
-                    rightIdx = leftIdx;
-
-                // Compute combined bounds
-                var (leftMin, leftMax) = GetNodeBounds(nodeData, (uint)leftIdx, (uint)headerScalars, (uint)nodeStride);
-                var (rightMin, rightMax) = GetNodeBounds(nodeData, (uint)rightIdx, (uint)headerScalars, (uint)nodeStride);
-
-                Vector3 minB = Vector3.Min(leftMin, rightMin);
-                Vector3 maxB = Vector3.Max(leftMax, rightMax);
-
-                // minBounds
-                nodeData[baseOffset + 0] = minB.X;
-                nodeData[baseOffset + 1] = minB.Y;
-                nodeData[baseOffset + 2] = minB.Z;
-                // leftChild
-                nodeData[baseOffset + 3] = BitConverter.Int32BitsToSingle(leftIdx);
-                // maxBounds
-                nodeData[baseOffset + 4] = maxB.X;
-                nodeData[baseOffset + 5] = maxB.Y;
-                nodeData[baseOffset + 6] = maxB.Z;
-                // rightChild
-                nodeData[baseOffset + 7] = BitConverter.Int32BitsToSingle(rightIdx);
-                // parentIndex
-                nodeData[baseOffset + 8] = BitConverter.Int32BitsToSingle(i / 2 + internalStart / 2);
-                // isLeaf
-                nodeData[baseOffset + 9] = BitConverter.Int32BitsToSingle(0);
-                // primitiveStart (unused for internal)
-                nodeData[baseOffset + 10] = 0;
-                // primitiveCount (unused for internal)
-                nodeData[baseOffset + 11] = 0;
-            }
-
-            _bvhNodeBuffer.SetDataRaw(nodeData, totalScalars);
-        }
-
-        private (Vector3 min, Vector3 max) GetNodeBounds(float[] nodeData, uint nodeIndex, uint headerScalars, uint nodeStride)
-        {
-            int baseOffset = (int)(headerScalars + nodeIndex * nodeStride);
-            if (baseOffset + 7 >= nodeData.Length)
-                return (Vector3.Zero, Vector3.Zero);
-
-            return (
-                new Vector3(nodeData[baseOffset], nodeData[baseOffset + 1], nodeData[baseOffset + 2]),
-                new Vector3(nodeData[baseOffset + 4], nodeData[baseOffset + 5], nodeData[baseOffset + 6])
-            );
-        }
-
-        private (Vector3 min, Vector3 max) GetCommandBounds(uint commandIndex)
-        {
-            // Command layout: bounding sphere at offset 32-35 (center xyz, radius)
-            const int commandFloats = 48;
-            const int boundsOffset = 32;
-
-            if (_allLoadedCommandsBuffer is null)
-                return (Vector3.Zero, Vector3.Zero);
-
-            int baseIdx = (int)(commandIndex * commandFloats + boundsOffset);
-            
-            // Read from client-side buffer
-            _allLoadedCommandsBuffer.GetDataRaw(out float[] data, false);
-            if (data is null || baseIdx + 4 > data.Length)
-                return (Vector3.Zero, Vector3.Zero);
-
-            Vector3 center = new(data[baseIdx], data[baseIdx + 1], data[baseIdx + 2]);
-            float radius = data[baseIdx + 3];
-
-            // Convert sphere to AABB
-            Vector3 radiusVec = new(radius, radius, radius);
-            return (center - radiusVec, center + radiusVec);
-        }
-
-        private void BuildTrivialRangeBuffer(uint leafCount)
-        {
-            if (_bvhRangeBuffer is null)
-                return;
-
-            // Each leaf has range [start, count] pointing into morton buffer
-            uint[] rangeData = new uint[leafCount * 2];
-            for (uint i = 0; i < leafCount; i++)
-            {
-                rangeData[i * 2] = i;     // start
-                rangeData[i * 2 + 1] = 1; // count
-            }
-            _bvhRangeBuffer.SetDataRaw(rangeData, (int)(leafCount * 2));
+            (uint x, uint y, uint z) = ComputeDispatch.ForCommands(Math.Max(commandCount, 1u));
+            program.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage);
         }
 
         #endregion

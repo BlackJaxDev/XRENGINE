@@ -59,7 +59,7 @@ namespace XREngine.Data.Trees
         internal ConcurrentQueue<(Segment segment, SortedDictionary<float, List<(T item, object? data)>> items, Func<T, Segment, (float? distance, object? data)> directTest, Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback)> RaycastCommands { get; } = new ConcurrentQueue<(Segment segment, SortedDictionary<float, List<(T item, object? data)>> items, Func<T, Segment, (float? distance, object? data)> directTest, Action<SortedDictionary<float, List<(T item, object? data)>>> finishedCallback)>();
 
         private readonly List<(T item, ETreeCommand command)> _swapCommandBuffer = new(256);
-        private readonly Dictionary<T, int> _swapCommandIndices = new();
+        private readonly Dictionary<T, int> _swapCommandIndices = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
         /// <summary>
         /// Updates all moved, added and removed items in the octree.
@@ -142,14 +142,41 @@ namespace XREngine.Data.Trees
             if (SwapCommands.IsEmpty)
                 return;
 
-            DrainSwapCommands();
+            if (!SwapCommands.TryDequeue(out (T item, ETreeCommand command) firstCommand))
+                return;
+
+            if (SwapCommands.IsEmpty)
+            {
+                ExecuteSwapCommand(firstCommand.item, firstCommand.command);
+                ReportSingleCommandStats(firstCommand.command);
+                return;
+            }
+
+            DrainSwapCommands(firstCommand);
             ExecuteSwapCommands();
         }
 
-        private void DrainSwapCommands()
+        private void ReportSingleCommandStats(ETreeCommand command)
+        {
+            if (IRenderTree.OctreeStatsHook is null)
+                return;
+
+            int adds = command == ETreeCommand.Add ? 1 : 0;
+            int moves = command == ETreeCommand.Move ? 1 : 0;
+            int removes = command == ETreeCommand.Remove ? 1 : 0;
+            IRenderTree.OctreeStatsHook(adds, moves, removes, 0);
+        }
+
+        private void DrainSwapCommands((T item, ETreeCommand command) firstCommand)
         {
             _swapCommandBuffer.Clear();
             _swapCommandIndices.Clear();
+
+            if (firstCommand.item is not null)
+            {
+                _swapCommandIndices[firstCommand.item] = _swapCommandBuffer.Count;
+                _swapCommandBuffer.Add(firstCommand);
+            }
 
             while (SwapCommands.TryDequeue(out (T item, ETreeCommand command) command))
             {
@@ -180,6 +207,7 @@ namespace XREngine.Data.Trees
             if (_swapCommandBuffer.Count == 0)
                 return;
 
+            int adds = 0, moves = 0, removes = 0;
             var head = _head;
             for (int i = 0; i < _swapCommandBuffer.Count; i++)
             {
@@ -187,28 +215,46 @@ namespace XREngine.Data.Trees
                 if (item is null || command == ETreeCommand.None)
                     continue;
 
+                ExecuteSwapCommand(item, command, head);
+                
                 switch (command)
                 {
-                    case ETreeCommand.Move:
-                        item.OctreeNode?.HandleMovedItem(item);
-                        break;
-                    case ETreeCommand.Add:
-                        if (!head.AddHereOrSmaller(item))
-                            head.AddHere(item);
-                        break;
-                    case ETreeCommand.Remove:
-                        var node = item.OctreeNode;
-                        if (node is null)
-                            break;
-                        node.Remove(item, out bool destroyNode);
-                        if (destroyNode)
-                            node.Destroy();
-                        break;
+                    case ETreeCommand.Add: adds++; break;
+                    case ETreeCommand.Move: moves++; break;
+                    case ETreeCommand.Remove: removes++; break;
                 }
             }
 
             _swapCommandBuffer.Clear();
             _swapCommandIndices.Clear();
+
+            IRenderTree.OctreeStatsHook?.Invoke(adds, moves, removes, 0);
+        }
+
+        private void ExecuteSwapCommand(T item, ETreeCommand command, OctreeNode<T>? headOverride = null)
+        {
+            if (item is null || command == ETreeCommand.None)
+                return;
+
+            var head = headOverride ?? _head;
+            switch (command)
+            {
+                case ETreeCommand.Move:
+                    item.OctreeNode?.HandleMovedItem(item);
+                    break;
+                case ETreeCommand.Add:
+                    if (!head.AddHereOrSmaller(item))
+                        head.AddHere(item);
+                    break;
+                case ETreeCommand.Remove:
+                    var node = item.OctreeNode;
+                    if (node is null)
+                        break;
+                    node.Remove(item, out bool destroyNode);
+                    if (destroyNode)
+                        node.Destroy();
+                    break;
+            }
         }
 
         private static ETreeCommand CombineCommands(ETreeCommand current, ETreeCommand next)

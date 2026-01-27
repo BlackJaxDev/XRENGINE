@@ -29,5 +29,5 @@
     public unsafe interface IUniformable4Float : IUniformable { float* Data { get; } }
     public unsafe interface IUniformable4Double : IUniformable { double* Data { get; } }
 
-    public unsafe interface IUniformableArray<T> : IUniformableArray where T : IUniformable { T[] Values { get; } }
+    public unsafe interface IUniformableArray<T> : IUniformableArray where T : IUniformable { T[]? Values { get; } }
 }

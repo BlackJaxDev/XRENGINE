@@ -1,6 +1,9 @@
 @echo off
 setlocal
 
+REM Change to repository root (parent of Tools directory)
+cd /d "%~dp0.."
+
 REM Build the DocFX site
 dotnet tool restore
 if errorlevel 1 (

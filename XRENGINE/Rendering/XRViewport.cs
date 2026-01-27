@@ -656,6 +656,8 @@ namespace XREngine.Rendering
             bool allowScreenSpaceUICollectVisible = true,
             IVolume? collectionVolumeOverride = null)
         {
+            using var sample = Engine.Profiler.Start("XRViewport.CollectVisible");
+            
 /*
             Debug.RenderingEvery(
                 $"XRViewport.CollectVisible.Tick.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
@@ -765,6 +767,8 @@ namespace XREngine.Rendering
         /// </summary>
         private void CollectVisible_ScreenSpaceUI()
         {
+            using var sample = Engine.Profiler.Start("XRViewport.CollectVisible_ScreenSpaceUI");
+
             if (!AllowUIRender)
                 return;
 

@@ -5,6 +5,12 @@ namespace XREngine.Data.Trees
     public interface IRenderTree
     {
         public static Func<string, IDisposable>? ProfilingHook = null;
+        
+        /// <summary>
+        /// Called when octree commands are executed.
+        /// Parameters: (addCount, moveCount, removeCount, skippedCount)
+        /// </summary>
+        public static Action<int, int, int, int>? OctreeStatsHook = null;
 
         void Remake();
         void Swap();

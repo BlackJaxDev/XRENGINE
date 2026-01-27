@@ -760,70 +760,77 @@ namespace XREngine.Rendering
             return remapper;
         }
 
-        public Remapper? GetDataRaw<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(out T[] array, bool remap = true) where T : struct
+        public Remapper? GetDataRaw<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(out T[] array, bool remap = true, bool validateTypes = true) where T : struct
         {
-            EComponentType componentType = EComponentType.Float;
-            var componentCount = 1;
-            var normalize = false;
-            switch (typeof(T))
+            if (validateTypes)
             {
-                case Type t when t == typeof(sbyte):
-                    componentType = EComponentType.SByte;
-                    break;
-                case Type t when t == typeof(byte):
-                    componentType = EComponentType.Byte;
-                    break;
-                case Type t when t == typeof(short):
-                    componentType = EComponentType.Short;
-                    break;
-                case Type t when t == typeof(ushort):
-                    componentType = EComponentType.UShort;
-                    break;
-                case Type t when t == typeof(int):
-                    componentType = EComponentType.Int;
-                    break;
-                case Type t when t == typeof(uint):
-                    componentType = EComponentType.UInt;
-                    break;
-                case Type t when t == typeof(float):
-                    //componentType = EComponentType.Float;
-                    break;
-                case Type t when t == typeof(double):
-                    componentType = EComponentType.Double;
-                    break;
-                case Type t when t == typeof(Vector2):
-                    //componentType = EComponentType.Float;
-                    componentCount = 2;
-                    break;
-                case Type t when t == typeof(Vector3):
-                    //componentType = EComponentType.Float;
-                    componentCount = 3;
-                    break;
-                case Type t when t == typeof(Vector4):
-                    //componentType = EComponentType.Float;
-                    componentCount = 4;
-                    break;
-                case Type t when t == typeof(Matrix4x4):
-                    //componentType = EComponentType.Float;
-                    componentCount = 16;
-                    break;
-                case Type t when t == typeof(Quaternion):
-                    //componentType = EComponentType.Float;
-                    componentCount = 4;
-                    break;
-                default:
-                    //componentType = EComponentType.Struct;
-                    componentCount = Marshal.SizeOf<T>();
-                    break;
+                EComponentType componentType = EComponentType.Float;
+                var componentCount = 1;
+                var normalize = false;
+                switch (typeof(T))
+                {
+                    case Type t when t == typeof(sbyte):
+                        componentType = EComponentType.SByte;
+                        break;
+                    case Type t when t == typeof(byte):
+                        componentType = EComponentType.Byte;
+                        break;
+                    case Type t when t == typeof(short):
+                        componentType = EComponentType.Short;
+                        break;
+                    case Type t when t == typeof(ushort):
+                        componentType = EComponentType.UShort;
+                        break;
+                    case Type t when t == typeof(int):
+                        componentType = EComponentType.Int;
+                        break;
+                    case Type t when t == typeof(uint):
+                        componentType = EComponentType.UInt;
+                        break;
+                    case Type t when t == typeof(float):
+                        //componentType = EComponentType.Float;
+                        break;
+                    case Type t when t == typeof(double):
+                        componentType = EComponentType.Double;
+                        break;
+                    case Type t when t == typeof(Vector2):
+                        //componentType = EComponentType.Float;
+                        componentCount = 2;
+                        break;
+                    case Type t when t == typeof(Vector3):
+                        //componentType = EComponentType.Float;
+                        componentCount = 3;
+                        break;
+                    case Type t when t == typeof(Vector4):
+                        //componentType = EComponentType.Float;
+                        componentCount = 4;
+                        break;
+                    case Type t when t == typeof(Matrix4x4):
+                        //componentType = EComponentType.Float;
+                        componentCount = 16;
+                        break;
+                    case Type t when t == typeof(Quaternion):
+                        //componentType = EComponentType.Float;
+                        componentCount = 4;
+                        break;
+                    default:
+                        //componentType = EComponentType.Struct;
+                        componentCount = Marshal.SizeOf<T>();
+                        break;
+                }
+
+                if (componentType != _componentType || componentCount != _componentCount || normalize != _normalize)
+                    throw new InvalidOperationException("Data type mismatch.");
             }
 
-            if (componentType != _componentType || componentCount != _componentCount || normalize != _normalize)
-                throw new InvalidOperationException("Data type mismatch.");
-
-            uint stride = ElementSize;
-            array = new T[_elementCount];
-            for (uint i = 0; i < _elementCount; ++i)
-                array[i] = Marshal.PtrToStructure<T>(_clientSideSource!.Address[i, stride]);
+            // When not validating types, read all raw bytes as an array of T
+            uint tSize = (uint)Marshal.SizeOf<T>();
+            uint totalBytes = _elementCount * ElementSize;
+            uint count = totalBytes / tSize;
+            
+            array = new T[count];
+            for (uint i = 0; i < count; ++i)
+                array[i] = Marshal.PtrToStructure<T>(_clientSideSource!.Address + (i * tSize));
             
             if (!remap)
                 return null;

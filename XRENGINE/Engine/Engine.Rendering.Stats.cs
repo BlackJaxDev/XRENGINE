@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Threading;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -19,6 +20,20 @@ namespace XREngine
                 private static int _lastFrameDrawCalls;
                 private static int _lastFrameTrianglesRendered;
                 private static int _lastFrameMultiDrawCalls;
+
+                // Render-matrix stats use a separate swap cycle aligned with SwapBuffers phase.
+                // Current = being written now, Display = last completed swap, Ready = waiting to become Display.
+                private static int _renderMatrixAppliedCurrent;
+                private static int _renderMatrixSetCallsCurrent;
+                private static int _renderMatrixListenerInvocationsCurrent;
+                private static int _renderMatrixAppliedDisplay;
+                private static int _renderMatrixSetCallsDisplay;
+                private static int _renderMatrixListenerInvocationsDisplay;
+                private static readonly object _renderMatrixStatsLock = new();
+                private static Dictionary<string, int> _renderMatrixListenerCountsCurrent = new(StringComparer.Ordinal);
+                private static Dictionary<string, int> _renderMatrixListenerCountsDisplay = new(StringComparer.Ordinal);
+                private static bool _renderMatrixStatsReady;
+                private static int _renderMatrixStatsDirty;
 
                 // VRAM tracking fields
                 private static long _allocatedVRAMBytes;
@@ -46,6 +61,36 @@ namespace XREngine
                 /// The number of multi-draw indirect calls in the last completed frame.
                 /// </summary>
                 public static int MultiDrawCalls => _lastFrameMultiDrawCalls;
+
+                /// <summary>
+                /// Enables collection of render-matrix statistics.
+                /// </summary>
+                public static bool EnableRenderMatrixStats { get; set; }
+
+                /// <summary>
+                /// Enables detailed render-matrix listener tracking (per listener type).
+                /// </summary>
+                public static bool EnableRenderMatrixListenerTracking { get; set; }
+
+                /// <summary>
+                /// Whether render-matrix stats have been populated at least once.
+                /// </summary>
+                public static bool RenderMatrixStatsReady => _renderMatrixStatsReady;
+
+                /// <summary>
+                /// Number of render-matrix updates applied in the last completed frame.
+                /// </summary>
+                public static int RenderMatrixApplied => _renderMatrixAppliedDisplay;
+
+                /// <summary>
+                /// Number of SetRenderMatrix calls in the last completed frame.
+                /// </summary>
+                public static int RenderMatrixSetCalls => _renderMatrixSetCallsDisplay;
+
+                /// <summary>
+                /// Total number of render-matrix listener invocations in the last completed frame.
+                /// </summary>
+                public static int RenderMatrixListenerInvocations => _renderMatrixListenerInvocationsDisplay;
 
                 /// <summary>
                 /// Total currently allocated GPU VRAM in bytes.
@@ -107,6 +152,153 @@ namespace XREngine
                     _multiDrawCalls = 0;
                     _fboBandwidthBytes = 0;
                     _fboBindCount = 0;
+                    // Note: render-matrix stats are swapped separately via SwapRenderMatrixStats()
+                }
+
+                /// <summary>
+                /// Swaps render-matrix stats from current to display buffer. Call from SwapBuffers phase.
+                /// </summary>
+                public static void SwapRenderMatrixStats()
+                {
+                    if (!EnableRenderMatrixStats)
+                        return;
+
+                    if (Interlocked.Exchange(ref _renderMatrixStatsDirty, 0) == 0)
+                        return;
+
+                    // Atomically copy current values to display and reset current.
+                    _renderMatrixAppliedDisplay = Interlocked.Exchange(ref _renderMatrixAppliedCurrent, 0);
+                    _renderMatrixSetCallsDisplay = Interlocked.Exchange(ref _renderMatrixSetCallsCurrent, 0);
+                    _renderMatrixListenerInvocationsDisplay = Interlocked.Exchange(ref _renderMatrixListenerInvocationsCurrent, 0);
+
+                    lock (_renderMatrixStatsLock)
+                    {
+                        var temp = _renderMatrixListenerCountsDisplay;
+                        _renderMatrixListenerCountsDisplay = _renderMatrixListenerCountsCurrent;
+                        _renderMatrixListenerCountsCurrent = temp;
+                        _renderMatrixListenerCountsCurrent.Clear();
+                    }
+
+                    _renderMatrixStatsReady = true;
+                }
+
+                /// <summary>
+                /// Record the number of render-matrix updates applied during swap buffers.
+                /// </summary>
+                public static void RecordRenderMatrixApplied(int count)
+                {
+                    if (!EnableRenderMatrixStats || count <= 0)
+                        return;
+
+                    Interlocked.Add(ref _renderMatrixAppliedCurrent, count);
+                    Interlocked.Exchange(ref _renderMatrixStatsDirty, 1);
+                }
+
+                /// <summary>
+                /// Record a render-matrix change event and (optionally) its listeners.
+                /// </summary>
+                public static void RecordRenderMatrixChange(Delegate? listeners)
+                {
+                    if (!EnableRenderMatrixStats)
+                        return;
+
+                    Interlocked.Increment(ref _renderMatrixSetCallsCurrent);
+                    Interlocked.Exchange(ref _renderMatrixStatsDirty, 1);
+
+                    if (!EnableRenderMatrixListenerTracking || listeners is null)
+                        return;
+
+                    var invocationList = listeners.GetInvocationList();
+                    Interlocked.Add(ref _renderMatrixListenerInvocationsCurrent, invocationList.Length);
+
+                    lock (_renderMatrixStatsLock)
+                    {
+                        foreach (var handler in invocationList)
+                        {
+                            var key = handler.Target?.GetType().Name ?? handler.Method.DeclaringType?.Name ?? "Static";
+                            if (_renderMatrixListenerCountsCurrent.TryGetValue(key, out int current))
+                                _renderMatrixListenerCountsCurrent[key] = current + 1;
+                            else
+                                _renderMatrixListenerCountsCurrent[key] = 1;
+                        }
+                    }
+                }
+
+                /// <summary>
+                /// Returns the last-frame snapshot of render-matrix listener counts per listener type.
+                /// </summary>
+                public static KeyValuePair<string, int>[] GetRenderMatrixListenerSnapshot()
+                {
+                    lock (_renderMatrixStatsLock)
+                    {
+                        if (_renderMatrixListenerCountsDisplay.Count == 0)
+                            return [];
+
+                        var copy = new KeyValuePair<string, int>[_renderMatrixListenerCountsDisplay.Count];
+                        int index = 0;
+                        foreach (var pair in _renderMatrixListenerCountsDisplay)
+                            copy[index++] = pair;
+                        return copy;
+                    }
+                }
+
+                // Octree stats
+                private static int _octreeAddCommandsCurrent;
+                private static int _octreeMoveCommandsCurrent;
+                private static int _octreeRemoveCommandsCurrent;
+                private static int _octreeSkippedMovesCurrent;
+                private static int _octreeAddCommandsDisplay;
+                private static int _octreeMoveCommandsDisplay;
+                private static int _octreeRemoveCommandsDisplay;
+                private static int _octreeSkippedMovesDisplay;
+                private static int _octreeStatsDirty;
+                private static bool _octreeStatsReady;
+
+                public static bool EnableOctreeStats { get; set; }
+                public static bool OctreeStatsReady => _octreeStatsReady;
+                public static int OctreeAddCount => _octreeAddCommandsDisplay;
+                public static int OctreeMoveCount => _octreeMoveCommandsDisplay;
+                public static int OctreeRemoveCount => _octreeRemoveCommandsDisplay;
+                public static int OctreeSkippedMoveCount => _octreeSkippedMovesDisplay;
+
+                public static void RecordOctreeAdd()
+                {
+                    if (!EnableOctreeStats) return;
+                    Interlocked.Increment(ref _octreeAddCommandsCurrent);
+                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
+                }
+
+                public static void RecordOctreeMove()
+                {
+                    if (!EnableOctreeStats) return;
+                    Interlocked.Increment(ref _octreeMoveCommandsCurrent);
+                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
+                }
+
+                public static void RecordOctreeRemove()
+                {
+                    if (!EnableOctreeStats) return;
+                    Interlocked.Increment(ref _octreeRemoveCommandsCurrent);
+                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
+                }
+
+                public static void RecordOctreeSkippedMove()
+                {
+                    if (!EnableOctreeStats) return;
+                    Interlocked.Increment(ref _octreeSkippedMovesCurrent);
+                    Interlocked.Exchange(ref _octreeStatsDirty, 1);
+                }
+
+                public static void SwapOctreeStats()
+                {
+                    if (!EnableOctreeStats) return;
+                    if (Interlocked.Exchange(ref _octreeStatsDirty, 0) == 0) return;
+
+                    _octreeAddCommandsDisplay = Interlocked.Exchange(ref _octreeAddCommandsCurrent, 0);
+                    _octreeMoveCommandsDisplay = Interlocked.Exchange(ref _octreeMoveCommandsCurrent, 0);
+                    _octreeRemoveCommandsDisplay = Interlocked.Exchange(ref _octreeRemoveCommandsCurrent, 0);
+                    _octreeSkippedMovesDisplay = Interlocked.Exchange(ref _octreeSkippedMovesCurrent, 0);
+                    _octreeStatsReady = true;
                 }
 
                 /// <summary>

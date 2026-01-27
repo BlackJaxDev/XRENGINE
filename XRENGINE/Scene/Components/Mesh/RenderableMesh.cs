@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Numerics;
@@ -22,6 +23,7 @@ namespace XREngine.Components.Scene.Mesh
 {
     public class RenderableMesh : XRBase, IDisposable
     {
+        private static readonly ConcurrentQueue<RenderableMesh> _pendingRenderMatrixUpdates = new();
         public RenderInfo3D RenderInfo { get; }
 
         private readonly RenderCommandMesh3D _rc;
@@ -91,6 +93,13 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private readonly RenderCommandMethod3D _renderBoundsCommand;
+
+        private readonly object _pendingRenderMatrixLock = new();
+        private Matrix4x4 _pendingComponentRenderMatrix = Matrix4x4.Identity;
+        private int _pendingComponentRenderMatrixVersion;
+        private Matrix4x4 _pendingRootBoneRenderMatrix = Matrix4x4.Identity;
+        private int _pendingRootBoneRenderMatrixVersion;
+        private int _pendingRenderMatrixQueued;
 
         public bool IsSkinned
             => (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
@@ -265,11 +274,10 @@ namespace XREngine.Components.Scene.Mesh
             // Skinned mesh bounds should be calculated in root bone local space.
             // The root bone's world matrix transforms from root bone local to world space.
             // Its inverse transforms from world space to root bone local space.
-            if (RootBone is not null)
-                return RootBone.RenderMatrix;
-            
-            // Fallback to component transform if no root bone
-            return Component?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+            // Fallback to component transform if no root bone.
+            return RootBone is not null 
+                ? RootBone.RenderMatrix 
+                : Component?.Transform.RenderMatrix ?? Matrix4x4.Identity;
         }
 
         internal SkinnedMeshBoundsCalculator.Result EnsureLocalBounds(SkinnedMeshBoundsCalculator.Result result)
@@ -312,7 +320,7 @@ namespace XREngine.Components.Scene.Mesh
                     return !initialize;
                 }
 
-                if (!MatrixNearlyEqual(previous, relative))
+                if (!MatrixEqual(previous, relative))
                 {
                     _relativeBoneMatrices[bone] = relative;
                     return true;
@@ -322,6 +330,27 @@ namespace XREngine.Components.Scene.Mesh
             return false;
         }
 
+        private static bool MatrixEqual(in Matrix4x4 a, in Matrix4x4 b)
+        {
+            return a.M11 == b.M11 &&
+                   a.M12 == b.M12 &&
+                   a.M13 == b.M13 &&
+                   a.M14 == b.M14 &&
+                   a.M21 == b.M21 &&
+                   a.M22 == b.M22 &&
+                   a.M23 == b.M23 &&
+                   a.M24 == b.M24 &&
+                   a.M31 == b.M31 &&
+                   a.M32 == b.M32 &&
+                   a.M33 == b.M33 &&
+                   a.M34 == b.M34 &&
+                   a.M41 == b.M41 &&
+                   a.M42 == b.M42 &&
+                   a.M43 == b.M43 &&
+                   a.M44 == b.M44;
+        }
+
+/*
         private static bool MatrixNearlyEqual(in Matrix4x4 a, in Matrix4x4 b, float epsilon = 1e-4f)
         {
             return MathF.Abs(a.M11 - b.M11) <= epsilon &&
@@ -341,6 +370,7 @@ namespace XREngine.Components.Scene.Mesh
                    MathF.Abs(a.M43 - b.M43) <= epsilon &&
                    MathF.Abs(a.M44 - b.M44) <= epsilon;
         }
+*/
 
         private void UntrackAllBones()
         {
@@ -718,17 +748,7 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void RootBone_WorldMatrixChanged(TransformBase rootBone, Matrix4x4 renderMatrix)
         {
-            if (RenderInfo is null)
-                return;
-
-            SetSkinnedRootRenderMatrix(renderMatrix);
-            
-            // Skinned bounds are calculated in root bone local space.
-            // When the root bone moves, update the CullingOffsetMatrix to transform bounds to world space.
-            RenderInfo.CullingOffsetMatrix = renderMatrix;
-            
-            if (!IsSkinned)
-                return;
+            MarkPendingRootBoneRenderMatrix(renderMatrix);
         }
 
         /// <summary>
@@ -736,30 +756,82 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void Component_WorldMatrixChanged(TransformBase component, Matrix4x4 renderMatrix)
         {
-            //using var timer = Engine.Profiler.Start();
+            MarkPendingComponentRenderMatrix(renderMatrix);
+        }
+
+        private void MarkPendingComponentRenderMatrix(Matrix4x4 renderMatrix)
+        {
+            lock (_pendingRenderMatrixLock)
+            {
+                _pendingComponentRenderMatrix = renderMatrix;
+                _pendingComponentRenderMatrixVersion++;
+            }
+
+            if (Interlocked.Exchange(ref _pendingRenderMatrixQueued, 1) == 0)
+                _pendingRenderMatrixUpdates.Enqueue(this);
+        }
+
+        private void MarkPendingRootBoneRenderMatrix(Matrix4x4 renderMatrix)
+        {
+            lock (_pendingRenderMatrixLock)
+            {
+                _pendingRootBoneRenderMatrix = renderMatrix;
+                _pendingRootBoneRenderMatrixVersion++;
+            }
+
+            if (Interlocked.Exchange(ref _pendingRenderMatrixQueued, 1) == 0)
+                _pendingRenderMatrixUpdates.Enqueue(this);
+        }
+
+        private void ApplyPendingRenderMatrixUpdates()
+        {
+            int componentVersion;
+            int rootBoneVersion;
+            Matrix4x4 componentMatrix;
+            Matrix4x4 rootMatrix;
+
+            lock (_pendingRenderMatrixLock)
+            {
+                componentVersion = _pendingComponentRenderMatrixVersion;
+                rootBoneVersion = _pendingRootBoneRenderMatrixVersion;
+                componentMatrix = _pendingComponentRenderMatrix;
+                rootMatrix = _pendingRootBoneRenderMatrix;
+            }
 
             bool hasSkinning = (CurrentLOD?.Value?.Renderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
-                // For skinned meshes without a root bone, use the component transform as the basis.
-                if (RootBone is null && RenderInfo is not null)
-                {
-                    SetSkinnedRootRenderMatrix(renderMatrix);
-                    RenderInfo.CullingOffsetMatrix = renderMatrix;
-                }
-                return;
+                Matrix4x4 basis = RootBone is null ? componentMatrix : rootMatrix;
+                SetSkinnedRootRenderMatrix(basis);
+                if (RenderInfo is not null)
+                    RenderInfo.CullingOffsetMatrix = basis;
+            }
+            else
+            {
+                if (_rc is not null)
+                    _rc.WorldMatrix = componentMatrix;
+
+                if (RenderInfo is not null)
+                    RenderInfo.CullingOffsetMatrix = componentMatrix;
             }
 
-            if (component is null)
-                return;
-            
-            if (_rc is not null)
-                _rc.WorldMatrix = renderMatrix;
+            Interlocked.Exchange(ref _pendingRenderMatrixQueued, 0);
 
-            // For static meshes, bounds are in mesh-local (component-local) space.
-            // CullingOffsetMatrix transforms from component local to world space.
-            if (RenderInfo is not null)
-                RenderInfo.CullingOffsetMatrix = renderMatrix;
+            lock (_pendingRenderMatrixLock)
+            {
+                if (_pendingComponentRenderMatrixVersion != componentVersion ||
+                    _pendingRootBoneRenderMatrixVersion != rootBoneVersion)
+                {
+                    if (Interlocked.Exchange(ref _pendingRenderMatrixQueued, 1) == 0)
+                        _pendingRenderMatrixUpdates.Enqueue(this);
+                }
+            }
+        }
+
+        internal static void ProcessPendingRenderMatrixUpdates()
+        {
+            while (_pendingRenderMatrixUpdates.TryDequeue(out var mesh))
+                mesh.ApplyPendingRenderMatrixUpdates();
         }
     }
 }

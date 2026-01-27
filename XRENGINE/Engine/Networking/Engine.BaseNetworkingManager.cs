@@ -328,15 +328,18 @@ namespace XREngine
                 UdpReceiver = udpClient;
             }
 
-            private readonly record struct PendingAckPacket(Guid OwnerId, byte[] Bytes);
+            private readonly record struct PendingAckPacket(Guid OwnerId, byte[] Bytes, float FirstSendTimeSec, float TimeoutSec);
 
             private readonly ConcurrentDictionary<ushort, PendingAckPacket> _mustAck = new();
 
-            private void EnqueueBroadcast(ushort sequenceNum, byte[] bytes, bool resendOnFailedAck, Guid ownerId)
+            private void EnqueueBroadcast(ushort sequenceNum, byte[] bytes, bool resendOnFailedAck, Guid ownerId, float maxAckWaitSec, float? firstSendTimeSec = null)
             {
                 UdpSendQueue.Enqueue((sequenceNum, bytes));
                 if (resendOnFailedAck)
-                    _mustAck[sequenceNum] = new PendingAckPacket(ownerId, bytes);
+                {
+                    float firstSend = firstSendTimeSec ?? Engine.ElapsedTime;
+                    _mustAck[sequenceNum] = new PendingAckPacket(ownerId, bytes, firstSend, maxAckWaitSec);
+                }
             }
 
             private static bool ShouldResendRequiredPacket(Guid ownerId)
@@ -353,6 +356,8 @@ namespace XREngine
                 return true;
             }
             
+            private const float DefaultAckTimeoutSec = 5.0f;
+
             private float _maxRoundTripSec = 1.0f;
             public float MaxRoundTripSec
             {
@@ -476,8 +481,9 @@ namespace XREngine
             {
                 if (_rttBuffer.IsEmpty)
                     return;
-                                
-                float oldest = Engine.ElapsedTime - MaxRoundTripSec;
+
+                float now = Engine.ElapsedTime;
+                float oldest = now - MaxRoundTripSec;
                 foreach (ushort key in _rttBuffer.Keys)
                 {
                     if (!_rttBuffer.TryGetValue(key, out float time) || time >= oldest)
@@ -486,10 +492,16 @@ namespace XREngine
                     _rttBuffer.TryRemove(key, out _);
                     if (_mustAck.TryRemove(key, out PendingAckPacket pending))
                     {
+                        if (pending.TimeoutSec > 0.0f && now - pending.FirstSendTimeSec >= pending.TimeoutSec)
+                        {
+                            Debug.Out($"Required packet sequence {key} timed out after {pending.TimeoutSec:0.###}s, dropping...");
+                            continue;
+                        }
+
                         if (ShouldResendRequiredPacket(pending.OwnerId))
                         {
                             Debug.Out($"Required packet sequence {key} failed to return, resending...");
-                            EnqueueBroadcast(key, pending.Bytes, true, pending.OwnerId);
+                            EnqueueBroadcast(key, pending.Bytes, true, pending.OwnerId, pending.TimeoutSec, pending.FirstSendTimeSec);
                         }
                     }
                     //else
@@ -544,11 +556,11 @@ namespace XREngine
             /// </summary>
             /// <param name="obj"></param>
             /// <param name="compress"></param>
-            public void ReplicateObject(XRWorldObjectBase obj, bool compress, bool resendOnFailedAck)
+            public void ReplicateObject(XRWorldObjectBase obj, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 var bytes = MemoryPackSerializer.Serialize(obj);
                 //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(obj));
-                Send(obj.ID, compress, bytes, EBroadcastType.Object, resendOnFailedAck);
+                Send(obj.ID, compress, bytes, EBroadcastType.Object, resendOnFailedAck, maxAckWaitSec);
             }
 
             /// <summary>
@@ -558,12 +570,12 @@ namespace XREngine
             /// <param name="value"></param>
             /// <param name="idStr"></param>
             /// <param name="compress"></param>
-            public void ReplicateData(XRWorldObjectBase obj, byte[] value, string idStr, bool compress, bool resendOnFailedAck)
+            public void ReplicateData(XRWorldObjectBase obj, byte[] value, string idStr, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 IdValue data = new(idStr, value);
                 var bytes = MemoryPackSerializer.Serialize(data);
                 //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(data));
-                Send(obj.ID, compress, bytes, EBroadcastType.Data, resendOnFailedAck);
+                Send(obj.ID, compress, bytes, EBroadcastType.Data, resendOnFailedAck, maxAckWaitSec);
             }
 
             /// <summary>
@@ -574,13 +586,13 @@ namespace XREngine
             /// <param name="propName"></param>
             /// <param name="value"></param>
             /// <param name="compress"></param>
-            public void ReplicatePropertyUpdated<T>(XRWorldObjectBase obj, string? propName, T value, bool compress, bool resendOnFailedAck)
+            public void ReplicatePropertyUpdated<T>(XRWorldObjectBase obj, string? propName, T value, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 var bytes1 = MemoryPackSerializer.Serialize(value);
                 IdValue data = new(propName ?? string.Empty, bytes1);
                 var bytes = MemoryPackSerializer.Serialize(data);
                 //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(data));
-                Send(obj.ID, compress, bytes, EBroadcastType.Property, resendOnFailedAck);
+                Send(obj.ID, compress, bytes, EBroadcastType.Property, resendOnFailedAck, maxAckWaitSec);
             }
 
             /// <summary>
@@ -588,9 +600,9 @@ namespace XREngine
             /// The transform handles the encoding and decoding of its own data.
             /// </summary>
             /// <param name="transform"></param>
-            public void ReplicateTransform(TransformBase transform, bool resendOnFailedAck)
+            public void ReplicateTransform(TransformBase transform, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
-                Send(transform.ID, false, transform.EncodeToBytes(), EBroadcastType.Transform, resendOnFailedAck);
+                Send(transform.ID, false, transform.EncodeToBytes(), EBroadcastType.Transform, resendOnFailedAck, maxAckWaitSec);
             }
 
             /// <summary>
@@ -598,45 +610,45 @@ namespace XREngine
             /// </summary>
             /// <param name="data"></param>
             /// <param name="compress"></param>
-            public void ReplicateStateChange(StateChangeInfo data, bool compress, bool resendOnFailedAck)
+            public void ReplicateStateChange(StateChangeInfo data, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 var bytes = MemoryPackSerializer.Serialize(data);
                 //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(data));
-                Send(Guid.Empty, compress, bytes, EBroadcastType.StateChange, resendOnFailedAck);
+                Send(Guid.Empty, compress, bytes, EBroadcastType.StateChange, resendOnFailedAck, maxAckWaitSec);
             }
 
-            public void BroadcastRemoteJobRequest(RemoteJobRequest request, bool compress = true, bool resendOnFailedAck = false)
+            public void BroadcastRemoteJobRequest(RemoteJobRequest request, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 ArgumentNullException.ThrowIfNull(request);
                 string serialized = StateChangePayloadSerializer.Serialize(request);
-                ReplicateStateChange(new StateChangeInfo(EStateChangeType.RemoteJobRequest, serialized), compress, resendOnFailedAck);
+                ReplicateStateChange(new StateChangeInfo(EStateChangeType.RemoteJobRequest, serialized), compress, resendOnFailedAck, maxAckWaitSec);
             }
 
-            public void BroadcastRemoteJobResponse(RemoteJobResponse response, bool compress = true, bool resendOnFailedAck = false)
+            public void BroadcastRemoteJobResponse(RemoteJobResponse response, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 ArgumentNullException.ThrowIfNull(response);
                 string serialized = StateChangePayloadSerializer.Serialize(response);
-                ReplicateStateChange(new StateChangeInfo(EStateChangeType.RemoteJobResponse, serialized), compress, resendOnFailedAck);
+                ReplicateStateChange(new StateChangeInfo(EStateChangeType.RemoteJobResponse, serialized), compress, resendOnFailedAck, maxAckWaitSec);
             }
 
-            public void BroadcastServerError(ServerErrorMessage error, bool compress = true, bool resendOnFailedAck = false)
+            public void BroadcastServerError(ServerErrorMessage error, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 ArgumentNullException.ThrowIfNull(error);
                 string serialized = StateChangePayloadSerializer.Serialize(error);
-                ReplicateStateChange(new StateChangeInfo(EStateChangeType.ServerError, serialized), compress, resendOnFailedAck);
+                ReplicateStateChange(new StateChangeInfo(EStateChangeType.ServerError, serialized), compress, resendOnFailedAck, maxAckWaitSec);
             }
 
-            public void BroadcastHumanoidPoseFrame(HumanoidPoseFrame frame, bool compress = false, bool resendOnFailedAck = false)
+            public void BroadcastHumanoidPoseFrame(HumanoidPoseFrame frame, bool compress = false, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 ArgumentNullException.ThrowIfNull(frame);
                 string serialized = StateChangePayloadSerializer.Serialize(frame);
-                ReplicateStateChange(new StateChangeInfo(EStateChangeType.HumanoidPoseFrame, serialized), compress, resendOnFailedAck);
+                ReplicateStateChange(new StateChangeInfo(EStateChangeType.HumanoidPoseFrame, serialized), compress, resendOnFailedAck, maxAckWaitSec);
             }
 
-            protected void BroadcastStateChange<TPayload>(EStateChangeType type, TPayload payload, bool compress = true, bool resendOnFailedAck = false)
+            protected void BroadcastStateChange<TPayload>(EStateChangeType type, TPayload payload, bool compress = true, bool resendOnFailedAck = false, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 string serialized = StateChangePayloadSerializer.Serialize(payload);
-                ReplicateStateChange(new StateChangeInfo(type, serialized), compress, resendOnFailedAck);
+                ReplicateStateChange(new StateChangeInfo(type, serialized), compress, resendOnFailedAck, maxAckWaitSec);
             }
 
             private const int HeaderLen = 16; //3 bytes for protocol, 1 byte for flags, 2 bytes for sequence, 2 bytes for ack, 4 bytes for ack bitfield, 4 bytes for data length (not including header or guid)
@@ -656,8 +668,9 @@ namespace XREngine
             /// <param name="data">The data to send.</param>
             /// <param name="type">The type of replication this is - each type is optimized for its use case.</param>
             /// <param name="resendOnFailedAck">If the packet MUST be recieved - if it fails to be acknowledged by the receiver, it will be sent again until it is.</param>
+            /// <param name="maxAckWaitSec">Maximum total time to wait for an ack before giving up.</param>
             /// <returns></returns>
-            protected void Send(Guid id, bool compress, byte[] data, EBroadcastType type, bool resendOnFailedAck)
+            protected void Send(Guid id, bool compress, byte[] data, EBroadcastType type, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 ushort[] acks = ReadRemoteSeqs();
                 byte flags = EncodeFlags(compress, type);
@@ -703,7 +716,7 @@ namespace XREngine
                     int offset = HeaderLen;
                     SetGuidAndData(id, data, allData, ref offset);
                 }
-                EnqueueBroadcast(seq, allData, resendOnFailedAck, id);
+                EnqueueBroadcast(seq, allData, resendOnFailedAck, id, maxAckWaitSec);
             }
 
             private static byte EncodeFlags(bool compress, EBroadcastType type)

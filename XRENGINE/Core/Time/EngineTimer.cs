@@ -409,8 +409,8 @@ namespace XREngine.Timers
                 Collect.Delta = elapsed;
                 Collect.LastTimestamp = timestamp;
                 PreCollectVisible?.Invoke();
-                CollectVisible?.InvokeParallel();
-                //(CollectVisible?.InvokeAsync() ?? Task.CompletedTask).Wait();
+                //CollectVisible?.InvokeParallel();
+                (CollectVisible?.InvokeAsync() ?? Task.CompletedTask).Wait();
                 timestamp = Time();
                 Collect.ElapsedTime = timestamp - Collect.LastTimestamp;
             }
