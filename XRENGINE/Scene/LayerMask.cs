@@ -8,9 +8,7 @@ namespace XREngine.Scene
 
         public LayerMask() { }
         public LayerMask(int mask) : this()
-        {
-            _mask = mask;
-        }
+            => _mask = mask;
 
         //
         // Summary:
@@ -55,11 +53,9 @@ namespace XREngine.Scene
         public readonly ObjectLayer AsJoltObjectLayer()
             => new((uint)_mask);
 
-        public static readonly LayerMask Everything = new LayerMask(-1);
+        public static readonly LayerMask Everything = new(-1);
 
         public readonly bool Contains(int layerIndex)
-        {
-            return (_mask & (1 << layerIndex)) != 0;
-        }
+             => (_mask & (1 << layerIndex)) != 0;
     }
 }

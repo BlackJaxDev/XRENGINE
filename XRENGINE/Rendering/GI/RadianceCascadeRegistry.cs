@@ -9,7 +9,7 @@ namespace XREngine.Rendering.GI
     /// </summary>
     internal static class RadianceCascadeRegistry
     {
-        private static readonly Dictionary<XRWorldInstance, List<RadianceCascadeComponent>> s_perWorld = new();
+        private static readonly Dictionary<XRWorldInstance, List<RadianceCascadeComponent>> s_perWorld = [];
         private static readonly object s_lock = new();
 
         public static void Register(XRWorldInstance world, RadianceCascadeComponent component)
@@ -18,7 +18,7 @@ namespace XREngine.Rendering.GI
             {
                 if (!s_perWorld.TryGetValue(world, out var list))
                 {
-                    list = new List<RadianceCascadeComponent>();
+                    list = [];
                     s_perWorld[world] = list;
                 }
 
