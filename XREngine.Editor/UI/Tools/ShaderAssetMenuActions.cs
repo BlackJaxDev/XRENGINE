@@ -25,6 +25,13 @@ public static class ShaderAssetMenuActions
             ShaderAnalyzerWindow.Instance.LoadShaderFromPath(path);
         }, "Shader Analyzer");
 
+    public static void OpenInShaderCrossCompiler(XRAssetContextMenuContext context)
+        => WithShaderPath(context, path =>
+        {
+            ShaderCrossCompilerWindow.Instance.Open();
+            ShaderCrossCompilerWindow.Instance.LoadShaderFromPath(path);
+        }, "Shader Cross-Compiler");
+
     private static void WithShaderPath(XRAssetContextMenuContext context, Action<string> action, string actionName)
     {
         string? path = ResolveShaderFilePath(context);
