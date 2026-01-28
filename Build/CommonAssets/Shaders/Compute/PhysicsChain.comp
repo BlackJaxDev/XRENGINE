@@ -127,6 +127,31 @@ bool boxColliderCollision(vec3 center, vec3 halfExt, inout vec3 pos, float r)
     return sphereColliderCollision(closest, 1e-4, pos, r);
 }
 
+// Plane collider: Center.xyz = point on plane, Params.xyz = plane normal, Params.w = bound (0=Outside, 1=Inside)
+bool planeColliderCollision(vec3 planePoint, vec3 planeNormal, float bound, inout vec3 pos, float r)
+{
+    // Calculate signed distance from particle to plane
+    float d = dot(pos - planePoint, planeNormal);
+    
+    if (bound < 0.5) // Outside bound
+    {
+        if (d < 0.0)
+        {
+            pos -= planeNormal * d;
+            return true;
+        }
+    }
+    else // Inside bound
+    {
+        if (d > 0.0)
+        {
+            pos -= planeNormal * d;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool processColliders(inout vec3 pos, float r)
 {
     bool coll = false;
@@ -144,6 +169,10 @@ bool processColliders(inout vec3 pos, float r)
         else if (c.Type == 2)
         {
             coll = coll || boxColliderCollision(c.Center.xyz, c.Params.xyz, pos, r);
+        }
+        else if (c.Type == 3) // Plane collider
+        {
+            coll = coll || planeColliderCollision(c.Center.xyz, c.Params.xyz, c.Params.w, pos, r);
         }
     }
     return coll;

@@ -531,7 +531,7 @@ namespace XREngine.Rendering
 
             //Recalculate all transforms before activating nodes, in case any cross-dependencies exist
             foreach (SceneNode node in RootNodes)
-                await node.Transform.RecalculateMatrixHeirarchy(true, true, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
+                await node.Transform.RecalculateMatrixHierarchy(true, true, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
 
             foreach (SceneNode node in RootNodes)
                 node.OnBeginPlay();
@@ -739,7 +739,7 @@ namespace XREngine.Rendering
         private static async Task RecalcTransformDepthSequential(IEnumerable<TransformBase> bag)
         {
             foreach (var transform in bag)
-                await transform.RecalculateMatrixHeirarchy(true, false, ELoopType.Sequential);
+                await transform.RecalculateMatrixHierarchy(true, false, ELoopType.Sequential);
         }
 
         /// <summary>
@@ -749,7 +749,7 @@ namespace XREngine.Rendering
         /// <param name="bag"></param>
         /// <returns></returns>
         private static Task RecalcTransformDepthAsync(IEnumerable<TransformBase> bag)
-            => Task.WhenAll(bag.Select(tfm => tfm.RecalculateMatrixHeirarchy(
+            => Task.WhenAll(bag.Select(tfm => tfm.RecalculateMatrixHierarchy(
                 forceWorldRecalc: true,
                 setRenderMatrixNow: false,
                 childRecalcType: ELoopType.Asynchronous)));
@@ -760,7 +760,7 @@ namespace XREngine.Rendering
                 return Task.CompletedTask;
 
             return Task.Run(() => Parallel.ForEach(bag, tfm =>
-                tfm.RecalculateMatrixHeirarchy(
+                tfm.RecalculateMatrixHierarchy(
                     forceWorldRecalc: true,
                     setRenderMatrixNow: false,
                     childRecalcType: ELoopType.Parallel)

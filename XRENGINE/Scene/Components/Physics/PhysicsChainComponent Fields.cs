@@ -92,9 +92,15 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
     private bool _multithread = false;
 
+    private TransformBase? _rootBone = null;
+    private float _rootInertia = 0.0f;
+    private float _velocitySmoothing = 0.0f;
+
     private Vector3 _objectMove;
     private Vector3 _objectPrevPosition;
     private float _objectScale;
+    private Vector3 _rootBonePrevPosition;
+    private Vector3 _smoothedObjectMove;
 
     private float _time = 0;
     private float _weight = 1.0f;
@@ -255,5 +261,41 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
     {
         get => _multithread;
         set => SetField(ref _multithread, value);
+    }
+
+    /// <summary>
+    /// Optional root bone transform for character locomotion.
+    /// When set, physics calculations can be made relative to this transform's movement
+    /// instead of pure world space, which is useful for character controllers.
+    /// </summary>
+    public TransformBase? RootBone
+    {
+        get => _rootBone;
+        set => SetField(ref _rootBone, value);
+    }
+
+    /// <summary>
+    /// Controls how much the RootBone's movement affects physics calculations.
+    /// 0 = World space (RootBone movement ignored), 1 = Fully relative to RootBone.
+    /// This is useful for preventing physics chains from lagging behind when a character
+    /// controller moves the character rapidly (e.g., teleporting, dashing).
+    /// </summary>
+    [Range(0, 1)]
+    public float RootInertia
+    {
+        get => _rootInertia;
+        set => SetField(ref _rootInertia, value);
+    }
+
+    /// <summary>
+    /// Smooths the velocity applied to physics chains to reduce jitter at high velocities.
+    /// 0 = No smoothing (raw velocity), 1 = Maximum smoothing (very dampened response).
+    /// This helps prevent violent shaking when the root transform moves very fast.
+    /// </summary>
+    [Range(0, 1)]
+    public float VelocitySmoothing
+    {
+        get => _velocitySmoothing;
+        set => SetField(ref _velocitySmoothing, value);
     }
 }
