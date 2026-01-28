@@ -137,6 +137,9 @@ namespace XREngine.Scene
             base.GlobalPreRender();
             if (_useGpuBvhActive)
                 BvhRaycasts.ProcessDispatches();
+            
+            // Process batched GPU physics chains
+            GPUPhysicsChainDispatcher.Instance.ProcessDispatches();
         }
 
         public override void GlobalPostRender()

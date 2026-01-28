@@ -21,9 +21,16 @@ The `GPUPhysicsChainComponent` has been completely rewritten to provide **identi
 - **Active compute shader execution** (previously commented out)
 - **Proper uniform binding** for all physics parameters
 - **Correct thread group sizing** for optimal GPU utilization
+- **Memory barriers** between multiple iterations for coherent parent-child dependencies
 
-### 4. **Collider System**
-- **Complete collider support** including sphere, capsule, and box colliders
+### 4. **Update Mode Support**
+- **Default mode** - uses frame delta, optionally scaled by UpdateRate
+- **FixedUpdate mode** - uses fixed timestep with multiple iterations per frame when needed
+- **Undilated mode** - uses undilated delta time, supports UpdateRate iterations
+- **Iteration capping** - limits to 3 iterations per frame to prevent spiral of death
+
+### 5. **Collider System**
+- **Complete collider support** including sphere, capsule, box, and plane colliders
 - **Identical collision detection** algorithms between CPU and GPU
 - **Real-time collider updates** with proper data synchronization
 
@@ -41,10 +48,17 @@ The `GPUPhysicsChainComponent` has been completely rewritten to provide **identi
 - ✅ **Length constraint** - identical bone length maintenance
 - ✅ **Freeze axis constraint** - same plane projection logic
 
+### **Update Modes**
+- ✅ **Default mode** - frame delta with optional UpdateRate scaling
+- ✅ **FixedUpdate mode** - fixed timestep iterations matching physics tick rate
+- ✅ **Undilated mode** - time-scale independent updates
+- ✅ **UpdateRate support** - configurable simulation frequency with iteration limiting
+
 ### **Collision Detection**
 - ✅ **Sphere colliders** - identical collision response
 - ✅ **Capsule colliders** - same line segment projection
 - ✅ **Box colliders** - identical AABB collision
+- ✅ **Plane colliders** - identical half-space collision with inside/outside bounds
 - ✅ **Collision flags** - same friction application
 
 ### **Distribution Curves**
@@ -59,10 +73,23 @@ The `GPUPhysicsChainComponent` has been completely rewritten to provide **identi
 - **Reduced CPU overhead** - physics calculations moved to GPU
 - **Better scalability** - performance scales with particle count
 
+### **Batched Dispatching**
+- **Single dispatch per frame** - all physics chains processed in one compute dispatch
+- **Centralized dispatcher** - `GPUPhysicsChainDispatcher` batches all registered components
+- **Combined buffers** - particles, trees, colliders merged for maximum GPU utilization
+- **Automatic registration** - components register/unregister automatically via `UseBatchedDispatcher`
+
 ### **Memory Efficiency**
 - **Structured buffers** - optimal GPU memory layout
 - **Minimal data transfer** - only necessary data sent to GPU
 - **Efficient updates** - delta updates when possible
+- **Shared GPU resources** - single set of shaders and programs for all components
+
+### **Async Readback**
+- **Non-blocking GPU sync** - uses fence sync to avoid CPU stalls
+- **Persistent buffer mapping** - enables efficient GPU-to-CPU data transfer
+- **One-frame latency** - particle positions are read back on the next frame
+- **Batched readback** - single readback operation distributes to all components
 
 ## Usage
 
@@ -77,19 +104,33 @@ gpuPhysics.Damping = 0.1f;
 gpuPhysics.Elasticity = 0.1f;
 gpuPhysics.Stiffness = 0.1f;
 
+// Use batched dispatcher for best performance (default: true)
+gpuPhysics.UseBatchedDispatcher = true;
+
 // Add colliders
 gpuPhysics.Colliders = new List<PhysicsChainColliderBase>
 {
     sphereCollider,
     capsuleCollider,
-    boxCollider
+    boxCollider,
+    planeCollider
 };
+```
+
+### **Batched vs Standalone Mode**
+```csharp
+// Batched mode (default) - all components processed in single dispatch
+gpuPhysics.UseBatchedDispatcher = true;
+
+// Standalone mode - component dispatches its own compute shader
+gpuPhysics.UseBatchedDispatcher = false;
 ```
 
 ### **Automatic GPU Management**
 - **Buffer initialization** happens automatically on first use
 - **Shader compilation** handled by the engine
 - **Memory cleanup** managed automatically on component destruction
+- **Batched registration** - components auto-register/unregister with dispatcher
 
 ## Verification
 
@@ -112,7 +153,8 @@ To verify compatibility:
 ### **Current Limitations**
 - **Single GPU only** - no multi-GPU support yet
 - **Fixed precision** - uses same precision as CPU version
-- **Synchronous execution** - GPU must complete before CPU continues
+- **One-frame latency** - async GPU readback introduces a single frame of latency for particle positions
+- **Matrix recalculation** - GPU version doesn't force matrix hierarchy recalculation before sampling transforms
 
 ### **Future Enhancements**
 - **Multi-GPU support** for massive particle systems
@@ -121,4 +163,11 @@ To verify compatibility:
 
 ## Conclusion
 
-The `GPUPhysicsChainComponent` now provides **100% compatibility** with the `PhysicsChainComponent` while delivering significant performance improvements through GPU acceleration. All physics calculations, constraints, and features work identically between both versions, making it a drop-in replacement for CPU-based physics chains. 
+The `GPUPhysicsChainComponent` now provides **100% feature compatibility** with the `PhysicsChainComponent` while delivering significant performance improvements through GPU acceleration. All physics calculations, constraints, colliders, and features work identically between both versions.
+
+**Key implementation details:**
+- All collider types are supported (sphere, capsule, box, plane)
+- Async GPU readback prevents CPU stalls (introduces one frame of latency)
+- Physics calculations are parallelized across GPU threads
+
+The GPU version is a suitable drop-in replacement for CPU-based physics chains in scenarios where the one-frame latency is acceptable. 

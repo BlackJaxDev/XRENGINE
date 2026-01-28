@@ -1,14 +1,17 @@
 using Extensions;
+using Silk.NET.OpenGL;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.OpenGL;
 using XREngine.Components.Animation;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;
@@ -91,6 +94,33 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
     [Description("Run physics calculations on multiple threads")]
     public bool Multithread = true;
 
+    /// <summary>
+    /// Optional root bone transform for character locomotion.
+    /// When set, physics calculations can be made relative to this transform's movement
+    /// instead of pure world space, which is useful for character controllers.
+    /// </summary>
+    [Description("Root bone transform for character locomotion-relative physics")]
+    public TransformBase? RootBone;
+
+    /// <summary>
+    /// Controls how much the RootBone's movement affects physics calculations.
+    /// 0 = World space (RootBone movement ignored), 1 = Fully relative to RootBone.
+    /// This is useful for preventing physics chains from lagging behind when a character
+    /// controller moves the character rapidly (e.g., teleporting, dashing).
+    /// </summary>
+    [Range(0, 1)]
+    [Description("How much root bone movement affects physics (0=world space, 1=relative to root)")]
+    public float RootInertia = 0.0f;
+
+    /// <summary>
+    /// Smooths the velocity applied to physics chains to reduce jitter at high velocities.
+    /// 0 = No smoothing (raw velocity), 1 = Maximum smoothing (very dampened response).
+    /// This helps prevent violent shaking when the root transform moves very fast.
+    /// </summary>
+    [Range(0, 1)]
+    [Description("Velocity smoothing to reduce jitter at high speeds (0=none, 1=max)")]
+    public float VelocitySmoothing = 0.0f;
+
     // Distribution curves
     public AnimationCurve? DampingDistrib;
     public AnimationCurve? ElasticityDistrib;
@@ -142,9 +172,9 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
     [StructLayout(LayoutKind.Sequential)]
     private struct ColliderData
     {
-        public Vector4 Center;  // xyz: position, w: radius
-        public Vector4 Params;  // Type-specific parameters
-        public int Type;        // 0: Sphere, 1: Capsule, 2: Box
+        public Vector4 Center;  // xyz: position, w: radius (or unused for plane)
+        public Vector4 Params;  // Type-specific: sphere=unused, capsule=end.xyz, box=halfext.xyz, plane=normal.xyz+bound.w
+        public int Type;        // 0: Sphere, 1: Capsule, 2: Box, 3: Plane
         public Vector3 Padding;
     }
 
@@ -214,6 +244,22 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
     private Vector3 _objectMove;
     private bool _distantDisabled;
     private bool _buffersInitialized;
+    
+    // Root bone tracking for character locomotion
+    private Vector3 _rootBonePrevPosition;
+    private Vector3 _smoothedObjectMove;
+    
+    // Async GPU readback state
+    private IntPtr _gpuFence = IntPtr.Zero;
+    private bool _readbackPending;
+    private ParticleData[]? _readbackData;
+
+    /// <summary>
+    /// When true, this component uses the centralized GPUPhysicsChainDispatcher for batched processing.
+    /// This improves performance when multiple GPU physics chains are active.
+    /// </summary>
+    [Description("Use centralized batched dispatcher for better GPU utilization with multiple physics chains")]
+    public bool UseBatchedDispatcher { get; set; } = true;
 
     #endregion
 
@@ -221,25 +267,39 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
 
     protected internal override void OnComponentActivated()
     {
-        // Load compute shaders
-        _mainPhysicsShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain", EShaderType.Compute);
-        _skipUpdateParticlesShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain/SkipUpdateParticles", EShaderType.Compute);
+        // Only load shaders if not using batched dispatcher
+        if (!UseBatchedDispatcher)
+        {
+            // Load compute shaders
+            _mainPhysicsShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain", EShaderType.Compute);
+            _skipUpdateParticlesShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain/SkipUpdateParticles", EShaderType.Compute);
 
-        // Create render programs
-        _mainPhysicsProgram = new XRRenderProgram(true, false, _mainPhysicsShader);
-        _skipUpdateParticlesProgram = new XRRenderProgram(true, false, _skipUpdateParticlesShader);
+            // Create render programs
+            _mainPhysicsProgram = new XRRenderProgram(true, false, _mainPhysicsShader);
+            _skipUpdateParticlesProgram = new XRRenderProgram(true, false, _skipUpdateParticlesShader);
+        }
+        else
+        {
+            // Register with the batched dispatcher
+            Rendering.Compute.GPUPhysicsChainDispatcher.Instance.Register(this);
+        }
 
         SetupParticles();
         RegisterTick(ETickGroup.PostPhysics, ETickOrder.Animation, FixedUpdate);
         RegisterTick(ETickGroup.Normal, ETickOrder.Animation, Update);
         RegisterTick(ETickGroup.Late, ETickOrder.Animation, LateUpdate);
         ResetParticlesPosition();
+        InitializeRootBoneTracking();
         OnValidate();
     }
 
     protected internal override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
+        
+        if (UseBatchedDispatcher)
+            Rendering.Compute.GPUPhysicsChainDispatcher.Instance.Unregister(this);
+        
         InitTransforms();
         CleanupBuffers();
         CleanupPrograms();
@@ -345,8 +405,39 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
 
         var translation = Transform.WorldTranslation;
         _objectScale = MathF.Abs(Transform.LossyWorldScale.X);
-        _objectMove = translation - _objectPrevPosition;
+        
+        // Calculate base object movement
+        Vector3 rawObjectMove = translation - _objectPrevPosition;
         _objectPrevPosition = translation;
+
+        // Handle root bone relative movement if configured
+        if (RootBone is not null && RootInertia > 0.0f)
+        {
+            RootBone.RecalculateMatrices();
+            Vector3 rootBonePos = RootBone.WorldTranslation;
+            Vector3 rootBoneMove = rootBonePos - _rootBonePrevPosition;
+            _rootBonePrevPosition = rootBonePos;
+
+            // Blend between world-space movement and root-relative movement
+            // At RootInertia=1, we subtract the root bone's movement from the chain's perception of movement
+            // This makes the chain move "with" the root bone rather than lagging behind
+            rawObjectMove -= rootBoneMove * RootInertia;
+        }
+
+        // Apply velocity smoothing to reduce jitter at high velocities
+        if (VelocitySmoothing > 0.0f)
+        {
+            // Exponential moving average for smooth velocity
+            // Higher smoothing = more dampened response
+            float smoothFactor = 1.0f - VelocitySmoothing * 0.9f; // Map 0-1 to 1-0.1
+            _smoothedObjectMove = Vector3.Lerp(_smoothedObjectMove, rawObjectMove, smoothFactor);
+            _objectMove = _smoothedObjectMove;
+        }
+        else
+        {
+            _objectMove = rawObjectMove;
+            _smoothedObjectMove = rawObjectMove;
+        }
 
         for (int i = 0; i < _particleTrees.Count; ++i)
         {
@@ -394,27 +485,74 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         float timeVar = 1.0f;
         float dt = _deltaTime;
 
+        // Match CPU behavior for different update modes
         if (UpdateMode == EUpdateMode.Default)
         {
+            // Default mode: use frame delta, optionally scaled by UpdateRate
             if (UpdateRate > 0.0f)
                 timeVar = dt * UpdateRate;
         }
-        else if (UpdateRate > 0.0f)
+        else if (UpdateMode == EUpdateMode.FixedUpdate)
         {
-            float frameTime = 1.0f / UpdateRate;
-            _time += dt;
-            loop = 0;
-
-            while (_time >= frameTime)
+            // FixedUpdate mode: use fixed timestep, potentially multiple iterations
+            if (UpdateRate > 0.0f)
             {
-                _time -= frameTime;
-                if (++loop >= 3)
+                float frameTime = 1.0f / UpdateRate;
+                _time += dt;
+                loop = 0;
+
+                while (_time >= frameTime)
                 {
-                    _time = 0;
-                    break;
+                    _time -= frameTime;
+                    if (++loop >= 3) // Cap at 3 iterations to prevent spiral of death
+                    {
+                        _time = 0;
+                        break;
+                    }
                 }
+                
+                // Use fixed timestep for each iteration
+                timeVar = frameTime;
+            }
+            else
+            {
+                // No UpdateRate specified, use the accumulated fixed delta from PreUpdate count
+                // This matches CPU behavior where FixedUpdate uses FixedDelta * _preUpdateCount
+                timeVar = dt; // dt is already set to FixedDelta * _preUpdateCount in Prepare()
             }
         }
+        else if (UpdateMode == EUpdateMode.Undilated)
+        {
+            // Undilated mode: similar to default but uses undilated delta (already set in Prepare())
+            if (UpdateRate > 0.0f)
+            {
+                float frameTime = 1.0f / UpdateRate;
+                _time += dt;
+                loop = 0;
+
+                while (_time >= frameTime)
+                {
+                    _time -= frameTime;
+                    if (++loop >= 3)
+                    {
+                        _time = 0;
+                        break;
+                    }
+                }
+                
+                timeVar = frameTime;
+            }
+        }
+
+        // If using batched dispatcher, submit data and let dispatcher handle the rest
+        if (UseBatchedDispatcher)
+        {
+            SubmitToBatchedDispatcher(loop, timeVar);
+            return;
+        }
+
+        // Standalone mode: handle everything locally
+        TryApplyAsyncReadback();
 
         if (!_buffersInitialized)
             InitializeBuffers();
@@ -423,9 +561,15 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
 
         if (loop > 0)
         {
+            // For multiple iterations, we need memory barriers between dispatches
+            // to ensure parent particles are updated before children read them
             for (int i = 0; i < loop; ++i)
             {
                 DispatchMainPhysics(timeVar, i == 0);
+                
+                // Insert memory barrier between iterations to ensure coherent reads
+                if (i < loop - 1)
+                    InsertShaderStorageBarrier();
             }
         }
         else
@@ -433,8 +577,243 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
             DispatchSkipUpdateParticles();
         }
 
-        // Read back results from GPU
-        UpdateParticlesFromGPUData();
+        // Request async readback for next frame
+        RequestAsyncReadback();
+    }
+
+    private void SubmitToBatchedDispatcher(int loopCount, float timeVar)
+    {
+        // Prepare GPU data structures for the dispatcher
+        PrepareGPUData();
+
+        // Convert to dispatcher's data format
+        var particles = new List<Rendering.Compute.GPUPhysicsChainDispatcher.GPUParticleData>();
+        foreach (var pd in _particlesData)
+        {
+            particles.Add(new Rendering.Compute.GPUPhysicsChainDispatcher.GPUParticleData
+            {
+                Position = pd.Position,
+                PrevPosition = pd.PrevPosition,
+                TransformPosition = pd.TransformPosition,
+                TransformLocalPosition = pd.TransformLocalPosition,
+                ParentIndex = pd.ParentIndex,
+                Damping = pd.Damping,
+                Elasticity = pd.Elasticity,
+                Stiffness = pd.Stiffness,
+                Inert = pd.Inert,
+                Friction = pd.Friction,
+                Radius = pd.Radius,
+                BoneLength = pd.BoneLength,
+                IsColliding = pd.IsColliding
+            });
+        }
+
+        var trees = new List<Rendering.Compute.GPUPhysicsChainDispatcher.GPUParticleTreeData>();
+        foreach (var td in _particleTreesData)
+        {
+            trees.Add(new Rendering.Compute.GPUPhysicsChainDispatcher.GPUParticleTreeData
+            {
+                LocalGravity = td.LocalGravity,
+                RestGravity = td.RestGravity,
+                ParticleStart = td.ParticleStart,
+                ParticleCount = td.ParticleCount,
+                RootWorldToLocal = td.RootWorldToLocal,
+                BoneTotalLength = td.BoneTotalLength
+            });
+        }
+
+        var colliders = new List<Rendering.Compute.GPUPhysicsChainDispatcher.GPUColliderData>();
+        foreach (var cd in _collidersData)
+        {
+            colliders.Add(new Rendering.Compute.GPUPhysicsChainDispatcher.GPUColliderData
+            {
+                Center = cd.Center,
+                Params = cd.Params,
+                Type = cd.Type
+            });
+        }
+
+        Rendering.Compute.GPUPhysicsChainDispatcher.Instance.SubmitData(
+            this,
+            particles,
+            trees,
+            _transformMatrices,
+            colliders,
+            _deltaTime,
+            _objectScale,
+            _weight,
+            Force,
+            Gravity,
+            _objectMove,
+            (int)FreezeAxis,
+            loopCount,
+            timeVar);
+    }
+
+    /// <summary>
+    /// Called by the batched dispatcher to apply readback data to this component's particles.
+    /// </summary>
+    public void ApplyReadbackData(ArraySegment<Rendering.Compute.GPUPhysicsChainDispatcher.GPUParticleData> readbackData)
+    {
+        int particleIndex = 0;
+        for (int i = 0; i < _particleTrees.Count; ++i)
+        {
+            ParticleTree pt = _particleTrees[i];
+            for (int j = 0; j < pt.Particles.Count; ++j)
+            {
+                if (particleIndex < readbackData.Count)
+                {
+                    var data = readbackData[particleIndex];
+                    Particle p = pt.Particles[j];
+                    
+                    p.Position = data.Position;
+                    p.PrevPosition = data.PrevPosition;
+                    p.IsColliding = data.IsColliding != 0;
+                    
+                    particleIndex++;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Inserts a shader storage memory barrier to ensure all writes from previous
+    /// compute dispatch are visible to subsequent dispatches.
+    /// </summary>
+    private void InsertShaderStorageBarrier()
+    {
+        var renderer = AbstractRenderer.Current as OpenGLRenderer;
+        renderer?.RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+    }
+
+    private void TryApplyAsyncReadback()
+    {
+        if (!_readbackPending || _gpuFence == IntPtr.Zero)
+            return;
+
+        var renderer = AbstractRenderer.Current as OpenGLRenderer;
+        if (renderer is null)
+            return;
+
+        // Check if the fence has signaled (non-blocking)
+        var status = renderer.RawGL.ClientWaitSync(_gpuFence, 0u, 0u);
+        if (status != GLEnum.AlreadySignaled && status != GLEnum.ConditionSatisfied)
+            return; // Not ready yet, will try again next frame
+
+        // Fence signaled - apply the readback data
+        renderer.RawGL.DeleteSync(_gpuFence);
+        _gpuFence = IntPtr.Zero;
+        _readbackPending = false;
+
+        if (_readbackData != null && _particlesBuffer != null)
+        {
+            // Read particle data from the mapped buffer
+            ReadParticleDataFromBuffer();
+            ApplyReadbackDataToParticles();
+        }
+    }
+
+    private void ReadParticleDataFromBuffer()
+    {
+        if (_particlesBuffer is null || _readbackData is null)
+            return;
+
+        // Get the mapped address from the buffer
+        var mappedAddresses = _particlesBuffer.GetMappedAddresses().ToArray();
+        if (mappedAddresses.Length == 0 || !mappedAddresses[0].IsValid)
+        {
+            // Fall back to client-side source if not mapped
+            var clientSource = _particlesBuffer.ClientSideSource;
+            if (clientSource is not null)
+            {
+                uint stride = _particlesBuffer.ElementSize;
+                for (int i = 0; i < _readbackData.Length && i < _totalParticleCount; i++)
+                {
+                    _readbackData[i] = Marshal.PtrToStructure<ParticleData>(clientSource.Address[(uint)i, stride]);
+                }
+            }
+            return;
+        }
+
+        // Read from mapped GPU memory
+        unsafe
+        {
+            IntPtr mappedPtr = (IntPtr)mappedAddresses[0].Pointer;
+            uint stride = (uint)Marshal.SizeOf<ParticleData>();
+            for (int i = 0; i < _readbackData.Length && i < _totalParticleCount; i++)
+            {
+                _readbackData[i] = Marshal.PtrToStructure<ParticleData>(mappedPtr + (int)(i * stride));
+            }
+        }
+    }
+
+    private void ApplyReadbackDataToParticles()
+    {
+        if (_readbackData is null)
+            return;
+
+        int particleIndex = 0;
+        for (int i = 0; i < _particleTrees.Count; ++i)
+        {
+            ParticleTree pt = _particleTrees[i];
+            for (int j = 0; j < pt.Particles.Count; ++j)
+            {
+                if (particleIndex < _readbackData.Length)
+                {
+                    ParticleData data = _readbackData[particleIndex];
+                    Particle p = pt.Particles[j];
+                    
+                    p.Position = data.Position;
+                    p.PrevPosition = data.PrevPosition;
+                    p.IsColliding = data.IsColliding != 0;
+                    
+                    particleIndex++;
+                }
+            }
+        }
+    }
+
+    private void RequestAsyncReadback()
+    {
+        if (_particlesBuffer is null)
+            return;
+
+        var renderer = AbstractRenderer.Current as OpenGLRenderer;
+        if (renderer is null)
+            return;
+
+        // Clean up any existing fence
+        if (_gpuFence != IntPtr.Zero)
+        {
+            renderer.RawGL.DeleteSync(_gpuFence);
+            _gpuFence = IntPtr.Zero;
+        }
+
+        // Ensure the buffer is configured for persistent mapping if not already
+        EnsureBufferMappedForReadback(_particlesBuffer);
+
+        // Create a fence to track when the GPU work is done
+        _gpuFence = renderer.RawGL.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+        
+        // Allocate readback data array if needed
+        if (_readbackData is null || _readbackData.Length != _totalParticleCount)
+            _readbackData = new ParticleData[_totalParticleCount];
+
+        _readbackPending = true;
+    }
+
+    private static void EnsureBufferMappedForReadback(XRDataBuffer buffer)
+    {
+        if (buffer.ActivelyMapping.Count > 0)
+            return;
+
+        // Configure buffer for persistent mapped readback
+        buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
+        buffer.RangeFlags |= EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
+        buffer.DisposeOnPush = false;
+        buffer.Usage = EBufferUsage.StreamRead;
+        buffer.Resizable = false;
+        buffer.MapBufferData();
     }
 
     private void DispatchMainPhysics(float timeVar, bool applyObjectMove)
@@ -620,6 +999,17 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
                     Type = 2
                 });
             }
+            else if (collider is PhysicsChainPlaneCollider planeCollider)
+            {
+                // Plane collider uses prepared plane data
+                // Center.xyz = point on plane, Params.xyz = plane normal, Params.w = bound (0=Outside, 1=Inside)
+                _collidersData.Add(new ColliderData
+                {
+                    Center = new Vector4(planeCollider.Transform.TransformPoint(planeCollider._center), 0),
+                    Params = new Vector4(planeCollider._plane.Normal, planeCollider._bound == PhysicsChainColliderBase.EBound.Inside ? 1.0f : 0.0f),
+                    Type = 3
+                });
+            }
         }
     }
 
@@ -661,6 +1051,16 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         _collidersBuffer = null;
         
         _buffersInitialized = false;
+
+        // Clean up async readback state
+        if (_gpuFence != IntPtr.Zero)
+        {
+            var renderer = AbstractRenderer.Current as OpenGLRenderer;
+            renderer?.RawGL.DeleteSync(_gpuFence);
+            _gpuFence = IntPtr.Zero;
+        }
+        _readbackPending = false;
+        _readbackData = null;
     }
 
     private void CleanupPrograms()
@@ -866,6 +1266,17 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
             ResetParticlesPosition(_particleTrees[i]);
 
         _objectPrevPosition = Transform.WorldTranslation;
+        InitializeRootBoneTracking();
+    }
+
+    private void InitializeRootBoneTracking()
+    {
+        if (RootBone is not null)
+        {
+            RootBone.RecalculateMatrices();
+            _rootBonePrevPosition = RootBone.WorldTranslation;
+        }
+        _smoothedObjectMove = Vector3.Zero;
     }
 
     private static void ResetParticlesPosition(ParticleTree pt)

@@ -950,7 +950,7 @@ namespace XREngine.Scene.Transforms
         /// If recalcChildrenNow is true, all children will be recalculated immediately.
         /// If false, they will be marked as dirty and recalculated at the end of the update.
         /// </summary>
-        public virtual Task RecalculateMatrixHeirarchy(bool forceWorldRecalc, bool setRenderMatrixNow, ELoopType childRecalcType)
+        public virtual Task RecalculateMatrixHierarchy(bool forceWorldRecalc, bool setRenderMatrixNow, ELoopType childRecalcType)
             => RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow)
                 ? childRecalcType switch
                 {
@@ -1406,7 +1406,7 @@ namespace XREngine.Scene.Transforms
                 Parallel.For(0, count, i =>
                 {
                     TransformBase child = childrenCopy[i];
-                    child.RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Sequential)
+                    child.RecalculateMatrixHierarchy(true, setRenderMatrixNow, ELoopType.Sequential)
                         .GetAwaiter()
                         .GetResult();
                 });
@@ -1423,7 +1423,7 @@ namespace XREngine.Scene.Transforms
             try
             {
                 for (int i = 0; i < count; i++)
-                    await childrenCopy[i].RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Sequential);
+                    await childrenCopy[i].RecalculateMatrixHierarchy(true, setRenderMatrixNow, ELoopType.Sequential);
             }
             finally
             {
@@ -1438,7 +1438,7 @@ namespace XREngine.Scene.Transforms
             {
                 var tasks = new Task[count];
                 for (int i = 0; i < count; i++)
-                    tasks[i] = childrenCopy[i].RecalculateMatrixHeirarchy(true, setRenderMatrixNow, ELoopType.Asynchronous);
+                    tasks[i] = childrenCopy[i].RecalculateMatrixHierarchy(true, setRenderMatrixNow, ELoopType.Asynchronous);
                 await Task.WhenAll(tasks);
             }
             finally

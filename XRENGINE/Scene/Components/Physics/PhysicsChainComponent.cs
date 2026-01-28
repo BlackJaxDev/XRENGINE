@@ -45,6 +45,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         RegisterTick(ETickGroup.Normal, ETickOrder.Animation, Update);
         RegisterTick(ETickGroup.Late, ETickOrder.Animation, LateUpdate);
         ResetParticlesPosition();
+        InitializeRootBoneTracking();
         OnValidate();
     }
     protected internal override void OnComponentDeactivated()
@@ -123,8 +124,39 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
 
         var translation = Transform.WorldTranslation;
         _objectScale = MathF.Abs(Transform.LossyWorldScale.X);
-        _objectMove = translation - _objectPrevPosition;
+        
+        // Calculate base object movement
+        Vector3 rawObjectMove = translation - _objectPrevPosition;
         _objectPrevPosition = translation;
+
+        // Handle root bone relative movement if configured
+        if (_rootBone is not null && _rootInertia > 0.0f)
+        {
+            _rootBone.RecalculateMatrices();
+            Vector3 rootBonePos = _rootBone.WorldTranslation;
+            Vector3 rootBoneMove = rootBonePos - _rootBonePrevPosition;
+            _rootBonePrevPosition = rootBonePos;
+
+            // Blend between world-space movement and root-relative movement
+            // At RootInertia=1, we subtract the root bone's movement from the chain's perception of movement
+            // This makes the chain move "with" the root bone rather than lagging behind
+            rawObjectMove -= rootBoneMove * _rootInertia;
+        }
+
+        // Apply velocity smoothing to reduce jitter at high velocities
+        if (_velocitySmoothing > 0.0f)
+        {
+            // Exponential moving average for smooth velocity
+            // Higher smoothing = more dampened response
+            float smoothFactor = 1.0f - _velocitySmoothing * 0.9f; // Map 0-1 to 1-0.1
+            _smoothedObjectMove = Vector3.Lerp(_smoothedObjectMove, rawObjectMove, smoothFactor);
+            _objectMove = _smoothedObjectMove;
+        }
+        else
+        {
+            _objectMove = rawObjectMove;
+            _smoothedObjectMove = rawObjectMove;
+        }
 
         for (int i = 0; i < _particleTrees.Count; ++i)
         {
@@ -133,7 +165,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             // Ensure we sample the current (post-InitTransforms / post-animation) pose.
             // Without this, we can end up using stale world matrices from the prior frame,
             // effectively allowing the simulated pose to slowly become the new "rest".
-            pt.Root.RecalculateMatrixHeirarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Sequential).Wait();
+            pt.Root.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Sequential).Wait();
 
             pt.RestGravity = pt.Root.TransformDirection(pt.LocalGravity);
 
@@ -574,6 +606,17 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             ResetParticlesPosition(_particleTrees[i]);
 
         _objectPrevPosition = Transform.WorldTranslation;
+        InitializeRootBoneTracking();
+    }
+
+    private void InitializeRootBoneTracking()
+    {
+        if (_rootBone is not null)
+        {
+            _rootBone.RecalculateMatrices();
+            _rootBonePrevPosition = _rootBone.WorldTranslation;
+        }
+        _smoothedObjectMove = Vector3.Zero;
     }
 
     private static void ResetParticlesPosition(ParticleTree pt)

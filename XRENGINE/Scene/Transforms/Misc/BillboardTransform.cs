@@ -232,7 +232,7 @@ namespace XREngine.Scene.Transforms
             => MarkWorldModified();
 
         private void CameraMoved(TransformBase @base, Matrix4x4 worldMatrix)
-            => RecalculateMatrixHeirarchy(true, false, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
+            => RecalculateMatrixHierarchy(true, false, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
 
         protected override Matrix4x4 CreateLocalMatrix()
             => Matrix4x4.Identity;
