@@ -98,6 +98,27 @@ namespace XREngine.Rendering.OpenGL
 
                 return _separatedVertexProgram!;
             }
+
+            public bool AreBuffersReadyForRendering()
+            {
+                if (!BuffersBound)
+                    return false;
+
+                foreach (var buffer in _bufferCache.Values)
+                {
+                    if (!buffer.IsReadyForRendering)
+                        return false;
+                }
+
+                if (_triangleIndicesBuffer is not null && !_triangleIndicesBuffer.IsReadyForRendering)
+                    return false;
+                if (_lineIndicesBuffer is not null && !_lineIndicesBuffer.IsReadyForRendering)
+                    return false;
+                if (_pointIndicesBuffer is not null && !_pointIndicesBuffer.IsReadyForRendering)
+                    return false;
+
+                return true;
+            }
         }
 
         /// <summary>
@@ -107,12 +128,14 @@ namespace XREngine.Rendering.OpenGL
 
         public void UnbindMeshRenderer()
         {
+            using var prof = Engine.Profiler.Start("OpenGLRenderer.UnbindMeshRenderer");
             Api.BindVertexArray(0);
             ActiveMeshRenderer = null;
         }
 
         public void BindMeshRenderer(GLMeshRenderer? mesh)
         {
+            using var prof = Engine.Profiler.Start("OpenGLRenderer.BindMeshRenderer");
             Api.BindVertexArray(mesh?.BindingId ?? 0);
             ActiveMeshRenderer = mesh;
             if (mesh == null)
@@ -122,17 +145,30 @@ namespace XREngine.Rendering.OpenGL
             GLDataBuffer? elem = mesh.TriangleIndicesBuffer ?? mesh.LineIndicesBuffer ?? mesh.PointIndicesBuffer;
             if (elem != null)
             {
-                elem.Generate();
-                Api.VertexArrayElementBuffer(mesh.BindingId, elem.BindingId);
+                using (Engine.Profiler.Start("OpenGLRenderer.BindMeshRenderer.BindElementBuffer"))
+                {
+                    elem.Generate();
+                    Api.VertexArrayElementBuffer(mesh.BindingId, elem.BindingId);
+                }
             }
         }
 
         public void RenderMesh(GLMeshRenderer manager, bool preservePreviouslyBound = true, uint instances = 1)
         {
+            using var prof = Engine.Profiler.Start("OpenGLRenderer.RenderMesh");
             GLMeshRenderer? prev = ActiveMeshRenderer;
-            BindMeshRenderer(manager);
-            RenderCurrentMesh(instances);
-            BindMeshRenderer(preservePreviouslyBound ? prev : null);
+            using (Engine.Profiler.Start("OpenGLRenderer.RenderMesh.Bind"))
+            {
+                BindMeshRenderer(manager);
+            }
+            using (Engine.Profiler.Start("OpenGLRenderer.RenderMesh.Draw"))
+            {
+                RenderCurrentMesh(instances);
+            }
+            using (Engine.Profiler.Start("OpenGLRenderer.RenderMesh.Restore"))
+            {
+                BindMeshRenderer(preservePreviouslyBound ? prev : null);
+            }
         }
 
         /// <summary>
@@ -140,29 +176,50 @@ namespace XREngine.Rendering.OpenGL
         /// </summary>
         public void RenderCurrentMesh(uint instances = 1)
         {
+            using var prof = Engine.Profiler.Start("OpenGLRenderer.RenderCurrentMesh");
             if (ActiveMeshRenderer?.Mesh is null)
                 return;
 
-            uint triangles = ActiveMeshRenderer.TriangleIndicesBuffer?.Data?.ElementCount ?? 0u;
+            using (Engine.Profiler.Start("OpenGLRenderer.RenderCurrentMesh.ReadyCheck"))
+            {
+                if (!ActiveMeshRenderer.AreBuffersReadyForRendering())
+                    return;
+            }
+
+            // Skip rendering if index buffer data hasn't been uploaded yet
+            var triBuffer = ActiveMeshRenderer.TriangleIndicesBuffer;
+            var lineBuffer = ActiveMeshRenderer.LineIndicesBuffer;
+            var pointBuffer = ActiveMeshRenderer.PointIndicesBuffer;
+
+            uint triangles = triBuffer?.Data?.ElementCount ?? 0u;
             if (triangles > 0)
             {
-                Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
-                Engine.Rendering.Stats.IncrementDrawCalls();
-                Engine.Rendering.Stats.AddTrianglesRendered((int)(triangles / 3 * instances));
+                using (Engine.Profiler.Start("OpenGLRenderer.RenderCurrentMesh.DrawTriangles"))
+                {
+                    Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
+                    Engine.Rendering.Stats.IncrementDrawCalls();
+                    Engine.Rendering.Stats.AddTrianglesRendered((int)(triangles / 3 * instances));
+                }
             }
 
-            uint lines = ActiveMeshRenderer.LineIndicesBuffer?.Data?.ElementCount ?? 0u;
+            uint lines = lineBuffer?.Data?.ElementCount ?? 0u;
             if (lines > 0)
             {
-                Api.DrawElementsInstanced(GLEnum.Lines, lines, ToGLEnum(ActiveMeshRenderer.LineIndicesElementType), null, instances);
-                Engine.Rendering.Stats.IncrementDrawCalls();
+                using (Engine.Profiler.Start("OpenGLRenderer.RenderCurrentMesh.DrawLines"))
+                {
+                    Api.DrawElementsInstanced(GLEnum.Lines, lines, ToGLEnum(ActiveMeshRenderer.LineIndicesElementType), null, instances);
+                    Engine.Rendering.Stats.IncrementDrawCalls();
+                }
             }
 
-            uint points = ActiveMeshRenderer.PointIndicesBuffer?.Data?.ElementCount ?? 0u;
+            uint points = pointBuffer?.Data?.ElementCount ?? 0u;
             if (points > 0)
             {
-                Api.DrawElementsInstanced(GLEnum.Points, points, ToGLEnum(ActiveMeshRenderer.PointIndicesElementType), null, instances);
-                Engine.Rendering.Stats.IncrementDrawCalls();
+                using (Engine.Profiler.Start("OpenGLRenderer.RenderCurrentMesh.DrawPoints"))
+                {
+                    Api.DrawElementsInstanced(GLEnum.Points, points, ToGLEnum(ActiveMeshRenderer.PointIndicesElementType), null, instances);
+                    Engine.Rendering.Stats.IncrementDrawCalls();
+                }
             }
         }
 
@@ -171,6 +228,7 @@ namespace XREngine.Rendering.OpenGL
         /// </summary>
         public void RenderCurrentMeshIndirect()
         {
+            using var prof = Engine.Profiler.Start("OpenGLRenderer.RenderCurrentMeshIndirect");
             if (ActiveMeshRenderer?.Mesh is null)
                 return;
 

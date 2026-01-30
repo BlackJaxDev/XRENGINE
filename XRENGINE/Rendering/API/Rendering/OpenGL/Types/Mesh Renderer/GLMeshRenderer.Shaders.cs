@@ -13,6 +13,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void GenProgramsAndBuffers()
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.GenProgramsAndBuffers");
                 BuffersBound = false;
 
                 var material = Material;
@@ -74,6 +75,7 @@ namespace XREngine.Rendering.OpenGL
                 [MaybeNullWhen(false)] out GLRenderProgram? vertexProgram,
                 [MaybeNullWhen(false)] out GLRenderProgram? materialProgram)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.GetPrograms");
                 bool forceShaderPipelines = Engine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
                 bool usePipelines = (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines) || forceShaderPipelines;
                 
@@ -87,6 +89,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private bool GetCombinedProgram(out GLRenderProgram? vertexProgram, out GLRenderProgram? materialProgram)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.GetCombinedProgram");
                 if ((vertexProgram = materialProgram = _combinedProgram) is null)
                 {
                     Dbg("GetCombinedProgram: program null", "Programs");
@@ -110,6 +113,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private bool GetPipelinePrograms(GLMaterial material, out GLRenderProgram? vertexProgram, out GLRenderProgram? materialProgram)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.GetPipelinePrograms");
                 _pipeline ??= Renderer.GenericToAPI<GLRenderProgramPipeline>(new XRRenderProgramPipeline())!;
                 _pipeline.Bind();
                 _pipeline.Clear(EProgramStageMask.AllShaderBits);
@@ -128,6 +132,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private bool UseSuppliedVertexShader(out GLRenderProgram? vertexProgram, GLRenderProgram? materialProgram, EProgramStageMask mask)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.UseSuppliedVertexShader");
                 vertexProgram = materialProgram;
                 if (materialProgram?.Link() ?? false)
                 {
@@ -149,6 +154,7 @@ namespace XREngine.Rendering.OpenGL
             /// <returns></returns>
             private bool GenerateVertexShader(out GLRenderProgram? vertexProgram, GLRenderProgram? materialProgram, EProgramStageMask mask)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.GenerateVertexShader");
                 vertexProgram = _separatedVertexProgram;
 
                 if (materialProgram?.Link() ?? false)
@@ -181,6 +187,7 @@ namespace XREngine.Rendering.OpenGL
                 Func<XRShader, bool> vertexShaderSelector,
                 Func<string> vertexSourceGenerator)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.CreateCombinedProgram");
                 XRShader vertexShader = hasNoVertexShaders
                     ? GenerateVertexShader(vertexSourceGenerator)
                     : FindVertexShader(shaders, vertexShaderSelector) ?? GenerateVertexShader(vertexSourceGenerator);
@@ -211,6 +218,7 @@ namespace XREngine.Rendering.OpenGL
                 Func<XRShader, bool> vertexShaderSelector,
                 Func<string> vertexSourceGenerator)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.CreateSeparatedVertexProgram");
                 XRShader vertexShader = hasNoVertexShaders
                     ? GenerateVertexShader(vertexSourceGenerator)
                     : vertexShaders.FirstOrDefault(vertexShaderSelector) ?? GenerateVertexShader(vertexSourceGenerator);
@@ -231,6 +239,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void InitiateLink(GLRenderProgram vertexProgram)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.InitiateLink");
                 vertexProgram.Data.AllowLink();
                 if (!Data.Parent.GenerateAsync)
                     vertexProgram.Link();
@@ -241,6 +250,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void CheckProgramLinked(object? sender, IXRPropertyChangedEventArgs e)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.CheckProgramLinked");
                 GLRenderProgram? program = sender as GLRenderProgram;
                 if (e.PropertyName != nameof(GLRenderProgram.IsLinked) || !(program?.IsLinked ?? false))
                     return;

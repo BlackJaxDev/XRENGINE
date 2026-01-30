@@ -5,6 +5,7 @@ using XREngine.Data;
 using XREngine.Data.Rendering;
 using System.Linq;
 using System.Collections.Concurrent;
+using System.Threading.Tasks;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -85,6 +86,7 @@ namespace XREngine.Rendering.OpenGL
 
             public void BindToRenderer(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink, bool pushDataNow = true)
             {
+                using var prof = Engine.Profiler.Start("GLDataBuffer.BindToRenderer");
                 try
                 {
                     BindV2(vertexProgram, arrayBufferLink);
@@ -103,6 +105,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void BindV2(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink)
             {
+                using var prof = Engine.Profiler.Start("GLDataBuffer.BindV2");
                 if (vertexProgram is null)
                 {
                     Debug.LogWarning("[GLDataBuffer] Cannot bind buffer without an active GLRenderProgram.");
@@ -113,6 +116,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     case EBufferTarget.ArrayBuffer:
                         {
+                            using var bufferProf = Engine.Profiler.Start("GLDataBuffer.BindV2.ArrayBuffer");
                             uint vaoId = arrayBufferLink?.BindingId ?? 0;
                             if (vaoId == 0)
                             {
@@ -181,6 +185,7 @@ namespace XREngine.Rendering.OpenGL
                     case EBufferTarget.ShaderStorageBuffer:
                     case EBufferTarget.UniformBuffer:
                         {
+                                using var bufferProf = Engine.Profiler.Start("GLDataBuffer.BindV2.BufferBase");
                             uint bindingIndex = uint.MaxValue;
                             if (Data.BindingIndexOverride.HasValue)
                                 bindingIndex = Data.BindingIndexOverride.Value;
@@ -232,16 +237,101 @@ namespace XREngine.Rendering.OpenGL
             private uint _lastPushedLength = 0u;
 
             /// <summary>
+            /// Threshold above which frame-budgeted uploads are used (64 KB).
+            /// Smaller buffers use synchronous upload as the overhead isn't worth it.
+            /// </summary>
+            private const uint AsyncUploadThreshold = 64 * 1024;
+
+            /// <summary>
             /// Allocates and pushes the buffer to the GPU.
+            /// Uses frame-budgeted uploads for large buffers to prevent FPS stalls.
             /// </summary>
             public void PushData()
             {
                 if (Data.ActivelyMapping.Contains(this))
                     return;
 
+                uint dataLength = Data.Length;
+
+                // Use frame-budgeted path for large buffers (even when on render thread)
+                // This spreads upload work across multiple frames to prevent stalls
+                if (dataLength > AsyncUploadThreshold && Renderer.UploadQueue.Enabled)
+                {
+                    PushDataQueued();
+                    return;
+                }
+
+                // Synchronous path for small buffers or when upload queue is disabled
                 if (Engine.InvokeOnMainThread(PushData, "GLDataBuffer.PushData"))
                     return;
 
+                PushDataImmediate();
+            }
+
+            /// <summary>
+            /// Queues the buffer data for frame-budgeted upload.
+            /// Can be called from any thread.
+            /// </summary>
+            private void PushDataQueued()
+            {
+                uint dataLength = Data.Length;
+                if (dataLength == 0)
+                    return;
+
+                // Get source data address
+                if (!Data.TryGetAddress(out var sourceAddress) || sourceAddress == VoidPtr.Zero)
+                {
+                    // Fallback to sync path if no data
+                    if (Engine.IsRenderThread)
+                        PushDataImmediate();
+                    else
+                        Engine.EnqueueMainThreadTask(PushDataImmediate, "GLDataBuffer.PushData.Fallback");
+                    return;
+                }
+
+                void* srcPtr = sourceAddress.Pointer;
+                bool disposeOnPush = Data.DisposeOnPush;
+                var dataRef = Data;
+
+                void EnqueueCopy()
+                {
+                    // Copy data to managed array - no GL calls needed
+                    byte[] dataCopy = new byte[dataLength];
+                    fixed (byte* dest = dataCopy)
+                    {
+                        System.Buffer.MemoryCopy(srcPtr, dest, dataLength, dataLength);
+                    }
+
+                    // Enqueue for frame-budgeted upload
+                    Renderer.UploadQueue.EnqueueUpload(this, dataCopy, dataLength);
+
+                    // Handle disposal separately if needed
+                    if (disposeOnPush)
+                    {
+                        Engine.EnqueueMainThreadTask(() =>
+                        {
+                            // Only dispose after upload completes
+                            if (_lastPushedLength >= dataLength)
+                                dataRef.Dispose();
+                        }, "GLDataBuffer.PushDataQueued.Dispose");
+                    }
+                }
+
+                if (Engine.IsRenderThread)
+                {
+                    Task.Run(EnqueueCopy);
+                }
+                else
+                {
+                    EnqueueCopy();
+                }
+            }
+
+            /// <summary>
+            /// Performs the actual synchronous GPU upload. Must be called on the render thread.
+            /// </summary>
+            private void PushDataImmediate()
+            {
                 // Track VRAM deallocation of previous buffer if any
                 if (_allocatedVRAMBytes > 0)
                 {
@@ -260,6 +350,34 @@ namespace XREngine.Rendering.OpenGL
                 if (Data.DisposeOnPush)
                     Data.Dispose();
             }
+
+            /// <summary>
+            /// Sets the last pushed length. Used by the upload queue.
+            /// </summary>
+            internal void SetLastPushedLength(uint length)
+            {
+                _lastPushedLength = length;
+            }
+
+            /// <summary>
+            /// Tracks the allocation in stats. Used by the upload queue.
+            /// </summary>
+            internal void TrackAllocation(long bytes)
+            {
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                }
+                _allocatedVRAMBytes = bytes;
+                Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+            }
+
+            /// <summary>
+            /// Returns true if this buffer has data uploaded and is ready for rendering.
+            /// Returns false if there's a pending upload in the queue.
+            /// </summary>
+            public bool IsReadyForRendering
+                => _lastPushedLength > 0 && !Renderer.UploadQueue.HasPendingUpload(this);
 
             public static GLEnum ToGLEnum(EBufferUsage usage) => usage switch
             {

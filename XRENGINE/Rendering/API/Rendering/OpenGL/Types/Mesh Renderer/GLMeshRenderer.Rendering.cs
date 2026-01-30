@@ -79,52 +79,99 @@ namespace XREngine.Rendering.OpenGL
 
                 if (!IsGenerated)
                 {
-                    Dbg("Not generated yet - calling Generate()", "Render");
-                    Generate();
+                    // Queue generation for next frame(s) to spread load
+                    // This prevents all meshes from generating at once during import
+                    if (Renderer.MeshGenerationQueue.Enabled)
+                    {
+                        Renderer.MeshGenerationQueue.EnqueueGeneration(this);
+                        Dbg("Not generated yet - queued for deferred generation", "Render");
+                        return; // Skip rendering until generated
+                    }
+
+                    using (Engine.Profiler.Start("GLMeshRenderer.Render.Generate"))
+                    {
+                        Dbg("Not generated yet - calling Generate()", "Render");
+                        Generate();
+                    }
                 }
 
-                var settingsVersion = Engine.Rendering.Settings.ShaderConfigVersion;
-                // Recreate programs if global shader config (defines, skinning mode) changed since last draw.
-                if (_shaderConfigVersion != settingsVersion)
+                using (Engine.Profiler.Start("GLMeshRenderer.Render.ProgramSetup"))
                 {
-                    _shaderConfigVersion = settingsVersion;
+                    var settingsVersion = Engine.Rendering.Settings.ShaderConfigVersion;
+                    // Recreate programs if global shader config (defines, skinning mode) changed since last draw.
+                    if (_shaderConfigVersion != settingsVersion)
+                    {
+                        _shaderConfigVersion = settingsVersion;
 
-                    _combinedProgram?.Destroy();
-                    _combinedProgram = null;
+                        _combinedProgram?.Destroy();
+                        _combinedProgram = null;
 
-                    _separatedVertexProgram?.Destroy();
-                    _separatedVertexProgram = null;
+                        _separatedVertexProgram?.Destroy();
+                        _separatedVertexProgram = null;
 
-                    if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader)
-                        DestroySkinnedBuffers();
+                        if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader)
+                            DestroySkinnedBuffers();
 
-                    BuffersBound = false;
-                    GenProgramsAndBuffers();
+                        BuffersBound = false;
+                        GenProgramsAndBuffers();
+                    }
                 }
 
-                GLMaterial material = GetRenderMaterial(materialOverride);
+                GLMaterial material;
+                using (Engine.Profiler.Start("GLMeshRenderer.Render.GetMaterial"))
+                {
+                    material = GetRenderMaterial(materialOverride);
+                }
+
                 if (GetPrograms(material, out var vtx, out var mat))
                 {
                     Dbg("Programs ready - binding SSBOs and uniforms", "Render");
 
-                    if (!BuffersBound)
-                        BindBuffers(vtx!);
+                    using (Engine.Profiler.Start("GLMeshRenderer.Render.BindBuffers"))
+                    {
+                        if (!BuffersBound)
+                            BindBuffers(vtx!);
+                    }
 
                     if (!BuffersBound)
                         return;
 
-                    BindSSBOs(mat!);
-                    BindSSBOs(vtx!);
+                    using (Engine.Profiler.Start("GLMeshRenderer.Render.BindSSBOs"))
+                    {
+                        BindSSBOs(mat!);
+                        BindSSBOs(vtx!);
+                    }
 
-                    BindSkinnedVertexBuffers(vtx!);
+                    using (Engine.Profiler.Start("GLMeshRenderer.Render.BindSkinnedVertexBuffers"))
+                    {
+                        BindSkinnedVertexBuffers(vtx!);
+                    }
 
-                    MeshRenderer.PushBoneMatricesToGPU();
-                    MeshRenderer.PushBlendshapeWeightsToGPU();
+                    using (Engine.Profiler.Start("GLMeshRenderer.Render.PushSkinningData"))
+                    {
+                        MeshRenderer.PushBoneMatricesToGPU();
+                        MeshRenderer.PushBlendshapeWeightsToGPU();
+                    }
 
-                    SetMeshUniforms(modelMatrix, prevModelMatrix, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
-                    material.SetUniforms(mat);
-                    OnSettingUniforms(vtx!, mat!);
-                    Renderer.RenderMesh(this, false, instances);
+                    using (Engine.Profiler.Start("GLMeshRenderer.Render.SetMeshUniforms"))
+                    {
+                        SetMeshUniforms(modelMatrix, prevModelMatrix, vtx!, mat, materialOverride?.BillboardMode ?? billboardMode);
+                    }
+
+                    using (Engine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms"))
+                    {
+                        material.SetUniforms(mat);
+                    }
+
+                    using (Engine.Profiler.Start("GLMeshRenderer.Render.CustomUniforms"))
+                    {
+                        OnSettingUniforms(vtx!, mat!);
+                    }
+
+                    using (Engine.Profiler.Start("GLMeshRenderer.Render.Draw"))
+                    {
+                        Renderer.RenderMesh(this, false, instances);
+                    }
                     Dbg("Render mesh submitted", "Render");
                 }
                 else

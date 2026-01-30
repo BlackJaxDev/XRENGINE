@@ -9,6 +9,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
@@ -261,6 +262,16 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
     [Description("Use centralized batched dispatcher for better GPU utilization with multiple physics chains")]
     public bool UseBatchedDispatcher { get; set; } = true;
 
+    // RenderInfo3D for executing GPU work on the render thread via PreRender pass
+    private RenderInfo3D? _gpuWorkRenderInfo;
+    private RenderCommandMethod3D? _gpuWorkRenderCommand;
+    
+    // Pending GPU work parameters (set on update thread, consumed on render thread)
+    private volatile bool _hasPendingGPUWork;
+    private int _pendingLoop;
+    private float _pendingTimeVar;
+    private readonly object _pendingWorkLock = new();
+
     #endregion
 
     #region Component Lifecycle
@@ -271,12 +282,16 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         if (!UseBatchedDispatcher)
         {
             // Load compute shaders
-            _mainPhysicsShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain", EShaderType.Compute);
-            _skipUpdateParticlesShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain/SkipUpdateParticles", EShaderType.Compute);
+            _mainPhysicsShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain.comp", EShaderType.Compute);
+            _skipUpdateParticlesShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain/SkipUpdateParticles.comp", EShaderType.Compute);
 
             // Create render programs
             _mainPhysicsProgram = new XRRenderProgram(true, false, _mainPhysicsShader);
             _skipUpdateParticlesProgram = new XRRenderProgram(true, false, _skipUpdateParticlesShader);
+            
+            // Create RenderInfo3D with PreRender pass to execute GPU work on the render thread
+            _gpuWorkRenderCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.PreRender, ExecutePendingGPUWork);
+            _gpuWorkRenderInfo = RenderInfo3D.New(this, _gpuWorkRenderCommand);
         }
         else
         {
@@ -551,7 +566,48 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
             return;
         }
 
-        // Standalone mode: handle everything locally
+        // Standalone mode: store pending work to be executed on render thread via PreRender pass
+        lock (_pendingWorkLock)
+        {
+            _pendingLoop = loop;
+            _pendingTimeVar = timeVar;
+            _hasPendingGPUWork = true;
+        }
+    }
+
+    /// <summary>
+    /// Called during PreRender pass on the render thread to execute pending GPU physics work.
+    /// </summary>
+    private void ExecutePendingGPUWork()
+    {
+        if (!_hasPendingGPUWork)
+            return;
+
+        int loop;
+        float timeVar;
+        lock (_pendingWorkLock)
+        {
+            if (!_hasPendingGPUWork)
+                return;
+            
+            loop = _pendingLoop;
+            timeVar = _pendingTimeVar;
+            _hasPendingGPUWork = false;
+        }
+
+        ExecuteStandaloneGPUWork(loop, timeVar);
+    }
+
+    /// <summary>
+    /// Executes the standalone GPU physics work on the render thread.
+    /// This must run on the render thread because it makes GL calls.
+    /// </summary>
+    private void ExecuteStandaloneGPUWork(int loop, float timeVar)
+    {
+        // Check if component is still active
+        if (!IsActive)
+            return;
+
         TryApplyAsyncReadback();
 
         if (!_buffersInitialized)
@@ -1430,7 +1486,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
 
     public float Weight => _weight;
 
-    public RenderInfo[] RenderedObjects { get; } = [];
+    public RenderInfo[] RenderedObjects => _gpuWorkRenderInfo is not null ? [_gpuWorkRenderInfo] : [];
 
     #endregion
 }

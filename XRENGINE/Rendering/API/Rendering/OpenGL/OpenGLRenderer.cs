@@ -523,6 +523,15 @@ namespace XREngine.Rendering.OpenGL
             _luminanceComputeInitialized = false;
         }
 
+        /// <summary>
+        /// Processes pending async buffer uploads and mesh generations within the frame time budget.
+        /// </summary>
+        public override void ProcessPendingUploads()
+        {
+            UploadQueue.ProcessUploads();
+            MeshGenerationQueue.ProcessGeneration();
+        }
+
         protected override void WindowRenderCallback(double delta)
         {
 
