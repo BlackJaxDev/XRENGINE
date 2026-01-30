@@ -279,8 +279,8 @@ public sealed class GPUPhysicsChainDispatcher
         if (_initialized)
             return;
 
-        _mainPhysicsShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain", EShaderType.Compute);
-        _skipUpdateShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain/SkipUpdateParticles", EShaderType.Compute);
+        _mainPhysicsShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain.comp", EShaderType.Compute);
+        _skipUpdateShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain/SkipUpdateParticles.comp", EShaderType.Compute);
 
         _mainPhysicsProgram = new XRRenderProgram(true, false, _mainPhysicsShader);
         _skipUpdateProgram = new XRRenderProgram(true, false, _skipUpdateShader);

@@ -81,6 +81,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public override void Generate()
             {
+                using var prof = Engine.Profiler.Start($"GLObject.Generate.{Type}");
                 if (!_invalidated)
                 {
                     if (!_hasSentInvalidationWarning)

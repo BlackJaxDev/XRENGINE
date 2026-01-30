@@ -709,6 +709,12 @@ namespace XREngine.Rendering
             // Reset per-frame rendering statistics at the start of each frame
             Engine.Rendering.Stats.BeginFrame();
 
+            // Process any pending async buffer uploads within the frame budget
+            using (var uploadSample = Engine.Profiler.Start("XRWindow.ProcessPendingUploads"))
+            {
+                Renderer.ProcessPendingUploads();
+            }
+
             try
             {
                 Renderer.Active = true;

@@ -66,6 +66,12 @@ namespace XREngine.Rendering
 
         protected abstract void WindowRenderCallback(double delta);
 
+        /// <summary>
+        /// Processes any pending async uploads within a frame time budget.
+        /// Called at the start of each frame to spread upload work across frames.
+        /// </summary>
+        public virtual void ProcessPendingUploads() { }
+
         public void RenderWindow(double delta)
             => WindowRenderCallback(delta);
 

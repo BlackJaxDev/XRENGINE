@@ -25,6 +25,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void MakeIndexBuffers()
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.MakeIndexBuffers");
                 Dbg("MakeIndexBuffers begin", "Buffers");
 
                 var mesh = Mesh;
@@ -60,6 +61,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void CollectBuffers()
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.CollectBuffers");
                 _bufferCache = [];
                 Dbg("CollectBuffers start", "Buffers");
 
@@ -97,6 +99,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void BindSSBOs(GLRenderProgram program)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.BindSSBOs");
                 int count = 0;
                 foreach (var buffer in _bufferCache.Where(x => x.Value.Data.Target == EBufferTarget.ShaderStorageBuffer))
                 {
@@ -129,6 +132,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void BindSkinnedVertexBuffers(GLRenderProgram vertexProgram)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.BindSkinnedVertexBuffers");
                 if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader)
                     return;
 
@@ -188,6 +192,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void BindSkinnedInterleavedBuffer(GLRenderProgram vertexProgram, XRDataBuffer skinnedInterleavedBuffer)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.BindSkinnedInterleavedBuffer");
                 var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(skinnedInterleavedBuffer);
                 if (glBuffer is null)
                     return;
@@ -205,6 +210,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void BindBuffers(GLRenderProgram program)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.BindBuffers");
                 var mesh = Mesh;
                 if (BuffersBound)
                 {
@@ -212,23 +218,38 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                Renderer.BindMeshRenderer(this);
+                using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.BindVAO"))
+                {
+                    Renderer.BindMeshRenderer(this);
+                }
                 Dbg(mesh is null ? "BindBuffers: binding renderer buffers (mesh=null)" : "BindBuffers: binding attribute & index buffers", "Buffers");
 
-                foreach (GLDataBuffer buffer in _bufferCache.Values)
+                using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.BindAttributes"))
                 {
-                    buffer.Generate();
-                    buffer.BindToRenderer(program, this);
+                    foreach (GLDataBuffer buffer in _bufferCache.Values)
+                    {
+                        using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.Buffer"))
+                        {
+                            buffer.Generate();
+                            buffer.BindToRenderer(program, this);
+                        }
+                    }
                 }
 
-                if (TriangleIndicesBuffer is not null)
-                    Api.VertexArrayElementBuffer(BindingId, TriangleIndicesBuffer.BindingId);
-                if (LineIndicesBuffer is not null)
-                    Api.VertexArrayElementBuffer(BindingId, LineIndicesBuffer.BindingId);
-                if (PointIndicesBuffer is not null)
-                    Api.VertexArrayElementBuffer(BindingId, PointIndicesBuffer.BindingId);
+                using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.BindIndexBuffers"))
+                {
+                    if (TriangleIndicesBuffer is not null)
+                        Api.VertexArrayElementBuffer(BindingId, TriangleIndicesBuffer.BindingId);
+                    if (LineIndicesBuffer is not null)
+                        Api.VertexArrayElementBuffer(BindingId, LineIndicesBuffer.BindingId);
+                    if (PointIndicesBuffer is not null)
+                        Api.VertexArrayElementBuffer(BindingId, PointIndicesBuffer.BindingId);
+                }
 
-                Renderer.BindMeshRenderer(null);
+                using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.UnbindVAO"))
+                {
+                    Renderer.BindMeshRenderer(null);
+                }
 
                 BuffersBound = true;
                 Dbg("BindBuffers: complete", "Buffers");
