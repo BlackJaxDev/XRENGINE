@@ -221,3 +221,13 @@ This project is licensed under the **GNU Affero General Public License v3.0 (AGP
 Note: this repo includes third-party submodules/dependencies that may have their own license terms.
 - Issues: https://github.com/BlackJaxDev/XRENGINE/issues
 - Discussions: https://github.com/BlackJaxDev/XRENGINE/discussions
+
+## Star History
+
+<a href="https://www.star-history.com/#BlackJaxDev/XRENGINE&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=BlackJaxDev/XRENGINE&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=BlackJaxDev/XRENGINE&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=BlackJaxDev/XRENGINE&type=date&legend=top-left" />
+ </picture>
+</a>
