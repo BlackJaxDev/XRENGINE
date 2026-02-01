@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.IO;
 using XREngine.Core.Files;
+using Extensions;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Editor.ComponentEditors;
@@ -271,7 +272,7 @@ public static partial class EditorImGuiUI
                     if (browsableAttr != null && !browsableAttr.Browsable)
                         return null;
 
-                    string displayName = displayAttr?.DisplayName ?? p.Name;
+                    string displayName = displayAttr?.DisplayName ?? p.Name.SplitCamelCase();
                     string? description = descAttr?.Description;
                     string? category = categoryAttr?.Category;
 
@@ -325,7 +326,7 @@ public static partial class EditorImGuiUI
                     if (f.GetCustomAttribute<HideInInspectorAttribute>() is not null)
                         return null;
 
-                    string displayName = displayAttr?.DisplayName ?? f.Name;
+                    string displayName = displayAttr?.DisplayName ?? f.Name.SplitCamelCase();
                     string? description = descAttr?.Description;
                     string? category = categoryAttr?.Category;
 

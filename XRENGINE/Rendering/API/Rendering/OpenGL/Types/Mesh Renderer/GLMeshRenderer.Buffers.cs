@@ -63,17 +63,33 @@ namespace XREngine.Rendering.OpenGL
             {
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.CollectBuffers");
                 _bufferCache = [];
+                _ssboBufferCache = [];
+                _allBuffersList = [];
                 Dbg("CollectBuffers start", "Buffers");
 
                 var meshBuffers = Mesh?.Buffers as IEventDictionary<string, XRDataBuffer>;
                 var rendBuffers = (IEventDictionary<string, XRDataBuffer>)MeshRenderer.Buffers;
 
                 if (meshBuffers is not null)
+                {
                     foreach (var pair in meshBuffers)
-                        _bufferCache[pair.Key] = Renderer.GenericToAPI<GLDataBuffer>(pair.Value)!;
+                    {
+                        var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(pair.Value)!;
+                        _bufferCache[pair.Key] = glBuffer;
+                        _allBuffersList.Add(glBuffer);
+                        if (pair.Value.Target == EBufferTarget.ShaderStorageBuffer)
+                            _ssboBufferCache.Add(glBuffer);
+                    }
+                }
 
                 foreach (var pair in rendBuffers)
-                    _bufferCache[pair.Key] = Renderer.GenericToAPI<GLDataBuffer>(pair.Value)!;
+                {
+                    var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(pair.Value)!;
+                    _bufferCache[pair.Key] = glBuffer;
+                    _allBuffersList.Add(glBuffer);
+                    if (pair.Value.Target == EBufferTarget.ShaderStorageBuffer)
+                        _ssboBufferCache.Add(glBuffer);
+                }
 
                 if (Engine.Rendering.Settings.CalculateSkinningInComputeShader)
                 {
@@ -81,17 +97,27 @@ namespace XREngine.Rendering.OpenGL
                     _bufferCache.Remove(ECommonBufferType.BoneMatrixCount.ToString());
                 }
 
-                Dbg($"CollectBuffers end. Total={_bufferCache.Count}", "Buffers");
+                Dbg($"CollectBuffers end. Total={_bufferCache.Count}, SSBOs={_ssboBufferCache.Count}", "Buffers");
             }
 
             private void Buffers_Removed(string key, XRDataBuffer value)
             {
-                _bufferCache.Remove(key);
+                if (_bufferCache.TryGetValue(key, out var glBuffer))
+                {
+                    _bufferCache.Remove(key);
+                    _allBuffersList.Remove(glBuffer);
+                    if (value.Target == EBufferTarget.ShaderStorageBuffer)
+                        _ssboBufferCache.Remove(glBuffer);
+                }
             }
 
             private void Buffers_Added(string key, XRDataBuffer value)
             {
-                _bufferCache[key] = Renderer.GenericToAPI<GLDataBuffer>(value)!;
+                var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(value)!;
+                _bufferCache[key] = glBuffer;
+                _allBuffersList.Add(glBuffer);
+                if (value.Target == EBufferTarget.ShaderStorageBuffer)
+                    _ssboBufferCache.Add(glBuffer);
             }
 
             /// <summary>
@@ -100,12 +126,9 @@ namespace XREngine.Rendering.OpenGL
             private void BindSSBOs(GLRenderProgram program)
             {
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.BindSSBOs");
-                int count = 0;
-                foreach (var buffer in _bufferCache.Where(x => x.Value.Data.Target == EBufferTarget.ShaderStorageBuffer))
-                {
-                    buffer.Value.BindSSBO(program);
-                    count++;
-                }
+                int count = _ssboBufferCache.Count;
+                for (int i = 0; i < count; i++)
+                    _ssboBufferCache[i].BindSSBO(program);
 
                 if (count > 0)
                     Dbg($"BindSSBOs bound {count} SSBO(s)", "Buffers");

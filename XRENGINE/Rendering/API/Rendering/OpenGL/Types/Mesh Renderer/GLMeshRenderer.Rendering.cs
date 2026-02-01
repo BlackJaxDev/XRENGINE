@@ -196,6 +196,8 @@ namespace XREngine.Rendering.OpenGL
                 GLRenderProgram? materialProgram,
                 EMeshBillboardMode billboardMode)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.SetMeshUniforms");
+
                 bool stereoPass = Engine.Rendering.State.IsStereoPass;
                 var cam = Engine.Rendering.State.RenderingCamera;
                 if (stereoPass)
@@ -216,8 +218,8 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 // If previous transform was never captured, assume static to avoid fake motion vectors.
-                if (IsApproximatelyIdentity(prevModelMatrix) && !IsApproximatelyIdentity(modelMatrix))
-                    prevModelMatrix = modelMatrix;
+                //if (IsApproximatelyIdentity(prevModelMatrix) && !IsApproximatelyIdentity(modelMatrix))
+                //    prevModelMatrix = modelMatrix;
 
                 SetUniformBoth(EEngineUniform.ModelMatrix, modelMatrix);
                 SetUniformBoth(EEngineUniform.PrevModelMatrix, prevModelMatrix);
@@ -250,6 +252,8 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private static void PassCameraUniforms(GLRenderProgram vertexProgram, XRCamera? camera, EEngineUniform invView, EEngineUniform proj)
             {
+                using var prof = Engine.Profiler.Start("GLMeshRenderer.PassCameraUniforms");
+
                 Matrix4x4 viewMatrix;
                 Matrix4x4 inverseViewMatrix;
                 Matrix4x4 projMatrix;
@@ -268,9 +272,10 @@ namespace XREngine.Rendering.OpenGL
                     projMatrix = Matrix4x4.Identity;
                 }
 
-                vertexProgram.Uniform($"{EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix}", viewMatrix);
-                vertexProgram.Uniform($"{invView}{DefaultVertexShaderGenerator.VertexUniformSuffix}", inverseViewMatrix);
-                vertexProgram.Uniform($"{proj}{DefaultVertexShaderGenerator.VertexUniformSuffix}", projMatrix);
+                // Use cached uniform names to avoid string allocations per call
+                vertexProgram.Uniform(EEngineUniform.ViewMatrix.ToVertexUniformName(), viewMatrix);
+                vertexProgram.Uniform(invView.ToVertexUniformName(), inverseViewMatrix);
+                vertexProgram.Uniform(proj.ToVertexUniformName(), projMatrix);
             }
 
             /// <summary>

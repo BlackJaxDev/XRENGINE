@@ -151,7 +151,7 @@ namespace XREngine.Rendering.Physics.Physx
             set
             {
                 ControllerPtr->SetUserDataMut(value);
-                Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} UserData=0x{1:X}", (nint)ControllerPtr, (nint)value);
+                //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} UserData=0x{1:X}", (nint)ControllerPtr, (nint)value);
             }
         }
 
@@ -206,7 +206,7 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 PxExtendedVec3 pos = PxExtendedVec3_new_1(value.X, value.Y, value.Z);
                 ControllerPtr->SetPositionMut(&pos);
-                Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} Position={1}", (nint)ControllerPtr, value);
+                //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} Position={1}", (nint)ControllerPtr, value);
             }
         }
 
@@ -222,7 +222,7 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 PxExtendedVec3 pos = PxExtendedVec3_new_1(value.X, value.Y, value.Z);
                 ControllerPtr->SetFootPositionMut(&pos);
-                Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} FootPosition={1}", (nint)ControllerPtr, value);
+                //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} FootPosition={1}", (nint)ControllerPtr, value);
             }
         }
 
@@ -238,7 +238,7 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 PxVec3 up = PxVec3_new_3(value.X, value.Y, value.Z);
                 ControllerPtr->SetUpDirectionMut(&up);
-                Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} UpDirection={1}", (nint)ControllerPtr, value);
+                //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} UpDirection={1}", (nint)ControllerPtr, value);
             }
         }
 
@@ -249,7 +249,7 @@ namespace XREngine.Rendering.Physics.Physx
             set
             {
                 ControllerPtr->SetSlopeLimitMut(value);
-                Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} SlopeLimit={1}", (nint)ControllerPtr, value);
+                //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} SlopeLimit={1}", (nint)ControllerPtr, value);
             }
         }
 
@@ -260,7 +260,7 @@ namespace XREngine.Rendering.Physics.Physx
             set
             {
                 ControllerPtr->SetStepOffsetMut(value);
-                Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} StepOffset={1}", (nint)ControllerPtr, value);
+                //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller ptr=0x{0:X} StepOffset={1}", (nint)ControllerPtr, value);
             }
         }
 
@@ -441,7 +441,7 @@ namespace XREngine.Rendering.Physics.Physx
             if (Interlocked.Exchange(ref _released, 1) != 0)
                 return;
 
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller RequestRelease ptr=0x{0:X}", (nint)ControllerPtr);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller RequestRelease ptr=0x{0:X}", (nint)ControllerPtr);
 
             // Clear the input buffer
             while (_inputBuffer.TryDequeue(out _)) { }
@@ -470,7 +470,7 @@ namespace XREngine.Rendering.Physics.Physx
             if (Interlocked.Exchange(ref _nativeReleased, 1) != 0)
                 return;
 
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] - Controller ReleaseNativeNow ptr=0x{0:X}", (nint)ControllerPtr);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] - Controller ReleaseNativeNow ptr=0x{0:X}", (nint)ControllerPtr);
 
             //lock (_nativeCallLock)
             {
@@ -586,7 +586,7 @@ namespace XREngine.Rendering.Physics.Physx
         private static void HitReportDestructor(void* self)
         {
             _hitReportToController.TryRemove((nint)self, out _);
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller HitReport Destructor ptr=0x{0:X}", (nint)self);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller HitReport Destructor ptr=0x{0:X}", (nint)self);
         }
 
         #endregion
@@ -597,7 +597,7 @@ namespace XREngine.Rendering.Physics.Physx
         private static void BehaviorCallbackDestructor(void* self)
         {
             _behaviorCallbackToController.TryRemove((nint)self, out _);
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller BehaviorCallback Destructor ptr=0x{0:X}", (nint)self);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ Controller BehaviorCallback Destructor ptr=0x{0:X}", (nint)self);
         }
 
         /// <summary>

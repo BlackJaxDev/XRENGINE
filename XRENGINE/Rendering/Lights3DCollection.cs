@@ -221,6 +221,8 @@ namespace XREngine.Scene
 
         public void CollectVisibleItems()
         {
+            using var sample = Engine.Profiler.Start("Lights3DCollection.CollectVisibleItems");
+
             //CollectingVisibleShadowMaps = true;
 
             _shadowLightsCollectedThisTick.Clear();
@@ -604,6 +606,8 @@ namespace XREngine.Scene
 
         public void RenderShadowMaps(bool collectVisibleNow)
         {
+            using var sample = Engine.Profiler.Start("Lights3DCollection.RenderShadowMaps");
+
             RenderingShadowMaps = true;
 
             foreach (DirectionalLightComponent l in DynamicDirectionalLights)
@@ -633,6 +637,8 @@ namespace XREngine.Scene
 
         public void Clear()
         {
+            using var sample = Engine.Profiler.Start("Lights3DCollection.Clear");
+
             DynamicSpotLights.Clear();
             DynamicPointLights.Clear();
             DynamicDirectionalLights.Clear();

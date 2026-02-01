@@ -73,6 +73,12 @@ namespace XREngine
                 public static bool EnableRenderMatrixListenerTracking { get; set; }
 
                 /// <summary>
+                /// When false, disables all per-frame statistics tracking to reduce overhead.
+                /// VRAM tracking remains enabled as it's not per-frame.
+                /// </summary>
+                public static bool EnableTracking { get; set; } = true;
+
+                /// <summary>
                 /// Whether render-matrix stats have been populated at least once.
                 /// </summary>
                 public static bool RenderMatrixStatsReady => _renderMatrixStatsReady;
@@ -306,6 +312,7 @@ namespace XREngine
                 /// </summary>
                 public static void IncrementDrawCalls()
                 {
+                    if (!EnableTracking) return;
                     Interlocked.Increment(ref _drawCalls);
                 }
 
@@ -314,6 +321,7 @@ namespace XREngine
                 /// </summary>
                 public static void IncrementDrawCalls(int count)
                 {
+                    if (!EnableTracking) return;
                     Interlocked.Add(ref _drawCalls, count);
                 }
 
@@ -322,6 +330,7 @@ namespace XREngine
                 /// </summary>
                 public static void AddTrianglesRendered(int count)
                 {
+                    if (!EnableTracking) return;
                     Interlocked.Add(ref _trianglesRendered, count);
                 }
 
@@ -330,6 +339,7 @@ namespace XREngine
                 /// </summary>
                 public static void IncrementMultiDrawCalls()
                 {
+                    if (!EnableTracking) return;
                     Interlocked.Increment(ref _multiDrawCalls);
                 }
 
@@ -338,6 +348,7 @@ namespace XREngine
                 /// </summary>
                 public static void IncrementMultiDrawCalls(int count)
                 {
+                    if (!EnableTracking) return;
                     Interlocked.Add(ref _multiDrawCalls, count);
                 }
 

@@ -170,6 +170,8 @@ namespace XREngine
         private OverrideableSetting<bool> _useDebugOpaquePipelineOverride = new();
         private OverrideableSetting<bool> _forceGpuPassthroughCullingOverride = new();
         private OverrideableSetting<bool> _allowGpuCpuFallbackOverride = new();
+        private OverrideableSetting<bool> _enableProfilerFrameLoggingOverride = new();
+        private OverrideableSetting<bool> _enableRenderStatisticsTrackingOverride = new();
 
         public OverrideableSetting<bool> RenderMesh3DBoundsOverride
         {
@@ -283,6 +285,18 @@ namespace XREngine
         {
             get => _allowGpuCpuFallbackOverride;
             set => SetField(ref _allowGpuCpuFallbackOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> EnableProfilerFrameLoggingOverride
+        {
+            get => _enableProfilerFrameLoggingOverride;
+            set => SetField(ref _enableProfilerFrameLoggingOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> EnableRenderStatisticsTrackingOverride
+        {
+            get => _enableRenderStatisticsTrackingOverride;
+            set => SetField(ref _enableRenderStatisticsTrackingOverride, value ?? new());
         }
     }
 }

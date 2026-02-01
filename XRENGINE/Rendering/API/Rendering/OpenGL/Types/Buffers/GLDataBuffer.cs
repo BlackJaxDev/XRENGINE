@@ -20,6 +20,11 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private long _allocatedVRAMBytes = 0;
 
+            /// <summary>
+            /// Cache of program binding ID -> SSBO resource index to avoid expensive glGetProgramResourceIndex calls every frame.
+            /// </summary>
+            private readonly Dictionary<uint, uint> _ssboResourceIndexCache = [];
+
             protected override void UnlinkData()
             {
                 Data.PushDataRequested -= PushData;
@@ -86,7 +91,7 @@ namespace XREngine.Rendering.OpenGL
 
             public void BindToRenderer(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink, bool pushDataNow = true)
             {
-                using var prof = Engine.Profiler.Start("GLDataBuffer.BindToRenderer");
+                // Profiler instrumentation removed from this hot path - called per buffer per mesh
                 try
                 {
                     BindV2(vertexProgram, arrayBufferLink);
@@ -105,7 +110,7 @@ namespace XREngine.Rendering.OpenGL
 
             private void BindV2(GLRenderProgram vertexProgram, GLMeshRenderer? arrayBufferLink)
             {
-                using var prof = Engine.Profiler.Start("GLDataBuffer.BindV2");
+                // Profiler instrumentation removed from this hot path
                 if (vertexProgram is null)
                 {
                     Debug.LogWarning("[GLDataBuffer] Cannot bind buffer without an active GLRenderProgram.");
@@ -116,7 +121,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     case EBufferTarget.ArrayBuffer:
                         {
-                            using var bufferProf = Engine.Profiler.Start("GLDataBuffer.BindV2.ArrayBuffer");
+                            // Profiler instrumentation removed from this hot path
                             uint vaoId = arrayBufferLink?.BindingId ?? 0;
                             if (vaoId == 0)
                             {
@@ -185,7 +190,7 @@ namespace XREngine.Rendering.OpenGL
                     case EBufferTarget.ShaderStorageBuffer:
                     case EBufferTarget.UniformBuffer:
                         {
-                                using var bufferProf = Engine.Profiler.Start("GLDataBuffer.BindV2.BufferBase");
+                            // Profiler instrumentation removed from this hot path
                             uint bindingIndex = uint.MaxValue;
                             if (Data.BindingIndexOverride.HasValue)
                                 bindingIndex = Data.BindingIndexOverride.Value;
@@ -373,11 +378,17 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
+            /// Tracks whether this buffer has a pending upload in the queue.
+            /// Set by GLUploadQueue when enqueued/completed.
+            /// </summary>
+            internal volatile bool _hasPendingUpload;
+
+            /// <summary>
             /// Returns true if this buffer has data uploaded and is ready for rendering.
             /// Returns false if there's a pending upload in the queue.
             /// </summary>
             public bool IsReadyForRendering
-                => _lastPushedLength > 0 && !Renderer.UploadQueue.HasPendingUpload(this);
+                => _lastPushedLength > 0 && !_hasPendingUpload;
 
             public static GLEnum ToGLEnum(EBufferUsage usage) => usage switch
             {
@@ -699,13 +710,31 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                uint resourceIndex = bindindIndexOverride ?? Data.BindingIndexOverride ?? Api.GetProgramResourceIndex(program.BindingId, GLEnum.ShaderStorageBlock, Data.AttributeName);
+                uint resourceIndex;
+                if (bindindIndexOverride.HasValue)
+                {
+                    resourceIndex = bindindIndexOverride.Value;
+                }
+                else if (Data.BindingIndexOverride.HasValue)
+                {
+                    resourceIndex = Data.BindingIndexOverride.Value;
+                }
+                else
+                {
+                    // Cache the resource index lookup per program to avoid expensive GL query every frame
+                    uint programId = program.BindingId;
+                    if (!_ssboResourceIndexCache.TryGetValue(programId, out resourceIndex))
+                    {
+                        resourceIndex = Api.GetProgramResourceIndex(programId, GLEnum.ShaderStorageBlock, Data.AttributeName);
+                        _ssboResourceIndexCache[programId] = resourceIndex;
+                    }
+                }
+
                 if (resourceIndex == uint.MaxValue)
                     return;
 
-                Bind();
+                // BindBufferBase binds directly by ID - no need for Bind()/Unbind() calls
                 Api.BindBufferBase(ToGLEnum(EBufferTarget.ShaderStorageBuffer), resourceIndex, BindingId);
-                Unbind();
             }
         }
     }

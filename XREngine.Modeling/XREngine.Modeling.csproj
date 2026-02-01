@@ -34,13 +34,13 @@
 
   <ItemGroup>
     <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
-    <PackageReference Include="Magick.NET.Core" Version="14.10.1" />
-    <PackageReference Include="Magick.NET.SystemDrawing" Version="8.0.14" />
+    <PackageReference Include="Magick.NET.Core" Version="14.10.2" />
+    <PackageReference Include="Magick.NET.SystemDrawing" Version="8.0.15" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Meshoptimizer.NET" Version="1.0.7" />
     <PackageReference Include="MIConvexHull" Version="1.1.19.1019" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
-    <PackageReference Include="System.Text.Json" Version="10.0.1" />
+    <PackageReference Include="System.Text.Json" Version="10.0.2" />
   </ItemGroup>
 
   <ItemGroup>

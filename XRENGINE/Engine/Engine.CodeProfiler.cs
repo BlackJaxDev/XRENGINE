@@ -8,6 +8,11 @@ namespace XREngine
 {
     public static partial class Engine
     {
+        /// <summary>
+        /// Event-based code profiler with near-zero overhead on the calling thread.
+        /// Start() only captures a timestamp and pushes a lightweight event to a queue.
+        /// All tree reconstruction and processing happens on a dedicated stats thread.
+        /// </summary>
         public class CodeProfiler : XRBase
         {
 #if DEBUG
@@ -18,7 +23,16 @@ namespace XREngine
             public bool EnableFrameLogging
             {
                 get => _enableFrameLogging;
-                set => SetField(ref _enableFrameLogging, value);
+                set
+                {
+                    if (!SetField(ref _enableFrameLogging, value))
+                        return;
+
+                    if (value)
+                        StartStatsThread();
+                    else
+                        StopStatsThread(waitForExit: true);
+                }
             }
 
             private float _debugOutputMinElapsedMs = 1.0f;
@@ -28,37 +42,199 @@ namespace XREngine
                 set => SetField(ref _debugOutputMinElapsedMs, value);
             }
 
-            public ConcurrentDictionary<int, CodeProfilerTimer> RootEntriesPerThread { get; } = [];
+            // ============ EVENT-BASED ARCHITECTURE ============
+            // Events are lightweight structs pushed to a queue - no allocations, no locks on Start/Stop
+            
+            private enum ProfilerEventType : byte { Start, Stop }
 
-            private ConcurrentQueue<CodeProfilerTimer> _completedEntriesPrinting = [];
-            private ConcurrentQueue<CodeProfilerTimer> _completedEntries = [];
+            private readonly struct ProfilerEvent
+            {
+                public readonly ProfilerEventType Type;
+                public readonly float Timestamp;
+                public readonly int ThreadId;
+                public readonly int CorrelationId;
+                public readonly string? MethodName; // Only set for Start events
 
-            private readonly ResourcePool<CodeProfilerTimer> _timerPool = new(() => new CodeProfilerTimer());
+                public ProfilerEvent(ProfilerEventType type, float timestamp, int threadId, int correlationId, string? methodName)
+                {
+                    Type = type;
+                    Timestamp = timestamp;
+                    ThreadId = threadId;
+                    CorrelationId = correlationId;
+                    MethodName = methodName;
+                }
+            }
 
-            private readonly ConcurrentDictionary<Guid, CodeProfilerTimer> _asyncTimers = [];
-            private readonly ThreadLocal<ThreadContext> _threadContext;
+            // Thread-local correlation ID counter - no contention, no atomic operations needed
+            [ThreadStatic]
+            private static int _tlsCorrelationId;
 
-            private readonly object _snapshotLock = new();
-            private ProfilerFrameSnapshot? _lastFrameSnapshot;
+            // Main event queue - all profiler events go here
+            private readonly ConcurrentQueue<ProfilerEvent> _eventQueue = new();
+
+            private readonly object _statsThreadLock = new();
+            private Thread? _statsThread;
+            private CancellationTokenSource? _statsThreadCts;
+
+            // Lock-free snapshot access using volatile references
+            private volatile ProfilerFrameSnapshot? _readySnapshot;
+            private volatile Dictionary<int, float[]> _readyHistorySnapshot = [];
+            
+            // Stats thread owns these - no locking needed
             private readonly Dictionary<int, Queue<float>> _threadFrameHistory = [];
             private const int ThreadHistoryCapacity = 240;
 
+            // Stats thread working buffers - reused to avoid allocations
+            private readonly Dictionary<int, ThreadBuildState> _threadBuildStates = [];
+            private readonly List<ProfilerThreadSnapshot> _threadSnapshotsBuffer = new(8);
+
+            // Accumulated roots per thread - survives across processing cycles until snapshot is built
+            private readonly Dictionary<int, List<BuiltTimer>> _accumulatedRoots = [];
+
+            // Snapshot timing - build snapshots at fixed intervals, not every processing cycle
+            private const int StatsThreadIntervalMs = 4; // ~250Hz event processing (fast drain)
+            private const int SnapshotIntervalMs = 33; // ~30Hz snapshot publishing
+            private float _lastSnapshotTime = float.NegativeInfinity;
+
             public delegate void DelTimerCallback(string? methodName, float elapsedMs);
+
+            /// <summary>
+            /// Lightweight scope returned by Start() that captures only a correlation ID.
+            /// Dispose() pushes a Stop event to the queue.
+            /// </summary>
+            public struct ProfilerScope : IDisposable
+            {
+                private readonly CodeProfiler? _profiler;
+                private readonly int _correlationId;
+                private readonly int _threadId;
+
+                internal ProfilerScope(CodeProfiler? profiler, int correlationId, int threadId)
+                {
+                    _profiler = profiler;
+                    _correlationId = correlationId;
+                    _threadId = threadId;
+                }
+
+                [MethodImpl(MethodImplOptions.AggressiveInlining)]
+                public void Dispose()
+                {
+                    if (_profiler is null)
+                        return;
+
+                    // Push stop event - just timestamp and correlation ID
+                    _profiler._eventQueue.Enqueue(new ProfilerEvent(
+                        ProfilerEventType.Stop,
+                        Time.Timer.Time(),
+                        _threadId,
+                        _correlationId,
+                        null));
+                }
+            }
 
             public CodeProfiler()
             {
-                _threadContext = new ThreadLocal<ThreadContext>(() => new ThreadContext(), trackAllValues: false);
-                Time.Timer.SwapBuffers += ClearFrameLog;
+                if (_enableFrameLogging)
+                    StartStatsThread();
             }
+
             ~CodeProfiler()
             {
-                Time.Timer.SwapBuffers -= ClearFrameLog;
+                StopStatsThread(waitForExit: false);
             }
 
+            // ============ BUILD STATE FOR STATS THREAD ============
+            // These classes are only used on the stats thread
+
+            private sealed class PendingTimer
+            {
+                public string Name = string.Empty;
+                public float StartTime;
+                public int CorrelationId;
+                public PendingTimer? Parent;
+                public List<BuiltTimer> Children = new(4);
+
+                public void Reset()
+                {
+                    Name = string.Empty;
+                    StartTime = 0f;
+                    CorrelationId = 0;
+                    Parent = null;
+                    Children.Clear();
+                }
+            }
+
+            private sealed class BuiltTimer
+            {
+                public string Name = string.Empty;
+                public float ElapsedMs;
+                public List<BuiltTimer> Children = new(4);
+
+                public void Reset()
+                {
+                    Name = string.Empty;
+                    ElapsedMs = 0f;
+                    Children.Clear();
+                }
+            }
+
+            private sealed class ThreadBuildState
+            {
+                public Stack<PendingTimer> ActiveStack = new(32);
+                public List<BuiltTimer> CompletedRoots = new(16);
+                public Queue<PendingTimer> PendingTimerPool = new(64);
+                public Queue<BuiltTimer> BuiltTimerPool = new(64);
+                public Dictionary<int, PendingTimer> CorrelationMap = new(64);
+
+                public PendingTimer RentPending()
+                {
+                    if (PendingTimerPool.Count > 0)
+                        return PendingTimerPool.Dequeue();
+                    return new PendingTimer();
+                }
+
+                public void ReturnPending(PendingTimer timer)
+                {
+                    timer.Reset();
+                    PendingTimerPool.Enqueue(timer);
+                }
+
+                public BuiltTimer RentBuilt()
+                {
+                    if (BuiltTimerPool.Count > 0)
+                        return BuiltTimerPool.Dequeue();
+                    return new BuiltTimer();
+                }
+
+                public void ReturnBuilt(BuiltTimer timer)
+                {
+                    timer.Reset();
+                    BuiltTimerPool.Enqueue(timer);
+                }
+
+                public void Clear()
+                {
+                    while (ActiveStack.Count > 0)
+                    {
+                        var pending = ActiveStack.Pop();
+                        ReturnPending(pending);
+                    }
+                    foreach (var root in CompletedRoots)
+                        ReturnBuiltRecursive(root);
+                    CompletedRoots.Clear();
+                    CorrelationMap.Clear();
+                }
+
+                public void ReturnBuiltRecursive(BuiltTimer timer)
+                {
+                    foreach (var child in timer.Children)
+                        ReturnBuiltRecursive(child);
+                    ReturnBuilt(timer);
+                }
+            }
+
+            // Legacy types for API compatibility
             public class CodeProfilerTimer(string? name = null) : IPoolable
             {
-                private readonly List<CodeProfilerTimer> _children = new(4);
-
                 public float StartTime { get; private set; }
                 public float EndTime { get; private set; }
                 public float ElapsedMs { get; private set; }
@@ -67,341 +243,363 @@ namespace XREngine
                 public int ThreadId { get; private set; }
                 public int Depth { get; private set; }
 
-                internal CodeProfilerTimer? Parent { get; private set; }
-                internal DelTimerCallback? Callback { get; set; }
-
-                [MethodImpl(MethodImplOptions.AggressiveInlining)]
-                internal void Begin(string? name, int threadId, CodeProfilerTimer? parent)
-                {
-                    Name = name ?? string.Empty;
-                    ThreadId = threadId;
-                    Parent = parent;
-                    Depth = parent is null ? 0 : parent.Depth + 1;
-                    StartTime = Time.Timer.Time();
-                    EndTime = StartTime;
-                    ElapsedMs = 0f;
-                }
-
-                [MethodImpl(MethodImplOptions.AggressiveInlining)]
-                public void Stop()
-                {
-                    EndTime = Time.Timer.Time();
-                    ElapsedMs = (EndTime - StartTime) * 1000.0f;
-                }
-
-                internal void AddChild(CodeProfilerTimer child)
-                    => _children.Add(child);
-
-                internal IReadOnlyList<CodeProfilerTimer> Children => _children;
-                internal void ClearChildren() => _children.Clear();
-
                 public void OnPoolableDestroyed() { }
                 public void OnPoolableReleased() { }
                 public void OnPoolableReset()
                 {
                     Depth = 0;
                     ThreadId = 0;
-                    Parent = null;
-                    Callback = null;
                     Name = string.Empty;
                     StartTime = 0f;
                     EndTime = 0f;
                     ElapsedMs = 0f;
-                    _children.Clear();
+                }
+            }
+
+            // Legacy - kept for API compatibility but not used internally
+            public ConcurrentDictionary<int, CodeProfilerTimer> RootEntriesPerThread { get; } = [];
+
+
+            // ============ STATS THREAD ============
+
+            private void StartStatsThread()
+            {
+                lock (_statsThreadLock)
+                {
+                    if (_statsThread is { IsAlive: true })
+                        return;
+
+                    _statsThreadCts = new CancellationTokenSource();
+                    _statsThread = new Thread(StatsThreadMain)
+                    {
+                        IsBackground = true,
+                        Name = "XREngine.ProfilerStats",
+                        Priority = ThreadPriority.BelowNormal
+                    };
+                    _statsThread.Start(_statsThreadCts.Token);
+                }
+            }
+
+            private void StopStatsThread(bool waitForExit)
+            {
+                Thread? threadToJoin = null;
+                lock (_statsThreadLock)
+                {
+                    if (_statsThread is null)
+                        return;
+
+                    _statsThreadCts?.Cancel();
+                    threadToJoin = _statsThread;
+                    _statsThread = null;
                 }
 
-                internal void PrintSubEntries(StringBuilder sb, ResourcePool<CodeProfilerTimer> timerPool, float debugOutputMinElapsedMs)
-                {
-                    float totalMs = ElapsedMs;
-                    bool hadSubEntries = false;
+                if (waitForExit && threadToJoin is not null)
+                    threadToJoin.Join(TimeSpan.FromMilliseconds(250));
 
-                    for (int i = 0; i < _children.Count; ++i)
+                // Drain any remaining events
+                while (_eventQueue.TryDequeue(out _)) { }
+            }
+
+            private void StatsThreadMain(object? state)
+            {
+                if (state is not CancellationToken token)
+                    return;
+
+                // Continuous processing loop - no waiting for signals
+                while (!token.IsCancellationRequested)
+                {
+                    try
                     {
-                        var child = _children[i];
-                        if (child.ElapsedMs >= debugOutputMinElapsedMs)
+                        // Process events - this drains the queue and accumulates completed roots
+                        ProcessEventQueue();
+
+                        // Check if it's time to publish a snapshot
+                        float now = Time.Timer.Time();
+                        float elapsed = (now - _lastSnapshotTime) * 1000.0f; // Convert to ms
+                        if (elapsed >= SnapshotIntervalMs || _lastSnapshotTime < 0)
                         {
-                            hadSubEntries = true;
-                            string indent = new(' ', child.Depth * 2);
-                            sb.Append($"{indent}{child.Name} took {FormatMs(child.ElapsedMs)}\n");
-                            child.PrintSubEntries(sb, timerPool, debugOutputMinElapsedMs);
-                            totalMs -= child.ElapsedMs;
+                            BuildFrameSnapshot(now);
+                            _lastSnapshotTime = now;
                         }
-
-                        timerPool.Release(child);
+                        
+                        // Small sleep to prevent busy-spinning while still being responsive
+                        Thread.Sleep(StatsThreadIntervalMs);
                     }
-
-                    _children.Clear();
-
-                    if (hadSubEntries && totalMs >= debugOutputMinElapsedMs)
-                        sb.Append($"{new(' ', (Depth + 1) * 2)}<Remaining>: {FormatMs(totalMs)}\n");
-                }
-            }
-
-            private sealed class ThreadContext
-            {
-                public ThreadContext()
-                {
-                    ThreadId = Environment.CurrentManagedThreadId;
-                    ActiveStack = new Stack<CodeProfilerTimer>(32);
-                }
-
-                public int ThreadId { get; }
-                public Stack<CodeProfilerTimer> ActiveStack { get; }
-            }
-
-            public void ClearFrameLog()
-            {
-                StringBuilder sb = new();
-                Dictionary<int, List<ProfilerNodeSnapshot>> frameThreads = [];
-
-                _completedEntriesPrinting.Clear();
-                _completedEntriesPrinting = Interlocked.Exchange(ref _completedEntries, _completedEntriesPrinting);
-
-                while (_completedEntriesPrinting.TryDequeue(out var entry))
-                {
-                    var snapshot = BuildSnapshot(entry, DebugOutputMinElapsedMs, sb, out _);
-                    if (!frameThreads.TryGetValue(entry.ThreadId, out var list))
+                    catch (Exception ex)
                     {
-                        list = [];
-                        frameThreads[entry.ThreadId] = list;
+                        Debug.LogException(ex);
                     }
-                    list.Add(snapshot);
-                    _timerPool.Release(entry);
                 }
+            }
 
-                // Profiler output is now viewable via the Profiler panel in the editor
-                // No longer print to Debug.Out to avoid log spam
-                sb.Clear();
+            private void ProcessEventQueue()
+            {
+                // Process all pending events - don't wait, just drain what's available
+                int eventsProcessed = 0;
+                const int maxEventsPerBatch = 10000; // Prevent infinite loop if events come faster than we process
+                
+                while (eventsProcessed < maxEventsPerBatch && _eventQueue.TryDequeue(out var evt))
+                {
+                    eventsProcessed++;
+                    
+                    if (!_threadBuildStates.TryGetValue(evt.ThreadId, out var state))
+                    {
+                        state = new ThreadBuildState();
+                        _threadBuildStates[evt.ThreadId] = state;
+                    }
+
+                    if (evt.Type == ProfilerEventType.Start)
+                    {
+                        var pending = state.RentPending();
+                        pending.Name = evt.MethodName ?? string.Empty;
+                        pending.StartTime = evt.Timestamp;
+                        pending.CorrelationId = evt.CorrelationId;
+                        pending.Parent = state.ActiveStack.Count > 0 ? state.ActiveStack.Peek() : null;
+
+                        state.ActiveStack.Push(pending);
+                        state.CorrelationMap[evt.CorrelationId] = pending;
+                    }
+                    else // Stop
+                    {
+                        if (state.CorrelationMap.TryGetValue(evt.CorrelationId, out var pending))
+                        {
+                            state.CorrelationMap.Remove(evt.CorrelationId);
+
+                            // Pop from stack (may be out of order)
+                            if (state.ActiveStack.Count > 0 && ReferenceEquals(state.ActiveStack.Peek(), pending))
+                            {
+                                state.ActiveStack.Pop();
+                            }
+
+                            // Build completed timer
+                            var built = state.RentBuilt();
+                            built.Name = pending.Name;
+                            built.ElapsedMs = (evt.Timestamp - pending.StartTime) * 1000.0f;
+
+                            // Move children from pending to built
+                            foreach (var child in pending.Children)
+                                built.Children.Add(child);
+
+                            if (pending.Parent is not null)
+                            {
+                                // Add to parent's children
+                                pending.Parent.Children.Add(built);
+                            }
+                            else
+                            {
+                                // Root timer - accumulate for next snapshot
+                                if (!_accumulatedRoots.TryGetValue(evt.ThreadId, out var roots))
+                                {
+                                    roots = new List<BuiltTimer>(32);
+                                    _accumulatedRoots[evt.ThreadId] = roots;
+                                }
+                                roots.Add(built);
+                            }
+
+                            state.ReturnPending(pending);
+                        }
+                    }
+                }
+            }
+
+            private void BuildFrameSnapshot(float frameTime)
+            {
+                _threadSnapshotsBuffer.Clear();
+
+                // Build snapshots from accumulated roots (gathered since last snapshot)
+                foreach (var kvp in _accumulatedRoots)
+                {
+                    var threadId = kvp.Key;
+                    var roots = kvp.Value;
+                    
+                    if (roots.Count > 0)
+                    {
+                        var rootSnapshots = new ProfilerNodeSnapshot[roots.Count];
+                        for (int i = 0; i < roots.Count; i++)
+                        {
+                            rootSnapshots[i] = BuildSnapshotFromBuilt(roots[i]);
+                            
+                            // Return to pool if we have the build state
+                            if (_threadBuildStates.TryGetValue(threadId, out var state))
+                                state.ReturnBuiltRecursive(roots[i]);
+                        }
+                        roots.Clear();
+
+                        _threadSnapshotsBuffer.Add(new ProfilerThreadSnapshot(threadId, rootSnapshots));
+                    }
+                }
 
                 ProfilerFrameSnapshot? frameSnapshot = null;
-                if (frameThreads.Count > 0)
+                if (_threadSnapshotsBuffer.Count > 0)
+                    frameSnapshot = new ProfilerFrameSnapshot(frameTime, _threadSnapshotsBuffer.ToArray());
+
+                // Update history
+                if (frameSnapshot is not null)
                 {
-                    List<ProfilerThreadSnapshot> threads = new(frameThreads.Count);
-                    foreach (var kvp in frameThreads)
-                        threads.Add(new ProfilerThreadSnapshot(kvp.Key, kvp.Value.AsReadOnly()));
-
-                    frameSnapshot = new ProfilerFrameSnapshot(Time.Timer.Time(), threads.AsReadOnly());
-                }
-
-                lock (_snapshotLock)
-                {
-                    _lastFrameSnapshot = frameSnapshot;
-
-                    if (frameSnapshot is not null)
+                    foreach (var threadSnapshot in frameSnapshot.Threads)
                     {
-                        foreach (var threadSnapshot in frameSnapshot.Threads)
-                        {
-                            if (!_threadFrameHistory.TryGetValue(threadSnapshot.ThreadId, out var history))
-                                history = _threadFrameHistory[threadSnapshot.ThreadId] = new Queue<float>(ThreadHistoryCapacity);
+                        if (!_threadFrameHistory.TryGetValue(threadSnapshot.ThreadId, out var history))
+                            history = _threadFrameHistory[threadSnapshot.ThreadId] = new Queue<float>(ThreadHistoryCapacity);
 
-                            history.Enqueue(threadSnapshot.TotalTimeMs);
-                            while (history.Count > ThreadHistoryCapacity)
-                                history.Dequeue();
-                        }
+                        history.Enqueue(threadSnapshot.TotalTimeMs);
+                        while (history.Count > ThreadHistoryCapacity)
+                            history.Dequeue();
                     }
                 }
+
+                Dictionary<int, float[]> historySnapshot = [];
+                if (_threadFrameHistory.Count > 0)
+                {
+                    historySnapshot = new Dictionary<int, float[]>(_threadFrameHistory.Count);
+                    foreach (var kvp in _threadFrameHistory)
+                        historySnapshot[kvp.Key] = kvp.Value.ToArray();
+                }
+
+                // Lock-free publish - atomic reference writes
+                _readyHistorySnapshot = historySnapshot;
+                _readySnapshot = frameSnapshot;
             }
 
-            private static string FormatMs(float elapsedMs)
+            private static ProfilerNodeSnapshot BuildSnapshotFromBuilt(BuiltTimer timer)
             {
-                if (elapsedMs < 1.0f)
-                    return $"{MathF.Round(elapsedMs * 1000.0f)}μs";
-                if (elapsedMs >= 1000.0f)
-                    return $"{MathF.Round(elapsedMs / 1000.0f, 1)}sec (slow)";
-                return $"{MathF.Round(elapsedMs)}ms";
+                var children = timer.Children;
+                int childCount = children.Count;
+                ProfilerNodeSnapshot[] childSnapshots = childCount > 0 ? new ProfilerNodeSnapshot[childCount] : [];
+
+                for (int i = 0; i < childCount; ++i)
+                    childSnapshots[i] = BuildSnapshotFromBuilt(children[i]);
+
+                return new ProfilerNodeSnapshot(timer.Name, timer.ElapsedMs, childSnapshots);
+            }
+
+            // ============ PUBLIC API ============
+
+            /// <summary>
+            /// Clears the frame log - no longer needed with continuous processing.
+            /// Kept for API compatibility.
+            /// </summary>
+            public void ClearFrameLog()
+            {
+                // No-op - stats thread processes continuously
             }
 
             /// <summary>
-            /// Starts a timer and returns a StateObject that will stop the timer when it is disposed.
+            /// Gets the latest available snapshot. Completely non-blocking.
+            /// Snapshots are built asynchronously by the stats thread.
             /// </summary>
-            /// <param name="callback"></param>
-            /// <param name="methodName"></param>
-            /// <returns></returns>
-            public StateObject Start(DelTimerCallback? callback, [CallerMemberName] string? methodName = null)
+            public bool TryGetSnapshot(out ProfilerFrameSnapshot? frameSnapshot, out Dictionary<int, float[]> history)
+            {
+                // Lock-free reads of volatile references
+                frameSnapshot = _readySnapshot;
+                history = _readyHistorySnapshot;
+                return frameSnapshot is not null;
+            }
+
+            /// <summary>
+            /// Legacy API - just calls TryGetSnapshot. minIntervalSeconds is ignored.
+            /// </summary>
+            public bool TryRequestSnapshot(float minIntervalSeconds, out ProfilerFrameSnapshot? frameSnapshot, out Dictionary<int, float[]> history)
+            {
+                return TryGetSnapshot(out frameSnapshot, out history);
+            }
+
+            /// <summary>
+            /// Starts a profiler timer. Near-zero overhead - just captures timestamp and pushes event to queue.
+            /// </summary>
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public ProfilerScope Start(DelTimerCallback? callback, [CallerMemberName] string? methodName = null)
+            {
+                // Ignore callback in event-based model - callbacks would require blocking
+                return Start(methodName);
+            }
+
+            /// <summary>
+            /// Starts a profiler timer. Near-zero overhead - just captures timestamp and pushes event to queue.
+            /// </summary>
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public ProfilerScope Start([CallerMemberName] string? methodName = null)
             {
                 if (!EnableFrameLogging)
-                    return StateObject.New();
+                    return default;
 
-                var context = _threadContext.Value!;
-                var stack = context.ActiveStack;
-                var parent = stack.Count > 0 ? stack.Peek() : null;
+                // Thread-local correlation ID - no contention
+                int correlationId = ++_tlsCorrelationId;
+                int threadId = Environment.CurrentManagedThreadId;
+                float timestamp = Time.Timer.Time();
 
-                var entry = _timerPool.Take();
-                entry.Begin(methodName ?? string.Empty, context.ThreadId, parent);
-                entry.Callback = callback;
+                // Just push an event - no pool operations, no stack operations, no dictionary lookups
+                _eventQueue.Enqueue(new ProfilerEvent(
+                    ProfilerEventType.Start,
+                    timestamp,
+                    threadId,
+                    correlationId,
+                    methodName));
 
-                stack.Push(entry);
-
-                if (parent is null)
-                    RootEntriesPerThread[context.ThreadId] = entry;
-
-                return StateObject.New(() => Stop(entry));
+                return new ProfilerScope(this, correlationId, threadId);
             }
-            public StateObject Start([CallerMemberName] string? methodName = null)
-                => Start(null, methodName);
-            /// <summary>
-            /// Stops a timer and calls the callback if available.
-            /// </summary>
-            /// <param name="entry"></param>
-            private void Stop(CodeProfilerTimer entry)
-            {
-                var context = _threadContext.Value!;
-                var stack = context.ActiveStack;
-                CodeProfilerTimer? parent = null;
 
-                if (stack.Count > 0 && ReferenceEquals(stack.Peek(), entry))
-                {
-                    stack.Pop();
-                    parent = stack.Count > 0 ? stack.Peek() : null;
-                }
-                else if (stack.Count > 0 && stack.Contains(entry))
-                {
-                    // Out-of-order disposal; unwind until we drop the target entry.
-                    while (stack.Count > 0 && !ReferenceEquals(stack.Peek(), entry))
-                        stack.Pop();
-
-                    if (stack.Count > 0 && ReferenceEquals(stack.Peek(), entry))
-                    {
-                        stack.Pop();
-                        parent = stack.Count > 0 ? stack.Peek() : null;
-                    }
-                }
-                else
-                {
-                    parent = entry.Parent;
-                }
-
-                entry.Stop();
-
-                entry.Callback?.Invoke(entry.Name, entry.ElapsedMs);
-                entry.Callback = null;
-
-                if (parent is not null)
-                {
-                    parent.AddChild(entry);
-                    return;
-                }
-
-                RootEntriesPerThread.TryRemove(entry.ThreadId, out _);
-                _completedEntries.Enqueue(entry);
-            }
             /// <summary>
             /// Starts an async timer and returns the id of the timer.
             /// </summary>
-            /// <param name="callback"></param>
-            /// <param name="methodName"></param>
-            /// <returns></returns>
             public Guid StartAsync(DelTimerCallback? callback = null, [CallerMemberName] string? methodName = null)
             {
                 Guid id = Guid.NewGuid();
                 if (!EnableFrameLogging)
                     return id;
 
-                var entry = _timerPool.Take();
-                entry.Begin(methodName ?? string.Empty, Environment.CurrentManagedThreadId, null);
-                entry.Callback = callback;
-                _asyncTimers.TryAdd(id, entry);
+                // Use correlation ID as guid's hash for async timers
+                int correlationId = id.GetHashCode();
+                int threadId = Environment.CurrentManagedThreadId;
+                float timestamp = Time.Timer.Time();
+
+                _eventQueue.Enqueue(new ProfilerEvent(
+                    ProfilerEventType.Start,
+                    timestamp,
+                    threadId,
+                    correlationId,
+                    methodName));
+
                 return id;
             }
+
             /// <summary>
             /// Stops an async timer by id and returns the elapsed time in milliseconds.
+            /// Note: In event-based model, elapsed time is not available immediately.
             /// </summary>
-            /// <param name="id"></param>
-            /// <param name="methodName"></param>
-            /// <returns></returns>
             public float StopAsync(Guid id, out string? methodName)
             {
-                if (!EnableFrameLogging)
-                {
-                    methodName = string.Empty;
-                    return 0.0f;
-                }
-
-                if (_asyncTimers.TryRemove(id, out var entry))
-                {
-                    entry.Stop();
-                    entry.Callback?.Invoke(entry.Name, entry.ElapsedMs);
-                    entry.Callback = null;
-                    methodName = entry.Name;
-                    _completedEntries.Enqueue(entry);
-                    return entry.ElapsedMs;
-                }
-
                 methodName = string.Empty;
-                return 0.0f;
-            }
-            /// <summary>
-            /// Stops an async timer by id and returns the elapsed time in milliseconds.
-            /// </summary>
-            /// <param name="id"></param>
-            /// <param name="methodName"></param>
-            /// <returns></returns>
-            public float StopAsync(Guid id)
-            {
                 if (!EnableFrameLogging)
                     return 0.0f;
 
-                if (_asyncTimers.TryRemove(id, out var entry))
-                {
-                    entry.Stop();
-                    entry.Callback?.Invoke(entry.Name, entry.ElapsedMs);
-                    entry.Callback = null;
-                    _completedEntries.Enqueue(entry);
-                    return entry.ElapsedMs;
-                }
+                int correlationId = id.GetHashCode();
+                int threadId = Environment.CurrentManagedThreadId;
+                float timestamp = Time.Timer.Time();
 
+                _eventQueue.Enqueue(new ProfilerEvent(
+                    ProfilerEventType.Stop,
+                    timestamp,
+                    threadId,
+                    correlationId,
+                    null));
+
+                // In event-based model we can't return elapsed time immediately
                 return 0.0f;
             }
+
+            /// <summary>
+            /// Stops an async timer by id.
+            /// </summary>
+            public float StopAsync(Guid id)
+                => StopAsync(id, out _);
 
             public ProfilerFrameSnapshot? GetLastFrameSnapshot()
-            {
-                lock (_snapshotLock)
-                    return _lastFrameSnapshot;
-            }
+                => _readySnapshot;
 
             public Dictionary<int, float[]> GetThreadHistorySnapshot()
-            {
-                lock (_snapshotLock)
-                    return _threadFrameHistory.ToDictionary(static kvp => kvp.Key, static kvp => kvp.Value.ToArray());
-            }
+                => _readyHistorySnapshot;
 
-            private ProfilerNodeSnapshot BuildSnapshot(CodeProfilerTimer timer, float threshold, StringBuilder logBuilder, out bool subtreeLogged)
-            {
-                bool wroteHere = false;
-                if (timer.ElapsedMs >= threshold)
-                {
-                    logBuilder.Append($"{new string(' ', timer.Depth * 2)}{timer.Name} took {FormatMs(timer.ElapsedMs)}\n");
-                    wroteHere = true;
-                }
-
-                var children = timer.Children;
-                int childCount = children.Count;
-                List<ProfilerNodeSnapshot> childSnapshots = new(childCount);
-                float remaining = timer.ElapsedMs;
-                bool childLogged = false;
-
-                for (int i = 0; i < childCount; ++i)
-                {
-                    var childTimer = children[i];
-                    var childSnapshot = BuildSnapshot(childTimer, threshold, logBuilder, out bool childSubtreeLogged);
-                    childSnapshots.Add(childSnapshot);
-
-                    if (childSubtreeLogged)
-                        childLogged = true;
-
-                    remaining -= childTimer.ElapsedMs;
-                    _timerPool.Release(childTimer);
-                }
-
-                timer.ClearChildren();
-
-                if (wroteHere && childLogged && remaining >= threshold)
-                    logBuilder.Append($"{new string(' ', (timer.Depth + 1) * 2)}<Remaining>: {FormatMs(remaining)}\n");
-
-                subtreeLogged = wroteHere || childLogged;
-
-                return new ProfilerNodeSnapshot(timer.Name, timer.ElapsedMs, childSnapshots.AsReadOnly());
-            }
+            // ============ SNAPSHOT TYPES ============
 
             public sealed class ProfilerFrameSnapshot(float frameTime, IReadOnlyList<ProfilerThreadSnapshot> threads)
             {
@@ -409,11 +607,21 @@ namespace XREngine
                 public IReadOnlyList<ProfilerThreadSnapshot> Threads { get; } = threads;
             }
 
-            public sealed class ProfilerThreadSnapshot(int threadId, IReadOnlyList<ProfilerNodeSnapshot> rootNodes)
+            public sealed class ProfilerThreadSnapshot
             {
-                public int ThreadId { get; } = threadId;
-                public IReadOnlyList<ProfilerNodeSnapshot> RootNodes { get; } = rootNodes;
-                public float TotalTimeMs { get; } = rootNodes.Sum(static n => n.ElapsedMs);
+                public int ThreadId { get; }
+                public IReadOnlyList<ProfilerNodeSnapshot> RootNodes { get; }
+                public float TotalTimeMs { get; }
+
+                public ProfilerThreadSnapshot(int threadId, IReadOnlyList<ProfilerNodeSnapshot> rootNodes)
+                {
+                    ThreadId = threadId;
+                    RootNodes = rootNodes;
+                    float total = 0f;
+                    for (int i = 0; i < rootNodes.Count; i++)
+                        total += rootNodes[i].ElapsedMs;
+                    TotalTimeMs = total;
+                }
             }
 
             public sealed class ProfilerNodeSnapshot(string name, float elapsedMs, IReadOnlyList<ProfilerNodeSnapshot> children)

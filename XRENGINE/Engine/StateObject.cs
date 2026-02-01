@@ -7,6 +7,9 @@ namespace XREngine
         private static readonly ResourcePool<StateObject> _statePool = new(() => new());
         private bool _takenFromStatePool = false;
 
+        private Action<object?>? _onStateEndedWithState;
+        private object? _state;
+
         internal StateObject()
         {
             _takenFromStatePool = false;
@@ -23,15 +26,40 @@ namespace XREngine
             return state;
         }
 
-        public void OnPoolableDestroyed() => OnStateEnded = null;
+        public static StateObject New(Action<object?> onStateEnded, object? stateObject)
+        {
+            var state = _statePool.Take();
+            state._takenFromStatePool = true;
+            state._onStateEndedWithState = onStateEnded;
+            state._state = stateObject;
+            return state;
+        }
+
+        public void OnPoolableDestroyed()
+        {
+            OnStateEnded = null;
+            _onStateEndedWithState = null;
+            _state = null;
+        }
         public void OnPoolableReleased()
         {
-            OnStateEnded?.Invoke();
-            OnStateEnded = null;
+            if (_onStateEndedWithState is not null)
+            {
+                _onStateEndedWithState(_state);
+                _onStateEndedWithState = null;
+                _state = null;
+            }
+            else
+            {
+                OnStateEnded?.Invoke();
+                OnStateEnded = null;
+            }
         }
         public void OnPoolableReset()
         {
             OnStateEnded = null;
+            _onStateEndedWithState = null;
+            _state = null;
             _disposed = false;
         }
 

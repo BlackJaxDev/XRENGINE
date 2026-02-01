@@ -480,6 +480,8 @@ namespace XREngine
 
         private static void Timer_PostUpdateFrame()
         {
+            using var scope = Profiler.Start("Engine.Timer_PostUpdateFrame");
+
             XRObjectBase.ProcessPendingDestructions();
             TransformBase.ProcessParentReassignments();
         }
