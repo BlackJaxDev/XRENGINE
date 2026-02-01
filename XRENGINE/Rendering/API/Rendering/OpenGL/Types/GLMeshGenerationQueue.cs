@@ -23,8 +23,9 @@ namespace XREngine.Rendering.OpenGL
             /// <summary>
             /// Whether frame-budgeted generation is enabled.
             /// When disabled, generation happens immediately.
+            /// Disabled by default as it can cause rendering issues - enable only for debugging load spikes.
             /// </summary>
-            public bool Enabled { get; set; } = true;
+            public bool Enabled { get; set; } = false;
 
             /// <summary>
             /// Number of meshes pending generation.

@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace XREngine.Rendering
 {
     public enum EEngineUniform
@@ -61,5 +63,34 @@ namespace XREngine.Rendering
         UIX,
         UIY,
         UIXYWH,
+    }
+
+    /// <summary>
+    /// Extension methods for EEngineUniform to avoid expensive enum.ToString() calls.
+    /// The string names are cached at startup for O(1) lookup.
+    /// </summary>
+    public static class EEngineUniformExtensions
+    {
+        private const string VertexUniformSuffix = "_VTX";
+
+        private static readonly FrozenDictionary<EEngineUniform, string> _names = 
+            Enum.GetValues<EEngineUniform>().ToFrozenDictionary(e => e, e => e.ToString());
+
+        private static readonly FrozenDictionary<EEngineUniform, string> _namesWithVtxSuffix = 
+            Enum.GetValues<EEngineUniform>().ToFrozenDictionary(e => e, e => e.ToString() + VertexUniformSuffix);
+
+        /// <summary>
+        /// Returns the cached string name of the enum value.
+        /// Much faster than ToString() which uses reflection.
+        /// </summary>
+        public static string ToStringFast(this EEngineUniform value)
+            => _names.TryGetValue(value, out var name) ? name : value.ToString();
+
+        /// <summary>
+        /// Returns the cached string name with "_VTX" suffix for vertex shader uniforms.
+        /// Avoids string concatenation on every call.
+        /// </summary>
+        public static string ToVertexUniformName(this EEngineUniform value)
+            => _namesWithVtxSuffix.TryGetValue(value, out var name) ? name : value.ToString() + VertexUniformSuffix;
     }
 }

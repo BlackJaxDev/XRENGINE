@@ -2,8 +2,8 @@
   "$id": "1",
   "WorldKind": "Default",
 
-  "UpdateFPS": 60.0,
-  "RenderFPS": 90.0,
+  "UpdateFPS": 120.0,
+  "RenderFPS": 0.0,
   "FixedFPS": 30.0,
   "TickGroupedItemsInParallel": true,
   "RecalcChildMatricesType": "Asynchronous",

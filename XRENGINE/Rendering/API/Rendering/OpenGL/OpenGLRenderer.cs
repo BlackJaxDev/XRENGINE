@@ -524,10 +524,17 @@ namespace XREngine.Rendering.OpenGL
         }
 
         /// <summary>
+        /// Per-renderer frame counter for caching purposes.
+        /// Incremented each frame during ProcessPendingUploads.
+        /// </summary>
+        internal long _frameCounter;
+
+        /// <summary>
         /// Processes pending async buffer uploads and mesh generations within the frame time budget.
         /// </summary>
         public override void ProcessPendingUploads()
         {
+            _frameCounter++;
             UploadQueue.ProcessUploads();
             MeshGenerationQueue.ProcessGeneration();
         }
@@ -3535,7 +3542,7 @@ void main()
             }
         }
 
-        private GLEnum ToGLEnum(EBlendingFactor factor)
+        private static GLEnum ToGLEnum(EBlendingFactor factor)
             => factor switch
             {
                 EBlendingFactor.Zero => GLEnum.Zero,
@@ -3556,7 +3563,7 @@ void main()
                 _ => GLEnum.Zero,
             };
 
-        private GLEnum ToGLEnum(EBlendEquationMode equation)
+        private static GLEnum ToGLEnum(EBlendEquationMode equation)
             => equation switch
             {
                 EBlendEquationMode.FuncAdd => GLEnum.FuncAdd,
@@ -3567,7 +3574,7 @@ void main()
                 _ => GLEnum.FuncAdd,
             };
 
-        private GLEnum ToGLEnum(EComparison function)
+        private static GLEnum ToGLEnum(EComparison function)
             => function switch
             {
                 EComparison.Never => GLEnum.Never,
@@ -3581,7 +3588,7 @@ void main()
                 _ => GLEnum.Never,
             };
 
-        private GLEnum ToGLEnum(ECullMode cullMode)
+        private static GLEnum ToGLEnum(ECullMode cullMode)
             => cullMode switch
             {
                 ECullMode.Front => GLEnum.Front,
@@ -3589,7 +3596,7 @@ void main()
                 _ => GLEnum.FrontAndBack,
             };
 
-        private GLEnum ToGLEnum(IndexSize elementType)
+        private static GLEnum ToGLEnum(IndexSize elementType)
             => elementType switch
             {
                 IndexSize.Byte => GLEnum.UnsignedByte,
@@ -3598,7 +3605,7 @@ void main()
                 _ => GLEnum.UnsignedInt,
             };
 
-        private GLEnum ToGLEnum(EPrimitiveType type)
+        private static GLEnum ToGLEnum(EPrimitiveType type)
             => type switch
             {
                 EPrimitiveType.Points => GLEnum.Points,
@@ -3646,7 +3653,7 @@ void main()
             return false;
         }
 
-        private DrawElementsType ToDrawElementsType(IndexSize type) => type switch
+        private static DrawElementsType ToDrawElementsType(IndexSize type) => type switch
         {
             IndexSize.Byte => DrawElementsType.UnsignedByte,
             IndexSize.TwoBytes => DrawElementsType.UnsignedShort,
@@ -3731,9 +3738,10 @@ void main()
             }
             // Pass ViewMatrix (actual view transform) for accurate motion vector computation
             // This avoids single-precision inverse() in shader which causes precision issues for far objects
-            program.Uniform($"{EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix}", viewMatrix);
-            program.Uniform($"{invView}{DefaultVertexShaderGenerator.VertexUniformSuffix}", inverseViewMatrix);
-            program.Uniform($"{proj}{DefaultVertexShaderGenerator.VertexUniformSuffix}", projMatrix);
+            // Use cached uniform names to avoid string allocations per call
+            program.Uniform(EEngineUniform.ViewMatrix.ToVertexUniformName(), viewMatrix);
+            program.Uniform(invView.ToVertexUniformName(), inverseViewMatrix);
+            program.Uniform(proj.ToVertexUniformName(), projMatrix);
         }
 
         public override void SetMaterialUniforms(XRMaterial material, XRRenderProgram program)

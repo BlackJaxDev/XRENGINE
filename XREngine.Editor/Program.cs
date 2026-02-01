@@ -116,7 +116,7 @@ internal class Program
         if (UnitTestingWorld.Toggles.StartInPlayModeWithoutTransitions)
         {
             Engine.PlayMode.ForcePlayWithoutTransitions = true;
-            void StartPlayOnce()
+            static void StartPlayOnce()
             {
                 Time.Timer.PostUpdateFrame -= StartPlayOnce;
                 _ = Engine.PlayMode.EnterPlayModeAsync();

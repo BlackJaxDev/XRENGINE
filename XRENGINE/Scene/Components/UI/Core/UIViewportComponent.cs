@@ -89,6 +89,8 @@ namespace XREngine.Rendering.UI
 
         public void CollectVisible()
         {
+            using var sample = Engine.Profiler.Start("UIViewportComponent.CollectVisible");
+
             if (!IsActive || _collecting)
                 return;
 
@@ -98,16 +100,19 @@ namespace XREngine.Rendering.UI
         }
         public void SwapBuffers()
         {
+            using var sample = Engine.Profiler.Start("UIViewportComponent.SwapBuffers");
+
             if (!IsActive || _swapping)
                 return;
 
             _swapping = true;
-            using var sample = Engine.Profiler.Start("UIViewportComponent.SwapBuffers");
             Viewport.SwapBuffers();
             _swapping = false;
         }
         public void Render()
         {
+            using var sample = Engine.Profiler.Start("UIViewportComponent.Render");
+
             if (!IsActive || _rendering)
                 return;
 

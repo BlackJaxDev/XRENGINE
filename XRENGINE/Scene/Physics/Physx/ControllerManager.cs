@@ -171,7 +171,7 @@ namespace XREngine.Rendering.Physics.Physx
         {
             ControllerManagerPtr = manager;
 
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + ControllerManager ptr=0x{0:X}", (nint)manager);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] + ControllerManager ptr=0x{0:X}", (nint)manager);
 
             // Create controller filter callback vtable
             _controllerFilterCallbackVTableSource = DataSource.FromStruct(new PxControllerFilterCallbackVTable
@@ -291,7 +291,7 @@ namespace XREngine.Rendering.Physics.Physx
             if (!Controllers.TryAdd((nint)controller.ControllerPtr, controller))
                 Debug.Log(ELogCategory.Physics, "[PhysxCache] ! Controllers duplicate key ptr=0x{0:X}", (nint)controller.ControllerPtr);
 
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + BoxController ptr=0x{0:X} actor=0x{1:X}", (nint)controller.ControllerPtr, (nint)controller.ControllerPtr->GetActor());
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] + BoxController ptr=0x{0:X} actor=0x{1:X}", (nint)controller.ControllerPtr, (nint)controller.ControllerPtr->GetActor());
             return controller;
         }
 
@@ -351,7 +351,7 @@ namespace XREngine.Rendering.Physics.Physx
             if (!Controllers.TryAdd((nint)controller.ControllerPtr, controller))
                 Debug.Log(ELogCategory.Physics, "[PhysxCache] ! Controllers duplicate key ptr=0x{0:X}", (nint)controller.ControllerPtr);
 
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + CapsuleController ptr=0x{0:X} actor=0x{1:X}", (nint)controller.ControllerPtr, (nint)controller.ControllerPtr->GetActor());
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] + CapsuleController ptr=0x{0:X} actor=0x{1:X}", (nint)controller.ControllerPtr, (nint)controller.ControllerPtr->GetActor());
             return controller;
         }
 
@@ -403,7 +403,7 @@ namespace XREngine.Rendering.Physics.Physx
 
         public void DestroyAllControllers()
         {
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ ControllerManager DestroyAllControllers count={0}", Controllers.Count);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ ControllerManager DestroyAllControllers count={0}", Controllers.Count);
             foreach (var controller in Controllers.Values)
                 controller.RequestRelease();
             ControllerManagerPtr->PurgeControllersMut();
@@ -428,18 +428,18 @@ namespace XREngine.Rendering.Physics.Physx
             PxObstacleContext* context = ControllerManagerPtr->CreateObstacleContextMut();
             var obstacleContext = new ObstacleContext(context);
             ObstacleContexts.Add((nint)context, obstacleContext);
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + ObstacleContext ptr=0x{0:X}", (nint)context);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] + ObstacleContext ptr=0x{0:X}", (nint)context);
             return obstacleContext;
         }
         public void ReleaseObstacleContext(ObstacleContext context)
         {
             context.Release();
             ObstacleContexts.Remove((nint)context.ContextPtr);
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] - ObstacleContext ptr=0x{0:X}", (nint)context.ContextPtr);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] - ObstacleContext ptr=0x{0:X}", (nint)context.ContextPtr);
         }
         public void DestroyAllObstacleContexts()
         {
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ DestroyAllObstacleContexts count={0}", ObstacleContexts.Count);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ DestroyAllObstacleContexts count={0}", ObstacleContexts.Count);
             foreach (var context in ObstacleContexts.Values)
                 context.Release();
             ObstacleContexts.Clear();
@@ -500,7 +500,7 @@ namespace XREngine.Rendering.Physics.Physx
         private static void ControllerFilterDestructor(void* self)
         {
             _controllerFilterToManager.TryRemove((nint)self, out _);
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ ControllerFilterCallback Destructor ptr=0x{0:X}", (nint)self);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ ControllerFilterCallback Destructor ptr=0x{0:X}", (nint)self);
         }
 
         /// <summary>
@@ -538,7 +538,7 @@ namespace XREngine.Rendering.Physics.Physx
         private static void QueryFilterDestructor(void* self)
         {
             _queryFilterToManager.TryRemove((nint)self, out _);
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ QueryFilterCallback Destructor ptr=0x{0:X}", (nint)self);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] ~ QueryFilterCallback Destructor ptr=0x{0:X}", (nint)self);
         }
 
         #endregion

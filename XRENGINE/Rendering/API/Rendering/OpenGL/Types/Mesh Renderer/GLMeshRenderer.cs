@@ -25,6 +25,14 @@ namespace XREngine.Rendering.OpenGL
 
             // Cached buffers/programs to avoid regenerating on every draw.
             private Dictionary<string, GLDataBuffer> _bufferCache = [];
+            /// <summary>
+            /// Pre-filtered list of SSBO buffers to avoid LINQ filtering every frame.
+            /// </summary>
+            private List<GLDataBuffer> _ssboBufferCache = [];
+            /// <summary>
+            /// Flat list of all buffer values for fast iteration in CheckBuffersReady.
+            /// </summary>
+            private List<GLDataBuffer> _allBuffersList = [];
             private GLRenderProgramPipeline? _pipeline;
             private GLRenderProgram? _combinedProgram;
             private GLRenderProgram? _separatedVertexProgram;
@@ -99,14 +107,39 @@ namespace XREngine.Rendering.OpenGL
                 return _separatedVertexProgram!;
             }
 
+            /// <summary>
+            /// Checks if all buffers needed for rendering have been uploaded to the GPU.
+            /// Cached per-frame to avoid repeated dictionary lookups.
+            /// </summary>
+            private bool _buffersReadyCache = false;
+            private long _buffersReadyCacheFrame = -1;
+
             public bool AreBuffersReadyForRendering()
+            {
+                // Cache the result per frame to avoid repeated dictionary lookups
+                long currentFrame = Renderer._frameCounter;
+                if (_buffersReadyCacheFrame == currentFrame)
+                    return _buffersReadyCache;
+
+                _buffersReadyCacheFrame = currentFrame;
+                _buffersReadyCache = CheckBuffersReady();
+                return _buffersReadyCache;
+            }
+
+            private bool CheckBuffersReady()
             {
                 if (!BuffersBound)
                     return false;
 
-                foreach (var buffer in _bufferCache.Values)
+                // Check if upload queue has any pending buffers at all first (fast path)
+                if (Renderer.UploadQueue.PendingCount == 0)
+                    return true;
+
+                // Use pre-cached list to avoid dictionary enumerator allocation
+                var buffers = _allBuffersList;
+                for (int i = 0; i < buffers.Count; i++)
                 {
-                    if (!buffer.IsReadyForRendering)
+                    if (!buffers[i].IsReadyForRendering)
                         return false;
                 }
 
@@ -128,14 +161,13 @@ namespace XREngine.Rendering.OpenGL
 
         public void UnbindMeshRenderer()
         {
-            using var prof = Engine.Profiler.Start("OpenGLRenderer.UnbindMeshRenderer");
+            // Profiler instrumentation removed from this hot path - called per mesh per frame
             Api.BindVertexArray(0);
             ActiveMeshRenderer = null;
         }
 
         public void BindMeshRenderer(GLMeshRenderer? mesh)
         {
-            using var prof = Engine.Profiler.Start("OpenGLRenderer.BindMeshRenderer");
             Api.BindVertexArray(mesh?.BindingId ?? 0);
             ActiveMeshRenderer = mesh;
             if (mesh == null)
@@ -145,30 +177,20 @@ namespace XREngine.Rendering.OpenGL
             GLDataBuffer? elem = mesh.TriangleIndicesBuffer ?? mesh.LineIndicesBuffer ?? mesh.PointIndicesBuffer;
             if (elem != null)
             {
-                using (Engine.Profiler.Start("OpenGLRenderer.BindMeshRenderer.BindElementBuffer"))
-                {
+                // Only generate if not already generated
+                if (!elem.IsGenerated)
                     elem.Generate();
-                    Api.VertexArrayElementBuffer(mesh.BindingId, elem.BindingId);
-                }
+                Api.VertexArrayElementBuffer(mesh.BindingId, elem.BindingId);
             }
         }
 
         public void RenderMesh(GLMeshRenderer manager, bool preservePreviouslyBound = true, uint instances = 1)
         {
-            using var prof = Engine.Profiler.Start("OpenGLRenderer.RenderMesh");
+            // Profiler instrumentation removed from this hot path - called per mesh per frame
             GLMeshRenderer? prev = ActiveMeshRenderer;
-            using (Engine.Profiler.Start("OpenGLRenderer.RenderMesh.Bind"))
-            {
-                BindMeshRenderer(manager);
-            }
-            using (Engine.Profiler.Start("OpenGLRenderer.RenderMesh.Draw"))
-            {
-                RenderCurrentMesh(instances);
-            }
-            using (Engine.Profiler.Start("OpenGLRenderer.RenderMesh.Restore"))
-            {
-                BindMeshRenderer(preservePreviouslyBound ? prev : null);
-            }
+            BindMeshRenderer(manager);
+            RenderCurrentMesh(instances);
+            BindMeshRenderer(preservePreviouslyBound ? prev : null);
         }
 
         /// <summary>
@@ -176,15 +198,12 @@ namespace XREngine.Rendering.OpenGL
         /// </summary>
         public void RenderCurrentMesh(uint instances = 1)
         {
-            using var prof = Engine.Profiler.Start("OpenGLRenderer.RenderCurrentMesh");
+            // Profiler instrumentation removed from this hot path - called per mesh per frame
             if (ActiveMeshRenderer?.Mesh is null)
                 return;
 
-            using (Engine.Profiler.Start("OpenGLRenderer.RenderCurrentMesh.ReadyCheck"))
-            {
-                if (!ActiveMeshRenderer.AreBuffersReadyForRendering())
-                    return;
-            }
+            if (!ActiveMeshRenderer.AreBuffersReadyForRendering())
+                return;
 
             // Skip rendering if index buffer data hasn't been uploaded yet
             var triBuffer = ActiveMeshRenderer.TriangleIndicesBuffer;
@@ -194,32 +213,23 @@ namespace XREngine.Rendering.OpenGL
             uint triangles = triBuffer?.Data?.ElementCount ?? 0u;
             if (triangles > 0)
             {
-                using (Engine.Profiler.Start("OpenGLRenderer.RenderCurrentMesh.DrawTriangles"))
-                {
-                    Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
-                    Engine.Rendering.Stats.IncrementDrawCalls();
-                    Engine.Rendering.Stats.AddTrianglesRendered((int)(triangles / 3 * instances));
-                }
+                Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
+                Engine.Rendering.Stats.IncrementDrawCalls();
+                Engine.Rendering.Stats.AddTrianglesRendered((int)(triangles / 3 * instances));
             }
 
             uint lines = lineBuffer?.Data?.ElementCount ?? 0u;
             if (lines > 0)
             {
-                using (Engine.Profiler.Start("OpenGLRenderer.RenderCurrentMesh.DrawLines"))
-                {
-                    Api.DrawElementsInstanced(GLEnum.Lines, lines, ToGLEnum(ActiveMeshRenderer.LineIndicesElementType), null, instances);
-                    Engine.Rendering.Stats.IncrementDrawCalls();
-                }
+                Api.DrawElementsInstanced(GLEnum.Lines, lines, ToGLEnum(ActiveMeshRenderer.LineIndicesElementType), null, instances);
+                Engine.Rendering.Stats.IncrementDrawCalls();
             }
 
             uint points = pointBuffer?.Data?.ElementCount ?? 0u;
             if (points > 0)
             {
-                using (Engine.Profiler.Start("OpenGLRenderer.RenderCurrentMesh.DrawPoints"))
-                {
-                    Api.DrawElementsInstanced(GLEnum.Points, points, ToGLEnum(ActiveMeshRenderer.PointIndicesElementType), null, instances);
-                    Engine.Rendering.Stats.IncrementDrawCalls();
-                }
+                Api.DrawElementsInstanced(GLEnum.Points, points, ToGLEnum(ActiveMeshRenderer.PointIndicesElementType), null, instances);
+                Engine.Rendering.Stats.IncrementDrawCalls();
             }
         }
 
@@ -228,7 +238,7 @@ namespace XREngine.Rendering.OpenGL
         /// </summary>
         public void RenderCurrentMeshIndirect()
         {
-            using var prof = Engine.Profiler.Start("OpenGLRenderer.RenderCurrentMeshIndirect");
+            // Profiler instrumentation removed from this hot path
             if (ActiveMeshRenderer?.Mesh is null)
                 return;
 

@@ -60,7 +60,7 @@ namespace XREngine.Rendering.Commands
         public event Action? PreRender;
         public event Action? PostRender;
 
-        private StateObject? _renderState;
+        private XREngine.Engine.CodeProfiler.ProfilerScope? _renderState;
 
         protected void OnPreRender()
         {

@@ -27,6 +27,7 @@ namespace XREngine
         private int _mcpServerPort = 5467;
 
         [Category("Theme")]
+        [DisplayName("Theme")]
         [Description("Theme and color customization for editor visuals.")]
         public EditorThemeSettings Theme
         {
@@ -35,6 +36,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Debug")]
         [Description("Editor-only debug visualization options.")]
         public EditorDebugOptions Debug
         {
@@ -46,6 +48,7 @@ namespace XREngine
         /// Controls how the main world viewport is presented when Dear ImGui is active.
         /// </summary>
         [Category("Viewport")]
+        [DisplayName("Viewport Presentation Mode")]
         [Description("Controls whether the world renders full-screen behind ImGui UI, or is constrained to the docked Scene panel.")]
         public EViewportPresentationMode ViewportPresentationMode
         {
@@ -57,6 +60,7 @@ namespace XREngine
         /// Debounce for Scene panel resizes (0 disables).
         /// </summary>
         [Category("Viewport")]
+        [DisplayName("Scene Panel Resize Debounce (ms)")]
         [Description("Debounce in milliseconds for Scene panel resizes (0 disables).")]
         public int ScenePanelResizeDebounceMs
         {
@@ -69,6 +73,7 @@ namespace XREngine
         /// When enabled, AI assistants and external tools can interact with the editor via HTTP.
         /// </summary>
         [Category("MCP Server")]
+        [DisplayName("MCP Server Enabled")]
         [Description("Enable the MCP server to allow AI assistants and external tools to interact with the editor.")]
         public bool McpServerEnabled
         {
@@ -80,6 +85,7 @@ namespace XREngine
         /// The port number for the MCP server.
         /// </summary>
         [Category("MCP Server")]
+        [DisplayName("MCP Server Port")]
         [Description("The port number for the MCP server (default: 5467).")]
         public int McpServerPort
         {
@@ -138,6 +144,7 @@ namespace XREngine
         private ColorF4 _transformCapsuleColor = ColorF4.LightOrange;
 
         [Category("Theme")]
+        [DisplayName("Theme Name")]
         [Description("Name of the editor theme preset to apply.")]
         public string ThemeName
         {
@@ -146,6 +153,7 @@ namespace XREngine
         }
 
         [Category("Theme")]
+        [DisplayName("Quadtree Intersected Bounds Color")]
         [Description("The color used to represent quadtree intersected bounds in the editor.")]
         public ColorF4 QuadtreeIntersectedBoundsColor
         {
@@ -154,6 +162,7 @@ namespace XREngine
         }
 
         [Category("Theme")]
+        [DisplayName("Quadtree Contained Bounds Color")]
         [Description("The color used to represent quadtree contained bounds in the editor.")]
         public ColorF4 QuadtreeContainedBoundsColor
         {
@@ -162,6 +171,7 @@ namespace XREngine
         }
 
         [Category("Theme")]
+        [DisplayName("Octree Intersected Bounds Color")]
         [Description("The color used to represent octree intersected bounds in the editor.")]
         public ColorF4 OctreeIntersectedBoundsColor
         {
@@ -170,6 +180,7 @@ namespace XREngine
         }
 
         [Category("Theme")]
+        [DisplayName("Octree Contained Bounds Color")]
         [Description("The color used to represent octree contained bounds in the editor.")]
         public ColorF4 OctreeContainedBoundsColor
         {
@@ -178,6 +189,7 @@ namespace XREngine
         }
 
         [Category("Theme")]
+        [DisplayName("2D Bounds Color")]
         [Description("The color used to represent 2D bounds in the editor.")]
         public ColorF4 Bounds2DColor
         {
@@ -186,6 +198,7 @@ namespace XREngine
         }
 
         [Category("Theme")]
+        [DisplayName("3D Bounds Color")]
         [Description("The color used to represent 3D bounds in the editor.")]
         public ColorF4 Bounds3DColor
         {
@@ -194,6 +207,7 @@ namespace XREngine
         }
 
         [Category("Theme")]
+        [DisplayName("Transform Point Color")]
         [Description("The color used to represent transform points in the editor.")]
         public ColorF4 TransformPointColor
         {
@@ -202,6 +216,7 @@ namespace XREngine
         }
 
         [Category("Theme")]
+        [DisplayName("Transform Line Color")]
         [Description("The color used to represent transform lines in the editor.")]
         public ColorF4 TransformLineColor
         {
@@ -210,6 +225,7 @@ namespace XREngine
         }
 
         [Category("Theme")]
+        [DisplayName("Transform Capsule Color")]
         [Description("The color used to represent transform capsules in the editor.")]
         public ColorF4 TransformCapsuleColor
         {
@@ -294,8 +310,11 @@ namespace XREngine
         private bool _useDebugOpaquePipeline;
         private bool _forceGpuPassthroughCulling = true;
         private bool _allowGpuCpuFallback = false;
+        private bool _enableProfilerFrameLogging = true;
+        private bool _enableRenderStatisticsTracking = true;
 
         [Category("Debug")]
+        [DisplayName("Render 3D Mesh Bounds")]
         [Description("If true, the engine will render the bounds of each 3D mesh.")]
         public bool RenderMesh3DBounds
         {
@@ -304,6 +323,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Render 2D Mesh Bounds")]
         [Description("If true, the engine will render the bounds of each UI mesh.")]
         public bool RenderMesh2DBounds
         {
@@ -312,6 +332,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Render Transform Debug Info")]
         [Description("If true, the engine will render all transforms in the scene as lines and points.")]
         public bool RenderTransformDebugInfo
         {
@@ -320,6 +341,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Render UI Transform Coordinate")]
         [Description("If true, the engine will render the coordinate system of UI transforms.")]
         public bool RenderUITransformCoordinate
         {
@@ -328,6 +350,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Render Transform Lines")]
         [Description("If true, the engine will render all transforms in the scene as lines.")]
         public bool RenderTransformLines
         {
@@ -336,6 +359,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Render Transform Points")]
         [Description("If true, the engine will render all transforms in the scene as points.")]
         public bool RenderTransformPoints
         {
@@ -344,6 +368,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Render Transform Capsules")]
         [Description("If true, the engine will render capsules around transforms for debugging purposes.")]
         public bool RenderTransformCapsules
         {
@@ -352,6 +377,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Visualize Directional Light Volumes")]
         [Description("If true, the engine will visualize the volumes of directional lights.")]
         public bool VisualizeDirectionalLightVolumes
         {
@@ -360,6 +386,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Preview 3D World Octree")]
         [Description("If true, the engine will render the octree for the 3D world.")]
         public bool Preview3DWorldOctree
         {
@@ -368,6 +395,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Preview 2D World Quadtree")]
         [Description("If true, the engine will render the quadtree for the 2D world.")]
         public bool Preview2DWorldQuadtree
         {
@@ -376,6 +404,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Preview Traces")]
         [Description("If true, the engine will render physics traces.")]
         public bool PreviewTraces
         {
@@ -384,6 +413,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Visualize Transform ID")]
         [Description("If true, the engine will visualize the per-draw TransformId buffer as a false-color output.")]
         public bool VisualizeTransformId
         {
@@ -392,6 +422,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Render Culling Volumes")]
         [Description("If true, culling volumes will be rendered for debugging purposes.")]
         public bool RenderCullingVolumes
         {
@@ -400,6 +431,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Debug Text Max Lifespan")]
         [Description("How long a cache object for text rendering should exist without receiving any further updates.")]
         public float DebugTextMaxLifespan
         {
@@ -408,6 +440,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Render Light Probe Tetrahedra")]
         [Description("If true, renders light probe tetrahedra for visualization.")]
         public bool RenderLightProbeTetrahedra
         {
@@ -416,6 +449,7 @@ namespace XREngine
         }
 
         [Category("Debug")]
+        [DisplayName("Use Debug Opaque Pipeline")]
         [Description("Whether to use the debug opaque render pipeline.")]
         public bool UseDebugOpaquePipeline
         {
@@ -424,6 +458,7 @@ namespace XREngine
         }
 
         [Category("GPU Rendering")]
+        [DisplayName("Force GPU Passthrough Culling")]
         [Description("When true, GPU culling uses passthrough mode (copies all commands without frustum culling). When false, uses actual GPU frustum culling.")]
         public bool ForceGpuPassthroughCulling
         {
@@ -432,6 +467,7 @@ namespace XREngine
         }
 
         [Category("GPU Rendering")]
+        [DisplayName("Allow GPU CPU Fallback")]
         [Description("When true, allows CPU fallback rendering when GPU indirect rendering produces zero visible commands. Useful for debugging GPU rendering issues.")]
         public bool AllowGpuCpuFallback
         {
@@ -440,11 +476,38 @@ namespace XREngine
         }
 
         [Category("Profiling")]
+        [DisplayName("Enable Thread Allocation Tracking")]
         [Description("Tracks GC allocations per engine thread/tick using GC.GetAllocatedBytesForCurrentThread(). Used by the Profiler panel.")]
         public bool EnableThreadAllocationTracking
         {
             get => _enableThreadAllocationTracking;
             set => SetField(ref _enableThreadAllocationTracking, value);
+        }
+
+        [Category("Profiling")]
+        [DisplayName("Enable Profiler Frame Logging")]
+        [Description("When enabled, the code profiler records method timings for the Profiler panel. Disable to reduce overhead in hot paths.")]
+        public bool EnableProfilerFrameLogging
+        {
+            get => _enableProfilerFrameLogging;
+            set
+            {
+                if (SetField(ref _enableProfilerFrameLogging, value))
+                    Engine.Profiler.EnableFrameLogging = value;
+            }
+        }
+
+        [Category("Profiling")]
+        [DisplayName("Enable Render Statistics Tracking")]
+        [Description("When enabled, tracks per-frame rendering statistics (draw calls, triangles, etc.). Disable to reduce overhead.")]
+        public bool EnableRenderStatisticsTracking
+        {
+            get => _enableRenderStatisticsTracking;
+            set
+            {
+                if (SetField(ref _enableRenderStatisticsTracking, value))
+                    Engine.Rendering.Stats.EnableTracking = value;
+            }
         }
 
         public void CopyFrom(EditorDebugOptions source)
@@ -471,6 +534,8 @@ namespace XREngine
             UseDebugOpaquePipeline = source.UseDebugOpaquePipeline;
             ForceGpuPassthroughCulling = source.ForceGpuPassthroughCulling;
             AllowGpuCpuFallback = source.AllowGpuCpuFallback;
+            EnableProfilerFrameLogging = source.EnableProfilerFrameLogging;
+            EnableRenderStatisticsTracking = source.EnableRenderStatisticsTracking;
         }
 
         public void ApplyOverrides(EditorDebugOverrides overrides)
@@ -516,6 +581,10 @@ namespace XREngine
                 ForceGpuPassthroughCulling = passthrough.Value;
             if (overrides.AllowGpuCpuFallbackOverride is { HasOverride: true } cpuFallback)
                 AllowGpuCpuFallback = cpuFallback.Value;
+            if (overrides.EnableProfilerFrameLoggingOverride is { HasOverride: true } profilerLogging)
+                EnableProfilerFrameLogging = profilerLogging.Value;
+            if (overrides.EnableRenderStatisticsTrackingOverride is { HasOverride: true } statsTracking)
+                EnableRenderStatisticsTracking = statsTracking.Value;
         }
     }
 }

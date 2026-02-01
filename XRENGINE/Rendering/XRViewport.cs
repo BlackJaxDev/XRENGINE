@@ -893,6 +893,8 @@ namespace XREngine.Rendering
             bool shadowPass = false,
             XRMaterial? forcedMaterial = null)
         {
+            using var sample = Engine.Profiler.Start("XRViewport.Render");
+
             XRCamera? camera = cameraOverride ?? ActiveCamera;
             if (camera is null)
             {

@@ -54,6 +54,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void EnqueueUpload(GLDataBuffer buffer, byte[] data, uint dataLength)
             {
+                buffer._hasPendingUpload = true;
                 _pendingBuffers.TryAdd(buffer, 0);
                 _pendingUploads.Enqueue(new PendingUpload
                 {
@@ -94,6 +95,7 @@ namespace XREngine.Rendering.OpenGL
                 uint targetBufferId = buffer.BindingId;
                 if (targetBufferId == GLObjectBase.InvalidBindingId)
                 {
+                    buffer._hasPendingUpload = false;
                     _pendingBuffers.TryRemove(buffer, out _);
                     Debug.LogWarning("GLUploadQueue: Failed to generate buffer for upload.");
                     return;
@@ -108,7 +110,8 @@ namespace XREngine.Rendering.OpenGL
                 buffer.SetLastPushedLength(dataLength);
                 buffer.TrackAllocation(dataLength);
 
-                // Remove from pending set after successful upload
+                // Clear pending flag and remove from pending set after successful upload
+                buffer._hasPendingUpload = false;
                 _pendingBuffers.TryRemove(buffer, out _);
             }
 

@@ -109,6 +109,7 @@ namespace XREngine.Rendering.OpenGL
                 foreach (var buffer in _bufferCache)
                     buffer.Value.Destroy();
                 _bufferCache = [];
+                _ssboBufferCache = [];
             }
         }
     }

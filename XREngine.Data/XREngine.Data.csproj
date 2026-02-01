@@ -35,8 +35,8 @@
   <ItemGroup>
     <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
     <PackageReference Include="LZMA-SDK" Version="22.1.1" />
-    <PackageReference Include="Magick.NET.Core" Version="14.10.1" />
-    <PackageReference Include="Magick.NET.SystemDrawing" Version="8.0.14" />
+    <PackageReference Include="Magick.NET.Core" Version="14.10.2" />
+    <PackageReference Include="Magick.NET.SystemDrawing" Version="8.0.15" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="NAudio.Lame" Version="2.1.0" />
@@ -46,10 +46,10 @@
     <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
     <PackageReference Include="SharpFont.NetStandard" Version="1.0.5" />
     <PackageReference Include="SharpZipLib" Version="1.4.2" />
-    <PackageReference Include="Silk.NET.OpenGLES.Extensions.EXT" Version="2.22.0" />
+    <PackageReference Include="Silk.NET.OpenGLES.Extensions.EXT" Version="2.23.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
-    <PackageReference Include="System.Drawing.Common" Version="10.0.1" />
-    <PackageReference Include="System.Text.Json" Version="10.0.1" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.2" />
+    <PackageReference Include="System.Text.Json" Version="10.0.2" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 

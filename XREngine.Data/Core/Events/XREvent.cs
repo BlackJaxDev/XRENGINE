@@ -26,9 +26,18 @@ namespace XREngine.Data.Core
 
         private void InvokeInternal()
         {
-            ConsumeQueues("XREvent.ConsumeQueues");
-            Actions.ForEach(x => x.Invoke());
-            InvokePersistentCalls([]);
+            using (BeginProfiling("XREvent.ConsumeQueues"))
+            {
+                ConsumeQueues("XREvent.ConsumeQueues");
+            }
+            using (BeginProfiling("XREvent.Actions"))
+            {
+                Actions.ForEach(x => x.Invoke());
+            }
+            using (BeginProfiling("XREvent.PersistentCalls"))
+            {
+                InvokePersistentCalls([]);
+            }
         }
 
         private void InvokePersistentCalls(object?[] args)

@@ -809,7 +809,7 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 shape = PhysxShape.Get(ptr) ?? new PhysxShape(ptr);
                 Shapes[(nint)ptr] = shape;
-                Debug.Log(ELogCategory.Physics, "[PhysxScene] Registered shape ptr=0x{0:X}", (nint)ptr);
+                //Debug.Log(ELogCategory.Physics, "[PhysxScene] Registered shape ptr=0x{0:X}", (nint)ptr);
 
                 /*
                 var flags = ptr->GetFlags();
@@ -842,7 +842,7 @@ namespace XREngine.Rendering.Physics.Physx
             var jointObj = new PhysxJoint_Contact(joint);
             Joints[(nint)joint] = jointObj;
             ContactJoints[(nint)joint] = jointObj;
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Contact ptr=0x{0:X}", (nint)joint);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Contact ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
@@ -857,7 +857,7 @@ namespace XREngine.Rendering.Physics.Physx
             var jointObj = new PhysxJoint_Distance(joint);
             Joints[(nint)joint] = jointObj;
             DistanceJoints[(nint)joint] = jointObj;
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Distance ptr=0x{0:X}", (nint)joint);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Distance ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
@@ -872,7 +872,7 @@ namespace XREngine.Rendering.Physics.Physx
             var jointObj = new PhysxJoint_D6(joint);
             Joints[(nint)joint] = jointObj;
             D6Joints[(nint)joint] = jointObj;
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_D6 ptr=0x{0:X}", (nint)joint);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_D6 ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
@@ -887,7 +887,7 @@ namespace XREngine.Rendering.Physics.Physx
             var jointObj = new PhysxJoint_Fixed(joint);
             Joints[(nint)joint] = jointObj;
             FixedJoints[(nint)joint] = jointObj;
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Fixed ptr=0x{0:X}", (nint)joint);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Fixed ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
@@ -902,7 +902,7 @@ namespace XREngine.Rendering.Physics.Physx
             var jointObj = new PhysxJoint_Prismatic(joint);
             Joints[(nint)joint] = jointObj;
             PrismaticJoints[(nint)joint] = jointObj;
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Prismatic ptr=0x{0:X}", (nint)joint);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Prismatic ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
@@ -917,7 +917,7 @@ namespace XREngine.Rendering.Physics.Physx
             var jointObj = new PhysxJoint_Revolute(joint);
             Joints[(nint)joint] = jointObj;
             RevoluteJoints[(nint)joint] = jointObj;
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Revolute ptr=0x{0:X}", (nint)joint);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Revolute ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
@@ -932,7 +932,7 @@ namespace XREngine.Rendering.Physics.Physx
             var jointObj = new PhysxJoint_Spherical(joint);
             Joints[(nint)joint] = jointObj;
             SphericalJoints[(nint)joint] = jointObj;
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Spherical ptr=0x{0:X}", (nint)joint);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Spherical ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
 
@@ -1275,7 +1275,7 @@ namespace XREngine.Rendering.Physics.Physx
 
             var mgrPtr = _scene->PhysPxCreateControllerManager(lockingEnabled);
             _controllerManager = new ControllerManager(mgrPtr);
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] + ControllerManager ptr=0x{0:X} lockingEnabled={1}", (nint)mgrPtr, lockingEnabled);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] + ControllerManager ptr=0x{0:X} lockingEnabled={1}", (nint)mgrPtr, lockingEnabled);
             return _controllerManager;
         }
 
@@ -1284,7 +1284,7 @@ namespace XREngine.Rendering.Physics.Physx
             if (_controllerManager == null)
                 return;
 
-            Debug.Log(ELogCategory.Physics, "[PhysxScene] ReleaseControllerManager controllers={0}", _controllerManager.Controllers.Count);
+            //Debug.Log(ELogCategory.Physics, "[PhysxScene] ReleaseControllerManager controllers={0}", _controllerManager.Controllers.Count);
 
             // Release controllers before releasing the manager.
             foreach (var controller in _controllerManager.Controllers.Values)
@@ -1301,7 +1301,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
             
             _controllerManager.ControllerManagerPtr->ReleaseMut();
-            Debug.Log(ELogCategory.Physics, "[PhysxObj] - ControllerManager ptr=0x{0:X}", (nint)_controllerManager.ControllerManagerPtr);
+            //Debug.Log(ELogCategory.Physics, "[PhysxObj] - ControllerManager ptr=0x{0:X}", (nint)_controllerManager.ControllerManagerPtr);
             _controllerManager = null;
         }
 
