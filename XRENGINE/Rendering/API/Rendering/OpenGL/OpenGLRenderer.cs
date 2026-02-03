@@ -784,15 +784,22 @@ namespace XREngine.Rendering.OpenGL
                             bool isTex = Api.IsTexture(texId);
                             s += $"{splitter}[FBO Detail]   XR={xrTex.GetDescribingName()} -> GL texId={texId} glIsTexture={isTex} xrResizable={xrTex.IsResizeable} xrWHD={xrTex.WidthHeightDepth}";
 
-                            // DSA queries (works regardless of current binding).
-                            Api.GetTextureParameter(texId, GLEnum.TextureBaseLevel, out int baseLevel);
-                            Api.GetTextureParameter(texId, GLEnum.TextureMaxLevel, out int maxLevel);
-                            Api.GetTextureParameter(texId, GLEnum.TextureImmutableFormat, out int immutable);
-                            Api.GetTextureLevelParameter(texId, attachedLevel, GLEnum.TextureWidth, out int levelW);
-                            Api.GetTextureLevelParameter(texId, attachedLevel, GLEnum.TextureHeight, out int levelH);
-                            Api.GetTextureLevelParameter(texId, attachedLevel, GLEnum.TextureInternalFormat, out int levelInternal);
+                            if (!isTex)
+                            {
+                                s += $"{splitter}[FBO Detail]   GL texture object is invalid; skipping parameter queries.";
+                            }
+                            else
+                            {
+                                // DSA queries (works regardless of current binding).
+                                Api.GetTextureParameter(texId, GLEnum.TextureBaseLevel, out int baseLevel);
+                                Api.GetTextureParameter(texId, GLEnum.TextureMaxLevel, out int maxLevel);
+                                Api.GetTextureParameter(texId, GLEnum.TextureImmutableFormat, out int immutable);
+                                Api.GetTextureLevelParameter(texId, attachedLevel, GLEnum.TextureWidth, out int levelW);
+                                Api.GetTextureLevelParameter(texId, attachedLevel, GLEnum.TextureHeight, out int levelH);
+                                Api.GetTextureLevelParameter(texId, attachedLevel, GLEnum.TextureInternalFormat, out int levelInternal);
 
-                            s += $"{splitter}[FBO Detail]   GL baseLevel={baseLevel} maxLevel={maxLevel} immutable={(immutable != 0)} levelW={levelW} levelH={levelH} levelInternal=0x{levelInternal:X}";
+                                s += $"{splitter}[FBO Detail]   GL baseLevel={baseLevel} maxLevel={maxLevel} immutable={(immutable != 0)} levelW={levelW} levelH={levelH} levelInternal=0x{levelInternal:X}";
+                            }
                         }
                         else
                         {

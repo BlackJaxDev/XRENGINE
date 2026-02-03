@@ -80,6 +80,13 @@ public static partial class EditorImGuiUI
                 return;
             }
 
+            if (Engine.UserSettings is XRAsset userSettingsAsset && Engine.Assets is not null)
+            {
+                var rootAsset = userSettingsAsset.SourceAsset ?? userSettingsAsset;
+                rootAsset.Name ??= "User Settings";
+                Engine.Assets.EnsureTracked(rootAsset);
+            }
+
             // Save button at the top
             if (Engine.CurrentProject is not null)
             {

@@ -955,7 +955,7 @@ namespace XREngine.Scene.Transforms
                 ? childRecalcType switch
                 {
                     ELoopType.Asynchronous => ChildrenRecalcAsync(setRenderMatrixNow),
-                    ELoopType.Parallel => Task.Run(() => ChildrenRecalcParallel(setRenderMatrixNow)),
+                    ELoopType.Parallel => ChildrenRecalcParallelTask(setRenderMatrixNow),
                     _ => ChildrenRecalcSequential(setRenderMatrixNow),
                 }
                 : Task.CompletedTask;
@@ -1451,7 +1451,7 @@ namespace XREngine.Scene.Transforms
             => childRecalcType switch
             {
                 ELoopType.Asynchronous => AsyncChildrenRenderMatrixRecalc(),
-                ELoopType.Parallel => Task.Run(ParallelChildrenRenderMatrixRecalc),
+                ELoopType.Parallel => ParallelChildrenRenderMatrixRecalcTask(),
                 _ => SequentialChildrenRenderMatrixRecalc(),
             };
 
@@ -1475,6 +1475,18 @@ namespace XREngine.Scene.Transforms
             {
                 ReturnChildrenCopy(childrenCopy);
             }
+        }
+
+        private Task ChildrenRecalcParallelTask(bool setRenderMatrixNow)
+        {
+            ChildrenRecalcParallel(setRenderMatrixNow);
+            return Task.CompletedTask;
+        }
+
+        private Task ParallelChildrenRenderMatrixRecalcTask()
+        {
+            ParallelChildrenRenderMatrixRecalc();
+            return Task.CompletedTask;
         }
 
         private async Task SequentialChildrenRenderMatrixRecalc()

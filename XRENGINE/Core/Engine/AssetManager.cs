@@ -17,6 +17,7 @@ using System.Threading.Tasks;
 using XREngine.Core.Engine;
 using XREngine.Core.Files;
 using XREngine.Data;
+using XREngine.Data.Core;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
@@ -2217,6 +2218,16 @@ namespace XREngine
             XRAssetGraphUtility.RefreshAssetGraph(file);
 
             CacheAsset(file);
+
+            if (file is IOverrideableSettingsOwner overrideableOwner)
+                overrideableOwner.TrackOverrideableSettings();
+
+            // Clear dirty flag since the asset was just loaded from disk - any dirty state
+            // was from construction/deserialization, not actual user changes
+            file.ClearDirty();
+            foreach (var embedded in file.EmbeddedAssets)
+                embedded.ClearDirty();
+
             AssetLoaded?.Invoke(file);
         }
 

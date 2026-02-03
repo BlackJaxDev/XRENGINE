@@ -15,6 +15,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 {
     private static readonly Vector4 MissingColor = new(0.90f, 0.40f, 0.40f, 1.00f);
     private static readonly Vector4 AssignedColor = new(0.60f, 0.85f, 0.60f, 1.00f);
+    private static bool _showZeroMuscleValues = false;
 
     public void DrawInspector(XRComponent component, HashSet<object> visited)
     {
@@ -40,6 +41,8 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         DrawTargetSection(humanoid);
         ImGui.SeparatorText("Bone Mapping");
         DrawBoneMappingSection(humanoid);
+        ImGui.SeparatorText("Muscle Values");
+        DrawMuscleValuesSection(humanoid);
 
         ComponentEditorLayout.DrawActivePreviewDialog();
     }
@@ -217,6 +220,35 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
         DrawBodySide("Left Side", humanoid.Left);
         DrawBodySide("Right Side", humanoid.Right);
+    }
+
+    private static void DrawMuscleValuesSection(HumanoidComponent humanoid)
+    {
+        bool showZeroes = _showZeroMuscleValues;
+        if (ImGui.Checkbox("Show zero values", ref showZeroes))
+            _showZeroMuscleValues = showZeroes;
+
+        if (!ImGui.BeginTable("HumanoidMuscleValues", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+            return;
+
+        ImGui.TableSetupColumn("Muscle", ImGuiTableColumnFlags.WidthStretch, 0.7f);
+        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch, 0.3f);
+        ImGui.TableHeadersRow();
+
+        foreach (EHumanoidValue value in Enum.GetValues<EHumanoidValue>())
+        {
+            float amount = humanoid.TryGetMuscleValue(value, out var v) ? v : 0.0f;
+            if (!showZeroes && MathF.Abs(amount) < 0.0001f)
+                continue;
+
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted(value.ToString());
+            ImGui.TableSetColumnIndex(1);
+            ImGui.TextUnformatted($"{amount:0.###}");
+        }
+
+        ImGui.EndTable();
     }
 
     private static void DrawBoneGroup(string label, (string name, HumanoidComponent.BoneDef def)[] bones)

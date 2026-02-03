@@ -14,22 +14,13 @@ namespace XREngine
             AlreadyOnRenderThread
         }
 
-        public readonly struct MainThreadInvokeEntry
+        public readonly struct MainThreadInvokeEntry(long sequence, DateTimeOffset timestamp, string reason, Engine.MainThreadInvokeMode mode, int callerThreadId)
         {
-            public long Sequence { get; }
-            public DateTimeOffset Timestamp { get; }
-            public string Reason { get; }
-            public MainThreadInvokeMode Mode { get; }
-            public int CallerThreadId { get; }
-
-            public MainThreadInvokeEntry(long sequence, DateTimeOffset timestamp, string reason, MainThreadInvokeMode mode, int callerThreadId)
-            {
-                Sequence = sequence;
-                Timestamp = timestamp;
-                Reason = reason;
-                Mode = mode;
-                CallerThreadId = callerThreadId;
-            }
+            public long Sequence { get; } = sequence;
+            public DateTimeOffset Timestamp { get; } = timestamp;
+            public string Reason { get; } = reason;
+            public MainThreadInvokeMode Mode { get; } = mode;
+            public int CallerThreadId { get; } = callerThreadId;
         }
 
         private static long _mainThreadInvokeSequence;
@@ -49,6 +40,6 @@ namespace XREngine
         }
 
         public static IReadOnlyList<MainThreadInvokeEntry> GetMainThreadInvokeLogSnapshot()
-            => _mainThreadInvokeLog.ToArray();
+            => [.. _mainThreadInvokeLog];
     }
 }

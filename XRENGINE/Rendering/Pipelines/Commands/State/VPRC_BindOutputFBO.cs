@@ -29,6 +29,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             var fbo = ActivePipelineInstance.RenderState.OutputFBO;
 
+            /*
             //if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DEBUG_PRESENT_CLEAR")))
             {
                 Debug.RenderingEvery(
@@ -40,6 +41,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     fbo?.Name ?? "<null>",
                     Write);
             }
+            */
 
             if (fbo is null)
             {

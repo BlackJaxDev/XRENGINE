@@ -11,8 +11,14 @@ namespace XREngine
     /// </summary>
     [Serializable]
     [MemoryPackable]
-    public partial class EditorPreferencesOverrides : XRAsset
+    public partial class EditorPreferencesOverrides : OverrideableSettingsAssetBase
     {
+        public EditorPreferencesOverrides()
+        {
+            AttachSubSettings(_theme, _debug);
+            TrackOverrideableSettings();
+        }
+
         private EditorThemeOverrides _theme = new();
         private EditorDebugOverrides _debug = new();
         private OverrideableSetting<EditorPreferences.EViewportPresentationMode> _viewportPresentationModeOverride = new();
@@ -67,12 +73,61 @@ namespace XREngine
             get => _mcpServerPortOverride;
             set => SetField(ref _mcpServerPortOverride, value ?? new());
         }
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+
+            if (propName == nameof(Theme))
+            {
+                if (prev is EditorThemeOverrides previous)
+                    previous.PropertyChanged -= HandleSubSettingsChanged;
+
+                if (field is EditorThemeOverrides current)
+                    current.PropertyChanged += HandleSubSettingsChanged;
+            }
+
+            if (propName == nameof(Debug))
+            {
+                if (prev is EditorDebugOverrides previous)
+                    previous.PropertyChanged -= HandleSubSettingsChanged;
+
+                if (field is EditorDebugOverrides current)
+                    current.PropertyChanged += HandleSubSettingsChanged;
+            }
+
+        }
+
+        private void AttachSubSettings(EditorThemeOverrides? theme, EditorDebugOverrides? debug)
+        {
+            theme?.PropertyChanged += HandleSubSettingsChanged;
+            debug?.PropertyChanged += HandleSubSettingsChanged;
+        }
+
+        private void HandleSubSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (!IsDirty)
+                MarkDirty();
+        }
+
+        protected override void OnOverrideableSettingChanged(string propertyName, IOverrideableSetting setting, IXRPropertyChangedEventArgs e)
+        {
+            base.OnOverrideableSettingChanged(propertyName, setting, e);
+
+            if (!IsDirty)
+                MarkDirty();
+        }
     }
 
     [Serializable]
     [MemoryPackable]
-    public partial class EditorThemeOverrides : XRBase
+    public partial class EditorThemeOverrides : OverrideableSettingsOwnerBase
     {
+        public EditorThemeOverrides()
+        {
+            TrackOverrideableSettings();
+        }
+
         private OverrideableSetting<string> _themeNameOverride = new();
         private OverrideableSetting<ColorF4> _quadtreeIntersectedBoundsColorOverride = new();
         private OverrideableSetting<ColorF4> _quadtreeContainedBoundsColorOverride = new();
@@ -149,8 +204,13 @@ namespace XREngine
 
     [Serializable]
     [MemoryPackable]
-    public partial class EditorDebugOverrides : XRBase
+    public partial class EditorDebugOverrides : OverrideableSettingsOwnerBase
     {
+        public EditorDebugOverrides()
+        {
+            TrackOverrideableSettings();
+        }
+
         private OverrideableSetting<bool> _renderMesh3DBoundsOverride = new();
         private OverrideableSetting<bool> _renderMesh2DBoundsOverride = new();
         private OverrideableSetting<bool> _renderTransformDebugInfoOverride = new();

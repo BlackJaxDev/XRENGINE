@@ -19,6 +19,7 @@ namespace XREngine.Components.Animation
         // Humanoid (muscle) curve state. Values are expected to be normalized in [-1, 1].
         // We store raw values and apply a full pose once per frame.
         private readonly Dictionary<EHumanoidValue, float> _muscleValues = [];
+        private readonly object _muscleValuesLock = new();
 
         protected internal override void OnComponentActivated()
         {
@@ -95,14 +96,26 @@ namespace XREngine.Components.Animation
                     }
                 default:
                     // Store muscle values; actual application happens once per frame in ApplyMusclePose().
-                    _muscleValues[value] = amount;
+                    lock (_muscleValuesLock)
+                    {
+                        _muscleValues[value] = amount;
+                    }
                     break;
             }
         }
 
         // Int overload for decoupled reflection callers (e.g. Unity animation importer).
         public void SetValue(int value, float amount)
-            => SetValue((EHumanoidValue)value, amount);
+        {
+            // Diagnostic: log the first few calls to verify animation is reaching HumanoidComponent
+            if (_setValueCallCount < 5)
+            {
+                _setValueCallCount++;
+                System.Diagnostics.Debug.WriteLine($"[HumanoidComponent] SetValue called: value={(EHumanoidValue)value} ({value}), amount={amount:F4}");
+            }
+            SetValue((EHumanoidValue)value, amount);
+        }
+        private int _setValueCallCount = 0;
 
         /// <summary>
         /// Legacy string-based humanoid setter. String-to-enum conversion is performed by importers.
@@ -115,10 +128,25 @@ namespace XREngine.Components.Animation
         }
 
         private float GetMuscleValue(EHumanoidValue value)
-            => _muscleValues.TryGetValue(value, out var v) ? v : 0.0f;
+        {
+            lock (_muscleValuesLock)
+            {
+                return _muscleValues.TryGetValue(value, out var v) ? v : 0.0f;
+            }
+        }
+
+        public bool TryGetMuscleValue(EHumanoidValue value, out float amount)
+        {
+            lock (_muscleValuesLock)
+            {
+                return _muscleValues.TryGetValue(value, out amount);
+            }
+        }
 
         private void ApplyMusclePose()
         {
+            EnsureBoneMapping();
+
             // Torso
             ApplyBindRelativeEulerDegrees(
                 Spine.Node,
@@ -162,6 +190,23 @@ namespace XREngine.Components.Animation
             // Fingers
             ApplyFingerMuscles(isLeft: true);
             ApplyFingerMuscles(isLeft: false);
+        }
+
+        private bool _boneMappingComplete;
+        private float _nextRebindTime;
+        private bool? _lastBoneMappingComplete;
+
+        private void EnsureBoneMapping()
+        {
+            if (_boneMappingComplete)
+                return;
+
+            float now = Engine.ElapsedTime;
+            if (now < _nextRebindTime)
+                return;
+
+            _nextRebindTime = now + 0.5f;
+            SetFromNode();
         }
 
         private void ApplyLimbMuscles(bool isLeft)
@@ -977,6 +1022,53 @@ namespace XREngine.Components.Animation
             //Knees
             LeftKneeTarget = (Left.Knee.Node?.Transform, Matrix4x4.Identity);
             RightKneeTarget = (Right.Knee.Node?.Transform, Matrix4x4.Identity);
+
+            // Log diagnostic information about bone mapping results
+            LogBoneMappingDiagnostics();
+        }
+
+        private void LogBoneMappingDiagnostics()
+        {
+            var missing = new System.Collections.Generic.List<string>();
+
+            if (Hips.Node is null) missing.Add("Hips");
+            if (Spine.Node is null) missing.Add("Spine");
+            if (Chest.Node is null) missing.Add("Chest");
+            if (Neck.Node is null) missing.Add("Neck");
+            if (Head.Node is null) missing.Add("Head");
+            if (Left.Shoulder.Node is null) missing.Add("LeftShoulder");
+            if (Left.Arm.Node is null) missing.Add("LeftArm");
+            if (Left.Elbow.Node is null) missing.Add("LeftElbow");
+            if (Left.Wrist.Node is null) missing.Add("LeftWrist");
+            if (Right.Shoulder.Node is null) missing.Add("RightShoulder");
+            if (Right.Arm.Node is null) missing.Add("RightArm");
+            if (Right.Elbow.Node is null) missing.Add("RightElbow");
+            if (Right.Wrist.Node is null) missing.Add("RightWrist");
+            if (Left.Leg.Node is null) missing.Add("LeftLeg");
+            if (Left.Knee.Node is null) missing.Add("LeftKnee");
+            if (Left.Foot.Node is null) missing.Add("LeftFoot");
+            if (Right.Leg.Node is null) missing.Add("RightLeg");
+            if (Right.Knee.Node is null) missing.Add("RightKnee");
+            if (Right.Foot.Node is null) missing.Add("RightFoot");
+
+            bool complete = missing.Count == 0;
+            _boneMappingComplete = complete;
+
+            // Only log when the mapping state changes (prevents spam).
+            if (_lastBoneMappingComplete.HasValue && _lastBoneMappingComplete.Value == complete)
+                return;
+
+            _lastBoneMappingComplete = complete;
+
+            if (!complete)
+            {
+                System.Diagnostics.Debug.WriteLine($"[HumanoidComponent] Bone mapping incomplete on '{SceneNode.Name}'. Missing bones: {string.Join(", ", missing)}");
+                System.Diagnostics.Debug.WriteLine($"[HumanoidComponent] Humanoid animations targeting missing bones will have no visible effect.");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[HumanoidComponent] Bone mapping complete on '{SceneNode.Name}'. All required bones found.");
+            }
         }
 
         private static BoneIKConstraints KneeConstraints()

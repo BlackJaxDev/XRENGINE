@@ -181,25 +181,49 @@ namespace Unity
         //
         // Summary:
         //     The tangent can be freely set by dragging the tangent handle.
-        Free,
+        Free = 0,
         //
         // Summary:
         //     The tangents are automatically set to make the curve go smoothly through the
         //     key.
-        Auto,
+        Auto = 1,
         //
         // Summary:
         //     The tangent points towards the neighboring key.
-        Linear,
+        Linear = 2,
         //
         // Summary:
         //     The curve retains a constant value between two keys.
-        Constant,
+        Constant = 3,
         //
         // Summary:
         //     The tangents are automatically set to make the curve go smoothly through the
         //     key.
-        ClampedAuto
+        ClampedAuto = 4
+    }
+
+    /// <summary>
+    /// Helper class to decode Unity's tangentMode bitmask.
+    /// Unity encodes left and right tangent modes in a single integer:
+    /// - Bit 0: "broken" flag (if set, left and right can be edited independently)
+    /// - Bits 1-4: Left tangent mode (shifted left by 1)
+    /// - Bits 5-8: Right tangent mode (shifted left by 5)
+    /// </summary>
+    public static class TangentModeHelper
+    {
+        private const int BrokenBit = 0;
+        private const int LeftModeShift = 1;
+        private const int RightModeShift = 5;
+        private const int ModeMask = 0b1111; // 4 bits for mode
+
+        public static bool IsBroken(int tangentMode)
+            => (tangentMode & (1 << BrokenBit)) != 0;
+
+        public static TangentMode GetLeftTangentMode(int tangentMode)
+            => (TangentMode)((tangentMode >> LeftModeShift) & ModeMask);
+
+        public static TangentMode GetRightTangentMode(int tangentMode)
+            => (TangentMode)((tangentMode >> RightModeShift) & ModeMask);
     }
 
     public class UnityBounds

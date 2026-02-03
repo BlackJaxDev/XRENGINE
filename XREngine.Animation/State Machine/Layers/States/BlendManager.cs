@@ -55,8 +55,8 @@ namespace XREngine.Animation
         private void GetCurves(AnimState? currentState, AnimState nextState)
         {
             IEnumerable<string> uniquePaths =
-                (currentState?.Motion?._animationValues?.Keys ?? Enumerable.Empty<string>()).Union
-                (nextState.Motion?._animationValues?.Keys ?? Enumerable.Empty<string>()).Distinct();
+                (currentState?.Motion?.GetAnimationValueKeysSnapshot() ?? Enumerable.Empty<string>()).Union
+                (nextState.Motion?.GetAnimationValueKeysSnapshot() ?? Enumerable.Empty<string>()).Distinct();
             _animatedCurves = new Dictionary<string, AnimationMember>(uniquePaths.Count());
             foreach (string path in uniquePaths)
             {
@@ -106,8 +106,8 @@ namespace XREngine.Animation
             float blendTime = GetModifiedBlendTime();
 
             Blend(layer,
-                _currentState?.Motion?._animationValues,
-                _nextState?.Motion?._animationValues,
+                _currentState?.Motion?.GetAnimationValuesSnapshot(),
+                _nextState?.Motion?.GetAnimationValuesSnapshot(),
                 blendTime);
 
             _linearBlendTime += delta;
@@ -122,17 +122,20 @@ namespace XREngine.Animation
             return false;
         }
 
-        private static void Blend(AnimLayer layer, Dictionary<string, object?>? v1, Dictionary<string, object?>? v2, float t)
+        private static void Blend(AnimLayer layer, KeyValuePair<string, object?>[]? v1, KeyValuePair<string, object?>[]? v2, float t)
         {
+            Dictionary<string, object?>? v1Dict = v1 is null ? null : v1.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            Dictionary<string, object?>? v2Dict = v2 is null ? null : v2.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
             IEnumerable<string> keys =
-                (v1?.Keys ?? Enumerable.Empty<string>()).Union
-                (v2?.Keys ?? Enumerable.Empty<string>()).Distinct();
+                (v1Dict?.Keys ?? Enumerable.Empty<string>()).Union
+                (v2Dict?.Keys ?? Enumerable.Empty<string>()).Distinct();
 
             foreach (string key in keys)
             {
                 //Leave values that don't match alone
-                if (!(v1?.TryGetValue(key, out object? v1Value) ?? false) ||
-                    !(v2?.TryGetValue(key, out object? v2Value) ?? false))
+                if (!(v1Dict?.TryGetValue(key, out object? v1Value) ?? false) ||
+                    !(v2Dict?.TryGetValue(key, out object? v2Value) ?? false))
                     continue;
 
                 switch (v1Value)

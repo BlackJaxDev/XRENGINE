@@ -13,8 +13,14 @@ namespace XREngine
     /// Also includes optional overrides for engine-level settings (Project > Engine cascade).
     /// </summary>
     [MemoryPackable]
-    public partial class GameStartupSettings : XRAsset
+    public partial class GameStartupSettings : OverrideableSettingsAssetBase
     {
+        public GameStartupSettings()
+        {
+            AttachSubSettings(_buildSettings, _defaultUserSettings);
+            TrackOverrideableSettings();
+        }
+
         private BuildSettings _buildSettings = new();
         private ENetworkingType _networkingType = ENetworkingType.Local;
         private List<GameWindowStartupSettings> _startupWindows = [];
@@ -230,6 +236,44 @@ namespace XREngine
         {
             get => _buildSettings;
             set => SetField(ref _buildSettings, value ?? new BuildSettings());
+        }
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+
+            if (propName == nameof(BuildSettings))
+            {
+                if (prev is BuildSettings previous)
+                    previous.PropertyChanged -= HandleSubSettingsChanged;
+
+                if (field is BuildSettings current)
+                    current.PropertyChanged += HandleSubSettingsChanged;
+            }
+
+            if (propName == nameof(DefaultUserSettings))
+            {
+                if (prev is UserSettings previous)
+                    previous.PropertyChanged -= HandleSubSettingsChanged;
+
+                if (field is UserSettings current)
+                    current.PropertyChanged += HandleSubSettingsChanged;
+            }
+        }
+
+        private void AttachSubSettings(BuildSettings? buildSettings, UserSettings? defaultUserSettings)
+        {
+            if (buildSettings is not null)
+                buildSettings.PropertyChanged += HandleSubSettingsChanged;
+
+            if (defaultUserSettings is not null)
+                defaultUserSettings.PropertyChanged += HandleSubSettingsChanged;
+        }
+
+        private void HandleSubSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (!IsDirty)
+                MarkDirty();
         }
 
         /// <summary>

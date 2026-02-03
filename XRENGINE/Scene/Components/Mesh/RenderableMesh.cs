@@ -528,7 +528,7 @@ namespace XREngine.Components.Scene.Mesh
             return result;
         }
 
-        public BVH<Triangle>? GetSkinnedBvh()
+        public BVH<Triangle>? GetSkinnedBvh(bool allowRebuild = true)
         {
             if (!IsSkinned)
                 return CurrentLODRenderer?.Mesh?.BVHTree;
@@ -538,7 +538,10 @@ namespace XREngine.Components.Scene.Mesh
                 if (_skinnedBoundsDirty && !EnsureSkinnedBounds())
                     return null;
 
-                if (!_skinnedBvhDirty && _skinnedBvh is not null)
+                if (_skinnedBvh is not null && (!_skinnedBvhDirty || !allowRebuild))
+                    return _skinnedBvh;
+
+                if (!allowRebuild)
                     return _skinnedBvh;
 
                 if (TryFinalizeSkinnedBvhJob(out var readyTree))

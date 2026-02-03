@@ -32,6 +32,8 @@ namespace XREngine.Animation
 
         [MemoryPackIgnore]
         protected internal readonly Dictionary<string, object?> _animatedValues = [];
+        [MemoryPackIgnore]
+        internal readonly object _animationValuesLock = new();
         
         [MemoryPackIgnore]
         private readonly BlendManager _blendManager = new();
@@ -212,21 +214,23 @@ namespace XREngine.Animation
         }
 
         private void CopyAnimationValuesFromMotion(MotionBase? motion)
-            => CopyAnimationValues(motion?.AnimationValues);
-        private void CopyAnimationValues(Dictionary<string, object?>? values)
+            => CopyAnimationValues(motion?.GetAnimationValuesSnapshot());
+        private void CopyAnimationValues(IEnumerable<KeyValuePair<string, object?>>? values)
         {
             if (values is null)
                 return;
 
-            foreach (string key in values.Keys)
-                if (values.TryGetValue(key, out object? v1Value))
-                    SetAnimValue(key, v1Value);
+            foreach (var kvp in values)
+                SetAnimValue(kvp.Key, kvp.Value);
         }
 
         internal void SetAnimValue(string path, object? animValue)
         {
-            if (!_animatedValues.TryAdd(path, animValue))
-                _animatedValues[path] = animValue;
+            lock (_animationValuesLock)
+            {
+                if (!_animatedValues.TryAdd(path, animValue))
+                    _animatedValues[path] = animValue;
+            }
         }
 
         private bool TryTransition(IDictionary<string, AnimVar> variables, AnimStateBase testState, out AnimState? nextState)

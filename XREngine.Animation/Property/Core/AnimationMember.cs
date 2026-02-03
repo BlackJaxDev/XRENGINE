@@ -1,5 +1,6 @@
 ﻿using ImmediateReflection;
 using System.Diagnostics;
+using System.Linq.Expressions;
 using System.Reflection;
 using XREngine.Data.Core;
 
@@ -7,11 +8,22 @@ namespace XREngine.Animation
 {
     public class AnimationMember : XRBase
     {
+        // Track logged messages to avoid spamming the same warnings every frame
+        private static readonly HashSet<string> _loggedWarnings = [];
+        
+        private static void LogWarningOnce(string message)
+        {
+            if (_loggedWarnings.Add(message))
+                Debug.WriteLine(message);
+        }
+
         public AnimationMember()
         {
             _fieldCache = null;
             _propertyCache = null;
             _methodCache = null;
+            // Default MemberType is Property, so set the Initialize delegate accordingly
+            _initialize = InitializeProperty;
         }
         /// <summary>
         /// Constructor to create a subtree without an animation at this level.
@@ -32,6 +44,14 @@ namespace XREngine.Animation
             _memberName = memberName;
             Animation = null;
             MemberType = memberType;
+            // Explicitly set Initialize delegate in case OnPropertyChanged didn't fire
+            _initialize = memberType switch
+            {
+                EAnimationMemberType.Field => InitializeField,
+                EAnimationMemberType.Property => InitializeProperty,
+                EAnimationMemberType.Method => InitializeMethod,
+                _ => null
+            };
         }
         /// <summary>
         /// Constructor to create a subtree with an animation attached at this level.
@@ -54,6 +74,14 @@ namespace XREngine.Animation
             _memberName = memberName;
             Animation = animation;
             MemberType = memberType;
+            // Explicitly set Initialize delegate in case OnPropertyChanged didn't fire
+            _initialize = memberType switch
+            {
+                EAnimationMemberType.Field => InitializeField,
+                EAnimationMemberType.Property => InitializeProperty,
+                EAnimationMemberType.Method => InitializeMethod,
+                _ => null
+            };
         }
 
         private const BindingFlags BindingFlag = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -61,6 +89,7 @@ namespace XREngine.Animation
         //Cached at runtime
         private ImmediateProperty? _propertyCache;
         private MethodInfo? _methodCache;
+        private Action<object?, object?[]?>? _methodInvoker;
         private ImmediateField? _fieldCache;
 
         public delegate object? DelInitialize(object? parentObject);
@@ -269,9 +298,18 @@ namespace XREngine.Animation
         public object? GetAnimationValue()
         {
             var a = Animation;
-            return a is null
-                ? MemberType == EAnimationMemberType.Method ? _methodArguments[AnimatedMethodArgumentIndex] : null
-                : a.GetCurrentValueGeneric();
+            if (a is not null)
+                return a.GetCurrentValueGeneric();
+
+            // For methods without an animation, return the default argument value if valid
+            if (MemberType == EAnimationMemberType.Method &&
+                AnimatedMethodArgumentIndex >= 0 &&
+                AnimatedMethodArgumentIndex < _methodArguments.Length)
+            {
+                return _methodArguments[AnimatedMethodArgumentIndex];
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -295,9 +333,31 @@ namespace XREngine.Animation
                     if (AnimatedMethodArgumentIndex < 0 || AnimatedMethodArgumentIndex >= _methodArguments.Length)
                         return;
 
+                    if (_methodCache is null)
+                    {
+                        LogWarningOnce($"[Animation] Cannot apply value for method '{_memberName}': method cache is null (was the method resolved during initialization?)");
+                        return;
+                    }
+
+                    if (_parentObject is null)
+                    {
+                        LogWarningOnce($"[Animation] Cannot apply value for method '{_memberName}': parent object is null (lookup may have failed earlier in the chain)");
+                        return;
+                    }
+
                     object? lastArg = _methodArguments[AnimatedMethodArgumentIndex];
                     _methodArguments[AnimatedMethodArgumentIndex] = value;
-                    _methodCache?.Invoke(_parentObject, _methodArguments);
+                    try
+                    {
+                        if (_methodInvoker is not null)
+                            _methodInvoker(_parentObject, _methodArguments);
+                        else
+                            _methodCache.Invoke(_parentObject, _methodArguments);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogWarningOnce($"[Animation] Failed to invoke method '{_memberName}' on '{_parentObject.GetType().Name}': {ex.Message}");
+                    }
                     _methodArguments[AnimatedMethodArgumentIndex] = lastArg;
 
                     break;
@@ -316,7 +376,7 @@ namespace XREngine.Animation
             return _cachedReturnValue = memberValue;
         }
 
-        internal object? InitializeMethod(object? parentObj)
+        public object? InitializeMethod(object? parentObj)
         {
             _parentObject = parentObj;
 
@@ -326,14 +386,33 @@ namespace XREngine.Animation
             var argumentTypes = MethodArguments.Select(x => x?.GetType() ?? typeof(object)).ToArray();
             _methodCache ??= parentObj.GetType()?.GetMethod(_memberName, BindingFlag, argumentTypes);
 
+            if (_methodCache is not null && _methodInvoker is null)
+                _methodInvoker = BuildMethodInvoker(_methodCache, parentObj.GetType(), argumentTypes.Length);
+
             MemberNotFound = _methodCache is null;
+
+            if (MemberNotFound)
+            {
+                string argTypes = string.Join(", ", argumentTypes.Select(t => t.Name));
+                LogWarningOnce($"[Animation] Method '{_memberName}({argTypes})' not found on type '{parentObj.GetType().Name}'.");
+            }
 
             DefaultValue = AnimatedMethodArgumentIndex >= 0 && AnimatedMethodArgumentIndex < MethodArguments.Length
                 ? MethodArguments[AnimatedMethodArgumentIndex]
                 : null;
-            return Cache(_methodCache?.Invoke(parentObj, MethodArguments));
+            
+            object? result = Cache(_methodCache?.Invoke(parentObj, MethodArguments));
+            
+            // Log if a lookup method (like GetComponent) returns null - this breaks the animation chain
+            if (CacheReturnValue && result is null && !MemberNotFound)
+            {
+                string args = string.Join(", ", MethodArguments.Select(a => a?.ToString() ?? "null"));
+                LogWarningOnce($"[Animation] Method '{_memberName}({args})' on '{parentObj.GetType().Name}' returned null. Downstream animation members will not function.");
+            }
+            
+            return result;
         }
-        internal object? InitializeProperty(object? parentObj)
+        public object? InitializeProperty(object? parentObj)
         {
             _parentObject = parentObj;
 
@@ -349,7 +428,7 @@ namespace XREngine.Animation
             return Cache(value);
         }
 
-        internal object? InitializeField(object? parentObj)
+        public object? InitializeField(object? parentObj)
         {
             if (parentObj is null || MemberNotFound)
                 return null;
@@ -361,6 +440,43 @@ namespace XREngine.Animation
             object? value = _fieldCache?.GetValue(parentObj);
             DefaultValue = value;
             return Cache(value);
+        }
+
+        private static Action<object?, object?[]?>? BuildMethodInvoker(MethodInfo methodInfo, Type targetType, int argumentCount)
+        {
+            try
+            {
+                var targetParam = Expression.Parameter(typeof(object), "target");
+                var argsParam = Expression.Parameter(typeof(object[]), "args");
+
+                Expression instance = methodInfo.IsStatic
+                    ? null!
+                    : Expression.Convert(targetParam, targetType);
+
+                var parameters = methodInfo.GetParameters();
+                var callArgs = new Expression[parameters.Length];
+                for (int i = 0; i < parameters.Length; i++)
+                {
+                    var indexExpr = Expression.Constant(i);
+                    var argAccess = Expression.ArrayIndex(argsParam, indexExpr);
+                    callArgs[i] = Expression.Convert(argAccess, parameters[i].ParameterType);
+                }
+
+                Expression call = methodInfo.IsStatic
+                    ? Expression.Call(methodInfo, callArgs)
+                    : Expression.Call(instance, methodInfo, callArgs);
+
+                var body = methodInfo.ReturnType == typeof(void)
+                    ? (Expression)call
+                    : Expression.Block(call, Expression.Empty());
+
+                var lambda = Expression.Lambda<Action<object?, object?[]?>>(body, targetParam, argsParam);
+                return lambda.Compile();
+            }
+            catch
+            {
+                return null;
+            }
         }
         /// <summary>
         /// Registers to the AnimationHasEnded method in the animation tree
@@ -413,10 +529,8 @@ namespace XREngine.Animation
 
         private void StartAnimation()
         {
-            MemberNotFound = false;
-            _fieldCache = null;
-            _propertyCache = null;
-            _methodCache = null;
+            // Note: Do NOT clear _fieldCache, _propertyCache, _methodCache here.
+            // These are populated during Initialize() and must persist for ApplyAnimationValue() to work.
             if (Animation is null)
                 return;
             //Debug.WriteLine($"Starting animation {Animation.Name} on {MemberName}");
@@ -425,11 +539,8 @@ namespace XREngine.Animation
 
         internal void StopAnimations()
         {
-            MemberNotFound = false;
-            _fieldCache = null;
-            _propertyCache = null;
-            _methodCache = null;
-
+            // Note: Do NOT clear _fieldCache, _propertyCache, _methodCache here.
+            // These are populated during Initialize() and must persist for subsequent playback.
             Animation?.Stop();
             foreach (AnimationMember folder in _children)
                 folder.StopAnimations();

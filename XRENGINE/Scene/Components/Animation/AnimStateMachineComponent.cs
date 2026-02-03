@@ -32,6 +32,33 @@ namespace XREngine.Components
             set => SetField(ref _humanoid, value);
         }
 
+        private bool _suspendedByClip;
+        public bool SuspendedByClip
+        {
+            get => _suspendedByClip;
+            private set => SetField(ref _suspendedByClip, value);
+        }
+
+        public void SetSuspendedByClip(bool suspended)
+        {
+            if (SuspendedByClip == suspended)
+                return;
+
+            SuspendedByClip = suspended;
+
+            if (!IsActiveInHierarchy)
+                return;
+
+            if (suspended)
+            {
+                UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
+            }
+            else
+            {
+                RegisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
+            }
+        }
+
         private HumanoidComponent? GetHumanoidComponent()
             => Humanoid ?? (TryGetSiblingComponent<HumanoidComponent>(out var humanoid) ? humanoid : null);
 
@@ -40,7 +67,8 @@ namespace XREngine.Components
             base.OnComponentActivated();
             StateMachine.Initialize(this);
             StateMachine.VariableChanged += VariableChanged;
-            RegisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
+            if (!SuspendedByClip)
+                RegisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
 
             ReplicateParameterSchema(force: true);
         }
@@ -65,6 +93,9 @@ namespace XREngine.Components
 
         protected internal void EvaluationTick()
         {
+            if (SuspendedByClip)
+                return;
+
             StateMachine.EvaluationTick(this, Engine.Delta);
 
             // Keep schema in sync before sending any indexed changes.

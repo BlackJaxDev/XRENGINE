@@ -952,6 +952,7 @@ namespace XREngine.Rendering
             }
 
             // Diagnostic: Log camera transform state during render to help diagnose play mode transition issues
+            /*
             Debug.RenderingEvery(
                 $"XRViewport.Render.CameraState.{GetHashCode()}[{Index}]",
                 TimeSpan.FromSeconds(2),
@@ -968,7 +969,8 @@ namespace XREngine.Rendering
                 camera.Transform?.RenderTranslation.Y ?? 0,
                 camera.Transform?.RenderTranslation.Z ?? 0,
                 Engine.PlayMode.State);
-
+            */
+            
             //using (Engine.Profiler.Start("XRViewport.Render"))
             {
                 // Visibility-driven compute deformation (skinning/blendshapes).
