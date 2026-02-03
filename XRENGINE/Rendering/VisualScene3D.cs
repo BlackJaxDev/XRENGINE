@@ -82,12 +82,16 @@ namespace XREngine.Scene
             IVolume? collectionVolumeOverride,
             bool collectMirrors)
         {
+            using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems");
+
             XRCamera? cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
             IVolume? collectionVolume = collectionVolumeOverride ?? (cullWithFrustum ? cullingCamera?.WorldFrustum() : null);
             CollectRenderedItems(meshRenderCommands, collectionVolume, camera, collectMirrors);
         }
         public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera, bool collectMirrors)
         {
+            using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItems");
+
             bool IntersectionTest(RenderInfo3D item, IVolume? cullingVolume, bool containsOnly)
                 => item.AllowRender(cullingVolume, commands, camera, containsOnly, collectMirrors);
 
@@ -260,19 +264,19 @@ namespace XREngine.Scene
 
             foreach (var mesh in _skinnedMeshes)
             {
-                // Kick skinned BVH scheduling; call-through schedules async if required.
-                _ = mesh.GetSkinnedBvh();
+                // Use cached skinned BVHs during culling; avoid triggering rebuilds on every bone update.
+                _ = mesh.GetSkinnedBvh(allowRebuild: false);
             }
         }
 
         private void CollectRenderedItemsGpu(RenderCommandCollection commands, IVolume? collectionVolume, XRCamera? camera, bool collectMirrors)
         {
+            using var sample = Engine.Profiler.Start("VisualScene3D.CollectRenderedItemsGpu");
+
             var snapshot = _renderables.ToArray();
             foreach (var renderable in snapshot)
-            {
                 if (renderable.AllowRender(collectionVolume, commands, camera, false, collectMirrors))
                     renderable.CollectCommands(commands, camera);
-            }
         }
 
         private void TrackRenderable(RenderInfo3D renderable)

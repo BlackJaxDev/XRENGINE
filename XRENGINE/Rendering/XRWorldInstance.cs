@@ -702,6 +702,8 @@ namespace XREngine.Rendering
 
             _pushToRenderWrite.Clear();
             _invalidTransforms.ForEach(x => x.Value.Clear());
+            Volatile.Write(ref _dirtyMinDepth, int.MaxValue);
+            Volatile.Write(ref _dirtyMaxDepth, int.MinValue);
         }
 
         private void PostUpdate()
@@ -718,8 +720,16 @@ namespace XREngine.Rendering
 
             //Sequentially iterate through each depth of modified transforms, in order
             //This will set each transforms' WorldMatrix, which will push it into the _pushToRenderWrite queue
-            foreach (var item in _invalidTransforms.OrderBy(x => x.Key))
-                recalcDepth(item.Value).Wait();
+            int minDepth = Volatile.Read(ref _dirtyMinDepth);
+            int maxDepth = Volatile.Read(ref _dirtyMaxDepth);
+            if (minDepth <= maxDepth)
+            {
+                for (int depth = minDepth; depth <= maxDepth; depth++)
+                {
+                    if (_invalidTransforms.TryGetValue(depth, out var bag) && bag.Count > 0)
+                        recalcDepth(bag).Wait();
+                }
+            }
 
             //Capture of a snapshot of the queue to be processed in the render thread
             _pushToRenderWrite = Interlocked.Exchange(ref _pushToRenderSnapshot, _pushToRenderWrite);
@@ -759,17 +769,21 @@ namespace XREngine.Rendering
             if (!bag.Any())
                 return Task.CompletedTask;
 
-            return Task.Run(() => Parallel.ForEach(bag, tfm =>
+            Parallel.ForEach(bag, tfm =>
                 tfm.RecalculateMatrixHierarchy(
                     forceWorldRecalc: true,
                     setRenderMatrixNow: false,
                     childRecalcType: ELoopType.Parallel)
-                .GetAwaiter().GetResult()));
+                .GetAwaiter().GetResult());
+
+            return Task.CompletedTask;
         }
 
         private ConcurrentQueue<(TransformBase tfm, Matrix4x4 renderMatrix)> _pushToRenderWrite = new();
         private ConcurrentQueue<(TransformBase tfm, Matrix4x4 renderMatrix)> _pushToRenderSnapshot = new();
         private readonly ConcurrentDictionary<int, ConcurrentHashSet<TransformBase>> _invalidTransforms = [];
+        private int _dirtyMinDepth = int.MaxValue;
+        private int _dirtyMaxDepth = int.MinValue;
 
         /// <summary>
         /// Enqueues a transform to be recalculated at the end of the update after user code has been executed.
@@ -781,6 +795,22 @@ namespace XREngine.Rendering
                 return;
 
             _invalidTransforms.GetOrAdd(transform.Depth, i => []).Add(transform);
+            UpdateDirtyDepthRange(transform.Depth);
+        }
+
+        private void UpdateDirtyDepthRange(int depth)
+        {
+            int currentMin;
+            while (depth < (currentMin = Volatile.Read(ref _dirtyMinDepth)) &&
+                   Interlocked.CompareExchange(ref _dirtyMinDepth, depth, currentMin) != currentMin)
+            {
+            }
+
+            int currentMax;
+            while (depth > (currentMax = Volatile.Read(ref _dirtyMaxDepth)) &&
+                   Interlocked.CompareExchange(ref _dirtyMaxDepth, depth, currentMax) != currentMax)
+            {
+            }
         }
 
         private XRWorld? _targetWorld;

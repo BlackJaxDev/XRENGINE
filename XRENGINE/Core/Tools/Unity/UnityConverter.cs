@@ -5,6 +5,18 @@ namespace XREngine.Core.Tools.Unity
 {
     public static class UnityConverter
     {
+        /// <summary>
+        /// Converts a Unity TangentMode to an EVectorInterpType.
+        /// </summary>
+        private static EVectorInterpType ToInterpType(TangentMode mode)
+            => mode switch
+            {
+                TangentMode.Constant => EVectorInterpType.Step,
+                TangentMode.Linear => EVectorInterpType.Linear,
+                TangentMode.Free or TangentMode.Auto or TangentMode.ClampedAuto => EVectorInterpType.Smooth,
+                _ => EVectorInterpType.Smooth,
+            };
+
         public static AnimationClip ConvertFloatAnimation(UnityAnimationClip animClip)
         {
             var settings = animClip.AnimationClipSettings;
@@ -21,15 +33,20 @@ namespace XREngine.Core.Tools.Unity
                 };
                 var path = curve.Path;
                 var attrib = curve.Attribute;
-                var kfs = curve.Curve?.Curve?.Select(kf => new FloatKeyframe
+                var kfs = curve.Curve?.Curve?.Select(kf =>
                 {
-                    Second = kf.Time,
-                    InValue = kf.Value,
-                    OutValue = kf.Value,
-                    InTangent = kf.InSlope,
-                    OutTangent = kf.OutSlope,
-                    InterpolationTypeIn = EVectorInterpType.Smooth,
-                    InterpolationTypeOut = EVectorInterpType.Smooth,
+                    var leftTangentMode = TangentModeHelper.GetLeftTangentMode(kf.CombinedTangentMode);
+                    var rightTangentMode = TangentModeHelper.GetRightTangentMode(kf.CombinedTangentMode);
+                    return new FloatKeyframe
+                    {
+                        Second = kf.Time,
+                        InValue = kf.Value,
+                        OutValue = kf.Value,
+                        InTangent = kf.InSlope,
+                        OutTangent = kf.OutSlope,
+                        InterpolationTypeIn = ToInterpType(leftTangentMode),
+                        InterpolationTypeOut = ToInterpType(rightTangentMode),
+                    };
                 });
                 if (kfs is not null)
                     anim.Keyframes.Add(kfs);

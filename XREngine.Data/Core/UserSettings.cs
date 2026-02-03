@@ -1,5 +1,6 @@
 ﻿using MemoryPack;
 using System.ComponentModel;
+using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Vectors;
 
@@ -12,8 +13,21 @@ namespace XREngine
     /// </summary>
     [Serializable]
     [MemoryPackable]
-    public partial class UserSettings : XRBase
+    public partial class UserSettings : OverrideableSettingsAssetBase
     {
+        public UserSettings()
+        {
+            // Note: base class OverrideableSettingsAssetBase already calls TrackOverrideableSettings()
+        }
+
+        protected override void OnOverrideableSettingChanged(string propertyName, IOverrideableSetting setting, IXRPropertyChangedEventArgs e)
+        {
+            base.OnOverrideableSettingChanged(propertyName, setting, e);
+
+            if (!IsDirty)
+                MarkDirty();
+        }
+
         private EWindowState _windowState = EWindowState.Windowed;
         private EVSyncMode _vSyncMode = EVSyncMode.Adaptive;
         private EEngineQuality _textureQuality = EEngineQuality.Highest;

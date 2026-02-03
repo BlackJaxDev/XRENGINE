@@ -656,7 +656,19 @@ namespace XREngine.Components.Physics
             base.OnComponentActivated();
             Debug.Physics("[DynamicRigidBodyComponent] Activating component on {0}", SceneNode?.Name ?? "<unnamed>");
             EnsureRigidBodyConstructed();
-            ApplyAllCachedProperties();
+            if (Engine.IsPhysicsThread)
+            {
+                ApplyAllCachedProperties();
+            }
+            else
+            {
+                Engine.EnqueuePhysicsThreadTask(() =>
+                {
+                    if (!IsActive || RigidBody is null)
+                        return;
+                    ApplyAllCachedProperties();
+                });
+            }
             TryRegisterRigidBodyWithScene();
         }
 

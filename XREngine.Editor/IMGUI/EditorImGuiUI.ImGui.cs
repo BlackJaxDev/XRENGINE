@@ -1486,6 +1486,15 @@ public static partial class EditorImGuiUI
 
             _showInspector = true;
             SetInspectorStandaloneTarget(settingsRoot, title);
+
+            if (settingsRoot is XRAsset inspectedAsset)
+            {
+                _inspectorAssetContext = inspectedAsset.SourceAsset;
+            }
+            else
+            {
+                _inspectorAssetContext = null;
+            }
         }
 
         private static void SetInspectorStandaloneTarget(object target, string? title, Action? onClear = null)
@@ -1518,6 +1527,7 @@ public static partial class EditorImGuiUI
                 _inspectorStandaloneTarget = null;
                 _inspectorStandaloneTitle = null;
                 _inspectorStandaloneClearAction = null;
+                _inspectorAssetContext = null;
             }
         }
 

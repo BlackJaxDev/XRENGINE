@@ -809,6 +809,7 @@ namespace XREngine.Rendering
             }
 
             // Per-viewport state snapshot (only a few times a second)
+            /*
             Debug.RenderingEvery(
                 keyBase + ".ViewportSummary",
                 TimeSpan.FromSeconds(2),
@@ -817,12 +818,15 @@ namespace XREngine.Rendering
                 Viewports.Count,
                 TargetWorldInstance?.TargetWorld?.Name ?? "<null>",
                 useScenePanelMode);
-
+            */
+            
             foreach (var vp in Viewports)
             {
                 var activeCamera = vp.ActiveCamera;
                 var world = vp.World;
                 bool hasPipeline = vp.RenderPipelineInstance.Pipeline is not null;
+
+                /*
                 Debug.RenderingEvery(
                     keyBase + $".VP.{vp.Index}",
                     TimeSpan.FromSeconds(2),
@@ -838,6 +842,7 @@ namespace XREngine.Rendering
                     world is null,
                     !hasPipeline,
                     vp.AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
+                */
             }
         }
 

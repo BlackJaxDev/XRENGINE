@@ -104,8 +104,13 @@ namespace XREngine
             /// Contains global rendering settings.
             /// </summary>
             [MemoryPackable(GenerateType.NoGenerate)]
-            public partial class EngineSettings : XRAsset
+            public partial class EngineSettings : OverrideableSettingsAssetBase
             {
+                public EngineSettings()
+                {
+                    TrackOverrideableSettings();
+                }
+
                 #region Debug/Logging Settings (moved from UserSettings)
 
                 private bool _enableFrameLogging = true;

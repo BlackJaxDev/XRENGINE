@@ -185,6 +185,24 @@ namespace XREngine.Scene
             => ComponentsInternal.FirstOrDefault(x => string.Equals(x.GetType().Name, typeName));
 
         /// <summary>
+        /// Returns the first component with the specified type name on this node or any descendant.
+        /// </summary>
+        /// <param name="typeName">The simple name of the component type to find.</param>
+        /// <returns>The first matching component, or <c>null</c> if not found.</returns>
+        public XRComponent? GetComponentInHierarchy(string typeName)
+        {
+            XRComponent? found = null;
+            IterateComponents(component =>
+            {
+                if (found is not null)
+                    return;
+                if (string.Equals(component.GetType().Name, typeName))
+                    found = component;
+            }, iterateChildHierarchy: true);
+            return found;
+        }
+
+        /// <summary>
         /// Returns the component at the given index.
         /// </summary>
         public XRComponent? GetComponentAtIndex(int index)

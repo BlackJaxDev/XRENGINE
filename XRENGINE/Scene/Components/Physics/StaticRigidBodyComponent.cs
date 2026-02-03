@@ -247,7 +247,19 @@ namespace XREngine.Components.Physics
         {
             base.OnComponentActivated();
             EnsureRigidBodyConstructed();
-            ApplyCachedProperties();
+            if (Engine.IsPhysicsThread)
+            {
+                ApplyCachedProperties();
+            }
+            else
+            {
+                Engine.EnqueuePhysicsThreadTask(() =>
+                {
+                    if (!IsActive || RigidBody is null)
+                        return;
+                    ApplyCachedProperties();
+                });
+            }
             TryRegisterRigidBodyWithScene();
         }
 

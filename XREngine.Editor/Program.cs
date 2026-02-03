@@ -61,6 +61,15 @@ internal class Program
         StartEditorStartupTimer();
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
+        // Install global trace listener to capture System.Diagnostics.Debug output from external libraries
+        // and route it through the engine's logging system (console panel + log files)
+        XREngine.TraceListener.GlobalMessageCallback = message =>
+        {
+            if (!string.IsNullOrEmpty(message))
+                EngineDebug.Log(ELogCategory.General, message.TrimEnd('\r', '\n'));
+        };
+        XREngine.TraceListener.InstallGlobalListener();
+
         if (TryHandleCommandLine(args))
             return;
 

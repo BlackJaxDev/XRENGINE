@@ -13,6 +13,11 @@ namespace XREngine
     [MemoryPackable]
     public partial class EditorPreferences : XRAsset
     {
+        public EditorPreferences()
+        {
+            AttachSubSettings(_theme, _debug);
+        }
+
         public enum EViewportPresentationMode
         {
             FullViewportBehindImGuiUI,
@@ -91,6 +96,44 @@ namespace XREngine
         {
             get => _mcpServerPort;
             set => SetField(ref _mcpServerPort, Math.Max(1, Math.Min(65535, value)));
+        }
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+
+            if (propName == nameof(Theme))
+            {
+                if (prev is EditorThemeSettings previous)
+                    previous.PropertyChanged -= HandleSubSettingsChanged;
+
+                if (field is EditorThemeSettings current)
+                    current.PropertyChanged += HandleSubSettingsChanged;
+            }
+
+            if (propName == nameof(Debug))
+            {
+                if (prev is EditorDebugOptions previous)
+                    previous.PropertyChanged -= HandleSubSettingsChanged;
+
+                if (field is EditorDebugOptions current)
+                    current.PropertyChanged += HandleSubSettingsChanged;
+            }
+        }
+
+        private void AttachSubSettings(EditorThemeSettings? theme, EditorDebugOptions? debug)
+        {
+            if (theme is not null)
+                theme.PropertyChanged += HandleSubSettingsChanged;
+
+            if (debug is not null)
+                debug.PropertyChanged += HandleSubSettingsChanged;
+        }
+
+        private void HandleSubSettingsChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (!IsDirty)
+                MarkDirty();
         }
 
         public void CopyFrom(EditorPreferences source)

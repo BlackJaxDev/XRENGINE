@@ -75,6 +75,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             var pixelType = useHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
 
             XRTexture outputTexture;
+            const int bloomMaxMipmapLevel = 4;
             if (Stereo)
             {
                 var t = XRTexture2DArray.CreateFrameBufferTexture(
@@ -86,6 +87,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                     pixelType);
                 t.Resizable = false;
                 t.SizedInternalFormat = sizedInternalFormat;
+                t.LargestMipmapLevel = 0;
+                t.SmallestAllowedMipmapLevel = bloomMaxMipmapLevel;
                 t.OVRMultiViewParameters = new(0, 2u);
                 t.Name = BloomOutputTextureName;
                 t.SamplerName = BloomOutputTextureName;
@@ -108,6 +111,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 // Mark as non-resizable so the GL backend uses immutable storage (TexStorage) with mip levels.
                 t.Resizable = false;
                 t.SizedInternalFormat = sizedInternalFormat;
+                t.LargestMipmapLevel = 0;
+                t.SmallestAllowedMipmapLevel = bloomMaxMipmapLevel;
                 t.Name = BloomOutputTextureName;
                 t.SamplerName = BloomOutputTextureName;
                 t.MagFilter = ETexMagFilter.Linear;

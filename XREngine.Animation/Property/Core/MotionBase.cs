@@ -13,10 +13,21 @@ namespace XREngine.Animation
     [MemoryPackUnion(3, typeof(BlendTreeDirect))]
     public abstract partial class MotionBase : XRAsset
     {
+        // Track logged messages to avoid spamming the same warnings
+        private static readonly HashSet<string> _loggedWarnings = [];
+        
+        private static void LogWarningOnce(string message)
+        {
+            if (_loggedWarnings.Add(message))
+                Debug.WriteLine(message);
+        }
+
         [MemoryPackIgnore]
         protected readonly Dictionary<string, AnimationMember> _animatedCurves = [];
         [MemoryPackIgnore]
         protected internal Dictionary<string, object?> _animationValues = [];
+        [MemoryPackIgnore]
+        private readonly object _animationValuesLock = new();
 
         [MemoryPackIgnore]
         public Dictionary<string, object?> AnimationValues => _animationValues;
@@ -92,20 +103,39 @@ namespace XREngine.Animation
                 return;
 
             object? prevObject = parentObject;
-            parentObject = member.Initialize?.Invoke(parentObject);
+            
+            // Fallback: If Initialize delegate is null but we have a valid MemberType, call the appropriate method directly
+            if (member.Initialize is null && member.MemberType != EAnimationMemberType.Group)
+            {
+                LogWarningOnce($"[Animation] Initialize delegate was null for member '{member.MemberName}' (type={member.MemberType}). Calling initialization directly.");
+                parentObject = member.MemberType switch
+                {
+                    EAnimationMemberType.Field => member.InitializeField(parentObject),
+                    EAnimationMemberType.Property => member.InitializeProperty(parentObject),
+                    EAnimationMemberType.Method => member.InitializeMethod(parentObject),
+                    _ => parentObject
+                };
+            }
+            else
+            {
+                parentObject = member.Initialize?.Invoke(parentObject);
+            }
 
             // If we had a parent object and initialization returns null, the animation path is broken at this segment.
             // This commonly happens when scene node names don't match (e.g., FindDescendantByName("Body") returns null).
-            if (prevObject is not null && member.Initialize is not null && parentObject is null && member.MemberType != EAnimationMemberType.Group)
+            // Only log for humanoid/important paths, not blendshapes which commonly have mismatches
+            if (prevObject is not null && member.MemberType != EAnimationMemberType.Group && parentObject is null)
             {
                 string brokenAt = string.IsNullOrEmpty(path) ? member.MemberName : $"{path}{member.MemberName}";
-                System.Diagnostics.Debug.WriteLine($"[Animation] Broken animation path at '{brokenAt}' (segment '{member.MemberName}') on '{prevObject.GetType().Name}'.");
+                // Log GetComponent/GetComponentInHierarchy failures (HumanoidComponent, etc), not FindDescendantByName (blendshape mesh paths)
+                if (member.MemberName == "GetComponent" || member.MemberName == "GetComponentInHierarchy")
+                    LogWarningOnce($"[Animation] Broken animation path at '{brokenAt}' (segment '{member.MemberName}') on '{prevObject.GetType().Name}'. Humanoid animation will not work.");
             }
 
             if (member.MemberNotFound)
             {
                 string brokenAt = string.IsNullOrEmpty(path) ? member.MemberName : $"{path}{member.MemberName}";
-                System.Diagnostics.Debug.WriteLine($"[Animation] Animation member not found at '{brokenAt}' (segment '{member.MemberName}').");
+                LogWarningOnce($"[Animation] Animation member not found at '{brokenAt}' (segment '{member.MemberName}').");
             }
 
             if (member.MemberType != EAnimationMemberType.Group)
@@ -160,15 +190,30 @@ namespace XREngine.Animation
 
         protected internal void SetAnimValue(string path, object? animValue)
         {
-            if (!_animationValues.TryAdd(path, animValue))
-                _animationValues[path] = animValue;
+            lock (_animationValuesLock)
+            {
+                if (!_animationValues.TryAdd(path, animValue))
+                    _animationValues[path] = animValue;
+            }
+        }
+
+        public KeyValuePair<string, object?>[] GetAnimationValuesSnapshot()
+        {
+            lock (_animationValuesLock)
+                return _animationValues.ToArray();
+        }
+
+        public string[] GetAnimationValueKeysSnapshot()
+        {
+            lock (_animationValuesLock)
+                return [.. _animationValues.Keys];
         }
 
         /// <summary>
         /// Copies the animation values from the given dictionary to the current motion.
         /// </summary>
         /// <param name="animatedValues"></param>
-        private void CopyAnimationValuesFrom(Dictionary<string, object?>? animatedValues)
+        private void CopyAnimationValuesFrom(IEnumerable<KeyValuePair<string, object?>>? animatedValues)
         {
             if (animatedValues is null)
                 return;
@@ -359,7 +404,7 @@ namespace XREngine.Animation
         /// <param name="parentMotion"></param>
         /// <param name="motion"></param>
         public void CopyAnimationValuesFrom(MotionBase? motion)
-            => CopyAnimationValuesFrom(motion?._animationValues);
+            => CopyAnimationValuesFrom(motion?.GetAnimationValuesSnapshot());
 
         /// <summary>
         /// Blends the animation values of the two given child motions into this motion.

@@ -59,6 +59,8 @@ namespace XREngine.Animation
         protected internal Dictionary<string, object?> _animationValues = [];
         [MemoryPackIgnore]
         protected internal readonly Dictionary<string, AnimationMember> _animatedCurves = [];
+        [MemoryPackIgnore]
+        private readonly object _animationValuesLock = new();
 
         public void Initialize(object? rootObject)
         {
@@ -86,25 +88,39 @@ namespace XREngine.Animation
         private void CombineAnimationValues(AnimLayer layer)
         {
             //Merge animation paths from the last layer into this layer
-            IEnumerable<string> currLayerKeys = layer._animatedValues.Keys;
+            // Take a snapshot of keys to avoid concurrent modification
+            string[] currLayerKeys;
+            lock (layer._animationValuesLock)
+            {
+                currLayerKeys = [.. layer._animatedValues.Keys];
+            }
 
             //First layer is always the initial setter, can't be additive
             bool additive = layer.ApplyType == EApplyType.Additive;
 
-            foreach (var key in currLayerKeys)
+            lock (_animationValuesLock)
             {
-                //Does the value already exist?
-                if (_animationValues.TryGetValue(key, out object? currentValue))
+                foreach (var key in currLayerKeys)
                 {
-                    if (!layer._animatedValues.TryGetValue(key, out var layerValue))
-                        continue;
-                    
-                    _animationValues[key] = additive
-                        ? AddValues(currentValue, layerValue)
-                        : layerValue;
+                    object? layerValue;
+                    lock (layer._animationValuesLock)
+                    {
+                        if (!layer._animatedValues.TryGetValue(key, out layerValue))
+                            continue;
+                    }
+
+                    //Does the value already exist?
+                    if (_animationValues.TryGetValue(key, out object? currentValue))
+                    {
+                        _animationValues[key] = additive
+                            ? AddValues(currentValue, layerValue)
+                            : layerValue;
+                    }
+                    else
+                    {
+                        _animationValues.TryAdd(key, layerValue);
+                    }
                 }
-                else if (layer._animatedValues.TryGetValue(key, out var layerValue))
-                    _animationValues.Add(key, layerValue);
             }
         }
 
@@ -120,7 +136,13 @@ namespace XREngine.Animation
 
         public void ApplyAnimationValues()
         {
-            foreach (var kvp in _animationValues)
+            KeyValuePair<string, object?>[] snapshot;
+            lock (_animationValuesLock)
+            {
+                snapshot = [.. _animationValues];
+            }
+            
+            foreach (var kvp in snapshot)
                 if (_animatedCurves.TryGetValue(kvp.Key, out var member))
                     member.ApplyAnimationValue(kvp.Value);
         }

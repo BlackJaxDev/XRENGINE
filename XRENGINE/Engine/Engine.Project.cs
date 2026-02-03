@@ -9,7 +9,6 @@ namespace XREngine
 {
     public static partial class Engine
     {
-        private static ProjectUserSettings? _trackedProjectUserSettings;
         private const string SandboxFolderName = "Sandbox";
         private const string SandboxConfigFolderName = "Config";
         /// <summary>
@@ -82,6 +81,9 @@ namespace XREngine
             // Load project-specific build settings
             LoadProjectBuildSettings();
 
+            // Clear any dirty state that accumulated during loading
+            ClearSettingsDirtyState();
+
             Debug.Out($"Project loaded: {project.ProjectName}");
             ProjectLoaded?.Invoke(project);
             return true;
@@ -112,6 +114,25 @@ namespace XREngine
             LoadSandboxEditorPreferencesOverrides();
             LoadSandboxUserSettings();
             LoadSandboxBuildSettings();
+
+            // Clear any dirty state that accumulated during initialization.
+            // Settings created during startup (e.g., VRGameStartupSettings with DefaultUserSettings)
+            // may have been marked dirty before the actual saved settings were loaded.
+            ClearSettingsDirtyState();
+        }
+
+        /// <summary>
+        /// Clears dirty state on all engine settings objects.
+        /// Called after loading settings to ensure a clean starting state.
+        /// </summary>
+        private static void ClearSettingsDirtyState()
+        {
+            _globalEditorPreferences?.ClearDirty();
+            _editorPreferencesOverrides?.ClearDirty();
+            _userSettings?.ClearDirty();
+            _gameSettings?.ClearDirty();
+            _gameSettings?.BuildSettings?.ClearDirty();
+            _gameSettings?.DefaultUserSettings?.ClearDirty();
         }
 
         private static string? GetSandboxConfigDirectory()
@@ -266,31 +287,26 @@ namespace XREngine
 
             if (File.Exists(userSettingsPath))
             {
-                var projectSettings = Assets.Load<ProjectUserSettings>(userSettingsPath);
-                if (projectSettings?.Settings is not null)
+                var loadedSettings = Assets.Load<UserSettings>(userSettingsPath);
+                if (loadedSettings is not null)
                 {
-                    projectSettings.Name = "User Settings";
-                    _trackedProjectUserSettings = projectSettings;
-                    UserSettings = projectSettings.Settings;
+                    loadedSettings.Name = "User Settings";
+                    UserSettings = loadedSettings;
                     Debug.Out("Loaded project user settings.");
                 }
                 return;
             }
 
-            // No file yet: create a tracked settings asset so changes show up in Save/Save All like any other file.
-            var created = new ProjectUserSettings(UserSettings)
-            {
-                FilePath = userSettingsPath,
-                Name = "User Settings"
-            };
+            // No file yet: ensure UserSettings is tracked so changes show up in Save/Save All
+            UserSettings.FilePath = userSettingsPath;
+            UserSettings.Name = "User Settings";
 
             string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
                 Directory.CreateDirectory(settingsDirectory);
 
-            Assets.EnsureTracked(created);
-            _trackedProjectUserSettings = created;
-            created.MarkDirty();
+            Assets.EnsureTracked(UserSettings);
+            UserSettings.MarkDirty();
         }
 
         private static void LoadSandboxUserSettings()
@@ -301,30 +317,26 @@ namespace XREngine
 
             if (File.Exists(userSettingsPath))
             {
-                var projectSettings = Assets.Load<ProjectUserSettings>(userSettingsPath);
-                if (projectSettings?.Settings is not null)
+                var loadedSettings = Assets.Load<UserSettings>(userSettingsPath);
+                if (loadedSettings is not null)
                 {
-                    projectSettings.Name = "User Settings";
-                    _trackedProjectUserSettings = projectSettings;
-                    UserSettings = projectSettings.Settings;
+                    loadedSettings.Name = "User Settings";
+                    UserSettings = loadedSettings;
                     Debug.Out("Loaded sandbox user settings.");
                 }
                 return;
             }
 
-            var created = new ProjectUserSettings(UserSettings)
-            {
-                FilePath = userSettingsPath,
-                Name = "User Settings"
-            };
+            // No file yet: ensure UserSettings is tracked so changes show up in Save/Save All
+            UserSettings.FilePath = userSettingsPath;
+            UserSettings.Name = "User Settings";
 
             string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
                 Directory.CreateDirectory(settingsDirectory);
 
-            Assets.EnsureTracked(created);
-            _trackedProjectUserSettings = created;
-            created.MarkDirty();
+            Assets.EnsureTracked(UserSettings);
+            UserSettings.MarkDirty();
         }
 
         /// <summary>
@@ -485,30 +497,15 @@ namespace XREngine
 
             string userSettingsPath = CurrentProject.UserSettingsPath;
 
-            ProjectUserSettings projectSettings;
-            if (_trackedProjectUserSettings is not null)
-            {
-                projectSettings = _trackedProjectUserSettings;
-                projectSettings.FilePath = userSettingsPath;
-                projectSettings.Name = "User Settings";
-                if (!ReferenceEquals(projectSettings.Settings, UserSettings))
-                    projectSettings.Settings = UserSettings;
-            }
-            else
-            {
-                projectSettings = Assets.GetAssetByPath(userSettingsPath) as ProjectUserSettings
-                    ?? new ProjectUserSettings(UserSettings);
-                projectSettings.FilePath = userSettingsPath;
-                projectSettings.Name = "User Settings";
-                Assets.EnsureTracked(projectSettings);
-                _trackedProjectUserSettings = projectSettings;
-            }
+            UserSettings.FilePath = userSettingsPath;
+            UserSettings.Name = "User Settings";
+            Assets.EnsureTracked(UserSettings);
 
             string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
                 Directory.CreateDirectory(settingsDirectory);
             
-            Assets.Save(projectSettings);
+            Assets.Save(UserSettings);
             Debug.Out("Saved project user settings.");
         }
 
@@ -521,30 +518,15 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(userSettingsPath))
                 return;
 
-            ProjectUserSettings projectSettings;
-            if (_trackedProjectUserSettings is not null)
-            {
-                projectSettings = _trackedProjectUserSettings;
-                projectSettings.FilePath = userSettingsPath;
-                projectSettings.Name = "User Settings";
-                if (!ReferenceEquals(projectSettings.Settings, UserSettings))
-                    projectSettings.Settings = UserSettings;
-            }
-            else
-            {
-                projectSettings = Assets.GetAssetByPath(userSettingsPath) as ProjectUserSettings
-                    ?? new ProjectUserSettings(UserSettings);
-                projectSettings.FilePath = userSettingsPath;
-                projectSettings.Name = "User Settings";
-                Assets.EnsureTracked(projectSettings);
-                _trackedProjectUserSettings = projectSettings;
-            }
+            UserSettings.FilePath = userSettingsPath;
+            UserSettings.Name = "User Settings";
+            Assets.EnsureTracked(UserSettings);
 
             string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
                 Directory.CreateDirectory(settingsDirectory);
 
-            Assets.Save(projectSettings);
+            Assets.Save(UserSettings);
             Debug.Out("Saved sandbox user settings.");
         }
 
