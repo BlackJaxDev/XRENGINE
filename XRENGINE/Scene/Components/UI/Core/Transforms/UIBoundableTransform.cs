@@ -185,6 +185,9 @@ namespace XREngine.Rendering.UI
             return false;
         }
 
+        // Internal accessor for UILayoutSystem
+        internal bool ShouldMarkLocalMatrixChangedInternal() => ShouldMarkLocalMatrixChanged();
+
         private Vector2 _prevActualBottomLeftTranslation = Vector2.Zero;
         private float _prevDepthTranslation = 0.0f;
         private float _prevRotationRadians = 0.0f;
@@ -257,71 +260,20 @@ namespace XREngine.Rendering.UI
         {
             using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(OnResizeActual)}");
 
+            // Use the virtual method which can be overridden in derived classes
             GetActualBounds(parentBounds, out Vector2 bottomLeftTranslation, out Vector2 size);
             RemakeAxisAlignedRegion(size, WorldMatrix);
-            ActualSize = size;
-            ActualLocalBottomLeftTranslation = bottomLeftTranslation;
-        }
-
-        /// <summary>
-        /// This method calculates the actual size and bottom left translation of the component.
-        /// </summary>
-        /// <param name="parentBounds"></param>
-        /// <param name="bottomLeftTranslation"></param>
-        /// <param name="size"></param>
-        protected virtual void GetActualBounds(BoundingRectangleF parentBounds, out Vector2 bottomLeftTranslation, out Vector2 size)
-        {
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(GetActualBounds)}");
-
-            GetAnchors(
-                parentBounds.Width,
-                parentBounds.Height,
-                out float minX,
-                out float minY,
-                out float maxX,
-                out float maxY);
-
-            bool sameX = XRMath.Approx(maxX, minX);
-            bool sameY = XRMath.Approx(maxY, minY);
-
-            size = Vector2.Zero;
-            if (sameX)
-            {
-                //If the min and max anchors are the same, use the width of the component.
-                size.X = GetWidth();
-            }
-            else
-            {
-                //Otherwise, calculate the size based on the anchors.
-                //Translation is used as the translation from the min anchor, and width is used as the translation from the max anchor.
-                size.X = (maxX + (Width ?? 0)) - (minX + Translation.X);
-            }
-            if (sameY)
-            {
-                //If the min and max anchors are the same, use the height of the component.
-                size.Y = GetHeight();
-            }
-            else
-            {
-                //Otherwise, calculate the size based on the anchors.
-                //Translation is used as the translation from the min anchor, and height is used as the translation from the max anchor.
-                size.Y = (maxY + (Height ?? 0)) - (minY + Translation.Y);
-            }
-
-            //Clamp the size to the min and max size.
-            ClampSize(ref size);
-
-            //Adjust the translation based on the pivot.
-            minX -= NormalizedPivot.X * size.X;
-            minY -= NormalizedPivot.Y * size.Y;
-
-            //If the min and max anchors are the same, add the translation to the min anchor position.
-            if (sameX)
-                minX += Translation.X;
-            if (sameY)
-                minY += Translation.Y;
-
-            bottomLeftTranslation = new(minX + Margins.X, minY + Margins.Y);
+            
+            // Check if anything actually changed before marking dirty
+            bool sizeChanged = !XRMath.VectorsEqual(_actualSize, size);
+            bool posChanged = !XRMath.VectorsEqual(_actualLocalBottomLeftTranslation, bottomLeftTranslation);
+            
+            _actualSize = size;
+            _actualLocalBottomLeftTranslation = bottomLeftTranslation;
+            
+            // Only mark modified if bounds actually changed to avoid unnecessary recalcs
+            if (sizeChanged || posChanged)
+                MarkLocalModified(true); // Force deferred to avoid re-entrant layout
         }
 
         /// <summary>
@@ -365,124 +317,60 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public override Vector2 Measure(Vector2 availableSize)
         {
-            if (IsCollapsed)
-            {
-                _desiredSize = Vector2.Zero;
-                _lastMeasuredVersion = _layoutVersion;
-                return _desiredSize;
-            }
-
-            // Skip if already measured with same constraints and not dirty
-            if (!NeedsMeasure && XRMath.VectorsEqual(_lastMeasureConstraint, availableSize))
-                return _desiredSize;
-
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(Measure)}");
-
-            _lastMeasureConstraint = availableSize;
-
-            // Calculate desired size based on explicit dimensions or auto-sizing
-            float desiredWidth;
-            float desiredHeight;
-
-            if (Width.HasValue)
-            {
-                desiredWidth = Width.Value;
-            }
-            else
-            {
-                // Auto width: use callback or measure children
-                if (CalcAutoWidthCallback != null)
-                    desiredWidth = CalcAutoWidthCallback(this);
-                else
-                    desiredWidth = MeasureChildrenWidth(availableSize);
-            }
-
-            if (Height.HasValue)
-            {
-                desiredHeight = Height.Value;
-            }
-            else
-            {
-                // Auto height: use callback or measure children
-                if (CalcAutoHeightCallback != null)
-                    desiredHeight = CalcAutoHeightCallback(this);
-                else
-                    desiredHeight = MeasureChildrenHeight(availableSize);
-            }
-
-            _desiredSize = new Vector2(desiredWidth, desiredHeight);
-
-            // Apply size constraints
-            ClampSize(ref _desiredSize);
-
-            // Add margins to desired size for parent layout calculations
-            _desiredSize = new Vector2(
-                ApplyHorizontalMargins(_desiredSize.X),
-                ApplyVerticalMargins(_desiredSize.Y)
-            );
-
-            _lastMeasuredVersion = _layoutVersion;
-            return _desiredSize;
+            return UILayoutSystem.MeasureBoundable(this, availableSize);
         }
 
         /// <summary>
         /// Measures children to determine required width.
+        /// Can be overridden for custom layout (e.g., UIListTransform).
         /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         protected virtual float MeasureChildrenWidth(Vector2 availableSize)
         {
             return GetMaxChildWidth();
         }
 
+        // Internal accessor for UILayoutSystem to call the virtual method
+        internal float InvokeMeasureChildrenWidth(Vector2 availableSize) => MeasureChildrenWidth(availableSize);
+
         /// <summary>
         /// Measures children to determine required height.
+        /// Can be overridden for custom layout (e.g., UIListTransform).
         /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         protected virtual float MeasureChildrenHeight(Vector2 availableSize)
         {
             return GetMaxChildHeight();
         }
+
+        // Internal accessor for UILayoutSystem to call the virtual method
+        internal float InvokeMeasureChildrenHeight(Vector2 availableSize) => MeasureChildrenHeight(availableSize);
 
         /// <summary>
         /// Arrange phase: assigns final position and size.
         /// </summary>
         public override void Arrange(BoundingRectangleF finalBounds)
         {
-            // Skip if already arranged with same bounds and not dirty
-            if (!NeedsArrange && _lastArrangeBounds.Equals(finalBounds))
-                return;
-
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(Arrange)}");
-
-            _lastArrangeBounds = finalBounds;
-            OnResizeActual(ApplyMargins(finalBounds));
-            
-            if (ShouldMarkLocalMatrixChanged())
-                MarkLocalModified();
-
-            _lastArrangedVersion = _layoutVersion;
+            UILayoutSystem.ArrangeBoundable(this, finalBounds);
         }
 
         /// <summary>
         /// Arrange children within the padded region.
+        /// Can be overridden for custom layout (e.g., UIListTransform).
         /// </summary>
-        protected override void ArrangeChildren(BoundingRectangleF childRegion)
+        protected virtual void ArrangeChildren(BoundingRectangleF childRegion)
         {
-            var paddedRegion = ApplyPadding(childRegion);
-            try
-            {
-                foreach (var child in Children)
-                {
-                    if (child is UIBoundableTransform uiChild)
-                        uiChild.Arrange(paddedRegion);
-                    else if (child is UITransform uiTfm)
-                        uiTfm.Arrange(paddedRegion);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex);
-            }
+            UILayoutSystem.ArrangeChildrenBoundable(this, childRegion);
+        }
+
+        // Internal accessor for UILayoutSystem to call the virtual method
+        internal void InvokeArrangeChildren(BoundingRectangleF childRegion) => ArrangeChildren(childRegion);
+
+        /// <summary>
+        /// This method calculates the actual size and bottom left translation of the component.
+        /// Can be overridden for custom fit behavior (e.g., UIFittedTransform).
+        /// </summary>
+        protected virtual void GetActualBounds(BoundingRectangleF parentBounds, out Vector2 bottomLeftTranslation, out Vector2 size)
+        {
+            UILayoutSystem.GetActualBounds(this, parentBounds, out bottomLeftTranslation, out size);
         }
 
         #endregion
@@ -577,26 +465,6 @@ namespace XREngine.Rendering.UI
             //}
         }
 
-        private void ClampSize(ref Vector2 size)
-        {
-            if (MinWidth.HasValue)
-                size.X = Math.Max(size.X, MinWidth.Value);
-            if (MinHeight.HasValue)
-                size.Y = Math.Max(size.Y, MinHeight.Value);
-            if (MaxWidth.HasValue)
-                size.X = Math.Min(size.X, MaxWidth.Value);
-            if (MaxHeight.HasValue)
-                size.Y = Math.Min(size.Y, MaxHeight.Value);
-        }
-
-        private void GetAnchors(float parentWidth, float parentHeight, out float minX, out float minY, out float maxX, out float maxY)
-        {
-            minX = parentWidth * MinAnchor.X;
-            maxX = parentWidth * MaxAnchor.X;
-            minY = parentHeight * MinAnchor.Y;
-            maxY = parentHeight * MaxAnchor.Y;
-        }
-
         public BoundingRectangleF GetActualBounds()
             => new(_actualLocalBottomLeftTranslation, _actualSize);
 
@@ -607,11 +475,7 @@ namespace XREngine.Rendering.UI
         /// <param name="parentBounds"></param>
         public override void FitLayout(BoundingRectangleF parentBounds)
         {
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(FitLayout)}");
-
-            // Use the two-phase approach for better dirty tracking
-            Measure(parentBounds.Extents);
-            Arrange(parentBounds);
+            UILayoutSystem.FitLayout(this, parentBounds);
         }
 
         protected override void OnLocalMatrixChanged(Matrix4x4 localMatrix)

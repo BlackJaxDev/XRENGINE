@@ -11,7 +11,7 @@ namespace XREngine.Components.Lights
         protected override Lazy<XRMaterial> InvalidMaterialFactory => new(MakeInvalidMaterial, LazyThreadSafetyMode.PublicationOnly);
         private XRMaterial MakeInvalidMaterial()
         {
-            Debug.Out("Generating invalid material");
+            Debug.Rendering("Generating invalid material");
             return XRMaterial.CreateColorMaterialDeferred();
         }
 

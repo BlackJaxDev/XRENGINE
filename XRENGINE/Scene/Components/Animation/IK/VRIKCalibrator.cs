@@ -94,13 +94,13 @@ namespace XREngine.Components.Animation
         {
             if (!ik.Solver.Initialized)
             {
-                Debug.LogWarning("Can not calibrate before VRIK has initiated.");
+                Debug.Animation("Can not calibrate before VRIK has initiated.");
                 return null;
             }
 
             if (headTracker is null)
             {
-                Debug.LogWarning("Can not calibrate VRIK without the head tracker.");
+                Debug.Animation("Can not calibrate VRIK without the head tracker.");
                 return null;
             }
 
@@ -111,19 +111,19 @@ namespace XREngine.Components.Animation
             var root = ik.Root;
             if (root is null)
             {
-                Debug.LogWarning("Can not calibrate VRIK without a root transform.");
+                Debug.Animation("Can not calibrate VRIK without a root transform.");
                 return null;
             }
             var human = ik.Humanoid;
             if (human is null)
             {
-                Debug.LogWarning("Can not calibrate VRIK without a humanoid component.");
+                Debug.Animation("Can not calibrate VRIK without a humanoid component.");
                 return null;
             }
             var head = human.Head.Node?.GetTransformAs<Transform>(true);
             if (head is null)
             {
-                Debug.LogWarning("Can not calibrate VRIK without a head transform.");
+                Debug.Animation("Can not calibrate VRIK without a head transform.");
                 return null;
             }
 
@@ -260,7 +260,7 @@ namespace XREngine.Components.Animation
             SceneNode? headTrackerNode = headTracker.SceneNode;
             if (headTrackerNode is null)
             {
-                Debug.LogWarning("Can not calibrate VRIK without a root scene node.");
+                Debug.Animation("Can not calibrate VRIK without a root scene node.");
                 return spine.HeadTarget;
             }
 
@@ -276,7 +276,7 @@ namespace XREngine.Components.Animation
         {
             if (headTarget is null)
             {
-                Debug.LogWarning("Can not calibrate scale without a head target.");
+                Debug.Animation("Can not calibrate scale without a head target.");
                 return;
             }
             float targetDist = headTarget.WorldTranslation.Y - root.WorldTranslation.Y;
@@ -295,14 +295,14 @@ namespace XREngine.Components.Animation
         {
             if (hipTracker is null)
             {
-                Debug.LogWarning("Can not calibrate without a hip tracker.");
+                Debug.Animation("Can not calibrate without a hip tracker.");
                 return;
             }
 
             SceneNode? hipTrackerNode = hipTracker.SceneNode;
             if (hipTrackerNode is null)
             {
-                Debug.LogWarning("Can not create hips target without a hip tracker scene node.");
+                Debug.Animation("Can not create hips target without a hip tracker scene node.");
                 return;
             }
 
@@ -341,12 +341,12 @@ namespace XREngine.Components.Animation
             var trackerNode = tracker.SceneNode;
             if (trackerNode is null)
             {
-                Debug.LogWarning("Can not create bend goal without a tracker scene node.");
+                Debug.Animation("Can not create bend goal without a tracker scene node.");
                 return;
             }
             if (lastBone is null)
             {
-                Debug.LogWarning("Can not calibrate leg without the last bone transform.");
+                Debug.Animation("Can not calibrate leg without the last bone transform.");
                 return;
             }
 
@@ -512,14 +512,14 @@ namespace XREngine.Components.Animation
         {
             if (controllerTfm is null)
             {
-                Debug.LogWarning("Can not calibrate hand without a controller transform.");
+                Debug.Animation("Can not calibrate hand without a controller transform.");
                 return;
             }
 
             SceneNode? controllerNode = controllerTfm.SceneNode;
             if (controllerNode is null)
             {
-                Debug.LogWarning("Can not create hand target without a controller scene node.");
+                Debug.Animation("Can not create hand target without a controller scene node.");
                 return;
             }
 

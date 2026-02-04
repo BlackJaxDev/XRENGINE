@@ -19,6 +19,8 @@ namespace XREngine
         OpenGL,
         Physics,
         Audio,
+        Animation,
+        UI,
     }
 
     /// <summary>
@@ -64,6 +66,8 @@ namespace XREngine
             [ELogCategory.OpenGL] = null,
             [ELogCategory.Physics] = null,
             [ELogCategory.Audio] = null,
+            [ELogCategory.Animation] = null,
+            [ELogCategory.UI] = null,
         };
 
         /// <summary>
@@ -127,61 +131,6 @@ namespace XREngine
         private static string? _logSessionId;
         private static string? _logsRootDirectory;
         private static string? _logRunDirectory;
-        private static readonly List<(string Token, bool RequireBoundary)> OpenGlTokens = new()
-        {
-            ("opengl", false),
-            ("gl error", true),
-            ("gl warning", true),
-            ("gl_debug", true),
-            ("gl debug", true),
-            ("gl_invalid", true),
-            ("gl_out_of", true),
-            ("silk.net.opengl", false),
-        };
-
-        private static readonly List<(string Token, bool RequireBoundary)> RenderingTokens = new()
-        {
-            ("xreengine.rendering", false),
-            ("\\rendering\\", false),
-            ("/rendering/", false),
-            ("gpurenderpass", false),
-            ("gpu", false),
-            ("glbuffer", false),
-            ("gldatabuffer", false),
-            ("renderpass", false),
-            ("renderer", false),
-            ("rendering", false),
-            (" render", false),
-            ("render target", false),
-            ("drawcall", false),
-            ("framebuffer", false),
-            ("shader", false),
-            ("ensurecombinedprogram", false),
-            ("batch draw", false),
-            ("materialid", false),
-            ("creating new program", false),
-            ("program created and linked", false),
-            ("program cached", false),
-            ("added new viewport", false),
-            ("viewport", false),
-            ("xrwindow", false),
-            ("xrmesh", false),
-            ("mesh ", false),
-            ("mesh.", false),
-            ("mesh:", false),
-            ("mesh=", false),
-        };
-
-        private static readonly List<(string Token, bool RequireBoundary)> PhysicsTokens = new()
-        {
-            ("[physics]", false),
-            ("physics", true),
-            ("physx", false),
-            ("rigidbody", false),
-            ("collision", false),
-        };
-
-        private const string PhysicsPrefix = "[Physics]";
 
         /// <summary>
         /// Prints a message for debugging purposes.
@@ -203,23 +152,205 @@ namespace XREngine
         /// Convenience helper that routes output through the physics log.
         /// </summary>
         public static void Physics(string message, params object[] args)
-            => Log(ELogCategory.Physics, EOutputVerbosity.Normal, false, $"{PhysicsPrefix} {message}", args);
+            => Log(ELogCategory.Physics, EOutputVerbosity.Normal, false, message, args);
 
+        /// <summary>
+        /// Convenience helper that routes output through the rendering log.
+        /// </summary>
         public static void Rendering(string message, params object[] args)
             => Log(ELogCategory.Rendering, EOutputVerbosity.Normal, false, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the OpenGL log.
+        /// </summary>
         public static void OpenGL(string message, params object[] args)
             => Log(ELogCategory.OpenGL, EOutputVerbosity.Normal, false, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the audio log.
+        /// </summary>
         public static void Audio(string message, params object[] args)
             => Log(ELogCategory.Audio, EOutputVerbosity.Normal, false, message, args);
 
         /// <summary>
-        /// Logs a message under an explicit category (no keyword-based classification).
+        /// Convenience helper that routes output through the animation log.
+        /// </summary>
+        public static void Animation(string message, params object[] args)
+            => Log(ELogCategory.Animation, EOutputVerbosity.Normal, false, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the UI log.
+        /// </summary>
+        public static void UI(string message, params object[] args)
+            => Log(ELogCategory.UI, EOutputVerbosity.Normal, false, message, args);
+
+        #region Category-Specific Warnings
+
+        /// <summary>
+        /// Logs a warning message to the rendering log with stack trace.
+        /// </summary>
+        public static void RenderingWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.Rendering, message, args);
+
+        /// <summary>
+        /// Logs a warning message to the OpenGL log with stack trace.
+        /// </summary>
+        public static void OpenGLWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.OpenGL, message, args);
+
+        /// <summary>
+        /// Logs a warning message to the physics log with stack trace.
+        /// </summary>
+        public static void PhysicsWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.Physics, message, args);
+
+        /// <summary>
+        /// Logs a warning message to the audio log with stack trace.
+        /// </summary>
+        public static void AudioWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.Audio, message, args);
+
+        /// <summary>
+        /// Logs a warning message to the animation log with stack trace.
+        /// </summary>
+        public static void AnimationWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.Animation, message, args);
+
+        /// <summary>
+        /// Logs a warning message to the UI log with stack trace.
+        /// </summary>
+        public static void UIWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.UI, message, args);
+
+        /// <summary>
+        /// Logs a warning message under an explicit category with stack trace.
+        /// </summary>
+        public static void LogWarning(ELogCategory category, string message, params object[] args)
+        {
+#if DEBUG || EDITOR
+            if (args.Length > 0)
+                message = string.Format(message, args);
+            string stackTrace = GetStackTrace(4, 5);
+            WriteLogMessage($"[WARN] {message}{Environment.NewLine}{stackTrace}", Engine.GameSettings?.LogOutputToFile ?? false, category);
+#endif
+        }
+
+        #endregion
+
+        #region Category-Specific Exceptions
+
+        /// <summary>
+        /// Logs an exception to the rendering log.
+        /// </summary>
+        public static void RenderingException(Exception ex, string? message = null)
+            => LogException(ELogCategory.Rendering, ex, message);
+
+        /// <summary>
+        /// Logs an exception to the OpenGL log.
+        /// </summary>
+        public static void OpenGLException(Exception ex, string? message = null)
+            => LogException(ELogCategory.OpenGL, ex, message);
+
+        /// <summary>
+        /// Logs an exception to the physics log.
+        /// </summary>
+        public static void PhysicsException(Exception ex, string? message = null)
+            => LogException(ELogCategory.Physics, ex, message);
+
+        /// <summary>
+        /// Logs an exception to the audio log.
+        /// </summary>
+        public static void AudioException(Exception ex, string? message = null)
+            => LogException(ELogCategory.Audio, ex, message);
+
+        /// <summary>
+        /// Logs an exception to the animation log.
+        /// </summary>
+        public static void AnimationException(Exception ex, string? message = null)
+            => LogException(ELogCategory.Animation, ex, message);
+
+        /// <summary>
+        /// Logs an exception to the UI log.
+        /// </summary>
+        public static void UIException(Exception ex, string? message = null)
+            => LogException(ELogCategory.UI, ex, message);
+
+        /// <summary>
+        /// Logs an exception under an explicit category.
+        /// </summary>
+        public static void LogException(ELogCategory category, Exception ex, string? message = null)
+        {
+#if DEBUG || EDITOR
+            string logMessage = message != null
+                ? $"[EXCEPTION] {message}{Environment.NewLine}{ex}"
+                : $"[EXCEPTION] {ex}";
+            WriteLogMessage(logMessage, Engine.GameSettings?.LogOutputToFile ?? false, category);
+#endif
+        }
+
+        #endregion
+
+        #region Category-Specific Errors
+
+        /// <summary>
+        /// Logs an error message to the rendering log with stack trace.
+        /// </summary>
+        public static void RenderingError(string message, params object[] args)
+            => LogError(ELogCategory.Rendering, message, args);
+
+        /// <summary>
+        /// Logs an error message to the OpenGL log with stack trace.
+        /// </summary>
+        public static void OpenGLError(string message, params object[] args)
+            => LogError(ELogCategory.OpenGL, message, args);
+
+        /// <summary>
+        /// Logs an error message to the physics log with stack trace.
+        /// </summary>
+        public static void PhysicsError(string message, params object[] args)
+            => LogError(ELogCategory.Physics, message, args);
+
+        /// <summary>
+        /// Logs an error message to the audio log with stack trace.
+        /// </summary>
+        public static void AudioError(string message, params object[] args)
+            => LogError(ELogCategory.Audio, message, args);
+
+        /// <summary>
+        /// Logs an error message to the animation log with stack trace.
+        /// </summary>
+        public static void AnimationError(string message, params object[] args)
+            => LogError(ELogCategory.Animation, message, args);
+
+        /// <summary>
+        /// Logs an error message to the UI log with stack trace.
+        /// </summary>
+        public static void UIError(string message, params object[] args)
+            => LogError(ELogCategory.UI, message, args);
+
+        /// <summary>
+        /// Logs an error message under an explicit category with stack trace.
+        /// </summary>
+        public static void LogError(ELogCategory category, string message, params object[] args)
+        {
+#if DEBUG || EDITOR
+            if (args.Length > 0)
+                message = string.Format(message, args);
+            string stackTrace = GetStackTrace(4, 10);
+            WriteLogMessage($"[ERROR] {message}{Environment.NewLine}{stackTrace}", Engine.GameSettings?.LogOutputToFile ?? false, category);
+#endif
+        }
+
+        #endregion
+
+        /// <summary>
+        /// Logs a message under an explicit category.
         /// </summary>
         public static void Log(ELogCategory category, string message, params object[] args)
             => Log(category, EOutputVerbosity.Verbose, true, message, args);
 
         /// <summary>
-        /// Logs a message under an explicit category (no keyword-based classification).
+        /// Logs a message under an explicit category.
         /// </summary>
         public static void Log(ELogCategory category, EOutputVerbosity verbosity, bool debugOnly, string message, params object[] args)
         {
@@ -343,19 +474,20 @@ namespace XREngine
         private static void Suppressed(string message)
             => WriteLogMessage($"[Suppressed] {message}", Engine.GameSettings?.LogOutputToFile ?? false);
 
+        /// <summary>
+        /// Logs an exception to the general log. Use category-specific methods for specialized logging.
+        /// </summary>
         public static void LogException(Exception ex, string? message = null)
-        {
-#if DEBUG || EDITOR
-            if (message != null)
-                Out(EOutputVerbosity.Minimal, false, $"{message}{Environment.NewLine}{ex}");
-            else
-                Out(EOutputVerbosity.Minimal, false, ex.ToString());
-#endif
-        }
+            => LogException(ELogCategory.General, ex, message);
+
+        /// <summary>
+        /// Logs a warning to the general log with stack trace. Use category-specific methods for specialized logging.
+        /// </summary>
         public static void LogWarning(string message, int lineIgnoreCount = 0, int includedLineCount = 5)
         {
 #if DEBUG || EDITOR
-            Out(EOutputVerbosity.Normal, true, false, false, true, 4 + lineIgnoreCount, includedLineCount, message);
+            string stackTrace = GetStackTrace(4 + lineIgnoreCount, includedLineCount);
+            WriteLogMessage($"[WARN] {message}{Environment.NewLine}{stackTrace}", Engine.GameSettings?.LogOutputToFile ?? false, ELogCategory.General);
 #endif
         }
 
@@ -406,10 +538,14 @@ namespace XREngine
     #endif
         }
 
+        /// <summary>
+        /// Logs an error to the general log with stack trace. Use category-specific methods for specialized logging.
+        /// </summary>
         public static void LogError(string message, int lineIgnoreCount = 0, int includedLineCount = 10)
         {
     #if DEBUG || EDITOR
-            Out(EOutputVerbosity.Minimal, false, false, false, true, 4 + lineIgnoreCount, includedLineCount, message);
+            string stackTrace = GetStackTrace(4 + lineIgnoreCount, includedLineCount);
+            WriteLogMessage($"[ERROR] {message}{Environment.NewLine}{stackTrace}", Engine.GameSettings?.LogOutputToFile ?? false, ELogCategory.General);
     #endif
         }
         public static string GetStackTrace(int lineIgnoreCount = 3, int includedLineCount = -1, bool ignoreBeforeWndProc = true)
@@ -444,17 +580,14 @@ namespace XREngine
             return stackTrace;
         }
 
-        private static void WriteLogMessage(string message, bool logToFile, ELogCategory? categoryOverride = null)
+        private static void WriteLogMessage(string message, bool logToFile, ELogCategory category = ELogCategory.General)
         {
             StreamWriter? writer = null;
-            ELogCategory category;
 
             lock (LogWriterLock)
             {
-            category = categoryOverride ?? ClassifyMessage(message);
                 writer = EnsureLogWriterInternal(category, logToFile);
-                if (writer is not null)
-                    writer.WriteLine($"{FormatTimestamp(DateTimeOffset.Now)} {message}");
+                writer?.WriteLine($"{FormatTimestamp(DateTimeOffset.Now)} {message}");
             }
 
             // Add to console entries for in-editor viewing
@@ -480,14 +613,7 @@ namespace XREngine
             if (LogWriters[category] is null)
             {
                 string logsDirectory = GetLogRunDirectory();
-                string fileSuffix = category switch
-                {
-                    ELogCategory.OpenGL => "opengl",
-                    ELogCategory.Rendering => "rendering",
-                    ELogCategory.Physics => "physics",
-                    ELogCategory.Audio => "audio",
-                    _ => "general",
-                };
+                string fileSuffix = category.ToString().ToLowerInvariant();
                 string fileName = $"log_{fileSuffix}_{_logSessionId}.txt";
                 string filePath = Path.Combine(logsDirectory, fileName);
                 var writer = new StreamWriter(new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read))
@@ -503,51 +629,6 @@ namespace XREngine
 
         private static string FormatTimestamp(DateTimeOffset timestamp)
             => timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
-
-        private static ELogCategory ClassifyMessage(string message)
-        {
-            if (string.IsNullOrWhiteSpace(message))
-                return ELogCategory.General;
-
-            string normalized = message.ToLowerInvariant();
-
-            foreach (var entry in OpenGlTokens)
-            {
-                if (ContainsToken(normalized, entry.Token, entry.RequireBoundary))
-                    return ELogCategory.OpenGL;
-            }
-
-            if (normalized.StartsWith("render"))
-                return ELogCategory.Rendering;
-
-            foreach (var entry in RenderingTokens)
-            {
-                if (ContainsToken(normalized, entry.Token, entry.RequireBoundary))
-                    return ELogCategory.Rendering;
-            }
-
-            foreach (var entry in PhysicsTokens)
-            {
-                if (ContainsToken(normalized, entry.Token, entry.RequireBoundary))
-                    return ELogCategory.Physics;
-            }
-
-            return ELogCategory.General;
-        }
-
-        private static bool ContainsToken(string source, string token, bool requireWordBoundary)
-        {
-            int index = source.IndexOf(token, StringComparison.Ordinal);
-            while (index >= 0)
-            {
-                if (!requireWordBoundary || index == 0 || !char.IsLetterOrDigit(source[index - 1]))
-                    return true;
-
-                index = source.IndexOf(token, index + token.Length, StringComparison.Ordinal);
-            }
-
-            return false;
-        }
 
         private static void ResetLogWriters()
         {

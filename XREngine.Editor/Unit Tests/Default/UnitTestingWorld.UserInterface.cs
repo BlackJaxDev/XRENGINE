@@ -93,8 +93,7 @@ public static partial class UnitTestingWorld
             var canvas = rootCanvasNode.AddComponent<UICanvasComponent>()!;
             var canvasTfm = canvas.CanvasTransform;
             canvasTfm.DrawSpace = ECanvasDrawSpace.Screen;
-            canvasTfm.Width = 1920.0f;
-            canvasTfm.Height = 1080.0f;
+            canvasTfm.SetSize(new Vector2(1920.0f, 1080.0f));
             canvasTfm.Padding = new Vector4(0.0f);
 
             // Ensure it's attached to the hidden editor scene (so it doesn't show in the hierarchy panel)

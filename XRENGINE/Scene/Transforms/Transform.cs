@@ -338,7 +338,7 @@ namespace XREngine.Scene.Transforms
             Order = ETransformOrder.TRS;
 
             if (!Matrix4x4.Decompose(value, out Vector3 scale, out Quaternion rotation, out Vector3 translation))
-                Debug.Out("Failed to decompose matrix.");
+                Debug.Rendering("Failed to decompose matrix.");
 
             if (networkSmoothed)
             {

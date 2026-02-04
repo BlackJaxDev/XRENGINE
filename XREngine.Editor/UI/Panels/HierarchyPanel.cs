@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 using XREngine;
@@ -21,8 +22,23 @@ public partial class HierarchyPanel : EditorPanel
 
     private const float Margin = 4.0f;
     private const int DepthIncrement = 10;
+    private const int DefaultMaxNodesToRender = 2000;
     private static readonly Vector4 DropTargetHighlight = new(0.25f, 0.55f, 0.95f, 0.35f);
     private static readonly Vector4 RootDropHighlight = new(0.18f, 0.18f, 0.18f, 0.30f);
+
+    private bool _truncateHierarchy = true;
+    public bool TruncateHierarchy
+    {
+        get => _truncateHierarchy;
+        set => SetField(ref _truncateHierarchy, value);
+    }
+
+    private int _maxNodesToRender = DefaultMaxNodesToRender;
+    public int MaxNodesToRender
+    {
+        get => _maxNodesToRender;
+        set => SetField(ref _maxNodesToRender, Math.Max(1, value));
+    }
 
     private readonly Dictionary<UIInteractableComponent, Vector2> _pendingDragStarts = new();
     private SceneNode? _lastClickedNode;
@@ -55,6 +71,8 @@ public partial class HierarchyPanel : EditorPanel
         switch (propName)
         {
             case nameof(RootNodes):
+            case nameof(TruncateHierarchy):
+            case nameof(MaxNodesToRender):
                 RemakeChildren();
                 break;
         }
@@ -115,15 +133,24 @@ public partial class HierarchyPanel : EditorPanel
             payload => EditorDragDropUtility.IsSceneNodePayload(payload),
             hovering => UpdateBackgroundHighlight(menuMat, hovering ? RootDropHighlight : Vector4.Zero));
 
-        CreateNodes(listNode, RootNodes);
+        int totalNodes = CountNodes(RootNodes);
+        int maxToRender = TruncateHierarchy ? Math.Min(totalNodes, MaxNodesToRender) : totalNodes;
+        int renderedCount = 0;
+
+        CreateNodes(listNode, RootNodes, ref renderedCount, maxToRender);
+        if (renderedCount < totalNodes)
+            AddTruncationNotice(listNode, totalNodes - renderedCount);
     }
 
-    private void CreateNodes(SceneNode listNode, IEnumerable<SceneNode> nodes)
+    private void CreateNodes(SceneNode listNode, IEnumerable<SceneNode> nodes, ref int renderedCount, int maxToRender)
     {
         using var sample = Engine.Profiler.Start("HierarchyPanel.CreateNodes");
         var copy = nodes.Where(x => x is not null).ToList();
         foreach (SceneNode node in copy)
         {
+            if (renderedCount >= maxToRender)
+                return;
+
             using var nodeSample = Engine.Profiler.Start("HierarchyPanel.CreateNodes.Node");
             string? nodeName = node.Name;
             if (string.IsNullOrWhiteSpace(nodeName))
@@ -178,8 +205,44 @@ public partial class HierarchyPanel : EditorPanel
                     UpdateDropPreview(dropPreview, hovering);
                 });
 
-            CreateNodes(listNode, node.Transform.Children.Select(x => x.SceneNode!));
+            renderedCount++;
+            if (renderedCount >= maxToRender)
+                return;
+
+            CreateNodes(listNode, node.Transform.Children.Select(x => x.SceneNode!), ref renderedCount, maxToRender);
         }
+    }
+
+    private static int CountNodes(IEnumerable<SceneNode> nodes)
+    {
+        int count = 0;
+        foreach (var node in nodes)
+        {
+            if (node is null)
+                continue;
+            count++;
+            if (node.Transform?.Children is null)
+                continue;
+            count += CountNodes(node.Transform.Children.Select(x => x.SceneNode!));
+        }
+        return count;
+    }
+
+    private void AddTruncationNotice(SceneNode listNode, int hiddenCount)
+    {
+        var noticeNode = listNode.NewChild<UIMaterialComponent>(out var background);
+        background.Material = MakeBackgroundMaterial();
+        var noticeTfm = noticeNode.SetTransform<UIBoundableTransform>();
+        noticeTfm.MaxAnchor = new Vector2(1.0f, 1.0f);
+        noticeTfm.Margins = new Vector4(0.0f);
+
+        noticeNode.NewChild<UITextComponent>(out var text);
+        var textTfm = text.BoundableTransform;
+        textTfm.Margins = new Vector4(10.0f, Margin, 10.0f, Margin);
+        text.FontSize = 12;
+        text.Text = $"Hierarchy truncated ({hiddenCount} more nodes).";
+        text.HorizontalAlignment = EHorizontalAlignment.Left;
+        text.VerticalAlignment = EVerticalAlignment.Center;
     }
 
     private void RegisterNodeDragHandlers(UIButtonComponent button, SceneNode node)

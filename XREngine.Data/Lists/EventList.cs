@@ -273,10 +273,29 @@ namespace System.Collections.Generic
             if (collection is null)
                 return;
 
+            // Materialize the collection immediately to avoid deferred enumeration
+            // that would call Contains() inside the write lock
+            List<T> items;
             if (!_allowDuplicates)
-                collection = collection.Where(x => !Contains(x));
-            if (!_allowNull)
-                collection = collection.Where(x => x != null);
+            {
+                if (!_allowNull)
+                    items = collection.Where(x => x != null && !Contains(x)).ToList();
+                else
+                    items = collection.Where(x => !Contains(x)).ToList();
+            }
+            else if (!_allowNull)
+            {
+                items = collection.Where(x => x != null).ToList();
+            }
+            else
+            {
+                items = collection.ToList();
+            }
+            
+            if (items.Count == 0)
+                return;
+            
+            collection = items;
 
             if (!_updating)
             {
@@ -291,9 +310,17 @@ namespace System.Collections.Generic
                         return;
 
                     if (PreAnythingAdded != null)
-                        foreach (T item in collection)
-                            if (!PreAnythingAdded(item))
-                                collection = collection.Where(x => !ReferenceEquals(x, item));
+                    {
+                        // Filter items that are rejected by PreAnythingAdded, but materialize immediately
+                        var filteredItems = new List<T>();
+                        foreach (T item in items)
+                            if (PreAnythingAdded(item))
+                                filteredItems.Add(item);
+                        items = filteredItems;
+                        collection = items;
+                        if (items.Count == 0)
+                            return;
+                    }
                 }
             }
 
@@ -689,10 +716,29 @@ namespace System.Collections.Generic
             if (collection is null)
                 return;
 
+            // Materialize the collection immediately to avoid deferred enumeration
+            // that would call Contains() inside the write lock
+            List<T> items;
             if (!_allowDuplicates)
-                collection = collection.Where(x => !Contains(x));
-            if (!_allowNull)
-                collection = collection.Where(x => x != null);
+            {
+                if (!_allowNull)
+                    items = collection.Where(x => x != null && !Contains(x)).ToList();
+                else
+                    items = collection.Where(x => !Contains(x)).ToList();
+            }
+            else if (!_allowNull)
+            {
+                items = collection.Where(x => x != null).ToList();
+            }
+            else
+            {
+                items = collection.ToList();
+            }
+            
+            if (items.Count == 0)
+                return;
+            
+            collection = items;
 
             if (!_updating)
             {
@@ -707,9 +753,17 @@ namespace System.Collections.Generic
                         return;
 
                     if (PreAnythingAdded != null)
-                        foreach (T item in collection)
-                            if (!PreAnythingAdded(item))
-                                collection = collection.Where(x => !ReferenceEquals(x, item));
+                    {
+                        // Filter items that are rejected by PreAnythingAdded, but materialize immediately
+                        var filteredItems = new List<T>();
+                        foreach (T item in items)
+                            if (PreAnythingAdded(item))
+                                filteredItems.Add(item);
+                        items = filteredItems;
+                        collection = items;
+                        if (items.Count == 0)
+                            return;
+                    }
                 }
             }
 

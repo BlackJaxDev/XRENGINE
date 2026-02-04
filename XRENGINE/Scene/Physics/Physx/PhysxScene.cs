@@ -465,7 +465,7 @@ namespace XREngine.Rendering.Physics.Physx
             Simulate(dt, null, true);
             if (!FetchResults(true, out uint error))
             {
-                Debug.Out($"PhysX FetchResults error: {error}");
+                Debug.Physics($"PhysX FetchResults error: {error}");
                 return;
             }
 

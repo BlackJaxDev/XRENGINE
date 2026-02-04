@@ -550,7 +550,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
             catch (Exception e)
             {
-                Debug.Out(e.Message);
+                Debug.PhysicsException(e, "Failed to create debug point material.");
                 Engine.Rendering.State.DebugInstanceRenderingAvailable = false;
                 return null;
             }
@@ -583,7 +583,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
             catch (Exception e)
             {
-                Debug.Out(e.Message);
+                Debug.PhysicsException(e, "Failed to create debug line material.");
                 Engine.Rendering.State.DebugInstanceRenderingAvailable = false;
                 return null;
             }
@@ -615,7 +615,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
             catch (Exception e)
             {
-                Debug.Out(e.Message);
+                Debug.PhysicsException(e, "Failed to create debug triangle material.");
                 Engine.Rendering.State.DebugInstanceRenderingAvailable = false;
                 return null;
             }

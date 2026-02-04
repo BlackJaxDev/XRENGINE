@@ -381,7 +381,7 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Failed to compile particle compute shaders: {ex.Message}");
+            Debug.RenderingWarning($"Failed to compile particle compute shaders: {ex.Message}");
             // Fallback to loading static shaders
             LoadStaticShaders();
         }
@@ -399,7 +399,7 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Failed to load static particle compute shaders: {ex.Message}");
+            Debug.RenderingWarning($"Failed to load static particle compute shaders: {ex.Message}");
         }
     }
 

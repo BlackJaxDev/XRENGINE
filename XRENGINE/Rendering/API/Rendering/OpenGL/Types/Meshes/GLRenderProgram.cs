@@ -649,13 +649,25 @@ namespace XREngine.Rendering.OpenGL
             public static void DeleteFromBinaryShaderCache(ulong hash, GLEnum format)
             {
                 BinaryCache?.TryRemove(hash, out _);
-                //Delete the file
+                //Delete any matching file (hash-format-*.bin pattern)
                 string dir = Environment.CurrentDirectory;
                 string path = Path.Combine(dir, "ShaderCache");
-                string fileName = $"{hash}-{format}.bin";
-                path = Path.Combine(path, fileName);
-                if (File.Exists(path))
-                    File.Delete(path);
+                if (!Directory.Exists(path))
+                    return;
+                    
+                // Search for files matching the hash-format pattern with any version
+                string pattern = $"{hash}-{format}-*.bin";
+                foreach (string filePath in Directory.EnumerateFiles(path, pattern))
+                {
+                    try
+                    {
+                        File.Delete(filePath);
+                    }
+                    catch
+                    {
+                        // Ignore deletion failures (file may be in use)
+                    }
+                }
             }
 
             public ulong Hash { get; private set; }

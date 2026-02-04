@@ -22,54 +22,50 @@
         public T Current => _inner.Current;
         object IEnumerator.Current => Current!;
     }
-    public class ThreadSafeListEnumerator<T>(List<T> list, ReaderWriterLockSlim? locker) : IEnumerator<T>
+    public class ThreadSafeListEnumerator<T> : IEnumerator<T>
     {
-        private int _currentIndex = -1;  //Start at -1 per standard enumerator pattern
-        private bool _lockHeld = false;
+        private readonly T[] _snapshot;
+        private int _currentIndex = -1;  // Start at -1 per standard enumerator pattern
 
-        public T Current => _currentIndex < 0 || _currentIndex >= list.Count
+        public ThreadSafeListEnumerator(List<T> list, ReaderWriterLockSlim? locker)
+        {
+            if (locker != null)
+            {
+                locker.EnterReadLock();
+                try
+                {
+                    _snapshot = list.ToArray();
+                }
+                finally
+                {
+                    locker.ExitReadLock();
+                }
+            }
+            else
+            {
+                _snapshot = list.ToArray();
+            }
+        }
+
+        public T Current => _currentIndex < 0 || _currentIndex >= _snapshot.Length
             ? throw new InvalidOperationException()
-            : list[_currentIndex];
+            : _snapshot[_currentIndex];
 
         object IEnumerator.Current => Current!;
 
         public void Dispose()
         {
-            if (_lockHeld)
-            {
-                locker?.ExitReadLock();
-                _lockHeld = false;
-            }
             GC.SuppressFinalize(this);
         }
 
         public bool MoveNext()
         {
-            try
-            {
-                if (_currentIndex == -1)
-                {
-                    locker?.EnterReadLock();
-                    _lockHeld = true;
-                }
-
-                _currentIndex++;
-                return _currentIndex < list.Count;
-            }
-            catch
-            {
-                Dispose();
-                throw;
-            }
+            _currentIndex++;
+            return _currentIndex < _snapshot.Length;
         }
 
         public void Reset()
         {
-            if (_lockHeld)
-            {
-                locker?.ExitReadLock();
-                _lockHeld = false;
-            }
             _currentIndex = -1;
         }
     }

@@ -593,7 +593,7 @@ namespace XREngine.Components.Scene.Mesh
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex, "Skinned BVH compute path failed.");
+                Debug.RenderingException(ex, "Skinned BVH compute path failed.");
                 _skinnedBvh = null;
                 _skinnedBvhDirty = false;
                 return true;

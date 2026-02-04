@@ -104,28 +104,34 @@ namespace XREngine.Rendering.OpenGL
             if (mask == TexturePropertyUpdateMask.None)
                 return;
 
+            // Check if the texture has been generated and is a valid texture object.
+            // Property changes can be queued before the texture is created, in which case
+            // we skip the GL calls here - the parameters will be set when the texture is bound/pushed.
+            if (!TryGetBindingId(out uint id) || id == InvalidBindingId || !Api.IsTexture(id))
+                return;
+
             if (mask.HasFlag(TexturePropertyUpdateMask.MinLOD))
             {
                 int param = Data.MinLOD;
-                Api.TextureParameterI(BindingId, TextureParameterName.TextureMinLod, ref param);
+                Api.TextureParameterI(id, TextureParameterName.TextureMinLod, ref param);
             }
 
             if (mask.HasFlag(TexturePropertyUpdateMask.MaxLOD))
             {
                 int param = Data.MaxLOD;
-                Api.TextureParameterI(BindingId, TextureParameterName.TextureMaxLod, ref param);
+                Api.TextureParameterI(id, TextureParameterName.TextureMaxLod, ref param);
             }
 
             if (mask.HasFlag(TexturePropertyUpdateMask.LargestMipmapLevel))
             {
                 int param = Data.LargestMipmapLevel;
-                Api.TextureParameterI(BindingId, TextureParameterName.TextureBaseLevel, ref param);
+                Api.TextureParameterI(id, TextureParameterName.TextureBaseLevel, ref param);
             }
 
             if (mask.HasFlag(TexturePropertyUpdateMask.SmallestAllowedMipmapLevel))
             {
                 int param = Data.SmallestAllowedMipmapLevel;
-                Api.TextureParameterI(BindingId, TextureParameterName.TextureMaxLevel, ref param);
+                Api.TextureParameterI(id, TextureParameterName.TextureMaxLevel, ref param);
             }
         }
 

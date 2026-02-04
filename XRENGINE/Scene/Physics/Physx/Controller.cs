@@ -632,7 +632,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
             catch (Exception ex)
             {
-                Debug.Out("[PhysxCCT]   Exception in shape callback: {0}", ex.Message);
+                Debug.PhysicsException(ex, "[PhysxCCT] Exception in shape callback.");
                 *retPtr = (byte)PxControllerBehaviorFlags.CctSlide;
             }
         }
@@ -657,7 +657,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
             catch (Exception ex)
             {
-                Debug.Out("[PhysxCCT]   Exception in obstacle callback: {0}", ex.Message);
+                Debug.PhysicsException(ex, "[PhysxCCT] Exception in obstacle callback.");
                 *retPtr = (byte)PxControllerBehaviorFlags.CctSlide;
             }
         }
@@ -688,7 +688,7 @@ namespace XREngine.Rendering.Physics.Physx
             }
             catch (Exception ex)
             {
-                Debug.Out("[PhysxCCT]   Exception in controller callback: {0}", ex.Message);
+                Debug.PhysicsException(ex, "[PhysxCCT] Exception in controller callback.");
                 *retPtr = (byte)PxControllerBehaviorFlags.CctSlide;
             }
         }

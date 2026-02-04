@@ -497,18 +497,18 @@ namespace XREngine.Rendering
         public void EnsureViewportBoundToCamera()
         {
             var camera = ActiveCamera;
-            Debug.Out($"[XRViewport] EnsureViewportBoundToCamera: VP[{Index}] ActiveCamera={camera?.GetHashCode().ToString() ?? "NULL"} _camera={_camera?.GetHashCode().ToString() ?? "NULL"} _cameraComponent?.Camera={_cameraComponent?.Camera?.GetHashCode().ToString() ?? "NULL"}");
+            Debug.Rendering($"[XRViewport] EnsureViewportBoundToCamera: VP[{Index}] ActiveCamera={camera?.GetHashCode().ToString() ?? "NULL"} _camera={_camera?.GetHashCode().ToString() ?? "NULL"} _cameraComponent?.Camera={_cameraComponent?.Camera?.GetHashCode().ToString() ?? "NULL"}");
             if (camera is null)
                 return;
 
             if (!camera.Viewports.Contains(this))
             {
-                Debug.Out($"[XRViewport] EnsureViewportBoundToCamera: Adding VP[{Index}] to camera {camera.GetHashCode()} Viewports (was missing, now count={camera.Viewports.Count + 1})");
+                Debug.Rendering($"[XRViewport] EnsureViewportBoundToCamera: Adding VP[{Index}] to camera {camera.GetHashCode()} Viewports (was missing, now count={camera.Viewports.Count + 1})");
                 camera.Viewports.Add(this);
             }
             else
             {
-                Debug.Out($"[XRViewport] EnsureViewportBoundToCamera: VP[{Index}] already in camera {camera.GetHashCode()} Viewports (count={camera.Viewports.Count})");
+                Debug.Rendering($"[XRViewport] EnsureViewportBoundToCamera: VP[{Index}] already in camera {camera.GetHashCode()} Viewports (count={camera.Viewports.Count})");
             }
         }
 
@@ -615,7 +615,7 @@ namespace XREngine.Rendering
                     ResizeCameraComponentUI();
                     // Set the Camera property - this will handle viewport binding if the reference changes
                     var newCam = CameraComponent?.Camera;
-                    Debug.Out($"[XRViewport] CameraComponent changed: VP[{Index}] OldCamera={_camera?.GetHashCode().ToString() ?? "NULL"} NewCamera={newCam?.GetHashCode().ToString() ?? "NULL"} CamCompName={CameraComponent?.Name ?? "<null>"} CamCompHash={CameraComponent?.GetHashCode().ToString() ?? "null"}");
+                    Debug.Rendering($"[XRViewport] CameraComponent changed: VP[{Index}] OldCamera={_camera?.GetHashCode().ToString() ?? "NULL"} NewCamera={newCam?.GetHashCode().ToString() ?? "NULL"} CamCompName={CameraComponent?.Name ?? "<null>"} CamCompHash={CameraComponent?.GetHashCode().ToString() ?? "null"}");
                     Camera = newCam;
                     // IMPORTANT: Even if Camera reference didn't change, we must ensure this viewport
                     // is in the camera's Viewports list. This can happen when:
@@ -623,7 +623,7 @@ namespace XREngine.Rendering
                     // 2. The viewport was removed from camera.Viewports during play mode
                     // 3. SetField didn't detect a change because references are equal
                     EnsureViewportBoundToCamera();
-                    Debug.Out($"[XRViewport] After EnsureViewportBoundToCamera: VP[{Index}] Camera.Viewports.Count={ActiveCamera?.Viewports.Count ?? -1}");
+                    Debug.Rendering($"[XRViewport] After EnsureViewportBoundToCamera: VP[{Index}] Camera.Viewports.Count={ActiveCamera?.Viewports.Count ?? -1}");
                     //_renderPipeline.Pipeline = CameraComponent?.RenderPipeline;
                     break;
             }
@@ -947,7 +947,7 @@ namespace XREngine.Rendering
 
             if (State.RenderingPipelineState?.ViewportStack.Contains(this) ?? false)
             {
-                Debug.LogWarning("Render recursion: Viewport is already currently rendering.");
+                Debug.Rendering("Render recursion: Viewport is already currently rendering.");
                 return;
             }
 
@@ -1013,13 +1013,13 @@ namespace XREngine.Rendering
             var world = worldOverride ?? World;
             if (world is null)
             {
-                Debug.LogWarning("No world is set to this viewport.");
+                Debug.Rendering("No world is set to this viewport.");
                 return;
             }
 
             if (State.RenderingPipelineState?.ViewportStack.Contains(this) ?? false)
             {
-                Debug.LogWarning("Render recursion: Viewport is already currently rendering.");
+                Debug.Rendering("Render recursion: Viewport is already currently rendering.");
                 return;
             }
 
@@ -1192,9 +1192,17 @@ namespace XREngine.Rendering
             if (overlay is null)
                 return;
 
+            // Don't set invalid (zero or negative) sizes - this can happen if
+            // CameraComponent is set before the viewport is properly resized
+            if (_region.Size.X <= 0 || _region.Size.Y <= 0)
+            {
+                Debug.Rendering($"[XRViewport] ResizeCameraComponentUI: Skipping resize due to invalid region size ({_region.Size.X}x{_region.Size.Y})");
+                return;
+            }
+
             var tfm = overlay.CanvasTransform;
-            tfm.Width = _region.Size.X;
-            tfm.Height = _region.Size.Y;
+            Debug.Rendering($"[XRViewport] ResizeCameraComponentUI: Setting canvas size to {_region.Size.X}x{_region.Size.Y} (was {tfm.Width}x{tfm.Height})");
+            tfm.SetSize(_region.Size);
         }
 
         #endregion

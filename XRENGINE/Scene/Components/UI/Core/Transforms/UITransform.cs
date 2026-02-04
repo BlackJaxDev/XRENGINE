@@ -184,6 +184,21 @@ namespace XREngine.Rendering.UI
         /// </summary>
         protected BoundingRectangleF _lastArrangeBounds = default;
 
+        // Internal accessors for UILayoutSystem
+        public Vector2 LastMeasureConstraint => _lastMeasureConstraint;
+        public BoundingRectangleF LastArrangeBounds => _lastArrangeBounds;
+
+        internal void IncrementLayoutVersionInternal() => IncrementLayoutVersion();
+        internal void SetDesiredSize(Vector2 size) => _desiredSize = size;
+        internal void SetLastMeasureConstraint(Vector2 constraint) => _lastMeasureConstraint = constraint;
+        internal void SetLastArrangeBounds(BoundingRectangleF bounds) => _lastArrangeBounds = bounds;
+        internal void SetLastMeasuredVersion() => _lastMeasuredVersion = _layoutVersion;
+        internal void SetLastArrangedVersion() => _lastArrangedVersion = _layoutVersion;
+        internal void OnResizeActualInternal(BoundingRectangleF parentBounds) => OnResizeActual(parentBounds);
+        internal void RaiseLayoutInvalidated() => OnLayoutInvalidated();
+        internal new void MarkLocalModified(bool deferred = false) => base.MarkLocalModified(deferred);
+        internal new void MarkLocalModified() => base.MarkLocalModified();
+
         #endregion
 
         public RenderInfo2D DebugRenderInfo2D { get; private set; }
@@ -263,11 +278,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public virtual void InvalidateLayout()
         {
-            IncrementLayoutVersion();
-            if (ParentCanvas != null && ParentCanvas != this)
-                ParentCanvas.InvalidateLayout();
-            MarkLocalModified(true);
-            OnLayoutInvalidated();
+            UILayoutSystem.InvalidateLayout(this);
         }
 
         /// <summary>
@@ -276,12 +287,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public virtual void InvalidateMeasure()
         {
-            IncrementLayoutVersion();
-            // Propagate measure invalidation up for auto-sizing parents
-            if (Parent is UIBoundableTransform parentBoundable && parentBoundable.UsesAutoSizing)
-                parentBoundable.InvalidateMeasure();
-            if (ParentCanvas != null && ParentCanvas != this)
-                ParentCanvas.InvalidateLayout();
+            UILayoutSystem.InvalidateMeasure(this);
         }
 
         /// <summary>
@@ -290,11 +296,16 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public virtual void InvalidateArrange()
         {
-            // Only increment if we haven't already invalidated measure
-            if (!NeedsMeasure)
-                IncrementLayoutVersion();
-            if (ParentCanvas != null && ParentCanvas != this)
-                ParentCanvas.InvalidateLayout();
+            UILayoutSystem.InvalidateArrange(this);
+        }
+
+        /// <summary>
+        /// Forces invalidation of the arrange phase by incrementing the layout version.
+        /// This is called during canvas resize to ensure all children re-calculate positions.
+        /// </summary>
+        public void ForceInvalidateArrange()
+        {
+            IncrementLayoutVersion();
         }
 
         #region Measure/Arrange Phase Methods
@@ -307,44 +318,7 @@ namespace XREngine.Rendering.UI
         /// <returns>The desired size of this transform.</returns>
         public virtual Vector2 Measure(Vector2 availableSize)
         {
-            // Skip if already measured with same constraints
-            if (!NeedsMeasure && XRMath.VectorsEqual(_lastMeasureConstraint, availableSize))
-                return _desiredSize;
-
-            using var profiler = Engine.Profiler.Start($"{nameof(UITransform)}.{nameof(Measure)}");
-
-            _lastMeasureConstraint = availableSize;
-
-            // Measure children and aggregate their sizes
-            Vector2 childrenSize = MeasureChildren(availableSize);
-            _desiredSize = childrenSize;
-
-            _lastMeasuredVersion = _layoutVersion;
-            return _desiredSize;
-        }
-
-        /// <summary>
-        /// Measures all child transforms and returns the aggregate size.
-        /// </summary>
-        protected virtual Vector2 MeasureChildren(Vector2 availableSize)
-        {
-            Vector2 maxSize = Vector2.Zero;
-            try
-            {
-                foreach (var child in Children)
-                {
-                    if (child is UITransform uiChild && !uiChild.IsCollapsed)
-                    {
-                        var childSize = uiChild.Measure(availableSize);
-                        maxSize = Vector2.Max(maxSize, childSize);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex);
-            }
-            return maxSize;
+            return UILayoutSystem.MeasureTransform(this, availableSize);
         }
 
         /// <summary>
@@ -353,35 +327,7 @@ namespace XREngine.Rendering.UI
         /// <param name="finalBounds">The final bounds assigned by the parent.</param>
         public virtual void Arrange(BoundingRectangleF finalBounds)
         {
-            // Skip if already arranged with same bounds
-            if (!NeedsArrange && _lastArrangeBounds.Equals(finalBounds))
-                return;
-
-            using var profiler = Engine.Profiler.Start($"{nameof(UITransform)}.{nameof(Arrange)}");
-
-            _lastArrangeBounds = finalBounds;
-            OnResizeActual(finalBounds);
-
-            _lastArrangedVersion = _layoutVersion;
-        }
-
-        /// <summary>
-        /// Arrange children within the given region.
-        /// </summary>
-        protected virtual void ArrangeChildren(BoundingRectangleF childRegion)
-        {
-            try
-            {
-                foreach (var child in Children)
-                {
-                    if (child is UITransform uiChild)
-                        uiChild.Arrange(childRegion);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex);
-            }
+            UILayoutSystem.ArrangeTransform(this, finalBounds);
         }
 
         #endregion
@@ -535,7 +481,10 @@ namespace XREngine.Rendering.UI
 
         protected virtual void OnResizeActual(BoundingRectangleF parentBounds)
         {
-            ActualLocalBottomLeftTranslation = Translation;
+            bool posChanged = !XRMath.VectorsEqual(_actualLocalBottomLeftTranslation, Translation);
+            _actualLocalBottomLeftTranslation = Translation;
+            if (posChanged)
+                MarkLocalModified(true); // Force deferred to avoid re-entrant layout
         }
 
         public override byte[] EncodeToBytes(bool delta)
