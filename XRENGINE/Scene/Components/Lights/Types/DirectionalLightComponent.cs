@@ -376,17 +376,17 @@ namespace XREngine.Components.Lights
             {
                 _loggedShadowCameraOnce = true;
                 bool camNull = ShadowCamera is null;
-                Debug.Out($"[DirLightShadow] ShadowCamera null={camNull}, CastsShadows={CastsShadows}, Scale={Scale}");
+                Debug.Rendering($"[DirLightShadow] ShadowCamera null={camNull}, CastsShadows={CastsShadows}, Scale={Scale}");
                 if (!camNull)
                 {
-                    Debug.Out($"[DirLightShadow] lightProj diagonal: [{lightProj.M11:E3}, {lightProj.M22:E3}, {lightProj.M33:E3}, {lightProj.M44:E3}]");
-                    Debug.Out($"[DirLightShadow] lightView diagonal: [{lightView.M11:E3}, {lightView.M22:E3}, {lightView.M33:E3}, {lightView.M44:E3}]");
-                    Debug.Out($"[DirLightShadow] lightViewProj row0: [{lightViewProj.M11:E3}, {lightViewProj.M12:E3}, {lightViewProj.M13:E3}, {lightViewProj.M14:E3}]");
-                    Debug.Out($"[DirLightShadow] lightViewProj row1: [{lightViewProj.M21:E3}, {lightViewProj.M22:E3}, {lightViewProj.M23:E3}, {lightViewProj.M24:E3}]");
-                    Debug.Out($"[DirLightShadow] lightViewProj row2: [{lightViewProj.M31:E3}, {lightViewProj.M32:E3}, {lightViewProj.M33:E3}, {lightViewProj.M34:E3}]");
-                    Debug.Out($"[DirLightShadow] lightViewProj row3: [{lightViewProj.M41:E3}, {lightViewProj.M42:E3}, {lightViewProj.M43:E3}, {lightViewProj.M44:E3}]");
+                    Debug.Rendering($"[DirLightShadow] lightProj diagonal: [{lightProj.M11:E3}, {lightProj.M22:E3}, {lightProj.M33:E3}, {lightProj.M44:E3}]");
+                    Debug.Rendering($"[DirLightShadow] lightView diagonal: [{lightView.M11:E3}, {lightView.M22:E3}, {lightView.M33:E3}, {lightView.M44:E3}]");
+                    Debug.Rendering($"[DirLightShadow] lightViewProj row0: [{lightViewProj.M11:E3}, {lightViewProj.M12:E3}, {lightViewProj.M13:E3}, {lightViewProj.M14:E3}]");
+                    Debug.Rendering($"[DirLightShadow] lightViewProj row1: [{lightViewProj.M21:E3}, {lightViewProj.M22:E3}, {lightViewProj.M23:E3}, {lightViewProj.M24:E3}]");
+                    Debug.Rendering($"[DirLightShadow] lightViewProj row2: [{lightViewProj.M31:E3}, {lightViewProj.M32:E3}, {lightViewProj.M33:E3}, {lightViewProj.M34:E3}]");
+                    Debug.Rendering($"[DirLightShadow] lightViewProj row3: [{lightViewProj.M41:E3}, {lightViewProj.M42:E3}, {lightViewProj.M43:E3}, {lightViewProj.M44:E3}]");
                     if (ShadowCamera?.Parameters is XROrthographicCameraParameters ortho)
-                        Debug.Out($"[DirLightShadow] OrthoParams: W={ortho.Width}, H={ortho.Height}, NearZ={ortho.NearZ}, FarZ={ortho.FarZ}");
+                        Debug.Rendering($"[DirLightShadow] OrthoParams: W={ortho.Width}, H={ortho.Height}, NearZ={ortho.NearZ}, FarZ={ortho.FarZ}");
                 }
             }
 

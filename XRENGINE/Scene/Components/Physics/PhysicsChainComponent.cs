@@ -29,7 +29,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         if (!Debug.ShouldLogEvery(key, FaultLogInterval))
             return;
 
-        Debug.LogWarning($"[PhysicsChain] {message}");
+        Debug.PhysicsWarning($"[PhysicsChain] {message}");
     }
 
     private void QueueRebuild(string reason)

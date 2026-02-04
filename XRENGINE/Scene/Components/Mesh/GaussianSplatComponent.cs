@@ -70,7 +70,7 @@ public class GaussianSplatComponent : ModelComponent
         }
         catch (Exception ex)
         {
-            Debug.LogException(ex, $"Failed to load gaussian splat data from '{path}'.");
+            Debug.RenderingException(ex, $"Failed to load gaussian splat data from '{path}'.");
         }
     }
 

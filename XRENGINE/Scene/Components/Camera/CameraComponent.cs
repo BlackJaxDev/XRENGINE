@@ -410,8 +410,13 @@ namespace XREngine.Components
                         if (canvasTransform is null)
                             break;
 
-                        canvasTransform.SetSize(Camera.Parameters.GetFrustumSizeAtDistance(canvasTransform.CameraDrawSpaceDistance));
-                        canvasTransform.CameraSpaceCamera = Camera;
+                        // Only set camera-space sizing for Camera draw space.
+                        // Screen-space canvases get their size from the viewport.
+                        if (canvasTransform.DrawSpace == ECanvasDrawSpace.Camera)
+                        {
+                            canvasTransform.SetSize(Camera.Parameters.GetFrustumSizeAtDistance(canvasTransform.CameraDrawSpaceDistance));
+                            canvasTransform.CameraSpaceCamera = Camera;
+                        }
                     }
                     break;
                 case nameof(InternalResolutionMode):

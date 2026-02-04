@@ -61,7 +61,7 @@ namespace XREngine.Components.Animation
         {
             if (IKSolverComponent is null)
             {
-                Debug.LogWarning("No VRIK found on VRIKRootController's GameObject.");
+                Debug.Animation("No VRIK found on VRIKRootController's GameObject.");
                 return;
             }
 
@@ -85,7 +85,7 @@ namespace XREngine.Components.Animation
             var solverComp = IKSolverComponent;
             if (solverComp is null)
             {
-                Debug.LogWarning("No VRIK found on VRIKRootController's GameObject.");
+                Debug.Animation("No VRIK found on VRIKRootController's GameObject.");
                 return;
             }
             var solver = solverComp.Solver;
@@ -109,7 +109,7 @@ namespace XREngine.Components.Animation
             var root = solverComp.Root;
             if (root is null)
             {
-                Debug.LogWarning("Can not update VRIKRootController without the root transform.");
+                Debug.Animation("Can not update VRIKRootController without the root transform.");
                 return;
             }
 

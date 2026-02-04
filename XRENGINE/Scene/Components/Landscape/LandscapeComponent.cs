@@ -554,7 +554,7 @@ public class LandscapeComponent : XRComponent, IRenderable
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Failed to load static terrain compute shaders: {ex.Message}");
+            Debug.RenderingWarning($"Failed to load static terrain compute shaders: {ex.Message}");
         }
     }
 
@@ -593,7 +593,7 @@ public class LandscapeComponent : XRComponent, IRenderable
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Failed to compile terrain shaders from modules: {ex.Message}");
+            Debug.RenderingWarning($"Failed to compile terrain shaders from modules: {ex.Message}");
             // Fallback to loading static shader
             LoadFallbackSplatShader();
         }
@@ -608,7 +608,7 @@ public class LandscapeComponent : XRComponent, IRenderable
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Failed to load fallback terrain splat shader: {ex.Message}");
+            Debug.RenderingWarning($"Failed to load fallback terrain splat shader: {ex.Message}");
         }
     }
 
@@ -1744,7 +1744,7 @@ public class LandscapeComponent : XRComponent, IRenderable
     {
         if (_heightmapData is null || width != HeightmapResolution || height != HeightmapResolution)
         {
-            Debug.LogWarning($"Heightmap data dimensions ({width}x{height}) don't match terrain resolution ({HeightmapResolution})");
+            Debug.RenderingWarning($"Heightmap data dimensions ({width}x{height}) don't match terrain resolution ({HeightmapResolution})");
             return;
         }
 

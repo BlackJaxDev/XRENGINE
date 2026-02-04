@@ -186,6 +186,14 @@ namespace XREngine
         private ColorF4 _transformLineColor = ColorF4.LightRed;
         private ColorF4 _transformCapsuleColor = ColorF4.LightOrange;
 
+        // Console log category colors
+        private ColorF4 _consoleGeneralColor = new ColorF4(0.9f, 0.9f, 0.9f, 1.0f);    // White/Gray
+        private ColorF4 _consoleRenderingColor = new ColorF4(0.4f, 0.8f, 1.0f, 1.0f);  // Light Blue
+        private ColorF4 _consoleOpenGLColor = new ColorF4(0.4f, 1.0f, 0.4f, 1.0f);     // Light Green
+        private ColorF4 _consolePhysicsColor = new ColorF4(1.0f, 0.8f, 0.4f, 1.0f);    // Orange
+        private ColorF4 _consoleAnimationColor = new ColorF4(1.0f, 0.6f, 0.8f, 1.0f);  // Pink
+        private ColorF4 _consoleUIColor = new ColorF4(0.8f, 0.6f, 1.0f, 1.0f);         // Purple
+
         [Category("Theme")]
         [DisplayName("Theme Name")]
         [Description("Name of the editor theme preset to apply.")]
@@ -276,6 +284,60 @@ namespace XREngine
             set => SetField(ref _transformCapsuleColor, value);
         }
 
+        [Category("Console Colors")]
+        [DisplayName("Console General Color")]
+        [Description("The color used for General log entries in the console.")]
+        public ColorF4 ConsoleGeneralColor
+        {
+            get => _consoleGeneralColor;
+            set => SetField(ref _consoleGeneralColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console Rendering Color")]
+        [Description("The color used for Rendering log entries in the console.")]
+        public ColorF4 ConsoleRenderingColor
+        {
+            get => _consoleRenderingColor;
+            set => SetField(ref _consoleRenderingColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console OpenGL Color")]
+        [Description("The color used for OpenGL log entries in the console.")]
+        public ColorF4 ConsoleOpenGLColor
+        {
+            get => _consoleOpenGLColor;
+            set => SetField(ref _consoleOpenGLColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console Physics Color")]
+        [Description("The color used for Physics log entries in the console.")]
+        public ColorF4 ConsolePhysicsColor
+        {
+            get => _consolePhysicsColor;
+            set => SetField(ref _consolePhysicsColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console Animation Color")]
+        [Description("The color used for Animation log entries in the console.")]
+        public ColorF4 ConsoleAnimationColor
+        {
+            get => _consoleAnimationColor;
+            set => SetField(ref _consoleAnimationColor, value);
+        }
+
+        [Category("Console Colors")]
+        [DisplayName("Console UI Color")]
+        [Description("The color used for UI log entries in the console.")]
+        public ColorF4 ConsoleUIColor
+        {
+            get => _consoleUIColor;
+            set => SetField(ref _consoleUIColor, value);
+        }
+
         public void CopyFrom(EditorThemeSettings source)
         {
             if (source is null)
@@ -291,6 +353,12 @@ namespace XREngine
             TransformPointColor = source.TransformPointColor;
             TransformLineColor = source.TransformLineColor;
             TransformCapsuleColor = source.TransformCapsuleColor;
+            ConsoleGeneralColor = source.ConsoleGeneralColor;
+            ConsoleRenderingColor = source.ConsoleRenderingColor;
+            ConsoleOpenGLColor = source.ConsoleOpenGLColor;
+            ConsolePhysicsColor = source.ConsolePhysicsColor;
+            ConsoleAnimationColor = source.ConsoleAnimationColor;
+            ConsoleUIColor = source.ConsoleUIColor;
         }
 
         public void ApplyOverrides(EditorThemeOverrides overrides)
@@ -327,6 +395,24 @@ namespace XREngine
 
             if (overrides.TransformCapsuleColorOverride is { HasOverride: true } tcOverride)
                 TransformCapsuleColor = tcOverride.Value;
+
+            if (overrides.ConsoleGeneralColorOverride is { HasOverride: true } cgOverride)
+                ConsoleGeneralColor = cgOverride.Value;
+
+            if (overrides.ConsoleRenderingColorOverride is { HasOverride: true } crOverride)
+                ConsoleRenderingColor = crOverride.Value;
+
+            if (overrides.ConsoleOpenGLColorOverride is { HasOverride: true } coOverride)
+                ConsoleOpenGLColor = coOverride.Value;
+
+            if (overrides.ConsolePhysicsColorOverride is { HasOverride: true } cpOverride)
+                ConsolePhysicsColor = cpOverride.Value;
+
+            if (overrides.ConsoleAnimationColorOverride is { HasOverride: true } caOverride)
+                ConsoleAnimationColor = caOverride.Value;
+
+            if (overrides.ConsoleUIColorOverride is { HasOverride: true } cuOverride)
+                ConsoleUIColor = cuOverride.Value;
         }
     }
 

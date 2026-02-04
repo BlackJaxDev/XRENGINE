@@ -138,7 +138,7 @@ namespace XREngine
                     }
                     catch (Exception ex)
                     {
-                        XREngine.Debug.LogWarning($"Secondary render context terminated: {ex.Message}\n{ex.StackTrace}");
+                        XREngine.Debug.RenderingWarning($"Secondary render context terminated: {ex.Message}\n{ex.StackTrace}");
                     }
                 }
 
@@ -151,7 +151,7 @@ namespace XREngine
                     options.IsVisible = false;
 
                     if (Engine.Rendering.Settings.AllowSecondaryContextSharingFallback)
-                        XREngine.Debug.LogWarning("Secondary context sharing fallback requested, but the current Silk.NET build does not expose shared-context creation. Continuing without sharing.");
+                        XREngine.Debug.RenderingWarning("Secondary context sharing fallback requested, but the current Silk.NET build does not expose shared-context creation. Continuing without sharing.");
 
                     var window = new XRWindow(options, templateWindow.UseNativeTitleBar);
                     _headlessWindow = window;
@@ -176,7 +176,7 @@ namespace XREngine
                     }
                     catch (Exception ex)
                     {
-                        XREngine.Debug.LogWarning($"Unable to query GPU inventory: {ex.Message}");
+                        XREngine.Debug.RenderingWarning($"Unable to query GPU inventory: {ex.Message}");
                         return false;
                     }
                 }

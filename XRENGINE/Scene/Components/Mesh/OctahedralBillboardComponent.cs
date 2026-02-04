@@ -149,7 +149,7 @@ namespace XREngine.Components.Scene.Mesh
             XRMaterial? material = BuildMaterial();
             if (mesh is null || material is null)
             {
-                Debug.LogWarning("Failed to build octahedral billboard renderer. Renderer will be inactive.");
+                Debug.RenderingWarning("Failed to build octahedral billboard renderer. Renderer will be inactive.");
                 return;
             }
 
@@ -217,7 +217,7 @@ namespace XREngine.Components.Scene.Mesh
 
             XRShader? shader = Engine.Assets.LoadEngineAsset<XRShader>(JobPriority.Highest, "Shaders", "Scene3D", "OctahedralImposterBillboard.vs");
             if (shader is null)
-                Debug.LogWarning("Unable to load OctahedralImposterBillboard.vs.");
+                Debug.RenderingWarning("Unable to load OctahedralImposterBillboard.vs.");
             _vertexShader = shader;
             return shader;
         }
@@ -230,7 +230,7 @@ namespace XREngine.Components.Scene.Mesh
             XRShader? shader = Engine.Assets.LoadEngineAsset<XRShader>(JobPriority.Highest, "Shaders", "Scene3D", "OctahedralImposterBillboard.fs");
             if (shader is null)
             {
-                Debug.LogWarning("Unable to load OctahedralImposterBillboard.fs. Billboard imposters will render blank.");
+                Debug.RenderingWarning("Unable to load OctahedralImposterBillboard.fs. Billboard imposters will render blank.");
                 shader = new XRShader(EShaderType.Fragment, ShaderHelper.Frag_Nothing);
             }
 

@@ -243,7 +243,7 @@ namespace XREngine.Components.Scene.Mesh
             if (!_loggedActivated)
             {
                 _loggedActivated = true;
-                Debug.Out(EOutputVerbosity.Normal, "[Skybox] Activated. Mode={0} Pass={1}", _mode, _renderCommand?.RenderPass ?? -1);
+                Debug.Rendering("[Skybox] Activated. Mode={0} Pass={1}", _mode, _renderCommand?.RenderPass ?? -1);
             }
 
             RebuildAll();
@@ -285,7 +285,7 @@ namespace XREngine.Components.Scene.Mesh
                 return;
 
             _loggedCollected = true;
-            Debug.Out(EOutputVerbosity.Normal, "[Skybox] CollectedForRender. CmdPass={0} Camera={1}", command.RenderPass, camera?.ToString() ?? "<null>");
+            Debug.Rendering("[Skybox] CollectedForRender. CmdPass={0} Camera={1}", command.RenderPass, camera?.ToString() ?? "<null>");
         }
 
         private void OnPreRender()
@@ -294,7 +294,7 @@ namespace XREngine.Components.Scene.Mesh
                 return;
 
             _loggedRendered = true;
-            Debug.Out(EOutputVerbosity.Normal, "[Skybox] RenderCommand.PreRender fired (draw executing). Pass={0}", _renderCommand?.RenderPass ?? -1);
+            Debug.Rendering("[Skybox] RenderCommand.PreRender fired (draw executing). Pass={0}", _renderCommand?.RenderPass ?? -1);
         }
 
         private void RebuildAll()
@@ -333,7 +333,7 @@ namespace XREngine.Components.Scene.Mesh
             
             if (vertexShader is null || fragmentShader is null)
             {
-                Debug.LogWarning($"SkyboxComponent: Failed to load shaders for projection {_projection}");
+                Debug.RenderingWarning($"SkyboxComponent: Failed to load shaders for projection {_projection}");
                 return;
             }
 

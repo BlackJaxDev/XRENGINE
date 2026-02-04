@@ -60,7 +60,7 @@ public partial class UIToolbarComponent : UIComponent
     {
         SceneNode.Transform.Clear();
         //Create the root menu transform - this is a horizontal list of buttons.
-        CreateMenu(SceneNode, true, null, null, RootMenuOptions, false, null, this);
+        CreateMenu(SceneNode, true, null, SubmenuItemHeight, RootMenuOptions, false, SubmenuItemHeight, this);
     }
 
     public UIListTransform CreateMenu(

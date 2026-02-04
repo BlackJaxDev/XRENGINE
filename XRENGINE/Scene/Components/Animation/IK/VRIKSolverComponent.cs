@@ -92,7 +92,7 @@ namespace XREngine.Components.Animation
         {
             if (!(Humanoid?.SceneNode?.IsTransformNull ?? true) && Humanoid.SceneNode.Transform.LossyWorldScale.LengthSquared() < float.Epsilon)
             {
-                Debug.LogWarning("VRIK Root Transform's scale is zero, can not update VRIK. Make sure you have not calibrated the character to a zero scale.");
+                Debug.Animation("VRIK Root Transform's scale is zero, can not update VRIK. Make sure you have not calibrated the character to a zero scale.");
                 IsActive = false;
                 return;
             }

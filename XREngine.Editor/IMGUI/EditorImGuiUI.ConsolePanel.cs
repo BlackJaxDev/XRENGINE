@@ -60,6 +60,8 @@ public static partial class EditorImGuiUI
                 DrawConsoleTab("Rendering", ELogCategory.Rendering);
                 DrawConsoleTab("OpenGL", ELogCategory.OpenGL);
                 DrawConsoleTab("Physics", ELogCategory.Physics);
+                DrawConsoleTab("Animation", ELogCategory.Animation);
+                DrawConsoleTab("UI", ELogCategory.UI);
                 ImGui.EndTabBar();
             }
         }
@@ -173,14 +175,33 @@ public static partial class EditorImGuiUI
 
         private static Vector4 GetCategoryColor(ELogCategory category)
         {
-            return category switch
+            var theme = Engine.EditorPreferences?.Theme;
+            if (theme is null)
             {
-                ELogCategory.General => new Vector4(0.9f, 0.9f, 0.9f, 1.0f),   // White/Gray
-                ELogCategory.Rendering => new Vector4(0.4f, 0.8f, 1.0f, 1.0f), // Light Blue
-                ELogCategory.OpenGL => new Vector4(0.4f, 1.0f, 0.4f, 1.0f),    // Light Green
-                ELogCategory.Physics => new Vector4(1.0f, 0.8f, 0.4f, 1.0f),   // Orange
-                _ => new Vector4(0.9f, 0.9f, 0.9f, 1.0f),
+                // Fallback to default colors if theme is not available
+                return category switch
+                {
+                    ELogCategory.General => new Vector4(0.9f, 0.9f, 0.9f, 1.0f),
+                    ELogCategory.Rendering => new Vector4(0.4f, 0.8f, 1.0f, 1.0f),
+                    ELogCategory.OpenGL => new Vector4(0.4f, 1.0f, 0.4f, 1.0f),
+                    ELogCategory.Physics => new Vector4(1.0f, 0.8f, 0.4f, 1.0f),
+                    ELogCategory.Animation => new Vector4(1.0f, 0.6f, 0.8f, 1.0f),
+                    ELogCategory.UI => new Vector4(0.8f, 0.6f, 1.0f, 1.0f),
+                    _ => new Vector4(0.9f, 0.9f, 0.9f, 1.0f),
+                };
+            }
+
+            var color = category switch
+            {
+                ELogCategory.General => theme.ConsoleGeneralColor,
+                ELogCategory.Rendering => theme.ConsoleRenderingColor,
+                ELogCategory.OpenGL => theme.ConsoleOpenGLColor,
+                ELogCategory.Physics => theme.ConsolePhysicsColor,
+                ELogCategory.Animation => theme.ConsoleAnimationColor,
+                ELogCategory.UI => theme.ConsoleUIColor,
+                _ => theme.ConsoleGeneralColor,
             };
+            return new Vector4(color.R, color.G, color.B, color.A);
         }
 
         private static string GetCategoryPrefix(ELogCategory category)
@@ -191,6 +212,8 @@ public static partial class EditorImGuiUI
                 ELogCategory.Rendering => "[Render]",
                 ELogCategory.OpenGL => "[OpenGL]",
                 ELogCategory.Physics => "[Physics]",
+                ELogCategory.Animation => "[Anim]",
+                ELogCategory.UI => "[UI]",
                 _ => "[Unknown]",
             };
         }

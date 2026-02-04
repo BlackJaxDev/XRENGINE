@@ -92,7 +92,7 @@ namespace XREngine.Components.Capture.Lights.Types
             if (!_loggedShadowRenderOnce)
             {
                 _loggedShadowRenderOnce = true;
-                Debug.Out($"[ShadowRender] RenderShadowMap called. ShadowMap FBO exists, rendering...");
+                Debug.Rendering($"[ShadowRender] RenderShadowMap called. ShadowMap FBO exists, rendering...");
             }
 
             if (collectVisibleNow)

@@ -163,7 +163,7 @@ namespace XREngine.Components.Physics
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex, $"Failed to prepare convex assets for {GetType().Name}.");
+                Debug.PhysicsException(ex, $"Failed to prepare convex assets for {GetType().Name}.");
             }
         }
 
@@ -251,7 +251,7 @@ namespace XREngine.Components.Physics
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogException(ex, "Failed to release PhysX convex mesh.");
+                    Debug.PhysicsException(ex, "Failed to release PhysX convex mesh.");
                 }
             }
         }

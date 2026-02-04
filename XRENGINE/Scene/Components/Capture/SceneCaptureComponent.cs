@@ -334,12 +334,12 @@ namespace XREngine.Components.Lights
         {
             if (_environmentTextureCubemap is null)
             {
-                Debug.LogWarning("SceneCapture: cubemap is null during octa blit!");
+                Debug.RenderingWarning("SceneCapture: cubemap is null during octa blit!");
                 return;
             }
 
             var cubeTex = _environmentTextureCubemap as XRTextureCube;
-            Debug.Out($"SceneCapture octa blit: cubemap '{_environmentTextureCubemap.Name}' Extent={cubeTex?.Extent ?? 0}");
+            Debug.Rendering($"SceneCapture octa blit: cubemap '{_environmentTextureCubemap.Name}' Extent={cubeTex?.Extent ?? 0}");
 
             // Get the GL texture object to check if it exists
             var renderer = AbstractRenderer.Current;
@@ -349,11 +349,11 @@ namespace XREngine.Components.Lights
                 if (glTex != null)
                 {
                     var handle = glTex.GetHandle();
-                    Debug.Out($"SceneCapture: GL cubemap handle={handle}, IsGenerated={glTex.IsGenerated}");
+                    Debug.Rendering($"SceneCapture: GL cubemap handle={handle}, IsGenerated={glTex.IsGenerated}");
                 }
                 else
                 {
-                    Debug.LogWarning("SceneCapture: Failed to get GL texture object for cubemap!");
+                    Debug.RenderingWarning("SceneCapture: Failed to get GL texture object for cubemap!");
                 }
             }
 

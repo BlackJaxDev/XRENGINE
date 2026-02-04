@@ -262,7 +262,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     {
         if (Pipeline is null)
         {
-            Debug.LogWarning("No render pipeline is set.");
+            Debug.Rendering("No render pipeline is set.");
             return;
         }
 
@@ -354,7 +354,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         string? name = texture.Name;
         if (name is null)
         {
-            Debug.LogWarning("Texture name must be set before adding to the pipeline.");
+            Debug.Rendering("Texture name must be set before adding to the pipeline.");
             return;
         }
         Resources.BindTexture(texture, descriptor);
@@ -377,7 +377,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         string? name = fbo.Name;
         if (name is null)
         {
-            Debug.LogWarning("FBO name must be set before adding to the pipeline.");
+            Debug.Rendering("FBO name must be set before adding to the pipeline.");
             return;
         }
         Resources.BindFrameBuffer(fbo, descriptor);

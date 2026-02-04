@@ -138,6 +138,12 @@ namespace XREngine
         private OverrideableSetting<ColorF4> _transformPointColorOverride = new();
         private OverrideableSetting<ColorF4> _transformLineColorOverride = new();
         private OverrideableSetting<ColorF4> _transformCapsuleColorOverride = new();
+        private OverrideableSetting<ColorF4> _consoleGeneralColorOverride = new();
+        private OverrideableSetting<ColorF4> _consoleRenderingColorOverride = new();
+        private OverrideableSetting<ColorF4> _consoleOpenGLColorOverride = new();
+        private OverrideableSetting<ColorF4> _consolePhysicsColorOverride = new();
+        private OverrideableSetting<ColorF4> _consoleAnimationColorOverride = new();
+        private OverrideableSetting<ColorF4> _consoleUIColorOverride = new();
 
         [Category("Theme Overrides")]
         [Description("Override for theme preset name.")]
@@ -199,6 +205,42 @@ namespace XREngine
         {
             get => _transformCapsuleColorOverride;
             set => SetField(ref _transformCapsuleColorOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ColorF4> ConsoleGeneralColorOverride
+        {
+            get => _consoleGeneralColorOverride;
+            set => SetField(ref _consoleGeneralColorOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ColorF4> ConsoleRenderingColorOverride
+        {
+            get => _consoleRenderingColorOverride;
+            set => SetField(ref _consoleRenderingColorOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ColorF4> ConsoleOpenGLColorOverride
+        {
+            get => _consoleOpenGLColorOverride;
+            set => SetField(ref _consoleOpenGLColorOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ColorF4> ConsolePhysicsColorOverride
+        {
+            get => _consolePhysicsColorOverride;
+            set => SetField(ref _consolePhysicsColorOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ColorF4> ConsoleAnimationColorOverride
+        {
+            get => _consoleAnimationColorOverride;
+            set => SetField(ref _consoleAnimationColorOverride, value ?? new());
+        }
+
+        public OverrideableSetting<ColorF4> ConsoleUIColorOverride
+        {
+            get => _consoleUIColorOverride;
+            set => SetField(ref _consoleUIColorOverride, value ?? new());
         }
     }
 

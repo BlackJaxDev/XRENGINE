@@ -41,7 +41,7 @@ namespace XREngine
             }
             catch (Exception ex) when (options.API.API == ContextAPI.Vulkan)
             {
-                Debug.LogWarning($"Vulkan initialization failed, falling back to OpenGL: {ex.Message}");
+                Debug.RenderingWarning($"Vulkan initialization failed, falling back to OpenGL: {ex.Message}");
                 options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 6));
                 window = new XRWindow(options, windowSettings.UseNativeTitleBar);
             }
