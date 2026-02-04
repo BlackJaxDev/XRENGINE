@@ -147,7 +147,7 @@ namespace XREngine.Rendering.UI
         {
             IsUpdatingLayout = false;
             _layoutJob = null;
-            Debug.LogException(ex);
+            Debug.UIException(ex);
             LayoutingFinished?.Invoke(this);
         }
 

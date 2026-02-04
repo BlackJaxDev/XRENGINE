@@ -348,7 +348,7 @@ namespace XREngine.Rendering.UI
         //    }
         //    catch (Exception ex)
         //    {
-        //        Debug.LogWarning($"Failed to load Twitch stream for {username}: {ex.Message}");
+        //        Debug.UIWarning($"Failed to load Twitch stream for {username}: {ex.Message}");
         //    }
         //}
 
@@ -431,7 +431,7 @@ namespace XREngine.Rendering.UI
             }
             catch (HttpRequestException ex)
             {
-                Debug.LogWarning($"Failed to fetch M3U8 playlist: {ex.Message}");
+                Debug.UIWarning($"Failed to fetch M3U8 playlist: {ex.Message}");
                 return null;
             }
 
@@ -439,7 +439,7 @@ namespace XREngine.Rendering.UI
             var urls = ParseM3u8ForAllOptions(m3u8Response);
             if (urls.Length == 0)
             {
-                Debug.LogWarning("No valid stream URLs found in the playlist");
+                Debug.UIWarning("No valid stream URLs found in the playlist");
                 return null;
             }
 
@@ -448,7 +448,7 @@ namespace XREngine.Rendering.UI
             string streamUrl = url;
             if (string.IsNullOrEmpty(streamUrl))
             {
-                Debug.LogWarning("No valid stream URL found in the playlist");
+                Debug.UIWarning("No valid stream URL found in the playlist");
                 return null;
             }
 
@@ -627,7 +627,7 @@ namespace XREngine.Rendering.UI
 
             if (string.IsNullOrWhiteSpace(StreamUrl))
             {
-                Debug.LogWarning("Flyleaf video playback requires a valid StreamUrl.");
+                Debug.UIWarning("Flyleaf video playback requires a valid StreamUrl.");
                 return;
             }
 
@@ -640,7 +640,7 @@ namespace XREngine.Rendering.UI
             var renderer = GetActiveOpenGLRenderer();
             if (renderer is null)
             {
-                Debug.LogWarning("Flyleaf video playback requires an active OpenGL renderer.");
+                Debug.UIWarning("Flyleaf video playback requires an active OpenGL renderer.");
                 return;
             }
 
@@ -649,7 +649,7 @@ namespace XREngine.Rendering.UI
 
             if (!EnsureFlyleafEngineStarted())
             {
-                Debug.LogError("Flyleaf engine failed to start; falling back to legacy decoder.");
+                Debug.UIError("Flyleaf engine failed to start; falling back to legacy decoder.");
                 return;
             }
 
@@ -680,7 +680,7 @@ namespace XREngine.Rendering.UI
 
             if (_fbo.APIWrappers.OfType<GLFrameBuffer>().FirstOrDefault() is not GLFrameBuffer glFbo)
             {
-                Debug.LogWarning("Unable to locate GL framebuffer wrapper for Flyleaf video output.");
+                Debug.UIWarning("Unable to locate GL framebuffer wrapper for Flyleaf video output.");
                 return false;
             }
 
@@ -704,12 +704,12 @@ namespace XREngine.Rendering.UI
         {
             if (task.IsFaulted)
             {
-                Debug.LogWarning($"Flyleaf failed to open stream: {task.Exception?.GetBaseException().Message}");
+                Debug.UIWarning($"Flyleaf failed to open stream: {task.Exception?.GetBaseException().Message}");
                 return;
             }
 
             if (task.Result != 0)
-                Debug.LogWarning($"Flyleaf returned error code {task.Result} while opening '{_flyleafCurrentUrl}'. OpenGL decoder context still lacks full session support.");
+                Debug.UIWarning($"Flyleaf returned error code {task.Result} while opening '{_flyleafCurrentUrl}'. OpenGL decoder context still lacks full session support.");
         }
 
         private void StopFlyleafPipeline()
@@ -794,7 +794,7 @@ namespace XREngine.Rendering.UI
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogError($"Failed to initialize Flyleaf engine: {ex.Message}");
+                    Debug.UIError($"Failed to initialize Flyleaf engine: {ex.Message}");
                     return false;
                 }
             }
@@ -982,7 +982,7 @@ namespace XREngine.Rendering.UI
                 // Check for specific errors
                 if (result == ffmpeg.AVERROR_EOF)
                 {
-                    Debug.Out("End of stream reached");
+                    Debug.UI("End of stream reached");
                     return;
                 }
 
@@ -992,7 +992,7 @@ namespace XREngine.Rendering.UI
                 {
                     ffmpeg.av_strerror(result, ptr, (ulong)errorBuffer.Length);
                     string errorMsg = new string((sbyte*)ptr).Trim('\0');
-                    Debug.LogWarning($"av_read_frame error: {errorMsg} (code: {result})");
+                    Debug.UIWarning($"av_read_frame error: {errorMsg} (code: {result})");
                 }
 
                 // For HLS streams, we might need to reopen the stream if we get certain errors
@@ -1036,7 +1036,7 @@ namespace XREngine.Rendering.UI
             string? streamUrl = _streamUrl;
             if (string.IsNullOrEmpty(streamUrl))
             {
-                //Debug.LogWarning("Stream URL is null or empty");
+                //Debug.UIWarning("Stream URL is null or empty");
                 return false;
             }
 
@@ -1047,19 +1047,19 @@ namespace XREngine.Rendering.UI
             //        var response = await httpClient.GetAsync(streamUrl);
             //        if (!response.IsSuccessStatusCode)
             //        {
-            //            Debug.LogWarning($"Stream URL returned HTTP {response.StatusCode}");
+            //            Debug.UIWarning($"Stream URL returned HTTP {response.StatusCode}");
             //            return false;
             //        }
             //        var content = await response.Content.ReadAsStringAsync();
             //        if (!content.Contains("#EXTM3U"))
             //        {
-            //            Debug.LogWarning("Response doesn't appear to be a valid M3U8 file");
+            //            Debug.UIWarning("Response doesn't appear to be a valid M3U8 file");
             //            return false;
             //        }
             //    }
             //    catch (Exception ex)
             //    {
-            //        Debug.LogWarning($"Error checking stream URL: {ex.Message}");
+            //        Debug.UIWarning($"Error checking stream URL: {ex.Message}");
             //        return false;
             //    }
             //}
@@ -1148,14 +1148,14 @@ namespace XREngine.Rendering.UI
                     ffmpeg.av_strerror(result, ptr, (ulong)errorBuffer.Length);
                     errorMsg = new string((sbyte*)ptr).Trim('\0');
                 }
-                Debug.LogWarning($"Failed to open input stream: {errorMsg} (Code: {result})");
+                Debug.UIWarning($"Failed to open input stream: {errorMsg} (Code: {result})");
                 return false;
             }
 
             // Retrieve stream information
             if (ffmpeg.avformat_find_stream_info(_formatContext, null) < 0)
             {
-                Debug.LogWarning("Failed to find stream info");
+                Debug.UIWarning("Failed to find stream info");
                 return false;
             }
 
@@ -1172,7 +1172,7 @@ namespace XREngine.Rendering.UI
 
             if (_videoStreamIndex == -1 && _audioStreamIndex == -1)
             {
-                Debug.LogWarning("No video or audio stream found");
+                Debug.UIWarning("No video or audio stream found");
                 return false;
             }
 
@@ -1233,14 +1233,14 @@ namespace XREngine.Rendering.UI
         {
             //try
             //{
-                //Debug.Out($"Opening Twitch stream for {username}...");
+                //Debug.UI($"Opening Twitch stream for {username}...");
                 string? streamUrl = await GetTwitchStreamUrl(username);
-                //Debug.Out($"Got Twitch stream URL: {streamUrl}");
+                //Debug.UI($"Got Twitch stream URL: {streamUrl}");
                 StreamUrl = streamUrl;
             //}
             //catch (Exception ex)
             //{
-            //    Debug.LogWarning($"Failed to load Twitch stream for {username}: {ex.Message}");
+            //    Debug.UIWarning($"Failed to load Twitch stream for {username}: {ex.Message}");
             //    throw; // Re-throw to handle in the caller
             //}
         }
@@ -1326,7 +1326,7 @@ namespace XREngine.Rendering.UI
             var codec = ffmpeg.avcodec_find_decoder(codecParameters->codec_id);
             if (codec == null)
             {
-                Debug.LogWarning($"Unsupported codec ID: {codecParameters->codec_id}");
+                Debug.UIWarning($"Unsupported codec ID: {codecParameters->codec_id}");
                 return;
             }
 
@@ -1361,7 +1361,7 @@ namespace XREngine.Rendering.UI
             }
 
             if (!hwAccelInitialized)
-                Debug.Out("Hardware acceleration not available, using software decoding");
+                Debug.UI("Hardware acceleration not available, using software decoding");
 
             // Open codec with error handling
             int result = ffmpeg.avcodec_open2(_videoCodecContext, codec, null);
@@ -1374,7 +1374,7 @@ namespace XREngine.Rendering.UI
                     ffmpeg.av_strerror(result, ptr, (ulong)errorBuffer.Length);
                     errorMsg = new string((char*)ptr).Trim('\0');
                 }
-                Debug.LogWarning($"Could not open codec: {errorMsg}");
+                Debug.UIWarning($"Could not open codec: {errorMsg}");
                 return;
             }
         }
