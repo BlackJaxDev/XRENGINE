@@ -45,7 +45,7 @@ namespace XREngine.Components
                 // Validate model path
                 if (!File.Exists(_modelPath))
                 {
-                    Debug.Out($"RVC Error: Model file not found at {_modelPath}");
+                    Debug.Audio($"RVC Error: Model file not found at {_modelPath}");
                 }
             }
 
@@ -178,7 +178,7 @@ namespace XREngine.Components
                 }
                 catch (Exception ex)
                 {
-                    Debug.Out($"RVC conversion error: {ex.Message}");
+                    Debug.Audio($"RVC conversion error: {ex.Message}");
                 }
                 finally
                 {
@@ -242,13 +242,13 @@ namespace XREngine.Components
                         }
                         catch (Exception ex)
                         {
-                            Debug.Out($"RVC cleanup error: {ex.Message}");
+                            Debug.Audio($"RVC cleanup error: {ex.Message}");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    Debug.Out($"RVC conversion failed: {ex.Message}");
+                    Debug.Audio($"RVC conversion failed: {ex.Message}");
                 }
             }
 
@@ -305,14 +305,14 @@ namespace XREngine.Components
                     if (!completed)
                     {
                         process.Kill();
-                        Debug.Out("RVC inference timed out");
+                        Debug.Audio("RVC inference timed out");
                         return false;
                     }
 
                     if (process.ExitCode != 0)
                     {
                         string error = await process.StandardError.ReadToEndAsync();
-                        Debug.Out($"RVC inference failed with exit code {process.ExitCode}: {error}");
+                        Debug.Audio($"RVC inference failed with exit code {process.ExitCode}: {error}");
                         return false;
                     }
 
@@ -320,7 +320,7 @@ namespace XREngine.Components
                 }
                 catch (Exception ex)
                 {
-                    Debug.Out($"RVC inference error: {ex.Message}");
+                    Debug.Audio($"RVC inference error: {ex.Message}");
                     return false;
                 }
             }
@@ -338,7 +338,7 @@ namespace XREngine.Components
                 }
                 catch (Exception ex)
                 {
-                    Debug.Out($"Error saving audio to WAV: {ex.Message}");
+                    Debug.Audio($"Error saving audio to WAV: {ex.Message}");
                 }
             }
 
@@ -353,7 +353,7 @@ namespace XREngine.Components
                 }
                 catch (Exception ex)
                 {
-                    Debug.Out($"Error loading audio from WAV: {ex.Message}");
+                    Debug.Audio($"Error loading audio from WAV: {ex.Message}");
                     return [];
                 }
             }
@@ -406,7 +406,7 @@ namespace XREngine.Components
                 }
                 catch (Exception ex)
                 {
-                    Debug.Out($"Error killing RVC process: {ex.Message}");
+                    Debug.Audio($"Error killing RVC process: {ex.Message}");
                 }
             }
         }

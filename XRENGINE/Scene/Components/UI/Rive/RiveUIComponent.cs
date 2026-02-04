@@ -140,7 +140,7 @@ public class RiveUIComponent : UIInteractableComponent
             return;
 
         _reportedMissingNative = true;
-        Debug.LogWarning($"Rive native library failed to load: {ex.Message}. Rive UI component will be disabled.");
+        Debug.UIWarning($"Rive native library failed to load: {ex.Message}. Rive UI component will be disabled.");
     }
 
     private RiveSharp.Scene? GetActiveScene()
@@ -394,7 +394,7 @@ public class RiveUIComponent : UIInteractableComponent
         var viewSize = BoundableTransform.ActualSize;
         if (viewSize.X <= float.Epsilon || viewSize.Y <= float.Epsilon)
         {
-            Debug.LogWarning("Rive UI component has invalid size. Cannot render.");
+            Debug.UIWarning("Rive UI component has invalid size. Cannot render.");
             return;
         }
 
@@ -436,7 +436,7 @@ public class RiveUIComponent : UIInteractableComponent
         _interface = GRGlInterface.Create();
         if (_interface is null || !_interface.Validate())
         {
-            Debug.LogWarning("Failed to create a valid Skia GL interface.");
+            Debug.UIWarning("Failed to create a valid Skia GL interface.");
             return false;
         }
 
@@ -450,7 +450,7 @@ public class RiveUIComponent : UIInteractableComponent
     {
         if (_renderTarget is null || _renderFBO is null || _context is null)
         {
-            Debug.LogWarning("Render target or surface texture is not initialized. Cannot render Rive UI component.");
+            Debug.UIWarning("Render target or surface texture is not initialized. Cannot render Rive UI component.");
             return;
         }
 
@@ -464,7 +464,7 @@ public class RiveUIComponent : UIInteractableComponent
             );
             if (surf is null)
             {
-                Debug.LogWarning("Failed to create a valid SKSurface for Rive rendering.");
+                Debug.UIWarning("Failed to create a valid SKSurface for Rive rendering.");
                 return;
             }
             _surface = surf;
@@ -505,7 +505,7 @@ public class RiveUIComponent : UIInteractableComponent
         var current = AbstractRenderer.Current;
         if (current is null || current is not OpenGLRenderer ogl)
         {
-            Debug.LogWarning("No current renderer found. Cannot create backend texture.");
+            Debug.UIWarning("No current renderer found. Cannot create backend texture.");
             return false;
         }
 
@@ -527,7 +527,7 @@ public class RiveUIComponent : UIInteractableComponent
     {
         var bindingID = (_renderFBO?.APIWrappers?.FirstOrDefault() as GLFrameBuffer)?.BindingId ?? 0u;
         if (bindingID == 0)
-            Debug.LogWarning("Framebuffer binding ID is invalid");
+            Debug.UIWarning("Framebuffer binding ID is invalid");
         return new GRGlFramebufferInfo(bindingID, SKColorType.Rgba8888.ToGlSizedFormat());
     }
 
@@ -535,7 +535,7 @@ public class RiveUIComponent : UIInteractableComponent
     {
         if (fbo.APIWrappers.FirstOrDefault() is not GLFrameBuffer glFBO)
         {
-            Debug.LogWarning("Framebuffer is not a GL framebuffer. Cannot get stencil bits.");
+            Debug.UIWarning("Framebuffer is not a GL framebuffer. Cannot get stencil bits.");
             return 0;
         }
         return glFBO?.GetAttachmentParameter(GLEnum.ColorAttachment0, GLEnum.FramebufferAttachmentStencilSize) ?? 0;

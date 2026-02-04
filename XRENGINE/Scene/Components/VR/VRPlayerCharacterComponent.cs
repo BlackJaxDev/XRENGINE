@@ -688,7 +688,7 @@ namespace XREngine.Components.VR
         {
             if (IKSolver is null)
             {
-                Debug.LogWarning("IKSolver is null, failed to calibrate.");
+                Debug.AnimationWarning("IKSolver is null, failed to calibrate.");
                 return;
             }
 

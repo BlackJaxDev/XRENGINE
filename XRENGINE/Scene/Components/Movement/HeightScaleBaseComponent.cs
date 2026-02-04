@@ -71,7 +71,7 @@ namespace XREngine.Components
 
             ApplyMeasuredHeight(height);
 
-            Debug.Out($"Calculated model height as {height} meters. Real height set to {Engine.VRState.RealWorldHeight}; Real/Model ratio = {Engine.VRState.ModelToRealWorldHeightRatio}.");
+            Debug.Animation($"Calculated model height as {height} meters. Real height set to {Engine.VRState.RealWorldHeight}; Real/Model ratio = {Engine.VRState.ModelToRealWorldHeightRatio}.");
         }
 
         /// <summary>

@@ -167,7 +167,7 @@ namespace XREngine.Components
                 }
                 catch (Exception ex)
                 {
-                    Debug.Out($"ElevenLabs conversion error: {ex.Message}");
+                    Debug.Audio($"ElevenLabs conversion error: {ex.Message}");
                 }
                 finally
                 {
@@ -238,7 +238,7 @@ namespace XREngine.Components
                         else
                         {
                             var errorContent = await response.Content.ReadAsStringAsync();
-                            Debug.Out($"ElevenLabs API error: {response.StatusCode} - {errorContent}");
+                            Debug.Audio($"ElevenLabs API error: {response.StatusCode} - {errorContent}");
                             
                             if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
                             {
@@ -247,19 +247,19 @@ namespace XREngine.Components
                             }
                             else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                             {
-                                Debug.Out("ElevenLabs API key is invalid");
+                                Debug.Audio("ElevenLabs API key is invalid");
                                 return; // Don't retry auth errors
                             }
                             else if (response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
                             {
-                                Debug.Out("ElevenLabs API: Unprocessable Entity - check audio format and parameters");
+                                Debug.Audio("ElevenLabs API: Unprocessable Entity - check audio format and parameters");
                                 return; // Don't retry format errors
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        Debug.Out($"ElevenLabs conversion attempt {attempt + 1} failed: {ex.Message}");
+                        Debug.Audio($"ElevenLabs conversion attempt {attempt + 1} failed: {ex.Message}");
                         
                         if (attempt < _maxRetries)
                         {
@@ -299,7 +299,7 @@ namespace XREngine.Components
                 }
                 catch (Exception ex)
                 {
-                    Debug.Out($"Error converting to PCM16: {ex.Message}");
+                    Debug.Audio($"Error converting to PCM16: {ex.Message}");
                     // Fallback to original data
                     return audioData;
                 }
@@ -360,7 +360,7 @@ namespace XREngine.Components
                 }
                 catch (Exception ex)
                 {
-                    Debug.Out($"Error converting MP3 to original format: {ex.Message}");
+                    Debug.Audio($"Error converting MP3 to original format: {ex.Message}");
                 }
             }
 
