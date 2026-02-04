@@ -98,11 +98,11 @@ namespace XREngine.Components
             var bufferSize = (int)(Engine.Audio.SampleRate * 0.1f);
             if (ovrLipSyncDll_Initialize(Engine.Audio.SampleRate, bufferSize) == 0)
             {
-                Debug.Out("OVRLipSync library initialized.");
+                Debug.Audio("OVRLipSync library initialized.");
             }
             else
             {
-                Debug.Out("Failed to initialize OVRLipSync library.");
+                Debug.Audio("Failed to initialize OVRLipSync library.");
                 return;
             }
 
@@ -115,18 +115,18 @@ namespace XREngine.Components
 
             if (result == ovrLipSyncResult.ovrLipSyncSuccess)
             {
-                Debug.Out("OVRLipSync context created.");
+                Debug.Audio("OVRLipSync context created.");
             }
             else
             {
-                Debug.Out("Failed to create OVRLipSync context.");
+                Debug.Audio("Failed to create OVRLipSync context.");
                 return;
             }
 
             AudioSource = GetAudioSource();
             if (AudioSource is null)
             {
-                Debug.Out("No AudioSourceComponent found.");
+                Debug.Audio("No AudioSourceComponent found.");
                 return;
             }
 
@@ -166,7 +166,7 @@ namespace XREngine.Components
                 0);
 
             if (result != ovrLipSyncResult.ovrLipSyncSuccess)
-                Debug.LogWarning("Failed to process audio data.");
+                Debug.AudioWarning("Failed to process audio data.");
             else
                 _lastDirtyTime = Engine.ElapsedTime;
         }
@@ -193,7 +193,7 @@ namespace XREngine.Components
                 0);
 
             if (result != ovrLipSyncResult.ovrLipSyncSuccess)
-                Debug.LogWarning("Failed to process audio data.");
+                Debug.AudioWarning("Failed to process audio data.");
             else
                 _lastDirtyTime = Engine.ElapsedTime;
         }
@@ -220,7 +220,7 @@ namespace XREngine.Components
                 0);
 
             if (result != ovrLipSyncResult.ovrLipSyncSuccess)
-                Debug.LogWarning("Failed to process audio data.");
+                Debug.AudioWarning("Failed to process audio data.");
             else
                 _lastDirtyTime = Engine.ElapsedTime;
         }
@@ -304,12 +304,12 @@ namespace XREngine.Components
             for (int i = 0; i < _visemes.Length; i++)
             {
                 //if (visemes[i] > 0.0f)
-                //    Debug.Out($"Viseme {VisemeNames[i]}: {visemes[i]}");
+                //    Debug.Audio($"Viseme {VisemeNames[i]}: {visemes[i]}");
                 modelComp?.SetBlendShapeWeightNormalized($"{VisemeNamePrefix}{VisemeNames[i]}{VisemeNameSuffix}", _visemes[i]);
             }
 
             //if (laughterScore > 0.0f)
-            //    Debug.Out($"Laughter: {laughterScore}");
+            //    Debug.Audio($"Laughter: {laughterScore}");
             modelComp?.SetBlendShapeWeightNormalized(LaughterBlendshapeName, _laughterScore);
         }
 
@@ -328,7 +328,7 @@ namespace XREngine.Components
             uint len;
             if (frame.visemesLength != VisemeNames.Length)
             {
-                Debug.Out("Viseme length mismatch, using minimum.");
+                Debug.Audio("Viseme length mismatch, using minimum.");
                 len = (uint)Math.Min(frame.visemesLength, VisemeNames.Length);
             }
             else

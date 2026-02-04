@@ -414,7 +414,7 @@ namespace XREngine.Rendering.UI
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
+                Debug.UIException(ex);
             }
             finally
             {

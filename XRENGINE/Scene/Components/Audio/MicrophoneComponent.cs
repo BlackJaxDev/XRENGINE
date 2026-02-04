@@ -289,7 +289,7 @@ namespace XREngine.Components
             }
 
             float rmsSq = sumSquares / (_currentBuffer.Length / (_bitsPerSample / 8));
-            //Debug.Out($"Mic RMS: {Math.Sqrt(rmsSq)}");
+            //Debug.Audio($"Mic RMS: {Math.Sqrt(rmsSq)}");
             return rmsSq >= _lowerCutOff * _lowerCutOff;
         }
 
@@ -477,7 +477,7 @@ namespace XREngine.Components
                     }
                     break;
                 default:
-                    Debug.Out($"Unsupported bits per sample: {_bitsPerSample}");
+                    Debug.Audio($"Unsupported bits per sample: {_bitsPerSample}");
                     return;
             }
 
@@ -619,15 +619,15 @@ namespace XREngine.Components
             string[] devices = GetInputDeviceNames();
             if (devices.Length == 0)
             {
-                Debug.Out("No audio input devices found.");
+                Debug.Audio("No audio input devices found.");
                 return;
             }
             else
-                Debug.Out($"Available audio input devices:{Environment.NewLine}{string.Join(Environment.NewLine, devices)}");
+                Debug.Audio($"Available audio input devices:{Environment.NewLine}{string.Join(Environment.NewLine, devices)}");
 
             var asioNames = AsioOut.GetDriverNames();
             if (asioNames.Length > 0)
-                Debug.Out($"Available ASIO devices:{Environment.NewLine}{string.Join(Environment.NewLine, asioNames)}");
+                Debug.Audio($"Available ASIO devices:{Environment.NewLine}{string.Join(Environment.NewLine, asioNames)}");
 
             DeviceIndex = Math.Clamp(DeviceIndex, 0, devices.Length - 1);
 
