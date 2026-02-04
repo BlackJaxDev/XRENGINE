@@ -23,6 +23,8 @@ Notes:
 | Name | Used by | Owner | License (best-effort) | URL |
 |---|---|---|---|---|
 | CDT | CoACD | artem-ogre | [(unknown)](licenses/unknown/nested-CDT.txt) | https://github.com/artem-ogre/CDT |
+| fastgltf | Build-FastGltf.ps1 | spnda | [MIT](licenses/submodules/fastgltf-MIT.txt) | https://github.com/spnda/fastgltf |
+| simdjson | fastgltf | simdjson | [Apache-2.0](licenses/unknown/nested-simdjson-Apache-2.0.txt) | https://github.com/simdjson/simdjson |
 
 ## NuGet packages (direct)
 | Package | Version(s) | Owner (best-effort) | License (best-effort) | Used by |

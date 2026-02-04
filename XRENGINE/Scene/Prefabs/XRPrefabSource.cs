@@ -146,6 +146,14 @@ namespace XREngine.Scene.Prefabs
 
             var opts = importOptions as ModelImportOptions ?? new ModelImportOptions();
 
+            if (FastGltfImporter.ShouldUseFastGltf(filePath)
+                && FastGltfImporter.TryImport(filePath, opts, out SceneNode? fastNode, out _, out _))
+            {
+                RootNode = fastNode;
+                Name ??= Path.GetFileNameWithoutExtension(filePath);
+                return RootNode is not null;
+            }
+
             using var importer = new ModelImporter(filePath, onCompleted: null, materialFactory: null);
 
             // Preserve the importer's default texture factory (it sets FilePath + schedules actual loads)

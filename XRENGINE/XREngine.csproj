@@ -16,6 +16,10 @@
     <CoACDRid Condition="'$(CoACDRid)' == '' and '$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</CoACDRid>
     <CoACDRid Condition="'$(CoACDRid)' == ''">win-x64</CoACDRid>
     <ForceCoACDBuildSwitch Condition="'$(ForceCoACDBuild)' == 'true'">-ForceBuild</ForceCoACDBuildSwitch>
+    <FastGltfBuildScript Condition="'$(FastGltfBuildScript)' == ''">$(SolutionDir)Tools\Dependencies\Build-FastGltf.ps1</FastGltfBuildScript>
+    <FastGltfRid Condition="'$(FastGltfRid)' == '' and '$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</FastGltfRid>
+    <FastGltfRid Condition="'$(FastGltfRid)' == ''">win-x64</FastGltfRid>
+    <ForceFastGltfBuildSwitch Condition="'$(ForceFastGltfBuild)' == 'true'">-ForceBuild</ForceFastGltfBuildSwitch>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -254,6 +258,9 @@
     <None Update="runtimes\win-x64\native\libmagicphysx.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="runtimes\win-x64\native\fastgltf.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="runtimes\win-x64\native\nis.license.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
@@ -296,6 +303,11 @@
   <Target Name="EnsureCoACD" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(CoACDBuildScript)') and ('$(CoACDRid)' != '') and ('$(ForceCoACDBuild)' == 'true' or !Exists('$(MSBuildProjectDirectory)\\runtimes\\$(CoACDRid)\\native\\lib_coacd.dll'))">
     <Message Text="Ensuring CoACD native library ($(CoACDRid))" Importance="High" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(CoACDBuildScript)&quot; -Rid $(CoACDRid) -Ref $(CoACDRef) -Configuration $(Configuration) $(ForceCoACDBuildSwitch)" />
+  </Target>
+
+  <Target Name="EnsureFastGltf" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(FastGltfBuildScript)') and ('$(FastGltfRid)' != '') and ('$(ForceFastGltfBuild)' == 'true' or !Exists('$(MSBuildProjectDirectory)\\runtimes\\$(FastGltfRid)\\native\\fastgltf.dll'))">
+    <Message Text="Ensuring fastgltf native library ($(FastGltfRid))" Importance="High" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(FastGltfBuildScript)&quot; -Rid $(FastGltfRid) -Configuration $(Configuration) $(ForceFastGltfBuildSwitch)" />
   </Target>
 
   <Target Name="ForceFreetype64" AfterTargets="Build" Condition="Exists('$(Freetype64Source)')">

@@ -15,6 +15,7 @@ namespace XREngine
     {
         private EditorThemeOverrides _theme = new();
         private EditorDebugOverrides _debug = new();
+        private OverrideableSetting<bool> _preferFastGltfForGltfOverride = new();
         private OverrideableSetting<EditorPreferences.EViewportPresentationMode> _viewportPresentationModeOverride = new();
         private OverrideableSetting<int> _scenePanelResizeDebounceMsOverride = new();
         private OverrideableSetting<bool> _mcpServerEnabledOverride = new();
@@ -34,6 +35,14 @@ namespace XREngine
         {
             get => _debug;
             set => SetField(ref _debug, value ?? new EditorDebugOverrides());
+        }
+
+        [Category("Import Overrides")]
+        [Description("Override for preferring fastgltf over Assimp for glTF imports.")]
+        public OverrideableSetting<bool> PreferFastGltfForGltfOverride
+        {
+            get => _preferFastGltfForGltfOverride;
+            set => SetField(ref _preferFastGltfForGltfOverride, value ?? new());
         }
 
         [Category("Viewport Overrides")]

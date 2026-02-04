@@ -23,6 +23,7 @@ namespace XREngine
         private int _scenePanelResizeDebounceMs = 0;
         private EditorThemeSettings _theme = new();
         private EditorDebugOptions _debug = new();
+        private bool _preferFastGltfForGltf = true;
         private bool _mcpServerEnabled = false;
         private int _mcpServerPort = 5467;
 
@@ -40,6 +41,14 @@ namespace XREngine
         {
             get => _debug;
             set => SetField(ref _debug, value ?? new EditorDebugOptions());
+        }
+
+        [Category("Import")]
+        [Description("Prefer the fastgltf importer for .gltf/.glb files when available.")]
+        public bool PreferFastGltfForGltf
+        {
+            get => _preferFastGltfForGltf;
+            set => SetField(ref _preferFastGltfForGltf, value);
         }
 
         /// <summary>
@@ -94,6 +103,7 @@ namespace XREngine
 
             Theme.CopyFrom(source.Theme);
             Debug.CopyFrom(source.Debug);
+            PreferFastGltfForGltf = source.PreferFastGltfForGltf;
             ViewportPresentationMode = source.ViewportPresentationMode;
             ScenePanelResizeDebounceMs = source.ScenePanelResizeDebounceMs;
             McpServerEnabled = source.McpServerEnabled;
@@ -107,6 +117,9 @@ namespace XREngine
 
             Theme.ApplyOverrides(overrides.Theme);
             Debug.ApplyOverrides(overrides.Debug);
+
+            if (overrides.PreferFastGltfForGltfOverride is { HasOverride: true } preferFastGltfOverride)
+                PreferFastGltfForGltf = preferFastGltfOverride.Value;
 
             if (overrides.ViewportPresentationModeOverride is { HasOverride: true } vpOverride)
                 ViewportPresentationMode = vpOverride.Value;
