@@ -42,7 +42,7 @@ namespace XREngine.Components
     /// bridge.Enabled = true;
     /// 
     /// // Listen for responses
-    /// bridge.ResponseReceived += (comp, response) => Debug.Out($"MCP: {response}");
+    /// bridge.ResponseReceived += (comp, response) => Debug.Audio($"MCP: {response}");
     /// </code>
     /// </example>
     public partial class VoiceMcpBridgeComponent : XRComponent
@@ -464,7 +464,7 @@ namespace XREngine.Components
                 {
                     _lastWakeWordTime = DateTime.Now;
                     WakeWordDetected?.Invoke(this);
-                    Debug.Out($"[VoiceMCP] Wake word detected: \"{WakeWord}\"");
+                    Debug.Audio($"[VoiceMCP] Wake word detected: \"{WakeWord}\"");
 
                     // Remove wake word from text to process the rest
                     var idx = lowerText.IndexOf(WakeWord);
@@ -498,13 +498,13 @@ namespace XREngine.Components
         {
             if (_isProcessing)
             {
-                Debug.Out("[VoiceMCP] Already processing a command, ignoring.");
+                Debug.Audio("[VoiceMCP] Already processing a command, ignoring.");
                 return;
             }
 
             _isProcessing = true;
             CommandRecognized?.Invoke(this, text);
-            Debug.Out($"[VoiceMCP] Processing command: \"{text}\"");
+            Debug.Audio($"[VoiceMCP] Processing command: \"{text}\"");
 
             try
             {
@@ -527,7 +527,7 @@ namespace XREngine.Components
             catch (Exception ex)
             {
                 ErrorOccurred?.Invoke(this, ex.Message);
-                Debug.Out($"[VoiceMCP] Error: {ex.Message}");
+                Debug.Audio($"[VoiceMCP] Error: {ex.Message}");
             }
             finally
             {
@@ -559,7 +559,7 @@ namespace XREngine.Components
                 }
             }
 
-            Debug.Out($"[VoiceMCP] No keyword match for: \"{text}\"");
+            Debug.Audio($"[VoiceMCP] No keyword match for: \"{text}\"");
             return false;
         }
 
@@ -580,7 +580,7 @@ namespace XREngine.Components
                 }
                 else
                 {
-                    Debug.Out($"[VoiceMCP] LLM could not classify: \"{text}\"");
+                    Debug.Audio($"[VoiceMCP] LLM could not classify: \"{text}\"");
                     ErrorOccurred?.Invoke(this, $"Could not understand command: {text}");
                 }
             }
@@ -600,7 +600,7 @@ namespace XREngine.Components
         public async Task<McpVoiceResponse> SendMcpToolCallAsync(string toolName, JsonObject? arguments = null)
         {
             ToolCallSending?.Invoke(this, toolName, arguments);
-            Debug.Out($"[VoiceMCP] Calling tool: {toolName}");
+            Debug.Audio($"[VoiceMCP] Calling tool: {toolName}");
 
             var request = new JsonObject
             {
@@ -727,7 +727,7 @@ namespace XREngine.Components
             var tools = await ListMcpToolsAsync();
             if (tools.Length == 0)
             {
-                Debug.Out("[VoiceMCP] No MCP tools available");
+                Debug.Audio("[VoiceMCP] No MCP tools available");
                 return null;
             }
 
@@ -759,7 +759,7 @@ namespace XREngine.Components
             }
             catch
             {
-                Debug.Out($"[VoiceMCP] Failed to parse LLM response: {responseJson}");
+                Debug.Audio($"[VoiceMCP] Failed to parse LLM response: {responseJson}");
                 return null;
             }
         }
@@ -819,7 +819,7 @@ If the command doesn't match any tool, respond with:
 
             if (!response.IsSuccessStatusCode)
             {
-                Debug.Out($"[VoiceMCP] OpenAI error: {responseText}");
+                Debug.Audio($"[VoiceMCP] OpenAI error: {responseText}");
                 return null;
             }
 
@@ -853,7 +853,7 @@ If the command doesn't match any tool, respond with:
 
             if (!response.IsSuccessStatusCode)
             {
-                Debug.Out($"[VoiceMCP] Anthropic error: {responseText}");
+                Debug.Audio($"[VoiceMCP] Anthropic error: {responseText}");
                 return null;
             }
 
@@ -886,18 +886,18 @@ If the command doesn't match any tool, respond with:
             var tts = TextToSpeech;
             if (tts == null)
             {
-                Debug.Out($"[VoiceMCP] No TTS component available, would speak: {text}");
+                Debug.Audio($"[VoiceMCP] No TTS component available, would speak: {text}");
                 return;
             }
 
             try
             {
-                Debug.Out($"[VoiceMCP] Speaking: {text}");
+                Debug.Audio($"[VoiceMCP] Speaking: {text}");
                 await tts.SpeakAsync(text);
             }
             catch (Exception ex)
             {
-                Debug.Out($"[VoiceMCP] TTS error: {ex.Message}");
+                Debug.Audio($"[VoiceMCP] TTS error: {ex.Message}");
                 ErrorOccurred?.Invoke(this, $"TTS error: {ex.Message}");
             }
         }

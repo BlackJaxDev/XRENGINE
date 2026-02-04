@@ -177,7 +177,7 @@ public class UISvgComponent : UIMaterialComponent
             SKPicture? picture = svg.Picture;
             if (picture is null)
             {
-                Debug.LogWarning($"Failed to load SVG '{path}'. No drawable picture was produced.");
+                Debug.UIWarning($"Failed to load SVG '{path}'. No drawable picture was produced.");
                 return;
             }
 
@@ -190,7 +190,7 @@ public class UISvgComponent : UIMaterialComponent
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Failed to rasterize SVG '{path}': {ex.Message}");
+            Debug.UIWarning($"Failed to rasterize SVG '{path}': {ex.Message}");
         }
     }
 
@@ -342,7 +342,7 @@ public class UISvgComponent : UIMaterialComponent
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Failed to resolve SVG path '{SvgPath}': {ex.Message}");
+            Debug.UIWarning($"Failed to resolve SVG path '{SvgPath}': {ex.Message}");
             return null;
         }
     }

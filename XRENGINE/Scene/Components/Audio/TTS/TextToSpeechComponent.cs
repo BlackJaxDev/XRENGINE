@@ -301,7 +301,7 @@ namespace XREngine.Components
 
             _isSpeaking = true;
             SynthesisStarted?.Invoke(this, text);
-            Debug.Out($"[TTS] Synthesizing: \"{text}\"");
+            Debug.Audio($"[TTS] Synthesizing: \"{text}\"");
 
             try
             {
@@ -311,12 +311,12 @@ namespace XREngine.Components
 
                 if (result.Success)
                 {
-                    Debug.Out($"[TTS] Synthesis complete: {result.AudioData?.Length ?? 0} bytes, {result.DurationSeconds:F2}s");
+                    Debug.Audio($"[TTS] Synthesis complete: {result.AudioData?.Length ?? 0} bytes, {result.DurationSeconds:F2}s");
                     SynthesisCompleted?.Invoke(this, result);
                 }
                 else
                 {
-                    Debug.Out($"[TTS] Synthesis failed: {result.Error}");
+                    Debug.Audio($"[TTS] Synthesis failed: {result.Error}");
                     ErrorOccurred?.Invoke(this, result.Error ?? "Unknown error");
                 }
 
@@ -325,7 +325,7 @@ namespace XREngine.Components
             catch (Exception ex)
             {
                 var error = $"Synthesis error: {ex.Message}";
-                Debug.Out($"[TTS] {error}");
+                Debug.Audio($"[TTS] {error}");
                 ErrorOccurred?.Invoke(this, error);
                 return TTSResult.Failure(error);
             }
@@ -350,7 +350,7 @@ namespace XREngine.Components
             var audioSource = AudioSource;
             if (audioSource == null)
             {
-                Debug.Out("[TTS] No AudioSourceComponent found for playback");
+                Debug.Audio("[TTS] No AudioSourceComponent found for playback");
                 return;
             }
 
@@ -398,7 +398,7 @@ namespace XREngine.Components
             }
             catch (Exception ex)
             {
-                Debug.Out($"[TTS] Playback error: {ex.Message}");
+                Debug.Audio($"[TTS] Playback error: {ex.Message}");
                 ErrorOccurred?.Invoke(this, $"Playback error: {ex.Message}");
             }
             finally
@@ -448,7 +448,7 @@ namespace XREngine.Components
             }
             catch (Exception ex)
             {
-                Debug.Out($"[TTS] Failed to get voices: {ex.Message}");
+                Debug.Audio($"[TTS] Failed to get voices: {ex.Message}");
                 return [];
             }
         }

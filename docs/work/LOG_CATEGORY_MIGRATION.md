@@ -94,34 +94,34 @@ Debug.LogException(ex, msg)  // Prefixed with [EXCEPTION]
 | `XRENGINE/Scene/Components/Landscape/LandscapeComponent.cs` | 557, 596, 611, 1747 | `Debug.RenderingWarning(...)` | ✅ Done |
 | `XRENGINE/Scene/Components/Misc/SkyboxComponent.cs` | 246, 288, 297, 336 | `Debug.Rendering/RenderingWarning(...)` | ✅ Done |
 
-### AUDIO Category
+### AUDIO Category ✅ COMPLETED
 
-| File | Line | Current Call | Suggested Update |
-|------|------|--------------|------------------|
-| `XRENGINE/Scene/Components/Audio/VoiceMcpBridgeComponent.cs` | 467-900 | Various `Debug.Out(...)` | `Debug.Audio(...)` |
-| `XRENGINE/Scene/Components/Audio/TTS/TextToSpeechComponent.cs` | 304-451 | `Debug.Out(...)` | `Debug.Audio(...)` |
-| `XRENGINE/Scene/Components/Audio/OVRLipSyncComponent.cs` | 101-331 | `Debug.Out/LogWarning(...)` | `Debug.Audio/AudioWarning(...)` |
-| `XRENGINE/Scene/Components/Audio/MicrophoneComponent.cs` | 480, 622-630 | `Debug.Out(...)` | `Debug.Audio(...)` |
-| `XRENGINE/Scene/Components/Audio/Converters/MicrophoneComponent.RVCConverter.cs` | 48-409 | `Debug.Out(...)` | `Debug.Audio(...)` |
-| `XRENGINE/Scene/Components/Audio/Converters/MicrophoneComponent.ElevenLabsConverter.cs` | 170-363 | `Debug.Out(...)` | `Debug.Audio(...)` |
+| File | Line | Current Call | Status |
+|------|------|--------------|--------|
+| `XRENGINE/Scene/Components/Audio/VoiceMcpBridgeComponent.cs` | 467-900 | Various `Debug.Audio(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Audio/TTS/TextToSpeechComponent.cs` | 304-451 | `Debug.Audio(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Audio/OVRLipSyncComponent.cs` | 101-331 | `Debug.Audio/AudioWarning(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Audio/MicrophoneComponent.cs` | 480, 622-630 | `Debug.Audio(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Audio/Converters/MicrophoneComponent.RVCConverter.cs` | 48-409 | `Debug.Audio(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Audio/Converters/MicrophoneComponent.ElevenLabsConverter.cs` | 170-363 | `Debug.Audio(...)` | ✅ Done |
 
-### ANIMATION Category
+### ANIMATION Category ✅ COMPLETED
 
-| File | Line | Current Call | Suggested Update |
-|------|------|--------------|------------------|
-| `XRENGINE/Scene/Components/VR/VRPlayerCharacterComponent.cs` | 691 | `Debug.LogWarning(...)` | `Debug.AnimationWarning(...)` |
-| `XRENGINE/Scene/Components/Movement/HeightScaleBaseComponent.cs` | 74 | `Debug.Out(...)` | `Debug.Animation(...)` |
+| File | Line | Current Call | Status |
+|------|------|--------------|--------|
+| `XRENGINE/Scene/Components/VR/VRPlayerCharacterComponent.cs` | 691 | `Debug.AnimationWarning(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Movement/HeightScaleBaseComponent.cs` | 74 | `Debug.Animation(...)` | ✅ Done |
 
-### UI Category
+### UI Category ✅ COMPLETED
 
-| File | Line | Current Call | Suggested Update |
-|------|------|--------------|------------------|
-| `XRENGINE/Scene/Components/UI/UISvgComponent.cs` | 180, 193, 345 | `Debug.LogWarning(...)` | `Debug.UIWarning(...)` |
-| `XRENGINE/Scene/Components/UI/Core/Transforms/UITransform.cs` | 417 | `Debug.LogException(...)` | `Debug.UIException(...)` |
-| `XRENGINE/Scene/Components/UI/Core/Transforms/UICanvasTransform.cs` | 150 | `Debug.LogException(...)` | `Debug.UIException(...)` |
-| `XRENGINE/Scene/Components/UI/Core/Transforms/UIBoundableTransform.cs` | 636 | `Debug.LogException(...)` | `Debug.UIException(...)` |
-| `XRENGINE/Scene/Components/UI/Rive/RiveUIComponent.cs` | 143, 397-538 | `Debug.LogWarning(...)` | `Debug.UIWarning(...)` |
-| `XRENGINE/Scene/Components/UI/Core/UIVideoComponent.cs` | 434-1377 | Various `Debug.Out/LogWarning/LogError(...)` | `Debug.UI/UIWarning/UIError(...)` |
+| File | Line | Current Call | Status |
+|------|------|--------------|--------|
+| `XRENGINE/Scene/Components/UI/UISvgComponent.cs` | 180, 193, 345 | `Debug.UIWarning(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/UI/Core/Transforms/UITransform.cs` | 417 | `Debug.UIException(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/UI/Core/Transforms/UICanvasTransform.cs` | 150 | `Debug.UIException(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/UI/Core/Transforms/UIBoundableTransform.cs` | 636 | `Debug.UIException(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/UI/Rive/RiveUIComponent.cs` | 143, 397-538 | `Debug.UIWarning(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/UI/Core/UIVideoComponent.cs` | 434-1377 | Various `Debug.UI/UIWarning/UIError(...)` | ✅ Done |
 
 ### VR Category (currently mapped to Animation or General)
 
@@ -199,7 +199,7 @@ The following are editor/tool utilities and should remain in General category:
   - [x] `Debug.AnimationError()`
   - [x] `Debug.UIError()`
 - [x] Update legacy methods to add `[WARN]`, `[ERROR]`, `[EXCEPTION]` prefixes
-- [ ] Update call sites (see tables above)
+- [x] Update call sites (see tables above)
 - [ ] Consider adding new categories:
   - [ ] `ELogCategory.Networking`
   - [ ] `ELogCategory.VR`
