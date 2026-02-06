@@ -203,13 +203,14 @@ namespace XREngine.Components
 
         protected void OnShift(bool pressed)
         {
-            if (AllowKeyboardInput)
-                ShiftPressed = pressed;
+            // Modifier keys are NOT gated by AllowKeyboardInput — they must always
+            // update so that Ctrl+right-click rotation works even when a UI element
+            // has focus (e.g., after clicking a toolbar button).
+            ShiftPressed = pressed;
         }
         private void OnControl(bool pressed)
         {
-            if (AllowKeyboardInput)
-                CtrlPressed = pressed;
+            CtrlPressed = pressed;
         }
 
         public bool IsHoveringUI()
@@ -229,6 +230,15 @@ namespace XREngine.Components
                     return;
 
                 _rightClickDragging = !IsHoveringUI();
+
+                // When right-clicking in the viewport (not over UI), clear the focused
+                // UI component so that keyboard input (WASD, arrows) is restored.
+                if (_rightClickDragging)
+                {
+                    var controller = LocalPlayerController;
+                    if (controller is not null)
+                        controller.FocusedUIComponent = null;
+                }
             }
             else
             {

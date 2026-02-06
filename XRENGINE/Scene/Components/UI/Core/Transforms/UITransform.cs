@@ -334,12 +334,14 @@ namespace XREngine.Rendering.UI
 
         /// <summary>
         /// Fits the layout of this UI transform to the parent region.
-        /// This is the legacy single-pass layout method.
+        /// For non-boundable transforms, delegates to the centralized layout system
+        /// to run Measure + Arrange.
         /// </summary>
         /// <param name="parentRegion"></param>
         public virtual void FitLayout(BoundingRectangleF parentRegion)
         {
-
+            UILayoutSystem.MeasureTransform(this, parentRegion.Extents);
+            UILayoutSystem.ArrangeTransform(this, parentRegion);
         }
 
         public bool IsVisible => Visibility == EVisibility.Visible;
@@ -518,8 +520,12 @@ namespace XREngine.Rendering.UI
                 case nameof(DepthTranslation):
                 case nameof(Scale):
                     InvalidateLayout();
+                    // These properties directly affect CreateLocalMatrix,
+                    // so the matrix must be marked dirty independently of layout.
+                    MarkLocalModified(true);
                     break;
                 case nameof(Visibility):
+                    // Visibility affects layout but not the transform matrix directly.
                     InvalidateLayout();
                     break;
                 case nameof(ParentCanvas):

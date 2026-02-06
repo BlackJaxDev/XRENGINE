@@ -449,7 +449,7 @@ public unsafe partial class VulkanRenderer
 
         protected virtual void PushTextureData()
         {
-            Debug.LogWarning($"{GetType().Name} does not implement texture data uploads yet.");
+            Debug.VulkanWarning($"{GetType().Name} does not implement texture data uploads yet.");
         }
 
         protected virtual void GenerateMipmapsGPU()
@@ -550,7 +550,7 @@ public unsafe partial class VulkanRenderer
             Api!.GetPhysicalDeviceFormatProperties(PhysicalDevice, ResolvedFormat, out FormatProperties props);
             if ((props.OptimalTilingFeatures & FormatFeatureFlags.SampledImageFilterLinearBit) == 0)
             {
-                Debug.LogWarning($"Texture format '{ResolvedFormat}' does not support linear blitting; skipping mipmap generation.");
+                Debug.VulkanWarning($"Texture format '{ResolvedFormat}' does not support linear blitting; skipping mipmap generation.");
                 TransitionImageLayout(_currentImageLayout, ImageLayout.ShaderReadOnlyOptimal);
                 return;
             }
@@ -665,7 +665,7 @@ public unsafe partial class VulkanRenderer
             var mipmaps = Data.Mipmaps;
             if (mipmaps is null || mipmaps.Length == 0)
             {
-                Debug.LogWarning($"Texture '{Data.Name ?? GetDescribingName()}' has no mipmaps to upload.");
+                Debug.VulkanWarning($"Texture '{Data.Name ?? GetDescribingName()}' has no mipmaps to upload.");
                 return;
             }
 
@@ -730,7 +730,7 @@ public unsafe partial class VulkanRenderer
             XRTexture2D[] layers = Data.Textures;
             if (layers is null || layers.Length == 0)
             {
-                Debug.LogWarning($"Texture array '{Data.Name ?? GetDescribingName()}' has no layers to upload.");
+                Debug.VulkanWarning($"Texture array '{Data.Name ?? GetDescribingName()}' has no layers to upload.");
                 return;
             }
 
@@ -819,7 +819,7 @@ public unsafe partial class VulkanRenderer
             CubeMipmap[] mipmaps = Data.Mipmaps;
             if (mipmaps is null || mipmaps.Length == 0)
             {
-                Debug.LogWarning($"Cubemap '{Data.Name ?? GetDescribingName()}' has no mipmaps to upload.");
+                Debug.VulkanWarning($"Cubemap '{Data.Name ?? GetDescribingName()}' has no mipmaps to upload.");
                 return;
             }
 

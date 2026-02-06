@@ -73,7 +73,7 @@ namespace XREngine.Data.Components
                 if (!addr.StartsWith('/'))
                     addr = $"{_parameterPrefix}{addr}";
                 if (!Server!.TryAddMethod(addr, address.Value))
-                    Debug.LogWarning($"Failed to add OSC method for address {addr}");
+                    Debug.NetworkingWarning($"Failed to add OSC method for address {addr}");
             }
             Server!.AddMonitorCallback((message, values) =>
             {
@@ -81,7 +81,7 @@ namespace XREngine.Data.Components
                 if (address.StartsWith(_parameterPrefix))
                     address = address[_parameterPrefix.Length..];
                 if (!ReceiverAddresses.ContainsKey(address.ToString()) && _failedAddresses.Add(address.ToString()))
-                    Debug.Out($"Failed to handle message (only logging once): {address}");
+                    Debug.Networking($"Failed to handle message (only logging once): {address}");
             });
         }
 

@@ -94,7 +94,7 @@ public unsafe partial class VulkanRenderer
                 return;
 
             if (!Link())
-                Debug.LogWarning($"Failed to link Vulkan program '{Data.Name ?? "UnnamedProgram"}'.");
+                Debug.VulkanWarning($"Failed to link Vulkan program '{Data.Name ?? "UnnamedProgram"}'.");
         }
 
         private void OnUseRequested(XRRenderProgram program)
@@ -116,7 +116,7 @@ public unsafe partial class VulkanRenderer
 
             if (_shaderCache.Count == 0)
             {
-                Debug.LogWarning($"Cannot link Vulkan program '{Data.Name ?? "UnnamedProgram"}' because it contains no shaders.");
+                Debug.VulkanWarning($"Cannot link Vulkan program '{Data.Name ?? "UnnamedProgram"}' because it contains no shaders.");
                 return false;
             }
 

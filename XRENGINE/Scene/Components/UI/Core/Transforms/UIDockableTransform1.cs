@@ -50,6 +50,25 @@ namespace XREngine.Rendering.UI
             }
         }
 
+        protected override void ArrangeChildren(BoundingRectangleF childRegion)
+        {
+            for (int i = 0; i < Children.Count; i++)
+            {
+                if (Children[i] is not UIBoundableTransform bc)
+                    continue;
+
+                if (i == SelectedIndex)
+                {
+                    UILayoutSystem.FitLayout(bc, childRegion);
+                    bc.Visibility = EVisibility.Visible;
+                }
+                else
+                {
+                    bc.Visibility = EVisibility.Collapsed;
+                }
+            }
+        }
+
         protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
         {
             //lock (Children)

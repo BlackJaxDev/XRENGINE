@@ -27,7 +27,7 @@ namespace XREngine.Data.Components.Scene
             //RenderInfo.IsVisible = false;
 
             if (Instance is not null)
-                Debug.LogWarning("There can only be one VRHeadsetComponent in the scene.");
+                Debug.VRWarning("There can only be one VRHeadsetComponent in the scene.");
             else
                 Instance = this;
         }

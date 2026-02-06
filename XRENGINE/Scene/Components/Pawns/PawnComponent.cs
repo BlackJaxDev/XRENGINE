@@ -132,14 +132,9 @@ namespace XREngine.Components
             //    Debug.Out($"[PawnComponent.TickInput] Ticking input for {Name}, UIInputCaptured={Engine.Input.IsUIInputCaptured}, Keyboard={localInput.Keyboard != null}, Mouse={localInput.Mouse != null}");
             //}
 
-            if (Engine.Input.IsUIInputCaptured)
-            {
-                // Clear buffered scroll input to prevent it from being applied
-                // when the mouse moves back to the scene
-                localInput.ClearMouseScrollBuffer();
-                return;
-            }
-            
+            // Note: IsUIInputCaptured is NOT checked here.
+            // That flag is only relevant for ImGui overlay mode, not for native UI.
+            // Native UI handles its own input through the scene graph event system.
             localInput.TickStates(Engine.Delta);
         }
 

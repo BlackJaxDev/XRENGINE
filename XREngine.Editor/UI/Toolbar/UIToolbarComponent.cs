@@ -80,7 +80,10 @@ public partial class UIToolbarComponent : UIComponent
         listTfm.ItemSpacing = 0.0f;
         listTfm.Padding = new Vector4(0.0f);
         listTfm.ItemAlignment = EListAlignment.TopOrLeft;
-        listTfm.ItemSize = menuHeight;
+        // For horizontal lists, ItemSize is the WIDTH per item. Use null to let each
+        // item auto-size from its content (DesiredSize.X / text width).
+        // For vertical submenus, ItemSize is the HEIGHT per item (menuHeight = 34px).
+        listTfm.ItemSize = horizontal ? null : menuHeight;
         listTfm.Width = width;
         listTfm.Height = height;
         CreateChildMenu(options, listNode, alignSubmenuToSide, toolbar);

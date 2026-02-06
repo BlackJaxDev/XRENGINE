@@ -570,6 +570,14 @@ namespace XREngine.Scene.Transforms
         #region Local Matrix
 
         private bool _localChanged = false;
+
+        /// <summary>
+        /// Returns true if the local matrix has been marked as dirty and needs recalculation.
+        /// </summary>
+        [Browsable(false)]
+        [YamlIgnore]
+        public bool IsLocalMatrixDirty => Volatile.Read(ref _localChanged);
+
         private Matrix4x4 _localMatrix;
         private readonly object _localMatrixLock = new();
 
@@ -586,6 +594,14 @@ namespace XREngine.Scene.Transforms
         #region World Matrix
 
         private bool _worldChanged = false;
+
+        /// <summary>
+        /// Returns true if the world matrix has been marked as dirty and needs recalculation.
+        /// </summary>
+        [Browsable(false)]
+        [YamlIgnore]
+        public bool IsWorldMatrixDirty => Volatile.Read(ref _worldChanged);
+
         private Matrix4x4 _worldMatrix;
         private readonly object _worldMatrixLock = new();
 

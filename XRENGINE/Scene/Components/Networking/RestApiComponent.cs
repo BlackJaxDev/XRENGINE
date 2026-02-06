@@ -373,7 +373,7 @@ namespace XREngine.Components
             }
             else
             {
-                Debug.LogWarning($"[RestApi] Invalid base URL '{_baseUrl}'.");
+                Debug.NetworkingWarning($"[RestApi] Invalid base URL '{_baseUrl}'.");
             }
         }
 
@@ -533,7 +533,7 @@ namespace XREngine.Components
             }
             catch (JsonException ex)
             {
-                Debug.LogWarning($"[RestApi] Failed to parse JSON for '{request.ResponseDataKey}': {ex.Message}");
+                Debug.NetworkingWarning($"[RestApi] Failed to parse JSON for '{request.ResponseDataKey}': {ex.Message}");
             }
         }
 
@@ -593,7 +593,7 @@ namespace XREngine.Components
             if (!LogRequests)
                 return;
 
-            Debug.Out(EOutputVerbosity.Verbose, "[RestApi] {0} {1}", request.Method.Method, target);
+            Debug.Log(ELogCategory.Networking, EOutputVerbosity.Verbose, true, "[RestApi] {0} {1}", request.Method.Method, target);
         }
 
         /// <summary>
@@ -604,7 +604,7 @@ namespace XREngine.Components
             if (!LogRequests)
                 return;
 
-            Debug.Out(EOutputVerbosity.Verbose, "[RestApi] {0} ({1}) for {2}", (int)response.StatusCode, response.StatusCode, response.Request.Resource);
+            Debug.Log(ELogCategory.Networking, EOutputVerbosity.Verbose, true, "[RestApi] {0} ({1}) for {2}", (int)response.StatusCode, response.StatusCode, response.Request.Resource);
         }
 
         /// <summary>

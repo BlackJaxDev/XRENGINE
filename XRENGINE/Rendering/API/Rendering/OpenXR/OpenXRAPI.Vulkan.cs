@@ -29,7 +29,7 @@ public unsafe partial class OpenXRAPI
         if (vulkanExtension.GetVulkanGraphicsRequirements(_instance, _systemId, ref requirements) != Result.Success)
             throw new Exception("Failed to get Vulkan graphics requirements");
 
-        Debug.Out($"Vulkan requirements: Min {requirements.MinApiVersionSupported}, Max {requirements.MaxApiVersionSupported}");
+        Debug.Vulkan($"Vulkan requirements: Min {requirements.MinApiVersionSupported}, Max {requirements.MaxApiVersionSupported}");
 
         if (Window.Renderer is not VulkanRenderer renderer)
             throw new Exception("Renderer is not a VulkanRenderer.");
@@ -41,7 +41,7 @@ public unsafe partial class OpenXRAPI
         bool supportsMultiQueue = renderer.SupportsMultipleGraphicsQueues();
         if (supportsMultiQueue)
         {
-            Debug.Out("Multiple graphics queues are supported - enabling parallel eye rendering");
+            Debug.Vulkan("Multiple graphics queues are supported - enabling parallel eye rendering");
             _parallelRenderingEnabled = true;
 
             // Store secondary queue for right eye rendering
@@ -50,7 +50,7 @@ public unsafe partial class OpenXRAPI
         }
         else
         {
-            Debug.Out("Multiple graphics queues not supported - using single queue rendering");
+            Debug.Vulkan("Multiple graphics queues not supported - using single queue rendering");
             _parallelRenderingEnabled = false;
         }
 

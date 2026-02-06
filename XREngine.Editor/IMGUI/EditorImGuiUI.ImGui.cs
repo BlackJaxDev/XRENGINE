@@ -633,6 +633,10 @@ public static partial class EditorImGuiUI
                 Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel &&
                 _scenePanelInteracting;
 
+            // In FullViewportBehindImGuiUI mode, the dock space uses PassthruCentralNode so
+            // WantCaptureMouse is already false over the scene area. No extra bypass needed
+            // beyond the existing condition — but ensure we don't block engine input when
+            // we're NOT in play mode and the mouse is NOT over an ImGui panel.
             Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughScenePanel && Engine.PlayMode.State != EPlayModeState.EnteringPlay && !Engine.PlayMode.IsPlaying);
         }
 

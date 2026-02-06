@@ -105,7 +105,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            Debug.RenderingEvery(
+            Debug.VulkanEvery(
                 $"Vulkan.FrameOps.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] FrameOps: total={0} clears={1} draws={2} blits={3}",
@@ -484,7 +484,7 @@ namespace XREngine.Rendering.Vulkan
             var indirectBuffer = op.IndirectBuffer.BufferHandle;
             if (indirectBuffer is null || !indirectBuffer.HasValue)
             {
-                Debug.LogWarning("RecordIndirectDrawOp: Invalid indirect buffer.");
+                Debug.VulkanWarning("RecordIndirectDrawOp: Invalid indirect buffer.");
                 return;
             }
 
@@ -517,7 +517,7 @@ namespace XREngine.Rendering.Vulkan
                 var parameterBuffer = op.ParameterBuffer?.BufferHandle;
                 if (parameterBuffer is null || !parameterBuffer.HasValue)
                 {
-                    Debug.LogWarning("RecordIndirectDrawOp: Invalid parameter buffer for count draw.");
+                    Debug.VulkanWarning("RecordIndirectDrawOp: Invalid parameter buffer for count draw.");
                     return;
                 }
 

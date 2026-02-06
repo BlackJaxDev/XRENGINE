@@ -614,7 +614,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (inFBO is null || outFBO is null)
             {
-                Debug.LogWarning("Vulkan Blit currently requires both source and destination framebuffers.");
+                Debug.VulkanWarning("Vulkan Blit currently requires both source and destination framebuffers.");
                 return;
             }
 
@@ -746,7 +746,7 @@ namespace XREngine.Rendering.Vulkan
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"GetScreenshotAsync failed to create image: {ex.Message}");
+                Debug.VulkanWarning($"GetScreenshotAsync failed to create image: {ex.Message}");
                 imageCallback?.Invoke(null!, 0);
             }
             finally
@@ -1022,7 +1022,7 @@ namespace XREngine.Rendering.Vulkan
             Api!.WaitForFences(device, 1, ref inFlightFences![currentFrame], true, ulong.MaxValue);
 
             // Helpful when tracking down DPI / resize issues.
-            Debug.RenderingEvery(
+            Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.Sizes",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Frame={0} WindowFB={1}x{2} Swapchain={3}x{4}",
@@ -1036,7 +1036,7 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex = 0;
             var result = khrSwapChain!.AcquireNextImage(device, swapChain, ulong.MaxValue, imageAvailableSemaphores![currentFrame], default, ref imageIndex);
 
-            Debug.RenderingEvery(
+            Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.Acquire",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Frame={0} InFlightSlot={1} AcquiredImage={2} LastPresented={3}",
@@ -1096,7 +1096,7 @@ namespace XREngine.Rendering.Vulkan
             if (Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, inFlightFences[currentFrame]) != Result.Success)
                 throw new Exception("Failed to submit draw command buffer.");
 
-            Debug.RenderingEvery(
+            Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.Submit",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Frame={0} SubmittedImage={1}",
@@ -1118,7 +1118,7 @@ namespace XREngine.Rendering.Vulkan
             result = khrSwapChain.QueuePresent(presentQueue, ref presentInfo);
             _lastPresentedImageIndex = imageIndex;
 
-            Debug.RenderingEvery(
+            Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.Present",
                 TimeSpan.FromSeconds(1),
                 "[Vulkan] Frame={0} PresentedImage={1} Result={2}",
@@ -1209,7 +1209,7 @@ namespace XREngine.Rendering.Vulkan
         {
             if (_boundIndirectBuffer?.BufferHandle is null)
             {
-                Debug.LogWarning("MultiDrawElementsIndirectWithOffset: No indirect buffer bound.");
+                Debug.VulkanWarning("MultiDrawElementsIndirectWithOffset: No indirect buffer bound.");
                 return;
             }
 
@@ -1231,20 +1231,20 @@ namespace XREngine.Rendering.Vulkan
         {
             if (!_supportsDrawIndirectCount)
             {
-                Debug.LogWarning("MultiDrawElementsIndirectCount called but VK_KHR_draw_indirect_count is not supported. Falling back to regular indirect draw.");
+                Debug.VulkanWarning("MultiDrawElementsIndirectCount called but VK_KHR_draw_indirect_count is not supported. Falling back to regular indirect draw.");
                 MultiDrawElementsIndirectWithOffset(maxDrawCount, stride, byteOffset);
                 return;
             }
 
             if (_boundIndirectBuffer?.BufferHandle is null)
             {
-                Debug.LogWarning("MultiDrawElementsIndirectCount: No indirect buffer bound.");
+                Debug.VulkanWarning("MultiDrawElementsIndirectCount: No indirect buffer bound.");
                 return;
             }
 
             if (_boundParameterBuffer?.BufferHandle is null)
             {
-                Debug.LogWarning("MultiDrawElementsIndirectCount: No parameter (count) buffer bound. Falling back to regular indirect draw.");
+                Debug.VulkanWarning("MultiDrawElementsIndirectCount: No parameter (count) buffer bound. Falling back to regular indirect draw.");
                 MultiDrawElementsIndirectWithOffset(maxDrawCount, stride, byteOffset);
                 return;
             }

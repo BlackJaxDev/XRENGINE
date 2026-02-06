@@ -201,7 +201,7 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         protected override Matrix4x4 CreateLocalMatrix()
         {
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(CreateLocalMatrix)}");
+            using var profiler = Engine.Profiler.Start("UIBoundableTransform.CreateLocalMatrix");
 
             Matrix4x4 mtx = Matrix4x4.CreateTranslation(new Vector3(ActualLocalBottomLeftTranslation, DepthTranslation));
             var p = PlacementInfo;
@@ -258,18 +258,23 @@ namespace XREngine.Rendering.UI
         /// <param name="parentBounds"></param>
         protected override void OnResizeActual(BoundingRectangleF parentBounds)
         {
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(OnResizeActual)}");
+            using var profiler = Engine.Profiler.Start("UIBoundableTransform.OnResizeActual");
 
             // Use the virtual method which can be overridden in derived classes
             GetActualBounds(parentBounds, out Vector2 bottomLeftTranslation, out Vector2 size);
-            RemakeAxisAlignedRegion(size, WorldMatrix);
+            // NOTE: RemakeAxisAlignedRegion is NOT called here because WorldMatrix is still stale.
+            // It will be called correctly from OnWorldMatrixChanged after RecalculateMatrixHierarchy.
             
-            // Check if anything actually changed before marking dirty
             bool sizeChanged = !XRMath.VectorsEqual(_actualSize, size);
             bool posChanged = !XRMath.VectorsEqual(_actualLocalBottomLeftTranslation, bottomLeftTranslation);
             
-            _actualSize = size;
-            _actualLocalBottomLeftTranslation = bottomLeftTranslation;
+            // Only use property setters (which fire PropertyChanged) when values actually changed.
+            // UICanvasComponent listens for ActualSize/ActualLocalBottomLeftTranslation changes
+            // to call ResizeScreenSpace, which initializes the ortho camera and remakes the quadtree.
+            if (sizeChanged)
+                ActualSize = size;
+            if (posChanged)
+                ActualLocalBottomLeftTranslation = bottomLeftTranslation;
             
             // Only mark modified if bounds actually changed to avoid unnecessary recalcs
             if (sizeChanged || posChanged)
@@ -389,7 +394,7 @@ namespace XREngine.Rendering.UI
             if (IsCollapsed)
                 return 0.0f;
 
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(GetWidth)}");
+            using var profiler = Engine.Profiler.Start("UIBoundableTransform.GetWidth");
 
             return Width ?? CalcAutoWidthCallback?.Invoke(this) ?? GetMaxChildWidth();
         }
@@ -409,7 +414,7 @@ namespace XREngine.Rendering.UI
             if (IsCollapsed)
                 return 0.0f;
 
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(GetHeight)}");
+            using var profiler = Engine.Profiler.Start("UIBoundableTransform.GetHeight");
 
             return Height ?? CalcAutoHeightCallback?.Invoke(this) ?? GetMaxChildHeight();
         }
@@ -425,7 +430,7 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         public override float GetMaxChildWidth()
         {
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(GetMaxChildWidth)}");
+            using var profiler = Engine.Profiler.Start("UIBoundableTransform.GetMaxChildWidth");
 
             //lock (Children)
             //{
@@ -448,7 +453,7 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         public override float GetMaxChildHeight()
         {
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(GetMaxChildHeight)}");
+            using var profiler = Engine.Profiler.Start("UIBoundableTransform.GetMaxChildHeight");
 
             //lock (Children)
             //{
@@ -480,15 +485,17 @@ namespace XREngine.Rendering.UI
 
         protected override void OnLocalMatrixChanged(Matrix4x4 localMatrix)
         {
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(OnLocalMatrixChanged)}");
+            using var profiler = Engine.Profiler.Start("UIBoundableTransform.OnLocalMatrixChanged");
 
             base.OnLocalMatrixChanged(localMatrix);
-            OnResizeChildComponents(ApplyPadding(GetActualBounds()));
+            // OLD layout path removed: OnResizeChildComponents is no longer called here.
+            // Layout is now solely driven by UILayoutSystem via the ArrangeChildren virtual,
+            // triggered from UICanvasComponent's PostUpdate layout pass.
         }
 
         protected override void OnWorldMatrixChanged(Matrix4x4 worldMatrix)
         {
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(OnWorldMatrixChanged)}");
+            using var profiler = Engine.Profiler.Start("UIBoundableTransform.OnWorldMatrixChanged");
 
             RemakeAxisAlignedRegion(ActualSize, worldMatrix);
             base.OnWorldMatrixChanged(worldMatrix);
@@ -595,7 +602,7 @@ namespace XREngine.Rendering.UI
 
         protected virtual void RemakeAxisAlignedRegion(Vector2 actualSize, Matrix4x4 worldMatrix)
         {
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(RemakeAxisAlignedRegion)}");
+            using var profiler = Engine.Profiler.Start("UIBoundableTransform.RemakeAxisAlignedRegion");
 
             Matrix4x4 mtx = Matrix4x4.CreateScale(actualSize.X, actualSize.Y, 1.0f) * worldMatrix;
 
@@ -608,13 +615,11 @@ namespace XREngine.Rendering.UI
             Vector2 min = new(Math.Min(minPos.X, maxPos.X), Math.Min(minPos.Y, maxPos.Y));
             Vector2 max = new(Math.Max(minPos.X, maxPos.X), Math.Max(minPos.Y, maxPos.Y));
 
-            //DebugRenderInfo2D.CullingVolume = AxisAlignedRegion = BoundingRectangleF.FromMinMaxSides(min.X, max.X, min.Y, max.Y, 0.0f, 0.0f);
-            
-            //Engine.PrintLine($"Axis-aligned region remade: {_axisAlignedRegion.Translation} {_axisAlignedRegion.Extents}");
+            AxisAlignedRegion = BoundingRectangleF.FromMinMaxSides(min.X, max.X, min.Y, max.Y, 0.0f, 0.0f);
         }
         public UITransform? FindDeepestComponent(Vector2 worldPoint, bool includeThis)
         {
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(FindDeepestComponent)}");
+            using var profiler = Engine.Profiler.Start("UIBoundableTransform.FindDeepestComponent");
 
             try
             {
@@ -647,7 +652,7 @@ namespace XREngine.Rendering.UI
         }
         public List<UIBoundableTransform> FindAllIntersecting(Vector2 worldPoint, bool includeThis)
         {
-            using var profiler = Engine.Profiler.Start($"{nameof(UIBoundableTransform)}.{nameof(FindAllIntersecting)}");
+            using var profiler = Engine.Profiler.Start("UIBoundableTransform.FindAllIntersecting");
 
             List<UIBoundableTransform> list = [];
             FindAllIntersecting(worldPoint, includeThis, list);
@@ -741,7 +746,7 @@ namespace XREngine.Rendering.UI
                 switch (info)
                 {
                     case RenderInfo2D renderInfo2D when ParentCanvas?.DrawSpace == ECanvasDrawSpace.Screen:
-                        //renderInfo2D.CullingVolume = AxisAlignedRegion;
+                        renderInfo2D.CullingVolume = AxisAlignedRegion;
                         break;
                     case RenderInfo3D renderInfo3D when ParentCanvas?.DrawSpace != ECanvasDrawSpace.Screen:
                         renderInfo3D.CullingOffsetMatrix = RegionWorldTransform;

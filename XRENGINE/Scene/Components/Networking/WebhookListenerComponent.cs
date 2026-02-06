@@ -283,7 +283,7 @@ namespace XREngine.Components
             => RunOnMainThread(() => WebhookReceived?.Invoke(this, webhook), "WebhookListenerComponent.WebhookReceived");
 
         private void DispatchListenerError(Exception ex)
-            => RunOnMainThread(() => Debug.LogWarning($"[Webhook] Listener error: {ex.Message}"), "WebhookListenerComponent.ListenerError");
+            => RunOnMainThread(() => Debug.NetworkingWarning($"[Webhook] Listener error: {ex.Message}"), "WebhookListenerComponent.ListenerError");
 
         private static void RunOnMainThread(Action action, string reason)
         {
