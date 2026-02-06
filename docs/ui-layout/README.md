@@ -9,6 +9,13 @@ This directory contains comprehensive documentation for the XREngine UI layout s
 | [03-Rendering-Pipeline.md](03-Rendering-Pipeline.md) | How laid-out UI reaches the screen: UICanvasComponent → VisualScene2D → Quadtree → RenderInfo2D |
 | [04-Known-Issues.md](04-Known-Issues.md) | Architectural conflicts, performance traps, and outstanding bugs with analysis and suggested fixes |
 
+## Progress Update (2026-02-06)
+
+- Issues 1, 3, and 4 are fixed; issue 2 (camera WASD/mouse interaction) is still active.
+- Current diagnostics show `IsHoveringUI` is false and `_rightClickDragging` is true, so UI hover gating is not the blocker.
+- No `MoveForward` log entries appeared in the latest run, suggesting key state callbacks are not firing or movement is not applied.
+- Added temporary debug logging to trace key presses and mouse deltas; see [XRENGINE/Scene/Components/Pawns/FlyingCameraPawnBaseComponent.cs](../../XRENGINE/Scene/Components/Pawns/FlyingCameraPawnBaseComponent.cs) and [XRENGINE/Scene/Components/Pawns/FlyingCameraPawn.cs](../../XRENGINE/Scene/Components/Pawns/FlyingCameraPawn.cs).
+
 ## Quick Orientation
 
 The UI layout system lives in:
