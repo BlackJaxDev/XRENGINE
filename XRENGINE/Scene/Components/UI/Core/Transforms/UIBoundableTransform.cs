@@ -276,8 +276,11 @@ namespace XREngine.Rendering.UI
             if (posChanged)
                 ActualLocalBottomLeftTranslation = bottomLeftTranslation;
             
-            // Only mark modified if bounds actually changed to avoid unnecessary recalcs
-            if (sizeChanged || posChanged)
+            // Mark the local matrix dirty if bounds changed, or if other positioning
+            // factors changed (e.g., PlacementInfo offset in split/list transforms).
+            // ShouldMarkLocalMatrixChanged detects PlacementInfo.RelativePositioningChanged
+            // which fires when a parent split/list updates the child's offset.
+            if (sizeChanged || posChanged || ShouldMarkLocalMatrixChanged())
                 MarkLocalModified(true); // Force deferred to avoid re-entrant layout
         }
 

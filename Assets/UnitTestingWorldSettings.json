@@ -36,9 +36,9 @@
   "LightProbeCaptureMs": 100.0,
   "StopRealtimeCaptureSec": 5.0,
 
-  "AddEditorUI": false,
+  "AddEditorUI": true,
   "TransformTool": false,
-  "DearImGuiUI": true,
+  "DearImGuiUI": false,
   "EnableProfilerLogging": true,
   "RiveUI": false,
   "VideoStreaming": false,

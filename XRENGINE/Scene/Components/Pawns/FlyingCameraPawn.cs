@@ -39,6 +39,9 @@ namespace XREngine.Components
             set => SetField(ref _pitchIncrementModifier, value);
         }
 
+        private float _lastMouseMoveLogTime = -1.0f;
+        private float _lastMoveTickLogTime = -1.0f;
+
         /// <summary>
         /// Scale factor for orthographic zoom. Values > 1 zoom slower, values &lt; 1 zoom faster.
         /// </summary>
@@ -81,6 +84,16 @@ namespace XREngine.Components
 
         protected override void MouseMove(float x, float y)
         {
+            if ((Rotating || Translating) && (Math.Abs(x) > 0.001f || Math.Abs(y) > 0.001f))
+            {
+                float now = Engine.Time.Timer.Time();
+                if (now - _lastMouseMoveLogTime > 0.25f)
+                {
+                    Debug.Out($"[MouseMove] dx={x:0.###}, dy={y:0.###}, Rotating={Rotating}, Translating={Translating}");
+                    _lastMouseMoveLogTime = now;
+                }
+            }
+
             if (Rotating)
                 MouseRotate(x, y);
 
@@ -146,11 +159,12 @@ namespace XREngine.Components
 
         protected override void Tick()
         {
-            IncrementRotation();
+            bool rotationApplied = IncrementRotation();
 
-            if (_incRight.IsZero() && 
-                _incUp.IsZero() && 
-                _incForward.IsZero())
+            if (_incRight.IsZero() &&
+                _incUp.IsZero() &&
+                _incForward.IsZero() &&
+                !rotationApplied)
                 return;
 
             float incRight = _incRight;
@@ -167,6 +181,18 @@ namespace XREngine.Components
             //Don't time dilate user inputs
             float delta = Engine.UndilatedDelta;
 
+            var tfm = TransformAs<Transform>();
+            if (tfm is null)
+            {
+                float now = Engine.Time.Timer.Time();
+                if (now - _lastMoveTickLogTime > 0.5f)
+                {
+                    Debug.Out($"[MoveTick] TransformAs<Transform>() is null. Actual transform={Transform?.GetType().Name}");
+                    _lastMoveTickLogTime = now;
+                }
+                return;
+            }
+
             // For orthographic cameras, forward/backward controls zoom instead of movement
             if (CameraComponent?.Camera?.Parameters is XROrthographicCameraParameters ortho)
             {
@@ -180,25 +206,38 @@ namespace XREngine.Components
 
                 // Scale translation by ortho view size for consistent feel
                 float translationScale = ortho.Height * 0.1f; // Scale down for reasonable speed
-                TransformAs<Transform>()?.TranslateRelative(
+                tfm.TranslateRelative(
                     incRight * delta * translationScale,
                     incUp * delta * translationScale,
                     0.0f); // No forward movement for ortho
             }
             else
             {
-                TransformAs<Transform>()?.TranslateRelative(
+                Vector3 before = tfm.Translation;
+                tfm.TranslateRelative(
                     incRight * delta,
                     incUp * delta,
                     -incForward * delta);
+
+                float nowMove = Engine.Time.Timer.Time();
+                if (nowMove - _lastMoveTickLogTime > 0.5f)
+                {
+                    var renderPos = tfm.RenderTranslation;
+                    Debug.Out($"[MoveTick] delta={delta:0.####}, inc=({incRight:0.###},{incUp:0.###},{incForward:0.###}), pos=({before.X:0.###},{before.Y:0.###},{before.Z:0.###})->({tfm.Translation.X:0.###},{tfm.Translation.Y:0.###},{tfm.Translation.Z:0.###}), renderPos=({renderPos.X:0.###},{renderPos.Y:0.###},{renderPos.Z:0.###}), world={(tfm.World is null ? "null" : "ok")}");
+                    _lastMoveTickLogTime = nowMove;
+                }
             }
+
+            // Ensure render-space matrices are updated when input changes.
+            tfm.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
         }
 
-        private void IncrementRotation()
+        private bool IncrementRotation()
         {
             //Scale continuous rotation (keyboard/gamepad) by delta to be tickrate independent.
             //Mouse rotation is already an instantaneous per-event delta.
             float delta = Engine.UndilatedDelta;
+            bool rotationApplied = false;
 
             if (!_incPitch.IsZero())
             {
@@ -212,6 +251,7 @@ namespace XREngine.Components
                         pitch *= ShiftSpeedModifier;
                     }
                     AddYawPitch(yaw, pitch);
+                    rotationApplied = true;
                 }
                 else
                 {
@@ -219,6 +259,7 @@ namespace XREngine.Components
                     if (ShiftPressed)
                         pitch *= ShiftSpeedModifier;
                     Pitch += pitch;
+                    rotationApplied = true;
                 }
             }
             else if (!_incYaw.IsZero())
@@ -227,7 +268,10 @@ namespace XREngine.Components
                 if (ShiftPressed)
                     yaw *= ShiftSpeedModifier;
                 Yaw += yaw;
+                rotationApplied = true;
             }
+
+            return rotationApplied;
         }
 
         protected override void YawPitchUpdated()

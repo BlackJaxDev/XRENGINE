@@ -242,6 +242,15 @@ namespace XREngine.Rendering.UI
                 ApplyVerticalMargins(transform, desiredSize.Y)
             );
 
+            // Always ensure all children are measured so their DesiredSize is populated.
+            // When Width/Height are explicit (e.g., the root canvas), the auto-sizing
+            // InvokeMeasureChildrenWidth/Height paths above are skipped, but the arrange
+            // phase (e.g., UIListTransform.ArrangeChildren) reads child DesiredSize for
+            // item sizing. Without this, children have DesiredSize = Zero and items overlap.
+            // The NeedsMeasure + LastMeasureConstraint guard prevents redundant work when
+            // children were already measured by the auto-sizing path.
+            MeasureChildren(transform, availableSize);
+
             transform.SetDesiredSize(desiredSize);
             transform.SetLastMeasuredVersion();
 
@@ -712,8 +721,11 @@ namespace XREngine.Rendering.UI
 
         private static IEnumerable ArrangeChildCoroutine(UIBoundableTransform child, BoundingRectangleF bounds, LayoutCounter counter, int maxItemsPerFrame)
         {
-            // Skip if child doesn't need arranging
-            if (!child.NeedsArrange)
+            // Skip if child doesn't need arranging AND bounds haven't changed.
+            // Using the same dual guard as the synchronous ArrangeBoundable path
+            // to handle cases where NeedsArrange was cleared but position changed
+            // (e.g., split panel Y offset shifts on height-only window resize).
+            if (!child.NeedsArrange && child.LastArrangeBounds.Equals(bounds))
                 yield break;
 
             ArrangeBoundable(child, bounds);
