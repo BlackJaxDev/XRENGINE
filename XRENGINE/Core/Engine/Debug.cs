@@ -21,6 +21,10 @@ namespace XREngine
         Audio,
         Animation,
         UI,
+        Vulkan,
+        Networking,
+        VR,
+        Scripting,
     }
 
     /// <summary>
@@ -68,6 +72,10 @@ namespace XREngine
             [ELogCategory.Audio] = null,
             [ELogCategory.Animation] = null,
             [ELogCategory.UI] = null,
+            [ELogCategory.Vulkan] = null,
+            [ELogCategory.Networking] = null,
+            [ELogCategory.VR] = null,
+            [ELogCategory.Scripting] = null,
         };
 
         /// <summary>
@@ -184,6 +192,30 @@ namespace XREngine
         public static void UI(string message, params object[] args)
             => Log(ELogCategory.UI, EOutputVerbosity.Normal, false, message, args);
 
+        /// <summary>
+        /// Convenience helper that routes output through the Vulkan log.
+        /// </summary>
+        public static void Vulkan(string message, params object[] args)
+            => Log(ELogCategory.Vulkan, EOutputVerbosity.Normal, false, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the networking log.
+        /// </summary>
+        public static void Networking(string message, params object[] args)
+            => Log(ELogCategory.Networking, EOutputVerbosity.Normal, false, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the VR log.
+        /// </summary>
+        public static void VR(string message, params object[] args)
+            => Log(ELogCategory.VR, EOutputVerbosity.Normal, false, message, args);
+
+        /// <summary>
+        /// Convenience helper that routes output through the scripting log.
+        /// </summary>
+        public static void Scripting(string message, params object[] args)
+            => Log(ELogCategory.Scripting, EOutputVerbosity.Normal, false, message, args);
+
         #region Category-Specific Warnings
 
         /// <summary>
@@ -221,6 +253,30 @@ namespace XREngine
         /// </summary>
         public static void UIWarning(string message, params object[] args)
             => LogWarning(ELogCategory.UI, message, args);
+
+        /// <summary>
+        /// Logs a warning message to the Vulkan log with stack trace.
+        /// </summary>
+        public static void VulkanWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.Vulkan, message, args);
+
+        /// <summary>
+        /// Logs a warning message to the networking log with stack trace.
+        /// </summary>
+        public static void NetworkingWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.Networking, message, args);
+
+        /// <summary>
+        /// Logs a warning message to the VR log with stack trace.
+        /// </summary>
+        public static void VRWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.VR, message, args);
+
+        /// <summary>
+        /// Logs a warning message to the scripting log with stack trace.
+        /// </summary>
+        public static void ScriptingWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.Scripting, message, args);
 
         /// <summary>
         /// Logs a warning message under an explicit category with stack trace.
@@ -276,6 +332,30 @@ namespace XREngine
             => LogException(ELogCategory.UI, ex, message);
 
         /// <summary>
+        /// Logs an exception to the Vulkan log.
+        /// </summary>
+        public static void VulkanException(Exception ex, string? message = null)
+            => LogException(ELogCategory.Vulkan, ex, message);
+
+        /// <summary>
+        /// Logs an exception to the networking log.
+        /// </summary>
+        public static void NetworkingException(Exception ex, string? message = null)
+            => LogException(ELogCategory.Networking, ex, message);
+
+        /// <summary>
+        /// Logs an exception to the VR log.
+        /// </summary>
+        public static void VRException(Exception ex, string? message = null)
+            => LogException(ELogCategory.VR, ex, message);
+
+        /// <summary>
+        /// Logs an exception to the scripting log.
+        /// </summary>
+        public static void ScriptingException(Exception ex, string? message = null)
+            => LogException(ELogCategory.Scripting, ex, message);
+
+        /// <summary>
         /// Logs an exception under an explicit category.
         /// </summary>
         public static void LogException(ELogCategory category, Exception ex, string? message = null)
@@ -327,6 +407,30 @@ namespace XREngine
         /// </summary>
         public static void UIError(string message, params object[] args)
             => LogError(ELogCategory.UI, message, args);
+
+        /// <summary>
+        /// Logs an error message to the Vulkan log with stack trace.
+        /// </summary>
+        public static void VulkanError(string message, params object[] args)
+            => LogError(ELogCategory.Vulkan, message, args);
+
+        /// <summary>
+        /// Logs an error message to the networking log with stack trace.
+        /// </summary>
+        public static void NetworkingError(string message, params object[] args)
+            => LogError(ELogCategory.Networking, message, args);
+
+        /// <summary>
+        /// Logs an error message to the VR log with stack trace.
+        /// </summary>
+        public static void VRError(string message, params object[] args)
+            => LogError(ELogCategory.VR, message, args);
+
+        /// <summary>
+        /// Logs an error message to the scripting log with stack trace.
+        /// </summary>
+        public static void ScriptingError(string message, params object[] args)
+            => LogError(ELogCategory.Scripting, message, args);
 
         /// <summary>
         /// Logs an error message under an explicit category with stack trace.
@@ -535,6 +639,30 @@ namespace XREngine
             if (!ShouldLogEvery(key, interval))
             return;
             Log(ELogCategory.Rendering, EOutputVerbosity.Normal, false, "[WARN] " + message, args);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited Vulkan log. Intended for per-frame diagnostics.
+        /// </summary>
+        public static void VulkanEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+            return;
+            Vulkan(message, args);
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited Vulkan warning without stack trace (keeps logs readable).
+        /// </summary>
+        public static void VulkanWarningEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+            return;
+            Log(ELogCategory.Vulkan, EOutputVerbosity.Normal, false, "[WARN] " + message, args);
     #endif
         }
 

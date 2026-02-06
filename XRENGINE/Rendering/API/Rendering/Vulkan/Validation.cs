@@ -103,11 +103,11 @@ public unsafe partial class VulkanRenderer
         string msg = Marshal.PtrToStringAnsi((nint)pCallbackData->PMessage) ?? "<null>";
 
         if (messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt))
-            Debug.LogError($"[Vulkan] {msg}");
+            Debug.VulkanError($"[Vulkan] {msg}");
         else if (messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.WarningBitExt))
-            Debug.LogWarning($"[Vulkan] {msg}");
+            Debug.VulkanWarning($"[Vulkan] {msg}");
         else
-            Debug.Out($"[Vulkan] {msg}");
+            Debug.Vulkan($"[Vulkan] {msg}");
 
         return Vk.False;
     }

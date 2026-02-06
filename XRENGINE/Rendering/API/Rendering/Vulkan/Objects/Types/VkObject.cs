@@ -97,7 +97,7 @@ public unsafe partial class VulkanRenderer
             if (_cache.ContainsKey(BindingId))
             {
                 //Shouldn't happen
-                Debug.Out($"Vulkan object with binding id {BindingId} already exists in cache.");
+                Debug.VulkanWarning($"Vulkan object with binding id {BindingId} already exists in cache.");
                 _cache[BindingId] = this;
             }
             else

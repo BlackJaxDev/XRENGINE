@@ -219,12 +219,12 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (Data.ActivelyMapping.Contains(this))
                 {
-                    Debug.LogWarning($"Buffer {GetDescribingName()} is already mapped.");
+                    Debug.VulkanWarning($"Buffer {GetDescribingName()} is already mapped.");
                     return;
                 }
                 if (Data.Resizable)
                 {
-                    Debug.LogWarning($"Buffer {GetDescribingName()} is resizable and cannot be mapped.");
+                    Debug.VulkanWarning($"Buffer {GetDescribingName()} is resizable and cannot be mapped.");
                     return;
                 }
                 if (Engine.InvokeOnMainThread(MapBufferData, "VkDataBuffer.MapBufferData"))

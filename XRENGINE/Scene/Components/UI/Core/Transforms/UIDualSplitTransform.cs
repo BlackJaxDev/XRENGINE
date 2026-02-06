@@ -63,6 +63,100 @@ namespace XREngine.Rendering.UI
         public UIBoundableTransform? First => Children.FirstOrDefault() as UIBoundableTransform;
         public UIBoundableTransform? Second => Children.LastOrDefault() as UIBoundableTransform;
 
+        /// <summary>
+        /// New layout path: arranges children using the centralized layout system.
+        /// Splits the padded region into two sub-regions and arranges each child within its region.
+        /// </summary>
+        protected override void ArrangeChildren(BoundingRectangleF childRegion)
+        {
+            var paddedRegion = ApplyPadding(childRegion);
+
+            var a = First;
+            var b = Second;
+            if (a is null)
+                return;
+
+            if (b is null)
+            {
+                UILayoutSystem.FitLayout(a, paddedRegion);
+                return;
+            }
+            else if (VerticalSplit)
+            {
+                float topSize, bottomSize;
+
+                if (FirstFixedSize.HasValue)
+                {
+                    if (FirstFixedSize.Value)
+                    {
+                        float fixedSize = GetFixedSize(true);
+                        topSize = fixedSize;
+                        bottomSize = paddedRegion.Height - fixedSize;
+                    }
+                    else
+                    {
+                        float fixedSize = GetFixedSize(false);
+                        topSize = paddedRegion.Height - fixedSize;
+                        bottomSize = fixedSize;
+                    }
+                }
+                else
+                {
+                    float split = paddedRegion.Height * SplitPercent;
+                    topSize = split;
+                    bottomSize = paddedRegion.Height - split;
+                }
+
+                if (a.PlacementInfo is UISplitChildPlacementInfo aInfo)
+                    aInfo.Offset = bottomSize + SplitterSize;
+                UILayoutSystem.FitLayout(a, new(paddedRegion.X, paddedRegion.Y + bottomSize + SplitterSize, paddedRegion.Width, topSize));
+
+                if (b.PlacementInfo is UISplitChildPlacementInfo bInfo)
+                    bInfo.Offset = 0;
+                UILayoutSystem.FitLayout(b, new(paddedRegion.X, paddedRegion.Y, paddedRegion.Width, bottomSize));
+            }
+            else
+            {
+                float leftSize, rightSize;
+
+                if (FirstFixedSize.HasValue)
+                {
+                    if (FirstFixedSize.Value)
+                    {
+                        float fixedSize = GetFixedSize(true);
+                        leftSize = fixedSize;
+                        rightSize = paddedRegion.Width - fixedSize;
+                    }
+                    else
+                    {
+                        float fixedSize = GetFixedSize(false);
+                        leftSize = paddedRegion.Width - fixedSize;
+                        rightSize = fixedSize;
+                    }
+                }
+                else
+                {
+                    float split = paddedRegion.Width * SplitPercent;
+                    leftSize = split;
+                    rightSize = paddedRegion.Width - split;
+                }
+
+                if (a.PlacementInfo is UISplitChildPlacementInfo aInfo)
+                    aInfo.Offset = 0;
+                UILayoutSystem.FitLayout(a, new(paddedRegion.X, paddedRegion.Y, leftSize, paddedRegion.Height));
+
+                if (b.PlacementInfo is UISplitChildPlacementInfo bInfo)
+                    bInfo.Offset = leftSize + SplitterSize;
+                UILayoutSystem.FitLayout(b, new(paddedRegion.X + leftSize + SplitterSize, paddedRegion.Y, rightSize, paddedRegion.Height));
+            }
+        }
+
+        /// <summary>
+        /// Old layout path: called from OnLocalMatrixChanged.
+        /// Kept for compatibility — the new ArrangeChildren path handles arrangement during the layout system pass.
+        /// When OnResizeChildComponents fires after ArrangeChildren, FitLayout calls will early-exit
+        /// because children were already arranged with the same bounds.
+        /// </summary>
         protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
         {
             var a = First;

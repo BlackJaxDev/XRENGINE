@@ -877,7 +877,7 @@ internal static class VulkanShaderReflection
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"SPIR-V reflection failed ({ex.Message}). Falling back to GLSL source parsing.");
+                Debug.VulkanWarning($"SPIR-V reflection failed ({ex.Message}). Falling back to GLSL source parsing.");
             }
         }
 
@@ -901,7 +901,7 @@ internal static class VulkanShaderReflection
 
             if (!TryParseQualifier(qualifiers, "binding", out uint binding))
             {
-                Debug.LogWarning($"Shader descriptor '{declaration}' is missing a binding index; skipping.");
+                Debug.VulkanWarning($"Shader descriptor '{declaration}' is missing a binding index; skipping.");
                 continue;
             }
 

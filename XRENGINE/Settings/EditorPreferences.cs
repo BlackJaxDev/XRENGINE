@@ -441,6 +441,7 @@ namespace XREngine
         private bool _allowGpuCpuFallback = false;
         private bool _enableProfilerFrameLogging = true;
         private bool _enableRenderStatisticsTracking = true;
+        private bool _enableUILayoutDebugLogging = false;
 
         [Category("Debug")]
         [DisplayName("Render 3D Mesh Bounds")]
@@ -639,6 +640,19 @@ namespace XREngine
             }
         }
 
+        [Category("Debug")]
+        [DisplayName("Enable UI Layout Debug Logging")]
+        [Description("When enabled, logs verbose UI layout system measure/arrange passes to the UI log category.")]
+        public bool EnableUILayoutDebugLogging
+        {
+            get => _enableUILayoutDebugLogging;
+            set
+            {
+                if (SetField(ref _enableUILayoutDebugLogging, value))
+                    XREngine.Rendering.UI.UILayoutSystem.EnableDebugLogging = value;
+            }
+        }
+
         public void CopyFrom(EditorDebugOptions source)
         {
             if (source is null)
@@ -665,6 +679,7 @@ namespace XREngine
             AllowGpuCpuFallback = source.AllowGpuCpuFallback;
             EnableProfilerFrameLogging = source.EnableProfilerFrameLogging;
             EnableRenderStatisticsTracking = source.EnableRenderStatisticsTracking;
+            EnableUILayoutDebugLogging = source.EnableUILayoutDebugLogging;
         }
 
         public void ApplyOverrides(EditorDebugOverrides overrides)
@@ -714,6 +729,8 @@ namespace XREngine
                 EnableProfilerFrameLogging = profilerLogging.Value;
             if (overrides.EnableRenderStatisticsTrackingOverride is { HasOverride: true } statsTracking)
                 EnableRenderStatisticsTracking = statsTracking.Value;
+            if (overrides.EnableUILayoutDebugLoggingOverride is { HasOverride: true } uiLayoutDebug)
+                EnableUILayoutDebugLogging = uiLayoutDebug.Value;
         }
     }
 }

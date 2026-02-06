@@ -146,6 +146,171 @@ namespace XREngine.Rendering.UI
             //}
         }
 
+        protected override void ArrangeChildren(BoundingRectangleF childRegion)
+        {
+            //Set to fixed values or initialize to zero for auto calculation
+            float rowPropDenom = 0.0f;
+            float colPropDenom = 0.0f;
+
+            List<UITransform> autoComps = [];
+
+            //Pre-pass: 
+            //calculate initial values,
+            //grab any components affected by auto sizing,
+            //add proportional values for use later
+            foreach (var row in Rows)
+            {
+                switch (row.Value?.Mode ?? ESizingMode.Fixed)
+                {
+                    case ESizingMode.Auto:
+                        row.CalculatedValue = 0.0f;
+                        foreach (UITransform comp in row.AttachedControls)
+                            if (!autoComps.Contains(comp))
+                                autoComps.Add(comp);
+                        break;
+                    case ESizingMode.Fixed:
+                        row.CalculatedValue = row.Value?.Value ?? 0.0f;
+                        break;
+                    case ESizingMode.Proportional:
+                        row.CalculatedValue = 0.0f;
+                        rowPropDenom += row.Value?.Value ?? 0.0f;
+                        break;
+                }
+            }
+            foreach (var col in Columns)
+            {
+                switch (col.Value?.Mode ?? ESizingMode.Fixed)
+                {
+                    case ESizingMode.Auto:
+                        col.CalculatedValue = 0.0f;
+                        foreach (UITransform comp in col.AttachedControls)
+                            if (!autoComps.Contains(comp))
+                                autoComps.Add(comp);
+                        break;
+                    case ESizingMode.Fixed:
+                        col.CalculatedValue = col.Value?.Value ?? 0.0f;
+                        break;
+                    case ESizingMode.Proportional:
+                        col.CalculatedValue = 0.0f;
+                        colPropDenom += col.Value?.Value ?? 0.0f;
+                        break;
+                }
+            }
+            //Auto sizing pass, only calculate auto size for components that are affected
+            foreach (UITransform tfm in autoComps)
+            {
+                if (tfm?.PlacementInfo is not UIGridChildPlacementInfo info)
+                    continue;
+
+                bool hasCalcAutoHeight = false;
+                bool hasCalcAutoWidth = false;
+                float autoHeight = 0.0f;
+                float autoWidth = 0.0f;
+
+                //Calc height through one or more rows
+                foreach (int rowIndex in info.AssociatedRowIndices)
+                {
+                    var row = Rows[rowIndex];
+                    switch (row.Value?.Mode ?? ESizingMode.Fixed)
+                    {
+                        case ESizingMode.Auto:
+                            if (!hasCalcAutoHeight)
+                            {
+                                hasCalcAutoHeight = true;
+                                autoHeight = tfm?.GetMaxChildHeight() ?? 0.0f;
+                            }
+                            row.CalculatedValue = Math.Max(row.CalculatedValue, autoHeight);
+                            break;
+                    }
+                }
+
+                //Calc width through one or more cols
+                foreach (int colIndex in info.AssociatedColumnIndices)
+                {
+                    var col = Columns[colIndex];
+                    switch (col.Value?.Mode ?? ESizingMode.Fixed)
+                    {
+                        case ESizingMode.Auto:
+                            if (!hasCalcAutoWidth)
+                            {
+                                hasCalcAutoWidth = true;
+                                autoWidth = tfm?.GetMaxChildWidth() ?? 0.0f;
+                            }
+                            col.CalculatedValue = Math.Max(col.CalculatedValue, autoWidth);
+                            break;
+                    }
+                }
+            }
+
+            float remainingRowHeight = childRegion.Height;
+            float remainingColWidth = childRegion.Width;
+
+            foreach (var row in Rows)
+            {
+                if (row.Value.Mode != ESizingMode.Proportional)
+                    remainingRowHeight -= row.CalculatedValue;
+            }
+
+            foreach (var col in Columns)
+            {
+                if (col.Value.Mode != ESizingMode.Proportional)
+                    remainingColWidth -= col.CalculatedValue;
+            }
+
+            //Clamp remaining to zero
+            if (remainingRowHeight < 0.0f)
+                remainingRowHeight = 0.0f;
+            if (remainingColWidth < 0.0f)
+                remainingColWidth = 0.0f;
+
+            //Post-pass: actually size each row and col, and resize each component
+            float heightOffset = 0.0f;
+            for (int r = 0; r < Rows.Count; ++r)
+            {
+                var row = Rows[r];
+
+                //Calculate the proportional value now that the fixed and auto values have been processed
+                if (row.Value.Mode == ESizingMode.Proportional)
+                    row.CalculatedValue = rowPropDenom <= 0.0f ? 0.0f : row.Value.Value / rowPropDenom * remainingRowHeight;
+
+                float height = row.CalculatedValue;
+
+                float widthOffset = 0.0f;
+                for (int c = 0; c < Columns.Count; ++c)
+                {
+                    var col = Columns[c];
+
+                    //Calculate the proportional value now that the fixed and auto values have been processed
+                    if (col.Value.Mode == ESizingMode.Proportional)
+                        col.CalculatedValue = colPropDenom <= 0.0f ? 0.0f : col.Value.Value / colPropDenom * remainingColWidth;
+
+                    float width = col.CalculatedValue;
+
+                    List<int> indices = Indices[r, c];
+                    if (indices is null)
+                        Indices[r, c] = indices = [];
+                    foreach (var index in indices)
+                    {
+                        TransformBase? childTfm = null;
+                        childTfm = Children[index];
+                        if (childTfm is not UIBoundableTransform uiBoundable)
+                            continue;
+
+                        float x = childRegion.X;
+                        float y = childRegion.Y;
+                        y += childRegion.Height - heightOffset - height;
+                        x += widthOffset;
+
+                        UILayoutSystem.FitLayout(uiBoundable, new BoundingRectangleF(x, y, width, height));
+                    }
+
+                    widthOffset += width;
+                }
+
+                heightOffset += height;
+            }
+        }
+
         protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
         {
             //Set to fixed values or initialize to zero for auto calculation

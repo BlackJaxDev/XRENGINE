@@ -1,4 +1,4 @@
-ï»¿using Extensions;
+using Extensions;
 using System.Numerics;
 using XREngine.Data.Geometry;
 
@@ -58,6 +58,214 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _canUserResize, value);
         }
 
+        /// <summary>
+        /// New layout path: arranges children using the centralized layout system.
+        /// Splits the padded region into sub-regions based on the arrangement type.
+        /// </summary>
+        protected override void ArrangeChildren(BoundingRectangleF childRegion)
+        {
+            var paddedRegion = ApplyPadding(childRegion);
+            List<UIBoundableTransform> children = [.. Children.OfType<UIBoundableTransform>()];
+            int childCount = children.Count;
+
+            if (childCount == 0)
+                return;
+
+            switch (Arrangement)
+            {
+                case UISplitArrangement.LeftMiddleRight:
+                    ArrangeLeftMiddleRight(paddedRegion, children);
+                    break;
+                case UISplitArrangement.TopMiddleBottom:
+                    ArrangeTopMiddleBottom(paddedRegion, children);
+                    break;
+                case UISplitArrangement.LeftRight:
+                    ArrangeLeftRight(paddedRegion, children);
+                    break;
+                case UISplitArrangement.TopBottom:
+                    ArrangeTopBottom(paddedRegion, children);
+                    break;
+            }
+        }
+
+        private void ArrangeLeftMiddleRight(BoundingRectangleF parentRegion, List<UIBoundableTransform> children)
+        {
+            if (children.Count == 1)
+            {
+                UILayoutSystem.FitLayout(children[0], parentRegion);
+                return;
+            }
+            if (children.Count == 2)
+            {
+                ArrangeLeftRight(parentRegion, children);
+                return;
+            }
+
+            float leftSize, middleSize, rightSize;
+            if (FixedSizeFirst.HasValue && FixedSizeSecond.HasValue)
+            {
+                leftSize = FixedSizeFirst.Value;
+                rightSize = FixedSizeSecond.Value;
+                middleSize = Math.Max(0, parentRegion.Width - leftSize - rightSize - (2 * SplitterSize));
+            }
+            else if (FixedSizeFirst.HasValue)
+            {
+                leftSize = FixedSizeFirst.Value;
+                middleSize = (parentRegion.Width - leftSize - SplitterSize) * SplitPercentFirst;
+                rightSize = parentRegion.Width - leftSize - middleSize - (2 * SplitterSize);
+            }
+            else if (FixedSizeSecond.HasValue)
+            {
+                rightSize = FixedSizeSecond.Value;
+                middleSize = (parentRegion.Width - rightSize - SplitterSize) * SplitPercentFirst;
+                leftSize = parentRegion.Width - rightSize - middleSize - (2 * SplitterSize);
+            }
+            else
+            {
+                leftSize = parentRegion.Width * SplitPercentFirst;
+                middleSize = (parentRegion.Width - leftSize - SplitterSize) * (SplitPercentSecond - SplitPercentFirst);
+                rightSize = parentRegion.Width - leftSize - middleSize - (2 * SplitterSize);
+            }
+
+            if (children[0].PlacementInfo is UISplitChildPlacementInfo aInfo)
+                aInfo.Offset = 0;
+            UILayoutSystem.FitLayout(children[0], new(parentRegion.X, parentRegion.Y, leftSize, parentRegion.Height));
+
+            if (children[1].PlacementInfo is UISplitChildPlacementInfo bInfo)
+                bInfo.Offset = leftSize + SplitterSize;
+            UILayoutSystem.FitLayout(children[1], new(parentRegion.X + leftSize + SplitterSize, parentRegion.Y, middleSize, parentRegion.Height));
+
+            if (children[2].PlacementInfo is UISplitChildPlacementInfo cInfo)
+                cInfo.Offset = leftSize + middleSize + (2 * SplitterSize);
+            UILayoutSystem.FitLayout(children[2], new(parentRegion.X + leftSize + middleSize + (2 * SplitterSize), parentRegion.Y, rightSize, parentRegion.Height));
+        }
+
+        private void ArrangeTopMiddleBottom(BoundingRectangleF parentRegion, List<UIBoundableTransform> children)
+        {
+            if (children.Count == 1)
+            {
+                UILayoutSystem.FitLayout(children[0], parentRegion);
+                return;
+            }
+            if (children.Count == 2)
+            {
+                ArrangeTopBottom(parentRegion, children);
+                return;
+            }
+
+            float topSize, middleSize, bottomSize;
+            if (FixedSizeFirst.HasValue && FixedSizeSecond.HasValue)
+            {
+                topSize = FixedSizeFirst.Value;
+                bottomSize = FixedSizeSecond.Value;
+                middleSize = Math.Max(0, parentRegion.Height - topSize - bottomSize - (2 * SplitterSize));
+            }
+            else if (FixedSizeFirst.HasValue)
+            {
+                topSize = FixedSizeFirst.Value;
+                middleSize = (parentRegion.Height - topSize - SplitterSize) * SplitPercentFirst;
+                bottomSize = parentRegion.Height - topSize - middleSize - (2 * SplitterSize);
+            }
+            else if (FixedSizeSecond.HasValue)
+            {
+                bottomSize = FixedSizeSecond.Value;
+                middleSize = (parentRegion.Height - bottomSize - SplitterSize) * SplitPercentFirst;
+                topSize = parentRegion.Height - bottomSize - middleSize - (2 * SplitterSize);
+            }
+            else
+            {
+                topSize = parentRegion.Height * SplitPercentFirst;
+                middleSize = (parentRegion.Height - topSize - SplitterSize) * (SplitPercentSecond - SplitPercentFirst);
+                bottomSize = parentRegion.Height - topSize - middleSize - (2 * SplitterSize);
+            }
+
+            if (children[0].PlacementInfo is UISplitChildPlacementInfo aInfo)
+                aInfo.Offset = bottomSize + middleSize + (2 * SplitterSize);
+            UILayoutSystem.FitLayout(children[0], new(parentRegion.X, parentRegion.Y + bottomSize + middleSize + (2 * SplitterSize), parentRegion.Width, topSize));
+
+            if (children[1].PlacementInfo is UISplitChildPlacementInfo bInfo)
+                bInfo.Offset = bottomSize + SplitterSize;
+            UILayoutSystem.FitLayout(children[1], new(parentRegion.X, parentRegion.Y + bottomSize + SplitterSize, parentRegion.Width, middleSize));
+
+            if (children[2].PlacementInfo is UISplitChildPlacementInfo cInfo)
+                cInfo.Offset = 0;
+            UILayoutSystem.FitLayout(children[2], new(parentRegion.X, parentRegion.Y, parentRegion.Width, bottomSize));
+        }
+
+        private void ArrangeLeftRight(BoundingRectangleF parentRegion, List<UIBoundableTransform> children)
+        {
+            if (children.Count < 2) return;
+
+            float leftSize, rightSize;
+            if (FixedSizeFirst.HasValue && FixedSizeSecond.HasValue)
+            {
+                leftSize = FixedSizeFirst.Value;
+                rightSize = FixedSizeSecond.Value;
+            }
+            else if (FixedSizeFirst.HasValue)
+            {
+                leftSize = FixedSizeFirst.Value;
+                rightSize = parentRegion.Width - FixedSizeFirst.Value - SplitterSize;
+            }
+            else if (FixedSizeSecond.HasValue)
+            {
+                rightSize = FixedSizeSecond.Value;
+                leftSize = parentRegion.Width - FixedSizeSecond.Value - SplitterSize;
+            }
+            else
+            {
+                leftSize = parentRegion.Width * SplitPercentFirst;
+                rightSize = parentRegion.Width - leftSize - SplitterSize;
+            }
+
+            if (children[0].PlacementInfo is UISplitChildPlacementInfo aInfo)
+                aInfo.Offset = 0;
+            UILayoutSystem.FitLayout(children[0], new(parentRegion.X, parentRegion.Y, leftSize, parentRegion.Height));
+
+            if (children[1].PlacementInfo is UISplitChildPlacementInfo bInfo)
+                bInfo.Offset = leftSize + SplitterSize;
+            UILayoutSystem.FitLayout(children[1], new(parentRegion.X + leftSize + SplitterSize, parentRegion.Y, rightSize, parentRegion.Height));
+        }
+
+        private void ArrangeTopBottom(BoundingRectangleF parentRegion, List<UIBoundableTransform> children)
+        {
+            if (children.Count < 2) return;
+
+            float topSize, bottomSize;
+            if (FixedSizeFirst.HasValue && FixedSizeSecond.HasValue)
+            {
+                topSize = FixedSizeFirst.Value;
+                bottomSize = FixedSizeSecond.Value;
+            }
+            else if (FixedSizeFirst.HasValue)
+            {
+                topSize = FixedSizeFirst.Value;
+                bottomSize = parentRegion.Height - FixedSizeFirst.Value - SplitterSize;
+            }
+            else if (FixedSizeSecond.HasValue)
+            {
+                bottomSize = FixedSizeSecond.Value;
+                topSize = parentRegion.Height - FixedSizeSecond.Value - SplitterSize;
+            }
+            else
+            {
+                topSize = parentRegion.Height * SplitPercentFirst;
+                bottomSize = parentRegion.Height - topSize - SplitterSize;
+            }
+
+            if (children[0].PlacementInfo is UISplitChildPlacementInfo aInfo)
+                aInfo.Offset = bottomSize + SplitterSize;
+            UILayoutSystem.FitLayout(children[0], new(parentRegion.X, parentRegion.Y + bottomSize + SplitterSize, parentRegion.Width, topSize));
+
+            if (children[1].PlacementInfo is UISplitChildPlacementInfo bInfo)
+                bInfo.Offset = 0;
+            UILayoutSystem.FitLayout(children[1], new(parentRegion.X, parentRegion.Y, parentRegion.Width, bottomSize));
+        }
+
+        /// <summary>
+        /// Old layout path: called from OnLocalMatrixChanged.
+        /// Kept for compatibility — the new ArrangeChildren path handles arrangement during the layout system pass.
+        /// </summary>
         protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
         {
             List<UIBoundableTransform> children = [.. Children.OfType<UIBoundableTransform>()];

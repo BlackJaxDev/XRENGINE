@@ -329,7 +329,7 @@ namespace XREngine.Components
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[Discovery] Listener init error: {ex.Message}");
+                Debug.NetworkingWarning($"[Discovery] Listener init error: {ex.Message}");
                 return;
             }
 
@@ -346,7 +346,7 @@ namespace XREngine.Components
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[Discovery] Listener error: {ex.Message}");
+                    Debug.NetworkingWarning($"[Discovery] Listener error: {ex.Message}");
                 }
             }
         }
@@ -384,7 +384,7 @@ namespace XREngine.Components
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[Discovery] Broadcast error: {ex.Message}");
+                    Debug.NetworkingWarning($"[Discovery] Broadcast error: {ex.Message}");
                 }
             }
         }
@@ -438,7 +438,7 @@ namespace XREngine.Components
             }
             catch (Exception ex)
             {
-                Debug.Out(EOutputVerbosity.Verbose, "[Discovery] Failed to parse beacon from {0}: {1}", remote, ex.Message);
+                Debug.Log(ELogCategory.Networking, EOutputVerbosity.Verbose, true, "[Discovery] Failed to parse beacon from {0}: {1}", remote, ex.Message);
                 return;
             }
 

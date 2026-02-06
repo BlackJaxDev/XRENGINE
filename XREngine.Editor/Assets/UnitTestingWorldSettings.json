@@ -36,9 +36,9 @@
   "Mirror": false,
   "Spline": false,
 
-  "AddEditorUI": false,
+  "AddEditorUI": true,
   "TransformTool": false,
-  "DearImGuiUI": true,
+  "DearImGuiUI": false,
   "EnableProfilerLogging": true,
   "RiveUI": false,
   "VideoStreaming": false,
@@ -62,15 +62,15 @@
 
   "ModelsToImport": [
     {
-      "Enabled": true,
+      "Enabled": false,
       "Kind": "Animated",
-      "Path": "misc\\jax2026.fbx",
+      "Path": "misc\\Mitsuki.fbx",
       "ImportFlags": "Triangulate, FlipUVs",
       "Scale": 1.0,
       "ZUp": false,
       "YawPitchRoll": {
-        "Yaw": 180.0,
-        "Pitch": 180.0,
+        "Yaw": 0.0,
+        "Pitch": 0.0,
         "Roll": 0.0
       }
     },
@@ -93,7 +93,7 @@
   "FaceMotion3D": false,
   "FaceTracking": false,
   "AnimationClipVMD": false,
-  "AnimationClipAnim": true,
+  "AnimationClipAnim": false,
   "AnimClipPath": "Assets\\Walks\\Sexy Walk.anim",
   "AnimLooped": true,
   "IKTest": false,

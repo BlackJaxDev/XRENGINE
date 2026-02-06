@@ -133,46 +133,66 @@ namespace XREngine.Components
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            Engine.Time.Timer.CollectVisible += UpdateLayoutWorldSpace;
+            // Layout runs on UpdateFrame, BEFORE XRWorldInstance.PostUpdate (PostUpdateFrame).
+            // This way, layout marks dirty transforms via MarkLocalModified, and PostUpdate
+            // processes them in the same frame — no 1-frame lag.
+            Engine.Time.Timer.UpdateFrame += UpdateLayout;
         }
 
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
-            Engine.Time.Timer.CollectVisible -= UpdateLayoutWorldSpace;
-        }
-
-        private void UpdateLayoutWorldSpace()
-        {
-            //If in world/camera space, no screen-space render path will be calling layout, so we do it here.
-            if (CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen && IsActive)
-            {
-                using var sample = Engine.Profiler.Start("UICanvasComponent.UpdateLayoutWorldSpace");
-
-                using (Engine.Profiler.Start("UICanvasComponent.UpdateLayoutWorldSpace.UpdateLayout"))
-                    CanvasTransform.UpdateLayout();
-                
-                // For Camera/World space, we need to force immediate render matrix updates
-                // so the octree has correct bounds before collection happens.
-                // The deferred system won't apply changes until SwapBuffers, which is too late.
-                using (Engine.Profiler.Start("UICanvasComponent.UpdateLayoutWorldSpace.ForceRenderMatrixUpdatesRecursive"))
-                    ForceRenderMatrixUpdatesRecursive(CanvasTransform);
-            }
+            Engine.Time.Timer.UpdateFrame -= UpdateLayout;
         }
 
         /// <summary>
-        /// Recursively forces render matrix updates for all UI transforms.
-        /// This is needed for Camera/World space UI where render matrices must be up-to-date
-        /// before the world's visual scene collects items.
+        /// Runs the full layout pass (measure + arrange) for this canvas on the update thread.
+        /// Transforms that changed during layout have MarkLocalModified called on them,
+        /// which adds them to the world's dirty queue. XRWorldInstance.PostUpdate (on PostUpdateFrame)
+        /// then recalculates their matrices and enqueues render matrix changes.
+        /// No expensive per-frame recursive recalculation needed.
         /// </summary>
-        private static void ForceRenderMatrixUpdatesRecursive(TransformBase transform)
+        private void UpdateLayout()
         {
-            // Force recalculate and set render matrix now
-            transform.RecalculateMatrices(false, true);
-            
-            // Process children
-            foreach (var child in transform.Children)
-                ForceRenderMatrixUpdatesRecursive(child);
+            if (!IsActive)
+                return;
+
+            using var sample = Engine.Profiler.Start("UICanvasComponent.UpdateLayout");
+            bool wasInvalidated = CanvasTransform.IsLayoutInvalidated;
+            CanvasTransform.UpdateLayout();
+
+            if (!wasInvalidated)
+                return;
+
+            // Screen-space UI is not owned by a world, so dirty transforms will not be
+            // processed by XRWorldInstance.PostUpdate. Walk the tree and recalculate only
+            // transforms that have been marked dirty (_localChanged or _worldChanged).
+            if (CanvasTransform.World is null || CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
+                RecalculateDirtyMatrices(CanvasTransform);
+        }
+
+        /// <summary>
+        /// Walks the UI tree and recalculates only transforms whose local or world matrix
+        /// was marked dirty during the layout pass. Much cheaper than RecalculateMatrixHierarchy
+        /// with forceWorldRecalc=true, which recalculates EVERY node regardless.
+        /// </summary>
+        private static void RecalculateDirtyMatrices(TransformBase root)
+        {
+            using var sample = Engine.Profiler.Start("UICanvasComponent.RecalculateDirtyMatrices");
+
+            // If this node is dirty, recalculate it and all children.
+            if (root.IsLocalMatrixDirty || root.IsWorldMatrixDirty)
+            {
+                // RecalculateMatrixHierarchy with forceWorldRecalc=true propagates
+                // to all children — correct because a parent matrix change means
+                // all child world matrices are stale.
+                root.RecalculateMatrixHierarchy(true, true, ELoopType.Sequential);
+                return; // Children already handled by the recursive call above
+            }
+
+            // This node is clean, but children might be dirty. Walk them.
+            foreach (var child in root.Children)
+                RecalculateDirtyMatrices(child);
         }
 
         public void CollectVisibleItemsScreenSpace()
@@ -182,11 +202,8 @@ namespace XREngine.Components
 
             using var sample = Engine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace");
 
-            //Update the layout if it's invalid.
-            using (Engine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace.UpdateLayout"))
-                CanvasTransform.UpdateLayout();
-
-            //Collect the rendered items now that the layout is updated.
+            // Layout has already been applied during PostUpdateFrame by UpdateLayout().
+            // Just collect the rendered items from the quadtree.
             if (_renderPipeline.Pipeline is not null)
             {
                 using var collectSample = Engine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace.CollectRenderedItems");

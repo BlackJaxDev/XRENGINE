@@ -66,7 +66,7 @@ public unsafe partial class VulkanRenderer
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex, $"Vulkan shader '{Data.Name ?? "UnnamedShader"}' failed to compile.");
+                Debug.VulkanException(ex, $"Vulkan shader '{Data.Name ?? "UnnamedShader"}' failed to compile.");
                 throw;
             }
         }

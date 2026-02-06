@@ -12,6 +12,10 @@ The logging system now supports explicit categories for better organization and 
 - `ELogCategory.Audio` - Audio sources, microphones, TTS, lip sync
 - `ELogCategory.Animation` - IK solvers, animation clips, state machines
 - `ELogCategory.UI` - UI components, layouts, Rive, SVG
+- `ELogCategory.Vulkan` - Vulkan-specific operations, shaders, pipelines
+- `ELogCategory.Networking` - REST APIs, OSC, webhooks, discovery
+- `ELogCategory.VR` - VR headset, device models, OpenXR
+- `ELogCategory.Scripting` - Assembly loading, hot-reload, CSProj
 
 ## Available Logging Methods
 
@@ -24,6 +28,10 @@ Debug.Physics(message, args)                 // Physics category
 Debug.Audio(message, args)                   // Audio category
 Debug.Animation(message, args)               // Animation category
 Debug.UI(message, args)                      // UI category
+Debug.Vulkan(message, args)                  // Vulkan category
+Debug.Networking(message, args)              // Networking category
+Debug.VR(message, args)                      // VR category
+Debug.Scripting(message, args)               // Scripting category
 Debug.Log(category, message, args)           // Explicit category
 ```
 
@@ -36,6 +44,10 @@ Debug.PhysicsWarning(message, args)
 Debug.AudioWarning(message, args)
 Debug.AnimationWarning(message, args)
 Debug.UIWarning(message, args)
+Debug.VulkanWarning(message, args)
+Debug.NetworkingWarning(message, args)
+Debug.VRWarning(message, args)
+Debug.ScriptingWarning(message, args)
 Debug.LogWarning(ELogCategory, message, args)  // Explicit category
 
 // Category-specific errors (with stack trace)
@@ -45,6 +57,10 @@ Debug.PhysicsError(message, args)
 Debug.AudioError(message, args)
 Debug.AnimationError(message, args)
 Debug.UIError(message, args)
+Debug.VulkanError(message, args)
+Debug.NetworkingError(message, args)
+Debug.VRError(message, args)
+Debug.ScriptingError(message, args)
 Debug.LogError(ELogCategory, message, args)    // Explicit category
 
 // Category-specific exceptions
@@ -54,6 +70,10 @@ Debug.PhysicsException(ex, message)
 Debug.AudioException(ex, message)
 Debug.AnimationException(ex, message)
 Debug.UIException(ex, message)
+Debug.VulkanException(ex, message)
+Debug.NetworkingException(ex, message)
+Debug.VRException(ex, message)
+Debug.ScriptingException(ex, message)
 Debug.LogException(ELogCategory, ex, message)  // Explicit category
 
 // Legacy (routes to General category with prefixes)
@@ -123,12 +143,32 @@ Debug.LogException(ex, msg)  // Prefixed with [EXCEPTION]
 | `XRENGINE/Scene/Components/UI/Rive/RiveUIComponent.cs` | 143, 397-538 | `Debug.UIWarning(...)` | ✅ Done |
 | `XRENGINE/Scene/Components/UI/Core/UIVideoComponent.cs` | 434-1377 | Various `Debug.UI/UIWarning/UIError(...)` | ✅ Done |
 
-### VR Category (currently mapped to Animation or General)
+### VR Category ✅ COMPLETED
 
-| File | Line | Current Call | Suggested Update |
-|------|------|--------------|------------------|
-| `XRENGINE/Scene/Components/VR/VRHeadsetComponent.cs` | 30 | `Debug.LogWarning(...)` | Keep as `LogWarning` or new VR category |
-| `XRENGINE/Scene/Components/VR/VRDeviceModelComponent.cs` | 117 | `Debug.Out(...)` | Keep as `Out` or new VR category |
+| File | Line | Current Call | Status |
+|------|------|--------------|--------|
+| `XRENGINE/Scene/Components/VR/VRHeadsetComponent.cs` | 30 | `Debug.VRWarning(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/VR/VRDeviceModelComponent.cs` | 117 | `Debug.VRWarning(...)` | ✅ Done |
+
+### VULKAN Category ✅ COMPLETED
+
+| File | Line(s) | Current Call | Status |
+|------|---------|--------------|--------|
+| `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkTexture2D.cs` | 452, 553, 668, 733, 822 | `Debug.VulkanWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs` | 357-393 | `Debug.VulkanWarningEvery(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkMeshRenderer.cs` | 779, 804, 1724, 1864 | `Debug.VulkanWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkShader.cs` | 69 | `Debug.VulkanException(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs` | 97, 119 | `Debug.VulkanWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/Types/VkObject.cs` | 100 | `Debug.VulkanWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/Types/VkDataBuffer.cs` | 222, 227 | `Debug.VulkanWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/LogicalDevice.cs` | 106, 110, 169, 173 | `Debug.Vulkan/VulkanWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs` | 108-114 | `Debug.VulkanEvery(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs` | 487, 520 | `Debug.VulkanWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/Validation.cs` | 106, 108, 110 | `Debug.VulkanError/VulkanWarning/Vulkan(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/PhysicalDevice.cs` | 74-76, 82 | `Debug.Vulkan/VulkanWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/Drawing.cs` | 617, 749, 1025-1127, 1212-1247 | Various `Debug.Vulkan*(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/Vulkan/VulkanShaderTools.cs` | 880, 904 | `Debug.VulkanWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs` | 32, 44, 53 | `Debug.Vulkan(...)` | ✅ Done |
 
 ### GENERAL Category (Editor/Tool code - keep as-is)
 
@@ -147,10 +187,33 @@ The following are editor/tool utilities and should remain in General category:
 | `XREngine.Editor/ComponentEditors/*` | Inspector editors |
 | `XRENGINE/Scene/Prefabs/*` | Prefab system (General) |
 | `XRENGINE/Scene/SceneNode.Transform.cs` | Scene graph (General) |
-| `XRENGINE/Scene/Components/Scripting/*` | Scripting/assembly loading (General) |
-| `XRENGINE/Scene/Components/Networking/*` | Networking (General) |
 | `XRENGINE/Scene/Components/Pawns/*` | Pawn input (General) |
 | `XRENGINE/Scene/Components/Debug/*` | Debug visualization (General) |
+
+### NETWORKING Category ✅ COMPLETED
+
+| File | Line | Current Call | Status |
+|------|------|--------------|--------|
+| `XRENGINE/Scene/Components/Networking/OscReceiverComponent.cs` | 76 | `Debug.NetworkingWarning(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Networking/OscReceiverComponent.cs` | 84 | `Debug.Networking(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Networking/RestApiComponent.cs` | 376 | `Debug.NetworkingWarning(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Networking/RestApiComponent.cs` | 536 | `Debug.NetworkingWarning(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Networking/RestApiComponent.cs` | 596 | `Debug.Log(ELogCategory.Networking, ...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Networking/RestApiComponent.cs` | 607 | `Debug.Log(ELogCategory.Networking, ...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Networking/NetworkDiscoveryComponent.cs` | 332 | `Debug.NetworkingWarning(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Networking/NetworkDiscoveryComponent.cs` | 349 | `Debug.NetworkingWarning(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Networking/NetworkDiscoveryComponent.cs` | 387 | `Debug.NetworkingWarning(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Networking/NetworkDiscoveryComponent.cs` | 441 | `Debug.Log(ELogCategory.Networking, ...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Networking/WebhookListenerComponent.cs` | 286 | `Debug.NetworkingWarning(...)` | ✅ Done |
+
+### SCRIPTING Category ✅ COMPLETED
+
+| File | Line | Current Call | Status |
+|------|------|--------------|--------|
+| `XRENGINE/Scene/Components/Scripting/GameCSProjLoader.cs` | 60 | `Debug.ScriptingException(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Scripting/GameCSProjLoader.cs` | 69 | `Debug.ScriptingWarning(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Scripting/GameCSProjLoader.cs` | 107 | `Debug.Scripting(...)` | ✅ Done |
+| `XRENGINE/Scene/Components/Scripting/GameCSProjLoader.cs` | 111 | `Debug.ScriptingException(...)` | ✅ Done |
 
 ---
 
@@ -160,16 +223,19 @@ The following are editor/tool utilities and should remain in General category:
 1. Physics - All PhysX-related logging
 2. Rendering - Pipelines, shaders, GPU resources
 3. OpenGL - GL-specific calls
+4. Vulkan - Vulkan-specific calls
 
 ### Medium Priority (Runtime Features)  
 4. Audio - TTS, microphone, lip sync
 5. Animation - IK, animation state
 6. UI - Layout, Rive, video
+7. Networking - REST APIs, OSC, webhooks, discovery
+8. VR - Headset, device models
+9. Scripting - Assembly loading, hot-reload
+10. Vulkan - Validation, shaders, pipelines, swapchain
 
 ### Low Priority (Keep as General)
 7. Editor code - Intentionally General
-8. Networking - Could be new category later
-9. Prefabs/Scenes - General scene management
 
 ---
 
@@ -177,6 +243,10 @@ The following are editor/tool utilities and should remain in General category:
 
 - [x] Add `Debug.Animation()` helper method
 - [x] Add `Debug.UI()` helper method
+- [x] Add `Debug.Networking()` helper method
+- [x] Add `Debug.VR()` helper method
+- [x] Add `Debug.Scripting()` helper method
+- [x] Add `Debug.Vulkan()` helper method
 - [x] Add category-specific warning methods:
   - [x] `Debug.RenderingWarning()`
   - [x] `Debug.OpenGLWarning()`
@@ -184,6 +254,10 @@ The following are editor/tool utilities and should remain in General category:
   - [x] `Debug.AudioWarning()`
   - [x] `Debug.AnimationWarning()`
   - [x] `Debug.UIWarning()`
+  - [x] `Debug.NetworkingWarning()`
+  - [x] `Debug.VRWarning()`
+  - [x] `Debug.ScriptingWarning()`
+  - [x] `Debug.VulkanWarning()`
 - [x] Add category-specific exception methods:
   - [x] `Debug.RenderingException()`
   - [x] `Debug.OpenGLException()`
@@ -191,6 +265,10 @@ The following are editor/tool utilities and should remain in General category:
   - [x] `Debug.AudioException()`
   - [x] `Debug.AnimationException()`
   - [x] `Debug.UIException()`
+  - [x] `Debug.NetworkingException()`
+  - [x] `Debug.VRException()`
+  - [x] `Debug.ScriptingException()`
+  - [x] `Debug.VulkanException()`
 - [x] Add category-specific error methods:
   - [x] `Debug.RenderingError()`
   - [x] `Debug.OpenGLError()`
@@ -198,9 +276,14 @@ The following are editor/tool utilities and should remain in General category:
   - [x] `Debug.AudioError()`
   - [x] `Debug.AnimationError()`
   - [x] `Debug.UIError()`
+  - [x] `Debug.NetworkingError()`
+  - [x] `Debug.VRError()`
+  - [x] `Debug.ScriptingError()`
+  - [x] `Debug.VulkanError()`
 - [x] Update legacy methods to add `[WARN]`, `[ERROR]`, `[EXCEPTION]` prefixes
 - [x] Update call sites (see tables above)
-- [ ] Consider adding new categories:
-  - [ ] `ELogCategory.Networking`
-  - [ ] `ELogCategory.VR`
-  - [ ] `ELogCategory.Scripting`
+- [x] Add new categories:
+  - [x] `ELogCategory.Networking`
+  - [x] `ELogCategory.VR`
+  - [x] `ELogCategory.Scripting`
+  - [x] `ELogCategory.Vulkan`

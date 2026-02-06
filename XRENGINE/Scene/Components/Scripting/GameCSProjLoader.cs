@@ -57,7 +57,7 @@ namespace XREngine.Components.Scripting
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex, $"Failed to load assembly '{id}' from stream.");
+                Debug.ScriptingException(ex, $"Failed to load assembly '{id}' from stream.");
             }
         }
 
@@ -66,7 +66,7 @@ namespace XREngine.Components.Scripting
         {
             if (!File.Exists(assemblyPath))
             {
-                Debug.Out($"Assembly file not found: {assemblyPath}");
+                Debug.ScriptingWarning($"Assembly file not found: {assemblyPath}");
                 return;
             }
 
@@ -104,11 +104,11 @@ namespace XREngine.Components.Scripting
                 }
                 
                 LoadFromAssembly(id, assemblyPath, context, assembly);
-                Debug.Out($"Successfully loaded assembly '{id}' from {assemblyPath}");
+                Debug.Scripting($"Successfully loaded assembly '{id}' from {assemblyPath}");
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex, $"Failed to load assembly '{id}' from path: {assemblyPath}");
+                Debug.ScriptingException(ex, $"Failed to load assembly '{id}' from path: {assemblyPath}");
             }
         }
 

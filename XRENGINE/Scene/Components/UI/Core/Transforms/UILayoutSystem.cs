@@ -14,8 +14,8 @@ namespace XREngine.Rendering.UI
     /// </summary>
     public static class UILayoutSystem
     {
-        // Set to true to enable verbose layout debugging to UI log category
-        public static bool EnableDebugLogging = true;
+        // Controlled by Engine.EditorPreferences.Debug.EnableUILayoutDebugLogging
+        public static bool EnableDebugLogging = false;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void LogUI(string message)
@@ -45,17 +45,17 @@ namespace XREngine.Rendering.UI
             canvas.RaiseLayoutingStarted();
 
             BoundingRectangleF bounds;
-            using (Engine.Profiler.Start())
+            using (Engine.Profiler.Start("UpdateCanvasLayout.GetRootCanvasBounds"))
                 bounds = canvas.GetRootCanvasBounds();
 
             LogUI($"Canvas UpdateLayout: bounds={bounds.Translation} size={bounds.Extents}");
 
             // Phase 1: Measure (bottom-up, can skip unchanged subtrees)
-            using (Engine.Profiler.Start())
+            using (Engine.Profiler.Start("UpdateCanvasLayout.MeasureTransform"))
                 MeasureTransform(canvas, bounds.Extents);
 
             // Phase 2: Arrange (top-down, can skip unchanged subtrees)
-            using (Engine.Profiler.Start())
+            using (Engine.Profiler.Start("UpdateCanvasLayout.ArrangeTransform"))
                 ArrangeTransform(canvas, bounds);
 
             canvas.SetUpdatingLayout(false);
@@ -104,7 +104,12 @@ namespace XREngine.Rendering.UI
             transform.IncrementLayoutVersionInternal();
             if (transform.ParentCanvas != null && transform.ParentCanvas != transform)
                 transform.ParentCanvas.InvalidateLayout();
-            transform.MarkLocalModified(true);
+            // NOTE: MarkLocalModified is NOT called here. Layout invalidation marks
+            // the layout as dirty (version-based) but does not dirty the matrix.
+            // The matrix is only marked dirty during the arrange phase when
+            // actual positions change (via OnResizeActual → MarkLocalModified).
+            // Properties that directly affect the matrix (Scale, DepthTranslation)
+            // call MarkLocalModified explicitly in OnPropertyChanged.
             transform.RaiseLayoutInvalidated();
         }
 
@@ -333,12 +338,12 @@ namespace XREngine.Rendering.UI
 
             transform.SetLastArrangeBounds(finalBounds);
             
-            // Apply margins and resize
-            var marginsApplied = ApplyMargins(transform, finalBounds);
-            transform.OnResizeActualInternal(marginsApplied);
+            // Pass the full parent bounds to OnResizeActual.
+            // Margin handling is done entirely within GetActualBounds to avoid double-application.
+            transform.OnResizeActualInternal(finalBounds);
 
-            if (transform.ShouldMarkLocalMatrixChangedInternal())
-                transform.MarkLocalModified();
+            // OnResizeActual already calls MarkLocalModified(deferred) when bounds changed.
+            // No need for a second ShouldMarkLocalMatrixChanged / MarkLocalModified call here.
 
             transform.SetLastArrangedVersion();
 
@@ -428,7 +433,9 @@ namespace XREngine.Rendering.UI
             {
                 // Otherwise, calculate the size based on the anchors.
                 // Translation is used as the translation from the min anchor, and width is used as the translation from the max anchor.
-                size.X = (maxX + (transform.Width ?? 0)) - (minX + transform.Translation.X);
+                float rawWidth = (maxX + (transform.Width ?? 0)) - (minX + transform.Translation.X);
+                // Subtract both left and right margins for stretched anchors
+                size.X = rawWidth - transform.Margins.X - transform.Margins.Z;
             }
             if (sameY)
             {
@@ -439,7 +446,9 @@ namespace XREngine.Rendering.UI
             {
                 // Otherwise, calculate the size based on the anchors.
                 // Translation is used as the translation from the min anchor, and height is used as the translation from the max anchor.
-                size.Y = (maxY + (transform.Height ?? 0)) - (minY + transform.Translation.Y);
+                float rawHeight = (maxY + (transform.Height ?? 0)) - (minY + transform.Translation.Y);
+                // Subtract both bottom and top margins for stretched anchors
+                size.Y = rawHeight - transform.Margins.Y - transform.Margins.W;
             }
 
             // Clamp the size to the min and max size.
@@ -457,7 +466,7 @@ namespace XREngine.Rendering.UI
 
             // Apply margins based on anchor position
             // For point anchors: use the margin corresponding to the anchor edge
-            // For stretched anchors: margins are applied via ApplyMargins on the parent bounds
+            // For stretched anchors: size was already reduced above; position offset by left/bottom margin
             float marginX, marginY;
             if (sameX)
             {
@@ -468,7 +477,7 @@ namespace XREngine.Rendering.UI
             }
             else
             {
-                // Stretched anchor: left margin pushes from left
+                // Stretched anchor: left margin offsets position from left edge
                 marginX = transform.Margins.X;
             }
 
@@ -481,7 +490,7 @@ namespace XREngine.Rendering.UI
             }
             else
             {
-                // Stretched anchor: bottom margin pushes from bottom
+                // Stretched anchor: bottom margin offsets position from bottom edge
                 marginY = transform.Margins.Y;
             }
 

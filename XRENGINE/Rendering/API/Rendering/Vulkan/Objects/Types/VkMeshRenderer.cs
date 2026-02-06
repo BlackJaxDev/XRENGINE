@@ -373,7 +373,7 @@ public unsafe partial class VulkanRenderer
 
 			if (_program is null)
 			{
-				Debug.RenderingWarningEvery(
+				Debug.VulkanWarningEvery(
 					$"Vulkan.MeshRenderer.{GetHashCode()}.ProgramWrapperNull",
 					TimeSpan.FromSeconds(2),
 					"[Vulkan] MeshRenderer '{0}' cannot render: failed to create VkRenderProgram wrapper.",
@@ -385,7 +385,7 @@ public unsafe partial class VulkanRenderer
 			bool linked = _program.Link();
 			if (!linked)
 			{
-				Debug.RenderingWarningEvery(
+				Debug.VulkanWarningEvery(
 					$"Vulkan.MeshRenderer.{GetHashCode()}.ProgramLinkFailed",
 					TimeSpan.FromSeconds(2),
 					"[Vulkan] MeshRenderer '{0}' program link failed. Program='{1}'",
@@ -776,7 +776,7 @@ public unsafe partial class VulkanRenderer
 
 				if (Api!.CreateDescriptorPool(Device, ref poolInfo, null, out _descriptorPool) != Result.Success)
 				{
-					Debug.LogWarning("Failed to create Vulkan descriptor pool for mesh renderer.");
+					Debug.VulkanWarning("Failed to create Vulkan descriptor pool for mesh renderer.");
 					return false;
 				}
 			}
@@ -801,7 +801,7 @@ public unsafe partial class VulkanRenderer
 
 					if (Api!.AllocateDescriptorSets(Device, ref allocInfo, setPtr) != Result.Success)
 					{
-						Debug.LogWarning("Failed to allocate Vulkan descriptor sets for mesh renderer.");
+						Debug.VulkanWarning("Failed to allocate Vulkan descriptor sets for mesh renderer.");
 						return false;
 					}
 				}
@@ -1721,7 +1721,7 @@ public unsafe partial class VulkanRenderer
 				}
 
 				if (_engineUniformWarnings.Add(normalized))
-					Debug.LogWarning($"Unhandled engine uniform '{normalized}' for Vulkan descriptors.");
+					Debug.VulkanWarning($"Unhandled engine uniform '{normalized}' for Vulkan descriptors.");
 
 				return false;
 			}
@@ -1861,7 +1861,7 @@ public unsafe partial class VulkanRenderer
 		private void WarnOnce(string message)
 		{
 			if (_descriptorWarnings.Add(message))
-				Debug.LogWarning(message);
+				Debug.VulkanWarning(message);
 		}
 
 		private static Format ToFormat(EComponentType type, uint count, bool integral)

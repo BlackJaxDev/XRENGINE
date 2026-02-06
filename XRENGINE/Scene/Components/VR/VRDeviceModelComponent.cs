@@ -114,7 +114,7 @@ namespace XREngine.Components.VR
 
                 if (triangleIndices.Max() >= vertices.Count)
                 {
-                    Debug.Out("Invalid triangle index detected in model component.");
+                    Debug.VRWarning("Invalid triangle index detected in model component.");
                     return;
                 }
 

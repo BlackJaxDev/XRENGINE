@@ -279,7 +279,13 @@ namespace XREngine.Rendering.UI
             using (_glyphLock.EnterScope())
             {
                 if (_glyphs is null || _glyphs.Count == 0)
-                    return 0.0f;
+                {
+                    if (string.IsNullOrEmpty(Text))
+                        return 0.0f;
+
+                    Font ??= FontGlyphSet.LoadDefaultFont();
+                    return MeasureWidth(Text, Font, FontSize ?? 30.0f);
+                }
 
                 //if (WrapMode != FontGlyphSet.EWrapMode.None)
                 return _glyphs.Max(g => g.transform.X + g.transform.Z);
@@ -297,7 +303,7 @@ namespace XREngine.Rendering.UI
             using (_glyphLock.EnterScope())
             {
                 if (_glyphs is null || _glyphs.Count == 0)
-                    return 0.0f;
+                    return FontSize ?? 30.0f;
 
                 float max = _glyphs.Max(g => g.transform.Y);
                 float min = _glyphs.Min(g => g.transform.Y + g.transform.W);
@@ -376,6 +382,10 @@ namespace XREngine.Rendering.UI
                     var tfm = BoundableTransform;
                     float w = tfm.ActualWidth;
                     float h = tfm.ActualHeight;
+                    if (w <= 0.0f)
+                        w = float.MaxValue;
+                    if (h <= 0.0f)
+                        h = float.MaxValue;
                     Font.GetQuads(Text, _glyphs, FontSize, w, h, WrapMode, 5.0f, 2.0f);
                     AlignQuads(tfm, w, h);
                     count = (uint)(_glyphs?.Count ?? 0);

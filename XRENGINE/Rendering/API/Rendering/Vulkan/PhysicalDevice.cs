@@ -71,7 +71,7 @@ public unsafe partial class VulkanRenderer
 
             bool supported = hasKhrRt || hasNvRt;
 
-            Debug.Out(EOutputVerbosity.Normal, false, supported
+            Debug.Vulkan(supported
                 ? "Vulkan ray tracing extensions: available"
                 : "Vulkan ray tracing extensions: not reported; RT features will remain disabled.");
 
@@ -79,7 +79,7 @@ public unsafe partial class VulkanRenderer
         }
         catch (Exception ex)
         {
-            Debug.LogWarning($"Failed to query Vulkan ray tracing extensions: {ex.Message}");
+            Debug.VulkanWarning($"Failed to query Vulkan ray tracing extensions: {ex.Message}");
             return false;
         }
     }

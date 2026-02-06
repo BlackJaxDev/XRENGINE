@@ -103,11 +103,11 @@ public unsafe partial class VulkanRenderer
             if (IsDeviceExtensionSupported(optionalExt))
             {
                 extensionsToEnable.Add(optionalExt);
-                Debug.Out($"[Vulkan] Enabling optional extension: {optionalExt}");
+                Debug.Vulkan($"[Vulkan] Enabling optional extension: {optionalExt}");
             }
             else
             {
-                Debug.Out($"[Vulkan] Optional extension not supported: {optionalExt}");
+                Debug.Vulkan($"[Vulkan] Optional extension not supported: {optionalExt}");
             }
         }
 
@@ -166,11 +166,11 @@ public unsafe partial class VulkanRenderer
             if (Api!.TryGetDeviceExtension(instance, device, out _khrDrawIndirectCount))
             {
                 _supportsDrawIndirectCount = true;
-                Debug.Out("[Vulkan] VK_KHR_draw_indirect_count extension loaded successfully.");
+                Debug.Vulkan("[Vulkan] VK_KHR_draw_indirect_count extension loaded successfully.");
             }
             else
             {
-                Debug.LogWarning("[Vulkan] Failed to load VK_KHR_draw_indirect_count extension handle.");
+                Debug.VulkanWarning("[Vulkan] Failed to load VK_KHR_draw_indirect_count extension handle.");
                 _supportsDrawIndirectCount = false;
             }
         }
