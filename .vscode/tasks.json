@@ -279,6 +279,52 @@
                 "reveal": "always"
             },
             "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "build-profiler",
+            "command": "dotnet",
+            "type": "shell",
+            "args": [
+                "build",
+                "${workspaceFolder}/XREngine.Profiler/XREngine.Profiler.csproj",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "start-profiler-no-debug",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "start \"\" /D \"${workspaceFolder}\\XREngine.Profiler\" \"${workspaceFolder}\\XREngine.Profiler\\bin\\Debug\\net10.0-windows7.0\\XREngine.Profiler.exe\""
+            ],
+            "dependsOn": "build-profiler",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "start-editor-with-profiler-no-debug",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "set XRE_PROFILER_ENABLED=1 && set XRE_WINDOW_TITLE=XRE Editor (Profiled) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+            ],
+            "dependsOn": "build",
+            "presentation": {
+                "reveal": "silent"
+            },
+            "problemMatcher": []
         }
     ]
 }

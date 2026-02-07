@@ -50,7 +50,6 @@ public static partial class EditorImGuiUI
             SceneNode.ETransformSetFlags.RetainedChildrenMaintainWorldTransform;
         private static string _transformTypeSearch = string.Empty;
         private static IReadOnlyList<TransformTypeEntry>? _transformTypeEntries;
-        private static readonly Dictionary<int, ProfilerThreadCacheEntry> _profilerThreadCache = new();
         private static bool _showProfiler;
         private static bool _showOpenGLApiObjects;
         private static bool _showOpenGLErrors;
@@ -68,10 +67,6 @@ public static partial class EditorImGuiUI
         private static bool _showInspector = true;
         private static bool _showAssetExplorer = true;
         private static bool _showNetworking;
-        private static bool _profilerSortByTime;
-        private static readonly Dictionary<string, bool> _profilerNodeOpenCache = new();
-        private static readonly TimeSpan ProfilerThreadCacheTimeout = TimeSpan.FromSeconds(15.0);
-        private static readonly TimeSpan ProfilerThreadStaleThreshold = TimeSpan.FromSeconds(10.0);
 
         private static bool _renameInputFocusRequested;
         private static bool _imguiStyleInitialized;
@@ -79,8 +74,6 @@ public static partial class EditorImGuiUI
         private static Vector4? _imguiBaseChildBg;
         private static Vector4? _imguiBaseDockingEmptyBg;
         private static bool _componentTypeCacheDirty = true;
-        private static float _lastProfilerCaptureTime;
-
         private static SceneNode? _nodePendingRename;
         private static IReadOnlyList<SceneNode>? _nodesPendingAddComponent;
         private static string _componentPickerSearch = string.Empty;
@@ -204,13 +197,6 @@ public static partial class EditorImGuiUI
         private static XRWindow? _closePromptBypassWindow;
         private static readonly List<XRAsset> _closePromptAssets = [];
         private static readonly Dictionary<Guid, bool> _closePromptSelections = [];
-
-        private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameDisplaySnapshot;
-        private static Engine.CodeProfiler.ProfilerFrameSnapshot? _worstFrameWindowSnapshot;
-        private static float _worstFrameDisplayMs;
-        private static float _worstFrameWindowMaxMs;
-        private static DateTime _worstFrameWindowStart = DateTime.MinValue;
-        private static readonly TimeSpan WorstFrameWindowDuration = TimeSpan.FromSeconds(0.5);
 
 
 
@@ -1117,7 +1103,7 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Console", null, ref _showConsole);
                 ImGui.MenuItem("Render Pipeline Graph", null, ref _showRenderPipelineGraph);
                 ImGui.MenuItem("Engine State", null, ref _showStatePanel);
-                ImGui.MenuItem("Profiler", null, ref _showProfiler);
+                ImGui.MenuItem("Profiler", "F11", ref _showProfiler);
                 ImGui.MenuItem("OpenGL API Objects", null, ref _showOpenGLApiObjects);
                 ImGui.MenuItem("OpenGL Errors", null, ref _showOpenGLErrors);
                 ImGui.MenuItem("Missing Assets", null, ref _showMissingAssets);
