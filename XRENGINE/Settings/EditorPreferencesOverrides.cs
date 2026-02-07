@@ -275,6 +275,7 @@ namespace XREngine
         private OverrideableSetting<bool> _enableProfilerFrameLoggingOverride = new();
         private OverrideableSetting<bool> _enableRenderStatisticsTrackingOverride = new();
         private OverrideableSetting<bool> _enableUILayoutDebugLoggingOverride = new();
+        private OverrideableSetting<bool> _enableProfilerUdpSendingOverride = new();
 
         public OverrideableSetting<bool> RenderMesh3DBoundsOverride
         {
@@ -406,6 +407,12 @@ namespace XREngine
         {
             get => _enableUILayoutDebugLoggingOverride;
             set => SetField(ref _enableUILayoutDebugLoggingOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> EnableProfilerUdpSendingOverride
+        {
+            get => _enableProfilerUdpSendingOverride;
+            set => SetField(ref _enableProfilerUdpSendingOverride, value ?? new());
         }
     }
 }

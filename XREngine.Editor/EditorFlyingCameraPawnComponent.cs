@@ -20,6 +20,8 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Picking;
+using XREngine.Rendering.UI;
+using XREngine.Editor.UI;
 using XREngine.Scene;
 using XREngine.Scene.Components.Editing;
 using XREngine.Scene.Transforms;
@@ -1786,10 +1788,156 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         return MathF.Abs(_incRight) > threshold || MathF.Abs(_incForward) > threshold || MathF.Abs(_incUp) > threshold || MathF.Abs(_incPitch) > threshold || MathF.Abs(_incYaw) > threshold;
     }
 
+    private const string EditorImGuiRootNodeName = "EditorUIRoot";
+    private const string EditorImGuiNodeName = "Dear ImGui Node";
+
+    private void ToggleEditorImGuiOverlay()
+    {
+        var world = SceneNode?.World;
+        if (world is null)
+            return;
+
+        bool enable = !IsEditorImGuiOverlayEnabled(world);
+        SetEditorImGuiOverlayEnabled(world, enable);
+    }
+
+    private static bool IsEditorImGuiOverlayEnabled(XRWorldInstance world)
+    {
+        var node = FindEditorImGuiNode(world);
+        return node?.GetComponent<DearImGuiComponent>() is not null;
+    }
+
+    private static SceneNode? FindEditorUiRoot(XRWorldInstance world)
+    {
+        foreach (var node in world.EditorScene.RootNodes)
+        {
+            if (node?.GetComponent<UICanvasComponent>() is not null)
+                return node;
+        }
+
+        return null;
+    }
+
+    private static SceneNode? FindEditorImGuiNode(XRWorldInstance world)
+    {
+        var root = FindEditorUiRoot(world);
+        if (root is null)
+            return null;
+
+        var children = root.Transform?.Children;
+        if (children is null)
+            return null;
+
+        foreach (var childTransform in children)
+        {
+            var child = childTransform?.SceneNode;
+            if (child is not null && child.Name == EditorImGuiNodeName)
+                return child;
+        }
+
+        return null;
+    }
+
+    private static SceneNode EnsureEditorUiRoot(XRWorldInstance world)
+    {
+        var root = FindEditorUiRoot(world);
+        if (root is not null)
+            return root;
+
+        root = new SceneNode(world, EditorImGuiRootNodeName) { IsEditorOnly = true };
+        var canvas = root.AddComponent<UICanvasComponent>();
+        var canvasTfm = canvas?.CanvasTransform;
+        if (canvasTfm is not null)
+        {
+            canvasTfm.DrawSpace = ECanvasDrawSpace.Screen;
+            canvasTfm.SetSize(new Vector2(1920.0f, 1080.0f));
+            canvasTfm.Padding = new Vector4(0.0f);
+        }
+
+        world.AddToEditorScene(root);
+        return root;
+    }
+
+    private static SceneNode EnsureDearImGuiNode(SceneNode root)
+    {
+        var children = root.Transform?.Children;
+        if (children is not null)
+        {
+            foreach (var childTransform in children)
+            {
+                var child = childTransform?.SceneNode;
+                if (child is not null && child.Name == EditorImGuiNodeName)
+                    return child;
+            }
+        }
+
+        var node = new SceneNode(root) { Name = EditorImGuiNodeName };
+        var tfm = node.SetTransform<UIBoundableTransform>();
+        tfm.MinAnchor = new Vector2(0.0f, 0.0f);
+        tfm.MaxAnchor = new Vector2(1.0f, 1.0f);
+        tfm.NormalizedPivot = new Vector2(0.0f, 0.0f);
+        tfm.Width = null;
+        tfm.Height = null;
+        return node;
+    }
+
+    private void SetEditorImGuiOverlayEnabled(XRWorldInstance world, bool enable)
+    {
+        if (enable)
+        {
+            var root = EnsureEditorUiRoot(world);
+            var canvas = root.GetComponent<UICanvasComponent>() ?? root.AddComponent<UICanvasComponent>();
+            if (canvas is not null)
+            {
+                var cam = GetCamera();
+                if (cam is not null && cam.UserInterface != canvas)
+                    cam.UserInterface = canvas;
+            }
+
+            var input = root.GetComponent<UICanvasInputComponent>() ?? root.AddComponent<UICanvasInputComponent>();
+            if (input is not null)
+            {
+                input.OwningPawn = this;
+                UserInterfaceInput = input;
+                EditorDragDropUtility.Initialize(input);
+            }
+
+            var node = EnsureDearImGuiNode(root);
+            var comp = node.GetComponent<DearImGuiComponent>() ?? node.AddComponent<DearImGuiComponent>();
+            if (comp is not null)
+            {
+                comp.Draw -= EditorImGuiUI.RenderEditor;
+                comp.Draw -= EditorImGuiUI.RenderProfilerOverlay;
+                comp.Draw += EditorImGuiUI.RenderProfilerOverlay;
+            }
+
+            UnitTestingWorld.Toggles.DearImGuiUI = true;
+            EditorImGuiUI.SetProfilerVisible(true);
+        }
+        else
+        {
+            var node = FindEditorImGuiNode(world);
+            if (node is not null)
+            {
+                var comp = node.GetComponent<DearImGuiComponent>();
+                if (comp is not null)
+                {
+                    comp.Draw -= EditorImGuiUI.RenderEditor;
+                    comp.Draw -= EditorImGuiUI.RenderProfilerOverlay;
+                    node.RemoveComponent<DearImGuiComponent>();
+                }
+            }
+
+            UnitTestingWorld.Toggles.DearImGuiUI = false;
+            EditorImGuiUI.SetProfilerVisible(false);
+        }
+    }
+
     public override void RegisterInput(InputInterface input)
     {
         base.RegisterInput(input);
         input.RegisterKeyEvent(EKey.F12, EButtonInputType.Pressed, TakeScreenshot);
+        input.RegisterKeyEvent(EKey.F11, EButtonInputType.Pressed, ToggleEditorImGuiOverlay);
         input.RegisterKeyEvent(EKey.Number1, EButtonInputType.Pressed, SetTransformTranslation);
         input.RegisterKeyEvent(EKey.Number2, EButtonInputType.Pressed, SetTransformRotation);
         input.RegisterKeyEvent(EKey.Number3, EButtonInputType.Pressed, SetTransformScale);

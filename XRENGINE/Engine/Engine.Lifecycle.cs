@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using XREngine.Data.Profiling;
 using XREngine.Rendering;
 
 namespace XREngine
@@ -95,6 +96,11 @@ namespace XREngine
                 // Wire up event callbacks for task processing
                 Time.Timer.SwapBuffers += SwapBuffers;
                 Time.Timer.RenderFrame += DequeueMainThreadTasks;
+
+                // Wire up the external profiler UDP sender (delegates bridge XREngine.Data → Engine)
+                WireProfilerSenderCollectors();
+                UdpProfilerSender.TryStartFromEnvironment();
+
                 success = true;
             }
             catch (Exception e)
@@ -154,6 +160,9 @@ namespace XREngine
         /// </remarks>
         internal static void Cleanup()
         {
+            // Stop profiler sender before tearing down subsystems it reads from
+            UdpProfilerSender.Stop();
+
             // TODO: Implement clean shutdown where each window disposes of its own allocated assets
             Rendering.SecondaryContext.Dispose();
             Time.Timer.Stop();

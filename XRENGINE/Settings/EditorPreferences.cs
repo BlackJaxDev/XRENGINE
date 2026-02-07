@@ -3,6 +3,7 @@ using System.ComponentModel;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Colors;
+using XREngine.Data.Profiling;
 
 namespace XREngine
 {
@@ -442,6 +443,7 @@ namespace XREngine
         private bool _enableProfilerFrameLogging = true;
         private bool _enableRenderStatisticsTracking = true;
         private bool _enableUILayoutDebugLogging = false;
+        private bool _enableProfilerUdpSending = false;
 
         [Category("Debug")]
         [DisplayName("Render 3D Mesh Bounds")]
@@ -653,6 +655,29 @@ namespace XREngine
             }
         }
 
+        [Category("Profiling")]
+        [DisplayName("Enable Profiler UDP Sending")]
+        [Description("When enabled, sends profiler telemetry over UDP to an external XREngine.Profiler instance on localhost. When disabled, zero overhead (no thread, no socket).")]
+        public bool EnableProfilerUdpSending
+        {
+            get => _enableProfilerUdpSending;
+            set
+            {
+                if (SetField(ref _enableProfilerUdpSending, value))
+                {
+                    if (value)
+                    {
+                        Engine.WireProfilerSenderCollectors();
+                        UdpProfilerSender.Start();
+                    }
+                    else
+                    {
+                        UdpProfilerSender.Stop();
+                    }
+                }
+            }
+        }
+
         public void CopyFrom(EditorDebugOptions source)
         {
             if (source is null)
@@ -680,6 +705,7 @@ namespace XREngine
             EnableProfilerFrameLogging = source.EnableProfilerFrameLogging;
             EnableRenderStatisticsTracking = source.EnableRenderStatisticsTracking;
             EnableUILayoutDebugLogging = source.EnableUILayoutDebugLogging;
+            EnableProfilerUdpSending = source.EnableProfilerUdpSending;
         }
 
         public void ApplyOverrides(EditorDebugOverrides overrides)
@@ -731,6 +757,8 @@ namespace XREngine
                 EnableRenderStatisticsTracking = statsTracking.Value;
             if (overrides.EnableUILayoutDebugLoggingOverride is { HasOverride: true } uiLayoutDebug)
                 EnableUILayoutDebugLogging = uiLayoutDebug.Value;
+            if (overrides.EnableProfilerUdpSendingOverride is { HasOverride: true } profilerUdp)
+                EnableProfilerUdpSending = profilerUdp.Value;
         }
     }
 }

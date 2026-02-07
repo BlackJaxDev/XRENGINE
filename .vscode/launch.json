@@ -93,6 +93,28 @@
             "env": {
                 "XRE_VRCLIENT_GAMENAME": "XREngine.Editor"
             }
+        },
+        {
+            "name": "Debug Profiler",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build-profiler",
+            "program": "${workspaceFolder}/XREngine.Profiler/bin/Debug/net10.0-windows7.0/XREngine.Profiler.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/XREngine.Profiler",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        {
+            "name": "Debug Profiler (with Editor)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "start-editor-with-profiler-no-debug",
+            "program": "${workspaceFolder}/XREngine.Profiler/bin/Debug/net10.0-windows7.0/XREngine.Profiler.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/XREngine.Profiler",
+            "console": "internalConsole",
+            "stopAtEntry": false
         }
     ]
 }
