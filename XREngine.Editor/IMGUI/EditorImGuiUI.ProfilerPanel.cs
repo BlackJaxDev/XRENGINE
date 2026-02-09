@@ -13,11 +13,24 @@ namespace XREngine.Editor;
 /// </summary>
 public static partial class EditorImGuiUI
 {
+    private const string ProfilerDockSpaceWindowId = "Profiler Dockspace";
+    private const string ProfilerDockSpaceId = "ProfilerDockSpace";
+
     internal static void SetProfilerVisible(bool visible)
-        => _showProfiler = visible;
+    {
+        bool changed = _showProfiler != visible;
+        _showProfiler = visible;
+
+        if (visible && changed)
+            RequestProfilerDockLayoutReset();
+    }
 
     internal static void ToggleProfilerVisible()
-        => _showProfiler = !_showProfiler;
+    {
+        _showProfiler = !_showProfiler;
+        if (_showProfiler)
+            RequestProfilerDockLayoutReset();
+    }
 
     internal static void RenderProfilerOverlay()
     {
@@ -40,6 +53,8 @@ public static partial class EditorImGuiUI
     private static bool _showBvhMetrics = true;
     private static bool _showJobSystem = true;
     private static bool _showMainThreadInvokes = true;
+    private static bool _profilerDockLayoutInitialized;
+    private static bool _profilerDockLayoutRequested;
 
     /// <summary>Whether UDP profiler sending is active (disables in-editor panels).</summary>
     private static bool _profilerUdpEnabled;
@@ -60,6 +75,7 @@ public static partial class EditorImGuiUI
         if (!_showProfiler) return;
 
         EnsureProfilerInitialized();
+        DrawProfilerDockSpace();
 
         // If UDP sending is active, show a thin notice instead of the full panels.
         if (_profilerUdpEnabled)
@@ -156,6 +172,76 @@ public static partial class EditorImGuiUI
         if (_showBvhMetrics) _engineProfilerRenderer!.DrawBvhMetricsPanel(ref _showBvhMetrics, allowClose: false);
         if (_showJobSystem) _engineProfilerRenderer!.DrawJobSystemPanel(ref _showJobSystem, allowClose: false);
         if (_showMainThreadInvokes) _engineProfilerRenderer!.DrawMainThreadInvokesPanel(ref _showMainThreadInvokes, allowClose: false);
+    }
+
+    private static void RequestProfilerDockLayoutReset()
+    {
+        _profilerDockLayoutInitialized = false;
+        _profilerDockLayoutRequested = true;
+    }
+
+    private static void DrawProfilerDockSpace()
+    {
+        var viewport = ImGui.GetMainViewport();
+        Vector2 defaultSize = new(viewport.Size.X * 0.78f, viewport.Size.Y * 0.78f);
+        Vector2 defaultPos = new(
+            viewport.Pos.X + (viewport.Size.X - defaultSize.X) * 0.5f,
+            viewport.Pos.Y + (viewport.Size.Y - defaultSize.Y) * 0.5f);
+
+        ImGui.SetNextWindowSize(defaultSize, ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowPos(defaultPos, ImGuiCond.FirstUseEver);
+
+        ImGuiWindowFlags flags =
+            ImGuiWindowFlags.NoCollapse |
+            ImGuiWindowFlags.NoScrollbar |
+            ImGuiWindowFlags.NoScrollWithMouse;
+
+        ImGui.Begin(ProfilerDockSpaceWindowId, flags);
+
+        uint dockSpaceId = ImGui.GetID(ProfilerDockSpaceId);
+        ImGui.DockSpace(dockSpaceId, Vector2.Zero, ImGuiDockNodeFlags.PassthruCentralNode);
+
+        if (_profilerDockLayoutRequested || !_profilerDockLayoutInitialized)
+        {
+            InitializeProfilerDockingLayout(dockSpaceId, ImGui.GetWindowSize());
+            _profilerDockLayoutInitialized = true;
+            _profilerDockLayoutRequested = false;
+        }
+
+        ImGui.End();
+    }
+
+    private static void InitializeProfilerDockingLayout(uint dockSpaceId, Vector2 dockSize)
+    {
+        float availableWidth = dockSize.X;
+        float availableHeight = dockSize.Y;
+
+        ImGuiDockBuilderNative.RemoveNode(dockSpaceId);
+        ImGuiDockBuilderNative.AddNode(dockSpaceId, ImGuiDockNodeFlags.PassthruCentralNode);
+        ImGuiDockBuilderNative.SetNodeSize(dockSpaceId, new Vector2(availableWidth, availableHeight));
+
+        ImGuiDockBuilderNative.SplitNode(dockSpaceId, ImGuiDir.Left, 0.55f,
+            out uint leftDockId, out uint rightDockId);
+
+        ImGuiDockBuilderNative.SplitNode(leftDockId, ImGuiDir.Down, 0.30f,
+            out uint leftBottomId, out uint leftTopId);
+
+        ImGuiDockBuilderNative.SplitNode(rightDockId, ImGuiDir.Up, 0.35f,
+            out uint rightTopId, out uint rightBottomId);
+
+        ImGuiDockBuilderNative.SplitNode(rightBottomId, ImGuiDir.Up, 0.50f,
+            out uint rightMidId, out uint rightLowerId);
+
+        ImGuiDockBuilderNative.DockWindow("Profiler", rightTopId);
+        ImGuiDockBuilderNative.DockWindow("Profiler Tree", leftTopId);
+        ImGuiDockBuilderNative.DockWindow("FPS Drop Spikes", leftBottomId);
+        ImGuiDockBuilderNative.DockWindow("Render Stats", rightTopId);
+        ImGuiDockBuilderNative.DockWindow("Thread Allocations", rightMidId);
+        ImGuiDockBuilderNative.DockWindow("BVH Metrics", rightMidId);
+        ImGuiDockBuilderNative.DockWindow("Job System", rightLowerId);
+        ImGuiDockBuilderNative.DockWindow("Main Thread Invokes", rightLowerId);
+
+        ImGuiDockBuilderNative.Finish(dockSpaceId);
     }
 
     private static void DrawLaunchExternalProfilerButton()

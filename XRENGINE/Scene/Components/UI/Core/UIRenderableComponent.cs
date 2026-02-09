@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -43,8 +44,38 @@ namespace XREngine.Rendering.UI
             if (!(tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false) || !tfm.IsVisibleInHierarchy)
                 return false;
             var canvas = tfm.ParentCanvas;
-            return canvas is not null && canvas.DrawSpace == ECanvasDrawSpace.Screen;
+            if (canvas is null || canvas.DrawSpace != ECanvasDrawSpace.Screen)
+                return false;
+
+            // Attempt batched rendering path: register with the canvas's batch collector
+            // and skip the individual render command for this component.
+            if (SupportsBatchedRendering)
+            {
+                var canvasComp = canvas.SceneNode?.GetComponent<UICanvasComponent>();
+                if (canvasComp?.BatchCollector is { Enabled: true } collector)
+                {
+                    if (RegisterWithBatchCollector(collector))
+                        return false; // Successfully batched — skip individual command
+                    // Registration failed (e.g. font not loaded yet); fall through to individual render
+                }
+            }
+
+            return true;
         }
+
+        /// <summary>
+        /// When true, this component participates in batched instanced rendering.
+        /// Components with clip-to-bounds or special materials should return false.
+        /// </summary>
+        public virtual bool SupportsBatchedRendering => false;
+
+        /// <summary>
+        /// Called during collect-visible when batching is enabled.
+        /// Override to register per-instance data with the batch collector.
+        /// </summary>
+        /// <param name="collector">The canvas's batch collector to register with.</param>
+        /// <returns>True if the component was successfully registered for batching; false to fall back to individual rendering.</returns>
+        protected virtual bool RegisterWithBatchCollector(UIBatchCollector collector) => false;
 
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
@@ -137,17 +168,21 @@ namespace XREngine.Rendering.UI
             var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
             var x = bottomLeft.X;
             var y = bottomLeft.Y;
-            //if (x == _lastBounds.X && y == _lastBounds.Y && w == _lastBounds.Z && h == _lastBounds.W)
-            //    return; //No change, no need to update uniforms
+
+            if (x == _lastBounds.X && 
+                y == _lastBounds.Y && 
+                w == _lastBounds.Z && 
+                h == _lastBounds.W)
+                return; //No change, no need to update uniforms
 
             var bounds = new Vector4(x, y, w, h);
 
             _lastBounds = bounds;
-            program.Uniform(EEngineUniform.UIWidth.ToString(), w);
-            program.Uniform(EEngineUniform.UIHeight.ToString(), h);
-            program.Uniform(EEngineUniform.UIX.ToString(), x);
-            program.Uniform(EEngineUniform.UIY.ToString(), y);
-            program.Uniform(EEngineUniform.UIXYWH.ToString(), bounds);
+            program.Uniform(EEngineUniform.UIWidth.ToStringFast(), w);
+            program.Uniform(EEngineUniform.UIHeight.ToStringFast(), h);
+            program.Uniform(EEngineUniform.UIX.ToStringFast(), x);
+            program.Uniform(EEngineUniform.UIY.ToStringFast(), y);
+            program.Uniform(EEngineUniform.UIXYWH.ToStringFast(), bounds);
         }
 
         protected override void UITransformPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)

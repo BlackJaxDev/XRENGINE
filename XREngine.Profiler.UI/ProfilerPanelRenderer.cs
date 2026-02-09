@@ -9,14 +9,9 @@ namespace XREngine.Profiler.UI;
 /// logic. Works with any <see cref="IProfilerDataSource"/> implementation
 /// (in-process engine data or remote UDP packets).
 /// </summary>
-public sealed class ProfilerPanelRenderer
+public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 {
-    private readonly IProfilerDataSource _source;
-
-    public ProfilerPanelRenderer(IProfilerDataSource source)
-    {
-        _source = source;
-    }
+    private readonly IProfilerDataSource _source = source;
 
     // ──────────────── Root method aggregation cache ────────────────
 
@@ -89,7 +84,7 @@ public sealed class ProfilerPanelRenderer
         if (!isNew) return;
 
         _lastEnqueuedFrameTime = frame.FrameTime;
-        var history = frame.ThreadHistory ?? new Dictionary<int, float[]>();
+        var history = frame.ThreadHistory ?? [];
         _lastHistorySnapshot = history;
 
         var nowUtc = DateTime.UtcNow;
