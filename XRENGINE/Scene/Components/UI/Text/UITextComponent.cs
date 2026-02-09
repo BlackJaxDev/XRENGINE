@@ -685,5 +685,42 @@ namespace XREngine.Rendering.UI
         }
 
         #endregion
+
+        #region Batched Rendering
+
+        /// <summary>
+        /// Text components support batching unless they have clip-to-bounds enabled,
+        /// use animatable (per-glyph rotation) transforms, or have no glyphs to render.
+        /// </summary>
+        public override bool SupportsBatchedRendering
+            => !ClipToBounds && !AnimatableTransforms;
+
+        protected override bool RegisterWithBatchCollector(UIBatchCollector collector)
+        {
+            var font = Font;
+            var atlas = font?.Atlas;
+            if (atlas is null)
+                return false; // Font not loaded yet — fall back to individual rendering
+
+            (Vector4 transform, Vector4 uvs)[] glyphsCopy;
+            using (_glyphLock.EnterScope())
+            {
+                if (_glyphs.Count == 0)
+                    return false; // No glyphs — fall back to individual rendering
+                glyphsCopy = [.. _glyphs];
+            }
+
+            var tfm = BoundableTransform;
+            var worldMatrix = GetRenderWorldMatrix(tfm);
+            var textColor = new Vector4(Color.R, Color.G, Color.B, Color.A);
+            var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
+            var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
+
+            Debug.Out($"[UIBatch] Text registered: \"{Text?.Substring(0, Math.Min(Text?.Length ?? 0, 20))}\" glyphs={glyphsCopy.Length} pass={RenderPass} color={textColor}");
+            collector.AddTextQuad(RenderPass, atlas, in worldMatrix, in textColor, in bounds, glyphsCopy);
+            return true;
+        }
+
+        #endregion
     }
 }

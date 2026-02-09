@@ -113,5 +113,32 @@ namespace XREngine.Rendering.UI
             var h = tfm.ActualHeight;
             return Matrix4x4.CreateScale(w, h, 1.0f) * base.GetRenderWorldMatrix(tfm);
         }
+
+        #region Batched Rendering
+
+        /// <summary>
+        /// Material quads support batching unless they have clip-to-bounds enabled
+        /// or use textures (which require per-instance texture binds).
+        /// </summary>
+        public override bool SupportsBatchedRendering
+            => !ClipToBounds && (Material?.Textures is null || Material.Textures.Count == 0);
+
+        protected override bool RegisterWithBatchCollector(UIBatchCollector collector)
+        {
+            var tfm = BoundableTransform;
+            var worldMatrix = GetRenderWorldMatrix(tfm);
+
+            // Read the per-instance color from the material's MatColor parameter
+            var colorParam = Material?.Parameter<ShaderVector4>("MatColor");
+            var color = colorParam?.Value ?? new Vector4(1.0f, 0.0f, 1.0f, 1.0f);
+
+            var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
+            var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
+
+            collector.AddMaterialQuad(RenderPass, in worldMatrix, in color, in bounds);
+            return true;
+        }
+
+        #endregion
     }
 }

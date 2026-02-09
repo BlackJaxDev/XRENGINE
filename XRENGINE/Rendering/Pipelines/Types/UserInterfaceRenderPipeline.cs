@@ -3,12 +3,19 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering;
 
 public class UserInterfaceRenderPipeline : RenderPipeline
 {
     public const string SceneShaderPath = "Scene3D";
+
+    /// <summary>
+    /// When set, UI render passes dispatch batched instanced draws for material quads and text quads
+    /// instead of individual per-component draw calls. Set by the owning <see cref="UICanvasComponent"/>.
+    /// </summary>
+    public UIBatchCollector? BatchCollector { get; set; }
 
     //TODO: Some UI components need to rendered after their parent specifically for render clipping. breadth-first
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
@@ -54,7 +61,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
         ViewportRenderCommandContainer c = new(pipeline);
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Red, 1.0f, 0);
-        c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PreRender;
+        c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.PreRender;
 
         using (c.AddUsing<VPRC_PushOutputFBORenderArea>())
         {
@@ -67,15 +74,15 @@ public class UserInterfaceRenderPipeline : RenderPipeline
                 c.Add<VPRC_DepthWrite>().Allow = true;
 
                 c.Add<VPRC_DepthTest>().Enable = false;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.Background;
+                c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.Background;
                 c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
+                c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
             }
         }
-        c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PostRender;
+        c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.PostRender;
         return c;
     }
 
@@ -88,7 +95,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
         //Create FBOs only after all their texture dependencies have been cached.
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Red, 1.0f, 0);
-        c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PreRender;
+        c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.PreRender;
         
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
         {
@@ -101,14 +108,14 @@ public class UserInterfaceRenderPipeline : RenderPipeline
                 c.Add<VPRC_DepthWrite>().Allow = true;
 
                 c.Add<VPRC_DepthTest>().Enable = false;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.Background;
+                c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.Background;
                 c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
-                c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
+                c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
             }
         }
-        c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.PostRender;
+        c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.PostRender;
         return c;
     }
 

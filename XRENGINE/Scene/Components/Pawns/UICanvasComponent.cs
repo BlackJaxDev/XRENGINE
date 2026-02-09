@@ -19,6 +19,13 @@ namespace XREngine.Components
     {
         public UICanvasTransform CanvasTransform => TransformAs<UICanvasTransform>(true)!;
 
+        /// <summary>
+        /// Batch collector for instanced UI rendering.
+        /// Visible UI components register with this during collect-visible so their draws
+        /// can be dispatched as 1-2 instanced calls per render pass instead of N individual calls.
+        /// </summary>
+        public UIBatchCollector BatchCollector { get; } = new();
+
         public const float DefaultNearZ = -0.5f;
         public const float DefaultFarZ = 0.5f;
 
@@ -126,6 +133,7 @@ namespace XREngine.Components
                 return;
 
             using var sample = Engine.Profiler.Start("UICanvasComponent.SwapBuffersScreenSpace");
+            BatchCollector.SwapBuffers();
             _renderPipeline.MeshRenderCommands.SwapBuffers();
             VisualScene2D.GlobalSwapBuffers();
         }
@@ -202,8 +210,13 @@ namespace XREngine.Components
 
             using var sample = Engine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace");
 
+            // Ensure batch collector is wired to the pipeline
+            EnsureBatchCollectorWired();
+
             // Layout has already been applied during PostUpdateFrame by UpdateLayout().
             // Just collect the rendered items from the quadtree.
+            // Components that support batching will register with BatchCollector
+            // instead of adding individual render commands.
             if (_renderPipeline.Pipeline is not null)
             {
                 using var collectSample = Engine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace.CollectRenderedItems");
@@ -231,7 +244,22 @@ namespace XREngine.Components
         public RenderPipeline? RenderPipeline
         {
             get => _renderPipeline.Pipeline;
-            set => _renderPipeline.Pipeline = value;
+            set
+            {
+                _renderPipeline.Pipeline = value;
+                // Keep the batch collector wired to the active pipeline
+                if (value is UserInterfaceRenderPipeline uiPipeline)
+                    uiPipeline.BatchCollector = BatchCollector;
+            }
+        }
+
+        /// <summary>
+        /// Ensures the batch collector is wired to the active UI render pipeline on first use.
+        /// </summary>
+        private void EnsureBatchCollectorWired()
+        {
+            if (_renderPipeline.Pipeline is UserInterfaceRenderPipeline uiPipeline && uiPipeline.BatchCollector is null)
+                uiPipeline.BatchCollector = BatchCollector;
         }
     }
 }
