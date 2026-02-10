@@ -41,9 +41,11 @@ public static partial class EditorImGuiUI
             return;
         }
 
+        // Important: do not treat "focused" alone as scene interaction.
+        // Focus can linger on the Scene window for one frame while clicking another panel,
+        // which causes click-through into world picking.
         _scenePanelInteracting =
-            ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows | ImGuiHoveredFlags.AllowWhenBlockedByActiveItem) ||
-            ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows);
+            ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows | ImGuiHoveredFlags.AllowWhenBlockedByActiveItem);
 
         UpdateScenePanelRenderRegion();
 

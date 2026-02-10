@@ -1545,6 +1545,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (!AllowWorldPicking)
             return;
 
+        if (Engine.Input.IsUIInputCaptured)
+        {
+            if (!pressed && _selectionDragActive)
+                ResetSelectionDrag();
+            return;
+        }
+
         if (pressed)
         {
             if (IsHoveringUI())
@@ -1797,6 +1804,22 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (world is null)
             return;
 
+        // In ImGui-editor mode, F11 should only toggle profiler visibility.
+        // Keep the editor renderer attached so we don't lose the editor UI.
+        if (UnitTestingWorld.Toggles.DearImGuiUI)
+        {
+            var comp = EnsureEditorImGuiOverlayComponent(world);
+            if (comp is not null)
+            {
+                comp.Draw -= EditorImGuiUI.RenderProfilerOverlay;
+                comp.Draw -= EditorImGuiUI.RenderEditor;
+                comp.Draw += EditorImGuiUI.RenderEditor;
+            }
+
+            EditorImGuiUI.ToggleProfilerVisible();
+            return;
+        }
+
         bool enable = !IsEditorImGuiOverlayEnabled(world);
         SetEditorImGuiOverlayEnabled(world, enable);
     }
@@ -1881,29 +1904,34 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         return node;
     }
 
+    private DearImGuiComponent? EnsureEditorImGuiOverlayComponent(XRWorldInstance world)
+    {
+        var root = EnsureEditorUiRoot(world);
+        var canvas = root.GetComponent<UICanvasComponent>() ?? root.AddComponent<UICanvasComponent>();
+        if (canvas is not null)
+        {
+            var cam = GetCamera();
+            if (cam is not null && cam.UserInterface != canvas)
+                cam.UserInterface = canvas;
+        }
+
+        var input = root.GetComponent<UICanvasInputComponent>() ?? root.AddComponent<UICanvasInputComponent>();
+        if (input is not null)
+        {
+            input.OwningPawn = this;
+            UserInterfaceInput = input;
+            EditorDragDropUtility.Initialize(input);
+        }
+
+        var node = EnsureDearImGuiNode(root);
+        return node.GetComponent<DearImGuiComponent>() ?? node.AddComponent<DearImGuiComponent>();
+    }
+
     private void SetEditorImGuiOverlayEnabled(XRWorldInstance world, bool enable)
     {
         if (enable)
         {
-            var root = EnsureEditorUiRoot(world);
-            var canvas = root.GetComponent<UICanvasComponent>() ?? root.AddComponent<UICanvasComponent>();
-            if (canvas is not null)
-            {
-                var cam = GetCamera();
-                if (cam is not null && cam.UserInterface != canvas)
-                    cam.UserInterface = canvas;
-            }
-
-            var input = root.GetComponent<UICanvasInputComponent>() ?? root.AddComponent<UICanvasInputComponent>();
-            if (input is not null)
-            {
-                input.OwningPawn = this;
-                UserInterfaceInput = input;
-                EditorDragDropUtility.Initialize(input);
-            }
-
-            var node = EnsureDearImGuiNode(root);
-            var comp = node.GetComponent<DearImGuiComponent>() ?? node.AddComponent<DearImGuiComponent>();
+            var comp = EnsureEditorImGuiOverlayComponent(world);
             if (comp is not null)
             {
                 comp.Draw -= EditorImGuiUI.RenderEditor;
@@ -1911,7 +1939,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 comp.Draw += EditorImGuiUI.RenderProfilerOverlay;
             }
 
-            UnitTestingWorld.Toggles.DearImGuiUI = true;
             EditorImGuiUI.SetProfilerVisible(true);
         }
         else
@@ -1928,7 +1955,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 }
             }
 
-            UnitTestingWorld.Toggles.DearImGuiUI = false;
             EditorImGuiUI.SetProfilerVisible(false);
         }
     }

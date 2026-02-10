@@ -438,7 +438,7 @@ namespace XREngine
         private float _debugTextMaxLifespan;
         private bool _enableThreadAllocationTracking;
         private bool _useDebugOpaquePipeline;
-        private bool _forceGpuPassthroughCulling = true;
+        private bool _forceGpuPassthroughCulling = false;
         private bool _allowGpuCpuFallback = false;
         private bool _enableProfilerFrameLogging = true;
         private bool _enableRenderStatisticsTracking = true;

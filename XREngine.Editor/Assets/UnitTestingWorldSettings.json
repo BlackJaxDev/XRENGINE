@@ -36,9 +36,9 @@
   "Mirror": false,
   "Spline": false,
 
-  "AddEditorUI": true,
+  "AddEditorUI": false,
   "TransformTool": false,
-  "DearImGuiUI": false,
+  "DearImGuiUI": true,
   "EnableProfilerLogging": true,
   "RiveUI": false,
   "VideoStreaming": false,

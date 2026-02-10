@@ -326,6 +326,24 @@ namespace XREngine.Rendering.Commands
             return ok;
         }
 
+        /// <summary>
+        /// Attempts to resolve the original mesh render command for a GPU command index.
+        /// </summary>
+        public bool TryGetSourceCommand(uint commandIndex, out IRenderCommandMesh? command)
+        {
+            using (_lock.EnterScope())
+            {
+                if (_commandIndexLookup.TryGetValue(commandIndex, out var entry))
+                {
+                    command = entry.command;
+                    return true;
+                }
+            }
+
+            command = null;
+            return false;
+        }
+
         #endregion
 
         #region Atlas Management
@@ -1088,24 +1106,28 @@ namespace XREngine.Rendering.Commands
 
                         indices.Add(index);
                         _commandIndexLookup.Add(index, (meshCmd, subMeshIndex));
-                        UpdatingCommandsBuffer.SetDataRawAtIndex(index, gpuCommand.Value);
+
+                        GPUIndirectRenderCommand commandValue = gpuCommand.Value;
+                        // Preserve the source command index so post-cull stages can map back to CPU-side data.
+                        commandValue.Reserved1 = index;
+                        UpdatingCommandsBuffer.SetDataRawAtIndex(index, commandValue);
 
                         if (IsGpuSceneLoggingEnabled())
                         {
                             if (_commandBuildLogBudget > 0 && Interlocked.Decrement(ref _commandBuildLogBudget) >= 0)
                             {
-                                SceneLog($"[GPUScene/Build] idx={index} mesh={gpuCommand.Value.MeshID} material={gpuCommand.Value.MaterialID} pass={gpuCommand.Value.RenderPass} instances={gpuCommand.Value.InstanceCount}");
+                                SceneLog($"[GPUScene/Build] idx={index} mesh={commandValue.MeshID} material={commandValue.MaterialID} pass={commandValue.RenderPass} instances={commandValue.InstanceCount}");
                             }
 
                             GPUIndirectRenderCommand roundTrip = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(index);
-                            bool matches = roundTrip.MeshID == gpuCommand.Value.MeshID
-                                && roundTrip.MaterialID == gpuCommand.Value.MaterialID
-                                && roundTrip.RenderPass == gpuCommand.Value.RenderPass;
+                            bool matches = roundTrip.MeshID == commandValue.MeshID
+                                && roundTrip.MaterialID == commandValue.MaterialID
+                                && roundTrip.RenderPass == commandValue.RenderPass;
 
                             if (!matches)
                             {
                                 if (_commandRoundtripMismatchLogBudget > 0 && Interlocked.Decrement(ref _commandRoundtripMismatchLogBudget) >= 0)
-                                    Debug.LogWarning($"[GPUScene/RoundTrip] mismatch idx={index} mesh(write={gpuCommand.Value.MeshID}/read={roundTrip.MeshID}) material(write={gpuCommand.Value.MaterialID}/read={roundTrip.MaterialID}) pass(write={gpuCommand.Value.RenderPass}/read={roundTrip.RenderPass})");
+                                    Debug.LogWarning($"[GPUScene/RoundTrip] mismatch idx={index} mesh(write={commandValue.MeshID}/read={roundTrip.MeshID}) material(write={commandValue.MaterialID}/read={roundTrip.MaterialID}) pass(write={commandValue.RenderPass}/read={roundTrip.RenderPass})");
                             }
                             else if (_commandRoundtripLogBudget > 0 && Interlocked.Decrement(ref _commandRoundtripLogBudget) >= 0)
                             {
@@ -1419,6 +1441,7 @@ namespace XREngine.Rendering.Commands
             if (targetIndex < lastIndex)
             {
                 GPUIndirectRenderCommand lastCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(lastIndex);
+                lastCommand.Reserved1 = targetIndex;
                 UpdatingCommandsBuffer.SetDataRawAtIndex(targetIndex, lastCommand);
 
                 RemoveSubmeshFromAtlasAt(targetIndex);
