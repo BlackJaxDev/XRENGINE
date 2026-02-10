@@ -1,3 +1,5 @@
+using XREngine.Rendering.RenderGraph;
+
 namespace XREngine.Rendering.Pipelines.Commands
 {
     /// <summary>
@@ -49,11 +51,26 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (ui is null || !ui.IsActive)
                 return;
 
-            var fbo = OutputTargetFBOName is null ? null : ActivePipelineInstance.GetFBO<XRFrameBuffer>(OutputTargetFBOName);
+            var fbo = OutputTargetFBOName is null
+                ? ActivePipelineInstance.RenderState.OutputFBO
+                : ActivePipelineInstance.GetFBO<XRFrameBuffer>(OutputTargetFBOName);
             if (FailRenderIfNoOutputFBO && fbo is null)
                 return;
 
             ui.RenderScreenSpace(ActivePipelineInstance.RenderState.RenderingViewport, fbo);
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            string target = OutputTargetFBOName
+                ?? context.CurrentRenderTarget?.Name
+                ?? RenderGraphResourceNames.OutputRenderTarget;
+
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_RenderScreenSpaceUI), RenderGraphPassStage.Graphics);
+            builder.UseColorAttachment(MakeFboColorResource(target));
+            builder.UseDepthAttachment(MakeFboDepthResource(target));
         }
     }
 }

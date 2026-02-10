@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.RenderGraph;
 using static XREngine.Engine.Rendering.State;
 
 namespace XREngine.Rendering.Pipelines.Commands;
@@ -378,5 +379,46 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                MathF.Abs(a.M21 - b.M21) < epsilon && MathF.Abs(a.M22 - b.M22) < epsilon && MathF.Abs(a.M23 - b.M23) < epsilon && MathF.Abs(a.M24 - b.M24) < epsilon &&
                MathF.Abs(a.M31 - b.M31) < epsilon && MathF.Abs(a.M32 - b.M32) < epsilon && MathF.Abs(a.M33 - b.M33) < epsilon && MathF.Abs(a.M34 - b.M34) < epsilon &&
                MathF.Abs(a.M41 - b.M41) < epsilon && MathF.Abs(a.M42 - b.M42) < epsilon && MathF.Abs(a.M43 - b.M43) < epsilon && MathF.Abs(a.M44 - b.M44) < epsilon;
+    }
+
+    internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+    {
+        base.DescribeRenderPass(context);
+
+        if (Phase != EPhase.Accumulate)
+            return;
+
+        var builder = context.GetOrCreateSyntheticPass($"{nameof(VPRC_TemporalAccumulationPass)}_{Phase}", RenderGraphPassStage.Graphics);
+
+        builder.SampleTexture(MakeFboColorResource(ForwardFBOName));
+
+        builder.UseColorAttachment(
+            MakeFboColorResource(TemporalInputFBOName),
+            RenderGraphAccess.Write,
+            RenderPassLoadOp.DontCare,
+            RenderPassStoreOp.Store);
+        builder.SampleTexture(MakeFboColorResource(TemporalInputFBOName));
+
+        builder.UseColorAttachment(MakeFboColorResource(TemporalAccumulationFBOName));
+        builder.SampleTexture(MakeFboColorResource(TemporalAccumulationFBOName));
+
+        builder.SampleTexture(MakeFboColorResource(HistoryColorFBOName));
+        builder.UseColorAttachment(
+            MakeFboColorResource(HistoryColorFBOName),
+            RenderGraphAccess.Write,
+            RenderPassLoadOp.DontCare,
+            RenderPassStoreOp.Store);
+        builder.UseDepthAttachment(
+            MakeFboDepthResource(HistoryColorFBOName),
+            RenderGraphAccess.Write,
+            RenderPassLoadOp.DontCare,
+            RenderPassStoreOp.Store);
+
+        builder.SampleTexture(MakeFboColorResource(HistoryExposureFBOName));
+        builder.UseColorAttachment(
+            MakeFboColorResource(HistoryExposureFBOName),
+            RenderGraphAccess.Write,
+            RenderPassLoadOp.DontCare,
+            RenderPassStoreOp.Store);
     }
 }

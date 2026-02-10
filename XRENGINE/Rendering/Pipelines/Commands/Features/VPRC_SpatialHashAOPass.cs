@@ -9,6 +9,7 @@ using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -574,6 +575,19 @@ namespace XREngine.Rendering.Pipelines.Commands
             uint groupY = (uint)(height + LocalGroupSize - 1) / LocalGroupSize;
             _computeProgramStereo.DispatchCompute(groupX, groupY, 1u, EMemoryBarrierMask.TextureFetch | EMemoryBarrierMask.ShaderStorage);
             Log($"Dispatch stereo: frameIndex={state.FrameIndex}, groups={groupX}x{groupY}, hashCapacity={state.HashCapacity}");
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_SpatialHashAOPass), RenderGraphPassStage.Compute);
+            builder.SampleTexture(MakeTextureResource(NormalTextureName));
+            builder.SampleTexture(MakeTextureResource(DepthViewTextureName));
+            builder.ReadWriteTexture(MakeTextureResource(IntensityTextureName));
+            builder.ReadWriteBuffer("SpatialHashKeys");
+            builder.ReadWriteBuffer("SpatialHashTime");
+            builder.ReadWriteBuffer("SpatialHashData");
         }
     }
 }

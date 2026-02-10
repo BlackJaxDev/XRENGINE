@@ -1,6 +1,7 @@
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -254,6 +255,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             program.Uniform("UseThreshold", false);
             program.Uniform("BloomThreshold", 1.0f);
             program.Uniform("BloomSoftKnee", 0.5f);
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_BloomPass), RenderGraphPassStage.Graphics);
+            builder.SampleTexture(MakeFboColorResource(InputFBOName));
+            builder.ReadWriteTexture(MakeTextureResource(BloomOutputTextureName));
         }
     }
 }

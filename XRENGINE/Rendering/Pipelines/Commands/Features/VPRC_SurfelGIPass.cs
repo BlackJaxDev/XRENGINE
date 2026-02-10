@@ -4,6 +4,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -466,6 +467,27 @@ namespace XREngine.Rendering.Pipelines.Commands
             // ElementCount here is the number of commands, not the number of floats.
             program.Uniform("culledFloatCount", commands.ElementCount * CulledCommandFloats);
             program.Uniform("culledCommandFloats", CulledCommandFloats);
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_SurfelGIPass), RenderGraphPassStage.Graphics);
+            builder.SampleTexture(MakeTextureResource(DepthTextureName));
+            builder.SampleTexture(MakeTextureResource(NormalTextureName));
+            builder.SampleTexture(MakeTextureResource(AlbedoTextureName));
+            builder.SampleTexture(MakeTextureResource(TransformIdTextureName));
+
+            builder.ReadWriteBuffer("SurfelGI_Surfels");
+            builder.ReadWriteBuffer("SurfelGI_Counters");
+            builder.ReadWriteBuffer("SurfelGI_FreeStack");
+            builder.ReadWriteBuffer("SurfelGI_GridCounts");
+            builder.ReadWriteBuffer("SurfelGI_GridIndices");
+
+            builder.ReadWriteTexture(MakeTextureResource(OutputTextureName));
+            builder.SampleTexture(MakeTextureResource(OutputTextureName));
+            builder.UseColorAttachment(MakeFboColorResource(ForwardFBOName));
         }
     }
 }

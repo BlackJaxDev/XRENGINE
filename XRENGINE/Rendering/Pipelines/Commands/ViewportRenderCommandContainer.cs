@@ -193,6 +193,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         public void BuildRenderPassMetadata(RenderPassMetadataCollection collection)
         {
             RenderGraphDescribeContext context = new(collection);
+            BuildRenderPassMetadata(context);
+        }
+
+        internal void BuildRenderPassMetadata(RenderGraphDescribeContext context)
+        {
             for (int i = 0; i < _commands.Count; i++)
                 _commands[i].DescribeRenderPass(context);
         }

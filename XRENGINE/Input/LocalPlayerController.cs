@@ -35,6 +35,18 @@ namespace XREngine.Input
             internal set => SetField(ref _focusedUIComponent, value);
         }
 
+        private bool _renderUIThroughPipeline = false;
+        /// <summary>
+        /// When true, screen-space UI is rendered as part of the camera render pipeline DAG
+        /// (composited inline with the scene passes). When false, screen-space UI is rendered
+        /// as a separate overlay on top of the viewport after the pipeline finishes.
+        /// </summary>
+        public bool RenderUIThroughPipeline
+        {
+            get => _renderUIThroughPipeline;
+            set => SetField(ref _renderUIThroughPipeline, value);
+        }
+
         public LocalPlayerController(ELocalPlayerIndex index) : base(new LocalInputInterface((int)index))
         {
             _index = index;

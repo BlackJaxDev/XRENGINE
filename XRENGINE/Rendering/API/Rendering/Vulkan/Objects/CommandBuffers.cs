@@ -7,11 +7,20 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private CommandBuffer[]? _commandBuffers;
+        private List<ComputeTransientResources>[]? _computeTransientResources;
+
+        private sealed class ComputeTransientResources
+        {
+            public DescriptorPool DescriptorPool;
+            public List<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> UniformBuffers { get; } = [];
+        }
 
         private void DestroyCommandBuffers()
         {
             if (_commandBuffers is null)
                 return;
+
+            DestroyComputeTransientResources();
 
             fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
             {
@@ -21,6 +30,63 @@ namespace XREngine.Rendering.Vulkan
 
             _commandBuffers = null;
             _commandBufferDirtyFlags = null;
+        }
+
+        private void DestroyComputeTransientResources()
+        {
+            if (_computeTransientResources is null)
+                return;
+
+            for (int i = 0; i < _computeTransientResources.Length; i++)
+                CleanupComputeTransientResources((uint)i);
+
+            _computeTransientResources = null;
+        }
+
+        private void CleanupComputeTransientResources(uint imageIndex)
+        {
+            if (_computeTransientResources is null || imageIndex >= _computeTransientResources.Length)
+                return;
+
+            List<ComputeTransientResources>? resources = _computeTransientResources[imageIndex];
+            if (resources is null || resources.Count == 0)
+                return;
+
+            foreach (ComputeTransientResources resource in resources)
+            {
+                if (resource.DescriptorPool.Handle != 0)
+                    Api!.DestroyDescriptorPool(device, resource.DescriptorPool, null);
+
+                foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in resource.UniformBuffers)
+                {
+                    if (buffer.Handle != 0)
+                        Api!.DestroyBuffer(device, buffer, null);
+                    if (memory.Handle != 0)
+                        Api!.FreeMemory(device, memory, null);
+                }
+            }
+
+            resources.Clear();
+        }
+
+        private void RegisterComputeTransientResources(
+            uint imageIndex,
+            DescriptorPool descriptorPool,
+            IReadOnlyList<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> uniformBuffers)
+        {
+            if (_computeTransientResources is null || imageIndex >= _computeTransientResources.Length)
+                return;
+
+            _computeTransientResources[imageIndex] ??= [];
+            var resource = new ComputeTransientResources
+            {
+                DescriptorPool = descriptorPool
+            };
+
+            if (uniformBuffers is { Count: > 0 })
+                resource.UniformBuffers.AddRange(uniformBuffers);
+
+            _computeTransientResources[imageIndex]!.Add(resource);
         }
 
         private void CreateCommandBuffers()
@@ -45,6 +111,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             AllocateCommandBufferDirtyFlags();
+            _computeTransientResources = new List<ComputeTransientResources>[_commandBuffers.Length];
         }
 
         private void EnsureCommandBufferRecorded(uint imageIndex)
@@ -58,7 +125,6 @@ namespace XREngine.Rendering.Vulkan
             if (!_commandBufferDirtyFlags[imageIndex])
                 return;
 
-            UpdateResourcePlannerFromPipeline();
             RecordCommandBuffer(imageIndex);
             _commandBufferDirtyFlags[imageIndex] = false;
         }
@@ -68,6 +134,7 @@ namespace XREngine.Rendering.Vulkan
             var commandBuffer = _commandBuffers![imageIndex];
 
             Api!.ResetCommandBuffer(commandBuffer, 0);
+            CleanupComputeTransientResources(imageIndex);
 
             CommandBufferBeginInfo beginInfo = new()
             {
@@ -81,6 +148,12 @@ namespace XREngine.Rendering.Vulkan
 
             EmitPendingMemoryBarriers(commandBuffer);
 
+            var ops = DrainFrameOps();
+            FrameOpContext initialContext = ops.Length > 0
+                ? ops[0].Context
+                : CaptureFrameOpContext();
+            UpdateResourcePlannerFromContext(initialContext);
+
             // Ensure swapchain resources are transitioned appropriately before any rendering.
             CmdBeginLabel(commandBuffer, "SwapchainBarriers");
             var swapchainBarriers = _barrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
@@ -90,11 +163,10 @@ namespace XREngine.Rendering.Vulkan
                 EmitPlannedImageBarriers(commandBuffer, _barrierPlanner.ImageBarriers);
             CmdEndLabel(commandBuffer);
 
-            var ops = DrainFrameOps();
-
             int clearCount = 0;
             int drawCount = 0;
             int blitCount = 0;
+            int computeCount = 0;
             foreach (var op in ops)
             {
                 switch (op)
@@ -102,17 +174,19 @@ namespace XREngine.Rendering.Vulkan
                     case ClearOp: clearCount++; break;
                     case MeshDrawOp: drawCount++; break;
                     case BlitOp: blitCount++; break;
+                    case ComputeDispatchOp: computeCount++; break;
                 }
             }
 
             Debug.VulkanEvery(
                 $"Vulkan.FrameOps.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
-                "[Vulkan] FrameOps: total={0} clears={1} draws={2} blits={3}",
+                "[Vulkan] FrameOps: total={0} clears={1} draws={2} blits={3} computes={4}",
                 ops.Length,
                 clearCount,
                 drawCount,
-                blitCount);
+                blitCount,
+                computeCount);
 
             bool renderPassActive = false;
             XRFrameBuffer? activeTarget = null;
@@ -120,6 +194,9 @@ namespace XREngine.Rendering.Vulkan
             Framebuffer activeFramebuffer = default;
             Rect2D activeRenderArea = default;
             int activePassIndex = int.MinValue;
+            int activeSchedulingIdentity = int.MinValue;
+            FrameOpContext activeContext = default;
+            bool hasActiveContext = false;
             bool renderPassLabelActive = false;
             bool passIndexLabelActive = false;
 
@@ -226,7 +303,25 @@ namespace XREngine.Rendering.Vulkan
 
             foreach (var op in ops)
             {
-                if (op.PassIndex != activePassIndex)
+                if (!hasActiveContext || !Equals(activeContext, op.Context))
+                {
+                    EndActiveRenderPass();
+                    if (passIndexLabelActive)
+                    {
+                        CmdEndLabel(commandBuffer);
+                        passIndexLabelActive = false;
+                    }
+
+                    activeContext = op.Context;
+                    hasActiveContext = true;
+                    UpdateResourcePlannerFromContext(activeContext);
+                    activePassIndex = int.MinValue;
+                    activeSchedulingIdentity = int.MinValue;
+                }
+
+                int opPassIndex = EnsureValidPassIndex(op.PassIndex, op.GetType().Name);
+                int opSchedulingIdentity = op.Context.SchedulingIdentity;
+                if (opPassIndex != activePassIndex || opSchedulingIdentity != activeSchedulingIdentity)
                 {
                     // Barriers are safest outside render passes.
                     EndActiveRenderPass();
@@ -237,11 +332,14 @@ namespace XREngine.Rendering.Vulkan
                         passIndexLabelActive = false;
                     }
 
-                    CmdBeginLabel(commandBuffer, $"PassIndex={op.PassIndex}");
+                    CmdBeginLabel(
+                        commandBuffer,
+                        $"Pass={opPassIndex} Pipe={op.Context.PipelineIdentity} Vp={op.Context.ViewportIdentity}");
                     passIndexLabelActive = true;
 
-                    EmitPassBarriers(op.PassIndex);
-                    activePassIndex = op.PassIndex;
+                    EmitPassBarriers(opPassIndex);
+                    activePassIndex = opPassIndex;
+                    activeSchedulingIdentity = opSchedulingIdentity;
                 }
 
                 switch (op)
@@ -282,6 +380,13 @@ namespace XREngine.Rendering.Vulkan
                         EndActiveRenderPass();
                         CmdBeginLabel(commandBuffer, "IndirectDraw");
                         RecordIndirectDrawOp(commandBuffer, indirectOp);
+                        CmdEndLabel(commandBuffer);
+                        break;
+
+                    case ComputeDispatchOp computeOp:
+                        EndActiveRenderPass();
+                        CmdBeginLabel(commandBuffer, "ComputeDispatch");
+                        RecordComputeDispatchOp(commandBuffer, imageIndex, computeOp);
                         CmdEndLabel(commandBuffer);
                         break;
                 }
@@ -328,9 +433,12 @@ namespace XREngine.Rendering.Vulkan
                 CmdEndLabel(commandBuffer);
             }
 
-            CmdBeginLabel(commandBuffer, "ImGui");
-            RenderImGui(commandBuffer, imageIndex);
-            CmdEndLabel(commandBuffer);
+            if (SupportsImGui)
+            {
+                CmdBeginLabel(commandBuffer, "ImGui");
+                RenderImGui(commandBuffer, imageIndex);
+                CmdEndLabel(commandBuffer);
+            }
 
             EndActiveRenderPass();
 
@@ -546,6 +654,33 @@ namespace XREngine.Rendering.Vulkan
                         op.Stride);
                 }
             }
+        }
+
+        private void RecordComputeDispatchOp(CommandBuffer commandBuffer, uint imageIndex, ComputeDispatchOp op)
+        {
+            if (!op.Program.Link())
+                return;
+
+            Pipeline pipeline;
+            try
+            {
+                pipeline = op.Program.GetOrCreateComputePipeline();
+            }
+            catch (Exception ex)
+            {
+                Debug.VulkanWarning($"Failed to create Vulkan compute pipeline for '{op.Program.Data.Name ?? "UnnamedProgram"}': {ex.Message}");
+                return;
+            }
+
+            if (pipeline.Handle == 0)
+                return;
+
+            Api!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Compute, pipeline);
+
+            if (op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, op.Snapshot, out DescriptorPool descriptorPool, out var tempBuffers))
+                RegisterComputeTransientResources(imageIndex, descriptorPool, tempBuffers);
+
+            Api!.CmdDispatch(commandBuffer, op.GroupsX, op.GroupsY, op.GroupsZ);
         }
 
         private void ApplyDynamicState(CommandBuffer commandBuffer)

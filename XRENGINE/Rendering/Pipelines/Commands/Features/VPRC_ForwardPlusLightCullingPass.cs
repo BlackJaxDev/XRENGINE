@@ -6,6 +6,7 @@ using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
+using XREngine.Rendering.RenderGraph;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -237,6 +238,16 @@ namespace XREngine.Rendering.Pipelines.Commands
                 _localLightsBuffer.Set(i, lights[(int)i]);
 
             _localLightsBuffer.PushSubData();
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_ForwardPlusLightCullingPass), RenderGraphPassStage.Compute);
+            builder.SampleTexture(MakeTextureResource(DepthViewTexture));
+            builder.ReadWriteBuffer("ForwardPlusLocalLights");
+            builder.ReadWriteBuffer("ForwardPlusVisibleIndices");
         }
     }
 }
