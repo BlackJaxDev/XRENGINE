@@ -512,7 +512,8 @@ namespace XREngine.Rendering.Commands
             // Set uniforms for the culling shader
             _cullingComputeShader.Uniform("FrustumPlanes", planeData);
             _cullingComputeShader.Uniform("MaxRenderDistance", camera.FarZ * camera.FarZ); // squared distance
-            _cullingComputeShader.Uniform("CameraLayerMask", uint.MaxValue); // TODO: get from camera
+            uint mask = unchecked((uint)camera.CullingMask.Value);
+            _cullingComputeShader.Uniform("CameraLayerMask", mask);
             _cullingComputeShader.Uniform("CurrentRenderPass", RenderPass);
             _cullingComputeShader.Uniform("InputCommandCount", (int)inputCount);
             _cullingComputeShader.Uniform("MaxCulledCommands", (int)capacity);

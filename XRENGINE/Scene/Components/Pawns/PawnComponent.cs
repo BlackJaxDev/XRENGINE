@@ -132,9 +132,14 @@ namespace XREngine.Components
             //    Debug.Out($"[PawnComponent.TickInput] Ticking input for {Name}, UIInputCaptured={Engine.Input.IsUIInputCaptured}, Keyboard={localInput.Keyboard != null}, Mouse={localInput.Mouse != null}");
             //}
 
-            // Note: IsUIInputCaptured is NOT checked here.
-            // That flag is only relevant for ImGui overlay mode, not for native UI.
-            // Native UI handles its own input through the scene graph event system.
+            if (Engine.Input.IsUIInputCaptured)
+            {
+                // Prevent latent scroll from applying to the world camera once the cursor
+                // leaves an ImGui panel.
+                localInput.ClearMouseScrollBuffer();
+                return;
+            }
+
             localInput.TickStates(Engine.Delta);
         }
 

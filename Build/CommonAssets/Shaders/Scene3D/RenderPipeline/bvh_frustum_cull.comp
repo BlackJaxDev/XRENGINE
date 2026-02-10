@@ -283,7 +283,7 @@ void main()
             continue;
         if (DisabledFlagsMask != 0u && (flags & DisabledFlagsMask) != 0u)
             continue;
-        if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass))
+        if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass) && renderPass != 0xFFFFFFFFu)
             continue;
 
         vec3 toCenter = center - CameraPosition;

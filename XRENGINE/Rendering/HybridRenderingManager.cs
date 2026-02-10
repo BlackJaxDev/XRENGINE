@@ -21,6 +21,12 @@ namespace XREngine.Rendering
     /// </summary>
     public class HybridRenderingManager : XRBase, IDisposable
     {
+        private const uint IndirectCommandSsboBinding = 7;
+        private const int IndirectCommandFloatCount = 48;
+        private const int IndirectTextGlyphOffsetFloatIndex = 46;
+        private const string GlyphTransformsBufferName = "GlyphTransformsBuffer";
+        private const string GlyphTexCoordsBufferName = "GlyphTexCoordsBuffer";
+        private const string GlyphRotationsBufferName = "GlyphRotationsBuffer";
         private XRRenderProgram? _indirectCompProgram;
 
         private bool _useMeshletPipeline = false;
@@ -38,6 +44,10 @@ namespace XREngine.Rendering
         }
 
         private readonly Dictionary<(uint materialId, int rendererKey), MaterialProgramCache> _materialPrograms = [];
+        private XRDataBuffer? _indirectTextTransformsBuffer;
+        private XRDataBuffer? _indirectTextTexCoordsBuffer;
+        private XRDataBuffer? _indirectTextRotationsBuffer;
+        private bool _indirectTextBuffersNeedFullPush = true;
 
     private static GPURenderPassCollection.IndirectDebugSettings DebugSettings => GPURenderPassCollection.IndirectDebug;
     private static readonly HashSet<uint> _warnedMultiVertexMaterials = [];
@@ -242,8 +252,9 @@ namespace XREngine.Rendering
                 LogShaderBind(graphicsProgram.GetType().Name);
                 graphicsProgram.Use();
 
-                // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader at binding=0
-                culledCommandsBuffer?.BindTo(graphicsProgram, 0);
+                // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader.
+                // Use a dedicated binding to avoid colliding with material SSBOs (for example text glyph buffers).
+                culledCommandsBuffer?.BindTo(graphicsProgram, IndirectCommandSsboBinding);
                 
                 if (camera is not null)
                 {
@@ -683,7 +694,7 @@ namespace XREngine.Rendering
                 graphicsProgram.Use();
 
                 // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader
-                culledCommandsBuffer?.BindTo(graphicsProgram, 0);
+                culledCommandsBuffer?.BindTo(graphicsProgram, IndirectCommandSsboBinding);
                 
                 // Set camera/engine uniforms
                 if (camera is not null)
@@ -1263,6 +1274,15 @@ namespace XREngine.Rendering
                 GpuDebug($"  Shader type: {shader.Type}");
             }
 
+            bool useTextVertexPath = TryDetectTextVertexShader(shaderList, out bool includeTextRotations);
+            if (useTextVertexPath)
+            {
+                GpuDebug(
+                    "Material '{0}' uses text glyph buffers; selecting indirect text vertex path (rotations={1}).",
+                    material.Name ?? "<unnamed>",
+                    includeTextRotations);
+            }
+
             // For GPU-driven indirect rendering we need a vertex shader that fetches the per-draw world matrix
             // from the culled commands buffer (indexed by gl_BaseInstance). Material-provided vertex shaders
             // generally assume CPU-driven per-object uniforms.
@@ -1272,7 +1292,9 @@ namespace XREngine.Rendering
                     shaderList.RemoveAt(i);
             }
 
-            XRShader? generatedVertexShader = CreateGpuIndirectVertexShader(vaoRenderer);
+            XRShader? generatedVertexShader = useTextVertexPath
+                ? CreateGpuIndirectTextVertexShader(includeTextRotations)
+                : CreateGpuIndirectVertexShader(vaoRenderer);
             if (generatedVertexShader is not null)
                 shaderList.Add(generatedVertexShader);
 
@@ -1302,9 +1324,9 @@ namespace XREngine.Rendering
             var sb = new StringBuilder();
             sb.AppendLine("#version 460");
             sb.AppendLine();
-            sb.AppendLine("// GPU indirect: per-draw command data (float[48]) bound at SSBO binding=0");
-            sb.AppendLine("layout(std430, binding = 0) buffer CulledCommandsBuffer { float culled[]; };");
-            sb.AppendLine("const int COMMAND_FLOATS = 48;");
+            sb.AppendLine($"// GPU indirect: per-draw command data (float[{IndirectCommandFloatCount}])");
+            sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) buffer CulledCommandsBuffer {{ float culled[]; }};");
+            sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
             sb.AppendLine();
 
             uint location = 0;
@@ -1412,6 +1434,364 @@ namespace XREngine.Rendering
             {
                 Name = "GPUIndirect_AutoVS"
             };
+        }
+
+        private XRShader CreateGpuIndirectTextVertexShader(bool includeRotations)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("#version 460");
+            sb.AppendLine();
+            sb.AppendLine("layout(location = 0) in vec3 Position;");
+            sb.AppendLine("layout(location = 1) in vec3 Normal;");
+            sb.AppendLine("layout(location = 2) in vec2 TexCoord0;");
+            sb.AppendLine();
+            sb.AppendLine("layout(std430, binding = 0) buffer GlyphTransformsBuffer { vec4 GlyphTransforms[]; };");
+            sb.AppendLine("layout(std430, binding = 1) buffer GlyphTexCoordsBuffer { vec4 GlyphTexCoords[]; };");
+            if (includeRotations)
+                sb.AppendLine("layout(std430, binding = 2) buffer GlyphRotationsBuffer { float GlyphRotations[]; };");
+            sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) buffer CulledCommandsBuffer {{ float culled[]; }};");
+            sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
+            sb.AppendLine();
+
+            sb.AppendLine("layout(location = 0) out vec3 FragPos;");
+            sb.AppendLine("layout(location = 1) out vec3 FragNorm;");
+            sb.AppendLine("layout(location = 4) out vec2 FragUV0;");
+            sb.AppendLine($"layout(location = 20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
+            sb.AppendLine($"layout(location = 21) out float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            sb.AppendLine();
+
+            sb.AppendLine($"uniform mat4 {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            sb.AppendLine($"uniform mat4 {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            sb.AppendLine($"uniform bool {EEngineUniform.VRMode};");
+            sb.AppendLine();
+
+            sb.AppendLine("mat4 LoadWorldMatrix(uint commandIndex)");
+            sb.AppendLine("{");
+            sb.AppendLine("    int base = int(commandIndex) * COMMAND_FLOATS;");
+            sb.AppendLine("    vec4 c0 = vec4(culled[base+0], culled[base+4], culled[base+8],  culled[base+12]);");
+            sb.AppendLine("    vec4 c1 = vec4(culled[base+1], culled[base+5], culled[base+9],  culled[base+13]);");
+            sb.AppendLine("    vec4 c2 = vec4(culled[base+2], culled[base+6], culled[base+10], culled[base+14]);");
+            sb.AppendLine("    vec4 c3 = vec4(culled[base+3], culled[base+7], culled[base+11], culled[base+15]);");
+            sb.AppendLine("    return mat4(c0, c1, c2, c3);");
+            sb.AppendLine("}");
+            sb.AppendLine();
+
+            if (includeRotations)
+            {
+                sb.AppendLine("const float PI = 3.14159265359;");
+                sb.AppendLine("mat2 RotationMatrix(float angle)");
+                sb.AppendLine("{");
+                sb.AppendLine("    float radiansAngle = angle * PI / 180.0;");
+                sb.AppendLine("    float s = sin(radiansAngle);");
+                sb.AppendLine("    float c = cos(radiansAngle);");
+                sb.AppendLine("    return mat2(c, -s, s, c);");
+                sb.AppendLine("}");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("void main()");
+            sb.AppendLine("{");
+            sb.AppendLine("    mat4 ModelMatrix = LoadWorldMatrix(uint(gl_BaseInstance));");
+            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(uint(gl_BaseInstance));");
+            sb.AppendLine("    int cmdBase = int(gl_BaseInstance) * COMMAND_FLOATS;");
+            sb.AppendLine($"    uint glyphBase = floatBitsToUint(culled[cmdBase + {IndirectTextGlyphOffsetFloatIndex}]);");
+            sb.AppendLine("    uint glyphIndex = glyphBase + uint(gl_InstanceID);");
+            sb.AppendLine("    vec4 tfm = GlyphTransforms[glyphIndex];");
+            sb.AppendLine("    vec4 uv = GlyphTexCoords[glyphIndex];");
+            if (includeRotations)
+            {
+                sb.AppendLine("    float rot = GlyphRotations[glyphIndex];");
+                sb.AppendLine("    vec2 glyphPos = (tfm.xy + (TexCoord0.xy * tfm.zw)) * RotationMatrix(rot);");
+            }
+            else
+            {
+                sb.AppendLine("    vec2 glyphPos = tfm.xy + (TexCoord0.xy * tfm.zw);");
+            }
+            sb.AppendLine("    vec4 localPos = vec4(glyphPos, 0.0, 1.0);");
+            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragPosLocalName} = localPos.xyz;");
+            sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
+            sb.AppendLine("    vec4 worldPos = ModelMatrix * localPos;");
+            sb.AppendLine($"    vec4 clipPos = {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix} * viewMatrix * worldPos;");
+            sb.AppendLine($"    if ({EEngineUniform.VRMode})");
+            sb.AppendLine("        FragPos = worldPos.xyz;");
+            sb.AppendLine("    else");
+            sb.AppendLine("        FragPos = clipPos.xyz / max(clipPos.w, 1e-6);");
+            sb.AppendLine("    mat3 normalMatrix = transpose(inverse(mat3(ModelMatrix)));");
+            sb.AppendLine("    FragNorm = normalize(normalMatrix * Normal);");
+            sb.AppendLine("    FragUV0 = mix(uv.xy, uv.zw, Position.xy);");
+            sb.AppendLine("    gl_Position = clipPos;");
+            sb.AppendLine("}");
+
+            return new XRShader(EShaderType.Vertex, sb.ToString())
+            {
+                Name = includeRotations ? "GPUIndirect_TextRot_AutoVS" : "GPUIndirect_Text_AutoVS"
+            };
+        }
+
+        private static bool TryDetectTextVertexShader(IEnumerable<XRShader?> shaders, out bool includeRotations)
+        {
+            includeRotations = false;
+
+            foreach (XRShader? shader in shaders)
+            {
+                if (shader is null || shader.Type != EShaderType.Vertex)
+                    continue;
+
+                string? source = shader.Source?.Text;
+                if (string.IsNullOrEmpty(source))
+                    continue;
+
+                bool hasGlyphTransforms = source.Contains("GlyphTransformsBuffer", StringComparison.Ordinal);
+                bool hasGlyphTexCoords = source.Contains("GlyphTexCoordsBuffer", StringComparison.Ordinal);
+                if (!hasGlyphTransforms || !hasGlyphTexCoords)
+                    continue;
+
+                includeRotations = source.Contains("GlyphRotationsBuffer", StringComparison.Ordinal);
+                return true;
+            }
+
+            return false;
+        }
+
+        private void DetachIndirectTextBatchBuffers(XRMeshRenderer? vaoRenderer)
+        {
+            if (vaoRenderer?.Buffers is null)
+                return;
+
+            vaoRenderer.Buffers.Remove(GlyphTransformsBufferName);
+            vaoRenderer.Buffers.Remove(GlyphTexCoordsBufferName);
+            vaoRenderer.Buffers.Remove(GlyphRotationsBufferName);
+        }
+
+        private bool EnsureIndirectTextBatchBuffers(XRMeshRenderer vaoRenderer, uint requiredGlyphCount, bool includeRotations)
+        {
+            uint requiredCapacity = requiredGlyphCount == 0 ? 1u : XRMath.NextPowerOfTwo(requiredGlyphCount);
+            if (requiredCapacity == 0)
+                requiredCapacity = requiredGlyphCount == 0 ? 1u : requiredGlyphCount;
+
+            if (_indirectTextTransformsBuffer is null)
+            {
+                _indirectTextTransformsBuffer = new XRDataBuffer(
+                    GlyphTransformsBufferName,
+                    EBufferTarget.ShaderStorageBuffer,
+                    requiredCapacity,
+                    EComponentType.Float,
+                    4,
+                    false,
+                    false)
+                {
+                    Usage = EBufferUsage.StreamDraw,
+                    BindingIndexOverride = 0,
+                    DisposeOnPush = false
+                };
+                _indirectTextBuffersNeedFullPush = true;
+            }
+            else if (_indirectTextTransformsBuffer.ElementCount < requiredCapacity)
+            {
+                _indirectTextTransformsBuffer.Resize(requiredCapacity);
+                _indirectTextBuffersNeedFullPush = true;
+            }
+
+            if (_indirectTextTexCoordsBuffer is null)
+            {
+                _indirectTextTexCoordsBuffer = new XRDataBuffer(
+                    GlyphTexCoordsBufferName,
+                    EBufferTarget.ShaderStorageBuffer,
+                    requiredCapacity,
+                    EComponentType.Float,
+                    4,
+                    false,
+                    false)
+                {
+                    Usage = EBufferUsage.StreamDraw,
+                    BindingIndexOverride = 1,
+                    DisposeOnPush = false
+                };
+                _indirectTextBuffersNeedFullPush = true;
+            }
+            else if (_indirectTextTexCoordsBuffer.ElementCount < requiredCapacity)
+            {
+                _indirectTextTexCoordsBuffer.Resize(requiredCapacity);
+                _indirectTextBuffersNeedFullPush = true;
+            }
+
+            if (includeRotations)
+            {
+                if (_indirectTextRotationsBuffer is null)
+                {
+                    _indirectTextRotationsBuffer = new XRDataBuffer(
+                        GlyphRotationsBufferName,
+                        EBufferTarget.ShaderStorageBuffer,
+                        requiredCapacity,
+                        EComponentType.Float,
+                        1,
+                        false,
+                        false)
+                    {
+                        Usage = EBufferUsage.StreamDraw,
+                        BindingIndexOverride = 2,
+                        DisposeOnPush = false
+                    };
+                    _indirectTextBuffersNeedFullPush = true;
+                }
+                else if (_indirectTextRotationsBuffer.ElementCount < requiredCapacity)
+                {
+                    _indirectTextRotationsBuffer.Resize(requiredCapacity);
+                    _indirectTextBuffersNeedFullPush = true;
+                }
+            }
+
+            if (_indirectTextTransformsBuffer is null || _indirectTextTexCoordsBuffer is null)
+                return false;
+
+            vaoRenderer.Buffers[GlyphTransformsBufferName] = _indirectTextTransformsBuffer;
+            vaoRenderer.Buffers[GlyphTexCoordsBufferName] = _indirectTextTexCoordsBuffer;
+
+            if (includeRotations && _indirectTextRotationsBuffer is not null)
+                vaoRenderer.Buffers[GlyphRotationsBufferName] = _indirectTextRotationsBuffer;
+            else
+                vaoRenderer.Buffers.Remove(GlyphRotationsBufferName);
+
+            return true;
+        }
+
+        private bool PrepareIndirectTextBatchData(
+            GPURenderPassCollection renderPasses,
+            GPUScene scene,
+            XRMeshRenderer? vaoRenderer,
+            uint batchOffset,
+            uint batchCount,
+            bool includeRotations)
+        {
+            if (vaoRenderer is null || batchCount == 0)
+                return false;
+
+            var sources = new List<(uint visibleIndex, uint glyphCount, XRDataBuffer transforms, XRDataBuffer texCoords, XRDataBuffer? rotations)>((int)batchCount);
+            ulong totalGlyphs64 = 0;
+
+            for (uint local = 0; local < batchCount; ++local)
+            {
+                uint visibleIndex = batchOffset + local;
+                GPUIndirectRenderCommand culledCommand = renderPasses.CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(visibleIndex);
+
+                uint glyphCount = culledCommand.InstanceCount;
+                if (glyphCount == 0)
+                    continue;
+
+                uint sourceCommandIndex = culledCommand.Reserved1;
+                if (!scene.TryGetSourceCommand(sourceCommandIndex, out IRenderCommandMesh? sourceCommand) || sourceCommand?.Mesh is null)
+                {
+                    // Fallback for legacy command buffers that predate Reserved1 source-index encoding.
+                    if (!scene.TryGetSourceCommand(visibleIndex, out sourceCommand) || sourceCommand?.Mesh is null)
+                    {
+                        GpuWarn(LogCategory.Draw,
+                            "Indirect text batch preparation failed: unable to resolve source command for visibleIndex={0} (source={1}).",
+                            visibleIndex,
+                            sourceCommandIndex);
+                        return false;
+                    }
+                }
+
+                XRMeshRenderer sourceRenderer = sourceCommand.Mesh;
+                if (!sourceRenderer.Buffers.TryGetValue(GlyphTransformsBufferName, out XRDataBuffer? sourceTransforms)
+                    || !sourceRenderer.Buffers.TryGetValue(GlyphTexCoordsBufferName, out XRDataBuffer? sourceTexCoords))
+                {
+                    GpuWarn(LogCategory.Draw,
+                        "Indirect text batch preparation failed: command {0} is missing glyph SSBOs.",
+                        sourceCommandIndex);
+                    return false;
+                }
+
+                XRDataBuffer? sourceRotations = null;
+                if (includeRotations && !sourceRenderer.Buffers.TryGetValue(GlyphRotationsBufferName, out sourceRotations))
+                {
+                    GpuWarn(LogCategory.Draw,
+                        "Indirect text batch preparation failed: command {0} is missing '{1}'.",
+                        sourceCommandIndex,
+                        GlyphRotationsBufferName);
+                    return false;
+                }
+
+                totalGlyphs64 += glyphCount;
+                if (totalGlyphs64 > uint.MaxValue)
+                {
+                    GpuWarn(LogCategory.Draw, "Indirect text batch preparation failed: glyph count overflow ({0}).", totalGlyphs64);
+                    return false;
+                }
+
+                sources.Add((visibleIndex, glyphCount, sourceTransforms, sourceTexCoords, sourceRotations));
+            }
+
+            uint totalGlyphs = (uint)totalGlyphs64;
+            if (totalGlyphs == 0)
+                return false;
+
+            if (!EnsureIndirectTextBatchBuffers(vaoRenderer, totalGlyphs, includeRotations))
+                return false;
+
+            uint writeOffset = 0;
+            foreach (var source in sources)
+            {
+                GPUIndirectRenderCommand culledCommand = renderPasses.CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(source.visibleIndex);
+                culledCommand.Reserved0 = writeOffset;
+                renderPasses.CulledSceneToRenderBuffer.SetDataRawAtIndex(source.visibleIndex, culledCommand);
+
+                uint copyCount = source.glyphCount;
+                copyCount = Math.Min(copyCount, source.transforms.ElementCount);
+                copyCount = Math.Min(copyCount, source.texCoords.ElementCount);
+                if (includeRotations && source.rotations is not null)
+                    copyCount = Math.Min(copyCount, source.rotations.ElementCount);
+
+                if (copyCount < source.glyphCount)
+                {
+                    GpuWarn(LogCategory.Draw,
+                        "Indirect text glyph data truncated for command at visibleIndex={0}: requested={1}, copied={2}.",
+                        source.visibleIndex,
+                        source.glyphCount,
+                        copyCount);
+                }
+
+                for (uint glyph = 0; glyph < copyCount; ++glyph)
+                {
+                    _indirectTextTransformsBuffer!.SetVector4(writeOffset + glyph, source.transforms.GetVector4(glyph));
+                    _indirectTextTexCoordsBuffer!.SetVector4(writeOffset + glyph, source.texCoords.GetVector4(glyph));
+                    if (includeRotations && source.rotations is not null && _indirectTextRotationsBuffer is not null)
+                        _indirectTextRotationsBuffer.SetFloat(writeOffset + glyph, source.rotations.GetFloat(glyph));
+                }
+
+                for (uint glyph = copyCount; glyph < source.glyphCount; ++glyph)
+                {
+                    _indirectTextTransformsBuffer!.SetVector4(writeOffset + glyph, Vector4.Zero);
+                    _indirectTextTexCoordsBuffer!.SetVector4(writeOffset + glyph, Vector4.Zero);
+                    if (includeRotations && _indirectTextRotationsBuffer is not null)
+                        _indirectTextRotationsBuffer.SetFloat(writeOffset + glyph, 0.0f);
+                }
+
+                writeOffset += source.glyphCount;
+            }
+
+            uint commandStride = renderPasses.CulledSceneToRenderBuffer.ElementSize;
+            if (commandStride == 0)
+                commandStride = (uint)(GPUScene.CommandFloatCount * sizeof(float));
+            renderPasses.CulledSceneToRenderBuffer.PushSubData((int)(batchOffset * commandStride), batchCount * commandStride);
+
+            if (_indirectTextBuffersNeedFullPush)
+            {
+                _indirectTextTransformsBuffer!.PushData();
+                _indirectTextTexCoordsBuffer!.PushData();
+                if (includeRotations && _indirectTextRotationsBuffer is not null)
+                    _indirectTextRotationsBuffer.PushData();
+                _indirectTextBuffersNeedFullPush = false;
+            }
+            else
+            {
+                _indirectTextTransformsBuffer!.PushSubData();
+                _indirectTextTexCoordsBuffer!.PushSubData();
+                if (includeRotations && _indirectTextRotationsBuffer is not null)
+                    _indirectTextRotationsBuffer.PushSubData();
+            }
+
+            return true;
         }
 
         private XRShader? CreateDefaultVertexShader(XRMeshRenderer? vaoRenderer)
@@ -1586,7 +1966,9 @@ namespace XREngine.Rendering
                 defaultModelMatrix = firstWorldMatrix;
             }
 
-            XRDataBuffer? dispatchParameterBuffer = parameterBuffer;
+            // Batched range draws already provide explicit offset/count, so avoid
+            // global count-buffer semantics here.
+            XRDataBuffer? dispatchParameterBuffer = null;
             //uint cpuBuiltCount = 0;
             //bool usingCpuIndirect = DebugSettings.ForceCpuIndirectBuild;
             List<DrawBatch>? overrideBatches = null;
@@ -1681,6 +2063,7 @@ namespace XREngine.Rendering
                 DumpGpuIndirectArguments(renderPasses, indirectDrawBuffer, maxAllowed, dispatchParameterBuffer, visible);
             }
 
+            bool textBatchBuffersAttached = false;
             foreach (var batch in activeBatches)
             {
                 if (batch.Count == 0)
@@ -1739,17 +2122,6 @@ namespace XREngine.Rendering
                     continue;
                 }
 
-                // Ensure/Use graphics program (combined MVP)
-                var program = EnsureCombinedProgram(effectiveMaterialId, material, vaoRenderer);
-                if (program is null)
-                    continue;
-
-                // Set material uniforms
-                renderer.SetMaterialUniforms(material, program);
-                renderer.ApplyRenderParameters(material.RenderOptions);
-
-                GpuDebug("Batch draw: materialID={0} offset={1} count={2}", effectiveMaterialId, batch.Offset, effectiveCount);
-
                 if (batch.Offset >= renderPasses.VisibleCommandCount)
                 {
                     Debug.LogWarning($"Batch offset {batch.Offset} out of range for visible count {renderPasses.VisibleCommandCount}; skipping batch.");
@@ -1766,6 +2138,40 @@ namespace XREngine.Rendering
                 if (effectiveCount == 0)
                     continue;
 
+                bool isTextBatch = TryDetectTextVertexShader(material.Shaders, out bool includeTextRotations);
+                if (isTextBatch)
+                {
+                    if (!PrepareIndirectTextBatchData(renderPasses, scene, vaoRenderer, batch.Offset, effectiveCount, includeTextRotations))
+                    {
+                        GpuWarn(
+                            LogCategory.Draw,
+                            "Skipping text batch at offset={0}, count={1}: failed to prepare indirect glyph buffers.",
+                            batch.Offset,
+                            effectiveCount);
+                        DetachIndirectTextBatchBuffers(vaoRenderer);
+                        textBatchBuffersAttached = false;
+                        continue;
+                    }
+
+                    textBatchBuffersAttached = true;
+                }
+                else if (textBatchBuffersAttached)
+                {
+                    DetachIndirectTextBatchBuffers(vaoRenderer);
+                    textBatchBuffersAttached = false;
+                }
+
+                // Ensure/Use graphics program (combined MVP)
+                var program = EnsureCombinedProgram(effectiveMaterialId, material, vaoRenderer);
+                if (program is null)
+                    continue;
+
+                // Set material uniforms
+                renderer.SetMaterialUniforms(material, program);
+                renderer.ApplyRenderParameters(material.RenderOptions);
+
+                GpuDebug("Batch draw: materialID={0} offset={1} count={2}", effectiveMaterialId, batch.Offset, effectiveCount);
+
                 Matrix4x4 batchModelMatrix = defaultModelMatrix;
                 if (TryReadWorldMatrix(renderPasses.CulledSceneToRenderBuffer, batch.Offset, out Matrix4x4 firstDrawMatrix))
                     batchModelMatrix = firstDrawMatrix;
@@ -1781,6 +2187,9 @@ namespace XREngine.Rendering
                     camera,
                     batchModelMatrix);
             }
+
+            if (textBatchBuffersAttached)
+                DetachIndirectTextBatchBuffers(vaoRenderer);
         }
 
         public struct RenderingStats
@@ -1796,6 +2205,9 @@ namespace XREngine.Rendering
             foreach (var cache in _materialPrograms.Values)
                 cache.Program.Destroy();
             _materialPrograms.Clear();
+            _indirectTextTransformsBuffer?.Destroy();
+            _indirectTextTexCoordsBuffer?.Destroy();
+            _indirectTextRotationsBuffer?.Destroy();
             GC.SuppressFinalize(this);
         }
     }

@@ -82,7 +82,7 @@ void main(){
     if(instanceCount==0u) return;
     if((layerMask & CameraLayerMask)==0u) return;
     if(DisabledFlagsMask!=0u && (flags & DisabledFlagsMask)!=0u) return;
-    if(CurrentRenderPass>=0 && renderPass != uint(CurrentRenderPass)) return;
+    if(CurrentRenderPass>=0 && renderPass != uint(CurrentRenderPass) && renderPass != 0xFFFFFFFFu) return;
     vec3 center = sphere.xyz;
     float radius = sphere.w;
     vec3 toCenter = center - CameraPosition; float dist2 = dot(toCenter,toCenter);

@@ -111,19 +111,19 @@ void main()
     vec4 bs = vec4(inCommands[base+32], inCommands[base+33], inCommands[base+34], inCommands[base+35]); // bounding sphere
     vec3 center = bs.xyz;
     float radius = bs.w;
-    uint layerMask = uint(inCommands[base+43]);
-    uint renderPass = uint(inCommands[base+40]);
-    uint instanceCount = uint(inCommands[base+39]);
+    uint layerMask = floatBitsToUint(inCommands[base+43]);
+    uint renderPass = floatBitsToUint(inCommands[base+40]);
+    uint instanceCount = floatBitsToUint(inCommands[base+39]);
     // Compute distance metric (squared distance from camera to bounding sphere center)
     vec3 toCenter = center - CameraPosition;
     float renderDistance = dot(toCenter, toCenter);
-    uint flags = uint(inCommands[base+45]);
+    uint flags = floatBitsToUint(inCommands[base+45]);
 
     // Basic validity / trivially reject
     if (instanceCount == 0u) return;
     if ((layerMask & CameraLayerMask) == 0u) return;
     if (DisabledFlagsMask != 0u && (flags & DisabledFlagsMask) != 0u) return;
-    if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass)) return;
+    if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass) && renderPass != 0xFFFFFFFFu) return;
     if (renderDistance > MaxRenderDistance) {
         atomicAdd(StatsRejectedDistance, 1u);
         return;

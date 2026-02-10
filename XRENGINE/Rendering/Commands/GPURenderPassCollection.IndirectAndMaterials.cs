@@ -26,7 +26,7 @@ namespace XREngine.Rendering.Commands
         /// When true, sorts commands by material ID on CPU to create contiguous batches.
         /// This reduces batch count at the cost of CPU overhead for sorting.
         /// </summary>
-        public bool EnableCpuMaterialSort { get; set; } = true;
+        public bool EnableCpuMaterialSort { get; set; } = false;
 
         #endregion
 
@@ -264,7 +264,11 @@ namespace XREngine.Rendering.Commands
                 MaterialId = materialId;
             }
 
-            public int CompareTo(MaterialSortEntry other) => MaterialId.CompareTo(other.MaterialId);
+            public int CompareTo(MaterialSortEntry other)
+            {
+                int materialCompare = MaterialId.CompareTo(other.MaterialId);
+                return materialCompare != 0 ? materialCompare : OriginalIndex.CompareTo(other.OriginalIndex);
+            }
         }
 
         private void BuildBatchesFromCommands(
@@ -273,21 +277,18 @@ namespace XREngine.Rendering.Commands
             MappedBufferScope mappedBuffer,
             List<HybridRenderingManager.DrawBatch> batches)
         {
-            if (EnableCpuMaterialSort && count > 1)
-            {
-                BuildBatchesFromCommandsSorted(scene, count, mappedBuffer, batches);
-            }
-            else
-            {
-                BuildBatchesFromCommandsUnsorted(scene, count, mappedBuffer, batches);
-            }
+            if (EnableCpuMaterialSort && count > 1 &&
+                BuildBatchesFromCommandsSorted(scene, count, mappedBuffer, batches))
+                return;
+
+            BuildBatchesFromCommandsUnsorted(scene, count, mappedBuffer, batches);
         }
 
         /// <summary>
         /// Builds batches with CPU-side sorting by material ID for contiguous batches.
         /// Reduces batch count significantly when materials aren't spatially coherent.
         /// </summary>
-        private void BuildBatchesFromCommandsSorted(
+        private bool BuildBatchesFromCommandsSorted(
             GPUScene scene,
             uint count,
             MappedBufferScope mappedBuffer,
@@ -297,15 +298,32 @@ namespace XREngine.Rendering.Commands
             MaterialSortEntry[] sortEntries = ArrayPool<MaterialSortEntry>.Shared.Rent((int)count);
             try
             {
+                int unsortedBatchCount = 0;
+                uint previousMaterial = uint.MaxValue;
+                bool hasPrevious = false;
+
                 // Collect material IDs with original indices
                 for (uint i = 0; i < count; ++i)
                 {
                     uint materialId = GetMaterialIdForCommand(scene, i, mappedBuffer);
                     sortEntries[i] = new MaterialSortEntry(i, materialId);
+
+                    if (!hasPrevious || materialId != previousMaterial)
+                    {
+                        unsortedBatchCount++;
+                        previousMaterial = materialId;
+                        hasPrevious = true;
+                    }
                 }
 
                 // Sort by material ID
                 Array.Sort(sortEntries, 0, (int)count);
+
+                if (!TryReorderIndirectCommandsByMaterial(sortEntries, count))
+                {
+                    Dbg("MaterialSort reorder failed; using unsorted batches.", "Materials");
+                    return false;
+                }
 
                 // Build contiguous batches from sorted entries
                 uint currentMaterial = sortEntries[0].MaterialId;
@@ -322,9 +340,7 @@ namespace XREngine.Rendering.Commands
                         continue;
                     }
 
-                    // Emit batch for previous material
-                    // Note: For sorted batches, we need to track the sorted indices
-                    // For now, we use the sorted order's first index (this works with indirect count)
+                    // Emit batch for previous material in sorted draw order.
                     batches.Add(new HybridRenderingManager.DrawBatch(batchStartIndex, batchCount, currentMaterial));
 
                     currentMaterial = materialId;
@@ -336,8 +352,8 @@ namespace XREngine.Rendering.Commands
                 if (batchCount > 0)
                     batches.Add(new HybridRenderingManager.DrawBatch(batchStartIndex, batchCount, currentMaterial));
 
-                int unsortedBatchCount = EstimateUnsortedBatchCount(sortEntries, count);
-                Dbg($"MaterialSort: {count} commands, sorted batches={batches.Count}, unsorted would be ~{unsortedBatchCount}", "Materials");
+                Dbg($"MaterialSort: {count} commands, sorted batches={batches.Count}, unsorted batches={unsortedBatchCount}", "Materials");
+                return true;
             }
             finally
             {
@@ -346,33 +362,56 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// Estimates how many batches the unsorted path would produce (for diagnostics).
+        /// Reorders indirect draw commands to match CPU sorted material order.
         /// </summary>
-        private static int EstimateUnsortedBatchCount(MaterialSortEntry[] entries, uint count)
+        private bool TryReorderIndirectCommandsByMaterial(MaterialSortEntry[] sortedEntries, uint count)
         {
-            if (count == 0) return 0;
-            
-            // Re-examine in original order
-            int batchCount = 1;
-            uint prevMaterial = uint.MaxValue;
-            
-            for (uint i = 0; i < count; ++i)
+            if (_indirectDrawBuffer is null)
             {
-                uint originalIndex = entries[i].OriginalIndex;
-                // Find the entry for this original index
-                for (uint j = 0; j < count; ++j)
-                {
-                    if (entries[j].OriginalIndex == i)
-                    {
-                        uint mat = entries[j].MaterialId;
-                        if (i > 0 && mat != prevMaterial)
-                            batchCount++;
-                        prevMaterial = mat;
-                        break;
-                    }
-                }
+                Dbg("MaterialSort reorder skipped - indirect draw buffer missing.", "Materials");
+                return false;
             }
-            return batchCount;
+
+            if (count == 0)
+                return true;
+
+            if (count > _indirectDrawBuffer.ElementCount)
+            {
+                Dbg($"MaterialSort reorder skipped - visible count {count} exceeds indirect capacity {_indirectDrawBuffer.ElementCount}.", "Materials");
+                return false;
+            }
+
+            DrawElementsIndirectCommand[] sortedCommands = ArrayPool<DrawElementsIndirectCommand>.Shared.Rent((int)count);
+            try
+            {
+                for (uint i = 0; i < count; ++i)
+                {
+                    uint originalIndex = sortedEntries[i].OriginalIndex;
+                    if (originalIndex >= _indirectDrawBuffer.ElementCount)
+                    {
+                        Dbg($"MaterialSort reorder aborted - original index {originalIndex} out of bounds.", "Materials");
+                        return false;
+                    }
+
+                    sortedCommands[i] = _indirectDrawBuffer.GetDataRawAtIndex<DrawElementsIndirectCommand>(originalIndex);
+                }
+
+                for (uint i = 0; i < count; ++i)
+                    _indirectDrawBuffer.SetDataRawAtIndex(i, sortedCommands[i]);
+
+                uint byteLength = checked(count * (uint)Unsafe.SizeOf<DrawElementsIndirectCommand>());
+                _indirectDrawBuffer.PushSubData(0, byteLength);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Dbg($"MaterialSort reorder failed ex={ex.Message}", "Materials");
+                return false;
+            }
+            finally
+            {
+                ArrayPool<DrawElementsIndirectCommand>.Shared.Return(sortedCommands);
+            }
         }
 
         /// <summary>

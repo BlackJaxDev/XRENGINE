@@ -84,7 +84,7 @@ void main()
 
     // Defensive pass filter (culling shader should already filter by pass, but keep this to avoid
     // drawing mixed-pass command buffers if that assumption ever changes).
-    if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass))
+    if (CurrentRenderPass >= 0 && renderPass != uint(CurrentRenderPass) && renderPass != 0xFFFFFFFFu)
         return;
 
     // Deterministic output layout: one indirect slot per visible command.
