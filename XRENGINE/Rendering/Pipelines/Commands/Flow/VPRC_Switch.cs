@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using XREngine.Rendering;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -94,6 +95,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             var pipeline = CommandContainer?.ParentPipeline;
             if (container is not null && pipeline is not null && !ReferenceEquals(container.ParentPipeline, pipeline))
                 container.ParentPipeline = pipeline;
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+            if (Cases is not null)
+            {
+                foreach (var container in Cases.Values)
+                    container?.BuildRenderPassMetadata(context);
+            }
+            DefaultCase?.BuildRenderPassMetadata(context);
         }
 
         //public override bool NeedsCollecVisible

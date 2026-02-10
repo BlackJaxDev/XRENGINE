@@ -22,7 +22,7 @@ public unsafe partial class VulkanRenderer
 	private readonly Lock _frameOpsLock = new();
 	private readonly List<FrameOp> _frameOps = [];
 
-	internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target);
+	internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpContext Context);
 	internal sealed record ClearOp(
 		int PassIndex,
 		XRFrameBuffer? Target,
@@ -32,9 +32,10 @@ public unsafe partial class VulkanRenderer
 		ColorF4 Color,
 		float Depth,
 		uint Stencil,
-		Rect2D Rect) : FrameOp(PassIndex, Target);
+		Rect2D Rect,
+		FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
 
-	internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw) : FrameOp(PassIndex, Target);
+	internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw, FrameOpContext Context) : FrameOp(PassIndex, Target, Context);
 
 	internal sealed record BlitOp(
 		int PassIndex,
@@ -52,7 +53,8 @@ public unsafe partial class VulkanRenderer
 		bool ColorBit,
 		bool DepthBit,
 		bool StencilBit,
-		bool LinearFilter) : FrameOp(PassIndex, null);
+		bool LinearFilter,
+		FrameOpContext Context) : FrameOp(PassIndex, null, Context);
 
 	internal sealed record IndirectDrawOp(
 		int PassIndex,
@@ -61,7 +63,32 @@ public unsafe partial class VulkanRenderer
 		uint DrawCount,
 		uint Stride,
 		nuint ByteOffset,
-		bool UseCount) : FrameOp(PassIndex, null);
+		bool UseCount,
+		FrameOpContext Context) : FrameOp(PassIndex, null, Context);
+
+	internal readonly record struct ProgramUniformValue(EShaderVarType Type, object Value, bool IsArray);
+	internal readonly record struct ProgramImageBinding(
+		XRTexture Texture,
+		int Level,
+		bool Layered,
+		int Layer,
+		XRRenderProgram.EImageAccess Access,
+		XRRenderProgram.EImageFormat Format);
+
+	internal sealed record ComputeDispatchSnapshot(
+		Dictionary<string, ProgramUniformValue> Uniforms,
+		Dictionary<uint, XRTexture> Samplers,
+		Dictionary<uint, ProgramImageBinding> Images,
+		Dictionary<uint, XRDataBuffer> Buffers);
+
+	internal sealed record ComputeDispatchOp(
+		int PassIndex,
+		VkRenderProgram Program,
+		uint GroupsX,
+		uint GroupsY,
+		uint GroupsZ,
+		ComputeDispatchSnapshot Snapshot,
+		FrameOpContext Context) : FrameOp(PassIndex, null, Context);
 
 	internal void EnqueueFrameOp(FrameOp op)
 	{
@@ -89,8 +116,20 @@ public unsafe partial class VulkanRenderer
 		bool DepthTestEnabled,
 		bool DepthWriteEnabled,
 		CompareOp DepthCompareOp,
+		bool StencilTestEnabled,
+		StencilOpState FrontStencilState,
+		StencilOpState BackStencilState,
 		uint StencilWriteMask,
 		ColorComponentFlags ColorWriteMask,
+		CullModeFlags CullMode,
+		FrontFace FrontFace,
+		bool BlendEnabled,
+		BlendOp ColorBlendOp,
+		BlendOp AlphaBlendOp,
+		BlendFactor SrcColorBlendFactor,
+		BlendFactor DstColorBlendFactor,
+		BlendFactor SrcAlphaBlendFactor,
+		BlendFactor DstAlphaBlendFactor,
 		Matrix4x4 ModelMatrix,
 		Matrix4x4 PreviousModelMatrix,
 		XRMaterial? MaterialOverride,
@@ -117,12 +156,25 @@ public unsafe partial class VulkanRenderer
 		private IndexSize _lineIndexSize;
 		private IndexSize _pointIndexSize;
 		private readonly Dictionary<PipelineKey, Pipeline> _pipelines = new();
-				private readonly record struct PipelineKey(
+		private readonly record struct PipelineKey(
 					PrimitiveTopology Topology,
 					ulong RenderPassHandle,
 					bool DepthTestEnabled,
 					bool DepthWriteEnabled,
 					CompareOp DepthCompareOp,
+					bool StencilTestEnabled,
+					StencilOpState FrontStencilState,
+					StencilOpState BackStencilState,
+					uint StencilWriteMask,
+					CullModeFlags CullMode,
+					FrontFace FrontFace,
+					bool BlendEnabled,
+					BlendOp ColorBlendOp,
+					BlendOp AlphaBlendOp,
+					BlendFactor SrcColorBlendFactor,
+					BlendFactor DstColorBlendFactor,
+					BlendFactor SrcAlphaBlendFactor,
+					BlendFactor DstAlphaBlendFactor,
 					ColorComponentFlags ColorWriteMask);
 		private VkRenderProgram? _program;
 		private XRRenderProgram? _generatedProgram;
@@ -253,15 +305,31 @@ public unsafe partial class VulkanRenderer
 				Renderer.GetDepthTestEnabled(),
 				Renderer.GetDepthWriteEnabled(),
 				Renderer.GetDepthCompareOp(),
+				Renderer.GetStencilTestEnabled(),
+				Renderer.GetFrontStencilState(),
+				Renderer.GetBackStencilState(),
 				Renderer.GetStencilWriteMask(),
 				Renderer.GetColorWriteMask(),
+				Renderer.GetCullMode(),
+				Renderer.GetFrontFace(),
+				Renderer.GetBlendEnabled(),
+				Renderer.GetColorBlendOp(),
+				Renderer.GetAlphaBlendOp(),
+				Renderer.GetSrcColorBlendFactor(),
+				Renderer.GetDstColorBlendFactor(),
+				Renderer.GetSrcAlphaBlendFactor(),
+				Renderer.GetDstAlphaBlendFactor(),
 				modelMatrix,
 				prevModelMatrix,
 				materialOverride,
 				instances,
 				billboardMode);
 
-			Renderer.EnqueueFrameOp(new MeshDrawOp(passIndex, target, draw));
+			Renderer.EnqueueFrameOp(new MeshDrawOp(
+				Renderer.EnsureValidPassIndex(passIndex, "MeshDraw"),
+				target,
+				draw,
+				Renderer.CaptureFrameOpContext()));
 		}
 
 		private void CollectBuffers()
@@ -461,6 +529,19 @@ public unsafe partial class VulkanRenderer
 				draw.DepthTestEnabled,
 				draw.DepthWriteEnabled,
 				draw.DepthCompareOp,
+				draw.StencilTestEnabled,
+				draw.FrontStencilState,
+				draw.BackStencilState,
+				draw.StencilWriteMask,
+				draw.CullMode,
+				draw.FrontFace,
+				draw.BlendEnabled,
+				draw.ColorBlendOp,
+				draw.AlphaBlendOp,
+				draw.SrcColorBlendFactor,
+				draw.DstColorBlendFactor,
+				draw.SrcAlphaBlendFactor,
+				draw.DstAlphaBlendFactor,
 				draw.ColorWriteMask);
 
 			if (_pipelines.TryGetValue(key, out pipeline) && pipeline.Handle != 0 && !_pipelineDirty)
@@ -508,8 +589,8 @@ public unsafe partial class VulkanRenderer
 					DepthClampEnable = Vk.False,
 					RasterizerDiscardEnable = Vk.False,
 					PolygonMode = PolygonMode.Fill,
-					CullMode = CullModeFlags.BackBit,
-					FrontFace = FrontFace.CounterClockwise,
+					CullMode = draw.CullMode,
+					FrontFace = draw.FrontFace,
 					DepthBiasEnable = Vk.False,
 					LineWidth = 1.0f,
 				};
@@ -528,13 +609,21 @@ public unsafe partial class VulkanRenderer
 					DepthWriteEnable = draw.DepthWriteEnabled ? Vk.True : Vk.False,
 					DepthCompareOp = draw.DepthCompareOp,
 					DepthBoundsTestEnable = Vk.False,
-					StencilTestEnable = Vk.False,
+					StencilTestEnable = draw.StencilTestEnabled ? Vk.True : Vk.False,
+					Front = draw.FrontStencilState,
+					Back = draw.BackStencilState,
 				};
 
 				PipelineColorBlendAttachmentState colorBlendAttachment = new()
 				{
 					ColorWriteMask = draw.ColorWriteMask,
-					BlendEnable = Vk.False,
+					BlendEnable = draw.BlendEnabled ? Vk.True : Vk.False,
+					ColorBlendOp = draw.ColorBlendOp,
+					AlphaBlendOp = draw.AlphaBlendOp,
+					SrcColorBlendFactor = draw.SrcColorBlendFactor,
+					DstColorBlendFactor = draw.DstColorBlendFactor,
+					SrcAlphaBlendFactor = draw.SrcAlphaBlendFactor,
+					DstAlphaBlendFactor = draw.DstAlphaBlendFactor,
 				};
 
 				PipelineColorBlendAttachmentState[] blendAttachments = [colorBlendAttachment];
@@ -653,13 +742,14 @@ public unsafe partial class VulkanRenderer
 					return false;
 
 				Api!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, pipeline);
-				BindDescriptorsIfAvailable(commandBuffer, material, drawCopy);
 
 				if (!uniformsNotified && _program?.Data is { } programData)
 				{
 					MeshRenderer.OnSettingUniforms(programData, programData);
 					uniformsNotified = true;
 				}
+
+				BindDescriptorsIfAvailable(commandBuffer, material, drawCopy);
 
 				Api!.CmdBindIndexBuffer(commandBuffer, indexHandle, 0, ToVkIndexType(size));
 				Api!.CmdDrawIndexed(commandBuffer, indexCount, drawInstances, 0, 0, 0);
@@ -680,13 +770,14 @@ public unsafe partial class VulkanRenderer
 				if (vertexCount > 0 && EnsurePipeline(material, PrimitiveTopology.TriangleList, drawCopy, renderPass, out var pipeline))
 				{
 					Api!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, pipeline);
-					BindDescriptorsIfAvailable(commandBuffer, material, drawCopy);
 
 					if (!uniformsNotified && _program?.Data is { } programData)
 					{
 						MeshRenderer.OnSettingUniforms(programData, programData);
 						uniformsNotified = true;
 					}
+
+					BindDescriptorsIfAvailable(commandBuffer, material, drawCopy);
 
 					Api!.CmdDraw(commandBuffer, vertexCount, drawInstances, 0, 0);
 					Engine.Rendering.Stats.IncrementDrawCalls();
@@ -1284,6 +1375,9 @@ public unsafe partial class VulkanRenderer
 				if (TryResolveEngineUniformValue(member.Name, draw, out object? engineValue, out EShaderVarType engineType))
 					return engineValue is not null && TryWriteAutoUniformValue(data, member, engineValue, engineType);
 
+				if (_program is not null && _program.TryGetUniformValue(member.Name, out ProgramUniformValue programValue))
+					return TryWriteProgramUniformValue(data, member, programValue);
+
 				ShaderVar? parameter = material.Parameter<ShaderVar>(member.Name);
 				if (parameter is not null)
 				{
@@ -1300,6 +1394,31 @@ public unsafe partial class VulkanRenderer
 					return TryWriteAutoUniformValue(data, member, defaultValue.Value, defaultValue.Type);
 
 				return false;
+			}
+
+			private bool TryWriteProgramUniformValue(Span<byte> data, AutoUniformMember member, ProgramUniformValue value)
+			{
+				if (member.IsArray)
+				{
+					if (!value.IsArray || value.Value is not Array array || member.ArrayStride == 0 || member.ArrayLength == 0)
+						return false;
+
+					int max = Math.Min(array.Length, (int)member.ArrayLength);
+					for (int i = 0; i < max; i++)
+					{
+						object? element = array.GetValue(i);
+						if (element is null)
+							continue;
+
+						uint elementOffset = member.Offset + (uint)i * member.ArrayStride;
+						AutoUniformMember elementMember = member with { Offset = elementOffset, IsArray = false, ArrayLength = 0, ArrayStride = 0 };
+						TryWriteAutoUniformValue(data, elementMember, element, value.Type);
+					}
+
+					return true;
+				}
+
+				return TryWriteAutoUniformValue(data, member, value.Value, value.Type);
 			}
 
 			private bool TryWriteAutoUniformArray(Span<byte> data, AutoUniformMember member, ShaderVar parameter)
@@ -1360,6 +1479,7 @@ public unsafe partial class VulkanRenderer
 				type = EShaderVarType._float;
 				string normalized = NormalizeEngineUniformName(name);
 				XRCamera? camera = Engine.Rendering.State.RenderingCamera;
+				XRCamera? rightEyeCamera = Engine.Rendering.State.RenderingStereoRightEyeCamera;
 				bool stereoPass = Engine.Rendering.State.IsStereoPass;
 				bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
 
@@ -1367,8 +1487,28 @@ public unsafe partial class VulkanRenderer
 				if (IsApproximatelyIdentity(prevModelMatrix) && !IsApproximatelyIdentity(draw.ModelMatrix))
 					prevModelMatrix = draw.ModelMatrix;
 
+				Matrix4x4 inverseModel = Matrix4x4.Identity;
+				Matrix4x4.Invert(draw.ModelMatrix, out inverseModel);
+
+				Matrix4x4 viewMatrix = camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
+				Matrix4x4 inverseViewMatrix = camera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+				Matrix4x4 projMatrix = useUnjittered && camera is not null
+					? camera.ProjectionMatrixUnjittered
+					: camera?.ProjectionMatrix ?? Matrix4x4.Identity;
+
+				if (_program is not null && _program.TryGetUniformValue(normalized, out ProgramUniformValue programValue))
+				{
+					value = programValue.Value;
+					type = programValue.Type;
+					return true;
+				}
+
 				switch (normalized)
 				{
+					case nameof(EEngineUniform.UpdateDelta):
+						value = Engine.Time.Timer.Update.Delta;
+						type = EShaderVarType._float;
+						return true;
 					case nameof(EEngineUniform.ModelMatrix):
 						value = draw.ModelMatrix;
 						type = EShaderVarType._mat4;
@@ -1377,26 +1517,42 @@ public unsafe partial class VulkanRenderer
 						value = prevModelMatrix;
 						type = EShaderVarType._mat4;
 						return true;
+					case nameof(EEngineUniform.RootInvModelMatrix):
+						value = inverseModel;
+						type = EShaderVarType._mat4;
+						return true;
 					case nameof(EEngineUniform.ViewMatrix):
-						value = camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
+					case nameof(EEngineUniform.PrevViewMatrix):
+					case nameof(EEngineUniform.PrevLeftEyeViewMatrix):
+					case nameof(EEngineUniform.PrevRightEyeViewMatrix):
+						value = viewMatrix;
 						type = EShaderVarType._mat4;
 						return true;
 					case nameof(EEngineUniform.InverseViewMatrix):
-						value = camera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+						value = inverseViewMatrix;
 						type = EShaderVarType._mat4;
 						return true;
 					case nameof(EEngineUniform.ProjMatrix):
-						value = useUnjittered && camera is not null ? camera.Parameters.GetProjectionMatrix() : camera?.Parameters.GetProjectionMatrix() ?? Matrix4x4.Identity;
+					case nameof(EEngineUniform.PrevProjMatrix):
+					case nameof(EEngineUniform.PrevLeftEyeProjMatrix):
+					case nameof(EEngineUniform.PrevRightEyeProjMatrix):
+						value = projMatrix;
 						type = EShaderVarType._mat4;
 						return true;
 					case nameof(EEngineUniform.LeftEyeInverseViewMatrix):
+						value = inverseViewMatrix;
+						type = EShaderVarType._mat4;
+						return true;
 					case nameof(EEngineUniform.RightEyeInverseViewMatrix):
-						value = camera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+						value = rightEyeCamera?.Transform.RenderMatrix ?? inverseViewMatrix;
 						type = EShaderVarType._mat4;
 						return true;
 					case nameof(EEngineUniform.LeftEyeProjMatrix):
+						value = projMatrix;
+						type = EShaderVarType._mat4;
+						return true;
 					case nameof(EEngineUniform.RightEyeProjMatrix):
-						value = camera?.Parameters.GetProjectionMatrix() ?? Matrix4x4.Identity;
+						value = rightEyeCamera?.ProjectionMatrix ?? projMatrix;
 						type = EShaderVarType._mat4;
 						return true;
 					case nameof(EEngineUniform.CameraPosition):
@@ -1435,6 +1591,10 @@ public unsafe partial class VulkanRenderer
 						value = camera?.Parameters is XRPerspectiveCameraParameters perspA ? perspA.AspectRatio : 0f;
 						type = EShaderVarType._float;
 						return true;
+					case nameof(EEngineUniform.DepthMode):
+						value = (int)(camera?.DepthMode ?? XRCamera.EDepthMode.Normal);
+						type = EShaderVarType._int;
+						return true;
 					case nameof(EEngineUniform.ScreenWidth):
 					case nameof(EEngineUniform.ScreenHeight):
 						var area = Engine.Rendering.State.RenderArea;
@@ -1452,6 +1612,43 @@ public unsafe partial class VulkanRenderer
 					case nameof(EEngineUniform.VRMode):
 						value = stereoPass ? 1 : 0;
 						type = EShaderVarType._int;
+						return true;
+					case nameof(EEngineUniform.UIXYWH):
+						if (_program is not null && _program.TryGetUniformValue(nameof(EEngineUniform.UIXYWH), out ProgramUniformValue bounds))
+						{
+							value = bounds.Value;
+							type = bounds.Type;
+							return true;
+						}
+						value = Vector4.Zero;
+						type = EShaderVarType._vec4;
+						return true;
+					case nameof(EEngineUniform.UIWidth):
+					case nameof(EEngineUniform.UIHeight):
+					case nameof(EEngineUniform.UIX):
+					case nameof(EEngineUniform.UIY):
+						if (_program is not null && _program.TryGetUniformValue(normalized, out ProgramUniformValue uiScalar))
+						{
+							value = uiScalar.Value;
+							type = uiScalar.Type;
+							return true;
+						}
+						if (_program is not null && _program.TryGetUniformValue(nameof(EEngineUniform.UIXYWH), out ProgramUniformValue uiBounds) &&
+						    uiBounds.Value is Vector4 b)
+						{
+							value = normalized switch
+							{
+								nameof(EEngineUniform.UIX) => b.X,
+								nameof(EEngineUniform.UIY) => b.Y,
+								nameof(EEngineUniform.UIWidth) => b.Z,
+								nameof(EEngineUniform.UIHeight) => b.W,
+								_ => 0f
+							};
+							type = EShaderVarType._float;
+							return true;
+						}
+						value = 0f;
+						type = EShaderVarType._float;
 						return true;
 				}
 
@@ -1661,6 +1858,7 @@ public unsafe partial class VulkanRenderer
 			{
 				string normalized = NormalizeEngineUniformName(name);
 				XRCamera? camera = Engine.Rendering.State.RenderingCamera;
+				XRCamera? rightEyeCamera = Engine.Rendering.State.RenderingStereoRightEyeCamera;
 				bool stereoPass = Engine.Rendering.State.IsStereoPass;
 				bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
 
@@ -1672,24 +1870,48 @@ public unsafe partial class VulkanRenderer
 				if (IsApproximatelyIdentity(prevModelMatrix) && !IsApproximatelyIdentity(draw.ModelMatrix))
 					prevModelMatrix = draw.ModelMatrix;
 
+				Matrix4x4 inverseModel = Matrix4x4.Identity;
+				Matrix4x4.Invert(draw.ModelMatrix, out inverseModel);
+
+				Matrix4x4 viewMatrix = camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
+				Matrix4x4 inverseViewMatrix = camera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+				Matrix4x4 projMatrix = useUnjittered && camera is not null
+					? camera.ProjectionMatrixUnjittered
+					: camera?.ProjectionMatrix ?? Matrix4x4.Identity;
+
+				if (_program is not null && _program.TryGetUniformValue(normalized, out ProgramUniformValue programValue))
+					return UploadProgramUniform(buffer, programValue);
+
 				switch (normalized)
 				{
+					case nameof(EEngineUniform.UpdateDelta):
+						return UploadUniform(buffer, Engine.Time.Timer.Update.Delta);
 					case nameof(EEngineUniform.ModelMatrix):
 						return UploadUniform(buffer, draw.ModelMatrix);
 					case nameof(EEngineUniform.PrevModelMatrix):
 						return UploadUniform(buffer, prevModelMatrix);
+					case nameof(EEngineUniform.RootInvModelMatrix):
+						return UploadUniform(buffer, inverseModel);
 					case nameof(EEngineUniform.ViewMatrix):
-						return UploadUniform(buffer, camera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity);
+					case nameof(EEngineUniform.PrevViewMatrix):
+					case nameof(EEngineUniform.PrevLeftEyeViewMatrix):
+					case nameof(EEngineUniform.PrevRightEyeViewMatrix):
+						return UploadUniform(buffer, viewMatrix);
 					case nameof(EEngineUniform.InverseViewMatrix):
-						return UploadUniform(buffer, camera?.Transform.RenderMatrix ?? Matrix4x4.Identity);
+						return UploadUniform(buffer, inverseViewMatrix);
 					case nameof(EEngineUniform.ProjMatrix):
-						return UploadUniform(buffer, useUnjittered && camera is not null ? camera.Parameters.GetProjectionMatrix() : camera?.Parameters.GetProjectionMatrix() ?? Matrix4x4.Identity);
+					case nameof(EEngineUniform.PrevProjMatrix):
+					case nameof(EEngineUniform.PrevLeftEyeProjMatrix):
+					case nameof(EEngineUniform.PrevRightEyeProjMatrix):
+						return UploadUniform(buffer, projMatrix);
 					case nameof(EEngineUniform.LeftEyeInverseViewMatrix):
+						return UploadUniform(buffer, inverseViewMatrix);
 					case nameof(EEngineUniform.RightEyeInverseViewMatrix):
-						return UploadUniform(buffer, camera?.Transform.RenderMatrix ?? Matrix4x4.Identity);
+						return UploadUniform(buffer, rightEyeCamera?.Transform.RenderMatrix ?? inverseViewMatrix);
 					case nameof(EEngineUniform.LeftEyeProjMatrix):
+						return UploadUniform(buffer, projMatrix);
 					case nameof(EEngineUniform.RightEyeProjMatrix):
-						return UploadUniform(buffer, camera?.Parameters.GetProjectionMatrix() ?? Matrix4x4.Identity);
+						return UploadUniform(buffer, rightEyeCamera?.ProjectionMatrix ?? projMatrix);
 					case nameof(EEngineUniform.CameraPosition):
 						return UploadUniform(buffer, ToVector4(camera?.Transform.RenderTranslation ?? Vector3.Zero));
 					case nameof(EEngineUniform.CameraForward):
@@ -1708,6 +1930,8 @@ public unsafe partial class VulkanRenderer
 						return UploadUniform(buffer, camera?.Parameters is XRPerspectiveCameraParameters perspY ? perspY.VerticalFieldOfView : 0f);
 					case nameof(EEngineUniform.CameraAspect):
 						return UploadUniform(buffer, camera?.Parameters is XRPerspectiveCameraParameters perspA ? perspA.AspectRatio : 0f);
+					case nameof(EEngineUniform.DepthMode):
+						return UploadUniform(buffer, (int)(camera?.DepthMode ?? XRCamera.EDepthMode.Normal));
 					case nameof(EEngineUniform.ScreenWidth):
 					case nameof(EEngineUniform.ScreenHeight):
 						var area = Engine.Rendering.State.RenderArea;
@@ -1715,9 +1939,32 @@ public unsafe partial class VulkanRenderer
 					case nameof(EEngineUniform.ScreenOrigin):
 						return UploadUniform(buffer, new Vector2(0f, 0f));
 					case nameof(EEngineUniform.BillboardMode):
-						return UploadUniform(buffer, (uint)draw.BillboardMode);
+						return UploadUniform(buffer, (int)draw.BillboardMode);
 					case nameof(EEngineUniform.VRMode):
-						return UploadUniform(buffer, stereoPass ? 1u : 0u);
+						return UploadUniform(buffer, stereoPass ? 1 : 0);
+					case nameof(EEngineUniform.UIXYWH):
+						if (_program is not null && _program.TryGetUniformValue(nameof(EEngineUniform.UIXYWH), out ProgramUniformValue uiBounds))
+							return UploadProgramUniform(buffer, uiBounds);
+						return UploadUniform(buffer, Vector4.Zero);
+					case nameof(EEngineUniform.UIX):
+					case nameof(EEngineUniform.UIY):
+					case nameof(EEngineUniform.UIWidth):
+					case nameof(EEngineUniform.UIHeight):
+						if (_program is not null && _program.TryGetUniformValue(normalized, out ProgramUniformValue uiScalar))
+							return UploadProgramUniform(buffer, uiScalar);
+						if (_program is not null && _program.TryGetUniformValue(nameof(EEngineUniform.UIXYWH), out ProgramUniformValue packedBounds) && packedBounds.Value is Vector4 b)
+						{
+							float scalar = normalized switch
+							{
+								nameof(EEngineUniform.UIX) => b.X,
+								nameof(EEngineUniform.UIY) => b.Y,
+								nameof(EEngineUniform.UIWidth) => b.Z,
+								nameof(EEngineUniform.UIHeight) => b.W,
+								_ => 0f
+							};
+							return UploadUniform(buffer, scalar);
+						}
+						return UploadUniform(buffer, 0f);
 				}
 
 				if (_engineUniformWarnings.Add(normalized))
@@ -1741,11 +1988,12 @@ public unsafe partial class VulkanRenderer
 				string normalized = NormalizeEngineUniformName(name);
 				return normalized switch
 				{
-					nameof(EEngineUniform.ModelMatrix) or nameof(EEngineUniform.PrevModelMatrix) or nameof(EEngineUniform.ViewMatrix) or nameof(EEngineUniform.InverseViewMatrix) or nameof(EEngineUniform.ProjMatrix) or nameof(EEngineUniform.LeftEyeInverseViewMatrix) or nameof(EEngineUniform.RightEyeInverseViewMatrix) or nameof(EEngineUniform.LeftEyeProjMatrix) or nameof(EEngineUniform.RightEyeProjMatrix) => (uint)Unsafe.SizeOf<Matrix4x4>(),
+					nameof(EEngineUniform.ModelMatrix) or nameof(EEngineUniform.PrevModelMatrix) or nameof(EEngineUniform.ViewMatrix) or nameof(EEngineUniform.InverseViewMatrix) or nameof(EEngineUniform.ProjMatrix) or nameof(EEngineUniform.LeftEyeInverseViewMatrix) or nameof(EEngineUniform.RightEyeInverseViewMatrix) or nameof(EEngineUniform.LeftEyeProjMatrix) or nameof(EEngineUniform.RightEyeProjMatrix) or nameof(EEngineUniform.PrevViewMatrix) or nameof(EEngineUniform.PrevLeftEyeViewMatrix) or nameof(EEngineUniform.PrevRightEyeViewMatrix) or nameof(EEngineUniform.PrevProjMatrix) or nameof(EEngineUniform.PrevLeftEyeProjMatrix) or nameof(EEngineUniform.PrevRightEyeProjMatrix) or nameof(EEngineUniform.RootInvModelMatrix) => (uint)Unsafe.SizeOf<Matrix4x4>(),
 					nameof(EEngineUniform.CameraPosition) or nameof(EEngineUniform.CameraForward) or nameof(EEngineUniform.CameraUp) or nameof(EEngineUniform.CameraRight) => 16u,
-					nameof(EEngineUniform.CameraNearZ) or nameof(EEngineUniform.CameraFarZ) or nameof(EEngineUniform.CameraFovX) or nameof(EEngineUniform.CameraFovY) or nameof(EEngineUniform.CameraAspect) or nameof(EEngineUniform.ScreenWidth) or nameof(EEngineUniform.ScreenHeight) => 4u,
+					nameof(EEngineUniform.CameraNearZ) or nameof(EEngineUniform.CameraFarZ) or nameof(EEngineUniform.CameraFovX) or nameof(EEngineUniform.CameraFovY) or nameof(EEngineUniform.CameraAspect) or nameof(EEngineUniform.ScreenWidth) or nameof(EEngineUniform.ScreenHeight) or nameof(EEngineUniform.UpdateDelta) or nameof(EEngineUniform.DepthMode) or nameof(EEngineUniform.UIX) or nameof(EEngineUniform.UIY) or nameof(EEngineUniform.UIWidth) or nameof(EEngineUniform.UIHeight) => 4u,
 					nameof(EEngineUniform.ScreenOrigin) => 8u,
 					nameof(EEngineUniform.BillboardMode) or nameof(EEngineUniform.VRMode) => 4u,
+					nameof(EEngineUniform.UIXYWH) => 16u,
 					_ => 0u,
 				};
 			}
@@ -1775,6 +2023,28 @@ public unsafe partial class VulkanRenderer
 				Unsafe.CopyBlock(mapped, Unsafe.AsPointer(ref localValue), copySize);
 				Api.UnmapMemory(Device, buffer.Memory);
 				return true;
+			}
+
+			private bool UploadProgramUniform(EngineUniformBuffer buffer, ProgramUniformValue value)
+			{
+				return value.Type switch
+				{
+					EShaderVarType._float => UploadUniform(buffer, Convert.ToSingle(value.Value)),
+					EShaderVarType._int => UploadUniform(buffer, Convert.ToInt32(value.Value)),
+					EShaderVarType._uint => UploadUniform(buffer, Convert.ToUInt32(value.Value)),
+					EShaderVarType._bool => UploadUniform(buffer, Convert.ToBoolean(value.Value) ? 1 : 0),
+					EShaderVarType._vec2 when value.Value is Vector2 v2 => UploadUniform(buffer, v2),
+					EShaderVarType._vec3 when value.Value is Vector3 v3 => UploadUniform(buffer, new Vector4(v3, 0f)),
+					EShaderVarType._vec4 when value.Value is Vector4 v4 => UploadUniform(buffer, v4),
+					EShaderVarType._ivec2 when value.Value is IVector2 iv2 => UploadUniform(buffer, iv2),
+					EShaderVarType._ivec3 when value.Value is IVector3 iv3 => UploadUniform(buffer, new IVector4(iv3.X, iv3.Y, iv3.Z, 0)),
+					EShaderVarType._ivec4 when value.Value is IVector4 iv4 => UploadUniform(buffer, iv4),
+					EShaderVarType._uvec2 when value.Value is UVector2 uv2 => UploadUniform(buffer, uv2),
+					EShaderVarType._uvec3 when value.Value is UVector3 uv3 => UploadUniform(buffer, new UVector4(uv3.X, uv3.Y, uv3.Z, 0)),
+					EShaderVarType._uvec4 when value.Value is UVector4 uv4 => UploadUniform(buffer, uv4),
+					EShaderVarType._mat4 when value.Value is Matrix4x4 mat => UploadUniform(buffer, mat),
+					_ => false
+				};
 			}
 
 			private void DestroyEngineUniformBuffers(string? singleName = null)

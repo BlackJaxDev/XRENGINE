@@ -124,7 +124,35 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ)
         {
-            throw new NotImplementedException();
+            if (program is null)
+                return;
+
+            uint x = (uint)Math.Max(numGroupsX, 1);
+            uint y = (uint)Math.Max(numGroupsY, 1);
+            uint z = (uint)Math.Max(numGroupsZ, 1);
+
+            if (GetOrCreateAPIRenderObject(program) is not VkRenderProgram vkProgram)
+            {
+                Debug.VulkanWarning("DispatchCompute skipped: program could not be resolved to VkRenderProgram.");
+                return;
+            }
+
+            vkProgram.Generate();
+            if (!vkProgram.Link())
+            {
+                Debug.VulkanWarning($"DispatchCompute skipped: failed to link program '{program.Name ?? "UnnamedProgram"}'.");
+                return;
+            }
+
+            int passIndex = EnsureValidPassIndex(Engine.Rendering.State.CurrentRenderGraphPassIndex, "DispatchCompute");
+            EnqueueFrameOp(new ComputeDispatchOp(
+                passIndex,
+                vkProgram,
+                x,
+                y,
+                z,
+                vkProgram.CaptureComputeSnapshot(),
+                CaptureFrameOpContext()));
         }
         public override void WaitForGpu()
         {
@@ -183,7 +211,7 @@ namespace XREngine.Rendering.Vulkan
                 : new Rect2D(new Offset2D(0, 0), _state.GetCurrentTargetExtent());
 
             EnqueueFrameOp(new ClearOp(
-                passIndex,
+                EnsureValidPassIndex(passIndex, "Clear"),
                 target,
                 color,
                 depth,
@@ -191,7 +219,8 @@ namespace XREngine.Rendering.Vulkan
                 _state.GetClearColorValue(),
                 _state.GetClearDepthValue(),
                 _state.GetClearStencilValue(),
-                rect));
+                rect,
+                CaptureFrameOpContext()));
         }
         public override byte GetStencilIndex(float x, float y)
         {

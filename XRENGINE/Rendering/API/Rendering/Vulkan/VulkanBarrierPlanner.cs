@@ -34,7 +34,7 @@ internal sealed class VulkanBarrierPlanner
         if (passMetadata is null || passMetadata.Count == 0)
             return;
 
-        foreach (RenderPassMetadata pass in passMetadata.OrderBy(p => p.PassIndex))
+        foreach (RenderPassMetadata pass in SortPassesByDependencies(passMetadata))
         {
             foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
             {
@@ -72,6 +72,56 @@ internal sealed class VulkanBarrierPlanner
                 }
             }
         }
+    }
+
+    private static IReadOnlyList<RenderPassMetadata> SortPassesByDependencies(IReadOnlyCollection<RenderPassMetadata> passMetadata)
+    {
+        Dictionary<int, RenderPassMetadata> lookup = passMetadata.ToDictionary(p => p.PassIndex);
+        Dictionary<int, int> inDegree = lookup.Keys.ToDictionary(k => k, _ => 0);
+        Dictionary<int, List<int>> edges = lookup.Keys.ToDictionary(k => k, _ => new List<int>());
+
+        foreach (RenderPassMetadata pass in lookup.Values)
+        {
+            foreach (int dep in pass.ExplicitDependencies)
+            {
+                if (!lookup.ContainsKey(dep))
+                    continue;
+
+                edges[dep].Add(pass.PassIndex);
+                inDegree[pass.PassIndex] = inDegree[pass.PassIndex] + 1;
+            }
+        }
+
+        SortedSet<int> ready = new(inDegree.Where(kvp => kvp.Value == 0).Select(kvp => kvp.Key));
+        List<RenderPassMetadata> ordered = new(lookup.Count);
+
+        while (ready.Count > 0)
+        {
+            int passIndex = ready.Min;
+            ready.Remove(passIndex);
+            ordered.Add(lookup[passIndex]);
+
+            foreach (int consumer in edges[passIndex])
+            {
+                int next = inDegree[consumer] - 1;
+                inDegree[consumer] = next;
+                if (next == 0)
+                    ready.Add(consumer);
+            }
+        }
+
+        if (ordered.Count == lookup.Count)
+            return ordered;
+
+        // Dependency cycles or malformed metadata: retain deterministic order for remaining passes.
+        HashSet<int> included = ordered.Select(p => p.PassIndex).ToHashSet();
+        foreach (RenderPassMetadata pass in lookup.Values.OrderBy(p => p.PassIndex))
+        {
+            if (!included.Contains(pass.PassIndex))
+                ordered.Add(pass);
+        }
+
+        return ordered;
     }
 
     private void AddBarrier(PlannedImageBarrier barrier)

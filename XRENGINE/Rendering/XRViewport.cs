@@ -973,6 +973,9 @@ namespace XREngine.Rendering
             
             //using (Engine.Profiler.Start("XRViewport.Render"))
             {
+                bool uiThroughPipeline = AssociatedPlayer?.RenderUIThroughPipeline ?? true;
+                var screenSpaceUI = uiThroughPipeline ? ResolveScreenSpaceUIForPipeline() : null;
+
                 // Visibility-driven compute deformation (skinning/blendshapes).
                 // This runs on the render thread and uses the swapped (rendering) command buffers.
                 SkinningPrepassDispatcher.Instance.RunVisible(_renderPipeline.MeshRenderCommands);
@@ -983,12 +986,13 @@ namespace XREngine.Rendering
                     null,
                     this,
                     targetFbo,
-                    null,
+                    screenSpaceUI,
                     shadowPass,
                     false,
                     forcedMaterial);
 
-                RenderScreenSpaceUIOverlay(targetFbo);
+                if (!uiThroughPipeline)
+                    RenderScreenSpaceUIOverlay(targetFbo);
             }
         }
 
@@ -1023,30 +1027,51 @@ namespace XREngine.Rendering
                 return;
             }
 
+            var screenSpaceUI = (AssociatedPlayer?.RenderUIThroughPipeline ?? true)
+                ? ResolveScreenSpaceUIForPipeline() : null;
+
             _renderPipeline.Render(
                 world.VisualScene,
                 leftCamera,
                 rightCamera,
                 this,
                 targetFbo,
-                null,
+                screenSpaceUI,
                 false,
                 true,
                 null);
 
-            RenderScreenSpaceUIOverlay(targetFbo);
+            if (screenSpaceUI is null)
+                RenderScreenSpaceUIOverlay(targetFbo);
+        }
+
+        /// <summary>
+        /// Resolves the active screen-space UI canvas to route through the camera pipeline DAG.
+        /// 
+        /// The method checks several conditions before returning:
+        /// - AllowUIRender must be true
+        /// - CameraComponent must have a UI overlay canvas
+        /// - The canvas must be active and set to screen-space draw mode
+        /// </summary>
+        private UICanvasComponent? ResolveScreenSpaceUIForPipeline()
+        {
+            if (!AllowUIRender)
+                return null;
+
+            var ui = CameraComponent?.GetUserInterfaceOverlay();
+            if (ui is null || !ui.IsActive)
+                return null;
+
+            if (ui.CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen)
+                return null;
+
+            return ui;
         }
 
         /// <summary>
         /// Renders the screen-space UI overlay on top of the 3D scene.
-        /// This is called at the end of Render() and RenderStereo() to composite UI elements.
-        /// 
-        /// The method checks several conditions before rendering:
-        /// - AllowUIRender must be true
-        /// - CameraComponent must have a UI overlay canvas
-        /// - The canvas must be active and set to screen-space draw mode
-        /// 
-        /// The UI is rendered using its own pipeline, preserving the existing framebuffer contents.
+        /// Called when RenderUIThroughPipeline is false to composite UI elements
+        /// as a separate pass after the camera pipeline finishes.
         /// </summary>
         /// <param name="targetFbo">The framebuffer to render the UI to (same as the main render target).</param>
         private void RenderScreenSpaceUIOverlay(XRFrameBuffer? targetFbo)
@@ -1061,7 +1086,6 @@ namespace XREngine.Rendering
             if (ui.CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen)
                 return;
 
-            // Render the UI using its own pipeline on top of whatever the camera pipeline produced.
             ui.RenderScreenSpace(this, targetFbo);
         }
 

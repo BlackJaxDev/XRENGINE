@@ -6,6 +6,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.GI;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -237,6 +238,23 @@ namespace XREngine.Rendering.Pipelines.Commands
             uint groupX = (width + GroupSize - 1u) / GroupSize;
             uint groupY = (height + GroupSize - 1u) / GroupSize;
             _finalProgram.DispatchCompute(groupX, groupY, 1u, EMemoryBarrierMask.TextureFetch | EMemoryBarrierMask.ShaderStorage);
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_ReSTIRPass), RenderGraphPassStage.Graphics);
+            builder.SampleTexture(MakeTextureResource(DepthTextureName));
+            builder.SampleTexture(MakeTextureResource(NormalTextureName));
+            builder.ReadWriteTexture(MakeTextureResource(RestirOutputTextureName));
+
+            builder.ReadWriteBuffer("RestirInitialReservoir");
+            builder.ReadWriteBuffer("RestirTemporalReservoir");
+            builder.ReadWriteBuffer("RestirSpatialReservoir");
+
+            builder.SampleTexture(MakeTextureResource(RestirOutputTextureName));
+            builder.UseColorAttachment(MakeFboColorResource(ForwardFBOName));
         }
     }
 }

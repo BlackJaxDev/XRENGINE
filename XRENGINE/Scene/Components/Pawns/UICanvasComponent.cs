@@ -26,6 +26,23 @@ namespace XREngine.Components
         /// </summary>
         public UIBatchCollector BatchCollector { get; } = new();
 
+        private bool _strictOneByOneRenderCalls = false;
+        /// <summary>
+        /// When enabled, disables UI batching and forces strict per-item CPU render commands (1x1 draw behavior).
+        /// </summary>
+        public bool StrictOneByOneRenderCalls
+        {
+            get => _strictOneByOneRenderCalls;
+            set
+            {
+                if (!SetField(ref _strictOneByOneRenderCalls, value))
+                    return;
+
+                BatchCollector.Enabled = !value;
+                BatchCollector.Clear();
+            }
+        }
+
         public const float DefaultNearZ = -0.5f;
         public const float DefaultFarZ = 0.5f;
 

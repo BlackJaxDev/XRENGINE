@@ -295,6 +295,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             }
         }
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, GPURenderDispatch);
+        c.Add<VPRC_RenderScreenSpaceUI>();
         return c;
     }
 
@@ -614,6 +615,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
         c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Commit;
+        c.Add<VPRC_RenderScreenSpaceUI>();
         return c;
     }
 

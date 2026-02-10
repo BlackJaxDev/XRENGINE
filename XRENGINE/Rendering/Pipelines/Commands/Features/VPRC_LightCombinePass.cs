@@ -2,6 +2,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -184,6 +185,20 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             };
             return additiveRenderParams;
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_LightCombinePass), RenderGraphPassStage.Graphics);
+            builder.SampleTexture(MakeTextureResource(AlbedoOpacityTexture));
+            builder.SampleTexture(MakeTextureResource(NormalTexture));
+            builder.SampleTexture(MakeTextureResource(RMSETexture));
+            builder.SampleTexture(MakeTextureResource(DepthViewTexture));
+
+            if (context.CurrentRenderTarget is { } target)
+                builder.UseColorAttachment(MakeFboColorResource(target.Name), target.ColorAccess, target.ConsumeColorLoadOp(), target.GetColorStoreOp());
         }
     }
 }

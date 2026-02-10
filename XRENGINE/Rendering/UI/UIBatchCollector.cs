@@ -236,6 +236,26 @@ public sealed class UIBatchCollector : IDisposable
                 batch.Clear();
     }
 
+    /// <summary>
+    /// Clears both collecting and rendering-side batch lists immediately.
+    /// Useful when toggling between batched and strict per-item rendering modes.
+    /// </summary>
+    public void Clear()
+    {
+        foreach (var batch in _collectMaterialQuads.Values)
+            batch.Clear();
+        foreach (var batch in _renderMaterialQuads.Values)
+            batch.Clear();
+
+        foreach (var atlasMap in _collectTextData.Values)
+            foreach (var batch in atlasMap.Values)
+                batch.Clear();
+
+        foreach (var atlasMap in _renderTextData.Values)
+            foreach (var batch in atlasMap.Values)
+                batch.Clear();
+    }
+
     #endregion
 
     #region Render Thread API

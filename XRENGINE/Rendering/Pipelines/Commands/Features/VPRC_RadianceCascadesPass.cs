@@ -6,6 +6,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.GI;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -365,6 +366,18 @@ namespace XREngine.Rendering.Pipelines.Commands
             uint groupX = (width + GroupSize - 1u) / GroupSize;
             uint groupY = (height + GroupSize - 1u) / GroupSize;
             _computeProgramStereo.DispatchCompute(groupX, groupY, 1u, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_RadianceCascadesPass), RenderGraphPassStage.Graphics);
+            builder.SampleTexture(MakeTextureResource(DepthTextureName));
+            builder.SampleTexture(MakeTextureResource(NormalTextureName));
+            builder.ReadWriteTexture(MakeTextureResource(OutputTextureName));
+            builder.SampleTexture(MakeTextureResource(OutputTextureName));
+            builder.UseColorAttachment(MakeFboColorResource(ForwardFBOName));
         }
     }
 }

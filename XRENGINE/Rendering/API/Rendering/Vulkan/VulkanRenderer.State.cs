@@ -4,6 +4,7 @@ using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 
@@ -45,6 +46,42 @@ public unsafe partial class VulkanRenderer
 
     internal ColorComponentFlags GetColorWriteMask()
         => _state.GetColorWriteMask();
+
+    internal CullModeFlags GetCullMode()
+        => _state.GetCullMode();
+
+    internal FrontFace GetFrontFace()
+        => _state.GetFrontFace();
+
+    internal bool GetBlendEnabled()
+        => _state.GetBlendEnabled();
+
+    internal BlendOp GetColorBlendOp()
+        => _state.GetColorBlendOp();
+
+    internal BlendOp GetAlphaBlendOp()
+        => _state.GetAlphaBlendOp();
+
+    internal BlendFactor GetSrcColorBlendFactor()
+        => _state.GetSrcColorBlendFactor();
+
+    internal BlendFactor GetDstColorBlendFactor()
+        => _state.GetDstColorBlendFactor();
+
+    internal BlendFactor GetSrcAlphaBlendFactor()
+        => _state.GetSrcAlphaBlendFactor();
+
+    internal BlendFactor GetDstAlphaBlendFactor()
+        => _state.GetDstAlphaBlendFactor();
+
+    internal bool GetStencilTestEnabled()
+        => _state.GetStencilTestEnabled();
+
+    internal StencilOpState GetFrontStencilState()
+        => _state.GetFrontStencilState();
+
+    internal StencilOpState GetBackStencilState()
+        => _state.GetBackStencilState();
 
     internal bool GetCroppingEnabled()
         => _state.GetCroppingEnabled();
@@ -89,8 +126,20 @@ public unsafe partial class VulkanRenderer
         public bool DepthWriteEnabled { get; private set; } = true;
         public CompareOp DepthCompareOp { get; private set; }
         public uint StencilWriteMask { get; private set; } = uint.MaxValue;
+        public bool StencilTestEnabled { get; private set; }
+        public StencilOpState FrontStencilState { get; private set; }
+        public StencilOpState BackStencilState { get; private set; }
 
         public ColorComponentFlags ColorWriteMask { get; private set; }
+        public CullModeFlags CullMode { get; private set; } = CullModeFlags.BackBit;
+        public FrontFace FrontFace { get; private set; } = FrontFace.CounterClockwise;
+        public bool BlendEnabled { get; private set; }
+        public BlendOp ColorBlendOp { get; private set; } = BlendOp.Add;
+        public BlendOp AlphaBlendOp { get; private set; } = BlendOp.Add;
+        public BlendFactor SrcColorBlendFactor { get; private set; } = BlendFactor.One;
+        public BlendFactor DstColorBlendFactor { get; private set; } = BlendFactor.Zero;
+        public BlendFactor SrcAlphaBlendFactor { get; private set; } = BlendFactor.One;
+        public BlendFactor DstAlphaBlendFactor { get; private set; } = BlendFactor.Zero;
 
         public bool CroppingEnabled { get; private set; }
 
@@ -182,6 +231,18 @@ public unsafe partial class VulkanRenderer
         public ColorF4 GetClearColorValue() => ClearColor;
         public float GetClearDepthValue() => ClearDepth;
         public uint GetClearStencilValue() => ClearStencil;
+        public CullModeFlags GetCullMode() => CullMode;
+        public FrontFace GetFrontFace() => FrontFace;
+        public bool GetBlendEnabled() => BlendEnabled;
+        public BlendOp GetColorBlendOp() => ColorBlendOp;
+        public BlendOp GetAlphaBlendOp() => AlphaBlendOp;
+        public BlendFactor GetSrcColorBlendFactor() => SrcColorBlendFactor;
+        public BlendFactor GetDstColorBlendFactor() => DstColorBlendFactor;
+        public BlendFactor GetSrcAlphaBlendFactor() => SrcAlphaBlendFactor;
+        public BlendFactor GetDstAlphaBlendFactor() => DstAlphaBlendFactor;
+        public bool GetStencilTestEnabled() => StencilTestEnabled;
+        public StencilOpState GetFrontStencilState() => FrontStencilState;
+        public StencilOpState GetBackStencilState() => BackStencilState;
 
         private static Viewport DefaultViewport(Extent2D extent)
             => new()
@@ -229,6 +290,15 @@ public unsafe partial class VulkanRenderer
         public void SetStencilWriteMask(uint mask)
             => StencilWriteMask = mask;
 
+        public void SetStencilEnabled(bool enabled)
+            => StencilTestEnabled = enabled;
+
+        public void SetStencilStates(StencilOpState front, StencilOpState back)
+        {
+            FrontStencilState = front;
+            BackStencilState = back;
+        }
+
         public void SetColorMask(bool red, bool green, bool blue, bool alpha)
         {
             ColorWriteMask = ColorComponentFlags.None;
@@ -240,6 +310,30 @@ public unsafe partial class VulkanRenderer
                 ColorWriteMask |= ColorComponentFlags.BBit;
             if (alpha)
                 ColorWriteMask |= ColorComponentFlags.ABit;
+        }
+
+        public void SetCullMode(CullModeFlags mode)
+            => CullMode = mode;
+
+        public void SetFrontFace(FrontFace frontFace)
+            => FrontFace = frontFace;
+
+        public void SetBlendState(
+            bool enabled,
+            BlendOp colorOp,
+            BlendOp alphaOp,
+            BlendFactor srcColor,
+            BlendFactor dstColor,
+            BlendFactor srcAlpha,
+            BlendFactor dstAlpha)
+        {
+            BlendEnabled = enabled;
+            ColorBlendOp = colorOp;
+            AlphaBlendOp = alphaOp;
+            SrcColorBlendFactor = srcColor;
+            DstColorBlendFactor = dstColor;
+            SrcAlphaBlendFactor = srcAlpha;
+            DstAlphaBlendFactor = dstAlpha;
         }
 
         public void WriteClearValues(ClearValue* destination, uint attachmentCount)
@@ -282,13 +376,37 @@ public unsafe partial class VulkanRenderer
 
     private void UpdateResourcePlannerFromPipeline()
     {
-        _resourcePlanner.Sync(Engine.Rendering.State.CurrentResourceRegistry);
+        UpdateResourcePlannerFromContext(CaptureFrameOpContext());
+    }
+
+    internal readonly record struct FrameOpContext(
+        int PipelineIdentity,
+        int ViewportIdentity,
+        RenderResourceRegistry? ResourceRegistry,
+        IReadOnlyCollection<RenderPassMetadata>? PassMetadata)
+    {
+        public int SchedulingIdentity => HashCode.Combine(PipelineIdentity, ViewportIdentity);
+    }
+
+    internal FrameOpContext CaptureFrameOpContext()
+    {
+        XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+        XRViewport? viewport = Engine.Rendering.State.RenderingViewport;
+        return new FrameOpContext(
+            pipeline?.GetHashCode() ?? 0,
+            viewport?.GetHashCode() ?? 0,
+            pipeline?.Resources,
+            pipeline?.Pipeline?.PassMetadata);
+    }
+
+    private void UpdateResourcePlannerFromContext(in FrameOpContext context)
+    {
+        _resourcePlanner.Sync(context.ResourceRegistry);
         _resourceAllocator.UpdatePlan(_resourcePlanner.CurrentPlan);
         _resourceAllocator.RebuildPhysicalPlan(this);
         _resourceAllocator.AllocatePhysicalImages(this);
 
-        IReadOnlyCollection<RenderPassMetadata>? passMetadata = Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata;
-        _barrierPlanner.Rebuild(passMetadata, _resourcePlanner, _resourceAllocator);
+        _barrierPlanner.Rebuild(context.PassMetadata, _resourcePlanner, _resourceAllocator);
     }
 
     internal void AllocatePhysicalImage(VulkanPhysicalImageGroup group, ref Image image, ref DeviceMemory memory)
@@ -363,6 +481,26 @@ public unsafe partial class VulkanRenderer
 
         for (int i = 0; i < _commandBufferDirtyFlags.Length; i++)
             _commandBufferDirtyFlags[i] = true;
+    }
+
+    internal int EnsureValidPassIndex(int passIndex, string opName)
+    {
+        if (passIndex != int.MinValue)
+            return passIndex;
+
+        int fallback = Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata
+            ?.OrderBy(m => m.PassIndex)
+            .FirstOrDefault()
+            ?.PassIndex ?? 0;
+
+        Debug.VulkanWarningEvery(
+            $"Vulkan.InvalidPass.{opName}",
+            TimeSpan.FromSeconds(1),
+            "[Vulkan] '{0}' emitted with invalid render-graph pass index. Falling back to pass {1}.",
+            opName,
+            fallback);
+
+        return fallback;
     }
 
     private void EnsureFrameBufferRegistered(XRFrameBuffer frameBuffer)

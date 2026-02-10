@@ -4,6 +4,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -98,6 +99,17 @@ namespace XREngine.Rendering.Pipelines.Commands
                 voxelTexture.GenerateMipmapsGPU();
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.TextureFetch);
             }
+        }
+
+        internal override void DescribeRenderPass(RenderGraphDescribeContext context)
+        {
+            base.DescribeRenderPass(context);
+
+            if (string.IsNullOrWhiteSpace(VolumeTextureName))
+                return;
+
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_VoxelConeTracingPass), RenderGraphPassStage.Graphics);
+            builder.ReadWriteTexture(MakeTextureResource(VolumeTextureName));
         }
     }
 }

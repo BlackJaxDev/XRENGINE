@@ -8,6 +8,7 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 - [Project TODO](backlog/todo.md)
 - [Warnings Remediation Checklist](backlog/warnings-todo.md)
 - [Vulkan TODO](backlog/VULKAN_TODO.md)
+- [Vulkan CPU Octree + Screen UI DAG TODO](backlog/vulkan-cpu-octree-dag-todo.md)
 - [Indirect GPU Rendering TODO](backlog/IndirectGPURendering-TODO.md)
 
 ## Design & Investigations

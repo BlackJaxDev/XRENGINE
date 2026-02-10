@@ -47,6 +47,8 @@ namespace XREngine.Rendering.Vulkan
                 Data.BindRequested -= Bind;
                 Data.UnbindRequested -= Unbind;
                 Data.MapBufferDataRequested -= MapBufferData;
+                Data.UnmapBufferDataRequested -= UnmapBufferData;
+                Data.BindSSBORequested -= BindSSBO;
             }
             protected override void LinkData()
             {
@@ -59,6 +61,8 @@ namespace XREngine.Rendering.Vulkan
                 Data.BindRequested += Bind;
                 Data.UnbindRequested += Unbind;
                 Data.MapBufferDataRequested += MapBufferData;
+                Data.UnmapBufferDataRequested += UnmapBufferData;
+                Data.BindSSBORequested += BindSSBO;
             }
 
             public override VkObjectType Type => VkObjectType.Buffer;
@@ -303,6 +307,15 @@ namespace XREngine.Rendering.Vulkan
             {
                 // Vulkan: handled via descriptor set binding
                 // Integrate with descriptor set manager if needed
+            }
+
+            public void BindSSBO(XRRenderProgram program, uint? bindingIndexOverride = null)
+            {
+                if (program is null)
+                    return;
+
+                uint binding = bindingIndexOverride ?? Data.BindingIndexOverride ?? 0u;
+                program.BindBuffer(Data, binding);
             }
 
             protected internal override void PreDeleted()
