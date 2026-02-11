@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.RenderGraph;
 using Format = Silk.NET.Vulkan.Format;
 
 namespace XREngine.Rendering.Vulkan;
@@ -19,6 +21,55 @@ public unsafe partial class VulkanRenderer
         public RenderPass RenderPass => _renderPass;
 
         internal uint AttachmentCount => (uint)(_attachmentSignature?.Length ?? 0);
+
+        internal RenderPass ResolveRenderPassForPass(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+        {
+            if (_attachmentSignature is null || _attachmentSignature.Length == 0)
+                return _renderPass;
+
+            if (passMetadata is null || passMetadata.Count == 0)
+                return _renderPass;
+
+            string? frameBufferName = Data.Name;
+            if (string.IsNullOrWhiteSpace(frameBufferName))
+                return _renderPass;
+
+            RenderPassMetadata? pass = null;
+            foreach (RenderPassMetadata metadata in passMetadata)
+            {
+                if (metadata.PassIndex == passIndex)
+                {
+                    pass = metadata;
+                    break;
+                }
+            }
+
+            if (pass is null)
+                return _renderPass;
+
+            bool referencesFrameBuffer = false;
+            string prefix = $"fbo::{frameBufferName}::";
+            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            {
+                if (!usage.IsAttachment)
+                    continue;
+
+                if (usage.ResourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    referencesFrameBuffer = true;
+                    break;
+                }
+            }
+
+            if (!referencesFrameBuffer)
+                return _renderPass;
+
+            FrameBufferAttachmentSignature[] planned = BuildPlannedAttachmentSignature(pass, frameBufferName);
+            if (SignatureEquals(_attachmentSignature, planned))
+                return _renderPass;
+
+            return Renderer.GetOrCreateFrameBufferRenderPass(planned);
+        }
 
         internal void WriteClearValues(ClearValue* destination, uint clearValueCount)
         {
@@ -167,6 +218,242 @@ public unsafe partial class VulkanRenderer
             }
 
             return CacheObject(this);
+        }
+
+        private FrameBufferAttachmentSignature[] BuildPlannedAttachmentSignature(RenderPassMetadata pass, string frameBufferName)
+        {
+            FrameBufferAttachmentSignature[] planned = (FrameBufferAttachmentSignature[])_attachmentSignature!.Clone();
+            HashSet<int> touchedAttachments = [];
+            string prefix = $"fbo::{frameBufferName}::";
+
+            foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+            {
+                if (!usage.IsAttachment)
+                    continue;
+
+                if (!usage.ResourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string slot = usage.ResourceName[prefix.Length..];
+                if (string.IsNullOrWhiteSpace(slot))
+                    continue;
+
+                int[] matchingIndices = ResolveMatchingAttachmentIndices(planned, slot, usage, pass);
+                if (matchingIndices.Length == 0)
+                    continue;
+
+                AttachmentLoadOp loadOp = ToVkLoadOp(usage.LoadOp);
+                AttachmentStoreOp storeOp = ToVkStoreOp(usage.StoreOp);
+                foreach (int index in matchingIndices)
+                {
+                    FrameBufferAttachmentSignature existing = planned[index];
+                    FrameBufferAttachmentSignature updated = usage.ResourceType switch
+                    {
+                        RenderPassResourceType.StencilAttachment => WithOps(
+                            existing,
+                            existing.LoadOp,
+                            existing.StoreOp,
+                            loadOp,
+                            storeOp),
+                        _ => WithOps(
+                            existing,
+                            loadOp,
+                            storeOp,
+                            existing.StencilLoadOp,
+                            existing.StencilStoreOp),
+                    };
+
+                    planned[index] = updated;
+                    touchedAttachments.Add(index);
+                }
+            }
+
+            ValidateAttachmentSampleCounts(planned, touchedAttachments, pass, frameBufferName);
+            return planned;
+        }
+
+        private static int[] ResolveMatchingAttachmentIndices(
+            FrameBufferAttachmentSignature[] signatures,
+            string slot,
+            RenderPassResourceUsage usage,
+            RenderPassMetadata pass)
+        {
+            if (slot.StartsWith("color", StringComparison.OrdinalIgnoreCase))
+            {
+                if (usage.ResourceType is not RenderPassResourceType.ColorAttachment and not RenderPassResourceType.ResolveAttachment)
+                {
+                    throw new InvalidOperationException(
+                        $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for slot '{slot}', but color slots require color/resolve usage.");
+                }
+
+                bool hasExplicitIndex = false;
+                uint colorIndex = 0;
+                if (slot.Length > 5)
+                {
+                    if (!uint.TryParse(slot.AsSpan(5), out colorIndex))
+                    {
+                        throw new InvalidOperationException(
+                            $"Render pass '{pass.Name}' references invalid color slot '{slot}'. Use 'color' or 'colorN'.");
+                    }
+
+                    hasExplicitIndex = true;
+                }
+                List<int> colorMatches = [];
+                for (int i = 0; i < signatures.Length; i++)
+                {
+                    FrameBufferAttachmentSignature signature = signatures[i];
+                    if (signature.Role != AttachmentRole.Color)
+                        continue;
+
+                    if (hasExplicitIndex && signature.ColorIndex != colorIndex)
+                        continue;
+
+                    colorMatches.Add(i);
+                }
+
+                if (colorMatches.Count == 0)
+                {
+                    string suffix = hasExplicitIndex ? colorIndex.ToString() : "any";
+                    throw new InvalidOperationException(
+                        $"Render pass '{pass.Name}' references color slot '{suffix}' but framebuffer has no matching color attachment.");
+                }
+
+                return [.. colorMatches];
+            }
+
+            if (slot.Equals("depth", StringComparison.OrdinalIgnoreCase))
+            {
+                if (usage.ResourceType is not RenderPassResourceType.DepthAttachment and not RenderPassResourceType.StencilAttachment)
+                {
+                    throw new InvalidOperationException(
+                        $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for depth slot '{slot}'.");
+                }
+
+                for (int i = 0; i < signatures.Length; i++)
+                {
+                    FrameBufferAttachmentSignature signature = signatures[i];
+                    if (signature.Role is not (AttachmentRole.Depth or AttachmentRole.DepthStencil))
+                        continue;
+
+                    if (usage.ResourceType == RenderPassResourceType.StencilAttachment &&
+                        (signature.AspectMask & ImageAspectFlags.StencilBit) == 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"Render pass '{pass.Name}' expects stencil access on depth slot, but attachment has no stencil aspect.");
+                    }
+
+                    return [i];
+                }
+
+                throw new InvalidOperationException(
+                    $"Render pass '{pass.Name}' references depth slot '{slot}' but framebuffer has no depth attachment.");
+            }
+
+            if (slot.Equals("stencil", StringComparison.OrdinalIgnoreCase))
+            {
+                if (usage.ResourceType is not RenderPassResourceType.StencilAttachment and not RenderPassResourceType.DepthAttachment)
+                {
+                    throw new InvalidOperationException(
+                        $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for stencil slot '{slot}'.");
+                }
+
+                for (int i = 0; i < signatures.Length; i++)
+                {
+                    FrameBufferAttachmentSignature signature = signatures[i];
+                    if (signature.Role is not (AttachmentRole.Stencil or AttachmentRole.DepthStencil))
+                        continue;
+
+                    if ((signature.AspectMask & ImageAspectFlags.StencilBit) == 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"Render pass '{pass.Name}' references stencil slot but the attachment has no stencil aspect.");
+                    }
+
+                    return [i];
+                }
+
+                throw new InvalidOperationException(
+                    $"Render pass '{pass.Name}' references stencil slot '{slot}' but framebuffer has no stencil attachment.");
+            }
+
+            throw new InvalidOperationException(
+                $"Render pass '{pass.Name}' references unsupported framebuffer slot '{slot}'. Expected color/depth/stencil.");
+        }
+
+        private static void ValidateAttachmentSampleCounts(
+            FrameBufferAttachmentSignature[] signatures,
+            HashSet<int> touchedAttachments,
+            RenderPassMetadata pass,
+            string frameBufferName)
+        {
+            if (touchedAttachments.Count <= 1)
+                return;
+
+            bool hasBaseline = false;
+            SampleCountFlags baseline = SampleCountFlags.Count1Bit;
+
+            foreach (int index in touchedAttachments)
+            {
+                FrameBufferAttachmentSignature signature = signatures[index];
+                if (!hasBaseline)
+                {
+                    baseline = signature.Samples;
+                    hasBaseline = true;
+                    continue;
+                }
+
+                if (signature.Samples != baseline)
+                {
+                    throw new InvalidOperationException(
+                        $"Render pass '{pass.Name}' references framebuffer '{frameBufferName}' attachments with mismatched sample counts ({baseline} vs {signature.Samples}).");
+                }
+            }
+        }
+
+        private static FrameBufferAttachmentSignature WithOps(
+            FrameBufferAttachmentSignature signature,
+            AttachmentLoadOp loadOp,
+            AttachmentStoreOp storeOp,
+            AttachmentLoadOp stencilLoadOp,
+            AttachmentStoreOp stencilStoreOp)
+            => new(
+                signature.Format,
+                signature.Samples,
+                signature.AspectMask,
+                signature.Role,
+                signature.ColorIndex,
+                loadOp,
+                storeOp,
+                stencilLoadOp,
+                stencilStoreOp,
+                signature.InitialLayout,
+                signature.FinalLayout);
+
+        private static AttachmentLoadOp ToVkLoadOp(RenderPassLoadOp op)
+            => op switch
+            {
+                RenderPassLoadOp.Clear => AttachmentLoadOp.Clear,
+                RenderPassLoadOp.DontCare => AttachmentLoadOp.DontCare,
+                _ => AttachmentLoadOp.Load
+            };
+
+        private static AttachmentStoreOp ToVkStoreOp(RenderPassStoreOp op)
+            => op == RenderPassStoreOp.DontCare
+                ? AttachmentStoreOp.DontCare
+                : AttachmentStoreOp.Store;
+
+        private static bool SignatureEquals(FrameBufferAttachmentSignature[] first, FrameBufferAttachmentSignature[] second)
+        {
+            if (first.Length != second.Length)
+                return false;
+
+            for (int i = 0; i < first.Length; i++)
+            {
+                if (!first[i].Equals(second[i]))
+                    return false;
+            }
+
+            return true;
         }
 
         private AttachmentBuildInfo[] BuildAttachmentInfos()

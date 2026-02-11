@@ -1,6 +1,6 @@
 # Indirect GPU Rendering – Status & TODO
 
-> **Last Updated:** January 2026 (All Priority Items Complete for OpenGL)
+> **Last Updated:** 2026-02-11 (OpenGL priority items complete; Vulkan status refreshed)
 
 ## Overview
 
@@ -160,12 +160,9 @@ Offset  Field               Size    Description
 - **Implemented:** `GPUScene.AtlasRebuilt` event fires after `RebuildAtlasIfDirty()`, `GPURenderPassCollection` subscribes and calls `SyncIndirectRendererIndexBuffer()`. Version counter (`_atlasVersion`) enables defensive sync in `EnsureAtlasSynced()`.
 
 ### Vulkan Backend
-- `VulkanRenderer` has **stub implementations** for:
-  - `ValidateIndexedVAO` (returns `false` – intentionally fails validation)
-  - `UnbindDrawIndirectBuffer`, `UnbindParameterBuffer` (no-ops)
-  - `MultiDrawElementsIndirect*` variants (throws `NotImplementedException`)
-  - `TrySyncMeshRendererIndexBuffer` (returns `false`)
-- **Vulkan MDI** requires `VK_KHR_draw_indirect_count` – not yet hooked up.
+- `BindDrawIndirectBuffer` / `UnbindDrawIndirectBuffer` and `BindParameterBuffer` / `UnbindParameterBuffer` are implemented.
+- `MultiDrawElementsIndirect`, offset variants, and `MultiDrawElementsIndirectCount` are implemented (count path uses `VK_KHR_draw_indirect_count` when present, with fallback behavior when absent).
+- Remaining parity gap: `ValidateIndexedVAO`, `TryGetIndexBufferInfo`, and `TrySyncMeshRendererIndexBuffer` still return Vulkan-safe fallback values (`false`) and need mesh index-state plumbing for full API parity.
 
 ### ~~Diagnostics Gaps~~ ✅ IMPROVED
 - ~~No logging of VAO ID, EBO ID per indirect submission.~~
@@ -198,7 +195,7 @@ Offset  Field               Size    Description
 
 | Task | Priority | Status |
 |------|----------|--------|
-| ~~**Vulkan MDI implementation**~~ | 🟢 Low | ⏸️ Blocked – Stubs exist, waiting for Vulkan backend maturity |
+| **Vulkan MDI implementation parity** | 🟢 Low | 🟡 In progress – indirect draw/count dispatch is implemented; mesh index validation/sync parity is still open |
 | ~~**Document indirect buffer layout**~~ | 🟢 Low | ✅ Done – See "Indirect Buffer Layout" section above |
 | ~~**Remove legacy GL calls**~~ | 🟢 Low | ✅ Done – `XRDataBuffer.IsMapped` property + `TrySyncMeshRendererIndexBuffer` abstraction |
 | ~~**Enhanced diagnostics**~~ | 🟢 Low | ✅ Done – Index buffer info logged in `HybridRenderingManager` when GPU debug enabled |

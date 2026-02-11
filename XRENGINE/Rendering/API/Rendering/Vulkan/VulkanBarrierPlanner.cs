@@ -21,6 +21,8 @@ internal sealed class VulkanBarrierPlanner
     private readonly List<PlannedBufferBarrier> _bufferBarriers = [];
     private readonly Dictionary<int, List<PlannedBufferBarrier>> _perPassBufferBarriers = [];
     private readonly Dictionary<string, PlannedBufferState> _lastBufferStates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, uint> _lastImageQueueOwners = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, uint> _lastBufferQueueOwners = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyList<PlannedImageBarrier> ImageBarriers => _imageBarriers;
     public IReadOnlyList<PlannedBufferBarrier> BufferBarriers => _bufferBarriers;
@@ -31,24 +33,45 @@ internal sealed class VulkanBarrierPlanner
     public IReadOnlyList<PlannedBufferBarrier> GetBufferBarriersForPass(int passIndex)
         => _perPassBufferBarriers.TryGetValue(passIndex, out var list) ? list : _emptyBufferBarriers;
 
+    internal readonly record struct QueueOwnershipConfig(
+        uint GraphicsQueueFamilyIndex,
+        uint? ComputeQueueFamilyIndex = null,
+        uint? TransferQueueFamilyIndex = null)
+    {
+        public uint ResolveOwner(RenderGraphPassStage passStage, RenderPassResourceType resourceType)
+        {
+            if (resourceType is RenderPassResourceType.TransferSource or RenderPassResourceType.TransferDestination)
+                return TransferQueueFamilyIndex ?? GraphicsQueueFamilyIndex;
+
+            if (passStage == RenderGraphPassStage.Compute)
+                return ComputeQueueFamilyIndex ?? GraphicsQueueFamilyIndex;
+
+            return GraphicsQueueFamilyIndex;
+        }
+    }
+
     public void Rebuild(
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
         VulkanResourcePlanner resourcePlanner,
         VulkanResourceAllocator resourceAllocator,
-        RenderGraphSynchronizationInfo? synchronization = null)
+        RenderGraphSynchronizationInfo? synchronization = null,
+        QueueOwnershipConfig? queueOwnership = null)
     {
         _imageBarriers.Clear();
         _perPassImageBarriers.Clear();
         _lastImageStates.Clear();
+        _lastImageQueueOwners.Clear();
 
         _bufferBarriers.Clear();
         _perPassBufferBarriers.Clear();
         _lastBufferStates.Clear();
+        _lastBufferQueueOwners.Clear();
 
         if (passMetadata is null || passMetadata.Count == 0)
             return;
 
         RenderGraphSynchronizationInfo syncInfo = synchronization ?? RenderGraphSynchronizationPlanner.Build(passMetadata);
+        QueueOwnershipConfig ownership = queueOwnership ?? new QueueOwnershipConfig(0u);
 
         foreach (RenderPassMetadata pass in RenderGraphSynchronizationPlanner.TopologicallySort(passMetadata))
         {
@@ -64,10 +87,10 @@ internal sealed class VulkanBarrierPlanner
                     .LastOrDefault();
 
                 if (ShouldTrackImage(usage.ResourceType))
-                    TrackImageUsage(pass, usage, resourcePlanner, resourceAllocator, edge);
+                    TrackImageUsage(pass, usage, resourcePlanner, resourceAllocator, edge, ownership);
 
                 if (ShouldTrackBuffer(usage.ResourceType))
-                    TrackBufferUsage(pass, usage, resourcePlanner, edge);
+                    TrackBufferUsage(pass, usage, resourcePlanner, edge, ownership);
             }
         }
     }
@@ -77,7 +100,8 @@ internal sealed class VulkanBarrierPlanner
         RenderPassResourceUsage usage,
         VulkanResourcePlanner resourcePlanner,
         VulkanResourceAllocator resourceAllocator,
-        RenderGraphSynchronizationEdge? syncEdge)
+        RenderGraphSynchronizationEdge? syncEdge,
+        QueueOwnershipConfig ownership)
     {
         foreach (string logicalResource in ExpandImageLogicalResources(usage.ResourceName, resourcePlanner))
         {
@@ -89,6 +113,13 @@ internal sealed class VulkanBarrierPlanner
                 : PlannedImageState.FromSyncState(syncEdge.ConsumerState, usage.ResourceType, group, pass.Stage);
 
             PlannedImageBarrier? plannedBarrier = null;
+            uint desiredOwnerQueue = ownership.ResolveOwner(pass.Stage, usage.ResourceType);
+            uint previousOwnerQueue = desiredOwnerQueue;
+            if (_lastImageQueueOwners.TryGetValue(logicalResource, out uint existingOwner))
+                previousOwnerQueue = existingOwner;
+
+            uint srcQueueFamily = previousOwnerQueue != desiredOwnerQueue ? previousOwnerQueue : Vk.QueueFamilyIgnored;
+            uint dstQueueFamily = previousOwnerQueue != desiredOwnerQueue ? desiredOwnerQueue : Vk.QueueFamilyIgnored;
 
             if (_lastImageStates.TryGetValue(logicalResource, out PlannedImageState previousState))
             {
@@ -96,7 +127,7 @@ internal sealed class VulkanBarrierPlanner
                     previousState = PlannedImageState.FromSyncState(syncEdge.ProducerState, usage.ResourceType, group, pass.Stage);
 
                 if (!previousState.Equals(desiredState))
-                    plannedBarrier = new PlannedImageBarrier(pass.PassIndex, logicalResource, group, previousState, desiredState);
+                    plannedBarrier = new PlannedImageBarrier(pass.PassIndex, logicalResource, group, previousState, desiredState, srcQueueFamily, dstQueueFamily);
             }
             else
             {
@@ -105,13 +136,16 @@ internal sealed class VulkanBarrierPlanner
                     logicalResource,
                     group,
                     PlannedImageState.Initial(desiredState.AspectMask),
-                    desiredState);
+                    desiredState,
+                    srcQueueFamily,
+                    dstQueueFamily);
             }
 
             if (plannedBarrier.HasValue)
                 AddImageBarrier(plannedBarrier.Value);
 
             _lastImageStates[logicalResource] = desiredState;
+            _lastImageQueueOwners[logicalResource] = desiredOwnerQueue;
         }
     }
 
@@ -119,7 +153,8 @@ internal sealed class VulkanBarrierPlanner
         RenderPassMetadata pass,
         RenderPassResourceUsage usage,
         VulkanResourcePlanner resourcePlanner,
-        RenderGraphSynchronizationEdge? syncEdge)
+        RenderGraphSynchronizationEdge? syncEdge,
+        QueueOwnershipConfig ownership)
     {
         foreach (string logicalResource in ExpandBufferLogicalResources(usage.ResourceName, resourcePlanner))
         {
@@ -130,6 +165,13 @@ internal sealed class VulkanBarrierPlanner
                 ? PlannedBufferState.FromUsage(usage, pass.Stage)
                 : PlannedBufferState.FromSyncState(syncEdge.ConsumerState, usage.ResourceType, pass.Stage);
             PlannedBufferBarrier? plannedBarrier = null;
+            uint desiredOwnerQueue = ownership.ResolveOwner(pass.Stage, usage.ResourceType);
+            uint previousOwnerQueue = desiredOwnerQueue;
+            if (_lastBufferQueueOwners.TryGetValue(logicalResource, out uint existingOwner))
+                previousOwnerQueue = existingOwner;
+
+            uint srcQueueFamily = previousOwnerQueue != desiredOwnerQueue ? previousOwnerQueue : Vk.QueueFamilyIgnored;
+            uint dstQueueFamily = previousOwnerQueue != desiredOwnerQueue ? desiredOwnerQueue : Vk.QueueFamilyIgnored;
 
             if (_lastBufferStates.TryGetValue(logicalResource, out PlannedBufferState previousState))
             {
@@ -137,7 +179,7 @@ internal sealed class VulkanBarrierPlanner
                     previousState = PlannedBufferState.FromSyncState(syncEdge.ProducerState, usage.ResourceType, pass.Stage);
 
                 if (!previousState.Equals(desiredState))
-                    plannedBarrier = new PlannedBufferBarrier(pass.PassIndex, logicalResource, previousState, desiredState);
+                    plannedBarrier = new PlannedBufferBarrier(pass.PassIndex, logicalResource, previousState, desiredState, srcQueueFamily, dstQueueFamily);
             }
             else
             {
@@ -145,13 +187,16 @@ internal sealed class VulkanBarrierPlanner
                     pass.PassIndex,
                     logicalResource,
                     PlannedBufferState.Initial(),
-                    desiredState);
+                    desiredState,
+                    srcQueueFamily,
+                    dstQueueFamily);
             }
 
             if (plannedBarrier.HasValue)
                 AddBufferBarrier(plannedBarrier.Value);
 
             _lastBufferStates[logicalResource] = desiredState;
+            _lastBufferQueueOwners[logicalResource] = desiredOwnerQueue;
         }
     }
 
@@ -307,13 +352,17 @@ internal sealed class VulkanBarrierPlanner
         string ResourceName,
         VulkanPhysicalImageGroup Group,
         PlannedImageState Previous,
-        PlannedImageState Next);
+        PlannedImageState Next,
+        uint SrcQueueFamilyIndex,
+        uint DstQueueFamilyIndex);
 
     internal readonly record struct PlannedBufferBarrier(
         int PassIndex,
         string ResourceName,
         PlannedBufferState Previous,
-        PlannedBufferState Next);
+        PlannedBufferState Next,
+        uint SrcQueueFamilyIndex,
+        uint DstQueueFamilyIndex);
 
     internal readonly struct PlannedImageState(ImageLayout layout, PipelineStageFlags stageMask, AccessFlags accessMask, ImageAspectFlags aspectMask) : IEquatable<PlannedImageState>
     {

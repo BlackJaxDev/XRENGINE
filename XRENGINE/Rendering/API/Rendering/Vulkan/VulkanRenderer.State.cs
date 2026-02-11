@@ -456,11 +456,26 @@ public unsafe partial class VulkanRenderer
         _resourceAllocator.AllocatePhysicalBuffers(this);
 
         _compiledRenderGraph = _renderGraphCompiler.Compile(context.PassMetadata);
+        VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership = BuildQueueOwnershipConfig();
         _barrierPlanner.Rebuild(
             context.PassMetadata,
             _resourcePlanner,
             _resourceAllocator,
-            _compiledRenderGraph.Synchronization);
+            _compiledRenderGraph.Synchronization,
+            queueOwnership);
+    }
+
+    private VulkanBarrierPlanner.QueueOwnershipConfig BuildQueueOwnershipConfig()
+    {
+        uint graphicsFamily = FamilyQueueIndices.GraphicsFamilyIndex ?? 0u;
+
+        // The current backend records all work into command buffers sourced from the graphics
+        // queue family. Keep ownership in that family until async compute/transfer submission
+        // paths are implemented.
+        return new VulkanBarrierPlanner.QueueOwnershipConfig(
+            graphicsFamily,
+            graphicsFamily,
+            graphicsFamily);
     }
 
     internal void AllocatePhysicalImage(VulkanPhysicalImageGroup group, ref Image image, ref DeviceMemory memory)
@@ -592,21 +607,33 @@ public unsafe partial class VulkanRenderer
             _commandBufferDirtyFlags[i] = true;
     }
 
-    internal int EnsureValidPassIndex(int passIndex, string opName)
+    internal int EnsureValidPassIndex(
+        int passIndex,
+        string opName,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata = null)
     {
-        if (passIndex != int.MinValue)
+        passMetadata ??= Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata;
+
+        bool hasMetadata = passMetadata is { Count: > 0 };
+        bool passDefinedInMetadata = hasMetadata && passMetadata!.Any(m => m.PassIndex == passIndex);
+
+        if (passIndex != int.MinValue && (!hasMetadata || passDefinedInMetadata))
             return passIndex;
 
-        int fallback = Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.PassMetadata
-            ?.OrderBy(m => m.PassIndex)
-            .FirstOrDefault()
-            ?.PassIndex ?? 0;
+        int fallback = hasMetadata
+            ? passMetadata!.OrderBy(m => m.PassIndex).First().PassIndex
+            : 0;
+
+        string reason = passIndex == int.MinValue
+            ? "invalid sentinel value"
+            : $"pass {passIndex} is missing from metadata";
 
         Debug.VulkanWarningEvery(
-            $"Vulkan.InvalidPass.{opName}",
+            $"Vulkan.InvalidPass.{opName}.{passIndex}",
             TimeSpan.FromSeconds(1),
-            "[Vulkan] '{0}' emitted with invalid render-graph pass index. Falling back to pass {1}.",
+            "[Vulkan] '{0}' emitted with invalid render-graph pass index ({1}). Falling back to pass {2}.",
             opName,
+            reason,
             fallback);
 
         return fallback;

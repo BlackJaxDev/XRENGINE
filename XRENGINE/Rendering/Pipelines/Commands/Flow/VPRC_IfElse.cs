@@ -63,6 +63,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 state.ActiveContainer?.OnBranchSelected(instance);
             }
 
+            using var branchScope = instance.PushRenderGraphBranchScope();
             next?.Execute();
         }
 
