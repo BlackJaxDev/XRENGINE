@@ -37,6 +37,9 @@ namespace XREngine.Rendering.Commands
                     $"DrawElementsIndirectCommand struct size mismatch! Expected {ExpectedIndirectCommandStride} bytes, got {_indirectCommandStride}. " +
                     $"Check [StructLayout(Pack = 1)] attribute and field types.");
             }
+
+            // Validate ViewSet payload sizes so CPU/GPU packing stays in sync.
+            GPUViewSetLayout.ValidateRuntimeLayout();
         }
 
         // Verbose debug infra (shared across partials)

@@ -1,16 +1,25 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
-using XREngine.Data.Trees;
 using XREngine.Rendering.Models.Materials;
 using static XREngine.Data.Core.XRMath;
 
 namespace XREngine.Rendering.Compute;
+
+/// <summary>
+/// How the GPU BVH hierarchy is constructed.
+/// </summary>
+public enum BvhBuildMode
+{
+	/// <summary>Morton-code LBVH only.</summary>
+	MortonOnly = 0,
+	/// <summary>Morton-code LBVH followed by SAH refinement pass.</summary>
+	MortonPlusSah = 1
+}
 
 /// <summary>
 /// A fully GPU-based BVH tree that can be used for scene-level culling, per-model collision,
@@ -394,7 +403,9 @@ public sealed class GpuBvhTree : IDisposable
             Resizable = false,
             DisposeOnPush = false,
             PadEndingToVec4 = true,
-            ShouldMap = false
+            ShouldMap = false,
+            // Allow temporary mapping for GPU→CPU readback of the overflow flag.
+            RangeFlags = EBufferMapRangeFlags.Read
         };
         _overflowFlagBuffer.SetBlockIndex(OverflowFlagBinding);
         _overflowFlagBuffer.SetDataRaw(new uint[] { 0u }, 1);
@@ -419,7 +430,12 @@ public sealed class GpuBvhTree : IDisposable
         if (_overflowFlagBuffer is null)
             return false;
 
-        uint flags = ReadUInt(_overflowFlagBuffer);
+        // Map the GPU buffer to read the overflow flag written by compute shaders.
+        // This is a synchronous readback (the driver may wait for pending dispatches
+        // to finish), but the cost is bounded: 4 bytes, once per Build/Refit call.
+        // The BVH must be fully built before subsequent draw calls consume it, so
+        // the GPU work must complete this frame regardless.
+        uint flags = ReadOverflowFlagFromGpu();
         if (flags == 0u)
             return false;
 
@@ -428,6 +444,43 @@ public sealed class GpuBvhTree : IDisposable
         _lastPrimitiveCount = 0;
         _isDirty = true;
         return true;
+    }
+
+    /// <summary>
+    /// Reads the overflow flag by temporarily mapping the GPU buffer.
+    /// The buffer was configured with <see cref="EBufferMapRangeFlags.Read"/>
+    /// so <c>glMapNamedBufferRange</c> will succeed with <c>GL_MAP_READ_BIT</c>.
+    /// <para/>
+    /// Note: <see cref="XRDataBuffer.ClientSideSource"/> (<c>Address</c>) only
+    /// reflects the last CPU-side upload — GPU compute writes are NOT synced
+    /// back to it. A real map/unmap (or <c>glGetBufferSubData</c>) is required
+    /// to read data written by the GPU.
+    /// </summary>
+    private uint ReadOverflowFlagFromGpu()
+    {
+        if (_overflowFlagBuffer is null)
+            return 0u;
+
+        _overflowFlagBuffer.MapBufferData();
+        try
+        {
+            foreach (var addr in _overflowFlagBuffer.GetMappedAddresses())
+            {
+                if (addr.IsValid)
+                {
+                    unsafe
+                    {
+                        return *((uint*)addr.Pointer);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            _overflowFlagBuffer.UnmapBufferData();
+        }
+
+        return 0u;
     }
 
     private static string DescribeOverflow(uint flags, uint primitiveCount, uint nodeCount)
@@ -445,35 +498,6 @@ public sealed class GpuBvhTree : IDisposable
         return reasons.Count == 0
             ? "unknown overflow"
             : string.Join(", ", reasons);
-    }
-
-    private static unsafe uint ReadUInt(XRDataBuffer buf)
-    {
-        bool mappedTemporarily = false;
-
-        try
-        {
-            if (!buf.IsMapped)
-            {
-                buf.MapBufferData();
-                if (!buf.IsMapped)
-                    return buf.GetDataRawAtIndex<uint>(0);
-                mappedTemporarily = true;
-            }
-
-            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
-
-            var addr = buf.GetMappedAddresses().FirstOrDefault();
-            if (addr == IntPtr.Zero)
-                throw new InvalidOperationException("ReadUInt failed - buffer mapped address is null");
-
-            return *((uint*)addr.Pointer);
-        }
-        finally
-        {
-            if (mappedTemporarily)
-                buf.UnmapBufferData();
-        }
     }
 
     private void DispatchBuild(uint primitiveCount)

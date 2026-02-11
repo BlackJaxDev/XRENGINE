@@ -137,6 +137,7 @@ namespace XREngine.Rendering.Commands
 
             _resetCountersComputeShader.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             ResetCountersHook?.Invoke();
+            ResetPerViewDrawCounts(_activeViewCount);
         }
 
         #endregion
@@ -706,6 +707,7 @@ namespace XREngine.Rendering.Commands
             _culledSceneToRenderBuffer?.Dispose();
             _passFilterDebugBuffer?.Dispose();
             _materialIDsBuffer?.Dispose();
+            DisposeViewSetBuffers();
         }
 
         private void DisposeShaders()

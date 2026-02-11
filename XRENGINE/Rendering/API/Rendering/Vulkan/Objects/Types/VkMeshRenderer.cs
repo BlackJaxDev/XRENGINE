@@ -411,6 +411,92 @@ public unsafe partial class VulkanRenderer
 			_buffersDirty = false;
 		}
 
+		/// <summary>
+		/// Overrides the triangle index buffer binding used for indexed draws.
+		/// This is used by indirect-renderer atlas sync paths where indices are provided externally.
+		/// </summary>
+		internal void SetTriangleIndexBuffer(VkDataBuffer? buffer, IndexSize elementType)
+		{
+			_triangleIndexBuffer = buffer;
+			_triangleIndexSize = elementType;
+			_triangleIndexBuffer?.Generate();
+		}
+
+		/// <summary>
+		/// Returns the first available index buffer in primitive priority order:
+		/// triangles, then lines, then points.
+		/// </summary>
+		internal bool TryGetPrimaryIndexBufferInfo(out IndexSize indexElementSize, out uint indexCount)
+		{
+			EnsureBuffers();
+
+			if (HasIndexData(_triangleIndexBuffer))
+			{
+				indexElementSize = _triangleIndexSize;
+				indexCount = _triangleIndexBuffer!.Data.ElementCount;
+				return true;
+			}
+
+			if (HasIndexData(_lineIndexBuffer))
+			{
+				indexElementSize = _lineIndexSize;
+				indexCount = _lineIndexBuffer!.Data.ElementCount;
+				return true;
+			}
+
+			if (HasIndexData(_pointIndexBuffer))
+			{
+				indexElementSize = _pointIndexSize;
+				indexCount = _pointIndexBuffer!.Data.ElementCount;
+				return true;
+			}
+
+			indexElementSize = IndexSize.FourBytes;
+			indexCount = 0;
+			return false;
+		}
+
+		internal bool TryGetPrimaryIndexBinding(out VkBufferHandle handle, out IndexType indexType, out uint indexCount)
+		{
+			EnsureBuffers();
+
+			if (TryResolveIndexBinding(_triangleIndexBuffer, _triangleIndexSize, out handle, out indexType, out indexCount))
+				return true;
+
+			if (TryResolveIndexBinding(_lineIndexBuffer, _lineIndexSize, out handle, out indexType, out indexCount))
+				return true;
+
+			if (TryResolveIndexBinding(_pointIndexBuffer, _pointIndexSize, out handle, out indexType, out indexCount))
+				return true;
+
+			handle = default;
+			indexType = IndexType.Uint32;
+			indexCount = 0;
+			return false;
+		}
+
+		private static bool TryResolveIndexBinding(VkDataBuffer? buffer, IndexSize size, out VkBufferHandle handle, out IndexType indexType, out uint indexCount)
+		{
+			handle = default;
+			indexType = IndexType.Uint32;
+			indexCount = 0;
+
+			if (!HasIndexData(buffer))
+				return false;
+
+			buffer!.Generate();
+			if (buffer.BufferHandle is not { } bufferHandle)
+				return false;
+
+			handle = bufferHandle;
+			indexType = ToVkIndexType(size);
+			indexCount = buffer.Data.ElementCount;
+			return true;
+		}
+
+		private static bool HasIndexData(VkDataBuffer? buffer)
+			=> buffer is not null && buffer.Data.ElementCount > 0;
+
 		private XRMaterial ResolveMaterial(XRMaterial? localOverride)
 		{
 			var renderState = Engine.Rendering.State.RenderingPipelineState;
