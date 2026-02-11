@@ -11,6 +11,7 @@ using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.Vulkan;
 using static XREngine.Engine.Rendering.State;
 
 namespace XREngine.Rendering;
@@ -69,7 +70,10 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     public const string SurfelDebugFBOName = "SurfelDebugFBO";
     public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
 
-    private bool _gpuRenderDispatch = Engine.EffectiveSettings.GPURenderDispatch;
+    private bool _gpuRenderDispatch = Engine.Rendering.ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
+
+    private static bool EnableComputeDependentPasses
+        => VulkanFeatureProfile.EnableComputeDependentPasses;
 
     /// <summary>
     /// When true, the pipeline dispatches render passes using GPU-driven rendering.
@@ -77,7 +81,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     public bool GpuRenderDispatch
     {
         get => _gpuRenderDispatch;
-        set => SetField(ref _gpuRenderDispatch, value);
+        set => SetField(ref _gpuRenderDispatch, Engine.Rendering.ResolveGpuRenderDispatchPreference(value));
     }
 
     private ESurfelDebugVisualization _visualizationMode = ESurfelDebugVisualization.Normal;
@@ -141,9 +145,10 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     private ViewportRenderCommandContainer CreateViewportTargetCommands()
     {
         ViewportRenderCommandContainer c = new(this);
+        bool enableComputePasses = EnableComputeDependentPasses;
 
         // Cache textures
-        CacheTextures(c);
+        CacheTextures(c, enableComputePasses);
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Black, 1.0f, 0);
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
@@ -179,7 +184,8 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GpuRenderDispatch);
 
                 c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add<VPRC_ForwardPlusLightCullingPass>();
+                if (enableComputePasses)
+                    c.Add<VPRC_ForwardPlusLightCullingPass>();
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GpuRenderDispatch);
 
@@ -189,8 +195,9 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderDebugShapes>();
             }
 
-            // Run the Surfel GI pass (populates surfel buffers)
-            c.Add<VPRC_SurfelGIPass>();
+            // Run the Surfel GI pass (populates surfel buffers) only when compute-heavy features are enabled.
+            if (enableComputePasses)
+                c.Add<VPRC_SurfelGIPass>();
 
             // Visualization selection
             var visualizationSwitch = c.Add<VPRC_Switch>();
@@ -198,9 +205,12 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
             visualizationSwitch.Cases = new Dictionary<int, ViewportRenderCommandContainer>
             {
                 [(int)ESurfelDebugVisualization.TransformId] = CreateTransformIdVisualizationCommands(),
-                [(int)ESurfelDebugVisualization.SurfelCircles] = CreateSurfelCircleVisualizationCommands(),
-                [(int)ESurfelDebugVisualization.SurfelGridCells] = CreateSurfelGridVisualizationCommands(),
             };
+            if (enableComputePasses)
+            {
+                visualizationSwitch.Cases[(int)ESurfelDebugVisualization.SurfelCircles] = CreateSurfelCircleVisualizationCommands();
+                visualizationSwitch.Cases[(int)ESurfelDebugVisualization.SurfelGridCells] = CreateSurfelGridVisualizationCommands();
+            }
             // Default (Normal) just outputs the forward pass result
             visualizationSwitch.DefaultCase = CreateNormalOutputCommands();
         }
@@ -215,9 +225,12 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
                 outputChoice.Cases = new Dictionary<int, ViewportRenderCommandContainer>
                 {
                     [(int)ESurfelDebugVisualization.TransformId] = CreateTransformIdOutputCommands(),
-                    [(int)ESurfelDebugVisualization.SurfelCircles] = CreateSurfelDebugOutputCommands(),
-                    [(int)ESurfelDebugVisualization.SurfelGridCells] = CreateSurfelDebugOutputCommands(),
                 };
+                if (enableComputePasses)
+                {
+                    outputChoice.Cases[(int)ESurfelDebugVisualization.SurfelCircles] = CreateSurfelDebugOutputCommands();
+                    outputChoice.Cases[(int)ESurfelDebugVisualization.SurfelGridCells] = CreateSurfelDebugOutputCommands();
+                }
                 outputChoice.DefaultCase = CreateForwardPassOutputCommands();
             }
         }
@@ -229,6 +242,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     private ViewportRenderCommandContainer CreateFBOTargetCommands()
     {
         ViewportRenderCommandContainer c = new(this);
+        bool enableComputePasses = EnableComputeDependentPasses;
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Black, 1.0f, 0);
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
@@ -244,7 +258,8 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GpuRenderDispatch);
                 c.Add<VPRC_DepthWrite>().Allow = true;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
-                c.Add<VPRC_ForwardPlusLightCullingPass>();
+                if (enableComputePasses)
+                    c.Add<VPRC_ForwardPlusLightCullingPass>();
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GpuRenderDispatch);
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
@@ -332,7 +347,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
 
     #region Texture Creation
 
-    private void CacheTextures(ViewportRenderCommandContainer c)
+    private void CacheTextures(ViewportRenderCommandContainer c, bool includeComputeDebugTextures)
     {
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             DepthStencilTextureName,
@@ -370,11 +385,14 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
-        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-            SurfelDebugOutputTextureName,
-            CreateSurfelDebugOutputTexture,
-            NeedsRecreateTextureInternalSize,
-            ResizeTextureInternalSize);
+        if (includeComputeDebugTextures)
+        {
+            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+                SurfelDebugOutputTextureName,
+                CreateSurfelDebugOutputTexture,
+                NeedsRecreateTextureInternalSize,
+                ResizeTextureInternalSize);
+        }
     }
 
     private XRTexture CreateDepthStencilTexture()

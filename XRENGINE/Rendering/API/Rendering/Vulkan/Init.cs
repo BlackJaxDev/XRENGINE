@@ -39,6 +39,8 @@ namespace XREngine.Rendering.Vulkan
             DestroyAllSwapChainObjects();
             DestroyDescriptorSetLayout();
             _resourceAllocator.DestroyPhysicalImages(this);
+            _resourceAllocator.DestroyPhysicalBuffers(this);
+            _stagingManager.Destroy(this);
 
             DestroySyncObjects();
             DestroyCommandPool();
@@ -160,11 +162,21 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void SetReadBuffer(EReadBufferMode mode)
         {
-            throw new NotImplementedException();
+            _readBufferMode = mode;
         }
         public override void SetReadBuffer(XRFrameBuffer? fbo, EReadBufferMode mode)
         {
-            throw new NotImplementedException();
+            _boundReadFrameBuffer = fbo;
+            _readBufferMode = mode;
+
+            if (fbo is not null)
+            {
+                EnsureFrameBufferRegistered(fbo);
+                EnsureFrameBufferAttachmentsRegistered(fbo);
+
+                if (GetOrCreateAPIRenderObject(fbo, generateNow: true) is VkFrameBuffer vkFrameBuffer)
+                    vkFrameBuffer.Generate();
+            }
         }
         public override void BindFrameBuffer(EFramebufferTarget fboTarget, XRFrameBuffer? fbo)
         {
@@ -198,6 +210,7 @@ namespace XREngine.Rendering.Vulkan
                     vkFrameBuffer.Generate();
             }
 
+            UpdateResourcePlannerFromPipeline();
             MarkCommandBuffersDirty();
         }
         public override void Clear(bool color, bool depth, bool stencil)

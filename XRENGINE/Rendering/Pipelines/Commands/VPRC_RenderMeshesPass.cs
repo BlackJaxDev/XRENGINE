@@ -76,6 +76,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             string passName = $"RenderMeshes_{RenderPass}";
             var builder = context.Metadata.ForPass(RenderPass, passName, RenderGraphPassStage.Graphics);
+            builder
+                .UseEngineDescriptors()
+                .UseMaterialDescriptors();
 
             if (context.CurrentRenderTarget is { } target)
             {

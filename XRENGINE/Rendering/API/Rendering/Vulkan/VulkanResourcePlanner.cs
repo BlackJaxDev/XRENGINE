@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
@@ -12,16 +13,19 @@ internal sealed class VulkanResourcePlanner
 {
     private readonly Dictionary<string, TextureResourceDescriptor> _textures = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, FrameBufferResourceDescriptor> _frameBuffers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, BufferResourceDescriptor> _buffers = new(StringComparer.OrdinalIgnoreCase);
     private VulkanResourcePlan _plan = VulkanResourcePlan.Empty;
 
     public IReadOnlyDictionary<string, TextureResourceDescriptor> TextureDescriptors => _textures;
     public IReadOnlyDictionary<string, FrameBufferResourceDescriptor> FrameBufferDescriptors => _frameBuffers;
+    public IReadOnlyDictionary<string, BufferResourceDescriptor> BufferDescriptors => _buffers;
     public VulkanResourcePlan CurrentPlan => _plan;
 
     public void Sync(RenderResourceRegistry? registry)
     {
         _textures.Clear();
         _frameBuffers.Clear();
+        _buffers.Clear();
         _plan = VulkanResourcePlan.Empty;
 
         if (registry is null)
@@ -33,6 +37,9 @@ internal sealed class VulkanResourcePlanner
         foreach ((string name, RenderFrameBufferResource record) in registry.FrameBufferRecords)
             _frameBuffers[name] = record.Descriptor;
 
+        foreach ((string name, RenderBufferResource record) in registry.BufferRecords)
+            _buffers[name] = record.Descriptor;
+
         BuildPlan();
     }
 
@@ -42,9 +49,12 @@ internal sealed class VulkanResourcePlanner
     public bool TryGetFrameBufferDescriptor(string name, out FrameBufferResourceDescriptor? descriptor)
         => _frameBuffers.TryGetValue(name, out descriptor);
 
+    public bool TryGetBufferDescriptor(string name, out BufferResourceDescriptor? descriptor)
+        => _buffers.TryGetValue(name, out descriptor);
+
     private void BuildPlan()
     {
-        if (_textures.Count == 0 && _frameBuffers.Count == 0)
+        if (_textures.Count == 0 && _frameBuffers.Count == 0 && _buffers.Count == 0)
         {
             _plan = VulkanResourcePlan.Empty;
             return;
@@ -53,6 +63,9 @@ internal sealed class VulkanResourcePlanner
         List<VulkanAllocationRequest> persistent = new();
         List<VulkanAllocationRequest> transient = new();
         List<VulkanAllocationRequest> external = new();
+        List<VulkanBufferAllocationRequest> persistentBuffers = new();
+        List<VulkanBufferAllocationRequest> transientBuffers = new();
+        List<VulkanBufferAllocationRequest> externalBuffers = new();
 
         foreach (TextureResourceDescriptor descriptor in _textures.Values)
         {
@@ -75,10 +88,30 @@ internal sealed class VulkanResourcePlanner
         foreach ((string name, FrameBufferResourceDescriptor descriptor) in _frameBuffers)
             fboPlans[name] = new VulkanFrameBufferPlan(descriptor);
 
+        foreach (BufferResourceDescriptor descriptor in _buffers.Values)
+        {
+            var request = new VulkanBufferAllocationRequest(descriptor);
+            switch (descriptor.Lifetime)
+            {
+                case RenderResourceLifetime.Persistent:
+                    persistentBuffers.Add(request);
+                    break;
+                case RenderResourceLifetime.Transient:
+                    transientBuffers.Add(request);
+                    break;
+                case RenderResourceLifetime.External:
+                    externalBuffers.Add(request);
+                    break;
+            }
+        }
+
         _plan = new VulkanResourcePlan(
             persistent.ToArray(),
             transient.ToArray(),
             external.ToArray(),
+            persistentBuffers.ToArray(),
+            transientBuffers.ToArray(),
+            externalBuffers.ToArray(),
             fboPlans);
     }
 }
@@ -97,6 +130,22 @@ internal readonly record struct VulkanAllocationRequest(TextureResourceDescripto
         Descriptor.StereoCompatible);
 }
 
+internal readonly record struct VulkanBufferAllocationRequest(BufferResourceDescriptor Descriptor)
+{
+    public string Name => Descriptor.Name;
+    public RenderResourceLifetime Lifetime => Descriptor.Lifetime;
+    public ulong SizeInBytes => Descriptor.SizeInBytes;
+    public EBufferTarget Target => Descriptor.Target;
+    public EBufferUsage Usage => Descriptor.Usage;
+    public bool SupportsAliasing => Descriptor.SupportsAliasing;
+    public VulkanBufferAliasKey AliasKey => new(Descriptor.SizeInBytes, Descriptor.Target, Descriptor.Usage);
+}
+
+internal readonly record struct VulkanBufferAliasKey(
+    ulong SizeInBytes,
+    EBufferTarget Target,
+    EBufferUsage Usage);
+
 internal readonly record struct VulkanAliasKey(
     RenderResourceSizePolicy SizePolicy,
     string? FormatLabel,
@@ -109,23 +158,35 @@ internal sealed class VulkanResourcePlan
         Array.Empty<VulkanAllocationRequest>(),
         Array.Empty<VulkanAllocationRequest>(),
         Array.Empty<VulkanAllocationRequest>(),
+        Array.Empty<VulkanBufferAllocationRequest>(),
+        Array.Empty<VulkanBufferAllocationRequest>(),
+        Array.Empty<VulkanBufferAllocationRequest>(),
         new Dictionary<string, VulkanFrameBufferPlan>(StringComparer.OrdinalIgnoreCase));
 
     internal VulkanResourcePlan(
         IReadOnlyList<VulkanAllocationRequest> persistent,
         IReadOnlyList<VulkanAllocationRequest> transient,
         IReadOnlyList<VulkanAllocationRequest> external,
+        IReadOnlyList<VulkanBufferAllocationRequest> persistentBuffers,
+        IReadOnlyList<VulkanBufferAllocationRequest> transientBuffers,
+        IReadOnlyList<VulkanBufferAllocationRequest> externalBuffers,
         IReadOnlyDictionary<string, VulkanFrameBufferPlan> frameBuffers)
     {
         PersistentTextures = persistent;
         TransientTextures = transient;
         ExternalTextures = external;
+        PersistentBuffers = persistentBuffers;
+        TransientBuffers = transientBuffers;
+        ExternalBuffers = externalBuffers;
         FrameBuffers = frameBuffers;
     }
 
     public IReadOnlyList<VulkanAllocationRequest> PersistentTextures { get; }
     public IReadOnlyList<VulkanAllocationRequest> TransientTextures { get; }
     public IReadOnlyList<VulkanAllocationRequest> ExternalTextures { get; }
+    public IReadOnlyList<VulkanBufferAllocationRequest> PersistentBuffers { get; }
+    public IReadOnlyList<VulkanBufferAllocationRequest> TransientBuffers { get; }
+    public IReadOnlyList<VulkanBufferAllocationRequest> ExternalBuffers { get; }
     public IReadOnlyDictionary<string, VulkanFrameBufferPlan> FrameBuffers { get; }
 
     public IEnumerable<VulkanAllocationRequest> AllTextures()
@@ -135,6 +196,16 @@ internal sealed class VulkanResourcePlan
         foreach (var req in TransientTextures)
             yield return req;
         foreach (var req in ExternalTextures)
+            yield return req;
+    }
+
+    public IEnumerable<VulkanBufferAllocationRequest> AllBuffers()
+    {
+        foreach (var req in PersistentBuffers)
+            yield return req;
+        foreach (var req in TransientBuffers)
+            yield return req;
+        foreach (var req in ExternalBuffers)
             yield return req;
     }
 }

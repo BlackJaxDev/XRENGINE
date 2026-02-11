@@ -292,9 +292,29 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void GetDepthAsync(XRFrameBuffer fbo, int x, int y, Action<float> depthCallback)
         {
-            // True async implementation using Vulkan fences.
-            // The GPU work is submitted immediately, and we poll the fence on a background thread.
-            _ = fbo; // Currently ignores FBO and reads from swapchain depth
+            // Prefer reading from the provided FBO depth attachment when available.
+            if (fbo is not null)
+            {
+                x = Math.Clamp(x, 0, Math.Max((int)fbo.Width - 1, 0));
+                y = Math.Clamp(y, 0, Math.Max((int)fbo.Height - 1, 0));
+
+                if (TryResolveBlitImage(
+                        fbo,
+                        _lastPresentedImageIndex,
+                        GetReadBufferMode(),
+                        wantColor: false,
+                        wantDepth: true,
+                        wantStencil: false,
+                        out BlitImageInfo depthSource,
+                        isSource: true) &&
+                    TryReadDepthPixel(depthSource, x, y, out float depth))
+                {
+                    depthCallback?.Invoke(depth);
+                    return;
+                }
+            }
+
+            // Async fallback: read from swapchain depth image via fence + background poll.
 
             if (_swapchainDepthImage.Handle == 0)
             {
@@ -506,6 +526,33 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void GetPixelAsync(int x, int y, bool withTransparency, Action<ColorF4> colorCallback)
         {
+            if (_boundReadFrameBuffer is not null)
+            {
+                x = Math.Clamp(x, 0, Math.Max((int)_boundReadFrameBuffer.Width - 1, 0));
+                y = Math.Clamp(y, 0, Math.Max((int)_boundReadFrameBuffer.Height - 1, 0));
+
+                if (TryResolveBlitImage(
+                        _boundReadFrameBuffer,
+                        _lastPresentedImageIndex,
+                        _readBufferMode,
+                        wantColor: true,
+                        wantDepth: false,
+                        wantStencil: false,
+                        out BlitImageInfo colorSource,
+                        isSource: true) &&
+                    TryReadColorPixel(colorSource, x, y, out ColorF4 color))
+                {
+                    colorCallback?.Invoke(color);
+                    return;
+                }
+
+                Debug.VulkanWarningEvery(
+                    "Vulkan.Readback.PixelBoundFboFailed",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] GetPixelAsync fallback to swapchain: unable to resolve/read bound read framebuffer '{0}'.",
+                    _boundReadFrameBuffer.Name ?? "<unnamed>");
+            }
+
             // Read a single pixel from the last presented swapchain image.
             if (swapChainImages is null || swapChainImages.Length == 0)
             {
@@ -616,21 +663,23 @@ namespace XREngine.Rendering.Vulkan
             if (!colorBit && !depthBit && !stencilBit)
                 return;
 
-            if (inFBO is null || outFBO is null)
-            {
-                Debug.VulkanWarning("Vulkan Blit currently requires both source and destination framebuffers.");
+            if (inFBO is null && outFBO is null)
                 return;
-            }
 
             if (inW == 0 || inH == 0 || outW == 0 || outH == 0)
                 return;
 
-            _ = readBufferMode;
+            if (inFBO is not null)
+            {
+                EnsureFrameBufferRegistered(inFBO);
+                EnsureFrameBufferAttachmentsRegistered(inFBO);
+            }
 
-            EnsureFrameBufferRegistered(inFBO);
-            EnsureFrameBufferAttachmentsRegistered(inFBO);
-            EnsureFrameBufferRegistered(outFBO);
-            EnsureFrameBufferAttachmentsRegistered(outFBO);
+            if (outFBO is not null)
+            {
+                EnsureFrameBufferRegistered(outFBO);
+                EnsureFrameBufferAttachmentsRegistered(outFBO);
+            }
 
             int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
             EnqueueFrameOp(new BlitOp(
@@ -654,19 +703,59 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
         {
-            // Capture the specified region of the last presented swapchain image.
+            _ = withTransparency; // Vulkan path always reads resolved color output.
+
+            if (_boundReadFrameBuffer is not null)
+            {
+                ClampReadbackRegion(region, _boundReadFrameBuffer.Width, _boundReadFrameBuffer.Height, out int fboX, out int fboY, out int fboW, out int fboH);
+
+                if (TryResolveBlitImage(
+                        _boundReadFrameBuffer,
+                        _lastPresentedImageIndex,
+                        _readBufferMode,
+                        wantColor: true,
+                        wantDepth: false,
+                        wantStencil: false,
+                        out BlitImageInfo colorSource,
+                        isSource: true) &&
+                    TryReadColorRegionRgba8(colorSource, fboX, fboY, fboW, fboH, out byte[] rgbaPixels))
+                {
+                    try
+                    {
+                        var magickImage = new MagickImage(rgbaPixels, new MagickReadSettings
+                        {
+                            Width = (uint)fboW,
+                            Height = (uint)fboH,
+                            Format = MagickFormat.Rgba,
+                            Depth = 8
+                        });
+
+                        imageCallback?.Invoke(magickImage, fboW * fboH);
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.VulkanWarning($"GetScreenshotAsync failed to create image from read FBO: {ex.Message}");
+                        imageCallback?.Invoke(null!, 0);
+                        return;
+                    }
+                }
+
+                Debug.VulkanWarningEvery(
+                    "Vulkan.Readback.ScreenshotBoundFboFailed",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] GetScreenshotAsync fallback to swapchain: unable to resolve/read bound read framebuffer '{0}'.",
+                    _boundReadFrameBuffer.Name ?? "<unnamed>");
+            }
+
+            // Fallback: capture from the last presented swapchain image.
             if (swapChainImages is null || swapChainImages.Length == 0)
             {
                 imageCallback?.Invoke(null!, 0);
                 return;
             }
 
-            _ = withTransparency; // Vulkan swapchain is always opaque
-
-            int x = Math.Max(0, region.X);
-            int y = Math.Max(0, region.Y);
-            int w = Math.Clamp(region.Width, 1, Math.Max(1, (int)swapChainExtent.Width - x));
-            int h = Math.Clamp(region.Height, 1, Math.Max(1, (int)swapChainExtent.Height - y));
+            ClampReadbackRegion(region, swapChainExtent.Width, swapChainExtent.Height, out int x, out int y, out int w, out int h);
 
             ulong pixelStride = 4; // BGRA8
             ulong bufferSize = (ulong)(w * h) * pixelStride;
@@ -718,7 +807,6 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            // Map and create MagickImage
             void* mappedPtr;
             if (Api!.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
             {
@@ -729,15 +817,12 @@ namespace XREngine.Rendering.Vulkan
 
             try
             {
-                // Convert BGRA to MagickImage
-                byte[] pixels = new byte[bufferSize];
+                byte[] pixels = new byte[(int)bufferSize];
                 Marshal.Copy((IntPtr)mappedPtr, pixels, 0, (int)bufferSize);
 
-                // Convert BGRA to RGBA for ImageMagick
+                // Swapchain path reads BGRA8, while Magick expects RGBA.
                 for (int i = 0; i < pixels.Length; i += 4)
-                {
-                    (pixels[i], pixels[i + 2]) = (pixels[i + 2], pixels[i]); // Swap B and R
-                }
+                    (pixels[i], pixels[i + 2]) = (pixels[i + 2], pixels[i]);
 
                 var magickImage = new MagickImage(pixels, new MagickReadSettings
                 {
@@ -781,8 +866,6 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
-            uint mipWidth = Math.Max(1, texture.Width >> mipLevel);
-            uint mipHeight = Math.Max(1, texture.Height >> mipLevel);
 
             // Read one RGBA pixel per layer from the smallest mip
             ulong pixelSize = 16; // sizeof(Vector4) = 4 floats
@@ -814,7 +897,7 @@ namespace XREngine.Rendering.Vulkan
                         LayerCount = (uint)layerCount,
                     },
                     ImageOffset = new Offset3D { X = 0, Y = 0, Z = 0 },
-                    ImageExtent = new Extent3D { Width = mipWidth, Height = mipHeight, Depth = 1 }
+                    ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
                 };
 
                 Api!.CmdCopyImageToBuffer(
@@ -875,8 +958,6 @@ namespace XREngine.Rendering.Vulkan
                 texture.GenerateMipmapsGPU();
 
             int mipLevel = XRTexture.GetSmallestMipmapLevel(texture.Width, texture.Height, texture.SmallestAllowedMipmapLevel);
-            uint mipWidth = Math.Max(1, texture.Width >> mipLevel);
-            uint mipHeight = Math.Max(1, texture.Height >> mipLevel);
 
             // Read a single RGBA pixel from the smallest mip
             ulong pixelSize = 16; // sizeof(Vector4) = 4 floats
@@ -908,7 +989,7 @@ namespace XREngine.Rendering.Vulkan
                         LayerCount = 1,
                     },
                     ImageOffset = new Offset3D { X = 0, Y = 0, Z = 0 },
-                    ImageExtent = new Extent3D { Width = mipWidth, Height = mipHeight, Depth = 1 }
+                    ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
                 };
 
                 Api!.CmdCopyImageToBuffer(
@@ -968,26 +1049,24 @@ namespace XREngine.Rendering.Vulkan
                 XRFrameBuffer data => new VkFrameBuffer(this, data),
 
                 //Texture 1D
-                //XRTexture1D data => new VkTexture1D(this, data),
-                //XRTexture1DArray data => new VkTexture1DArray(this, data),
+                XRTexture1D data => new VkTexture1D(this, data),
+                XRTexture1DArray data => new VkTexture1DArray(this, data),
                 XRTextureViewBase data => new VkTextureView(this, data),
-                //XRTexture1DArrayView data => new VkTextureView(this, data),
 
                 //Texture 2D
                 XRTexture2D data => new VkTexture2D(this, data),
                 XRTexture2DArray data => new VkTexture2DArray(this, data),
-                //XRTexture2DView data => new VkTextureView(this, data),
-                //XRTexture2DArrayView data => new VkTextureView(this, data),
+                XRTextureRectangle data => new VkTextureRectangle(this, data),
 
                 //Texture 3D
                 XRTexture3D data => new VkTexture3D(this, data),
-                //XRTexture3DArray data => new VkTexture3DArray(this, data),
-                //XRTexture3DView data => new VkTextureView(this, data),
 
                 //Texture Cube
                 XRTextureCube data => new VkTextureCube(this, data),
-                //XRTextureCubeArray data => new VkTextureCubeArray(this, data),
-                //XRTextureCubeView data => new VkTextureView(this, data),
+                XRTextureCubeArray data => new VkTextureCubeArray(this, data),
+
+                //Texture Buffer
+                XRTextureBuffer data => new VkTextureBuffer(this, data),
 
                 //Feedback
                 XRRenderQuery data => new VkRenderQuery(this, data),
@@ -1100,6 +1179,9 @@ namespace XREngine.Rendering.Vulkan
 
             if (Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, inFlightFences[currentFrame]) != Result.Success)
                 throw new Exception("Failed to submit draw command buffer.");
+
+            // Trim idle staging buffers so the pool does not grow unbounded.
+            _stagingManager.Trim(this);
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.Submit",
@@ -1553,6 +1635,7 @@ namespace XREngine.Rendering.Vulkan
         {
             public BlitImageInfo(
                 Image image,
+                Format format,
                 ImageAspectFlags aspectMask,
                 uint baseArrayLayer,
                 uint layerCount,
@@ -1562,6 +1645,7 @@ namespace XREngine.Rendering.Vulkan
                 AccessFlags accessMask)
             {
                 Image = image;
+                Format = format;
                 AspectMask = aspectMask;
                 BaseArrayLayer = baseArrayLayer;
                 LayerCount = layerCount;
@@ -1572,6 +1656,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             public Image Image { get; }
+            public Format Format { get; }
             public ImageAspectFlags AspectMask { get; }
             public uint BaseArrayLayer { get; }
             public uint LayerCount { get; }
@@ -1582,8 +1667,22 @@ namespace XREngine.Rendering.Vulkan
             public bool IsValid => Image.Handle != 0;
         }
 
-        private bool TryResolveBlitImage(XRFrameBuffer frameBuffer, bool wantColor, bool wantDepth, bool wantStencil, out BlitImageInfo info)
+        private bool TryResolveBlitImage(
+            XRFrameBuffer? frameBuffer,
+            uint swapchainImageIndex,
+            EReadBufferMode readBufferMode,
+            bool wantColor,
+            bool wantDepth,
+            bool wantStencil,
+            out BlitImageInfo info,
+            bool isSource)
         {
+            if (frameBuffer is null)
+            {
+                info = ResolveSwapchainBlitImage(swapchainImageIndex, wantColor, wantDepth, wantStencil);
+                return info.IsValid;
+            }
+
             var targets = frameBuffer.Targets;
             if (targets is null)
             {
@@ -1591,12 +1690,19 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
+            int desiredColorIndex = isSource ? ResolveReadBufferColorAttachmentIndex(readBufferMode) : 0;
+            EFrameBufferAttachment desiredColorAttachment = (EFrameBufferAttachment)((int)EFrameBufferAttachment.ColorAttachment0 + desiredColorIndex);
+
             foreach (var (target, attachment, mipLevel, layerIndex) in targets)
             {
                 ImageAspectFlags aspect = ImageAspectFlags.None;
 
                 if (IsColorAttachment(attachment) && wantColor)
+                {
+                    if (attachment != desiredColorAttachment)
+                        continue;
                     aspect = ImageAspectFlags.ColorBit;
+                }
                 else if (attachment == EFrameBufferAttachment.DepthStencilAttachment && (wantDepth || wantStencil))
                 {
                     aspect = (wantDepth, wantStencil) switch
@@ -1641,51 +1747,15 @@ namespace XREngine.Rendering.Vulkan
 
             switch (attachment)
             {
-                case XRTexture2D tex2D when GetOrCreateAPIRenderObject(tex2D, true) is VkTexture2D vkTex2D:
-                    if (!aspectMask.HasFlag(ImageAspectFlags.ColorBit))
-                        return false; // Only treat XRTexture2D as color here.
-                    info = new BlitImageInfo(
-                        vkTex2D.Image,
-                        aspectMask,
-                        0,
-                        1,
-                        (uint)Math.Max(mipLevel, 0),
-                        layout,
-                        stage,
-                        access);
-                    return info.IsValid;
-                case XRTexture2DArray texArray when GetOrCreateAPIRenderObject(texArray, true) is VkTexture2DArray vkArray:
-                    if (!aspectMask.HasFlag(ImageAspectFlags.ColorBit))
-                        return false;
-                    info = new BlitImageInfo(
-                        vkArray.Image,
-                        aspectMask,
-                        ResolveLayerIndex(layerIndex),
-                        1,
-                        (uint)Math.Max(mipLevel, 0),
-                        layout,
-                        stage,
-                        access);
-                    return info.IsValid;
-                case XRTextureCube texCube when GetOrCreateAPIRenderObject(texCube, true) is VkTextureCube vkCube:
-                    if (!aspectMask.HasFlag(ImageAspectFlags.ColorBit))
-                        return false;
-                    info = new BlitImageInfo(
-                        vkCube.Image,
-                        aspectMask,
-                        ResolveLayerIndex(layerIndex),
-                        1,
-                        (uint)Math.Max(mipLevel, 0),
-                        layout,
-                        stage,
-                        access);
-                    return info.IsValid;
+                case XRTexture texture:
+                    return TryResolveTextureBlitImage(texture, mipLevel, layerIndex, aspectMask, layout, stage, access, out info);
                 case XRRenderBuffer renderBuffer when GetOrCreateAPIRenderObject(renderBuffer, true) is VkRenderBuffer vkRenderBuffer:
                     // Allow depth/stencil or color depending on the requested aspect and buffer format.
-                    if (aspectMask.HasFlag(ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit) && !vkRenderBuffer.Aspect.HasFlag(aspectMask))
+                    if (IsDepthOrStencilAspect(aspectMask) && (vkRenderBuffer.Aspect & aspectMask) != aspectMask)
                         return false;
                     info = new BlitImageInfo(
                         vkRenderBuffer.Image,
+                        vkRenderBuffer.Format,
                         aspectMask,
                         0,
                         1,
@@ -1699,11 +1769,144 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        private bool TryResolveTextureBlitImage(
+            XRTexture texture,
+            int mipLevel,
+            int layerIndex,
+            ImageAspectFlags aspectMask,
+            ImageLayout layout,
+            PipelineStageFlags stage,
+            AccessFlags access,
+            out BlitImageInfo info)
+        {
+            info = default;
+            if (GetOrCreateAPIRenderObject(texture, true) is not IVkImageDescriptorSource source)
+                return false;
+
+            if (source.DescriptorImage.Handle == 0)
+                return false;
+
+            Format format = source.DescriptorFormat;
+            if (IsDepthOrStencilAspect(aspectMask))
+            {
+                if (!IsDepthOrStencilFormat(format))
+                    return false;
+            }
+            else if (!aspectMask.HasFlag(ImageAspectFlags.ColorBit))
+            {
+                return false;
+            }
+
+            uint baseArrayLayer = ResolveBlitBaseArrayLayer(texture, layerIndex);
+            if (texture is XRTexture3D)
+                baseArrayLayer = 0;
+
+            info = new BlitImageInfo(
+                source.DescriptorImage,
+                format,
+                aspectMask,
+                baseArrayLayer,
+                1,
+                (uint)Math.Max(mipLevel, 0),
+                layout,
+                stage,
+                access);
+
+            return info.IsValid;
+        }
+
         private static bool IsColorAttachment(EFrameBufferAttachment attachment)
             => attachment >= EFrameBufferAttachment.ColorAttachment0 && attachment <= EFrameBufferAttachment.ColorAttachment31;
 
+        private static bool IsDepthOrStencilAspect(ImageAspectFlags aspectMask)
+            => (aspectMask & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0;
+
+        private static int ResolveReadBufferColorAttachmentIndex(EReadBufferMode mode)
+        {
+            if (mode >= EReadBufferMode.ColorAttachment0 && mode <= EReadBufferMode.ColorAttachment31)
+                return (int)mode - (int)EReadBufferMode.ColorAttachment0;
+
+            return 0;
+        }
+
+        private static bool IsDepthOrStencilFormat(Format format)
+            => format is Format.D16Unorm
+                or Format.D32Sfloat
+                or Format.D24UnormS8Uint
+                or Format.D32SfloatS8Uint
+                or Format.D16UnormS8Uint
+                or Format.X8D24UnormPack32;
+
+        private BlitImageInfo ResolveSwapchainBlitImage(uint swapchainImageIndex, bool wantColor, bool wantDepth, bool wantStencil)
+        {
+            if (wantColor && swapChainImages is not null && swapchainImageIndex < swapChainImages.Length)
+            {
+                return new BlitImageInfo(
+                    swapChainImages[swapchainImageIndex],
+                    swapChainImageFormat,
+                    ImageAspectFlags.ColorBit,
+                    0,
+                    1,
+                    0,
+                    ImageLayout.ColorAttachmentOptimal,
+                    PipelineStageFlags.ColorAttachmentOutputBit,
+                    AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);
+            }
+
+            if ((wantDepth || wantStencil) && _swapchainDepthImage.Handle != 0)
+            {
+                ImageAspectFlags depthAspect = (wantDepth, wantStencil) switch
+                {
+                    (true, true) => _swapchainDepthAspect,
+                    (true, false) => ImageAspectFlags.DepthBit,
+                    (false, true) => _swapchainDepthAspect.HasFlag(ImageAspectFlags.StencilBit) ? ImageAspectFlags.StencilBit : ImageAspectFlags.None,
+                    _ => ImageAspectFlags.None
+                };
+
+                if (depthAspect != ImageAspectFlags.None)
+                {
+                    return new BlitImageInfo(
+                        _swapchainDepthImage,
+                        _swapchainDepthFormat,
+                        depthAspect,
+                        0,
+                        1,
+                        0,
+                        ImageLayout.DepthStencilAttachmentOptimal,
+                        PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
+                        AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit);
+                }
+            }
+
+            return default;
+        }
+
         private static uint ResolveLayerIndex(int layerIndex)
             => layerIndex >= 0 ? (uint)layerIndex : 0u;
+
+        private static uint ResolveBlitBaseArrayLayer(XRTexture texture, int layerIndex)
+        {
+            uint resolvedLayer = ResolveLayerIndex(layerIndex);
+            return texture switch
+            {
+                XRTexture1D => 0,
+                XRTexture2D => 0,
+                XRTexture3D => 0,
+                XRTextureRectangle => 0,
+                XRTextureViewBase view => ResolveViewBlitBaseLayer(view, resolvedLayer),
+                _ => resolvedLayer
+            };
+        }
+
+        private static uint ResolveViewBlitBaseLayer(XRTextureViewBase view, uint resolvedLayer)
+            => view.TextureTarget switch
+            {
+                ETextureTarget.Texture1D => view.MinLayer,
+                ETextureTarget.Texture2D => view.MinLayer,
+                ETextureTarget.Texture3D => view.MinLayer,
+                ETextureTarget.TextureRectangle => view.MinLayer,
+                _ => view.MinLayer + resolvedLayer
+            };
 
         private static ImageBlit BuildImageBlit(
             BlitImageInfo source,
@@ -1819,6 +2022,312 @@ namespace XREngine.Rendering.Vulkan
                 null,
                 1,
                 barrierPtr);
+        }
+
+        private static void ClampReadbackRegion(BoundingRectangle region, uint sourceWidth, uint sourceHeight, out int x, out int y, out int width, out int height)
+        {
+            int maxX = Math.Max((int)sourceWidth - 1, 0);
+            int maxY = Math.Max((int)sourceHeight - 1, 0);
+            x = Math.Clamp(region.X, 0, maxX);
+            y = Math.Clamp(region.Y, 0, maxY);
+
+            int requestedWidth = region.Width > 0 ? region.Width : (int)sourceWidth;
+            int requestedHeight = region.Height > 0 ? region.Height : (int)sourceHeight;
+            int availableWidth = Math.Max((int)sourceWidth - x, 1);
+            int availableHeight = Math.Max((int)sourceHeight - y, 1);
+
+            width = Math.Clamp(requestedWidth, 1, availableWidth);
+            height = Math.Clamp(requestedHeight, 1, availableHeight);
+        }
+
+        private bool TryReadColorPixel(in BlitImageInfo source, int x, int y, out ColorF4 color)
+        {
+            color = ColorF4.Transparent;
+
+            if (!TryReadColorRegionRgba8(source, x, y, 1, 1, out byte[] rgba) || rgba.Length < 4)
+                return false;
+
+            color = new ColorF4(
+                rgba[0] / 255f,
+                rgba[1] / 255f,
+                rgba[2] / 255f,
+                rgba[3] / 255f);
+            return true;
+        }
+
+        private bool TryReadColorRegionRgba8(in BlitImageInfo source, int x, int y, int width, int height, out byte[] rgbaPixels)
+        {
+            rgbaPixels = [];
+
+            if (!source.IsValid || !source.AspectMask.HasFlag(ImageAspectFlags.ColorBit))
+                return false;
+
+            uint sourcePixelSize = GetColorFormatPixelSize(source.Format);
+            if (sourcePixelSize == 0)
+                return false;
+
+            ulong rawByteCount = (ulong)(width * height) * sourcePixelSize;
+            var (stagingBuffer, stagingMemory) = CreateBuffer(
+                rawByteCount,
+                BufferUsageFlags.TransferDstBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                null);
+
+            try
+            {
+                using var scope = NewCommandScope();
+
+                TransitionForBlit(
+                    scope.CommandBuffer,
+                    source,
+                    source.PreferredLayout,
+                    ImageLayout.TransferSrcOptimal,
+                    source.AccessMask,
+                    AccessFlags.TransferReadBit,
+                    source.StageMask,
+                    PipelineStageFlags.TransferBit);
+
+                BufferImageCopy copy = new()
+                {
+                    BufferOffset = 0,
+                    BufferRowLength = 0,
+                    BufferImageHeight = 0,
+                    ImageSubresource = new ImageSubresourceLayers
+                    {
+                        AspectMask = ImageAspectFlags.ColorBit,
+                        MipLevel = source.MipLevel,
+                        BaseArrayLayer = source.BaseArrayLayer,
+                        LayerCount = source.LayerCount,
+                    },
+                    ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
+                    ImageExtent = new Extent3D { Width = (uint)width, Height = (uint)height, Depth = 1 }
+                };
+
+                Api!.CmdCopyImageToBuffer(
+                    scope.CommandBuffer,
+                    source.Image,
+                    ImageLayout.TransferSrcOptimal,
+                    stagingBuffer,
+                    1,
+                    &copy);
+
+                TransitionForBlit(
+                    scope.CommandBuffer,
+                    source,
+                    ImageLayout.TransferSrcOptimal,
+                    source.PreferredLayout,
+                    AccessFlags.TransferReadBit,
+                    source.AccessMask,
+                    PipelineStageFlags.TransferBit,
+                    source.StageMask);
+            }
+            catch
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                return false;
+            }
+
+            void* mappedPtr;
+            if (Api!.MapMemory(device, stagingMemory, 0, rawByteCount, 0, &mappedPtr) != Result.Success)
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                return false;
+            }
+
+            try
+            {
+                rgbaPixels = new byte[width * height * 4];
+                return TryConvertColorPixelsToRgba8(mappedPtr, source.Format, width * height, rgbaPixels);
+            }
+            finally
+            {
+                Api!.UnmapMemory(device, stagingMemory);
+                DestroyBuffer(stagingBuffer, stagingMemory);
+            }
+        }
+
+        private static bool TryConvertColorPixelsToRgba8(void* srcPtr, Format format, int pixelCount, byte[] dstRgba)
+        {
+            if (pixelCount <= 0 || dstRgba.Length < pixelCount * 4)
+                return false;
+
+            static byte FloatToByte(float v)
+            {
+                float clamped = Math.Clamp(v, 0.0f, 1.0f);
+                return (byte)Math.Clamp((int)MathF.Round(clamped * 255.0f), 0, 255);
+            }
+
+            byte* src = (byte*)srcPtr;
+
+            switch (format)
+            {
+                case Format.R8G8B8A8Unorm:
+                case Format.R8G8B8A8Srgb:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 4;
+                        int dstIndex = i * 4;
+                        dstRgba[dstIndex + 0] = src[srcIndex + 0];
+                        dstRgba[dstIndex + 1] = src[srcIndex + 1];
+                        dstRgba[dstIndex + 2] = src[srcIndex + 2];
+                        dstRgba[dstIndex + 3] = src[srcIndex + 3];
+                    }
+                    return true;
+
+                case Format.B8G8R8A8Unorm:
+                case Format.B8G8R8A8Srgb:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 4;
+                        int dstIndex = i * 4;
+                        dstRgba[dstIndex + 0] = src[srcIndex + 2];
+                        dstRgba[dstIndex + 1] = src[srcIndex + 1];
+                        dstRgba[dstIndex + 2] = src[srcIndex + 0];
+                        dstRgba[dstIndex + 3] = src[srcIndex + 3];
+                    }
+                    return true;
+
+                case Format.R16G16B16A16Unorm:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 8;
+                        int dstIndex = i * 4;
+                        ushort* p = (ushort*)(src + srcIndex);
+                        dstRgba[dstIndex + 0] = FloatToByte(p[0] / 65535.0f);
+                        dstRgba[dstIndex + 1] = FloatToByte(p[1] / 65535.0f);
+                        dstRgba[dstIndex + 2] = FloatToByte(p[2] / 65535.0f);
+                        dstRgba[dstIndex + 3] = FloatToByte(p[3] / 65535.0f);
+                    }
+                    return true;
+
+                case Format.R16G16B16A16Sfloat:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 8;
+                        int dstIndex = i * 4;
+                        ushort* p = (ushort*)(src + srcIndex);
+                        dstRgba[dstIndex + 0] = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[0]));
+                        dstRgba[dstIndex + 1] = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[1]));
+                        dstRgba[dstIndex + 2] = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[2]));
+                        dstRgba[dstIndex + 3] = FloatToByte((float)BitConverter.UInt16BitsToHalf(p[3]));
+                    }
+                    return true;
+
+                case Format.R32G32B32A32Sfloat:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 16;
+                        int dstIndex = i * 4;
+                        float* p = (float*)(src + srcIndex);
+                        dstRgba[dstIndex + 0] = FloatToByte(p[0]);
+                        dstRgba[dstIndex + 1] = FloatToByte(p[1]);
+                        dstRgba[dstIndex + 2] = FloatToByte(p[2]);
+                        dstRgba[dstIndex + 3] = FloatToByte(p[3]);
+                    }
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static uint GetColorFormatPixelSize(Format format)
+            => format switch
+            {
+                Format.R8G8B8A8Unorm => 4,
+                Format.R8G8B8A8Srgb => 4,
+                Format.B8G8R8A8Unorm => 4,
+                Format.B8G8R8A8Srgb => 4,
+                Format.R16G16B16A16Unorm => 8,
+                Format.R16G16B16A16Sfloat => 8,
+                Format.R32G32B32A32Sfloat => 16,
+                _ => 0,
+            };
+
+        private bool TryReadDepthPixel(in BlitImageInfo source, int x, int y, out float depth)
+        {
+            depth = 1.0f;
+
+            if (!source.IsValid || !IsDepthOrStencilAspect(source.AspectMask))
+                return false;
+
+            uint pixelSize = GetDepthFormatPixelSize(source.Format);
+            if (pixelSize == 0)
+                return false;
+
+            ulong bufferSize = pixelSize;
+            var (stagingBuffer, stagingMemory) = CreateBuffer(
+                bufferSize,
+                BufferUsageFlags.TransferDstBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                null);
+
+            try
+            {
+                using var scope = NewCommandScope();
+
+                TransitionForBlit(
+                    scope.CommandBuffer,
+                    source,
+                    source.PreferredLayout,
+                    ImageLayout.TransferSrcOptimal,
+                    source.AccessMask,
+                    AccessFlags.TransferReadBit,
+                    source.StageMask,
+                    PipelineStageFlags.TransferBit);
+
+                BufferImageCopy copy = new()
+                {
+                    BufferOffset = 0,
+                    BufferRowLength = 0,
+                    BufferImageHeight = 0,
+                    ImageSubresource = new ImageSubresourceLayers
+                    {
+                        AspectMask = source.AspectMask.HasFlag(ImageAspectFlags.DepthBit)
+                            ? ImageAspectFlags.DepthBit
+                            : source.AspectMask,
+                        MipLevel = source.MipLevel,
+                        BaseArrayLayer = source.BaseArrayLayer,
+                        LayerCount = source.LayerCount,
+                    },
+                    ImageOffset = new Offset3D { X = x, Y = y, Z = 0 },
+                    ImageExtent = new Extent3D { Width = 1, Height = 1, Depth = 1 }
+                };
+
+                Api!.CmdCopyImageToBuffer(
+                    scope.CommandBuffer,
+                    source.Image,
+                    ImageLayout.TransferSrcOptimal,
+                    stagingBuffer,
+                    1,
+                    &copy);
+
+                TransitionForBlit(
+                    scope.CommandBuffer,
+                    source,
+                    ImageLayout.TransferSrcOptimal,
+                    source.PreferredLayout,
+                    AccessFlags.TransferReadBit,
+                    source.AccessMask,
+                    PipelineStageFlags.TransferBit,
+                    source.StageMask);
+            }
+            catch
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                return false;
+            }
+
+            void* mappedPtr;
+            if (Api!.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
+            {
+                DestroyBuffer(stagingBuffer, stagingMemory);
+                return false;
+            }
+
+            depth = ReadDepthValue(mappedPtr, source.Format);
+            Api!.UnmapMemory(device, stagingMemory);
+            DestroyBuffer(stagingBuffer, stagingMemory);
+            return true;
         }
 
         /// <summary>

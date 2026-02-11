@@ -75,7 +75,7 @@ public sealed record TextureResourceDescriptor(
             format,
             stereo,
             depth,
-            SupportsAliasing: false);
+            SupportsAliasing: lifetime == RenderResourceLifetime.Transient);
     }
 
     private static string ResolveFormat(XRTexture texture)
@@ -139,6 +139,35 @@ public sealed record FrameBufferResourceDescriptor(
     }
 }
 
+public sealed record BufferResourceDescriptor(
+    string Name,
+    RenderResourceLifetime Lifetime,
+    ulong SizeInBytes,
+    EBufferTarget Target,
+    EBufferUsage Usage,
+    bool SupportsAliasing = true)
+{
+    public static BufferResourceDescriptor FromBuffer(XRDataBuffer buffer, RenderResourceLifetime lifetime = RenderResourceLifetime.Persistent)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+
+        string name = buffer.AttributeName;
+        if (string.IsNullOrWhiteSpace(name))
+            name = buffer.Name ?? string.Empty;
+
+        ulong size = Math.Max(buffer.Length, 1u);
+        bool supportsAliasing = lifetime == RenderResourceLifetime.Transient;
+
+        return new BufferResourceDescriptor(
+            name,
+            lifetime,
+            size,
+            buffer.Target,
+            buffer.Usage,
+            supportsAliasing);
+    }
+}
+
 public sealed class RenderTextureResource
 {
     public TextureResourceDescriptor Descriptor { get; private set; }
@@ -197,13 +226,44 @@ public sealed class RenderFrameBufferResource
     }
 }
 
+public sealed class RenderBufferResource
+{
+    public BufferResourceDescriptor Descriptor { get; private set; }
+    public XRDataBuffer? Instance { get; private set; }
+
+    internal RenderBufferResource(BufferResourceDescriptor descriptor)
+    {
+        Descriptor = descriptor;
+    }
+
+    public void UpdateDescriptor(BufferResourceDescriptor descriptor)
+        => Descriptor = descriptor;
+
+    public void Bind(XRDataBuffer buffer)
+    {
+        if (Instance == buffer)
+            return;
+
+        Instance?.Destroy();
+        Instance = buffer;
+    }
+
+    public void DestroyInstance()
+    {
+        Instance?.Destroy();
+        Instance = null;
+    }
+}
+
 public sealed class RenderResourceRegistry
 {
     private readonly Dictionary<string, RenderTextureResource> _textures = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RenderFrameBufferResource> _frameBuffers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, RenderBufferResource> _buffers = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyDictionary<string, RenderTextureResource> TextureRecords => _textures;
     public IReadOnlyDictionary<string, RenderFrameBufferResource> FrameBufferRecords => _frameBuffers;
+    public IReadOnlyDictionary<string, RenderBufferResource> BufferRecords => _buffers;
 
     public RenderTextureResource RegisterTextureDescriptor(TextureResourceDescriptor descriptor)
     {
@@ -239,6 +299,23 @@ public sealed class RenderResourceRegistry
         return record;
     }
 
+    public RenderBufferResource RegisterBufferDescriptor(BufferResourceDescriptor descriptor)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+
+        if (!_buffers.TryGetValue(descriptor.Name, out RenderBufferResource? record))
+        {
+            record = new RenderBufferResource(descriptor);
+            _buffers.Add(descriptor.Name, record);
+        }
+        else
+        {
+            record.UpdateDescriptor(descriptor);
+        }
+
+        return record;
+    }
+
     public void BindTexture(XRTexture texture, TextureResourceDescriptor? descriptor = null)
     {
         ArgumentNullException.ThrowIfNull(texture);
@@ -261,6 +338,21 @@ public sealed class RenderResourceRegistry
 
         RenderFrameBufferResource record = RegisterFrameBufferDescriptor(descriptor);
         record.Bind(frameBuffer);
+    }
+
+    public void BindBuffer(XRDataBuffer buffer, BufferResourceDescriptor? descriptor = null)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+
+        string name = buffer.AttributeName;
+        if (string.IsNullOrWhiteSpace(name))
+            throw new InvalidOperationException("Data buffer attribute name must be set before binding to the registry.");
+
+        descriptor ??= BufferResourceDescriptor.FromBuffer(buffer);
+        descriptor = descriptor with { Name = name };
+
+        RenderBufferResource record = RegisterBufferDescriptor(descriptor);
+        record.Bind(buffer);
     }
 
     public bool TryGetTexture(string name, [NotNullWhen(true)] out XRTexture? texture)
@@ -287,6 +379,18 @@ public sealed class RenderResourceRegistry
         return false;
     }
 
+    public bool TryGetBuffer(string name, [NotNullWhen(true)] out XRDataBuffer? buffer)
+    {
+        if (_buffers.TryGetValue(name, out RenderBufferResource? record) && record.Instance is XRDataBuffer instance)
+        {
+            buffer = instance;
+            return true;
+        }
+
+        buffer = null;
+        return false;
+    }
+
     public IEnumerable<XRTexture> EnumerateTextureInstances()
     {
         foreach (RenderTextureResource record in _textures.Values)
@@ -301,6 +405,13 @@ public sealed class RenderResourceRegistry
                 yield return fbo;
     }
 
+    public IEnumerable<XRDataBuffer> EnumerateBufferInstances()
+    {
+        foreach (RenderBufferResource record in _buffers.Values)
+            if (record.Instance is XRDataBuffer buffer)
+                yield return buffer;
+    }
+
     public void RemoveTexture(string name)
     {
         if (_textures.Remove(name, out RenderTextureResource? record))
@@ -313,17 +424,26 @@ public sealed class RenderResourceRegistry
             record.DestroyInstance();
     }
 
+    public void RemoveBuffer(string name)
+    {
+        if (_buffers.Remove(name, out RenderBufferResource? record))
+            record.DestroyInstance();
+    }
+
     public void DestroyAllPhysicalResources(bool retainDescriptors = false)
     {
         foreach (RenderTextureResource record in _textures.Values)
             record.DestroyInstance();
         foreach (RenderFrameBufferResource record in _frameBuffers.Values)
             record.DestroyInstance();
+        foreach (RenderBufferResource record in _buffers.Values)
+            record.DestroyInstance();
 
         if (!retainDescriptors)
         {
             _textures.Clear();
             _frameBuffers.Clear();
+            _buffers.Clear();
         }
     }
 }

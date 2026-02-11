@@ -6,8 +6,11 @@ using XREngine.Core;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.UI;
 using XREngine.Scene;
 using static XREngine.Engine.Rendering.State;
 
@@ -298,7 +301,18 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         {
             using (RenderState.PushMainAttributes(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands))
             {
-                Pipeline.CommandChain.Execute();
+                WarnIfScreenSpaceUiHasNoRenderCommand(userInterface, viewport);
+
+                if (AbstractRenderer.Current is OpenGLRenderer)
+                {
+                    OpenGLRenderGraphExecutor.Shared.ExecuteSequential(
+                        Pipeline.CommandChain,
+                        Pipeline.PassMetadata);
+                }
+                else
+                {
+                    Pipeline.CommandChain.Execute();
+                }
             }
         }
     }
@@ -360,6 +374,30 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         Resources.BindTexture(texture, descriptor);
     }
 
+    public XRDataBuffer? GetBuffer(string name)
+    {
+        if (Resources.TryGetBuffer(name, out XRDataBuffer? value))
+            return value;
+        return null;
+    }
+
+    public bool TryGetBuffer(string name, out XRDataBuffer? buffer)
+    {
+        return Resources.TryGetBuffer(name, out buffer);
+    }
+
+    public void SetBuffer(XRDataBuffer buffer, BufferResourceDescriptor? descriptor = null)
+    {
+        string name = buffer.AttributeName;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            Debug.Rendering("Data buffer attribute name must be set before adding to the pipeline.");
+            return;
+        }
+
+        Resources.BindBuffer(buffer, descriptor);
+    }
+
     public T? GetFBO<T>(string name) where T : XRFrameBuffer
     {
         if (Resources.TryGetFrameBuffer(name, out XRFrameBuffer? value))
@@ -381,5 +419,59 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             return;
         }
         Resources.BindFrameBuffer(fbo, descriptor);
+    }
+
+    private void WarnIfScreenSpaceUiHasNoRenderCommand(UICanvasComponent? userInterface, XRViewport? viewport)
+    {
+        if (Pipeline?.CommandChain is null || userInterface is null)
+            return;
+
+        if (userInterface.CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen)
+            return;
+
+        if (ContainsScreenSpaceUiRenderCommand(Pipeline.CommandChain))
+            return;
+
+        string key = $"RenderPipeline.MissingScreenSpaceUiCommand.{GetHashCode()}";
+        Debug.RenderingWarningEvery(
+            key,
+            TimeSpan.FromSeconds(1),
+            "[RenderDiag] Screen-space UI was provided to pipeline '{0}' (viewport {1}) but no VPRC_RenderScreenSpaceUI exists in its command chain. UI will not render through the pipeline.",
+            Pipeline.DebugName ?? Pipeline.GetType().Name,
+            viewport?.Index ?? -1);
+    }
+
+    private static bool ContainsScreenSpaceUiRenderCommand(ViewportRenderCommandContainer container)
+    {
+        foreach (var cmd in container)
+        {
+            if (cmd is VPRC_RenderScreenSpaceUI)
+                return true;
+
+            if (cmd is VPRC_IfElse ifElse)
+            {
+                if (ifElse.TrueCommands is not null && ContainsScreenSpaceUiRenderCommand(ifElse.TrueCommands))
+                    return true;
+                if (ifElse.FalseCommands is not null && ContainsScreenSpaceUiRenderCommand(ifElse.FalseCommands))
+                    return true;
+            }
+
+            if (cmd is VPRC_Switch switchCmd)
+            {
+                if (switchCmd.Cases is not null)
+                {
+                    foreach (var caseContainer in switchCmd.Cases.Values)
+                    {
+                        if (ContainsScreenSpaceUiRenderCommand(caseContainer))
+                            return true;
+                    }
+                }
+
+                if (switchCmd.DefaultCase is not null && ContainsScreenSpaceUiRenderCommand(switchCmd.DefaultCase))
+                    return true;
+            }
+        }
+
+        return false;
     }
 }

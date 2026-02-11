@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using XREngine.Data;
+using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials.Textures;
@@ -14,7 +16,7 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
-    internal abstract class VkImageBackedTexture<TTexture> : VkTexture<TTexture> where TTexture : XRTexture
+    internal abstract class VkImageBackedTexture<TTexture> : VkTexture<TTexture>, IVkFrameBufferAttachmentSource where TTexture : XRTexture
     {
         private readonly Dictionary<AttachmentViewKey, ImageView> _attachmentViews = new();
         private TextureLayout _layout;
@@ -43,6 +45,12 @@ public unsafe partial class VulkanRenderer
         internal ImageView View => _view;
         internal Sampler Sampler => _sampler;
         internal bool UsesAllocatorImage => _physicalGroup is not null;
+        Image IVkImageDescriptorSource.DescriptorImage => _image;
+        ImageView IVkImageDescriptorSource.DescriptorView => _view;
+        Sampler IVkImageDescriptorSource.DescriptorSampler => _sampler;
+        Format IVkImageDescriptorSource.DescriptorFormat => ResolvedFormat;
+        ImageAspectFlags IVkImageDescriptorSource.DescriptorAspect => AspectFlags;
+        SampleCountFlags IVkImageDescriptorSource.DescriptorSamples => SampleCount;
 
         protected internal Format ResolvedFormat => _formatOverride ?? Format;
         protected Extent3D ResolvedExtent => _extentOverride ?? _layout.Extent;
@@ -326,7 +334,7 @@ public unsafe partial class VulkanRenderer
                 throw new Exception("Failed to create sampler.");
         }
 
-        internal ImageView GetAttachmentView(int mipLevel, int layerIndex)
+        public ImageView GetAttachmentView(int mipLevel, int layerIndex)
         {
             AttachmentViewKey key = BuildAttachmentViewKey(mipLevel, layerIndex);
             if (key == default)
@@ -475,6 +483,12 @@ public unsafe partial class VulkanRenderer
         {
             switch (Data)
             {
+                case XRTexture1D tex1D:
+                    tex1D.Resized += OnTextureResized;
+                    break;
+                case XRTexture1DArray tex1DArray:
+                    tex1DArray.Resized += OnTextureResized;
+                    break;
                 case XRTexture2D tex2D:
                     tex2D.Resized += OnTextureResized;
                     break;
@@ -483,6 +497,9 @@ public unsafe partial class VulkanRenderer
                     break;
                 case XRTextureCube texCube:
                     texCube.Resized += OnTextureResized;
+                    break;
+                case XRTextureCubeArray texCubeArray:
+                    texCubeArray.Resized += OnTextureResized;
                     break;
                 case XRTexture3D tex3D:
                     tex3D.Resized += OnTextureResized;
@@ -494,6 +511,12 @@ public unsafe partial class VulkanRenderer
         {
             switch (Data)
             {
+                case XRTexture1D tex1D:
+                    tex1D.Resized -= OnTextureResized;
+                    break;
+                case XRTexture1DArray tex1DArray:
+                    tex1DArray.Resized -= OnTextureResized;
+                    break;
                 case XRTexture2D tex2D:
                     tex2D.Resized -= OnTextureResized;
                     break;
@@ -502,6 +525,9 @@ public unsafe partial class VulkanRenderer
                     break;
                 case XRTextureCube texCube:
                     texCube.Resized -= OnTextureResized;
+                    break;
+                case XRTextureCubeArray texCubeArray:
+                    texCubeArray.Resized -= OnTextureResized;
                     break;
                 case XRTexture3D tex3D:
                     tex3D.Resized -= OnTextureResized;
@@ -648,6 +674,144 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    internal sealed class VkTexture1D(VulkanRenderer api, XRTexture1D data) : VkImageBackedTexture<XRTexture1D>(api, data)
+    {
+        protected override ImageType TextureImageType => ImageType.Type1D;
+        protected override ImageViewType DefaultImageViewType => ImageViewType.Type1D;
+
+        protected override TextureLayout DescribeTexture()
+        {
+            uint width = Math.Max(Data.Width, 1u);
+            uint mipLevels = (uint)Math.Max(Data.Mipmaps?.Length ?? 1, 1);
+            return new TextureLayout(new Extent3D(width, 1, 1), 1, mipLevels);
+        }
+
+        protected override AttachmentViewKey BuildAttachmentViewKey(int mipLevel, int layerIndex)
+        {
+            if (mipLevel <= 0)
+                return default;
+
+            uint baseMip = (uint)Math.Max(mipLevel, 0);
+            return new AttachmentViewKey(baseMip, 1, 0, 1, ImageViewType.Type1D, AspectFlags);
+        }
+
+        protected override void PushTextureData()
+        {
+            Generate();
+
+            Mipmap1D[] mipmaps = Data.Mipmaps;
+            if (mipmaps is null || mipmaps.Length == 0)
+            {
+                Debug.VulkanWarning($"1D texture '{Data.Name ?? GetDescribingName()}' has no mipmaps to upload.");
+                return;
+            }
+
+            TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
+
+            uint levelCount = Math.Min((uint)mipmaps.Length, ResolvedMipLevels);
+            for (uint level = 0; level < levelCount; level++)
+            {
+                Mipmap1D? mip = mipmaps[level];
+                if (mip is null)
+                    continue;
+
+                if (!TryCreateStagingBuffer(mip.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
+                    continue;
+
+                try
+                {
+                    Extent3D extent = new(Math.Max(mip.Width, 1u), 1, 1);
+                    CopyBufferToImage(stagingBuffer, level, 0, 1, extent);
+                }
+                finally
+                {
+                    DestroyStagingBuffer(stagingBuffer, stagingMemory);
+                }
+            }
+
+            if (Data.AutoGenerateMipmaps && ResolvedMipLevels > 1)
+                GenerateMipmapsGPU();
+            else
+                TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
+        }
+    }
+
+    internal sealed class VkTexture1DArray(VulkanRenderer api, XRTexture1DArray data) : VkImageBackedTexture<XRTexture1DArray>(api, data)
+    {
+        protected override ImageType TextureImageType => ImageType.Type1D;
+        protected override ImageViewType DefaultImageViewType => ImageViewType.Type1DArray;
+
+        protected override TextureLayout DescribeTexture()
+        {
+            XRTexture1D[] textures = Data.Textures;
+            uint width = textures.Length > 0 ? Math.Max(textures[0].Width, 1u) : 1u;
+            uint layers = (uint)Math.Max(textures.Length, 1);
+            uint mipLevels = (uint)Math.Max(
+                textures.Length > 0 ? textures.Max(t => t?.Mipmaps?.Length ?? 1) : 1,
+                1);
+            return new TextureLayout(new Extent3D(width, 1, 1), layers, mipLevels);
+        }
+
+        protected override AttachmentViewKey BuildAttachmentViewKey(int mipLevel, int layerIndex)
+        {
+            if (layerIndex < 0 && mipLevel <= 0)
+                return default;
+
+            uint baseLayer = (uint)Math.Max(layerIndex, 0);
+            uint baseMip = (uint)Math.Max(mipLevel, 0);
+            return new AttachmentViewKey(baseMip, 1, baseLayer, 1, ImageViewType.Type1D, AspectFlags);
+        }
+
+        protected override void PushTextureData()
+        {
+            Generate();
+
+            XRTexture1D[] layers = Data.Textures;
+            if (layers is null || layers.Length == 0)
+            {
+                Debug.VulkanWarning($"1D texture array '{Data.Name ?? GetDescribingName()}' has no layers to upload.");
+                return;
+            }
+
+            TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
+
+            uint arrayLayers = Math.Min((uint)layers.Length, ResolvedArrayLayers);
+            for (uint layer = 0; layer < arrayLayers; layer++)
+            {
+                XRTexture1D layerTexture = layers[layer];
+                Mipmap1D[] mipmaps = layerTexture.Mipmaps;
+                if (mipmaps is null || mipmaps.Length == 0)
+                    continue;
+
+                uint levelCount = Math.Min((uint)mipmaps.Length, ResolvedMipLevels);
+                for (uint level = 0; level < levelCount; level++)
+                {
+                    Mipmap1D? mip = mipmaps[level];
+                    if (mip is null)
+                        continue;
+
+                    if (!TryCreateStagingBuffer(mip.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
+                        continue;
+
+                    try
+                    {
+                        Extent3D extent = new(Math.Max(mip.Width, 1u), 1, 1);
+                        CopyBufferToImage(stagingBuffer, level, layer, 1, extent);
+                    }
+                    finally
+                    {
+                        DestroyStagingBuffer(stagingBuffer, stagingMemory);
+                    }
+                }
+            }
+
+            if (Data.AutoGenerateMipmaps && ResolvedMipLevels > 1)
+                GenerateMipmapsGPU();
+            else
+                TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
+        }
+    }
+
     internal sealed class VkTexture2D(VulkanRenderer api, XRTexture2D data) : VkImageBackedTexture<XRTexture2D>(api, data)
     {
         protected override TextureLayout DescribeTexture()
@@ -783,7 +947,82 @@ public unsafe partial class VulkanRenderer
             uint width = Math.Max(Data.Width, 1u);
             uint height = Math.Max(Data.Height, 1u);
             uint depth = Math.Max(Data.Depth, 1u);
-            return new TextureLayout(new Extent3D(width, height, depth), 1, 1);
+            uint mipLevels = (uint)Math.Max(Data.Mipmaps?.Length ?? 1, 1);
+            return new TextureLayout(new Extent3D(width, height, depth), 1, mipLevels);
+        }
+
+        protected override void PushTextureData()
+        {
+            Generate();
+
+            Mipmap3D[] mipmaps = Data.Mipmaps;
+            if (mipmaps is null || mipmaps.Length == 0)
+            {
+                Debug.VulkanWarning($"3D texture '{Data.Name ?? GetDescribingName()}' has no mipmaps to upload.");
+                return;
+            }
+
+            TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
+
+            uint levelCount = Math.Min((uint)mipmaps.Length, ResolvedMipLevels);
+            for (uint level = 0; level < levelCount; level++)
+            {
+                Mipmap3D? mip = mipmaps[level];
+                if (mip is null)
+                    continue;
+
+                if (!TryCreateStagingBuffer(mip.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
+                    continue;
+
+                try
+                {
+                    Extent3D extent = new(
+                        Math.Max(mip.Width, 1u),
+                        Math.Max(mip.Height, 1u),
+                        Math.Max(mip.Depth, 1u));
+                    CopyBufferToImage(stagingBuffer, level, 0, 1, extent);
+                }
+                finally
+                {
+                    DestroyStagingBuffer(stagingBuffer, stagingMemory);
+                }
+            }
+
+            if (Data.AutoGenerateMipmaps && ResolvedMipLevels > 1)
+                GenerateMipmapsGPU();
+            else
+                TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
+        }
+    }
+
+    internal sealed class VkTextureRectangle(VulkanRenderer api, XRTextureRectangle data) : VkImageBackedTexture<XRTextureRectangle>(api, data)
+    {
+        protected override TextureLayout DescribeTexture()
+        {
+            uint width = Math.Max(Data.Width, 1u);
+            uint height = Math.Max(Data.Height, 1u);
+            return new TextureLayout(new Extent3D(width, height, 1), 1, 1);
+        }
+
+        protected override void PushTextureData()
+        {
+            Generate();
+            TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
+
+            if (TryCreateStagingBuffer(Data.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
+            {
+                try
+                {
+                    Extent3D extent = new(Math.Max(Data.Width, 1u), Math.Max(Data.Height, 1u), 1);
+                    CopyBufferToImage(stagingBuffer, 0, 0, 1, extent);
+                }
+                finally
+                {
+                    DestroyStagingBuffer(stagingBuffer, stagingMemory);
+                }
+            }
+
+            TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
         }
     }
 
@@ -856,5 +1095,270 @@ public unsafe partial class VulkanRenderer
             else
                 TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
         }
+    }
+
+    internal sealed class VkTextureCubeArray(VulkanRenderer api, XRTextureCubeArray data) : VkImageBackedTexture<XRTextureCubeArray>(api, data)
+    {
+        private const ImageCreateFlags CubeCompatibleFlag = (ImageCreateFlags)0x10;
+
+        protected override ImageCreateFlags AdditionalImageFlags => CubeCompatibleFlag;
+        protected override ImageViewType DefaultImageViewType => ImageViewType.TypeCubeArray;
+
+        protected override TextureLayout DescribeTexture()
+        {
+            XRTextureCube[] cubes = Data.Cubes;
+            uint extent = cubes.Length > 0 ? Math.Max(cubes[0].Extent, 1u) : 1u;
+            uint layers = (uint)Math.Max(cubes.Length, 1) * 6u;
+            uint mipLevels = (uint)Math.Max(
+                cubes.Length > 0 ? cubes.Max(c => c?.Mipmaps?.Length ?? 1) : 1,
+                1);
+            return new TextureLayout(new Extent3D(extent, extent, 1), layers, mipLevels);
+        }
+
+        protected override AttachmentViewKey BuildAttachmentViewKey(int mipLevel, int layerIndex)
+        {
+            if (layerIndex < 0 && mipLevel <= 0)
+                return default;
+
+            uint baseLayer = (uint)Math.Max(layerIndex, 0);
+            uint baseMip = (uint)Math.Max(mipLevel, 0);
+            return new AttachmentViewKey(baseMip, 1, baseLayer, 1, ImageViewType.Type2D, AspectFlags);
+        }
+
+        protected override void PushTextureData()
+        {
+            Generate();
+
+            XRTextureCube[] cubes = Data.Cubes;
+            if (cubes is null || cubes.Length == 0)
+            {
+                Debug.VulkanWarning($"Cube array '{Data.Name ?? GetDescribingName()}' has no cube layers to upload.");
+                return;
+            }
+
+            TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
+
+            uint cubeCount = Math.Min((uint)cubes.Length, Math.Max(1u, ResolvedArrayLayers / 6u));
+            for (uint cubeIndex = 0; cubeIndex < cubeCount; cubeIndex++)
+            {
+                XRTextureCube cube = cubes[cubeIndex];
+                CubeMipmap[] mipmaps = cube.Mipmaps;
+                if (mipmaps is null || mipmaps.Length == 0)
+                    continue;
+
+                uint levelCount = Math.Min((uint)mipmaps.Length, ResolvedMipLevels);
+                for (uint level = 0; level < levelCount; level++)
+                {
+                    CubeMipmap? cubeMip = mipmaps[level];
+                    if (cubeMip is null)
+                        continue;
+
+                    uint faceCount = Math.Min((uint)cubeMip.Sides.Length, 6u);
+                    for (uint face = 0; face < faceCount; face++)
+                    {
+                        uint baseLayer = cubeIndex * 6u + face;
+                        if (baseLayer >= ResolvedArrayLayers)
+                            break;
+
+                        Mipmap2D side = cubeMip.Sides[face];
+                        if (!TryCreateStagingBuffer(side.Data, out Buffer stagingBuffer, out DeviceMemory stagingMemory))
+                            continue;
+
+                        try
+                        {
+                            Extent3D extent = new(Math.Max(side.Width, 1u), Math.Max(side.Height, 1u), 1);
+                            CopyBufferToImage(stagingBuffer, level, baseLayer, 1, extent);
+                        }
+                        finally
+                        {
+                            DestroyStagingBuffer(stagingBuffer, stagingMemory);
+                        }
+                    }
+                }
+            }
+
+            if (Data.AutoGenerateMipmaps && ResolvedMipLevels > 1)
+                GenerateMipmapsGPU();
+            else
+                TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
+        }
+    }
+
+    internal sealed class VkTextureBuffer(VulkanRenderer api, XRTextureBuffer data) : VkTexture<XRTextureBuffer>(api, data), IVkTexelBufferDescriptorSource
+    {
+        private BufferView _view;
+        private Format _format = Format.R8G8B8A8Unorm;
+
+        internal BufferView View => _view;
+        internal Format BufferFormat => _format;
+        BufferView IVkTexelBufferDescriptorSource.DescriptorBufferView => _view;
+        Format IVkTexelBufferDescriptorSource.DescriptorBufferFormat => _format;
+
+        public override VkObjectType Type => VkObjectType.BufferView;
+        public override bool IsGenerated => _view.Handle != 0;
+
+        protected override uint CreateObjectInternal()
+        {
+            CreateBufferView();
+            return CacheObject(this);
+        }
+
+        protected override void DeleteObjectInternal()
+        {
+            if (_view.Handle != 0)
+            {
+                Api!.DestroyBufferView(Device, _view, null);
+                _view = default;
+            }
+        }
+
+        protected override void LinkData()
+            => Data.PropertyChanged += OnTextureBufferPropertyChanged;
+
+        protected override void UnlinkData()
+            => Data.PropertyChanged -= OnTextureBufferPropertyChanged;
+
+        private void OnTextureBufferPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            switch (e.PropertyName)
+            {
+                case nameof(XRTextureBuffer.DataBuffer):
+                case nameof(XRTextureBuffer.SizedInternalFormat):
+                case nameof(XRTextureBuffer.TexelCount):
+                    if (IsActive)
+                    {
+                        Destroy();
+                        Generate();
+                    }
+                    break;
+            }
+        }
+
+        private void CreateBufferView()
+        {
+            XRDataBuffer? sourceBuffer = Data.DataBuffer;
+            if (sourceBuffer is null)
+            {
+                Debug.VulkanWarning($"Texture buffer '{Data.Name ?? "<unnamed>"}' has no source data buffer.");
+                return;
+            }
+
+            if (Renderer.GetOrCreateAPIRenderObject(sourceBuffer, generateNow: true) is not VkDataBuffer vkDataBuffer)
+                throw new InvalidOperationException("Texture buffer source is not backed by a Vulkan data buffer.");
+
+            vkDataBuffer.PushData();
+            Buffer? handle = vkDataBuffer.BufferHandle;
+            if (handle is null || handle.Value.Handle == 0)
+            {
+                Debug.VulkanWarning($"Texture buffer '{Data.Name ?? "<unnamed>"}' could not resolve a Vulkan buffer handle.");
+                return;
+            }
+
+            _format = ResolveBufferFormat(Data.SizedInternalFormat);
+            ulong bytesPerTexel = ResolveTexelSize(Data.SizedInternalFormat);
+            ulong requestedRange = Data.TexelCount > 0
+                ? bytesPerTexel * Data.TexelCount
+                : Math.Max(1u, sourceBuffer.Length);
+            ulong range = Math.Max(1ul, Math.Min(requestedRange, Math.Max(1u, sourceBuffer.Length)));
+
+            BufferViewCreateInfo createInfo = new()
+            {
+                SType = StructureType.BufferViewCreateInfo,
+                Buffer = handle.Value,
+                Format = _format,
+                Offset = 0,
+                Range = range
+            };
+
+            if (Api!.CreateBufferView(Device, ref createInfo, null, out _view) != Result.Success)
+                throw new Exception($"Failed to create Vulkan buffer view for texture buffer '{Data.Name ?? "<unnamed>"}'.");
+        }
+
+        private static Format ResolveBufferFormat(ESizedInternalFormat sizedFormat)
+            => sizedFormat switch
+            {
+                ESizedInternalFormat.R8 => Format.R8Unorm,
+                ESizedInternalFormat.R8i => Format.R8Sint,
+                ESizedInternalFormat.R8ui => Format.R8Uint,
+                ESizedInternalFormat.R16 => Format.R16Unorm,
+                ESizedInternalFormat.R16i => Format.R16Sint,
+                ESizedInternalFormat.R16ui => Format.R16Uint,
+                ESizedInternalFormat.R16f => Format.R16Sfloat,
+                ESizedInternalFormat.R32i => Format.R32Sint,
+                ESizedInternalFormat.R32ui => Format.R32Uint,
+                ESizedInternalFormat.R32f => Format.R32Sfloat,
+                ESizedInternalFormat.Rg8 => Format.R8G8Unorm,
+                ESizedInternalFormat.Rg8i => Format.R8G8Sint,
+                ESizedInternalFormat.Rg8ui => Format.R8G8Uint,
+                ESizedInternalFormat.Rg16 => Format.R16G16Unorm,
+                ESizedInternalFormat.Rg16i => Format.R16G16Sint,
+                ESizedInternalFormat.Rg16ui => Format.R16G16Uint,
+                ESizedInternalFormat.Rg16f => Format.R16G16Sfloat,
+                ESizedInternalFormat.Rg32i => Format.R32G32Sint,
+                ESizedInternalFormat.Rg32ui => Format.R32G32Uint,
+                ESizedInternalFormat.Rg32f => Format.R32G32Sfloat,
+                ESizedInternalFormat.Rgb8 => Format.R8G8B8Unorm,
+                ESizedInternalFormat.Rgb8i => Format.R8G8B8Sint,
+                ESizedInternalFormat.Rgb8ui => Format.R8G8B8Uint,
+                ESizedInternalFormat.Rgb16i => Format.R16G16B16Sint,
+                ESizedInternalFormat.Rgb16ui => Format.R16G16B16Uint,
+                ESizedInternalFormat.Rgb16f => Format.R16G16B16Sfloat,
+                ESizedInternalFormat.Rgb32i => Format.R32G32B32Sint,
+                ESizedInternalFormat.Rgb32ui => Format.R32G32B32Uint,
+                ESizedInternalFormat.Rgb32f => Format.R32G32B32Sfloat,
+                ESizedInternalFormat.Rgba8 => Format.R8G8B8A8Unorm,
+                ESizedInternalFormat.Rgba8i => Format.R8G8B8A8Sint,
+                ESizedInternalFormat.Rgba8ui => Format.R8G8B8A8Uint,
+                ESizedInternalFormat.Rgba16 => Format.R16G16B16A16Unorm,
+                ESizedInternalFormat.Rgba16i => Format.R16G16B16A16Sint,
+                ESizedInternalFormat.Rgba16ui => Format.R16G16B16A16Uint,
+                ESizedInternalFormat.Rgba16f => Format.R16G16B16A16Sfloat,
+                ESizedInternalFormat.Rgba32i => Format.R32G32B32A32Sint,
+                ESizedInternalFormat.Rgba32ui => Format.R32G32B32A32Uint,
+                ESizedInternalFormat.Rgba32f => Format.R32G32B32A32Sfloat,
+                _ => Format.R8G8B8A8Unorm
+            };
+
+        private static ulong ResolveTexelSize(ESizedInternalFormat sizedFormat)
+            => sizedFormat switch
+            {
+                ESizedInternalFormat.R8 or
+                ESizedInternalFormat.R8Snorm or
+                ESizedInternalFormat.R8i or
+                ESizedInternalFormat.R8ui => 1,
+
+                ESizedInternalFormat.R16 or
+                ESizedInternalFormat.R16Snorm or
+                ESizedInternalFormat.R16f or
+                ESizedInternalFormat.R16i or
+                ESizedInternalFormat.R16ui or
+                ESizedInternalFormat.Rg8 or
+                ESizedInternalFormat.Rg8Snorm or
+                ESizedInternalFormat.Rg8i or
+                ESizedInternalFormat.Rg8ui => 2,
+
+                ESizedInternalFormat.R32f or
+                ESizedInternalFormat.R32i or
+                ESizedInternalFormat.R32ui or
+                ESizedInternalFormat.Rg16 or
+                ESizedInternalFormat.Rg16Snorm or
+                ESizedInternalFormat.Rg16f or
+                ESizedInternalFormat.Rg16i or
+                ESizedInternalFormat.Rg16ui or
+                ESizedInternalFormat.Rgba8 or
+                ESizedInternalFormat.Rgba8Snorm or
+                ESizedInternalFormat.Rgba8i or
+                ESizedInternalFormat.Rgba8ui => 4,
+
+                ESizedInternalFormat.Rgb32f or
+                ESizedInternalFormat.Rgb32i or
+                ESizedInternalFormat.Rgb32ui => 12,
+
+                ESizedInternalFormat.Rgba32f or
+                ESizedInternalFormat.Rgba32i or
+                ESizedInternalFormat.Rgba32ui => 16,
+
+                _ => 4
+            };
     }
 }

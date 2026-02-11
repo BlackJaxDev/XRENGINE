@@ -240,10 +240,7 @@ public unsafe partial class VulkanRenderer
         private AttachmentSource ResolveAttachmentSource(IFrameBufferAttachement target, int mipLevel, int layerIndex)
             => target switch
             {
-                XRTexture2D tex2D => ResolveTextureAttachment(tex2D, mipLevel, layerIndex),
-                XRTexture2DArray texArray => ResolveTextureAttachment(texArray, mipLevel, layerIndex),
-                XRTexture3D tex3D => ResolveTextureAttachment(tex3D, mipLevel, layerIndex),
-                XRTextureCube texCube => ResolveTextureAttachment(texCube, mipLevel, layerIndex),
+                XRTexture texture => ResolveTextureAttachment(texture, mipLevel, layerIndex),
                 XRRenderBuffer renderBuffer => ResolveRenderBufferAttachment(renderBuffer),
                 _ => throw new NotSupportedException($"Framebuffer attachment type '{target.GetType().Name}' is not supported yet.")
             };
@@ -257,15 +254,13 @@ public unsafe partial class VulkanRenderer
             return new AttachmentSource(vkRenderBuffer.View, vkRenderBuffer.Format, vkRenderBuffer.Samples, vkRenderBuffer.Aspect);
         }
 
-        private AttachmentSource ResolveTextureAttachment<TTexture>(TTexture texture, int mipLevel, int layerIndex)
-            where TTexture : XRTexture
+        private AttachmentSource ResolveTextureAttachment(XRTexture texture, int mipLevel, int layerIndex)
         {
-            if (Renderer.GetOrCreateAPIRenderObject(texture) is not VkImageBackedTexture<TTexture> vkTexture)
+            if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkFrameBufferAttachmentSource source)
                 throw new InvalidOperationException($"Texture '{texture.Name ?? texture.GetDescribingName()}' is not backed by a Vulkan texture.");
 
-            vkTexture.Generate();
-            ImageView view = vkTexture.GetAttachmentView(mipLevel, layerIndex);
-            return new AttachmentSource(view, vkTexture.ResolvedFormat, vkTexture.SampleCount, vkTexture.AspectFlags);
+            ImageView view = source.GetAttachmentView(mipLevel, layerIndex);
+            return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, source.DescriptorAspect);
         }
 
         private static AttachmentRole ResolveAttachmentRole(EFrameBufferAttachment attachment, ImageAspectFlags aspect)
