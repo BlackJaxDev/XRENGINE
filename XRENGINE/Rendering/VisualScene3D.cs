@@ -26,7 +26,7 @@ namespace XREngine.Scene
         public Octree<RenderInfo3D> RenderTree { get; } = new Octree<RenderInfo3D>(new AABB());
         private AABB _sceneBounds;
         private bool _hasSceneBounds = false;
-        private bool _isGpuDispatchActive = Engine.EffectiveSettings.GPURenderDispatch;
+        private bool _isGpuDispatchActive = Engine.Rendering.ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
         private bool _useGpuBvhActive = Engine.EffectiveSettings.UseGpuBvh;
         public BvhRaycastDispatcher BvhRaycasts { get; } = new();
 
@@ -164,6 +164,11 @@ namespace XREngine.Scene
 
         public void ApplyRenderDispatchPreference(bool useGpu)
         {
+            // Always re-resolve through the central preference so Vulkan-active state
+            // overrides any stale caller value. This closes the propagation gap where
+            // the field initialiser ran before the Vulkan renderer was created.
+            useGpu = Engine.Rendering.ResolveGpuRenderDispatchPreference(useGpu);
+
             if (useGpu == _isGpuDispatchActive)
                 return;
 

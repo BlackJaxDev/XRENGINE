@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
@@ -7,6 +8,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
+using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -16,12 +18,16 @@ public unsafe partial class VulkanRenderer
     private readonly VulkanResourcePlanner _resourcePlanner = new();
     private readonly VulkanResourceAllocator _resourceAllocator = new();
     private readonly VulkanBarrierPlanner _barrierPlanner = new();
+    private VulkanCompiledRenderGraph _compiledRenderGraph = VulkanCompiledRenderGraph.Empty;
+    private readonly Dictionary<string, XRDataBuffer> _trackedBuffersByName = new(StringComparer.OrdinalIgnoreCase);
     internal VulkanResourcePlanner ResourcePlanner => _resourcePlanner;
     internal VulkanResourcePlan ResourcePlan => _resourcePlanner.CurrentPlan;
     internal VulkanResourceAllocator ResourceAllocator => _resourceAllocator;
+    internal VulkanCompiledRenderGraph CompiledRenderGraph => _compiledRenderGraph;
     private bool[]? _commandBufferDirtyFlags;
     private XRFrameBuffer? _boundDrawFrameBuffer;
     private XRFrameBuffer? _boundReadFrameBuffer;
+    private EReadBufferMode _readBufferMode = EReadBufferMode.ColorAttachment0;
 
     internal Viewport GetCurrentViewport()
         => _state.GetViewport();
@@ -31,6 +37,12 @@ public unsafe partial class VulkanRenderer
 
     internal XRFrameBuffer? GetCurrentDrawFrameBuffer()
         => _boundDrawFrameBuffer;
+
+    internal XRFrameBuffer? GetCurrentReadFrameBuffer()
+        => _boundReadFrameBuffer;
+
+    internal EReadBufferMode GetReadBufferMode()
+        => _readBufferMode;
 
     internal bool GetDepthTestEnabled()
         => _state.GetDepthTestEnabled();
@@ -145,11 +157,47 @@ public unsafe partial class VulkanRenderer
 
         public EMemoryBarrierMask PendingMemoryBarrierMask { get; private set; }
 
+        /// <summary>
+        /// Per-pass memory barrier masks accumulated during the frame. When a pass index
+        /// is known at barrier registration time, the mask is stored here instead of the
+        /// global <see cref="PendingMemoryBarrierMask"/>.
+        /// </summary>
+        private readonly Dictionary<int, EMemoryBarrierMask> _perPassMemoryBarriers = new();
+
         public void RegisterMemoryBarrier(EMemoryBarrierMask mask)
             => PendingMemoryBarrierMask |= mask;
 
+        /// <summary>
+        /// Associates a memory barrier mask with a specific render-graph pass index so the
+        /// barrier can be emitted at the correct point during command buffer recording.
+        /// </summary>
+        public void RegisterMemoryBarrierForPass(int passIndex, EMemoryBarrierMask mask)
+        {
+            if (mask == EMemoryBarrierMask.None)
+                return;
+
+            if (_perPassMemoryBarriers.TryGetValue(passIndex, out EMemoryBarrierMask existing))
+                _perPassMemoryBarriers[passIndex] = existing | mask;
+            else
+                _perPassMemoryBarriers[passIndex] = mask;
+        }
+
+        /// <summary>
+        /// Drains and returns the per-pass barrier mask for the given pass index, or
+        /// <see cref="EMemoryBarrierMask.None"/> if nothing was registered.
+        /// </summary>
+        public EMemoryBarrierMask DrainMemoryBarrierForPass(int passIndex)
+        {
+            if (!_perPassMemoryBarriers.Remove(passIndex, out EMemoryBarrierMask mask))
+                return EMemoryBarrierMask.None;
+            return mask;
+        }
+
         public void ClearPendingMemoryBarrierMask()
-            => PendingMemoryBarrierMask = EMemoryBarrierMask.None;
+        {
+            PendingMemoryBarrierMask = EMemoryBarrierMask.None;
+            _perPassMemoryBarriers.Clear();
+        }
 
         public void SetSwapchainExtent(Extent2D extent)
         {
@@ -403,10 +451,16 @@ public unsafe partial class VulkanRenderer
     {
         _resourcePlanner.Sync(context.ResourceRegistry);
         _resourceAllocator.UpdatePlan(_resourcePlanner.CurrentPlan);
-        _resourceAllocator.RebuildPhysicalPlan(this);
+        _resourceAllocator.RebuildPhysicalPlan(this, context.PassMetadata, _resourcePlanner);
         _resourceAllocator.AllocatePhysicalImages(this);
+        _resourceAllocator.AllocatePhysicalBuffers(this);
 
-        _barrierPlanner.Rebuild(context.PassMetadata, _resourcePlanner, _resourceAllocator);
+        _compiledRenderGraph = _renderGraphCompiler.Compile(context.PassMetadata);
+        _barrierPlanner.Rebuild(
+            context.PassMetadata,
+            _resourcePlanner,
+            _resourceAllocator,
+            _compiledRenderGraph.Synchronization);
     }
 
     internal void AllocatePhysicalImage(VulkanPhysicalImageGroup group, ref Image image, ref DeviceMemory memory)
@@ -471,8 +525,63 @@ public unsafe partial class VulkanRenderer
         }
     }
 
+    internal void AllocatePhysicalBuffer(VulkanPhysicalBufferGroup group, ref Buffer buffer, ref DeviceMemory memory)
+    {
+        if (buffer.Handle != 0)
+            return;
+
+        BufferCreateInfo bufferInfo = new()
+        {
+            SType = StructureType.BufferCreateInfo,
+            Size = Math.Max(group.SizeInBytes, 1UL),
+            Usage = group.Usage,
+            SharingMode = SharingMode.Exclusive
+        };
+
+        fixed (Buffer* bufferPtr = &buffer)
+        {
+            Result createResult = Api!.CreateBuffer(device, ref bufferInfo, null, bufferPtr);
+            if (createResult != Result.Success)
+                throw new Exception($"Failed to create Vulkan buffer for resource group '{group.Key}'. Result={createResult}.");
+        }
+
+        Api!.GetBufferMemoryRequirements(device, buffer, out MemoryRequirements memRequirements);
+
+        MemoryAllocateInfo allocInfo = new()
+        {
+            SType = StructureType.MemoryAllocateInfo,
+            AllocationSize = memRequirements.Size,
+            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
+        };
+
+        fixed (DeviceMemory* memPtr = &memory)
+            AllocateMemory(allocInfo, memPtr);
+
+        Result bindResult = Api!.BindBufferMemory(device, buffer, memory, 0);
+        if (bindResult != Result.Success)
+            throw new Exception($"Failed to bind device memory for Vulkan buffer group '{group.Key}'. Result={bindResult}.");
+    }
+
+    internal void DestroyPhysicalBuffer(ref Buffer buffer, ref DeviceMemory memory)
+    {
+        if (buffer.Handle != 0)
+        {
+            Api!.DestroyBuffer(device, buffer, null);
+            buffer = default;
+        }
+
+        if (memory.Handle != 0)
+        {
+            Api!.FreeMemory(device, memory, null);
+            memory = default;
+        }
+    }
+
     public bool TryGetPhysicalImage(string resourceName, out Image image)
         => _resourceAllocator.TryGetImage(resourceName, out image);
+
+    public bool TryGetPhysicalBuffer(string resourceName, out Buffer buffer, out ulong size)
+        => _resourceAllocator.TryGetBuffer(resourceName, out buffer, out size);
 
     private void MarkCommandBuffersDirty()
     {
@@ -535,5 +644,53 @@ public unsafe partial class VulkanRenderer
                     registry.BindTexture(texture);
             }
         }
+    }
+
+    internal void TrackBufferBinding(XRDataBuffer buffer)
+    {
+        if (buffer is null)
+            return;
+
+        string name = string.IsNullOrWhiteSpace(buffer.AttributeName)
+            ? buffer.Name ?? string.Empty
+            : buffer.AttributeName;
+
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+
+        RenderResourceLifetime lifetime = buffer.Usage is EBufferUsage.StreamDraw or EBufferUsage.StreamCopy
+            ? RenderResourceLifetime.Transient
+            : RenderResourceLifetime.Persistent;
+
+        _trackedBuffersByName[name] = buffer;
+
+        RenderResourceRegistry? registry = Engine.Rendering.State.CurrentResourceRegistry;
+        if (registry is not null)
+        {
+            BufferResourceDescriptor descriptor = BufferResourceDescriptor.FromBuffer(buffer, lifetime) with { Name = name };
+            registry.BindBuffer(buffer, descriptor);
+        }
+    }
+
+    internal bool TryResolveTrackedBuffer(string resourceName, out Buffer buffer, out ulong size)
+    {
+        if (_resourceAllocator.TryGetBuffer(resourceName, out buffer, out size))
+            return true;
+
+        if (_trackedBuffersByName.TryGetValue(resourceName, out XRDataBuffer? dataBuffer) &&
+            GetOrCreateAPIRenderObject(dataBuffer, true) is VkDataBuffer vkBuffer)
+        {
+            vkBuffer.Generate();
+            if (vkBuffer.BufferHandle is { } handle && handle.Handle != 0)
+            {
+                buffer = handle;
+                size = Math.Max(dataBuffer.Length, 1u);
+                return true;
+            }
+        }
+
+        buffer = default;
+        size = 0;
+        return false;
     }
 }

@@ -117,7 +117,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             if ((_sizePolicyOverride ?? InferSizePolicy()) is RenderResourceSizePolicy policy)
                 descriptor = descriptor with { SizePolicy = policy };
 
-            return descriptor with { Name = texture.Name ?? descriptor.Name };
+            return descriptor with
+            {
+                Name = texture.Name ?? descriptor.Name,
+                SupportsAliasing = _lifetime == RenderResourceLifetime.Transient
+            };
         }
 
         private RenderResourceSizePolicy? InferSizePolicy()

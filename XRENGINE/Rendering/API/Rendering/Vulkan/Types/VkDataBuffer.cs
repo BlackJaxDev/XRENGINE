@@ -9,6 +9,8 @@ namespace XREngine.Rendering.Vulkan
 {
     public unsafe partial class VulkanRenderer
     {
+        private readonly VulkanStagingManager _stagingManager = new();
+
         /// <summary>
         /// Vulkan data buffer with best practices: staging, synchronization, descriptor integration, lifetime, mapping, error handling, and multi-frame support.
         /// </summary>
@@ -96,53 +98,70 @@ namespace XREngine.Rendering.Vulkan
                     return;
 
                 // Determine usage and memory flags
-                BufferUsageFlags usage = ToVkUsageFlags(Data.Usage);
+                BufferUsageFlags usage = ResolveVkUsageFlags(Data.Target, Data.Usage);
                 MemoryPropertyFlags memProps = ShouldUseDeviceLocal(Data.Usage)
                     ? MemoryPropertyFlags.DeviceLocalBit
                     : MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
 
-                // Only recreate if size or usage changes
-                if (_vkBuffer != null &&
-                    _bufferSize == Data.Length &&
-                    _lastUsageFlags == usage &&
-                    _lastMemProps == memProps)
-                    return;
+                bool needsRecreate =
+                    _vkBuffer is null ||
+                    _vkMemory is null ||
+                    _bufferSize != Data.Length ||
+                    _lastUsageFlags != usage ||
+                    _lastMemProps != memProps;
 
-                // Destroy previous buffer if exists (this will also track VRAM deallocation)
-                Destroy();
-                _bufferSize = Data.Length;
-                _lastUsageFlags = usage;
-                _lastMemProps = memProps;
-
-                // --- Staging buffer pattern for device-local ---
-                if (ShouldUseDeviceLocal(Data.Usage))
+                if (needsRecreate)
                 {
-                    // 1. Create staging buffer (host visible)
-                    BufferUsageFlags stagingUsage = BufferUsageFlags.TransferSrcBit;
-                    MemoryPropertyFlags stagingProps = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
-                    var (stagingBuffer, stagingMemory) = Renderer.CreateBuffer(_bufferSize, stagingUsage, stagingProps, Data.TryGetAddress(out var address) ? address : null);
+                    // Destroy previous buffer if exists (this will also track VRAM deallocation)
+                    Destroy();
+                    _bufferSize = Data.Length;
+                    _lastUsageFlags = usage;
+                    _lastMemProps = memProps;
 
-                    // 2. Create device-local buffer
-                    var (deviceBuffer, deviceMemory) = Renderer.CreateBuffer(_bufferSize, usage | BufferUsageFlags.TransferDstBit, MemoryPropertyFlags.DeviceLocalBit, null);
+                    // --- Staging buffer pattern for device-local ---
+                    if (ShouldUseDeviceLocal(Data.Usage))
+                    {
+                        // Create device-local buffer first.
+                        var (deviceBuffer, deviceMemory) = Renderer.CreateBuffer(_bufferSize, usage | BufferUsageFlags.TransferDstBit, MemoryPropertyFlags.DeviceLocalBit, null);
+                        _vkBuffer = deviceBuffer;
+                        _vkMemory = deviceMemory;
 
-                    // 3. Copy from staging to device-local
-                    Renderer.CopyBuffer(stagingBuffer, deviceBuffer, _bufferSize);
+                        // If CPU-side data exists, upload through a transient staging buffer.
+                        if (_bufferSize > 0 && TryGetUploadSlice(0, (uint)_bufferSize, out VoidPtr sourceSlice))
+                        {
+                            BufferUsageFlags stagingUsage = BufferUsageFlags.TransferSrcBit;
+                            MemoryPropertyFlags stagingProps = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
+                            var (stagingBuffer, stagingMemory) = Renderer.CreateBuffer(_bufferSize, stagingUsage, stagingProps, sourceSlice);
+                            try
+                            {
+                                Renderer.CopyBuffer(stagingBuffer, deviceBuffer, _bufferSize);
+                            }
+                            finally
+                            {
+                                Renderer.DestroyBuffer(stagingBuffer, stagingMemory);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Host-visible buffer for dynamic/stream
+                        (_vkBuffer, _vkMemory) = Renderer.CreateBuffer(_bufferSize, usage, memProps, Data.TryGetAddress(out var address) ? address : null);
+                    }
 
-                    // 4. Destroy staging buffer
-                    Renderer.DestroyBuffer(stagingBuffer, stagingMemory);
-
-                    _vkBuffer = deviceBuffer;
-                    _vkMemory = deviceMemory;
+                    // Track VRAM allocation only when the backing allocation is recreated.
+                    _allocatedVRAMBytes = (long)_bufferSize;
+                    Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
                 }
                 else
                 {
-                    // Host-visible buffer for dynamic/stream
-                    (_vkBuffer, _vkMemory) = Renderer.CreateBuffer(_bufferSize, usage, memProps, Data.TryGetAddress(out var address) ? address : null);
+                    // Reuse the existing allocation and upload fresh data even when size/usage are unchanged.
+                    PushSubData(0, Data.Length);
+                    if (Data.DisposeOnPush)
+                        Data.Dispose();
+                    return;
                 }
 
-                // Track VRAM allocation
-                _allocatedVRAMBytes = (long)_bufferSize;
-                Engine.Rendering.Stats.AddBufferAllocation(_allocatedVRAMBytes);
+                Renderer.TrackBufferBinding(Data);
 
                 if (Data.DisposeOnPush)
                     Data.Dispose();
@@ -157,25 +176,51 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 if (Engine.InvokeOnMainThread(() => PushSubData(offset, length), "VkDataBuffer.PushSubData"))
                     return;
+                if (offset < 0 || length == 0)
+                    return;
+
+                uint totalLength = Data.Length;
+                if ((uint)offset >= totalLength)
+                    return;
+
+                uint clampedLength = Math.Min(length, totalLength - (uint)offset);
+                if (clampedLength == 0)
+                    return;
+
                 if (_vkBuffer == null || _vkMemory == null)
                     PushData();
+
+                if (_vkBuffer is null || _vkMemory is null)
+                    return;
 
                 // For device-local, use staging buffer for subdata
                 if (ShouldUseDeviceLocal(Data.Usage))
                 {
+                    if (!TryGetUploadSlice(offset, clampedLength, out VoidPtr sourceSlice))
+                        return;
+
                     BufferUsageFlags stagingUsage = BufferUsageFlags.TransferSrcBit;
                     MemoryPropertyFlags stagingProps = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
-                    var (stagingBuffer, stagingMemory) = Renderer.CreateBuffer(length, stagingUsage, stagingProps, Data.Address);
-                    Renderer.CopyBuffer(stagingBuffer, _vkBuffer, length, (ulong)offset);
-                    //stagingBuffer.Dispose();
-                    //stagingMemory.Dispose();
+                    var (stagingBuffer, stagingMemory) = Renderer.CreateBuffer(clampedLength, stagingUsage, stagingProps, sourceSlice);
+                    try
+                    {
+                        Renderer.CopyBuffer(stagingBuffer, _vkBuffer, clampedLength, (ulong)offset);
+                    }
+                    finally
+                    {
+                        Renderer.DestroyBuffer(stagingBuffer, stagingMemory);
+                    }
                 }
                 else
                 {
+                    if (!TryGetUploadSlice(offset, clampedLength, out VoidPtr sourceSlice))
+                        return;
+
                     // Host-visible: map, copy, unmap
-                    void* addr = Data.Address;
-                    Renderer.UpdateBuffer(_vkBuffer, _vkMemory, (ulong)offset, (ulong)length, addr);
+                    Renderer.UpdateBuffer(_vkBuffer, _vkMemory, (ulong)offset, (ulong)clampedLength, sourceSlice.Pointer);
                 }
+
+                Renderer.TrackBufferBinding(Data);
             }
             public void PushSubData() => PushSubData(0, Data.Length);
 
@@ -334,19 +379,64 @@ namespace XREngine.Rendering.Vulkan
             private static bool ShouldUseDeviceLocal(EBufferUsage usage)
                 => usage == EBufferUsage.StaticDraw || usage == EBufferUsage.StaticCopy;
 
+            private bool TryGetUploadSlice(int offset, uint length, out VoidPtr sourceSlice)
+            {
+                sourceSlice = VoidPtr.Zero;
+                if (offset < 0 || length == 0)
+                    return false;
+
+                if (!Data.TryGetAddress(out var baseAddress) || baseAddress.Pointer == null)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"VkDataBuffer.NoAddress.{GetDescribingName()}",
+                        TimeSpan.FromSeconds(2),
+                        "[VkDataBuffer] '{0}' upload skipped: CPU-side data source has no valid address (disposed?).",
+                        GetDescribingName());
+                    return false;
+                }
+
+                sourceSlice = baseAddress + offset;
+                return true;
+            }
+
+            private static BufferUsageFlags ResolveVkUsageFlags(EBufferTarget target, EBufferUsage usage)
+            {
+                BufferUsageFlags flags = ToVkUsageFlags(target) | ToVkUsageFlags(usage);
+                if (flags == 0)
+                    flags = BufferUsageFlags.StorageBufferBit;
+                return flags;
+            }
+
+            public static BufferUsageFlags ToVkUsageFlags(EBufferTarget target) => target switch
+            {
+                EBufferTarget.ArrayBuffer => BufferUsageFlags.VertexBufferBit,
+                EBufferTarget.ElementArrayBuffer => BufferUsageFlags.IndexBufferBit,
+                EBufferTarget.PixelPackBuffer => BufferUsageFlags.TransferDstBit,
+                EBufferTarget.PixelUnpackBuffer => BufferUsageFlags.TransferSrcBit,
+                EBufferTarget.UniformBuffer => BufferUsageFlags.UniformBufferBit,
+                EBufferTarget.TextureBuffer => BufferUsageFlags.UniformTexelBufferBit | BufferUsageFlags.StorageTexelBufferBit,
+                EBufferTarget.TransformFeedbackBuffer => BufferUsageFlags.StorageBufferBit,
+                EBufferTarget.CopyReadBuffer => BufferUsageFlags.TransferSrcBit,
+                EBufferTarget.CopyWriteBuffer => BufferUsageFlags.TransferDstBit,
+                EBufferTarget.DrawIndirectBuffer => BufferUsageFlags.IndirectBufferBit,
+                EBufferTarget.ShaderStorageBuffer => BufferUsageFlags.StorageBufferBit,
+                EBufferTarget.DispatchIndirectBuffer => BufferUsageFlags.IndirectBufferBit,
+                EBufferTarget.QueryBuffer => BufferUsageFlags.TransferDstBit,
+                EBufferTarget.AtomicCounterBuffer => BufferUsageFlags.StorageBufferBit,
+                EBufferTarget.ParameterBuffer => BufferUsageFlags.UniformBufferBit,
+                _ => BufferUsageFlags.StorageBufferBit,
+            };
+
             // --- Helper: Convert usage to Vulkan flags ---
             public static BufferUsageFlags ToVkUsageFlags(EBufferUsage usage) => usage switch
             {
-                EBufferUsage.StaticDraw => BufferUsageFlags.VertexBufferBit,
-                EBufferUsage.DynamicDraw => BufferUsageFlags.VertexBufferBit | BufferUsageFlags.TransferDstBit,
-                EBufferUsage.StreamDraw => BufferUsageFlags.VertexBufferBit | BufferUsageFlags.TransferDstBit,
+                EBufferUsage.StaticDraw => BufferUsageFlags.TransferDstBit,
+                EBufferUsage.StreamDraw or EBufferUsage.DynamicDraw => BufferUsageFlags.TransferDstBit,
+                EBufferUsage.StreamRead or EBufferUsage.DynamicRead => BufferUsageFlags.TransferSrcBit,
+                EBufferUsage.StreamCopy or EBufferUsage.DynamicCopy => BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
                 EBufferUsage.StaticRead => BufferUsageFlags.TransferSrcBit,
-                EBufferUsage.DynamicRead => BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
-                EBufferUsage.StreamRead => BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
-                EBufferUsage.StaticCopy => BufferUsageFlags.TransferDstBit,
-                EBufferUsage.DynamicCopy => BufferUsageFlags.TransferDstBit,
-                EBufferUsage.StreamCopy => BufferUsageFlags.TransferDstBit,
-                _ => BufferUsageFlags.VertexBufferBit,
+                EBufferUsage.StaticCopy => BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
+                _ => 0,
             };
 
             protected override uint CreateObjectInternal()
@@ -397,29 +487,15 @@ namespace XREngine.Rendering.Vulkan
             if (stagingBuffer is null || vkBuffer is null)
                 throw new ArgumentNullException("Buffers cannot be null for copy operation.");
 
-            if (CurrentCommandBuffer is null)
-            {
-                // Create a new command buffer if not already created
-                CommandBufferAllocateInfo allocInfo = new()
-                {
-                    SType = StructureType.CommandBufferAllocateInfo,
-                    CommandPool = commandPool,
-                    Level = CommandBufferLevel.Primary,
-                    CommandBufferCount = 1
-                };
-                CommandBuffer c;
-                Api!.AllocateCommandBuffers(device, ref allocInfo, &c);
-                CurrentCommandBuffer = c;
-            }
-
-            var copyRegion = new BufferCopy
+            using var scope = NewCommandScope();
+            BufferCopy copyRegion = new()
             {
                 SrcOffset = 0,
                 DstOffset = offset,
                 Size = length
             };
 
-            Api!.CmdCopyBuffer(CurrentCommandBuffer.Value, stagingBuffer.Value, vkBuffer.Value, 1, &copyRegion);
+            Api!.CmdCopyBuffer(scope.CommandBuffer, stagingBuffer.Value, vkBuffer.Value, 1, &copyRegion);
         }
 
         private void UpdateBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory, ulong offset, ulong length, void* addr)
@@ -441,11 +517,7 @@ namespace XREngine.Rendering.Vulkan
                 throw new ArgumentNullException(nameof(vkMemory), "Cannot unmap null Vulkan memory.");
 
             Api!.UnmapMemory(device, vkMemory.Value);
-
-            CurrentCommandBuffer = null; // Reset command buffer after unmapping
         }
-
-        private CommandBuffer? CurrentCommandBuffer;
 
         public void CopyBuffer(
             Buffer? stagingBuffer,
@@ -455,40 +527,23 @@ namespace XREngine.Rendering.Vulkan
             if (stagingBuffer is null || deviceBuffer is null)
                 throw new ArgumentNullException("Buffers cannot be null for copy operation.");
 
-            if (CurrentCommandBuffer is null)
-            {
-                // Create a new command buffer if not already created
-                CommandBufferAllocateInfo allocInfo = new()
-                {
-                    SType = StructureType.CommandBufferAllocateInfo,
-                    CommandPool = commandPool,
-                    Level = CommandBufferLevel.Primary,
-                    CommandBufferCount = 1
-                };
-                CommandBuffer c;
-                Api!.AllocateCommandBuffers(device, ref allocInfo, &c);
-                CurrentCommandBuffer = c;
-            }
-
-            var copyRegion = new BufferCopy
+            using var scope = NewCommandScope();
+            BufferCopy copyRegion = new()
             {
                 SrcOffset = 0,
                 DstOffset = 0,
                 Size = bufferSize
             };
-            Api!.CmdCopyBuffer(CurrentCommandBuffer.Value, stagingBuffer.Value, deviceBuffer.Value, 1, &copyRegion);
+
+            Api!.CmdCopyBuffer(scope.CommandBuffer, stagingBuffer.Value, deviceBuffer.Value, 1, &copyRegion);
         }
 
         public void DestroyBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory)
         {
-            if (vkBuffer.HasValue)
-            {
-                Api!.DestroyBuffer(device, vkBuffer.Value, null);
-            }
-            if (vkMemory.HasValue)
-            {
-                Api!.FreeMemory(device, vkMemory.Value, null);
-            }
+            if (vkBuffer.HasValue && vkMemory.HasValue && _stagingManager.TryRelease(vkBuffer.Value, vkMemory.Value))
+                return;
+
+            DestroyBufferRaw(vkBuffer, vkMemory);
         }
 
         public (Buffer stagingBuffer, DeviceMemory stagingMemory) CreateBuffer(
@@ -500,41 +555,91 @@ namespace XREngine.Rendering.Vulkan
             if (bufferSize == 0)
                 throw new ArgumentException("Buffer size must be greater than zero.", nameof(bufferSize));
 
-            var bufferInfo = new BufferCreateInfo
-            {
-                SType = StructureType.BufferCreateInfo,
-                Size = bufferSize,
-                Usage = stagingUsage,
-                SharingMode = SharingMode.Exclusive
-            };
+            if (_stagingManager.CanPool(stagingUsage, stagingProps))
+                return _stagingManager.Acquire(this, bufferSize, stagingUsage, stagingProps, dataPtr);
 
-            if (Api!.CreateBuffer(device, ref bufferInfo, null, out Buffer stagingBuffer) != Result.Success)
-                throw new Exception("Failed to create Vulkan staging buffer.");
+            (Buffer stagingBuffer, DeviceMemory stagingMemory) = CreateBufferRaw(bufferSize, stagingUsage, stagingProps);
 
-            var memoryRequirements = Api.GetBufferMemoryRequirements(device, stagingBuffer);
-            var memoryInfo = new MemoryAllocateInfo
-            {
-                SType = StructureType.MemoryAllocateInfo,
-                AllocationSize = memoryRequirements.Size,
-                MemoryTypeIndex = FindMemoryType(memoryRequirements.MemoryTypeBits, stagingProps)
-            };
-
-            if (Api.AllocateMemory(device, ref memoryInfo, null, out DeviceMemory stagingMemory) != Result.Success)
-                throw new Exception("Failed to allocate Vulkan staging memory.");
-
-            Api.BindBufferMemory(device, stagingBuffer, stagingMemory, 0);
-
-            // Map the buffer if needed
+            // Map the buffer if needed.
             if (dataPtr != null)
             {
-                void* mappedPtr;
-                if (Api.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
-                    throw new Exception("Failed to map Vulkan staging memory.");
+                void* mappedPtr = null;
+                if (Api!.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
+                    throw new Exception("Failed to map Vulkan memory.");
                 Unsafe.CopyBlock(mappedPtr, dataPtr.Pointer, (uint)bufferSize);
                 Api.UnmapMemory(device, stagingMemory);
             }
 
             return (stagingBuffer, stagingMemory);
+        }
+
+        internal (Buffer buffer, DeviceMemory memory) CreateBufferRaw(
+            ulong bufferSize,
+            BufferUsageFlags usage,
+            MemoryPropertyFlags properties)
+        {
+            BufferCreateInfo bufferInfo = new()
+            {
+                SType = StructureType.BufferCreateInfo,
+                Size = bufferSize,
+                Usage = usage,
+                SharingMode = SharingMode.Exclusive
+            };
+
+            if (Api!.CreateBuffer(device, ref bufferInfo, null, out Buffer buffer) != Result.Success)
+                throw new Exception("Failed to create Vulkan buffer.");
+
+            MemoryRequirements memoryRequirements = Api.GetBufferMemoryRequirements(device, buffer);
+            MemoryAllocateInfo memoryInfo = new()
+            {
+                SType = StructureType.MemoryAllocateInfo,
+                AllocationSize = memoryRequirements.Size,
+                MemoryTypeIndex = FindMemoryType(memoryRequirements.MemoryTypeBits, properties)
+            };
+
+            if (Api.AllocateMemory(device, ref memoryInfo, null, out DeviceMemory memory) != Result.Success)
+            {
+                Api.DestroyBuffer(device, buffer, null);
+                throw new Exception("Failed to allocate Vulkan buffer memory.");
+            }
+
+            Result bindResult = Api.BindBufferMemory(device, buffer, memory, 0);
+            if (bindResult != Result.Success)
+            {
+                Api.FreeMemory(device, memory, null);
+                Api.DestroyBuffer(device, buffer, null);
+                throw new Exception($"Failed to bind Vulkan buffer memory ({bindResult}).");
+            }
+
+            return (buffer, memory);
+        }
+
+        internal unsafe void UploadBufferMemory(DeviceMemory memory, ulong size, void* source)
+        {
+            if (source == null || size == 0)
+                return;
+
+            void* mappedPtr = null;
+            if (Api!.MapMemory(device, memory, 0, size, 0, &mappedPtr) != Result.Success)
+                throw new Exception("Failed to map Vulkan memory for staging upload.");
+
+            try
+            {
+                Unsafe.CopyBlock(mappedPtr, source, (uint)size);
+            }
+            finally
+            {
+                Api.UnmapMemory(device, memory);
+            }
+        }
+
+        internal void DestroyBufferRaw(Buffer? buffer, DeviceMemory? memory)
+        {
+            if (buffer.HasValue && buffer.Value.Handle != 0)
+                Api!.DestroyBuffer(device, buffer.Value, null);
+
+            if (memory.HasValue && memory.Value.Handle != 0)
+                Api!.FreeMemory(device, memory.Value, null);
         }
 
         public void FlushBuffer(

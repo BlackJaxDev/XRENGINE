@@ -12,6 +12,8 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Resources;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using static XREngine.Engine.Rendering.State;
 
@@ -60,7 +62,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public XRTexture2DArray? ProbePrefilterArray => _probePrefilterArray;
     public int ProbeCount => _probePositionBuffer is null ? 0 : (int)_probePositionBuffer.ElementCount;
 
-    protected static bool GPURenderDispatch => Engine.EffectiveSettings.GPURenderDispatch;
+    protected static bool GPURenderDispatch
+        => Engine.Rendering.ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
+
+    private static bool UseVulkanSafeFeatureProfile
+        => VulkanFeatureProfile.IsActive;
+
+    private static bool EnableComputeDependentPasses
+        => VulkanFeatureProfile.EnableComputeDependentPasses;
 
     private bool EnableMsaa
         => Engine.Rendering.Settings.AntiAliasingMode == EAntiAliasingMode.Msaa
@@ -272,6 +281,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public ViewportRenderCommandContainer CreateFBOTargetCommands()
     {
         ViewportRenderCommandContainer c = new(this);
+        bool enableComputePasses = EnableComputeDependentPasses;
 
         c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
@@ -287,7 +297,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GPURenderDispatch);
                 c.Add<VPRC_DepthWrite>().Allow = true;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GPURenderDispatch);
-                c.Add<VPRC_ForwardPlusLightCullingPass>();
+                if (enableComputePasses)
+                    c.Add<VPRC_ForwardPlusLightCullingPass>();
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
@@ -303,18 +314,22 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private ViewportRenderCommandContainer CreateViewportTargetCommands()
     {
         ViewportRenderCommandContainer c = new(this);
+        bool enableComputePasses = EnableComputeDependentPasses;
 
         c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Begin;
 
         CacheTextures(c);
 
-        c.Add<VPRC_VoxelConeTracingPass>().SetOptions(VoxelConeTracingVolumeTextureName,
-            [
-                (int)EDefaultRenderPass.OpaqueDeferred,
-                (int)EDefaultRenderPass.OpaqueForward
-            ],
-            GPURenderDispatch,
-            true);
+        if (enableComputePasses)
+        {
+            c.Add<VPRC_VoxelConeTracingPass>().SetOptions(VoxelConeTracingVolumeTextureName,
+                [
+                    (int)EDefaultRenderPass.OpaqueDeferred,
+                    (int)EDefaultRenderPass.OpaqueForward
+                ],
+                GPURenderDispatch,
+                true);
+        }
             
         //Create FBOs only after all their texture dependencies have been cached.
 
@@ -323,15 +338,22 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         {
-            // Render to the ambient occlusion FBO using a switch to select SSAO, MVAO, or spatial hash AO
-            var aoSwitch = c.Add<VPRC_Switch>();
-            aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
-            aoSwitch.Cases = new()
+            if (enableComputePasses)
             {
-                [(int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion] = CreateMVAOPassCommands(),
-                [(int)AmbientOcclusionSettings.EType.SpatialHashRaytraced] = CreateSpatialHashAOPassCommands(),
-            };
-            aoSwitch.DefaultCase = CreateSSAOPassCommands();
+                // Render to the ambient occlusion FBO using a switch to select SSAO, MVAO, or spatial hash AO.
+                var aoSwitch = c.Add<VPRC_Switch>();
+                aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
+                aoSwitch.Cases = new()
+                {
+                    [(int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion] = CreateMVAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.SpatialHashRaytraced] = CreateSpatialHashAOPassCommands(),
+                };
+                aoSwitch.DefaultCase = CreateSSAOPassCommands();
+            }
+            else
+            {
+                ConfigureSSAOPass(c.Add<VPRC_SSAOPass>());
+            }
 
             using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(AmbientOcclusionFBOName)))
             {
@@ -349,7 +371,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 LightCombineFBOName,
                 CreateLightCombineFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
 
             //Render the GBuffer fbo to the LightCombine fbo
             using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(LightCombineFBOName)))
@@ -378,27 +401,32 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 ForwardPassFBOName,
                 CreateForwardPassFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 RestirCompositeFBOName,
                 CreateRestirCompositeFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 LightVolumeCompositeFBOName,
                 CreateLightVolumeCompositeFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 RadianceCascadeCompositeFBOName,
                 CreateRadianceCascadeCompositeFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 SurfelGICompositeFBOName,
                 CreateSurfelGICompositeFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 HistoryCaptureFBOName,
@@ -443,17 +471,21 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 //Enable depth testing and writing for forward passes
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add<VPRC_ForwardPlusLightCullingPass>();
+                if (enableComputePasses)
+                    c.Add<VPRC_ForwardPlusLightCullingPass>();
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
 
                 //c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
 
-                c.Add<VPRC_ReSTIRPass>();
-                c.Add<VPRC_LightVolumesPass>();
-                c.Add<VPRC_RadianceCascadesPass>();
-                c.Add<VPRC_SurfelGIPass>();
+                if (enableComputePasses)
+                {
+                    c.Add<VPRC_ReSTIRPass>();
+                    c.Add<VPRC_LightVolumesPass>();
+                    c.Add<VPRC_RadianceCascadesPass>();
+                    c.Add<VPRC_SurfelGIPass>();
+                }
 
                 c.Add<VPRC_RenderDebugShapes>();
                 c.Add<VPRC_RenderDebugPhysics>();
@@ -476,7 +508,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 VelocityFBOName,
                 CreateVelocityFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
 
             // Ensure the velocity target is initialized to zero instead of inheriting whatever clear
             // color previous passes left on the renderer. Non-zero clears here imprint the scene's
@@ -533,7 +566,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 PostProcessFBOName,
                 CreatePostProcessFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
 
             if (EnableTransformIdVisualization)
             {

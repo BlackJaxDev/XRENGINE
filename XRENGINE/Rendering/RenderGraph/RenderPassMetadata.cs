@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -93,6 +94,7 @@ public sealed class RenderPassMetadata
 {
     private readonly List<RenderPassResourceUsage> _resourceUsages = new();
     private readonly HashSet<int> _explicitDependencies = new();
+    private readonly HashSet<string> _descriptorSchemas = new(StringComparer.Ordinal);
 
     public int PassIndex { get; }
     public RenderGraphPassStage Stage { get; private set; }
@@ -103,6 +105,9 @@ public sealed class RenderPassMetadata
         PassIndex = passIndex;
         Name = string.IsNullOrWhiteSpace(name) ? $"Pass{passIndex}" : name;
         Stage = stage;
+        AddDescriptorSchema(RenderGraphDescriptorSchemaCatalog.EngineGlobals.Name);
+        if (stage == RenderGraphPassStage.Graphics)
+            AddDescriptorSchema(RenderGraphDescriptorSchemaCatalog.MaterialResources.Name);
     }
 
     public ReadOnlyCollection<RenderPassResourceUsage> ResourceUsages
@@ -110,6 +115,9 @@ public sealed class RenderPassMetadata
 
     public ReadOnlyCollection<int> ExplicitDependencies
         => _explicitDependencies.ToList().AsReadOnly();
+
+    public ReadOnlyCollection<string> DescriptorSchemas
+        => _descriptorSchemas.ToList().AsReadOnly();
 
     internal void AddUsage(RenderPassResourceUsage usage)
     {
@@ -123,6 +131,14 @@ public sealed class RenderPassMetadata
         if (passIndex == PassIndex)
             return;
         _explicitDependencies.Add(passIndex);
+    }
+
+    internal void AddDescriptorSchema(string schemaName)
+    {
+        if (string.IsNullOrWhiteSpace(schemaName))
+            return;
+
+        _descriptorSchemas.Add(schemaName);
     }
 
     internal void UpdateStage(RenderGraphPassStage stage)
@@ -164,6 +180,18 @@ public sealed class RenderPassBuilder
         _metadata.AddDependency(passIndex);
         return this;
     }
+
+    public RenderPassBuilder UseDescriptorSchema(string schemaName)
+    {
+        _metadata.AddDescriptorSchema(schemaName);
+        return this;
+    }
+
+    public RenderPassBuilder UseEngineDescriptors()
+        => UseDescriptorSchema(RenderGraphDescriptorSchemaCatalog.EngineGlobals.Name);
+
+    public RenderPassBuilder UseMaterialDescriptors()
+        => UseDescriptorSchema(RenderGraphDescriptorSchemaCatalog.MaterialResources.Name);
 
     public RenderPassBuilder UseColorAttachment(string resourceName, RenderGraphAccess access = RenderGraphAccess.ReadWrite, RenderPassLoadOp load = RenderPassLoadOp.Load, RenderPassStoreOp store = RenderPassStoreOp.Store)
         => AddUsage(resourceName, RenderPassResourceType.ColorAttachment, access, load, store);
@@ -223,7 +251,17 @@ public sealed class RenderPassMetadataCollection
             metadata.UpdateStage(stage);
         }
 
+        EnsureDefaultDescriptorSchemas(metadata);
+
         return new RenderPassBuilder(metadata);
+    }
+
+    private static void EnsureDefaultDescriptorSchemas(RenderPassMetadata metadata)
+    {
+        metadata.AddDescriptorSchema(RenderGraphDescriptorSchemaCatalog.EngineGlobals.Name);
+
+        if (metadata.Stage == RenderGraphPassStage.Graphics)
+            metadata.AddDescriptorSchema(RenderGraphDescriptorSchemaCatalog.MaterialResources.Name);
     }
 
     public IReadOnlyCollection<RenderPassMetadata> Build()

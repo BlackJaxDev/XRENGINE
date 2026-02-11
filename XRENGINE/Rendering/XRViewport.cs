@@ -11,6 +11,7 @@ using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Picking;
 using XREngine.Rendering.UI;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using YamlDotNet.Serialization;
 using State = XREngine.Engine.Rendering.State;
@@ -973,7 +974,8 @@ namespace XREngine.Rendering
             
             //using (Engine.Profiler.Start("XRViewport.Render"))
             {
-                bool uiThroughPipeline = AssociatedPlayer?.RenderUIThroughPipeline ?? true;
+                bool forceUiThroughPipeline = Window?.Renderer is VulkanRenderer || AbstractRenderer.Current is VulkanRenderer;
+                bool uiThroughPipeline = forceUiThroughPipeline || (AssociatedPlayer?.RenderUIThroughPipeline ?? true);
                 var screenSpaceUI = uiThroughPipeline ? ResolveScreenSpaceUIForPipeline() : null;
 
                 // Visibility-driven compute deformation (skinning/blendshapes).
@@ -1027,7 +1029,9 @@ namespace XREngine.Rendering
                 return;
             }
 
-            var screenSpaceUI = (AssociatedPlayer?.RenderUIThroughPipeline ?? true)
+            bool forceUiThroughPipeline = Window?.Renderer is VulkanRenderer || AbstractRenderer.Current is VulkanRenderer;
+            bool uiThroughPipeline = forceUiThroughPipeline || (AssociatedPlayer?.RenderUIThroughPipeline ?? true);
+            var screenSpaceUI = uiThroughPipeline
                 ? ResolveScreenSpaceUIForPipeline() : null;
 
             _renderPipeline.Render(
@@ -1041,7 +1045,7 @@ namespace XREngine.Rendering
                 true,
                 null);
 
-            if (screenSpaceUI is null)
+            if (!uiThroughPipeline)
                 RenderScreenSpaceUIOverlay(targetFbo);
         }
 

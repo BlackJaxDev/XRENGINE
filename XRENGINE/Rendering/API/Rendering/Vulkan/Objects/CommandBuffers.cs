@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Silk.NET.Vulkan;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -8,6 +9,10 @@ namespace XREngine.Rendering.Vulkan
     {
         private CommandBuffer[]? _commandBuffers;
         private List<ComputeTransientResources>[]? _computeTransientResources;
+        private readonly object _oneTimeCommandPoolsLock = new();
+        private readonly Dictionary<nint, CommandPool> _oneTimeCommandPools = new();
+        private readonly object _oneTimeSubmitLock = new();
+        private bool _enableSecondaryCommandBuffers = true;
 
         private sealed class ComputeTransientResources
         {
@@ -21,6 +26,7 @@ namespace XREngine.Rendering.Vulkan
                 return;
 
             DestroyComputeTransientResources();
+            DestroyComputeDescriptorCaches();
 
             fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
             {
@@ -112,6 +118,7 @@ namespace XREngine.Rendering.Vulkan
 
             AllocateCommandBufferDirtyFlags();
             _computeTransientResources = new List<ComputeTransientResources>[_commandBuffers.Length];
+            InitializeComputeDescriptorCaches(_commandBuffers.Length);
         }
 
         private void EnsureCommandBufferRecorded(uint imageIndex)
@@ -146,7 +153,9 @@ namespace XREngine.Rendering.Vulkan
 
             CmdBeginLabel(commandBuffer, $"FrameCmd[{imageIndex}]");
 
-            EmitPendingMemoryBarriers(commandBuffer);
+            // Global pending barriers are deferred until the first pass boundary to
+            // maintain pass-scoped ordering.  Any remaining global mask is emitted
+            // before the first pass barrier group via EmitPassBarriers.
 
             var ops = DrainFrameOps();
             FrameOpContext initialContext = ops.Length > 0
@@ -154,13 +163,25 @@ namespace XREngine.Rendering.Vulkan
                 : CaptureFrameOpContext();
             UpdateResourcePlannerFromContext(initialContext);
 
+            bool singleContext = true;
+            for (int i = 1; i < ops.Length; i++)
+            {
+                if (!Equals(ops[i].Context, initialContext))
+                {
+                    singleContext = false;
+                    break;
+                }
+            }
+
+            if (singleContext)
+                ops = _renderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+
             // Ensure swapchain resources are transitioned appropriately before any rendering.
             CmdBeginLabel(commandBuffer, "SwapchainBarriers");
-            var swapchainBarriers = _barrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
-            if (swapchainBarriers.Count > 0)
-                EmitPlannedImageBarriers(commandBuffer, swapchainBarriers);
-            else
-                EmitPlannedImageBarriers(commandBuffer, _barrierPlanner.ImageBarriers);
+            var swapchainImageBarriers = _barrierPlanner.GetBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+            var swapchainBufferBarriers = _barrierPlanner.GetBufferBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
+            EmitPlannedImageBarriers(commandBuffer, swapchainImageBarriers);
+            EmitPlannedBufferBarriers(commandBuffer, swapchainBufferBarriers);
             CmdEndLabel(commandBuffer);
 
             int clearCount = 0;
@@ -292,11 +313,22 @@ namespace XREngine.Rendering.Vulkan
 
             void EmitPassBarriers(int passIndex)
             {
-                var barriers = _barrierPlanner.GetBarriersForPass(passIndex);
-                if (barriers.Count > 0)
+                // Emit any global pending memory barriers that accumulated before recording.
+                // After the first pass consumes them they are cleared.
+                EmitPendingMemoryBarriers(commandBuffer);
+
+                // Emit per-pass memory barriers registered during the frame.
+                EMemoryBarrierMask perPassMask = _state.DrainMemoryBarrierForPass(passIndex);
+                if (perPassMask != EMemoryBarrierMask.None)
+                    EmitMemoryBarrierMask(commandBuffer, perPassMask);
+
+                var imageBarriers = _barrierPlanner.GetBarriersForPass(passIndex);
+                var bufferBarriers = _barrierPlanner.GetBufferBarriersForPass(passIndex);
+                if (imageBarriers.Count > 0 || bufferBarriers.Count > 0)
                 {
                     CmdBeginLabel(commandBuffer, "PassBarriers");
-                    EmitPlannedImageBarriers(commandBuffer, barriers);
+                    EmitPlannedImageBarriers(commandBuffer, imageBarriers);
+                    EmitPlannedBufferBarriers(commandBuffer, bufferBarriers);
                     CmdEndLabel(commandBuffer);
                 }
             }
@@ -346,9 +378,14 @@ namespace XREngine.Rendering.Vulkan
                 {
                     case BlitOp blit:
                         EndActiveRenderPass();
-                        CmdBeginLabel(commandBuffer, "Blit");
-                        RecordBlitOp(commandBuffer, blit);
-                        CmdEndLabel(commandBuffer);
+                        if (_enableSecondaryCommandBuffers)
+                            ExecuteSecondaryCommandBuffer(commandBuffer, "Blit", secondary => RecordBlitOp(secondary, imageIndex, blit));
+                        else
+                        {
+                            CmdBeginLabel(commandBuffer, "Blit");
+                            RecordBlitOp(commandBuffer, imageIndex, blit);
+                            CmdEndLabel(commandBuffer);
+                        }
                         break;
 
                     case ClearOp clear:
@@ -378,16 +415,26 @@ namespace XREngine.Rendering.Vulkan
 
                     case IndirectDrawOp indirectOp:
                         EndActiveRenderPass();
-                        CmdBeginLabel(commandBuffer, "IndirectDraw");
-                        RecordIndirectDrawOp(commandBuffer, indirectOp);
-                        CmdEndLabel(commandBuffer);
+                        if (_enableSecondaryCommandBuffers)
+                            ExecuteSecondaryCommandBuffer(commandBuffer, "IndirectDraw", secondary => RecordIndirectDrawOp(secondary, indirectOp));
+                        else
+                        {
+                            CmdBeginLabel(commandBuffer, "IndirectDraw");
+                            RecordIndirectDrawOp(commandBuffer, indirectOp);
+                            CmdEndLabel(commandBuffer);
+                        }
                         break;
 
                     case ComputeDispatchOp computeOp:
                         EndActiveRenderPass();
-                        CmdBeginLabel(commandBuffer, "ComputeDispatch");
-                        RecordComputeDispatchOp(commandBuffer, imageIndex, computeOp);
-                        CmdEndLabel(commandBuffer);
+                        if (_enableSecondaryCommandBuffers)
+                            ExecuteSecondaryCommandBuffer(commandBuffer, "ComputeDispatch", secondary => RecordComputeDispatchOp(secondary, imageIndex, computeOp));
+                        else
+                        {
+                            CmdBeginLabel(commandBuffer, "ComputeDispatch");
+                            RecordComputeDispatchOp(commandBuffer, imageIndex, computeOp);
+                            CmdEndLabel(commandBuffer);
+                        }
                         break;
                 }
             }
@@ -525,66 +572,92 @@ namespace XREngine.Rendering.Vulkan
                 Api!.CmdClearAttachments(commandBuffer, fboCount, fboAttachments, 1, rectPtr);
         }
 
-        private void RecordBlitOp(CommandBuffer commandBuffer, BlitOp op)
+        private void RecordBlitOp(CommandBuffer commandBuffer, uint imageIndex, BlitOp op)
         {
-            if (!TryResolveBlitImage(op.InFbo, op.ColorBit, op.DepthBit, op.StencilBit, out var source))
-                return;
-            if (!TryResolveBlitImage(op.OutFbo, op.ColorBit, op.DepthBit, op.StencilBit, out var destination))
-                return;
+            void ExecuteSingleBlit(in BlitImageInfo source, in BlitImageInfo destination, Filter filter)
+            {
+                ImageBlit region = BuildImageBlit(source, destination, op.InX, op.InY, op.InW, op.InH, op.OutX, op.OutY, op.OutW, op.OutH);
 
-            Filter filter = op.LinearFilter ? Filter.Linear : Filter.Nearest;
-            ImageBlit region = BuildImageBlit(source, destination, op.InX, op.InY, op.InW, op.InH, op.OutX, op.OutY, op.OutW, op.OutH);
+                TransitionForBlit(
+                    commandBuffer,
+                    source,
+                    source.PreferredLayout,
+                    ImageLayout.TransferSrcOptimal,
+                    source.AccessMask,
+                    AccessFlags.TransferReadBit,
+                    source.StageMask,
+                    PipelineStageFlags.TransferBit);
 
-            // Transition to transfer layouts, blit, then transition back to preferred layouts.
-            TransitionForBlit(
-                commandBuffer,
-                source,
-                source.PreferredLayout,
-                ImageLayout.TransferSrcOptimal,
-                source.AccessMask,
-                AccessFlags.TransferReadBit,
-                source.StageMask,
-                PipelineStageFlags.TransferBit);
+                TransitionForBlit(
+                    commandBuffer,
+                    destination,
+                    destination.PreferredLayout,
+                    ImageLayout.TransferDstOptimal,
+                    destination.AccessMask,
+                    AccessFlags.TransferWriteBit,
+                    destination.StageMask,
+                    PipelineStageFlags.TransferBit);
 
-            TransitionForBlit(
-                commandBuffer,
-                destination,
-                destination.PreferredLayout,
-                ImageLayout.TransferDstOptimal,
-                destination.AccessMask,
-                AccessFlags.TransferWriteBit,
-                destination.StageMask,
-                PipelineStageFlags.TransferBit);
+                Api!.CmdBlitImage(
+                    commandBuffer,
+                    source.Image,
+                    ImageLayout.TransferSrcOptimal,
+                    destination.Image,
+                    ImageLayout.TransferDstOptimal,
+                    1,
+                    &region,
+                    filter);
 
-            Api!.CmdBlitImage(
-                commandBuffer,
-                source.Image,
-                ImageLayout.TransferSrcOptimal,
-                destination.Image,
-                ImageLayout.TransferDstOptimal,
-                1,
-                &region,
-                filter);
+                TransitionForBlit(
+                    commandBuffer,
+                    source,
+                    ImageLayout.TransferSrcOptimal,
+                    source.PreferredLayout,
+                    AccessFlags.TransferReadBit,
+                    source.AccessMask,
+                    PipelineStageFlags.TransferBit,
+                    source.StageMask);
 
-            TransitionForBlit(
-                commandBuffer,
-                source,
-                ImageLayout.TransferSrcOptimal,
-                source.PreferredLayout,
-                AccessFlags.TransferReadBit,
-                source.AccessMask,
-                PipelineStageFlags.TransferBit,
-                source.StageMask);
+                TransitionForBlit(
+                    commandBuffer,
+                    destination,
+                    ImageLayout.TransferDstOptimal,
+                    destination.PreferredLayout,
+                    AccessFlags.TransferWriteBit,
+                    destination.AccessMask,
+                    PipelineStageFlags.TransferBit,
+                    destination.StageMask);
+            }
 
-            TransitionForBlit(
-                commandBuffer,
-                destination,
-                ImageLayout.TransferDstOptimal,
-                destination.PreferredLayout,
-                AccessFlags.TransferWriteBit,
-                destination.AccessMask,
-                PipelineStageFlags.TransferBit,
-                destination.StageMask);
+            bool copiedAny = false;
+
+            if (op.ColorBit &&
+                TryResolveBlitImage(op.InFbo, imageIndex, op.ReadBufferMode, wantColor: true, wantDepth: false, wantStencil: false, out var colorSource, isSource: true) &&
+                TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.ColorAttachment0, wantColor: true, wantDepth: false, wantStencil: false, out var colorDestination, isSource: false))
+            {
+                ExecuteSingleBlit(colorSource, colorDestination, op.LinearFilter ? Filter.Linear : Filter.Nearest);
+                copiedAny = true;
+            }
+
+            if ((op.DepthBit || op.StencilBit) &&
+                TryResolveBlitImage(op.InFbo, imageIndex, op.ReadBufferMode, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthSource, isSource: true) &&
+                TryResolveBlitImage(op.OutFbo, imageIndex, EReadBufferMode.None, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthDestination, isSource: false))
+            {
+                // Vulkan only supports nearest filtering for depth/stencil blits.
+                ExecuteSingleBlit(depthSource, depthDestination, Filter.Nearest);
+                copiedAny = true;
+            }
+
+            if (!copiedAny)
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.Blit.NoAttachment",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Blit skipped: unable to resolve source/destination attachments for requested masks (Color={0}, Depth={1}, Stencil={2}).",
+                    op.ColorBit,
+                    op.DepthBit,
+                    op.StencilBit);
+            }
         }
 
         private void RecordIndirectDrawOp(CommandBuffer commandBuffer, IndirectDrawOp op)
@@ -677,7 +750,7 @@ namespace XREngine.Rendering.Vulkan
 
             Api!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Compute, pipeline);
 
-            if (op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, op.Snapshot, out DescriptorPool descriptorPool, out var tempBuffers))
+            if (op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, out DescriptorPool descriptorPool, out var tempBuffers))
                 RegisterComputeTransientResources(imageIndex, descriptorPool, tempBuffers);
 
             Api!.CmdDispatch(commandBuffer, op.GroupsX, op.GroupsY, op.GroupsZ);
@@ -698,7 +771,20 @@ namespace XREngine.Rendering.Vulkan
             if (pendingMask == EMemoryBarrierMask.None)
                 return;
 
-            ResolveBarrierScopes(pendingMask, out PipelineStageFlags srcStages, out PipelineStageFlags dstStages, out AccessFlags srcAccess, out AccessFlags dstAccess);
+            EmitMemoryBarrierMask(commandBuffer, pendingMask);
+            _state.ClearPendingMemoryBarrierMask();
+        }
+
+        /// <summary>
+        /// Emits a <c>vkCmdPipelineBarrier</c> for the given <see cref="EMemoryBarrierMask"/>.
+        /// Used both for global pending barriers and per-pass barriers.
+        /// </summary>
+        private void EmitMemoryBarrierMask(CommandBuffer commandBuffer, EMemoryBarrierMask mask)
+        {
+            if (mask == EMemoryBarrierMask.None)
+                return;
+
+            ResolveBarrierScopes(mask, out PipelineStageFlags srcStages, out PipelineStageFlags dstStages, out AccessFlags srcAccess, out AccessFlags dstAccess);
 
             MemoryBarrier memoryBarrier = new()
             {
@@ -718,8 +804,6 @@ namespace XREngine.Rendering.Vulkan
                 null,
                 0,
                 null);
-
-            _state.ClearPendingMemoryBarrierMask();
         }
 
         private static void ResolveBarrierScopes(
@@ -871,6 +955,86 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        private void EmitPlannedBufferBarriers(CommandBuffer commandBuffer, IReadOnlyList<VulkanBarrierPlanner.PlannedBufferBarrier>? plannedBarriers)
+        {
+            if (plannedBarriers is null || plannedBarriers.Count == 0)
+                return;
+
+            foreach (VulkanBarrierPlanner.PlannedBufferBarrier planned in plannedBarriers)
+            {
+                if (!TryResolveTrackedBuffer(planned.ResourceName, out Silk.NET.Vulkan.Buffer buffer, out ulong size) || buffer.Handle == 0)
+                    continue;
+
+                BufferMemoryBarrier barrier = new()
+                {
+                    SType = StructureType.BufferMemoryBarrier,
+                    SrcAccessMask = planned.Previous.AccessMask,
+                    DstAccessMask = planned.Next.AccessMask,
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    Buffer = buffer,
+                    Offset = 0,
+                    Size = size > 0 ? size : Vk.WholeSize
+                };
+
+                Api!.CmdPipelineBarrier(
+                    commandBuffer,
+                    planned.Previous.StageMask,
+                    planned.Next.StageMask,
+                    DependencyFlags.None,
+                    0,
+                    null,
+                    1,
+                    &barrier,
+                    0,
+                    null);
+            }
+        }
+
+        private void ExecuteSecondaryCommandBuffer(CommandBuffer primaryCommandBuffer, string label, Action<CommandBuffer> recorder)
+        {
+            CmdBeginLabel(primaryCommandBuffer, label);
+            CommandBuffer secondary = default;
+            bool allocated = false;
+
+            try
+            {
+                CommandBufferAllocateInfo allocInfo = new()
+                {
+                    SType = StructureType.CommandBufferAllocateInfo,
+                    CommandPool = commandPool,
+                    Level = CommandBufferLevel.Secondary,
+                    CommandBufferCount = 1
+                };
+
+                Api!.AllocateCommandBuffers(device, ref allocInfo, out secondary);
+                allocated = secondary.Handle != 0;
+
+                CommandBufferBeginInfo beginInfo = new()
+                {
+                    SType = StructureType.CommandBufferBeginInfo,
+                    Flags = CommandBufferUsageFlags.OneTimeSubmitBit
+                };
+
+                if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
+                    throw new Exception("Failed to begin Vulkan secondary command buffer.");
+
+                recorder(secondary);
+
+                if (Api!.EndCommandBuffer(secondary) != Result.Success)
+                    throw new Exception("Failed to end Vulkan secondary command buffer.");
+
+                Api!.CmdExecuteCommands(primaryCommandBuffer, 1, &secondary);
+            }
+            finally
+            {
+                if (allocated)
+                    Api!.FreeCommandBuffers(device, commandPool, 1, ref secondary);
+
+                CmdEndLabel(primaryCommandBuffer);
+            }
+        }
+
         public class CommandScope : IDisposable
         {
             private readonly VulkanRenderer _api;
@@ -895,11 +1059,13 @@ namespace XREngine.Rendering.Vulkan
 
         private CommandBuffer CommandsStart()
         {
+            CommandPool pool = GetThreadCommandPool();
+
             CommandBufferAllocateInfo allocateInfo = new()
             {
                 SType = StructureType.CommandBufferAllocateInfo,
                 Level = CommandBufferLevel.Primary,
-                CommandPool = commandPool,
+                CommandPool = pool,
                 CommandBufferCount = 1,
             };
 
@@ -912,6 +1078,9 @@ namespace XREngine.Rendering.Vulkan
             };
 
             Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
+
+            lock (_oneTimeCommandPoolsLock)
+                _oneTimeCommandPools[commandBuffer.Handle] = pool;
 
             return commandBuffer;
         }
@@ -927,10 +1096,20 @@ namespace XREngine.Rendering.Vulkan
                 PCommandBuffers = &commandBuffer,
             };
 
-            Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, default);
-            Api!.QueueWaitIdle(graphicsQueue);
+            lock (_oneTimeSubmitLock)
+            {
+                Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, default);
+                Api!.QueueWaitIdle(graphicsQueue);
+            }
 
-            Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
+            CommandPool pool = GetThreadCommandPool();
+            lock (_oneTimeCommandPoolsLock)
+            {
+                if (_oneTimeCommandPools.Remove(commandBuffer.Handle, out CommandPool ownerPool) && ownerPool.Handle != 0)
+                    pool = ownerPool;
+            }
+
+            Api!.FreeCommandBuffers(device, pool, 1, ref commandBuffer);
         }
 
         private void AllocateCommandBufferDirtyFlags()

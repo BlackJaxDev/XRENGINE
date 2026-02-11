@@ -1,9 +1,11 @@
-﻿using System.Collections.Concurrent;
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using XREngine.Rendering;
 using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.XeSS;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Jolt;
@@ -122,7 +124,7 @@ namespace XREngine
 
             public static void ApplyGpuRenderDispatchPreference()
             {
-                bool useGpu = Engine.EffectiveSettings.GPURenderDispatch;
+                bool useGpu = ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
 
                 void Apply()
                 {
@@ -146,6 +148,38 @@ namespace XREngine
                 }
 
                 Engine.InvokeOnMainThread(() => Apply(), "Engine.Rendering.ApplyGpuRenderDispatchPreference", true);
+            }
+
+            public static bool IsVulkanRendererActive()
+            {
+                if (State.RenderingViewport?.Window?.Renderer is VulkanRenderer)
+                    return true;
+
+                if (AbstractRenderer.Current is VulkanRenderer)
+                    return true;
+
+                foreach (XRWindow window in Engine.Windows)
+                {
+                    if (window.Renderer is VulkanRenderer)
+                        return true;
+                }
+
+                return false;
+            }
+
+            public static bool ResolveGpuRenderDispatchPreference(bool requestedGpuDispatch)
+            {
+                if (!requestedGpuDispatch)
+                    return false;
+
+                if (!IsVulkanRendererActive())
+                    return true;
+
+                XREngine.Debug.RenderingWarningEvery(
+                    "RenderDispatch.VulkanCpuPath",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDispatch] GPU render dispatch forced off while Vulkan renderer is active (CPU octree path target).");
+                return false;
             }
 
             public static void ApplyGpuBvhPreference()

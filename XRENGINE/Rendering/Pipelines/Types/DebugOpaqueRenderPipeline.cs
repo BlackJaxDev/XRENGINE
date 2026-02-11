@@ -19,7 +19,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 {
     private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
 
-    private bool _gpuRenderDispatch = Engine.EffectiveSettings.GPURenderDispatch;
+    private bool _gpuRenderDispatch = Engine.Rendering.ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
 
     /// <summary>
     /// When true, the pipeline dispatches opaque passes using GPU-driven rendering.
@@ -29,7 +29,8 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
         get => _gpuRenderDispatch;
         set
         {
-            SetField(ref _gpuRenderDispatch, value);
+            bool resolved = Engine.Rendering.ResolveGpuRenderDispatchPreference(value);
+            SetField(ref _gpuRenderDispatch, resolved);
         }
     }
 
