@@ -387,6 +387,7 @@ namespace XREngine.Rendering.Commands
 
             // Ensure material IDs buffer exists for batching keys
             EnsureMaterialIDs(capacity);
+            EnsureViewSetBuffers(capacity);
             _statsNeedsMap |= EnsureStatsBuffer();
 
             // Aggregate whether any buffer mapping is pending

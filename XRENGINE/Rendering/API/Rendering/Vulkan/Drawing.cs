@@ -1231,27 +1231,101 @@ namespace XREngine.Rendering.Vulkan
         // =========== Indirect + Pipeline Abstraction stubs for Vulkan ===========
         public override void BindVAOForRenderer(XRMeshRenderer.BaseVersion? version)
         {
-            // Vulkan has no VAO; this is a no-op for now.
+            if (version is null)
+            {
+                _boundMeshRendererForIndirect = null;
+                _boundIndexType = IndexType.Uint32;
+                _boundIndexCount = 0;
+                return;
+            }
+
+            var vkMesh = GenericToAPI<VkMeshRenderer>(version);
+            if (vkMesh is null)
+            {
+                _boundMeshRendererForIndirect = null;
+                _boundIndexType = IndexType.Uint32;
+                _boundIndexCount = 0;
+                return;
+            }
+
+            vkMesh.Generate();
+            _boundMeshRendererForIndirect = vkMesh;
+
+            if (vkMesh.TryGetPrimaryIndexBinding(out _, out IndexType indexType, out uint indexCount))
+            {
+                _boundIndexType = indexType;
+                _boundIndexCount = indexCount;
+            }
+            else
+            {
+                _boundIndexType = IndexType.Uint32;
+                _boundIndexCount = 0;
+            }
         }
 
         public override bool ValidateIndexedVAO(XRMeshRenderer.BaseVersion? version)
         {
-            // Vulkan path not implemented yet
-            return false;
+            return TryGetIndexBufferInfo(version, out _, out _);
         }
 
         public override bool TryGetIndexBufferInfo(XRMeshRenderer.BaseVersion? version, out IndexSize indexElementSize, out uint indexCount)
         {
-            // Vulkan path not implemented yet
             indexElementSize = IndexSize.FourBytes;
             indexCount = 0;
-            return false;
+
+            var vkMesh = version is not null ? GenericToAPI<VkMeshRenderer>(version) : _boundMeshRendererForIndirect;
+            if (vkMesh is null)
+                return false;
+
+            bool updateBoundState = version is null || _boundMeshRendererForIndirect == vkMesh;
+            vkMesh.Generate();
+            if (!vkMesh.TryGetPrimaryIndexBufferInfo(out indexElementSize, out indexCount))
+            {
+                if (updateBoundState)
+                {
+                    _boundIndexType = IndexType.Uint32;
+                    _boundIndexCount = 0;
+                }
+
+                return false;
+            }
+
+            if (updateBoundState)
+            {
+                _boundIndexType = ToVkIndexType(indexElementSize);
+                _boundIndexCount = indexCount;
+            }
+
+            return true;
         }
 
         public override bool TrySyncMeshRendererIndexBuffer(XRMeshRenderer meshRenderer, XRDataBuffer indexBuffer, IndexSize elementSize)
         {
-            // Vulkan path not implemented yet
-            return false;
+            if (meshRenderer is null || indexBuffer is null)
+                return false;
+
+            var version = meshRenderer.GetDefaultVersion();
+            var vkMesh = GenericToAPI<VkMeshRenderer>(version);
+            if (vkMesh is null)
+                return false;
+
+            var vkIndexBuffer = GenericToAPI<VkDataBuffer>(indexBuffer);
+            if (vkIndexBuffer is null)
+                return false;
+
+            vkMesh.Generate();
+            vkIndexBuffer.Generate();
+            vkMesh.SetTriangleIndexBuffer(vkIndexBuffer, elementSize);
+
+            if (_boundMeshRendererForIndirect == vkMesh &&
+                vkMesh.TryGetPrimaryIndexBinding(out _, out IndexType boundType, out uint boundCount))
+            {
+                _boundIndexType = boundType;
+                _boundIndexCount = boundCount;
+            }
+
+            MarkCommandBuffersDirty();
+            return true;
         }
 
         // =========== Indirect Draw State ===========
@@ -1300,6 +1374,12 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
+            if (_boundMeshRendererForIndirect is null || _boundIndexCount == 0)
+            {
+                Debug.VulkanWarning("MultiDrawElementsIndirectWithOffset: No indexed mesh renderer bound.");
+                return;
+            }
+
             int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
             EnqueueFrameOp(new IndirectDrawOp(
                 EnsureValidPassIndex(passIndex, "IndirectDraw"),
@@ -1330,6 +1410,12 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
+            if (_boundMeshRendererForIndirect is null || _boundIndexCount == 0)
+            {
+                Debug.VulkanWarning("MultiDrawElementsIndirectCount: No indexed mesh renderer bound.");
+                return;
+            }
+
             if (_boundParameterBuffer?.BufferHandle is null)
             {
                 Debug.VulkanWarning("MultiDrawElementsIndirectCount: No parameter (count) buffer bound. Falling back to regular indirect draw.");
@@ -1352,6 +1438,15 @@ namespace XREngine.Rendering.Vulkan
             // Actual draw count is determined by GPU; we track max as approximation
             Engine.Rendering.Stats.IncrementDrawCalls((int)maxDrawCount);
         }
+
+        private static IndexType ToVkIndexType(IndexSize size)
+            => size switch
+            {
+                IndexSize.Byte => IndexType.Uint8Ext,
+                IndexSize.TwoBytes => IndexType.Uint16,
+                IndexSize.FourBytes => IndexType.Uint32,
+                _ => IndexType.Uint32
+            };
 
         public override void ApplyRenderParameters(XREngine.Rendering.Models.Materials.RenderingParameters parameters)
         {

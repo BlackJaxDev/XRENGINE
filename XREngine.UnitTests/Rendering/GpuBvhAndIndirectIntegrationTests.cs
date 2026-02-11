@@ -1642,7 +1642,7 @@ public class GpuBvhAndIndirectIntegrationTests
     /// <summary>
     /// Strips Vulkan GLSL specialization constants (layout(constant_id = N)) which are not supported
     /// in plain OpenGL GLSL. Converts them to regular const declarations.
-    /// This matches what the engine does in OctreeGPU.PatchBvhSpecializationConstants.
+    /// This matches what the engine does in GpuBvhTree via uniform patching.
     /// </summary>
     private static string StripVulkanSpecializationConstants(string source, uint maxLeafPrimitives = 4, uint bvhMode = 0)
     {
