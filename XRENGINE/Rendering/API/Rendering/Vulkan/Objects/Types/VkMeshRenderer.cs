@@ -97,9 +97,28 @@ public unsafe partial class VulkanRenderer
 
 	internal void EnqueueFrameOp(FrameOp op)
 	{
+		FrameOp validatedOp = EnsureValidFrameOpPassIndex(op);
 		using (_frameOpsLock.EnterScope())
-			_frameOps.Add(op);
+			_frameOps.Add(validatedOp);
 		MarkCommandBuffersDirty();
+	}
+
+	private FrameOp EnsureValidFrameOpPassIndex(FrameOp op)
+	{
+		int validatedPassIndex = EnsureValidPassIndex(op.PassIndex, op.GetType().Name, op.Context.PassMetadata);
+		if (validatedPassIndex == op.PassIndex)
+			return op;
+
+		return op switch
+		{
+			ClearOp clear => clear with { PassIndex = validatedPassIndex },
+			MeshDrawOp meshDraw => meshDraw with { PassIndex = validatedPassIndex },
+			BlitOp blit => blit with { PassIndex = validatedPassIndex },
+			IndirectDrawOp indirectDraw => indirectDraw with { PassIndex = validatedPassIndex },
+			MemoryBarrierOp memoryBarrier => memoryBarrier with { PassIndex = validatedPassIndex },
+			ComputeDispatchOp computeDispatch => computeDispatch with { PassIndex = validatedPassIndex },
+			_ => op
+		};
 	}
 
 	internal FrameOp[] DrainFrameOps()

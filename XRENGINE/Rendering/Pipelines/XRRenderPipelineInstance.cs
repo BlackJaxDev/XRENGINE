@@ -1,5 +1,6 @@
 using ImageMagick;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Core;
@@ -48,6 +49,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
     // Track the last applied internal resolution scale to avoid resetting the viewport every frame.
     private float? _appliedInternalResolutionScale;
+    private readonly object _renderGraphValidationLock = new();
+    private readonly HashSet<int> _executedRenderGraphPassIndices = [];
+    private readonly HashSet<int> _executedBranchRenderGraphPassIndices = [];
+    private int _activeRenderGraphBranchDepth;
 
     private RenderPipeline? _pipeline;
     public RenderPipeline? Pipeline
@@ -302,6 +307,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             using (RenderState.PushMainAttributes(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands))
             {
                 WarnIfScreenSpaceUiHasNoRenderCommand(userInterface, viewport);
+                BeginRenderGraphValidationFrame();
 
                 if (AbstractRenderer.Current is OpenGLRenderer)
                 {
@@ -313,6 +319,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase
                 {
                     Pipeline.CommandChain.Execute();
                 }
+
+                ValidateRenderGraphExecutionAgainstMetadata();
             }
         }
     }
@@ -473,5 +481,101 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         }
 
         return false;
+    }
+
+    internal void RegisterExecutedRenderGraphPass(int passIndex)
+    {
+        if (passIndex == int.MinValue)
+            return;
+
+        lock (_renderGraphValidationLock)
+        {
+            _executedRenderGraphPassIndices.Add(passIndex);
+            if (_activeRenderGraphBranchDepth > 0)
+                _executedBranchRenderGraphPassIndices.Add(passIndex);
+        }
+    }
+
+    internal StateObject PushRenderGraphBranchScope()
+    {
+        lock (_renderGraphValidationLock)
+            _activeRenderGraphBranchDepth++;
+
+        return StateObject.New(() =>
+        {
+            lock (_renderGraphValidationLock)
+            {
+                if (_activeRenderGraphBranchDepth > 0)
+                    _activeRenderGraphBranchDepth--;
+            }
+        });
+    }
+
+    private void BeginRenderGraphValidationFrame()
+    {
+        lock (_renderGraphValidationLock)
+        {
+            _executedRenderGraphPassIndices.Clear();
+            _executedBranchRenderGraphPassIndices.Clear();
+            _activeRenderGraphBranchDepth = 0;
+        }
+    }
+
+    private void ValidateRenderGraphExecutionAgainstMetadata()
+    {
+        RenderPipeline? pipeline = Pipeline;
+        if (pipeline is null)
+            return;
+
+        HashSet<int> executedPasses;
+        HashSet<int> branchExecutedPasses;
+        lock (_renderGraphValidationLock)
+        {
+            if (_executedRenderGraphPassIndices.Count == 0 && _executedBranchRenderGraphPassIndices.Count == 0)
+                return;
+
+            executedPasses = [.. _executedRenderGraphPassIndices];
+            branchExecutedPasses = [.. _executedBranchRenderGraphPassIndices];
+        }
+
+        HashSet<int> metadataPassIndices = pipeline.PassMetadata
+            .Select(m => m.PassIndex)
+            .ToHashSet();
+
+        WarnMissingPassMetadata(
+            executedPasses,
+            metadataPassIndices,
+            "executed",
+            "[RenderDiag] Pipeline '{0}' executed render-graph passes without metadata: {1}.");
+
+        WarnMissingPassMetadata(
+            branchExecutedPasses,
+            metadataPassIndices,
+            "branch-executed",
+            "[RenderDiag] Pipeline '{0}' executed branch-selected passes without metadata: {1}.");
+    }
+
+    private void WarnMissingPassMetadata(
+        HashSet<int> executedPasses,
+        HashSet<int> metadataPassIndices,
+        string scopeLabel,
+        string messageTemplate)
+    {
+        if (executedPasses.Count == 0)
+            return;
+
+        int[] missing = [.. executedPasses.Where(passIndex => !metadataPassIndices.Contains(passIndex)).OrderBy(passIndex => passIndex)];
+        if (missing.Length == 0)
+            return;
+
+        string missingList = string.Join(", ", missing);
+        string pipelineName = Pipeline?.DebugName ?? Pipeline?.GetType().Name ?? "UnknownPipeline";
+
+        Debug.RenderingWarningEvery(
+            $"RenderGraph.MetadataCoverage.{GetHashCode()}.{scopeLabel}",
+            TimeSpan.FromSeconds(1),
+            messageTemplate,
+            pipelineName,
+            missingList);
     }
 }

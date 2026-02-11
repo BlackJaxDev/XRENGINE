@@ -238,7 +238,7 @@ namespace XREngine.Rendering.Vulkan
                 activeRenderArea = default;
             }
 
-            void BeginRenderPassForTarget(XRFrameBuffer? target)
+            void BeginRenderPassForTarget(XRFrameBuffer? target, int passIndex, in FrameOpContext context)
             {
                 // Assumes no active render pass.
                 if (target is null)
@@ -277,6 +277,7 @@ namespace XREngine.Rendering.Vulkan
                 var vkFrameBuffer = GenericToAPI<VkFrameBuffer>(target);
                 if (vkFrameBuffer is null)
                     throw new InvalidOperationException("Failed to resolve Vulkan framebuffer for target.");
+                vkFrameBuffer.Generate();
 
                 string fboName = string.IsNullOrWhiteSpace(target.Name)
                     ? $"FBO[{target.GetHashCode()}]"
@@ -284,10 +285,11 @@ namespace XREngine.Rendering.Vulkan
                 CmdBeginLabel(commandBuffer, $"RenderPass:{fboName}");
                 renderPassLabelActive = true;
 
+                RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(passIndex, context.PassMetadata);
                 RenderPassBeginInfo fboPassInfo = new()
                 {
                     SType = StructureType.RenderPassBeginInfo,
-                    RenderPass = vkFrameBuffer.RenderPass,
+                    RenderPass = passRenderPass,
                     Framebuffer = vkFrameBuffer.FrameBuffer,
                     RenderArea = new Rect2D
                     {
@@ -306,7 +308,7 @@ namespace XREngine.Rendering.Vulkan
 
                 renderPassActive = true;
                 activeTarget = target;
-                activeRenderPass = vkFrameBuffer.RenderPass;
+                activeRenderPass = passRenderPass;
                 activeFramebuffer = vkFrameBuffer.FrameBuffer;
                 activeRenderArea = fboPassInfo.RenderArea;
             }
@@ -351,7 +353,7 @@ namespace XREngine.Rendering.Vulkan
                     activeSchedulingIdentity = int.MinValue;
                 }
 
-                int opPassIndex = EnsureValidPassIndex(op.PassIndex, op.GetType().Name);
+                int opPassIndex = EnsureValidPassIndex(op.PassIndex, op.GetType().Name, op.Context.PassMetadata);
                 int opSchedulingIdentity = op.Context.SchedulingIdentity;
                 if (opPassIndex != activePassIndex || opSchedulingIdentity != activeSchedulingIdentity)
                 {
@@ -392,7 +394,7 @@ namespace XREngine.Rendering.Vulkan
                         if (!renderPassActive || activeTarget != clear.Target)
                         {
                             EndActiveRenderPass();
-                            BeginRenderPassForTarget(clear.Target);
+                            BeginRenderPassForTarget(clear.Target, opPassIndex, activeContext);
                         }
                         RecordClearOp(commandBuffer, imageIndex, clear);
                         break;
@@ -401,7 +403,7 @@ namespace XREngine.Rendering.Vulkan
                         if (!renderPassActive || activeTarget != drawOp.Target)
                         {
                             EndActiveRenderPass();
-                            BeginRenderPassForTarget(drawOp.Target);
+                            BeginRenderPassForTarget(drawOp.Target, opPassIndex, activeContext);
                         }
 
                         // Apply per-draw dynamic state snapshot (OpenGL-like immediate semantics).
@@ -449,7 +451,10 @@ namespace XREngine.Rendering.Vulkan
             if (!renderPassActive || activeTarget is not null)
             {
                 EndActiveRenderPass();
-                BeginRenderPassForTarget(null);
+                BeginRenderPassForTarget(
+                    null,
+                    activePassIndex != int.MinValue ? activePassIndex : VulkanBarrierPlanner.SwapchainPassIndex,
+                    hasActiveContext ? activeContext : initialContext);
             }
 
             // For presentation we want deterministic full-surface state regardless of prior per-viewport scissor.
@@ -935,8 +940,8 @@ namespace XREngine.Rendering.Vulkan
                     DstAccessMask = planned.Next.AccessMask,
                     OldLayout = planned.Previous.Layout,
                     NewLayout = planned.Next.Layout,
-                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    SrcQueueFamilyIndex = planned.SrcQueueFamilyIndex,
+                    DstQueueFamilyIndex = planned.DstQueueFamilyIndex,
                     Image = planned.Group.Image,
                     SubresourceRange = range
                 };
@@ -970,8 +975,8 @@ namespace XREngine.Rendering.Vulkan
                     SType = StructureType.BufferMemoryBarrier,
                     SrcAccessMask = planned.Previous.AccessMask,
                     DstAccessMask = planned.Next.AccessMask,
-                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    SrcQueueFamilyIndex = planned.SrcQueueFamilyIndex,
+                    DstQueueFamilyIndex = planned.DstQueueFamilyIndex,
                     Buffer = buffer,
                     Offset = 0,
                     Size = size > 0 ? size : Vk.WholeSize

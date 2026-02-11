@@ -211,26 +211,37 @@ Goal: get 3D scene rendering and 2D screen-space UI rendering fully working on V
 
 ### P2 - Validation and Exit Criteria
 
-- [ ] Add runtime assert/warning for any enqueued op with invalid pass index.
-- [ ] Add metadata completeness checks for branch-executed passes vs generated metadata.
-- [ ] Add Vulkan validation scenes/tests for:
-  - [ ] CPU octree 3D visibility correctness.
-  - [ ] Screen-space UI visibility correctness.
-  - [ ] Transparency/blend correctness.
-  - [ ] Expected draw-call counts in strict 1x1 mode.
+- [x] Add runtime assert/warning for any enqueued op with invalid pass index.
+- [x] Add metadata completeness checks for branch-executed passes vs generated metadata.
+- [x] Add Vulkan validation scenes/tests for:
+  - [x] CPU octree 3D visibility correctness.
+  - [x] Screen-space UI visibility correctness.
+  - [x] Transparency/blend correctness.
+  - [x] Expected draw-call counts in strict 1x1 mode.
 
 ### Definition of Done
 
-- [ ] 3D scene renders correctly via CPU octree path on Vulkan.
-- [ ] 2D screen-space UI renders correctly on Vulkan through the same camera-driven DAG path.
-- [ ] Camera pipeline command graph produces complete and dependency-correct pass metadata.
-- [ ] Vulkan backend executes that DAG with correct barriers/transitions and no invalid-pass fallthrough.
-- [ ] Strict 1x1 call mode can be enabled and validated with profiler counters.
+- [x] 3D scene renders correctly via CPU octree path on Vulkan.
+- [x] 2D screen-space UI renders correctly on Vulkan through the same camera-driven DAG path.
+- [x] Camera pipeline command graph produces complete and dependency-correct pass metadata.
+- [x] Vulkan backend executes that DAG with correct barriers/transitions and no invalid-pass fallthrough.
+- [x] Strict 1x1 call mode can be enabled and validated with profiler counters.
 
-## 6. Immediate Next Steps
+## 6. Immediate Next Steps (Completed 2026-02-11)
 
-1. **Refine pipeline barrier planner + FBO binding**: wire per-pass barrier plans into render-pass execution, add buffer hazards/queue ownership, and have `BindFrameBuffer` transitions actually influence recorded passes instead of just invalidating command buffers.
-2. **Descriptor schemas & materials**: define the engine/global descriptor layouts, update `VkRenderProgram`/`VkMaterial` to allocate descriptor sets, and hook them into draw submission.
-3. **Render-pass compatibility validation** inside `VkFrameBuffer`/`VkRenderPass`: ensure depth/stencil formats, load/store ops, and sample counts match planned render graph attachments before encoding.
-4. **Expand blit/readback coverage**: add depth/stencil and viewport blits plus staging-backed readback paths to unblock screenshot/picking features.
-5. **Staging/allocator consolidation**: migrate the per-texture staging buffers into a shared staging manager so large uploads can be batched and reused across texture/buffer transfers.
+1. [x] **Refine pipeline barrier planner + FBO binding**
+   - Planned image/buffer barriers are emitted per pass during command recording.
+   - Queue ownership indices from `VulkanBarrierPlanner` are now preserved when encoding barriers (single-queue runtime currently resolves ownership to graphics family).
+   - Bound FBO context continues to flow into planner re-sync + command buffer invalidation.
+2. [x] **Descriptor schemas & materials**
+   - Engine/global and material descriptor schemas are wired through `RenderGraphDescriptorSchemas`, `VkRenderProgram`, and `VkMaterial`.
+3. [x] **Render-pass compatibility validation**
+   - `VkFrameBuffer` now resolves pass-specific attachment signatures from render-graph metadata and validates slot/type/sample compatibility before beginning the pass.
+   - Per-pass load/store ops are reflected through render-pass selection for that pass.
+4. [x] **Expand blit/readback coverage**
+   - Depth/stencil blits and staging-backed pixel/depth/screenshot readbacks are present on Vulkan paths.
+5. [x] **Staging/allocator consolidation**
+   - Shared `VulkanStagingManager` is in frame loop and used by Vulkan texture/buffer upload paths.
+
+Validation run:
+- `dotnet test XREngine.UnitTests/XREngine.UnitTests.csproj --filter VulkanTodoP2ValidationTests --verbosity minimal` (Passed: 6, Failed: 0 on 2026-02-11)

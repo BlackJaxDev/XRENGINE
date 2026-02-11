@@ -66,6 +66,7 @@ namespace XREngine
                 {
                     int previous = _currentRenderGraphPassIndex;
                     _currentRenderGraphPassIndex = passIndex;
+                    CurrentRenderingPipeline?.RegisterExecutedRenderGraphPass(passIndex);
                     return StateObject.New(() => _currentRenderGraphPassIndex = previous);
                 }
 
