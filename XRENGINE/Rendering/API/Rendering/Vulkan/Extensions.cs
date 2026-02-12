@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Vulkan
         /// Indicates whether VK_KHR_draw_indirect_count extension is supported and loaded.
         /// </summary>
         private bool _supportsDrawIndirectCount;
+        private bool _supportsDescriptorIndexing;
 
         private readonly string[] deviceExtensions =
         [
@@ -26,7 +27,8 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private readonly string[] optionalDeviceExtensions =
         [
-            "VK_KHR_draw_indirect_count"
+            "VK_KHR_draw_indirect_count",
+            "VK_EXT_descriptor_indexing"
         ];
 
         private string[] GetRequiredExtensions()

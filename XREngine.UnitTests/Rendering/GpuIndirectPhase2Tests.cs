@@ -73,7 +73,12 @@ public class GpuIndirectPhase2Tests
         visibleField!.SetValue(pass, 123u);
 
         // Call the private method via reflection.
-        var method = typeof(GPURenderPassCollection).GetMethod("UpdateVisibleCountersFromBuffer", BindingFlags.Instance | BindingFlags.NonPublic);
+        var method = typeof(GPURenderPassCollection).GetMethod(
+            "UpdateVisibleCountersFromBuffer",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            types: Type.EmptyTypes,
+            modifiers: null);
         method.ShouldNotBeNull();
         method!.Invoke(pass, null);
 

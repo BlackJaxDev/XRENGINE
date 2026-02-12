@@ -155,7 +155,7 @@ public unsafe partial class VulkanRenderer
             if (_descriptorSetLayouts.Length > 0)
             {
                 foreach (DescriptorSetLayout layout in _descriptorSetLayouts)
-                    Api!.DestroyDescriptorSetLayout(Device, layout, null);
+                    Renderer.ReleaseCachedDescriptorSetLayout(layout);
 
                 _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
             }

@@ -7,6 +7,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
+using XREngine.Rendering.Vulkan;
 using static XREngine.Rendering.GpuDispatchLogger;
 
 namespace XREngine.Rendering.Commands
@@ -87,7 +88,7 @@ namespace XREngine.Rendering.Commands
             if (ForcePassthroughCulling)
                 return EOcclusionCullingMode.Disabled;
 
-            return Engine.EffectiveSettings.GpuOcclusionCullingMode;
+            return VulkanFeatureProfile.ResolveOcclusionCullingMode(Engine.EffectiveSettings.GpuOcclusionCullingMode);
         }
 
         private void ApplyOcclusionCulling(GPUScene scene, XRCamera? camera)

@@ -20,32 +20,14 @@ namespace XREngine.UnitTests.Rendering;
 /// set up GPU buffers with test data, dispatch compute shaders, and validate results.
 /// </summary>
 [TestFixture]
-public class GpuBvhAndIndirectIntegrationTests
+public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 {
-    private const int Width = 64;
-    private const int Height = 64;
-
-    private static string ShaderBasePath
-    {
-        get
-        {
-            var dir = AppContext.BaseDirectory;
-            for (int i = 0; i < 10; i++)
-            {
-                var candidate = Path.Combine(dir, "Build", "CommonAssets", "Shaders");
-                if (Directory.Exists(candidate))
-                    return candidate;
-                dir = Path.GetDirectoryName(dir) ?? dir;
-            }
-            return @"D:\Documents\XRENGINE\Build\CommonAssets\Shaders";
-        }
-    }
-
-    private static bool IsHeadless =>
-        Environment.GetEnvironmentVariable("XR_HEADLESS_TEST") == "1" ||
-        Environment.GetEnvironmentVariable("CI") == "true";
-
-    private static void AssertHardwareComputeOrInconclusive(GL gl)
+    /// <summary>
+    /// Extended hardware check: also rejects known software renderers
+    /// (GDI Generic, llvmpipe, SwiftShader) that can create a context but
+    /// silently miscompute shaders.
+    /// </summary>
+    private new static void AssertHardwareComputeOrInconclusive(GL gl)
     {
         if (IsHeadless)
             Assert.Inconclusive("GPU compute integration tests skipped in headless/CI mode.");
@@ -53,7 +35,6 @@ public class GpuBvhAndIndirectIntegrationTests
         string vendor = gl.GetStringS(StringName.Vendor) ?? string.Empty;
         string renderer = gl.GetStringS(StringName.Renderer) ?? string.Empty;
 
-        // Common software renderers / remote sessions that frequently don't execute compute as expected.
         if (vendor.Contains("Microsoft", StringComparison.OrdinalIgnoreCase) ||
             renderer.Contains("GDI Generic", StringComparison.OrdinalIgnoreCase) ||
             renderer.Contains("llvmpipe", StringComparison.OrdinalIgnoreCase) ||
@@ -1186,6 +1167,12 @@ public class GpuBvhAndIndirectIntegrationTests
             SetupTestCommand(culledCommands, 0, new Vector3(0, 0, -1), 1f);
             SetupTestCommand(culledCommands, 1, new Vector3(0, 0, -2), 1f);
             SetupTestCommand(culledCommands, 2, new Vector3(0, 0, -3), 1f);
+            culledCommands[0 * COMMAND_FLOATS + 36] = BitConverter.UInt32BitsToSingle(101u);
+            culledCommands[1 * COMMAND_FLOATS + 36] = BitConverter.UInt32BitsToSingle(102u);
+            culledCommands[2 * COMMAND_FLOATS + 36] = BitConverter.UInt32BitsToSingle(103u);
+            culledCommands[0 * COMMAND_FLOATS + 38] = BitConverter.UInt32BitsToSingle(201u);
+            culledCommands[1 * COMMAND_FLOATS + 38] = BitConverter.UInt32BitsToSingle(202u);
+            culledCommands[2 * COMMAND_FLOATS + 38] = BitConverter.UInt32BitsToSingle(203u);
             culledCommands[0 * COMMAND_FLOATS + 42] = 1.25f;
             culledCommands[1 * COMMAND_FLOATS + 42] = 2.50f;
             culledCommands[2 * COMMAND_FLOATS + 42] = 3.75f;
@@ -1204,7 +1191,8 @@ public class GpuBvhAndIndirectIntegrationTests
             gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, culledCount.AsSpan(), BufferUsageARB.StaticDraw);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 1, culledCountBuffer);
 
-            uint[] keyIndexOut = new uint[numCommands * 2];
+            const int KEY_UINTS = 4;
+            uint[] keyIndexOut = new uint[numCommands * KEY_UINTS];
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, keyIndexBuffer);
             gl.BufferData<uint>(BufferTargetARB.ShaderStorageBuffer, keyIndexOut.AsSpan(), BufferUsageARB.DynamicCopy);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 2, keyIndexBuffer);
@@ -1216,9 +1204,9 @@ public class GpuBvhAndIndirectIntegrationTests
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 3, materialIdsBuffer);
 
             gl.UseProgram(program);
-            gl.Uniform1(gl.GetUniformLocation(program, "SortByDistance"), 1);
-            gl.Uniform1(gl.GetUniformLocation(program, "SortDirection"), 1);
-            gl.Uniform1(gl.GetUniformLocation(program, "UseMaterialBatchKey"), 0);
+            gl.Uniform1(gl.GetUniformLocation(program, "CurrentRenderPass"), -1);
+            gl.Uniform1(gl.GetUniformLocation(program, "MaxSortKeys"), numCommands);
+            gl.Uniform1(gl.GetUniformLocation(program, "StateBitMask"), 0u);
 
             gl.DispatchCompute(1, 1, 1);
             gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
@@ -1226,19 +1214,26 @@ public class GpuBvhAndIndirectIntegrationTests
             gl.BindBuffer(BufferTargetARB.ShaderStorageBuffer, keyIndexBuffer);
             uint* outPtr = (uint*)gl.MapBuffer(BufferTargetARB.ShaderStorageBuffer, BufferAccessARB.ReadOnly);
 
-            // Shader emits unsorted key-index pairs (key for idx, then idx)
-            outPtr[1].ShouldBe(0u);
-            outPtr[3].ShouldBe(1u);
-            outPtr[5].ShouldBe(2u);
+            // Shader emits 4 uint lanes per command: packed key, materialID, meshID, logicalIdx.
+            outPtr[3].ShouldBe(0u);
+            outPtr[7].ShouldBe(1u);
+            outPtr[11].ShouldBe(2u);
 
             uint k0 = outPtr[0];
-            uint k1 = outPtr[2];
-            uint k2 = outPtr[4];
+            uint k1 = outPtr[4];
+            uint k2 = outPtr[8];
+            outPtr[1].ShouldBe(201u);
+            outPtr[5].ShouldBe(202u);
+            outPtr[9].ShouldBe(203u);
+            outPtr[2].ShouldBe(101u);
+            outPtr[6].ShouldBe(102u);
+            outPtr[10].ShouldBe(103u);
             gl.UnmapBuffer(BufferTargetARB.ShaderStorageBuffer);
 
-            k0.ShouldBe(BitConverter.SingleToUInt32Bits(1.25f));
-            k1.ShouldBe(BitConverter.SingleToUInt32Bits(2.50f));
-            k2.ShouldBe(BitConverter.SingleToUInt32Bits(3.75f));
+            // renderPass, shaderProgramID and flags are all zero in this setup
+            k0.ShouldBe(0u);
+            k1.ShouldBe(0u);
+            k2.ShouldBe(0u);
 
             gl.DeleteBuffer(culledBuffer);
             gl.DeleteBuffer(culledCountBuffer);
@@ -1606,69 +1601,16 @@ public class GpuBvhAndIndirectIntegrationTests
 
     #region Helper Methods
 
-    private static (GL?, IWindow?) CreateGLContext()
+    /// <summary>
+    /// Creates GL context and also validates the GPU driver is real hardware
+    /// (rejects software renderers).
+    /// </summary>
+    private new (GL?, IWindow?) CreateGLContext()
     {
-        var options = WindowOptions.Default;
-        options.Size = new Vector2D<int>(Width, Height);
-        options.IsVisible = false;
-        options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 6));
-
-        IWindow? window = null;
-        GL? gl = null;
-
-        try
-        {
-            window = Window.Create(options);
-            window.Initialize();
-            window.MakeCurrent();
-            window.DoEvents();
-            gl = GL.GetApi(window);
-
-            if (gl is not null)
-                AssertHardwareComputeOrInconclusive(gl);
-        }
-        catch (Exception)
-        {
-            window?.Close();
-            window?.Dispose();
-            return (null, null);
-        }
-
+        var (gl, window) = base.CreateGLContext();
+        if (gl is not null)
+            AssertHardwareComputeOrInconclusive(gl);
         return (gl, window);
-    }
-
-    private static uint CompileComputeShader(GL gl, string source)
-    {
-        uint shader = gl.CreateShader(ShaderType.ComputeShader);
-        gl.ShaderSource(shader, source);
-        gl.CompileShader(shader);
-
-        gl.GetShader(shader, ShaderParameterName.CompileStatus, out int status);
-        if (status == 0)
-        {
-            string infoLog = gl.GetShaderInfoLog(shader);
-            gl.DeleteShader(shader);
-            throw new InvalidOperationException($"Failed to compile compute shader:\n{infoLog}");
-        }
-
-        return shader;
-    }
-
-    private static uint CreateComputeProgram(GL gl, uint computeShader)
-    {
-        uint program = gl.CreateProgram();
-        gl.AttachShader(program, computeShader);
-        gl.LinkProgram(program);
-
-        gl.GetProgram(program, ProgramPropertyARB.LinkStatus, out int status);
-        if (status == 0)
-        {
-            string infoLog = gl.GetProgramInfoLog(program);
-            gl.DeleteProgram(program);
-            throw new InvalidOperationException($"Failed to link compute program:\n{infoLog}");
-        }
-
-        return program;
     }
 
     private static string ResolveIncludes(string source, string baseDir)

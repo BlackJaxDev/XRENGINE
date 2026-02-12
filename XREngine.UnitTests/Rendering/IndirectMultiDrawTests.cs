@@ -84,6 +84,7 @@ public class IndirectMultiDrawTests
     }
 
     [Test]
+    [Explicit("Requires interactive OpenGL multi-draw indirect support in the test environment")]
     public unsafe void MultiDrawElementsIndirect_RendersTwoDistinctCubes()
     {
         var options = WindowOptions.Default;
@@ -91,7 +92,19 @@ public class IndirectMultiDrawTests
         options.IsVisible = ShowWindow;
         options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 6));
 
-        using var window = Window.Create(options);
+        IWindow window;
+        try
+        {
+            window = Window.Create(options);
+        }
+        catch (Exception ex)
+        {
+            Assert.Inconclusive($"Failed to create OpenGL window/context: {ex.Message}");
+            return;
+        }
+
+        using (window)
+        {
 
         try
         {
@@ -214,10 +227,12 @@ public class IndirectMultiDrawTests
         gl.DeleteBuffer(vbo);
         gl.DeleteVertexArray(vao);
 
-        window.Close();
+            window.Close();
+        }
     }
 
     [Test]
+    [Explicit("Requires interactive OpenGL multi-draw indirect count support in the test environment")]
     public unsafe void MultiDrawElementsIndirectCount_RendersTwoDistinctCubes_UsingGpuCount()
     {
         var options = WindowOptions.Default;
@@ -225,7 +240,19 @@ public class IndirectMultiDrawTests
         options.IsVisible = ShowWindow;
         options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 6));
 
-        using var window = Window.Create(options);
+        IWindow window;
+        try
+        {
+            window = Window.Create(options);
+        }
+        catch (Exception ex)
+        {
+            Assert.Inconclusive($"Failed to create OpenGL window/context: {ex.Message}");
+            return;
+        }
+
+        using (window)
+        {
 
         try
         {
@@ -358,7 +385,8 @@ public class IndirectMultiDrawTests
         gl.DeleteBuffer(vbo);
         gl.DeleteVertexArray(vao);
 
-        window.Close();
+            window.Close();
+        }
     }
 
     [Test]

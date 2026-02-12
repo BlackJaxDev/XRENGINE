@@ -313,6 +313,12 @@ namespace XREngine
             {
                 Rendering.ApplyGpuBvhPreference();
             }
+            else if (propertyName == nameof(GameStartupSettings.VulkanGpuDrivenProfileOverride))
+            {
+                Rendering.ApplyGpuRenderDispatchPreference();
+                Rendering.ApplyGpuBvhPreference();
+                Rendering.LogVulkanFeatureProfileFingerprint();
+            }
             else if (propertyName == nameof(UserSettings.EnableNvidiaDlssOverride)
                 || propertyName == nameof(UserSettings.DlssQualityOverride))
             {

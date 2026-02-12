@@ -13,31 +13,8 @@ namespace XREngine.UnitTests.Physics;
 /// validating physics calculations, collision detection, and constraint solving.
 /// </summary>
 [TestFixture]
-public class PhysicsChainComputeIntegrationTests
+public class PhysicsChainComputeIntegrationTests : GpuTestBase
 {
-    private const int Width = 64;
-    private const int Height = 64;
-
-    private static string ShaderBasePath
-    {
-        get
-        {
-            var dir = AppContext.BaseDirectory;
-            for (int i = 0; i < 10; i++)
-            {
-                var candidate = Path.Combine(dir, "Build", "CommonAssets", "Shaders");
-                if (Directory.Exists(candidate))
-                    return candidate;
-                dir = Path.GetDirectoryName(dir) ?? dir;
-            }
-            return @"D:\Documents\XRENGINE\Build\CommonAssets\Shaders";
-        }
-    }
-
-    private static bool IsHeadless =>
-        Environment.GetEnvironmentVariable("XR_HEADLESS_TEST") == "1" ||
-        Environment.GetEnvironmentVariable("CI") == "true";
-
     #region Shader Compilation Tests
 
     [Test]
@@ -485,63 +462,6 @@ public class PhysicsChainComputeIntegrationTests
     #endregion
 
     #region Helper Methods
-
-    private static (GL? gl, IWindow? window) CreateGLContext()
-    {
-        if (IsHeadless)
-            return (null, null);
-
-        try
-        {
-            var options = WindowOptions.Default;
-            options.Size = new Silk.NET.Maths.Vector2D<int>(Width, Height);
-            options.Title = "PhysicsChain Test";
-            options.IsVisible = false;
-            options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.Default, new APIVersion(4, 6));
-
-            var window = Window.Create(options);
-            window.Initialize();
-
-            var gl = GL.GetApi(window);
-            return (gl, window);
-        }
-        catch
-        {
-            return (null, null);
-        }
-    }
-
-    private static uint CompileComputeShader(GL gl, string source)
-    {
-        uint shader = gl.CreateShader(ShaderType.ComputeShader);
-        gl.ShaderSource(shader, source);
-        gl.CompileShader(shader);
-
-        gl.GetShader(shader, ShaderParameterName.CompileStatus, out int success);
-        if (success == 0)
-        {
-            string log = gl.GetShaderInfoLog(shader);
-            Assert.Fail($"Compute shader compilation failed: {log}");
-        }
-
-        return shader;
-    }
-
-    private static uint CreateComputeProgram(GL gl, uint shader)
-    {
-        uint program = gl.CreateProgram();
-        gl.AttachShader(program, shader);
-        gl.LinkProgram(program);
-
-        gl.GetProgram(program, ProgramPropertyARB.LinkStatus, out int success);
-        if (success == 0)
-        {
-            string log = gl.GetProgramInfoLog(program);
-            Assert.Fail($"Compute program linking failed: {log}");
-        }
-
-        return program;
-    }
 
     private static void SetParticleData(float[] data, int index, int stride,
         Vector3 position, Vector3 prevPosition, Vector3 transformPosition, Vector3 transformLocalPosition,

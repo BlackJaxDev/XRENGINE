@@ -56,10 +56,16 @@ internal readonly record struct AutoUniformRewriteResult(
 internal static class VulkanShaderAutoUniforms
 {
     private static readonly Regex UniformStatementRegex = new(
-        @"\buniform\b\s+(?<statement>[^;]+);",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+        @"^\s*(?:layout\s*\([^)]*\)\s*)?uniform\s+(?<statement>[^;]+);",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
-    private static readonly Regex ArrayRegex = new(@"\[(?<size>\d+)\]", RegexOptions.Compiled);
+    private static readonly Regex ArrayRegex = new(@"\[(?<size>[A-Za-z_][A-Za-z0-9_]*|\d+u?)\]", RegexOptions.Compiled);
+    private static readonly Regex ConstIntegralRegex = new(
+        @"\bconst\s+(?:uint|int)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<value>\d+)u?\s*;",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+    private static readonly Regex DefineIntegralRegex = new(
+        @"^\s*#\s*define\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s+(?<value>\d+)u?\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline);
 
     private static readonly Regex LayoutQualifierRegex = new(
         @"layout\s*\((?<qualifiers>[^)]*)\)",
@@ -136,6 +142,8 @@ internal static class VulkanShaderAutoUniforms
         if (string.IsNullOrWhiteSpace(source))
             return new AutoUniformRewriteResult(source, null);
 
+        Dictionary<string, uint> integralConstants = ParseIntegralConstants(source);
+
         List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues)> members = new();
         StringBuilder output = new(source.Length + 256);
 
@@ -149,16 +157,24 @@ internal static class VulkanShaderAutoUniforms
             if (statement.IndexOf('{') >= 0)
                 continue; // uniform block
 
+            bool canRewriteStatement = false;
+            var statementMembers = new List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues)>();
+
             if (!TryExtractTypeAndDeclarators(statement, out string glslType, out string declarators))
                 continue;
 
             if (IsOpaque(glslType))
                 continue;
 
+            bool allDeclaratorsParsed = true;
+
             foreach (string declarator in SplitDeclarators(declarators))
             {
-                if (!TryParseDeclarator(declarator, out string name, out bool isArray, out uint arrayLength, out string? defaultExpression))
-                    continue;
+                if (!TryParseDeclarator(declarator, integralConstants, out string name, out bool isArray, out uint arrayLength, out string? defaultExpression))
+                {
+                    allDeclaratorsParsed = false;
+                    break;
+                }
 
                 AutoUniformDefaultValue? defaultValue = null;
                 IReadOnlyList<AutoUniformDefaultValue>? defaultArrayValues = null;
@@ -170,8 +186,20 @@ internal static class VulkanShaderAutoUniforms
                         defaultValue = parsed;
                 }
 
-                members.Add((glslType, name, isArray, arrayLength, defaultValue, defaultArrayValues));
+                statementMembers.Add((glslType, name, isArray, arrayLength, defaultValue, defaultArrayValues));
             }
+
+            if (!allDeclaratorsParsed)
+                continue;
+
+            if (statementMembers.Count > 0)
+            {
+                canRewriteStatement = true;
+                members.AddRange(statementMembers);
+            }
+
+            if (!canRewriteStatement)
+                continue;
 
             output.Append(source, lastIndex, match.Index - lastIndex);
             lastIndex = match.Index + match.Length;
@@ -184,10 +212,10 @@ internal static class VulkanShaderAutoUniforms
             return new AutoUniformRewriteResult(rewritten, null);
 
         string blockName = GetAutoUniformBlockName(shaderType);
-        string instanceName = blockName;
+        string instanceName = $"{blockName}_Instance";
 
         if (!TryComputeBlockLayout(members, out var layoutMembers, out uint blockSize))
-            return new AutoUniformRewriteResult(rewritten, null);
+            return new AutoUniformRewriteResult(source, null);
 
         uint binding = FindNextBinding(rewritten);
         uint set = 0;
@@ -300,7 +328,7 @@ internal static class VulkanShaderAutoUniforms
             yield return declarators[start..];
     }
 
-    private static bool TryParseDeclarator(string declarator, out string name, out bool isArray, out uint arrayLength, out string? defaultExpression)
+    private static bool TryParseDeclarator(string declarator, IReadOnlyDictionary<string, uint> integralConstants, out string name, out bool isArray, out uint arrayLength, out string? defaultExpression)
     {
         name = string.Empty;
         isArray = false;
@@ -319,8 +347,14 @@ internal static class VulkanShaderAutoUniforms
         }
 
         Match arrayMatch = ArrayRegex.Match(trimmed);
-        if (arrayMatch.Success && uint.TryParse(arrayMatch.Groups["size"].Value, out uint size))
+        if (arrayMatch.Success)
         {
+            string sizeToken = arrayMatch.Groups["size"].Value.Trim();
+            sizeToken = sizeToken.TrimEnd('u', 'U');
+
+            if (!uint.TryParse(sizeToken, out uint size) && !integralConstants.TryGetValue(sizeToken, out size))
+                return false;
+
             isArray = true;
             arrayLength = size;
             trimmed = ArrayRegex.Replace(trimmed, string.Empty);
@@ -342,6 +376,38 @@ internal static class VulkanShaderAutoUniforms
         return glslType.StartsWith("sampler", StringComparison.OrdinalIgnoreCase)
             || glslType.StartsWith("image", StringComparison.OrdinalIgnoreCase)
             || glslType.StartsWith("subpass", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static Dictionary<string, uint> ParseIntegralConstants(string source)
+    {
+        var constants = new Dictionary<string, uint>(StringComparer.Ordinal);
+        foreach (Match match in ConstIntegralRegex.Matches(source))
+        {
+            if (!match.Success)
+                continue;
+
+            string name = match.Groups["name"].Value;
+            string valueText = match.Groups["value"].Value;
+            if (string.IsNullOrWhiteSpace(name) || !uint.TryParse(valueText, out uint value))
+                continue;
+
+            constants[name] = value;
+        }
+
+        foreach (Match match in DefineIntegralRegex.Matches(source))
+        {
+            if (!match.Success)
+                continue;
+
+            string name = match.Groups["name"].Value;
+            string valueText = match.Groups["value"].Value;
+            if (string.IsNullOrWhiteSpace(name) || !uint.TryParse(valueText, out uint value))
+                continue;
+
+            constants[name] = value;
+        }
+
+        return constants;
     }
 
     private static uint FindNextBinding(string source)
@@ -400,13 +466,13 @@ internal static class VulkanShaderAutoUniforms
         blockSize = 0;
         uint offset = 0;
 
-        foreach (var member in members)
+        foreach (var (GlslType, Name, IsArray, ArrayLength, DefaultValue, DefaultArrayValues) in members)
         {
-            if (!TryGetStd140Info(member.GlslType, member.IsArray, member.ArrayLength, out uint alignment, out uint size, out uint arrayStride, out EShaderVarType? engineType))
+            if (!TryGetStd140Info(GlslType, IsArray, ArrayLength, out uint alignment, out uint size, out uint arrayStride, out EShaderVarType? engineType))
                 return false;
 
             offset = Align(offset, alignment);
-            layoutMembers.Add(new AutoUniformMember(member.Name, member.GlslType, engineType, member.IsArray, member.ArrayLength, arrayStride, offset, size, member.DefaultValue, member.DefaultArrayValues));
+            layoutMembers.Add(new AutoUniformMember(Name, GlslType, engineType, IsArray, ArrayLength, arrayStride, offset, size, DefaultValue, DefaultArrayValues));
             offset += size;
         }
 
@@ -523,7 +589,7 @@ internal static class VulkanShaderAutoUniforms
 
     private static bool TryParseDefaultArray(string glslType, string expression, uint arrayLength, out IReadOnlyList<AutoUniformDefaultValue> values)
     {
-        values = Array.Empty<AutoUniformDefaultValue>();
+        values = [];
         if (arrayLength == 0)
             return false;
 
@@ -532,7 +598,7 @@ internal static class VulkanShaderAutoUniforms
             return false;
 
         string inner;
-        if (trimmed.StartsWith("{", StringComparison.Ordinal))
+        if (trimmed.StartsWith('{'))
         {
             int end = trimmed.LastIndexOf('}');
             if (end <= 0)
@@ -552,7 +618,7 @@ internal static class VulkanShaderAutoUniforms
             inner = trimmed[(start + 1)..end];
         }
 
-        List<AutoUniformDefaultValue> parsed = new();
+        List<AutoUniformDefaultValue> parsed = [];
         foreach (string item in SplitArrayElements(inner))
         {
             if (TryParseDefaultValue(glslType, item, out var value))
@@ -608,7 +674,7 @@ internal static class VulkanShaderAutoUniforms
 
     private static bool TryParseVector(string expression, string constructor, int length, out float[] values)
     {
-        values = Array.Empty<float>();
+        values = [];
         if (!expression.StartsWith(constructor, StringComparison.OrdinalIgnoreCase))
             return false;
 
@@ -632,12 +698,7 @@ internal static class VulkanShaderAutoUniforms
         }
 
         for (int i = 0; i < length; i++)
-        {
-            if (i < parts.Length && TryParseFloat(parts[i], out float component))
-                parsed[i] = component;
-            else
-                parsed[i] = 0f;
-        }
+            parsed[i] = i < parts.Length && TryParseFloat(parts[i], out float component) ? component : 0f;
 
         values = parsed;
         return true;
@@ -750,6 +811,9 @@ internal static class VulkanShaderAutoUniforms
 internal static class VulkanShaderCompiler
 {
     private static readonly Shaderc ShadercApi = Shaderc.GetApi();
+    private static readonly Regex IncludeRegex = new(
+        @"^\s*#\s*include\s+[""<](?<path>[^"">]+)["">]\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline);
 
     public static unsafe byte[] Compile(
         XRShader shader,
@@ -759,6 +823,7 @@ internal static class VulkanShaderCompiler
     {
         entryPoint = "main";
         string source = shader.Source?.Text ?? string.Empty;
+        source = ExpandIncludes(source, shader.Source?.FilePath);
         if (string.IsNullOrWhiteSpace(source))
             throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' does not contain GLSL source code.");
 
@@ -854,6 +919,68 @@ internal static class VulkanShaderCompiler
             EShaderType.Mesh => ShaderKind.MeshShader,
             _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
         };
+
+    private static string ExpandIncludes(string source, string? sourcePath)
+    {
+        if (string.IsNullOrWhiteSpace(source) || !source.Contains("#include", StringComparison.Ordinal))
+            return source;
+
+        string? sourceDirectory = string.IsNullOrWhiteSpace(sourcePath)
+            ? null
+            : Path.GetDirectoryName(sourcePath);
+
+        return ExpandIncludesRecursive(source, sourceDirectory, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static string ExpandIncludesRecursive(string source, string? currentDirectory, HashSet<string> includeStack)
+    {
+        StringBuilder output = new(source.Length + 128);
+        using StringReader reader = new(source);
+
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            Match includeMatch = IncludeRegex.Match(line);
+            if (!includeMatch.Success)
+            {
+                output.AppendLine(line);
+                continue;
+            }
+
+            string includePath = includeMatch.Groups["path"].Value.Trim();
+            string resolvedPath = ResolveIncludePath(currentDirectory, includePath)
+                ?? throw new InvalidOperationException($"Failed to resolve shader include '{includePath}'.");
+
+            string normalizedPath = Path.GetFullPath(resolvedPath);
+            if (!includeStack.Add(normalizedPath))
+                throw new InvalidOperationException($"Recursive shader include detected for '{normalizedPath}'.");
+
+            string includedSource = File.ReadAllText(normalizedPath);
+            string expandedInclude = ExpandIncludesRecursive(includedSource, Path.GetDirectoryName(normalizedPath), includeStack);
+            includeStack.Remove(normalizedPath);
+
+            output.AppendLine($"// begin include {includePath}");
+            output.AppendLine(expandedInclude);
+            output.AppendLine($"// end include {includePath}");
+        }
+
+        return output.ToString();
+    }
+
+    private static string? ResolveIncludePath(string? currentDirectory, string includePath)
+    {
+        if (Path.IsPathRooted(includePath) && File.Exists(includePath))
+            return includePath;
+
+        if (!string.IsNullOrWhiteSpace(currentDirectory))
+        {
+            string fromCurrentDirectory = Path.Combine(currentDirectory, includePath);
+            if (File.Exists(fromCurrentDirectory))
+                return fromCurrentDirectory;
+        }
+
+        return null;
+    }
 }
 
 internal static class VulkanShaderReflection
@@ -1191,7 +1318,7 @@ internal static class VulkanShaderReflection
             SpirvType type = new(resultId)
             {
                 Kind = SpirvTypeKind.Struct,
-                Members = operands.Length > 1 ? operands.Slice(1).ToArray() : Array.Empty<uint>()
+                Members = operands.Length > 1 ? operands.Slice(1).ToArray() : []
             };
 
             _types[resultId] = type;
@@ -1460,7 +1587,7 @@ internal static class VulkanShaderReflection
         public SpirvStorageClass? StorageClass { get; init; }
         public uint? ElementTypeId { get; init; }
         public uint? LengthId { get; init; }
-        public uint[] Members { get; init; } = Array.Empty<uint>();
+        public uint[] Members { get; init; } = [];
         public SpirvImageInfo? ImageType { get; init; }
     }
 

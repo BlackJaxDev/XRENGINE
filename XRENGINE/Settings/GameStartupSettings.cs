@@ -4,6 +4,7 @@ using XREngine.Components.Scene.Transforms;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine
 {
@@ -330,6 +331,7 @@ namespace XREngine
         private OverrideableSetting<bool> _bvhRefitOnlyWhenStableOverride = new();
         private OverrideableSetting<uint> _raycastBufferSizeOverride = new();
         private OverrideableSetting<bool> _enableGpuBvhTimingQueriesOverride = new();
+        private OverrideableSetting<EVulkanGpuDrivenProfile> _vulkanGpuDrivenProfileOverride = new();
 
         // Full cascade settings (Project > Engine, user can override)
         private OverrideableSetting<EAntiAliasingMode> _antiAliasingModeOverride = new();
@@ -550,6 +552,18 @@ namespace XREngine
         {
             get => _enableGpuBvhTimingQueriesOverride;
             set => SetField(ref _enableGpuBvhTimingQueriesOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for the Vulkan GPU-driven runtime profile.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// </summary>
+        [Category("Rendering Overrides")]
+        [Description("Project override for the Vulkan GPU-driven runtime profile.")]
+        public OverrideableSetting<EVulkanGpuDrivenProfile> VulkanGpuDrivenProfileOverride
+        {
+            get => _vulkanGpuDrivenProfileOverride;
+            set => SetField(ref _vulkanGpuDrivenProfileOverride, value ?? new());
         }
 
         /// <summary>

@@ -11,6 +11,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.DLSS;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 
 namespace XREngine
@@ -297,6 +298,7 @@ namespace XREngine
                 private bool _useGlobalBlendshapeWeightsBufferForComputeSkinning = false;
                 private int _shaderConfigVersion = 0;
                 private bool _useGpuBvh = false;
+                private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Auto;
                 private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.Disabled;
                 private bool _cacheGpuHiZOcclusionOncePerFrame = false;
                 private uint _bvhLeafMaxPrims = 4u;
@@ -750,6 +752,25 @@ namespace XREngine
                 }
 
                 /// <summary>
+                /// Selects the Vulkan GPU-driven runtime profile used to gate feature policy.
+                /// Auto maps Debug builds to DevParity and non-Debug builds to ShippingFast.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Selects the Vulkan GPU-driven runtime profile used to gate feature policy. Auto maps Debug builds to DevParity and non-Debug builds to ShippingFast.")]
+                public EVulkanGpuDrivenProfile VulkanGpuDrivenProfile
+                {
+                    get => _vulkanGpuDrivenProfile;
+                    set => SetField(ref _vulkanGpuDrivenProfile, value,
+                        null,
+                        _ =>
+                        {
+                            Rendering.ApplyGpuRenderDispatchPreference();
+                            Rendering.ApplyGpuBvhPreference();
+                            Rendering.LogVulkanFeatureProfileFingerprint();
+                        });
+                }
+
+                /// <summary>
                 /// Selects which occlusion culling path to run for GPU indirect rendering.
                 /// </summary>
                 [Category("Occlusion")]
@@ -1154,6 +1175,13 @@ namespace XREngine
 
                 if (applyAll || propertyName == nameof(EngineSettings.UseGpuBvh))
                     Engine.Rendering.ApplyGpuBvhPreference();
+
+                if (applyAll || propertyName == nameof(EngineSettings.VulkanGpuDrivenProfile))
+                {
+                    Engine.Rendering.ApplyGpuRenderDispatchPreference();
+                    Engine.Rendering.ApplyGpuBvhPreference();
+                    Engine.Rendering.LogVulkanFeatureProfileFingerprint();
+                }
 
                 if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
                     || propertyName == nameof(EngineSettings.DlssQuality)
