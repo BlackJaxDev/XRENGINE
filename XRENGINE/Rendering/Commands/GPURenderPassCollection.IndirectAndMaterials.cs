@@ -633,6 +633,14 @@ namespace XREngine.Rendering.Commands
                          $"Draws={stats.Drawn} RejFrustum={stats.FrustumRejected} RejDist={stats.DistanceRejected} " +
                          $"CpuFallbackEvents={cpuFallbackEvents} CpuRecovered={cpuFallbackRecovered}");
 
+                EOcclusionCullingMode occlusionMode = ActiveOcclusionMode;
+                if (occlusionMode != EOcclusionCullingMode.Disabled)
+                {
+                    Debug.Out($"{FormatDebugPrefix("Stats")} [Occlusion] Mode={occlusionMode} " +
+                             $"Candidates={OcclusionCandidatesTested} Occluded={OcclusionAccepted} " +
+                             $"Recoveries={OcclusionFalsePositiveRecoveries} TemporalOverrides={OcclusionTemporalOverrides}");
+                }
+
                 if (stats.HasBvhActivity)
                 {
                     Debug.Out($"{FormatDebugPrefix("Stats")} [BVH] Build={stats.BvhBuildCount} ({stats.BvhBuildMs:F3} ms) " +

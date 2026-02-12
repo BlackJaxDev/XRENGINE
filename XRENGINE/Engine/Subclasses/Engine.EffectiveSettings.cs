@@ -102,6 +102,12 @@ namespace XREngine
                     null);
 
             /// <summary>
+            /// Gets the active occlusion culling mode for GPU indirect rendering.
+            /// </summary>
+            public static EOcclusionCullingMode GpuOcclusionCullingMode
+                => Rendering.Settings.GpuOcclusionCullingMode;
+
+            /// <summary>
             /// Gets the effective BVH leaf primitive budget for GPU builds.
             /// Resolved from: User Override > Project Override > Engine Default
             /// </summary>

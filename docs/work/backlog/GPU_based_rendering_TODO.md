@@ -150,10 +150,10 @@ Acceptance criteria:
 
 Outcome: add robust occlusion culling that works in both GPU-dispatch and CPU-compatible modes without introducing stalls.
 
-- [ ] Define occlusion mode matrix and runtime switch:
-  - [ ] `Disabled`
-  - [ ] `GPU_HiZ`
-  - [ ] `CPU_QueryAsync`
+- [x] Define occlusion mode matrix and runtime switch:
+  - [x] `Disabled`
+  - [x] `GPU_HiZ`
+  - [x] `CPU_QueryAsync`
 - [ ] GPU path (`GPU_HiZ`):
   - [ ] Add depth-only prepass for opaque occluders.
   - [ ] Build Hi-Z pyramid every frame from prepass depth.

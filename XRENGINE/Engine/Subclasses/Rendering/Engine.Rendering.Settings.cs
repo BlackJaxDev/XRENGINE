@@ -297,6 +297,7 @@ namespace XREngine
                 private bool _useGlobalBlendshapeWeightsBufferForComputeSkinning = false;
                 private int _shaderConfigVersion = 0;
                 private bool _useGpuBvh = false;
+                private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.Disabled;
                 private uint _bvhLeafMaxPrims = 4u;
                 private EBvhMode _bvhMode = EBvhMode.Morton;
                 private bool _bvhRefitOnlyWhenStable = true;
@@ -736,6 +737,17 @@ namespace XREngine
                 {
                     get => _useGpuBvh;
                     set => SetField(ref _useGpuBvh, value, null, _ => Rendering.ApplyGpuBvhPreference());
+                }
+
+                /// <summary>
+                /// Selects which occlusion culling path to run for GPU indirect rendering.
+                /// </summary>
+                [Category("Occlusion")]
+                [Description("Selects which occlusion culling path to run for GPU indirect rendering.")]
+                public EOcclusionCullingMode GpuOcclusionCullingMode
+                {
+                    get => _gpuOcclusionCullingMode;
+                    set => SetField(ref _gpuOcclusionCullingMode, value);
                 }
 
                 /// <summary>

@@ -62,6 +62,9 @@ namespace XREngine.Rendering.Commands
             _sanitizerSampleLogBudget = 12;
             _copyAtomicOverflowLogBudget = 4;
             _filteredCountLogBudget = 6;
+
+            _loggedGpuHiZOcclusionScaffold = false;
+            _loggedCpuQueryAsyncScaffold = false;
         }
 
         /// <summary>
@@ -416,6 +419,7 @@ namespace XREngine.Rendering.Commands
             
             LogCullingStart("Cull", gpuCommands.TotalCommandCount);
             Dbg("Cull invoked","Culling");
+            ResetOcclusionFrameStats();
 
             // Rebuild internal BVH if dirty (before we try to use it)
             gpuCommands.RebuildBvhIfDirty();
@@ -447,6 +451,8 @@ namespace XREngine.Rendering.Commands
                 LogCullModeActivation(CullFrameMode.Frustum);
                 FrustumCull(gpuCommands, camera, numCommands);
             }
+
+            ApplyOcclusionCulling(gpuCommands, camera);
 
             bool sanitizerOk = true;
             if (VisibleCommandCount > 0)
