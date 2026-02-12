@@ -45,24 +45,49 @@ namespace XREngine.Rendering.Commands
             if (!TryInitializeRender(scene, out XRCamera? camera))
                 return;
 
+            _gpuBatchingPreparedThisFrame = false;
             ResetCounters();
             Cull(scene, camera);
 
             // Phase 2: do not early-out based on CPU-visible counters.
             // The default submission path uses GPU-written count buffers; a 0 count naturally results in no draws.
 
-            using (BeginTiming("PopulateMaterialIDs"))
-                PopulateMaterialIDs(scene);
-            
-            using (BeginTiming("BuildIndirectCommandBuffer"))
-                BuildIndirectCommandBuffer(scene);
-            
+            bool useCpuBatchFallback = !EnableGpuDrivenBatching || IndirectDebug.EnableCpuBatching;
+            List<HybridRenderingManager.DrawBatch>? batches;
+
+            if (useCpuBatchFallback)
+            {
+                using (BeginTiming("PopulateMaterialIDs"))
+                    PopulateMaterialIDs(scene);
+
+                using (BeginTiming("BuildIndirectCommandBuffer"))
+                    BuildIndirectCommandBuffer(scene);
+
+                using var batchTiming = BeginTiming("BuildMaterialBatchesCpuFallback");
+                batches = BuildMaterialBatches(scene);
+                CurrentBatches = batches;
+                _gpuBatchingPreparedThisFrame = false;
+            }
+            else
+            {
+                using var batchTiming = BeginTiming("BuildGpuBatchesAndInstancing");
+                batches = BuildGpuBatchesAndInstancing(scene);
+                CurrentBatches = batches;
+                _gpuBatchingPreparedThisFrame = batches is not null;
+
+                if (batches is null || batches.Count == 0)
+                {
+                    if (scene.TotalCommandCount > 0)
+                    {
+                        Debug.LogWarning($"{FormatDebugPrefix("Materials")} GPU batching produced no batch ranges. " +
+                                         "Enable IndirectDebug.EnableCpuBatching for emergency fallback diagnostics.");
+                    }
+                    return;
+                }
+            }
+
             Log(LogCategory.Indirect, LogLevel.Info, "Indirect build complete - visible={0}", VisibleCommandCount);
             Dbg("Indirect build complete", "Indirect");
-
-            using var batchTiming = BeginTiming("BuildMaterialBatches");
-            var batches = BuildMaterialBatches(scene);
-            CurrentBatches = batches;
 
             if (batches is not null)
                 Log(LogCategory.Materials, LogLevel.Info, "Material batches={0}, visible commands={1}", batches.Count, VisibleCommandCount);
@@ -88,9 +113,15 @@ namespace XREngine.Rendering.Commands
             PreRenderInitialize(scene);
             camera = null;
 
-            if (_indirectRenderTaskShader is null || _indirectDrawBuffer is null)
+            if (_indirectDrawBuffer is null)
             {
-                Dbg("Render abort - shaders or draw buffer null", "Lifecycle");
+                Dbg("Render abort - draw buffer null", "Lifecycle");
+                return false;
+            }
+
+            if (_indirectRenderTaskShader is null && _buildGpuBatchesComputeShader is null)
+            {
+                Dbg("Render abort - indirect/batching shaders unavailable", "Lifecycle");
                 return false;
             }
 
@@ -115,7 +146,7 @@ namespace XREngine.Rendering.Commands
         {
             ResetVisibleCounters();
 
-            if (_resetCountersComputeShader is null || _culledCountBuffer is null || _drawCountBuffer is null)
+            if (_resetCountersComputeShader is null || _culledCountBuffer is null || _drawCountBuffer is null || _cullCountScratchBuffer is null)
                 return;
 
             Dbg("Reset counters dispatch", "Lifecycle");
@@ -128,12 +159,18 @@ namespace XREngine.Rendering.Commands
                 _resetCountersComputeShader.BindBuffer(_indirectOverflowFlagBuffer, 3);
             if (_truncationFlagBuffer is not null)
                 _resetCountersComputeShader.BindBuffer(_truncationFlagBuffer, 4);
+            _resetCountersComputeShader.BindBuffer(_cullCountScratchBuffer, 6);
             if (_statsBuffer is not null)
                 _resetCountersComputeShader.BindBuffer(_statsBuffer, 8);
+            if (_gpuBatchCountBuffer is not null)
+                _resetCountersComputeShader.BindBuffer(_gpuBatchCountBuffer, 9);
 
             _resetCountersComputeShader.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             ResetCountersHook?.Invoke();
             ResetPerViewDrawCounts(_activeViewCount);
+
+            if (_occlusionOverflowFlagBuffer is not null)
+                WriteUInt(_occlusionOverflowFlagBuffer, 0u);
         }
 
         #endregion
@@ -194,6 +231,211 @@ namespace XREngine.Rendering.Commands
             }
 
             _statsBuffer?.BindTo(_indirectRenderTaskShader!, 8);
+        }
+
+        private List<HybridRenderingManager.DrawBatch>? BuildGpuBatchesAndInstancing(GPUScene scene)
+        {
+            if (_buildKeysComputeShader is null ||
+                _buildGpuBatchesComputeShader is null ||
+                _keyIndexBufferA is null ||
+                _gpuBatchRangeBuffer is null ||
+                _gpuBatchCountBuffer is null ||
+                _instanceTransformBuffer is null ||
+                _instanceSourceIndexBuffer is null ||
+                _materialAggregationBuffer is null ||
+                _drawCountBuffer is null ||
+                _indirectDrawBuffer is null ||
+                _culledCountBuffer is null)
+            {
+                Dbg("GPU batching unavailable - missing shader/buffer dependencies.", "Materials");
+                return null;
+            }
+
+            UpdateVisibleCountersFromBuffer();
+            PopulateMaterialAggregationFlags(scene);
+            DispatchBuildKeys();
+            DispatchBuildGpuBatches(scene);
+            UpdateVisibleCountersFromBuffer();
+
+            return ReadGpuBatchRanges();
+        }
+
+        private void DispatchBuildKeys()
+        {
+            if (_buildKeysComputeShader is null || _keyIndexBufferA is null || _culledCountBuffer is null)
+                return;
+
+            uint dispatchCommands = IndirectDebug.DisableCpuReadbackCount
+                ? _keyIndexBufferA.ElementCount
+                : Math.Max(VisibleCommandCount, 1u);
+
+            _buildKeysComputeShader.Uniform("CurrentRenderPass", RenderPass);
+            _buildKeysComputeShader.Uniform("MaxSortKeys", (int)_keyIndexBufferA.ElementCount);
+            _buildKeysComputeShader.Uniform("StateBitMask", 0x0FFFu);
+
+            CulledSceneToRenderBuffer.BindTo(_buildKeysComputeShader, GPUBatchingBindings.BuildKeysInputCommands);
+            _culledCountBuffer.BindTo(_buildKeysComputeShader, GPUBatchingBindings.BuildKeysCulledCount);
+            _keyIndexBufferA.BindTo(_buildKeysComputeShader, GPUBatchingBindings.BuildKeysSortKeys);
+
+            uint groups = Math.Max(1, ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
+            _buildKeysComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
+        }
+
+        private void DispatchBuildGpuBatches(GPUScene scene)
+        {
+            if (_buildGpuBatchesComputeShader is null ||
+                _keyIndexBufferA is null ||
+                _gpuBatchRangeBuffer is null ||
+                _gpuBatchCountBuffer is null ||
+                _instanceTransformBuffer is null ||
+                _instanceSourceIndexBuffer is null ||
+                _materialAggregationBuffer is null ||
+                _indirectDrawBuffer is null ||
+                _drawCountBuffer is null ||
+                _culledCountBuffer is null)
+            {
+                return;
+            }
+
+            _buildGpuBatchesComputeShader.Uniform("MaxIndirectDraws", (int)_indirectDrawBuffer.ElementCount);
+            _buildGpuBatchesComputeShader.Uniform("MaxBatchRanges", (int)_gpuBatchRangeBuffer.ElementCount);
+            _buildGpuBatchesComputeShader.Uniform("MaxInstanceTransforms", (int)_instanceTransformBuffer.ElementCount);
+            _buildGpuBatchesComputeShader.Uniform("CurrentRenderPass", RenderPass);
+            _buildGpuBatchesComputeShader.Uniform("EnableInstancingAggregation", EnableGpuDrivenInstancing ? 1u : 0u);
+            _buildGpuBatchesComputeShader.Uniform("StatsEnabled", _statsBuffer is not null ? 1u : 0u);
+
+            CulledSceneToRenderBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesInputCommands);
+            scene.MeshDataBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesMeshData);
+            _culledCountBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesCulledCount);
+            _keyIndexBufferA.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesSortKeys);
+            _indirectDrawBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesIndirectDraws);
+            _drawCountBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesDrawCount);
+            _gpuBatchRangeBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesBatchRanges);
+            _gpuBatchCountBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesBatchCount);
+            _instanceTransformBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesInstanceTransforms);
+            _instanceSourceIndexBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesInstanceSources);
+            _materialAggregationBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesMaterialAggregation);
+            _indirectOverflowFlagBuffer?.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesIndirectOverflow);
+            _truncationFlagBuffer?.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesTruncation);
+            _statsBuffer?.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesStats);
+
+            _buildGpuBatchesComputeShader.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+        }
+
+        private void PopulateMaterialAggregationFlags(GPUScene scene)
+        {
+            if (_materialAggregationBuffer is null)
+                return;
+
+            uint maxMaterialId = 0u;
+            foreach (uint id in scene.MaterialMap.Keys)
+            {
+                if (id > maxMaterialId)
+                    maxMaterialId = id;
+            }
+
+            EnsureMaterialAggregationBuffer(maxMaterialId + 1u);
+            if (_materialAggregationBuffer is null)
+                return;
+
+            for (uint i = 0; i < _materialAggregationBuffer.ElementCount; ++i)
+                _materialAggregationBuffer.SetDataRawAtIndex(i, 1u);
+
+            foreach (var (materialID, material) in scene.MaterialMap)
+            {
+                uint allow = MaterialSupportsGpuInstanceAggregation(material) ? 1u : 0u;
+                if (materialID < _materialAggregationBuffer.ElementCount)
+                    _materialAggregationBuffer.SetDataRawAtIndex(materialID, allow);
+            }
+
+            _materialAggregationBuffer.PushSubData();
+        }
+
+        private static bool MaterialSupportsGpuInstanceAggregation(XRMaterial? material)
+        {
+            if (material is null)
+                return false;
+
+            foreach (XRShader? shader in material.Shaders)
+            {
+                if (shader?.Type != EShaderType.Vertex)
+                    continue;
+
+                string? source = shader.Source?.Text;
+                if (string.IsNullOrWhiteSpace(source))
+                    continue;
+
+                bool isTextShader =
+                    source.Contains("GlyphTransformsBuffer", StringComparison.Ordinal) &&
+                    source.Contains("GlyphTexCoordsBuffer", StringComparison.Ordinal);
+
+                if (isTextShader)
+                    return false;
+            }
+
+            return true;
+        }
+
+        private List<HybridRenderingManager.DrawBatch>? ReadGpuBatchRanges()
+        {
+            if (_gpuBatchCountBuffer is null || _gpuBatchRangeBuffer is null)
+                return null;
+
+            uint batchCount = ReadUIntAt(_gpuBatchCountBuffer, 0u);
+            if (batchCount == 0u)
+                return null;
+
+            batchCount = Math.Min(batchCount, _gpuBatchRangeBuffer.ElementCount);
+            if (batchCount == 0u)
+                return null;
+
+            bool mappedHere = false;
+
+            try
+            {
+                if (_gpuBatchRangeBuffer.ActivelyMapping.Count == 0)
+                {
+                    _gpuBatchRangeBuffer.StorageFlags |= EBufferMapStorageFlags.Read;
+                    _gpuBatchRangeBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
+                    _gpuBatchRangeBuffer.MapBufferData();
+                    mappedHere = true;
+                    Engine.Rendering.Stats.RecordGpuBufferMapped();
+                }
+
+                VoidPtr mapped = _gpuBatchRangeBuffer.GetMappedAddresses().FirstOrDefault(ptr => ptr.IsValid);
+                if (!mapped.IsValid)
+                    return null;
+
+                AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
+                Engine.Rendering.Stats.RecordGpuReadbackBytes((int)(batchCount * GPUBatchingLayout.BatchRangeStride));
+
+                uint stride = _gpuBatchRangeBuffer.ElementSize;
+                if (stride == 0)
+                    stride = GPUBatchingLayout.BatchRangeStride;
+
+                var batches = new List<HybridRenderingManager.DrawBatch>((int)batchCount);
+
+                unsafe
+                {
+                    byte* basePtr = (byte*)mapped.Pointer;
+                    for (uint i = 0; i < batchCount; ++i)
+                    {
+                        GPUBatchRangeEntry range = Unsafe.ReadUnaligned<GPUBatchRangeEntry>(basePtr + (int)(i * stride));
+                        if (range.DrawCount == 0u)
+                            continue;
+
+                        batches.Add(new HybridRenderingManager.DrawBatch(range.DrawOffset, range.DrawCount, range.MaterialID));
+                    }
+                }
+
+                return batches.Count == 0 ? null : batches;
+            }
+            finally
+            {
+                if (mappedHere)
+                    _gpuBatchRangeBuffer.UnmapBufferData();
+            }
         }
 
         #endregion
@@ -722,21 +964,41 @@ namespace XREngine.Rendering.Commands
         {
             _indirectDrawBuffer?.Dispose();
             _culledCountBuffer?.Dispose();
+            _cullCountScratchBuffer?.Dispose();
             _drawCountBuffer?.Dispose();
             _cullingOverflowFlagBuffer?.Dispose();
             _indirectOverflowFlagBuffer?.Dispose();
+            _occlusionOverflowFlagBuffer?.Dispose();
             _sortedCommandBuffer?.Dispose();
+            _keyIndexBufferA?.Dispose();
+            _gpuBatchRangeBuffer?.Dispose();
+            _gpuBatchCountBuffer?.Dispose();
+            _instanceTransformBuffer?.Dispose();
+            _instanceSourceIndexBuffer?.Dispose();
+            _materialAggregationBuffer?.Dispose();
             _culledSceneToRenderBuffer?.Dispose();
+            _occlusionCulledBuffer?.Dispose();
             _passFilterDebugBuffer?.Dispose();
             _materialIDsBuffer?.Dispose();
             DisposeViewSetBuffers();
+
+            _hiZDepthPyramidOwned?.Destroy();
+            _hiZDepthPyramidOwned = null;
+            _hiZDepthPyramid = null;
         }
 
         private void DisposeShaders()
         {
             _cullingComputeShader?.Destroy();
+            _buildKeysComputeShader?.Destroy();
+            _buildGpuBatchesComputeShader?.Destroy();
             _indirectRenderTaskShader?.Destroy();
             _indirectRenderer?.Destroy();
+
+            _hiZInitProgram?.Destroy();
+            _hiZGenProgram?.Destroy();
+            _hiZOcclusionProgram?.Destroy();
+            _copyCount3Program?.Destroy();
         }
 
         #endregion

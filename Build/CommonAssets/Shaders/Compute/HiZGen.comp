@@ -2,10 +2,12 @@
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
-layout(binding = 0) uniform sampler2D depthTexture; // Original depth buffer
+layout(binding = 0) uniform sampler2D depthTexture; // Source depth (depth buffer or previous Hi-Z mip)
 layout(binding = 1, rgba32f) uniform image2D hiZBuffer; // Hi-Z target mip level
 
 uniform ivec2 mipLevelSize; // Size of the current mip level
+uniform int SrcMip;          // Source mip level to read from depthTexture
+uniform uint UseMinReduction; // 1 = store min depth (normal Z), 0 = store max depth (reversed Z)
 
 void main()
 {
@@ -15,12 +17,16 @@ void main()
 
     // Fetch 2x2 block of depth values from the previous level
     ivec2 baseCoord = coord * 2;
-    float d0 = texelFetch(depthTexture, baseCoord, 0).r;
-    float d1 = texelFetch(depthTexture, baseCoord + ivec2(1, 0), 0).r;
-    float d2 = texelFetch(depthTexture, baseCoord + ivec2(0, 1), 0).r;
-    float d3 = texelFetch(depthTexture, baseCoord + ivec2(1, 1), 0).r;
+    float d0 = texelFetch(depthTexture, baseCoord, SrcMip).r;
+    float d1 = texelFetch(depthTexture, baseCoord + ivec2(1, 0), SrcMip).r;
+    float d2 = texelFetch(depthTexture, baseCoord + ivec2(0, 1), SrcMip).r;
+    float d3 = texelFetch(depthTexture, baseCoord + ivec2(1, 1), SrcMip).r;
 
-    // Store the maximum depth value
-    float maxDepth = max(max(d0, d1), max(d2, d3));
-    imageStore(hiZBuffer, coord, vec4(maxDepth));
+    float reducedDepth;
+    if (UseMinReduction != 0u)
+        reducedDepth = min(min(d0, d1), min(d2, d3));
+    else
+        reducedDepth = max(max(d0, d1), max(d2, d3));
+
+    imageStore(hiZBuffer, coord, vec4(reducedDepth, 0.0, 0.0, 0.0));
 }

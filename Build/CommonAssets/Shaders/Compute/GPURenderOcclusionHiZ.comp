@@ -1,0 +1,236 @@
+#version 460 core
+
+// Filters a culled command buffer against a Hi-Z depth pyramid.
+// Stage order intent: frustum/BVH cull -> (optional) Hi-Z occlusion refine -> indirect build.
+
+layout(local_size_x = 256) in;
+
+// Command layout: 48 floats per command (see GPURenderCulling.comp)
+layout(std430, binding = 0) buffer InputCommandsBuffer { float inCommands[]; };
+layout(std430, binding = 1) buffer OutputCommandsBuffer { float outCommands[]; };
+
+// Input counters (from frustum/BVH cull stage)
+layout(std430, binding = 2) buffer InCountBuffer
+{
+    uint InCount;
+    uint InInstanceCount;
+    uint InOverflow;
+};
+
+// Output counters (final visible set used for indirect build)
+layout(std430, binding = 3) buffer OutCountBuffer
+{
+    uint OutCount;
+    uint OutInstanceCount;
+    uint OutOverflow;
+};
+
+layout(std430, binding = 4) buffer OverflowFlagBuffer { uint OcclusionOverflowFlag; };
+
+// Optional stats buffer (shared layout)
+layout(std430, binding = 8) buffer StatsBuffer {
+    uint StatsInputCount;        // 0
+    uint StatsCulledCount;       // 1
+    uint StatsDrawCount;         // 2
+    uint StatsRejectedFrustum;   // 3
+    uint StatsRejectedDistance;  // 4
+    uint StatsBvhBuildCount;     // 5
+    uint StatsBvhRefitCount;     // 6
+    uint StatsBvhCullCount;      // 7
+    uint StatsBvhRayCount;       // 8
+    uint StatsBvhBuildTimeLo;    // 9
+    uint StatsBvhBuildTimeHi;    // 10
+    uint StatsBvhRefitTimeLo;    // 11
+    uint StatsBvhRefitTimeHi;    // 12
+    uint StatsBvhCullTimeLo;     // 13
+    uint StatsBvhCullTimeHi;     // 14
+    uint StatsBvhRayTimeLo;      // 15
+    uint StatsBvhRayTimeHi;      // 16
+};
+
+layout(binding = 0) uniform sampler2D HiZDepth;
+
+uniform mat4 ViewProj;
+uniform int HiZMaxMip;
+uniform uint IsReversedDepth; // 1 if camera uses reversed Z
+uniform int MaxOutputCommands;
+
+const int COMMAND_FLOATS = 48;
+
+bool IsValidCommand(int base)
+{
+    // Minimal validity: InstanceCount > 0
+    uint instanceCount = floatBitsToUint(inCommands[base + 39]);
+    return instanceCount != 0u;
+}
+
+float SampleHiZConservative(vec2 uvMin, vec2 uvMax, int mip)
+{
+    ivec2 mipSize = textureSize(HiZDepth, mip);
+    ivec2 t00 = ivec2(clamp(uvMin * vec2(mipSize), vec2(0.0), vec2(mipSize - 1)));
+    ivec2 t11 = ivec2(clamp(uvMax * vec2(mipSize), vec2(0.0), vec2(mipSize - 1)));
+    ivec2 t01 = ivec2(t00.x, t11.y);
+    ivec2 t10 = ivec2(t11.x, t00.y);
+
+    float d00 = texelFetch(HiZDepth, t00, mip).r;
+    float d01 = texelFetch(HiZDepth, t01, mip).r;
+    float d10 = texelFetch(HiZDepth, t10, mip).r;
+    float d11 = texelFetch(HiZDepth, t11, mip).r;
+
+    // Keep conservative aggregation mode aligned with Hi-Z reduction mode.
+    if (IsReversedDepth != 0u)
+        return min(min(d00, d01), min(d10, d11));
+
+    return max(max(d00, d01), max(d10, d11));
+}
+
+bool HiZOccludedAabbRefine(vec3 worldCenter, float radius)
+{
+    // Approximate AABB from the bounding sphere for a conservative second-stage test.
+    vec3 minP = worldCenter - vec3(radius);
+    vec3 maxP = worldCenter + vec3(radius);
+
+    vec3 corners[8] = vec3[8](
+        vec3(minP.x, minP.y, minP.z),
+        vec3(maxP.x, minP.y, minP.z),
+        vec3(minP.x, maxP.y, minP.z),
+        vec3(maxP.x, maxP.y, minP.z),
+        vec3(minP.x, minP.y, maxP.z),
+        vec3(maxP.x, minP.y, maxP.z),
+        vec3(minP.x, maxP.y, maxP.z),
+        vec3(maxP.x, maxP.y, maxP.z)
+    );
+
+    vec2 uvMin = vec2(1.0);
+    vec2 uvMax = vec2(0.0);
+    float nearestDepth = (IsReversedDepth != 0u) ? 0.0 : 1.0;
+
+    for (int i = 0; i < 8; ++i)
+    {
+        vec4 clip = ViewProj * vec4(corners[i], 1.0);
+        if (clip.w <= 0.0)
+            return false;
+
+        vec3 ndc = clip.xyz / clip.w;
+        vec2 uv = ndc.xy * 0.5 + 0.5;
+        uvMin = min(uvMin, uv);
+        uvMax = max(uvMax, uv);
+
+        float depth = ndc.z * 0.5 + 0.5;
+        if (depth < 0.0 || depth > 1.0)
+            return false;
+
+        if (IsReversedDepth != 0u)
+            nearestDepth = max(nearestDepth, depth);
+        else
+            nearestDepth = min(nearestDepth, depth);
+    }
+
+    if (any(lessThan(uvMin, vec2(0.0))) || any(greaterThan(uvMax, vec2(1.0))))
+        return false;
+
+    ivec2 baseSize = textureSize(HiZDepth, 0);
+    vec2 sizePx = (uvMax - uvMin) * vec2(baseSize);
+    float maxDim = max(sizePx.x, sizePx.y);
+    int mip = int(clamp(floor(log2(max(maxDim, 1.0))), 0.0, float(HiZMaxMip)));
+
+    float hiz = SampleHiZConservative(uvMin, uvMax, mip);
+    if (IsReversedDepth != 0u)
+        return nearestDepth < hiz;
+
+    return nearestDepth > hiz;
+}
+
+// Conservative Hi-Z test using a projected sphere.
+// Returns true if the sphere is definitely occluded; false otherwise.
+bool HiZOccluded(vec3 worldCenter, float radius)
+{
+    vec4 clip = ViewProj * vec4(worldCenter, 1.0);
+    if (clip.w <= 0.0)
+        return false;
+
+    vec3 ndc = clip.xyz / clip.w;
+
+    // Convert to UV in [0,1]
+    vec2 uvCenter = ndc.xy * 0.5 + 0.5;
+
+    // Conservative screen radius approximation.
+    float rNdc = radius / max(clip.w, 1e-6);
+    vec2 uvRadius = vec2(rNdc * 0.5);
+
+    vec2 uvMin = uvCenter - uvRadius;
+    vec2 uvMax = uvCenter + uvRadius;
+
+    // If bounds straddle outside the screen, keep visible (uncertain).
+    if (any(lessThan(uvMin, vec2(0.0))) || any(greaterThan(uvMax, vec2(1.0))))
+        return false;
+
+    // Select mip level based on projected footprint.
+    ivec2 baseSize = textureSize(HiZDepth, 0);
+    vec2 sizePx = (uvMax - uvMin) * vec2(baseSize);
+    float maxDim = max(sizePx.x, sizePx.y);
+    int mip = int(clamp(floor(log2(max(maxDim, 1.0))), 0.0, float(HiZMaxMip)));
+
+    float hiz = SampleHiZConservative(uvMin, uvMax, mip);
+
+    // Convert NDC z to depth-buffer space.
+    float depth = ndc.z * 0.5 + 0.5;
+
+    // Approximate depth extent of the sphere and use the nearest point for a conservative test.
+    float depthDelta = rNdc * 0.5;
+    float nearestDepth = (IsReversedDepth != 0u) ? (depth + depthDelta) : (depth - depthDelta);
+
+    // If depth is outside [0,1], keep visible (uncertain).
+    if (nearestDepth < 0.0 || nearestDepth > 1.0)
+        return false;
+
+    // Occlusion test depends on depth mode.
+    bool sphereOccluded = (IsReversedDepth != 0u) ? (nearestDepth < hiz) : (nearestDepth > hiz);
+    if (!sphereOccluded)
+        return false;
+
+    // Borderline values are refined using an AABB pass to reduce false positives.
+    float delta = abs(nearestDepth - hiz);
+    if (delta < 0.02)
+        return HiZOccludedAabbRefine(worldCenter, radius);
+
+    return true;
+}
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    uint inputCount = InCount;
+
+    if (idx >= inputCount)
+        return;
+
+    int base = int(idx) * COMMAND_FLOATS;
+    if (base + COMMAND_FLOATS > inCommands.length())
+        return;
+
+    if (!IsValidCommand(base))
+        return;
+
+    vec3 center = vec3(inCommands[base + 32], inCommands[base + 33], inCommands[base + 34]);
+    float radius = inCommands[base + 35];
+
+    bool occluded = HiZOccluded(center, radius);
+    if (occluded)
+        return;
+
+    uint outIndex = atomicAdd(OutCount, 1u);
+    if (outIndex >= uint(MaxOutputCommands))
+    {
+        atomicAdd(OcclusionOverflowFlag, 1u);
+        OutOverflow = 1u;
+        return;
+    }
+
+    int outBase = int(outIndex) * COMMAND_FLOATS;
+    for (int i = 0; i < COMMAND_FLOATS; ++i)
+        outCommands[outBase + i] = inCommands[base + i];
+
+    uint instanceCount = floatBitsToUint(inCommands[base + 39]);
+    atomicAdd(OutInstanceCount, instanceCount);
+}

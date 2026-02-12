@@ -298,18 +298,23 @@ namespace XREngine.Rendering.Commands
 
         private void UpdateVisibleCountersFromBuffer()
         {
+            UpdateVisibleCountersFromBuffer(_culledCountBuffer);
+        }
+
+        private void UpdateVisibleCountersFromBuffer(XRDataBuffer? countBuffer)
+        {
             if (IndirectDebug.DisableCpuReadbackCount)
                 return;
 
-            if (_culledCountBuffer is null)
+            if (countBuffer is null)
             {
                 VisibleCommandCount = 0;
                 VisibleInstanceCount = 0;
                 return;
             }
 
-            uint draws = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);
-            uint instances = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountInstanceIndex);
+            uint draws = ReadUIntAt(countBuffer, GPUScene.VisibleCountDrawIndex);
+            uint instances = ReadUIntAt(countBuffer, GPUScene.VisibleCountInstanceIndex);
             VisibleCommandCount = draws;
             VisibleInstanceCount = instances;
         }
@@ -577,7 +582,7 @@ namespace XREngine.Rendering.Commands
             // Bind buffers
             _cullingComputeShader.BindBuffer(src, 0);
             _cullingComputeShader.BindBuffer(dst, 1);
-            _cullingComputeShader.BindBuffer(_culledCountBuffer, 2);
+            _cullingComputeShader.BindBuffer(_culledCountBuffer!, 2);
             if (_cullingOverflowFlagBuffer is not null)
                 _cullingComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 3);
             if (_statsBuffer is not null)
@@ -607,7 +612,7 @@ namespace XREngine.Rendering.Commands
             }
 
             // Read back visible counts
-            UpdateVisibleCountersFromBuffer();
+            UpdateVisibleCountersFromBuffer(_culledCountBuffer);
             uint visibleCount = VisibleCommandCount;
 
             if (debugLoggingEnabled)
@@ -789,7 +794,7 @@ namespace XREngine.Rendering.Commands
             // Bind command buffers (same as linear culling)
             _bvhFrustumCullProgram.BindBuffer(src, 0);
             _bvhFrustumCullProgram.BindBuffer(dst, 1);
-            _bvhFrustumCullProgram.BindBuffer(_culledCountBuffer, 2);
+            _bvhFrustumCullProgram.BindBuffer(_culledCountBuffer!, 2);
             if (_cullingOverflowFlagBuffer is not null)
                 _bvhFrustumCullProgram.BindBuffer(_cullingOverflowFlagBuffer, 3);
 
@@ -830,7 +835,7 @@ namespace XREngine.Rendering.Commands
             }
 
             // Read back visible counts
-            UpdateVisibleCountersFromBuffer();
+            UpdateVisibleCountersFromBuffer(_culledCountBuffer);
             uint visibleCount = VisibleCommandCount;
 
             if (debugLoggingEnabled)
@@ -941,7 +946,7 @@ namespace XREngine.Rendering.Commands
             _copyCommandsProgram.Uniform("BoundsCheckEnabled", boundsCheckEnabled);
             _copyCommandsProgram.BindBuffer(src, 0);
             _copyCommandsProgram.BindBuffer(dst, 1);
-            _copyCommandsProgram.BindBuffer(_culledCountBuffer, 2);
+            _copyCommandsProgram.BindBuffer(_culledCountBuffer!, 2);
             if (_cullingOverflowFlagBuffer is not null)
                 _copyCommandsProgram.BindBuffer(_cullingOverflowFlagBuffer, 4);
 
@@ -972,7 +977,7 @@ namespace XREngine.Rendering.Commands
                 }
             }
 
-            UpdateVisibleCountersFromBuffer();
+            UpdateVisibleCountersFromBuffer(_culledCountBuffer);
             uint filteredCount = VisibleCommandCount;
             if (_filteredCountLogBudget > 0)
             {

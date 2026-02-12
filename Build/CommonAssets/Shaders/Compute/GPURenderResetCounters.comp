@@ -11,6 +11,9 @@ layout(std430, binding = 1) buffer DrawCountBuffer { uint DrawCount; };
 layout(std430, binding = 2) buffer CullingOverflowFlagBuffer { uint CullingOverflowFlag; };
 layout(std430, binding = 3) buffer IndirectOverflowFlagBuffer { uint IndirectOverflowFlag; };
 layout(std430, binding = 4) buffer TruncationFlagBuffer { uint TruncationFlag; };
+// Optional scratch count buffer for stages that need both input and output counts without CPU readback.
+layout(std430, binding = 6) buffer CullingScratchCountBuffer { uint ScratchCount; uint ScratchInstanceCount; uint ScratchOverflow; };
+layout(std430, binding = 9) buffer BatchCountBuffer { uint BatchCount; };
 // Optional stats buffer (binding = 8) if bound. Layout must match GpuStatsLayout in C#.
 layout(std430, binding = 8) buffer StatsBuffer {
     uint StatsInputCount;        // 0
@@ -40,6 +43,12 @@ void main() {
     CullingOverflowFlag = 0u;
     IndirectOverflowFlag = 0u;
     TruncationFlag = 0u;
+
+    // Scratch is bound only when the caller uses it; writing is safe regardless.
+    ScratchCount = 0u;
+    ScratchInstanceCount = 0u;
+    ScratchOverflow = 0u;
+    BatchCount = 0u;
     // Reset stats (per-frame)
     StatsInputCount = 0u;
     StatsCulledCount = 0u;

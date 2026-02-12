@@ -121,7 +121,7 @@ namespace XREngine.Rendering.Commands
 
             /// <summary>
             /// Enables CPU-side mapping/inspection of the culled command buffer to build material batches.
-            /// This is a diagnostics path only; default render flow should stay GPU-driven.
+            /// Emergency diagnostics fallback only; default render flow should stay GPU-driven.
             /// </summary>
             public bool EnableCpuBatching { get; set; } = false;
 
@@ -327,13 +327,31 @@ namespace XREngine.Rendering.Commands
         public XRRenderProgram? _cullingComputeShader;
         //public XRRenderProgram? SortingComputeShader;
         //public XRRenderProgram? RadixSortComputeShader;
-        //public XRRenderProgram? _buildKeysComputeShader;
+        public XRRenderProgram? _buildKeysComputeShader;
+        public XRRenderProgram? _buildGpuBatchesComputeShader;
         //public XRRenderProgram? RadixIndexSortComputeShader;
         public XRRenderProgram? _indirectRenderTaskShader;
         public XRRenderProgram? _resetCountersComputeShader;
         public XRRenderProgram? _debugDrawProgram;
         private XRRenderProgram? _copyCommandsProgram; // new: passthrough copy
         private XRRenderProgram? _bvhFrustumCullProgram; // BVH-accelerated frustum culling
+
+        // Phase 3: Hi-Z occlusion (GPU_HiZ)
+        private XRRenderProgram? _hiZInitProgram;
+        private XRRenderProgram? _hiZGenProgram;
+        private XRRenderProgram? _hiZOcclusionProgram;
+        private XRRenderProgram? _copyCount3Program;
+        private XRTexture2D? _hiZDepthPyramid;
+        private XRTexture2D? _hiZDepthPyramidOwned;
+        private int _hiZMaxMip;
+
+        // Occlusion stage needs an input count that survives writing the final visible count.
+        // We keep cull output counts in a scratch parameter buffer, then write final counts into _culledCountBuffer.
+        private XRDataBuffer? _cullCountScratchBuffer;
+
+        // Ping-pong output for occlusion refine (input is the current culled buffer; output becomes the new culled buffer).
+        private XRDataBuffer? _occlusionCulledBuffer;
+        private XRDataBuffer? _occlusionOverflowFlagBuffer;
 
         // Renderer used to issue indirect multi-draw calls
         public XRMeshRenderer? _indirectRenderer;
@@ -378,6 +396,14 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _drawCountBuffer;
         private XRDataBuffer? _cullingOverflowFlagBuffer;
         private XRDataBuffer? _indirectOverflowFlagBuffer;
+        private XRDataBuffer? _gpuBatchRangeBuffer;
+        private XRDataBuffer? _gpuBatchCountBuffer;
+        private XRDataBuffer? _instanceTransformBuffer;
+        private XRDataBuffer? _instanceSourceIndexBuffer;
+        private XRDataBuffer? _materialAggregationBuffer;
+        private bool _gpuBatchingPreparedThisFrame;
+        public bool EnableGpuDrivenBatching { get; set; } = true;
+        public bool EnableGpuDrivenInstancing { get; set; } = true;
 
         /// <summary>
         /// If true, the material ID is included in the sorting key to reduce overdraw.
@@ -420,16 +446,19 @@ namespace XREngine.Rendering.Commands
 
     public sealed partial class GPURenderPassCollection
     {
-        // Sorting key/index buffer (optional). When present, pairs [key, index] are used
-        // to traverse visible draws in a sort order to build contiguous material batches.
-        private XRDataBuffer? _keyIndexBufferA; // [key, index] per visible command
+        // GPU-generated sort keys (uint4 per visible command): packed pass/pipeline/state, material, mesh, source index.
+        private XRDataBuffer? _keyIndexBufferA;
 
         // Expose batches for the current pass for HybridRenderingManager
         public IReadOnlyList<HybridRenderingManager.DrawBatch>? CurrentBatches { get; private set; }
+        public XRDataBuffer? InstanceTransformBuffer => _instanceTransformBuffer;
+        public XRDataBuffer? InstanceSourceIndexBuffer => _instanceSourceIndexBuffer;
+        public bool GpuBatchingPreparedThisFrame => _gpuBatchingPreparedThisFrame;
 
         // Simple passthrough for count/flag/stat buffer exposure
         public XRDataBuffer? CulledCountBuffer => _culledCountBuffer;
         public XRDataBuffer? DrawCountBuffer => _drawCountBuffer;
+        public XRDataBuffer? IndirectDrawBuffer => _indirectDrawBuffer;
         public XRDataBuffer? IndirectOverflowFlagBuffer => _indirectOverflowFlagBuffer;
         public XRDataBuffer? TruncationFlagBuffer => _truncationFlagBuffer;
         public XRDataBuffer? StatsBuffer => _statsBuffer;

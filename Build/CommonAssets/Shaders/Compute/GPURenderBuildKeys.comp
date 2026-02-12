@@ -2,67 +2,56 @@
 
 layout(local_size_x = 256) in;
 
-// Culled commands buffer (float[48] per command)
-layout(std430, binding = 0) buffer CulledCommands { float culled[]; };
-// Culled count
-layout(std430, binding = 1) buffer CulledCountBuffer
+const uint COMMAND_FLOATS = 48u;
+const uint KEY_UINTS = 4u;
+
+layout(std430, binding = 0) readonly buffer CulledCommands { float culled[]; };
+layout(std430, binding = 1) readonly buffer CulledCountBuffer
 {
     uint CulledCount;
     uint CulledInstanceCount;
     uint CulledOverflow;
 };
-// Output key-index pairs (uint2 flattened)
-layout(std430, binding = 2) buffer KeyIndexOut { uint keyIndexOut[]; };
-// Optional material-major mode: high bits = MaterialID, low bits = quantized depth bucket
-layout(std430, binding = 3) buffer MaterialIDs { uint materialIDs[]; }; // parallel array by command index (if provided)
+layout(std430, binding = 2) writeonly buffer SortKeyBuffer { uint sortKeys[]; };
 
-uniform int SortByDistance;   // 1 distance, 0 = use alternate key (render pass or material-major)
-uniform int SortDirection;    // 1 ascending, -1 descending
-uniform int UseMaterialBatchKey; // 1 = material-major key when SortByDistance==0
-
-const int COMMAND_FLOATS = 48; // Updated for PrevWorldMatrix
+uniform int CurrentRenderPass;
+uniform int MaxSortKeys;
+uniform uint StateBitMask;
 
 void main()
 {
-    uint idx = gl_GlobalInvocationID.x;
+    uint logicalIdx = gl_GlobalInvocationID.x;
     uint total = CulledCount;
-    if (idx >= total) return;
 
-    int base = int(idx) * COMMAND_FLOATS;
-    if (base + COMMAND_FLOATS > culled.length()) return;
+    if (logicalIdx >= total || logicalIdx >= uint(MaxSortKeys))
+        return;
 
-    // Offsets updated for 48-float struct
-    float renderDistance = culled[base + 42];
-    uint renderPass = uint(culled[base + 40]);
-    uint flags = uint(culled[base + 45]);
+    uint base = logicalIdx * COMMAND_FLOATS;
+    if (base + COMMAND_FLOATS > uint(culled.length()))
+        return;
 
-    uint key;
-    if (SortByDistance != 0)
+    uint renderPass = floatBitsToUint(culled[base + 40u]);
+    if (CurrentRenderPass >= 0 &&
+        renderPass != uint(CurrentRenderPass) &&
+        renderPass != 0xFFFFFFFFu)
     {
-        // Float bit reinterpret. Assumes non-negative distances (camera depth or squared distance)
-        key = floatBitsToUint(renderDistance);
-        if (SortDirection < 0)
-            key = 0xFFFFFFFFu - key; // invert for descending
-    }
-    else
-    {
-        if (UseMaterialBatchKey != 0 && materialIDs.length() > 0)
-        {
-            uint materialID = materialIDs[idx];
-            // Quantize distance to 12 bits (0..4095) after scaling; simple clamp
-            float scaled = renderDistance * 0.001f; // tunable scale
-            uint depthQ = uint(clamp(scaled, 0.0, 4095.0));
-            key = (materialID << 12) | (depthQ & 0xFFFu);
-            if (SortDirection < 0) key = 0xFFFFFFFFu - key;
-        }
-        else
-        {
-            key = (renderPass << 8) | (flags & 0xFFu);
-            if (SortDirection < 0) key = 0xFFFFFFFFu - key;
-        }
+        return;
     }
 
-    uint outBase = idx * 2u;
-    keyIndexOut[outBase + 0u] = key;
-    keyIndexOut[outBase + 1u] = idx;
+    uint materialID = floatBitsToUint(culled[base + 38u]);
+    uint meshID = floatBitsToUint(culled[base + 36u]);
+    uint shaderProgramID = floatBitsToUint(culled[base + 41u]);
+    uint flags = floatBitsToUint(culled[base + 45u]);
+
+    uint stateBits = flags & StateBitMask;
+    uint packedPassPipelineState =
+        ((renderPass & 0xFFu) << 24u) |
+        ((shaderProgramID & 0x0FFFu) << 12u) |
+        (stateBits & 0x0FFFu);
+
+    uint outBase = logicalIdx * KEY_UINTS;
+    sortKeys[outBase + 0u] = packedPassPipelineState;
+    sortKeys[outBase + 1u] = materialID;
+    sortKeys[outBase + 2u] = meshID;
+    sortKeys[outBase + 3u] = logicalIdx;
 }
