@@ -90,6 +90,40 @@ public class GpuCullingPipelineTests
     }
 
     [Test]
+    public void GPURenderHiZInitShader_Loads_AndContainsExpectedBindings()
+    {
+        string source = LoadShaderSource("Compute/GPURenderHiZInit.comp");
+
+        source.ShouldNotBeNullOrEmpty();
+        source.ShouldContain("depthTexture");
+        source.ShouldContain("hiZBuffer");
+        source.ShouldContain("mipLevelSize");
+    }
+
+    [Test]
+    public void GPURenderOcclusionHiZShader_Loads_AndContainsExpectedUniforms()
+    {
+        string source = LoadShaderSource("Compute/GPURenderOcclusionHiZ.comp");
+
+        source.ShouldNotBeNullOrEmpty();
+        source.ShouldContain("HiZOccluded");
+        source.ShouldContain("ViewProj");
+        source.ShouldContain("HiZMaxMip");
+        source.ShouldContain("IsReversedDepth");
+    }
+
+    [Test]
+    public void GPURenderCopyCount3Shader_Loads_AndContainsExpectedBuffers()
+    {
+        string source = LoadShaderSource("Compute/GPURenderCopyCount3.comp");
+
+        source.ShouldNotBeNullOrEmpty();
+        source.ShouldContain("SrcCountBuffer");
+        source.ShouldContain("DstCountBuffer");
+        source.ShouldContain("Dst0 = Src0");
+    }
+
+    [Test]
     public void CullingShader_FlagBitLayout_MatchesCSharpFlags()
     {
         string source = LoadShaderSource("Compute/GPURenderCulling.comp");

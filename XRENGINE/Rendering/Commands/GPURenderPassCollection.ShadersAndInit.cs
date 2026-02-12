@@ -129,7 +129,8 @@ namespace XREngine.Rendering.Commands
             Dbg("GenerateShaders start","Lifecycle");
 
             _cullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderCulling.comp", EShaderType.Compute));
-            //_buildKeysComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderBuildKeys.comp", EShaderType.Compute));
+            _buildKeysComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderBuildKeys.comp", EShaderType.Compute));
+            _buildGpuBatchesComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderBuildBatches.comp", EShaderType.Compute));
             //RadixIndexSortComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderRadixIndexSort.comp", EShaderType.Compute));
             _indirectRenderTaskShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderIndirect.comp", EShaderType.Compute));
             _resetCountersComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderResetCounters.comp", EShaderType.Compute));
@@ -139,6 +140,12 @@ namespace XREngine.Rendering.Commands
             //_gatherProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderGather.comp", EShaderType.Compute));
             _copyCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderCopyCommands.comp", EShaderType.Compute));
             _bvhFrustumCullProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Scene3D/RenderPipeline/bvh_frustum_cull.comp", EShaderType.Compute));
+
+            // Phase 3: Hi-Z occlusion pyramid + refinement
+            _hiZInitProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderHiZInit.comp", EShaderType.Compute));
+            _hiZGenProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/HiZGen.comp", EShaderType.Compute));
+            _hiZOcclusionProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderOcclusionHiZ.comp", EShaderType.Compute));
+            _copyCount3Program = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderCopyCount3.comp", EShaderType.Compute));
 
             Dbg("GenerateShaders complete","Lifecycle");
         }
@@ -358,11 +365,13 @@ namespace XREngine.Rendering.Commands
             }
 
             // Track remap needs per-buffer
-            bool indirectDrawRecreated = EnsureIndirectDrawBuffer(capacity);
+            EnsureIndirectDrawBuffer(capacity);
             _culledCountNeedsMap = EnsureParameterBuffer(ref _culledCountBuffer, "CulledCount", GPUScene.VisibleCountComponents);
+            _culledCountNeedsMap |= EnsureParameterBuffer(ref _cullCountScratchBuffer, "CulledCountScratch", GPUScene.VisibleCountComponents);
             _drawCountNeedsMap = EnsureParameterBuffer(ref _drawCountBuffer, "DrawCount");
             _cullingOverflowNeedsMap = EnsureFlagBuffer(ref _cullingOverflowFlagBuffer, "CullingOverflowFlag");
             _indirectOverflowNeedsMap = EnsureFlagBuffer(ref _indirectOverflowFlagBuffer, "IndirectOverflowFlag");
+            _cullingOverflowNeedsMap |= EnsureFlagBuffer(ref _occlusionOverflowFlagBuffer, "OcclusionOverflowFlag");
 
             if (_sortedCommandBuffer is null || _sortedCommandBuffer.ElementCount != capacity)
             {
@@ -387,8 +396,31 @@ namespace XREngine.Rendering.Commands
 
             // Ensure material IDs buffer exists for batching keys
             EnsureMaterialIDs(capacity);
+            EnsureGpuDrivenBatchingBuffers(capacity);
             EnsureViewSetBuffers(capacity);
             _statsNeedsMap |= EnsureStatsBuffer();
+
+            // Phase 3: occlusion ping-pong buffer (same layout as CulledSceneToRenderBuffer)
+            if (_occlusionCulledBuffer is null || _occlusionCulledBuffer.ElementCount != capacity)
+            {
+                _occlusionCulledBuffer?.Destroy();
+                _occlusionCulledBuffer = new XRDataBuffer(
+                    $"CulledCommandsBuffer_Occlusion",
+                    EBufferTarget.ShaderStorageBuffer,
+                    capacity,
+                    EComponentType.Float,
+                    GPUScene.CommandFloatCount,
+                    false,
+                    false)
+                {
+                    Usage = EBufferUsage.StreamDraw,
+                    DisposeOnPush = false,
+                    Resizable = false,
+                    StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read,
+                    RangeFlags = EBufferMapRangeFlags.Read,
+                };
+                _occlusionCulledBuffer.Generate();
+            }
 
             // Aggregate whether any buffer mapping is pending
             bool anyRemapPending = _culledCountNeedsMap || _drawCountNeedsMap || _cullingOverflowNeedsMap || _indirectOverflowNeedsMap || _statsNeedsMap || _truncationNeedsMap;
@@ -766,6 +798,184 @@ namespace XREngine.Rendering.Commands
 
                 Dbg($"EnsureMaterialIDs resized -> {capacity}", "Materials");
             }
+        }
+
+        private void EnsureGpuDrivenBatchingBuffers(uint capacity)
+        {
+            EnsureSortKeyBuffer(capacity);
+            EnsureBatchRangeBuffer(capacity);
+            EnsureBatchCountBuffer();
+            EnsureInstanceDataBuffers(capacity);
+            EnsureMaterialAggregationBuffer(1u);
+        }
+
+        private void EnsureSortKeyBuffer(uint capacity)
+        {
+            if (_keyIndexBufferA is null ||
+                _keyIndexBufferA.ComponentType != EComponentType.UInt ||
+                _keyIndexBufferA.ComponentCount != GPUBatchingLayout.SortKeyUIntCount)
+            {
+                _keyIndexBufferA?.Destroy();
+                _keyIndexBufferA = new XRDataBuffer(
+                    "GPUSortKeys_Pass",
+                    EBufferTarget.ShaderStorageBuffer,
+                    capacity,
+                    EComponentType.UInt,
+                    GPUBatchingLayout.SortKeyUIntCount,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true,
+                    BindingIndexOverride = (uint)GPUBatchingBindings.BuildKeysSortKeys
+                };
+                _keyIndexBufferA.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
+                _keyIndexBufferA.Generate();
+                return;
+            }
+
+            if (_keyIndexBufferA.ElementCount < capacity)
+                _keyIndexBufferA.Resize(capacity);
+        }
+
+        private void EnsureBatchRangeBuffer(uint capacity)
+        {
+            if (_gpuBatchRangeBuffer is null ||
+                _gpuBatchRangeBuffer.ComponentType != EComponentType.UInt ||
+                _gpuBatchRangeBuffer.ComponentCount != GPUBatchingLayout.BatchRangeUIntCount)
+            {
+                _gpuBatchRangeBuffer?.Destroy();
+                _gpuBatchRangeBuffer = new XRDataBuffer(
+                    "GPUBatchRanges_Pass",
+                    EBufferTarget.ShaderStorageBuffer,
+                    capacity,
+                    EComponentType.UInt,
+                    GPUBatchingLayout.BatchRangeUIntCount,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true,
+                    BindingIndexOverride = (uint)GPUBatchingBindings.BuildBatchesBatchRanges,
+                    StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read,
+                    RangeFlags = EBufferMapRangeFlags.Read
+                };
+                _gpuBatchRangeBuffer.Generate();
+                return;
+            }
+
+            if (_gpuBatchRangeBuffer.ElementCount < capacity)
+                _gpuBatchRangeBuffer.Resize(capacity);
+        }
+
+        private void EnsureBatchCountBuffer()
+        {
+            if (_gpuBatchCountBuffer is not null)
+                return;
+
+            _gpuBatchCountBuffer = new XRDataBuffer(
+                "GPUBatchCount_Pass",
+                EBufferTarget.ShaderStorageBuffer,
+                1u,
+                EComponentType.UInt,
+                1u,
+                false,
+                true)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = false,
+                BindingIndexOverride = (uint)GPUBatchingBindings.BuildBatchesBatchCount,
+                StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read,
+                RangeFlags = EBufferMapRangeFlags.Read
+            };
+            _gpuBatchCountBuffer.Generate();
+            _gpuBatchCountBuffer.SetDataRawAtIndex(0u, 0u);
+            _gpuBatchCountBuffer.PushSubData();
+        }
+
+        private void EnsureInstanceDataBuffers(uint capacity)
+        {
+            if (_instanceTransformBuffer is null ||
+                _instanceTransformBuffer.ComponentType != EComponentType.Float ||
+                _instanceTransformBuffer.ComponentCount != GPUBatchingLayout.InstanceTransformFloatCount)
+            {
+                _instanceTransformBuffer?.Destroy();
+                _instanceTransformBuffer = new XRDataBuffer(
+                    "GPUInstanceTransforms_Pass",
+                    EBufferTarget.ShaderStorageBuffer,
+                    capacity,
+                    EComponentType.Float,
+                    GPUBatchingLayout.InstanceTransformFloatCount,
+                    false,
+                    false)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true,
+                    BindingIndexOverride = (uint)GPUBatchingBindings.InstanceTransformBuffer
+                };
+                _instanceTransformBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
+                _instanceTransformBuffer.Generate();
+            }
+            else if (_instanceTransformBuffer.ElementCount < capacity)
+            {
+                _instanceTransformBuffer.Resize(capacity);
+            }
+
+            if (_instanceSourceIndexBuffer is null)
+            {
+                _instanceSourceIndexBuffer = new XRDataBuffer(
+                    "GPUInstanceSources_Pass",
+                    EBufferTarget.ShaderStorageBuffer,
+                    capacity,
+                    EComponentType.UInt,
+                    1u,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true,
+                    BindingIndexOverride = (uint)GPUBatchingBindings.InstanceSourceIndexBuffer
+                };
+                _instanceSourceIndexBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
+                _instanceSourceIndexBuffer.Generate();
+            }
+            else if (_instanceSourceIndexBuffer.ElementCount < capacity)
+            {
+                _instanceSourceIndexBuffer.Resize(capacity);
+            }
+        }
+
+        private void EnsureMaterialAggregationBuffer(uint requiredEntries)
+        {
+            uint entryCount = Math.Max(1u, requiredEntries);
+            if (_materialAggregationBuffer is null)
+            {
+                _materialAggregationBuffer = new XRDataBuffer(
+                    "MaterialAggregationFlags",
+                    EBufferTarget.ShaderStorageBuffer,
+                    entryCount,
+                    EComponentType.UInt,
+                    1u,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true,
+                    BindingIndexOverride = (uint)GPUBatchingBindings.BuildBatchesMaterialAggregation
+                };
+                _materialAggregationBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
+                _materialAggregationBuffer.Generate();
+                return;
+            }
+
+            if (_materialAggregationBuffer.ElementCount < entryCount)
+                _materialAggregationBuffer.Resize(entryCount);
         }
     }
 }

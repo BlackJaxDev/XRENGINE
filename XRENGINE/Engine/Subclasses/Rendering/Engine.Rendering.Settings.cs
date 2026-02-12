@@ -298,6 +298,7 @@ namespace XREngine
                 private int _shaderConfigVersion = 0;
                 private bool _useGpuBvh = false;
                 private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.Disabled;
+                private bool _cacheGpuHiZOcclusionOncePerFrame = false;
                 private uint _bvhLeafMaxPrims = 4u;
                 private EBvhMode _bvhMode = EBvhMode.Morton;
                 private bool _bvhRefitOnlyWhenStable = true;
@@ -748,6 +749,19 @@ namespace XREngine
                 {
                     get => _gpuOcclusionCullingMode;
                     set => SetField(ref _gpuOcclusionCullingMode, value);
+                }
+
+                /// <summary>
+                /// When true, the Hi-Z depth pyramid used by GPU_HiZ occlusion is built once per render frame
+                /// and shared across GPU indirect render passes.
+                /// When false, each GPU pass builds its own pyramid (safer when depth changes mid-frame).
+                /// </summary>
+                [Category("Occlusion")]
+                [Description("When true, builds Hi-Z once per render frame and shares it across GPU passes. When false, builds per-pass.")]
+                public bool CacheGpuHiZOcclusionOncePerFrame
+                {
+                    get => _cacheGpuHiZOcclusionOncePerFrame;
+                    set => SetField(ref _cacheGpuHiZOcclusionOncePerFrame, value);
                 }
 
                 /// <summary>

@@ -52,8 +52,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void RenderGPU()
         {
             using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(_renderPass);
+            var camera = ActivePipelineInstance.RenderState.SceneCamera;
 
-            ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, true);
+            ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, true, camera);
             ActivePipelineInstance.MeshRenderCommands.RenderGPU(_renderPass);
 
             // Safety net: if the GPU-indirect path fails/early-outs (common during init/validation),
@@ -65,7 +66,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void RenderCPU()
         {
             using var passScope = Engine.Rendering.State.PushRenderGraphPassIndex(_renderPass);
-            ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, false);
+            var camera = ActivePipelineInstance.RenderState.SceneCamera;
+            ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, false, camera);
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

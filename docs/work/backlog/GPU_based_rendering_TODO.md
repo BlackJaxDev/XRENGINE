@@ -154,29 +154,29 @@ Outcome: add robust occlusion culling that works in both GPU-dispatch and CPU-co
   - [x] `Disabled`
   - [x] `GPU_HiZ`
   - [x] `CPU_QueryAsync`
-- [ ] GPU path (`GPU_HiZ`):
-  - [ ] Add depth-only prepass for opaque occluders.
-  - [ ] Build Hi-Z pyramid every frame from prepass depth.
-  - [ ] Integrate Hi-Z compute into active culling flow after frustum/BVH reject and before indirect build.
-  - [ ] Use conservative sphere-first test, then AABB refinement for borderline cases.
-  - [ ] Keep uncertain results visible (never hard-cull on ambiguous depth tests).
-- [ ] CPU-compatible path (`CPU_QueryAsync`):
-  - [ ] Add backend-agnostic async occlusion query manager using existing render query abstractions.
-  - [ ] Use previous-frame query results only (no same-frame wait/read stalls).
-  - [ ] Batch query submission for occlusion candidates (not all draws).
-  - [ ] Default to visible when query data is unavailable/late.
-- [ ] Shared temporal policy (both modes):
-  - [ ] Track per-command visibility history.
-  - [ ] Apply hysteresis: require N consecutive occluded frames before hiding.
-  - [ ] Immediately re-test when camera jump/FOV change/object transform delta exceeds threshold.
-  - [ ] Reset temporal state on scene load, teleport, or large topology changes.
-- [ ] Integrate pass-awareness:
-  - [ ] Ensure occlusion tests operate per render pass and do not hide required shadow/depth-only contributors.
-- [ ] Add instrumentation:
-  - [ ] candidates tested
-  - [ ] occluded accepted
-  - [ ] false-positive recoveries
-  - [ ] temporal overrides
+- [x] GPU path (`GPU_HiZ`):
+  - [x] Add depth-only prepass for opaque occluders.
+  - [x] Build Hi-Z pyramid every frame from prepass depth.
+  - [x] Integrate Hi-Z compute into active culling flow after frustum/BVH reject and before indirect build.
+  - [x] Use conservative sphere-first test, then AABB refinement for borderline cases.
+  - [x] Keep uncertain results visible (never hard-cull on ambiguous depth tests).
+- [x] CPU-compatible path (`CPU_QueryAsync`):
+  - [x] Add backend-agnostic async occlusion query manager using existing render query abstractions.
+  - [x] Use previous-frame query results only (no same-frame wait/read stalls).
+  - [x] Batch query submission for occlusion candidates (not all draws).
+  - [x] Default to visible when query data is unavailable/late.
+- [x] Shared temporal policy (both modes):
+  - [x] Track per-command visibility history.
+  - [x] Apply hysteresis: require N consecutive occluded frames before hiding.
+  - [x] Immediately re-test when camera jump/FOV change/object transform delta exceeds threshold.
+  - [x] Reset temporal state on scene load, teleport, or large topology changes.
+- [x] Integrate pass-awareness:
+  - [x] Ensure occlusion tests operate per render pass and do not hide required shadow/depth-only contributors.
+- [x] Add instrumentation:
+  - [x] candidates tested
+  - [x] occluded accepted
+  - [x] false-positive recoveries
+  - [x] temporal overrides
 
 Acceptance criteria:
 - Occlusion is stable (no obvious popping) under camera motion and animated transforms.
@@ -188,15 +188,15 @@ Acceptance criteria:
 
 Outcome: material/pass grouping and instancing are GPU generated.
 
-- [ ] Implement GPU key generation for visible commands.
-  - [ ] Key includes pass, material/pipeline, mesh, and required render-state bits.
-- [ ] Implement GPU sort or bucket pipeline and output batch ranges.
-- [ ] Replace CPU `BuildMaterialBatches` dependency in default path.
-- [ ] Implement true instancing aggregation:
-  - [ ] group identical mesh/material/pass
-  - [ ] emit one indirect draw with instance count > 1
-  - [ ] store per-instance transforms in instance data buffer
-- [ ] Keep CPU batching path as emergency debug fallback only.
+- [x] Implement GPU key generation for visible commands.
+  - [x] Key includes pass, material/pipeline, mesh, and required render-state bits.
+- [x] Implement GPU sort or bucket pipeline and output batch ranges.
+- [x] Replace CPU `BuildMaterialBatches` dependency in default path.
+- [x] Implement true instancing aggregation:
+  - [x] group identical mesh/material/pass
+  - [x] emit one indirect draw with instance count > 1
+  - [x] store per-instance transforms in instance data buffer
+- [x] Keep CPU batching path as emergency debug fallback only.
 
 Acceptance criteria:
 - Batch counts no longer depend on CPU sort toggle.

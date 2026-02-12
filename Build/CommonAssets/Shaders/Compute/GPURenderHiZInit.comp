@@ -1,0 +1,21 @@
+#version 460
+
+// Initializes Hi-Z mip 0 from the current depth buffer.
+// Writes a single-channel depth value into an RGBA32F pyramid texture (R is used).
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D depthTexture;
+layout(binding = 1, rgba32f) uniform image2D hiZBuffer;
+
+uniform ivec2 mipLevelSize;
+
+void main()
+{
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= mipLevelSize.x || coord.y >= mipLevelSize.y)
+        return;
+
+    float depth = texelFetch(depthTexture, coord, 0).r;
+    imageStore(hiZBuffer, coord, vec4(depth, 0.0, 0.0, 0.0));
+}

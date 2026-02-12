@@ -22,6 +22,9 @@ namespace XREngine.Rendering
     public class HybridRenderingManager : XRBase, IDisposable
     {
         private const uint IndirectCommandSsboBinding = 7;
+        private const uint InstanceTransformSsboBinding = GPUBatchingBindings.InstanceTransformBuffer;
+        private const uint InstanceSourceIndexSsboBinding = GPUBatchingBindings.InstanceSourceIndexBuffer;
+        private const uint LegacyCommandBaseInstanceFlag = GPUBatchingLayout.LegacyCommandBaseInstanceFlag;
         private const int IndirectCommandFloatCount = 48;
         private const int IndirectTextGlyphOffsetFloatIndex = 46;
         private const string GlyphTransformsBufferName = "GlyphTransformsBuffer";
@@ -217,6 +220,9 @@ namespace XREngine.Rendering
             XRDataBuffer? indirectDrawBuffer,
             XRMeshRenderer? vaoRenderer,
             XRDataBuffer? culledCommandsBuffer,
+            XRDataBuffer? instanceTransformBuffer,
+            XRDataBuffer? instanceSourceIndexBuffer,
+            bool useInstanceTransformBuffer,
             uint drawCount,
             uint maxCommands,
             XRDataBuffer? parameterBuffer,
@@ -255,6 +261,9 @@ namespace XREngine.Rendering
                 // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader.
                 // Use a dedicated binding to avoid colliding with material SSBOs (for example text glyph buffers).
                 culledCommandsBuffer?.BindTo(graphicsProgram, IndirectCommandSsboBinding);
+                instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
+                instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
+                graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);
                 
                 if (camera is not null)
                 {
@@ -671,6 +680,9 @@ namespace XREngine.Rendering
             XRDataBuffer? indirectDrawBuffer,
             XRMeshRenderer? vaoRenderer,
             XRDataBuffer? culledCommandsBuffer,
+            XRDataBuffer? instanceTransformBuffer,
+            XRDataBuffer? instanceSourceIndexBuffer,
+            bool useInstanceTransformBuffer,
             uint drawOffset,
             uint drawCount,
             XRDataBuffer? parameterBuffer,
@@ -695,6 +707,9 @@ namespace XREngine.Rendering
 
                 // Bind per-draw command data (world matrix, etc.) for GPU-indirect vertex shader
                 culledCommandsBuffer?.BindTo(graphicsProgram, IndirectCommandSsboBinding);
+                instanceTransformBuffer?.BindTo(graphicsProgram, InstanceTransformSsboBinding);
+                instanceSourceIndexBuffer?.BindTo(graphicsProgram, InstanceSourceIndexSsboBinding);
+                graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);
                 
                 // Set camera/engine uniforms
                 if (camera is not null)
@@ -962,6 +977,9 @@ namespace XREngine.Rendering
                     indirectDrawBuffer,
                     vaoRenderer,
                     culledBuffer,
+                    null,
+                    null,
+                    false,
                     built,
                     built,
                     null,
@@ -1111,6 +1129,9 @@ namespace XREngine.Rendering
                 indirectDrawBuffer,
                 vaoRenderer,
                 culledBuffer,
+                null,
+                null,
+                false,
                 visibleCount,
                 maxDrawAllowed,
                 parameterBuffer,
@@ -1341,7 +1362,11 @@ namespace XREngine.Rendering
             sb.AppendLine();
             sb.AppendLine($"// GPU indirect: per-draw command data (float[{IndirectCommandFloatCount}])");
             sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) buffer CulledCommandsBuffer {{ float culled[]; }};");
+            sb.AppendLine($"layout(std430, binding = {InstanceTransformSsboBinding}) buffer InstanceTransformBuffer {{ float instanceWorld[]; }};");
+            sb.AppendLine($"layout(std430, binding = {InstanceSourceIndexSsboBinding}) buffer InstanceSourceIndexBuffer {{ uint instanceSourceIndex[]; }};");
             sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
+            sb.AppendLine("const int INSTANCE_MATRIX_FLOATS = 16;");
+            sb.AppendLine($"const uint LEGACY_BASEINSTANCE_FLAG = {LegacyCommandBaseInstanceFlag}u;");
             sb.AppendLine();
 
             uint location = 0;
@@ -1385,9 +1410,10 @@ namespace XREngine.Rendering
             sb.AppendLine($"uniform mat4 {EEngineUniform.InverseViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
             sb.AppendLine($"uniform mat4 {EEngineUniform.ProjMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
             sb.AppendLine($"uniform bool {EEngineUniform.VRMode};");
+            sb.AppendLine("uniform int UseInstanceTransformBuffer;");
             sb.AppendLine();
 
-            sb.AppendLine("mat4 LoadWorldMatrix(uint commandIndex)");
+            sb.AppendLine("mat4 LoadWorldMatrixFromCommands(uint commandIndex)");
             sb.AppendLine("{");
             sb.AppendLine("    int base = int(commandIndex) * COMMAND_FLOATS;");
             sb.AppendLine("    // Matrix4x4 is row-major in CPU memory; construct GLSL mat4 by columns.");
@@ -1398,11 +1424,44 @@ namespace XREngine.Rendering
             sb.AppendLine("    return mat4(c0, c1, c2, c3);");
             sb.AppendLine("}");
             sb.AppendLine();
+            sb.AppendLine("mat4 LoadWorldMatrixFromInstances(uint instanceIndex)");
+            sb.AppendLine("{");
+            sb.AppendLine("    int base = int(instanceIndex) * INSTANCE_MATRIX_FLOATS;");
+            sb.AppendLine("    vec4 c0 = vec4(instanceWorld[base+0], instanceWorld[base+4], instanceWorld[base+8],  instanceWorld[base+12]);");
+            sb.AppendLine("    vec4 c1 = vec4(instanceWorld[base+1], instanceWorld[base+5], instanceWorld[base+9],  instanceWorld[base+13]);");
+            sb.AppendLine("    vec4 c2 = vec4(instanceWorld[base+2], instanceWorld[base+6], instanceWorld[base+10], instanceWorld[base+14]);");
+            sb.AppendLine("    vec4 c3 = vec4(instanceWorld[base+3], instanceWorld[base+7], instanceWorld[base+11], instanceWorld[base+15]);");
+            sb.AppendLine("    return mat4(c0, c1, c2, c3);");
+            sb.AppendLine("}");
+            sb.AppendLine();
+            sb.AppendLine("uint ResolveCommandIndex(uint rawBaseInstance, uint instanceLinearIndex)");
+            sb.AppendLine("{");
+            sb.AppendLine("    uint baseIndex = rawBaseInstance & (~LEGACY_BASEINSTANCE_FLAG);");
+            sb.AppendLine("    bool legacyMode = (rawBaseInstance & LEGACY_BASEINSTANCE_FLAG) != 0u;");
+            sb.AppendLine("    if (!legacyMode && UseInstanceTransformBuffer != 0 && instanceLinearIndex < uint(instanceSourceIndex.length()))");
+            sb.AppendLine("        return instanceSourceIndex[instanceLinearIndex];");
+            sb.AppendLine("    return baseIndex;");
+            sb.AppendLine("}");
+            sb.AppendLine();
+            sb.AppendLine("mat4 ResolveModelMatrix(uint rawBaseInstance, uint instanceLinearIndex)");
+            sb.AppendLine("{");
+            sb.AppendLine("    uint baseIndex = rawBaseInstance & (~LEGACY_BASEINSTANCE_FLAG);");
+            sb.AppendLine("    bool legacyMode = (rawBaseInstance & LEGACY_BASEINSTANCE_FLAG) != 0u;");
+            sb.AppendLine("    uint instanceCapacity = uint(instanceWorld.length()) / uint(INSTANCE_MATRIX_FLOATS);");
+            sb.AppendLine("    if (!legacyMode && UseInstanceTransformBuffer != 0 && instanceLinearIndex < instanceCapacity)");
+            sb.AppendLine("        return LoadWorldMatrixFromInstances(instanceLinearIndex);");
+            sb.AppendLine("    return LoadWorldMatrixFromCommands(baseIndex);");
+            sb.AppendLine("}");
+            sb.AppendLine();
 
             sb.AppendLine("void main()");
             sb.AppendLine("{");
-            sb.AppendLine("    mat4 ModelMatrix = LoadWorldMatrix(uint(gl_BaseInstance));");
-            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(uint(gl_BaseInstance));");
+            sb.AppendLine("    uint rawBaseInstance = uint(gl_BaseInstance);");
+            sb.AppendLine("    uint baseIndex = rawBaseInstance & (~LEGACY_BASEINSTANCE_FLAG);");
+            sb.AppendLine("    uint instanceLinearIndex = baseIndex + uint(gl_InstanceID);");
+            sb.AppendLine("    mat4 ModelMatrix = ResolveModelMatrix(rawBaseInstance, instanceLinearIndex);");
+            sb.AppendLine("    uint commandIndex = ResolveCommandIndex(rawBaseInstance, instanceLinearIndex);");
+            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(commandIndex);");
             sb.AppendLine("    vec4 localPos = vec4(Position, 1.0);");
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragPosLocalName} = localPos.xyz;");
             sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
@@ -1466,6 +1525,7 @@ namespace XREngine.Rendering
                 sb.AppendLine("layout(std430, binding = 2) buffer GlyphRotationsBuffer { float GlyphRotations[]; };");
             sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) buffer CulledCommandsBuffer {{ float culled[]; }};");
             sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
+            sb.AppendLine($"const uint LEGACY_BASEINSTANCE_FLAG = {LegacyCommandBaseInstanceFlag}u;");
             sb.AppendLine();
 
             sb.AppendLine("layout(location = 0) out vec3 FragPos;");
@@ -1490,6 +1550,11 @@ namespace XREngine.Rendering
             sb.AppendLine("    return mat4(c0, c1, c2, c3);");
             sb.AppendLine("}");
             sb.AppendLine();
+            sb.AppendLine("uint ResolveCommandIndex(uint rawBaseInstance)");
+            sb.AppendLine("{");
+            sb.AppendLine("    return rawBaseInstance & (~LEGACY_BASEINSTANCE_FLAG);");
+            sb.AppendLine("}");
+            sb.AppendLine();
 
             if (includeRotations)
             {
@@ -1506,9 +1571,10 @@ namespace XREngine.Rendering
 
             sb.AppendLine("void main()");
             sb.AppendLine("{");
-            sb.AppendLine("    mat4 ModelMatrix = LoadWorldMatrix(uint(gl_BaseInstance));");
-            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(uint(gl_BaseInstance));");
-            sb.AppendLine("    int cmdBase = int(gl_BaseInstance) * COMMAND_FLOATS;");
+            sb.AppendLine("    uint commandIndex = ResolveCommandIndex(uint(gl_BaseInstance));");
+            sb.AppendLine("    mat4 ModelMatrix = LoadWorldMatrix(commandIndex);");
+            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(commandIndex);");
+            sb.AppendLine("    int cmdBase = int(commandIndex) * COMMAND_FLOATS;");
             sb.AppendLine($"    uint glyphBase = floatBitsToUint(culled[cmdBase + {IndirectTextGlyphOffsetFloatIndex}]);");
             sb.AppendLine("    uint glyphIndex = glyphBase + uint(gl_InstanceID);");
             sb.AppendLine("    vec4 tfm = GlyphTransforms[glyphIndex];");
@@ -1681,27 +1747,44 @@ namespace XREngine.Rendering
             if (vaoRenderer is null || batchCount == 0)
                 return false;
 
-            var sources = new List<(uint visibleIndex, uint glyphCount, XRDataBuffer transforms, XRDataBuffer texCoords, XRDataBuffer? rotations)>((int)batchCount);
+            XRDataBuffer? indirectBuffer = renderPasses.IndirectDrawBuffer;
+            if (indirectBuffer is null)
+                return false;
+
+            var sources = new List<(uint culledIndex, uint glyphCount, XRDataBuffer transforms, XRDataBuffer texCoords, XRDataBuffer? rotations)>((int)batchCount);
             ulong totalGlyphs64 = 0;
 
             for (uint local = 0; local < batchCount; ++local)
             {
-                uint visibleIndex = batchOffset + local;
-                GPUIndirectRenderCommand culledCommand = renderPasses.CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(visibleIndex);
+                uint drawIndex = batchOffset + local;
+                if (drawIndex >= indirectBuffer.ElementCount)
+                    break;
 
-                uint glyphCount = culledCommand.InstanceCount;
+                DrawElementsIndirectCommand drawCommand = indirectBuffer.GetDataRawAtIndex<DrawElementsIndirectCommand>(drawIndex);
+                uint glyphCount = drawCommand.InstanceCount;
                 if (glyphCount == 0)
                     continue;
 
+                uint culledIndex = drawCommand.BaseInstance & ~LegacyCommandBaseInstanceFlag;
+                if (culledIndex >= renderPasses.CulledSceneToRenderBuffer.ElementCount)
+                {
+                    GpuWarn(LogCategory.Draw,
+                        "Indirect text batch preparation failed: culled index {0} out of range for drawIndex={1}.",
+                        culledIndex,
+                        drawIndex);
+                    return false;
+                }
+
+                GPUIndirectRenderCommand culledCommand = renderPasses.CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(culledIndex);
                 uint sourceCommandIndex = culledCommand.Reserved1;
                 if (!scene.TryGetSourceCommand(sourceCommandIndex, out IRenderCommandMesh? sourceCommand) || sourceCommand?.Mesh is null)
                 {
                     // Fallback for legacy command buffers that predate Reserved1 source-index encoding.
-                    if (!scene.TryGetSourceCommand(visibleIndex, out sourceCommand) || sourceCommand?.Mesh is null)
+                    if (!scene.TryGetSourceCommand(culledIndex, out sourceCommand) || sourceCommand?.Mesh is null)
                     {
                         GpuWarn(LogCategory.Draw,
-                            "Indirect text batch preparation failed: unable to resolve source command for visibleIndex={0} (source={1}).",
-                            visibleIndex,
+                            "Indirect text batch preparation failed: unable to resolve source command for culledIndex={0} (source={1}).",
+                            culledIndex,
                             sourceCommandIndex);
                         return false;
                     }
@@ -1734,7 +1817,7 @@ namespace XREngine.Rendering
                     return false;
                 }
 
-                sources.Add((visibleIndex, glyphCount, sourceTransforms, sourceTexCoords, sourceRotations));
+                sources.Add((culledIndex, glyphCount, sourceTransforms, sourceTexCoords, sourceRotations));
             }
 
             uint totalGlyphs = (uint)totalGlyphs64;
@@ -1745,11 +1828,16 @@ namespace XREngine.Rendering
                 return false;
 
             uint writeOffset = 0;
+            uint commandStride = renderPasses.CulledSceneToRenderBuffer.ElementSize;
+            if (commandStride == 0)
+                commandStride = (uint)(GPUScene.CommandFloatCount * sizeof(float));
+
             foreach (var source in sources)
             {
-                GPUIndirectRenderCommand culledCommand = renderPasses.CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(source.visibleIndex);
+                GPUIndirectRenderCommand culledCommand = renderPasses.CulledSceneToRenderBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(source.culledIndex);
                 culledCommand.Reserved0 = writeOffset;
-                renderPasses.CulledSceneToRenderBuffer.SetDataRawAtIndex(source.visibleIndex, culledCommand);
+                renderPasses.CulledSceneToRenderBuffer.SetDataRawAtIndex(source.culledIndex, culledCommand);
+                renderPasses.CulledSceneToRenderBuffer.PushSubData((int)(source.culledIndex * commandStride), commandStride);
 
                 uint copyCount = source.glyphCount;
                 copyCount = Math.Min(copyCount, source.transforms.ElementCount);
@@ -1760,8 +1848,8 @@ namespace XREngine.Rendering
                 if (copyCount < source.glyphCount)
                 {
                     GpuWarn(LogCategory.Draw,
-                        "Indirect text glyph data truncated for command at visibleIndex={0}: requested={1}, copied={2}.",
-                        source.visibleIndex,
+                        "Indirect text glyph data truncated for command at culledIndex={0}: requested={1}, copied={2}.",
+                        source.culledIndex,
                         source.glyphCount,
                         copyCount);
                 }
@@ -1784,11 +1872,6 @@ namespace XREngine.Rendering
 
                 writeOffset += source.glyphCount;
             }
-
-            uint commandStride = renderPasses.CulledSceneToRenderBuffer.ElementSize;
-            if (commandStride == 0)
-                commandStride = (uint)(GPUScene.CommandFloatCount * sizeof(float));
-            renderPasses.CulledSceneToRenderBuffer.PushSubData((int)(batchOffset * commandStride), batchCount * commandStride);
 
             if (_indirectTextBuffersNeedFullPush)
             {
@@ -2042,6 +2125,12 @@ namespace XREngine.Rendering
             //}
 
             var activeBatches = overrideBatches ?? batches;
+            XRDataBuffer? instanceTransformBuffer = renderPasses.InstanceTransformBuffer;
+            XRDataBuffer? instanceSourceIndexBuffer = renderPasses.InstanceSourceIndexBuffer;
+            bool useGpuInstanceTransforms =
+                renderPasses.GpuBatchingPreparedThisFrame &&
+                instanceTransformBuffer is not null &&
+                instanceSourceIndexBuffer is not null;
 
             if (materialMap.Count > 0)
             {
@@ -2195,6 +2284,9 @@ namespace XREngine.Rendering
                     indirectDrawBuffer,
                     vaoRenderer,
                     renderPasses.CulledSceneToRenderBuffer,
+                    instanceTransformBuffer,
+                    instanceSourceIndexBuffer,
+                    useGpuInstanceTransforms && !isTextBatch,
                     batch.Offset,
                     effectiveCount,
                     dispatchParameterBuffer,

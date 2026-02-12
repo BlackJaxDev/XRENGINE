@@ -1,6 +1,7 @@
 using Extensions;
 using XREngine.Data.Core;
 using XREngine.Rendering;
+using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Scene;
 
@@ -24,6 +25,8 @@ namespace XREngine.Rendering.Commands
     /// </summary>
     public sealed class RenderCommandCollection : XRBase
     {
+        private static readonly CpuRenderOcclusionCoordinator s_cpuOcclusionCoordinator = new();
+
         public bool IsShadowPass { get; private set; } = false;
         public void SetRenderPasses(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters, IEnumerable<RenderPassMetadata>? passMetadata = null)
         {
@@ -133,7 +136,7 @@ namespace XREngine.Rendering.Commands
             return added;
         }
 
-        public void RenderCPU(int renderPass, bool skipGpuCommands = false)
+        public void RenderCPU(int renderPass, bool skipGpuCommands = false, XRCamera? camera = null)
         {
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
             {
@@ -141,6 +144,15 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
+            bool useCpuOcclusion =
+                !Engine.Rendering.State.IsShadowPass &&
+                camera is not null &&
+                Engine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync;
+
+            if (useCpuOcclusion)
+                s_cpuOcclusionCoordinator.BeginPass(renderPass, camera!, (uint)list.Count);
+
+            uint cpuCmdIndex = 0;
             foreach (var cmd in list)
             {
                 if (skipGpuCommands && cmd is IRenderCommandMesh meshCmd)
@@ -149,8 +161,38 @@ namespace XREngine.Rendering.Commands
                     // but still render meshes that explicitly exclude themselves from GPU indirect.
                     var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
                     if (material?.RenderOptions?.ExcludeFromGpuIndirect != true)
+                    {
+                        cpuCmdIndex++;
                         continue;
+                    }
                 }
+
+                if (useCpuOcclusion && cmd is IRenderCommandMesh)
+                {
+                    // Use the loop index as the key — GPUCommandIndex is uint.MaxValue
+                    // for all commands in pure CPU mode, which would cause every command
+                    // to share a single query state.
+                    if (!s_cpuOcclusionCoordinator.ShouldRender(renderPass, cpuCmdIndex))
+                    {
+                        cpuCmdIndex++;
+                        continue;
+                    }
+
+                    s_cpuOcclusionCoordinator.BeginQuery(renderPass, cpuCmdIndex);
+                    try
+                    {
+                        cmd?.Render();
+                    }
+                    finally
+                    {
+                        s_cpuOcclusionCoordinator.EndQuery(renderPass, cpuCmdIndex);
+                    }
+
+                    cpuCmdIndex++;
+                    continue;
+                }
+
+                cpuCmdIndex++;
                 cmd?.Render();
             }
         }

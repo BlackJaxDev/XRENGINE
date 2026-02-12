@@ -1,0 +1,27 @@
+#version 460 core
+
+// Copies three uint counters from one SSBO to another.
+// Intended for preserving/forwarding visible-count buffers without CPU readback.
+
+layout(local_size_x = 1) in;
+
+layout(std430, binding = 0) buffer SrcCountBuffer
+{
+    uint Src0;
+    uint Src1;
+    uint Src2;
+};
+
+layout(std430, binding = 1) buffer DstCountBuffer
+{
+    uint Dst0;
+    uint Dst1;
+    uint Dst2;
+};
+
+void main()
+{
+    Dst0 = Src0;
+    Dst1 = Src1;
+    Dst2 = Src2;
+}
