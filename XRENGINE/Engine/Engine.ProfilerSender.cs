@@ -81,6 +81,8 @@ public static partial class Engine
             DrawCalls = Rendering.Stats.DrawCalls,
             MultiDrawCalls = Rendering.Stats.MultiDrawCalls,
             TrianglesRendered = Rendering.Stats.TrianglesRendered,
+            GpuCpuFallbackEvents = Rendering.Stats.GpuCpuFallbackEvents,
+            GpuCpuFallbackRecoveredCommands = Rendering.Stats.GpuCpuFallbackRecoveredCommands,
             AllocatedVRAMBytes = Rendering.Stats.AllocatedVRAMBytes,
             AllocatedBufferBytes = Rendering.Stats.AllocatedBufferBytes,
             AllocatedTextureBytes = Rendering.Stats.AllocatedTextureBytes,

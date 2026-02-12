@@ -120,6 +120,12 @@ namespace XREngine.Rendering.Commands
             public bool DisableCpuReadbackCount { get; set; } = true;
 
             /// <summary>
+            /// Enables CPU-side mapping/inspection of the culled command buffer to build material batches.
+            /// This is a diagnostics path only; default render flow should stay GPU-driven.
+            /// </summary>
+            public bool EnableCpuBatching { get; set; } = false;
+
+            /// <summary>
             /// Dumps a snapshot of source commands before the GPU copy shader runs.
             /// </summary>
             public bool ProbeSourceCommandsBeforeCopy { get; set; } = true;
@@ -399,6 +405,9 @@ namespace XREngine.Rendering.Commands
             overflowMarker = 0u;
 
             if (_culledCountBuffer is null)
+                return;
+
+            if (IndirectDebug.DisableCpuReadbackCount && !IndirectDebug.ForceCpuFallbackCount)
                 return;
 
             drawCount = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);

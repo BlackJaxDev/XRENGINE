@@ -48,13 +48,8 @@ namespace XREngine.Rendering.Commands
             ResetCounters();
             Cull(scene, camera);
 
-            if (VisibleCommandCount == 0)
-            {
-                Log(LogCategory.Lifecycle, LogLevel.Debug, "Render early-out - visible=0");
-                Dbg("Render early-out - visible=0", "Lifecycle");
-                PostRenderDiagnostics();
-                return;
-            }
+            // Phase 2: do not early-out based on CPU-visible counters.
+            // The default submission path uses GPU-written count buffers; a 0 count naturally results in no draws.
 
             using (BeginTiming("PopulateMaterialIDs"))
                 PopulateMaterialIDs(scene);
@@ -66,10 +61,11 @@ namespace XREngine.Rendering.Commands
             Dbg("Indirect build complete", "Indirect");
 
             using var batchTiming = BeginTiming("BuildMaterialBatches");
-            var batches = BuildMaterialBatches(scene) ?? [new HybridRenderingManager.DrawBatch(0, VisibleCommandCount, 0)];
+            var batches = BuildMaterialBatches(scene);
             CurrentBatches = batches;
 
-            Log(LogCategory.Materials, LogLevel.Info, "Material batches={0}, visible commands={1}", batches.Count, VisibleCommandCount);
+            if (batches is not null)
+                Log(LogCategory.Materials, LogLevel.Info, "Material batches={0}, visible commands={1}", batches.Count, VisibleCommandCount);
 
             _renderManager.Render(this, camera, scene, _indirectDrawBuffer!, _indirectRenderer, RenderPass, _drawCountBuffer, batches);
             
@@ -154,11 +150,20 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
+            // Phase 2: avoid CPU readback of visible counters in the hot path.
+            // Indirect compute shaders consume the GPU-written count buffer directly.
             UpdateVisibleCountersFromBuffer();
             BindIndirectShaderUniforms();
             BindIndirectShaderBuffers(scene);
 
-            uint dispatchGroups = Math.Max(1, ComputeDispatch.ForCommands(VisibleCommandCount).Item1);
+            uint dispatchCommands = VisibleCommandCount;
+            if (IndirectDebug.DisableCpuReadbackCount)
+            {
+                // When we don't read counts back, conservatively dispatch for the max indirect capacity.
+                dispatchCommands = _indirectDrawBuffer!.ElementCount;
+            }
+
+            uint dispatchGroups = Math.Max(1, ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
             _indirectRenderTaskShader.DispatchCompute(dispatchGroups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
             Dbg($"Indirect dispatch groups={dispatchGroups} visible={VisibleCommandCount}", "Indirect");
@@ -230,6 +235,11 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         private List<HybridRenderingManager.DrawBatch>? BuildMaterialBatches(GPUScene scene)
         {
+            // Phase 2: CPU-side mapping of the culled command buffer is debug-only.
+            // Default path is a single submit using GPU-generated counts.
+            if (!IndirectDebug.EnableCpuBatching)
+                return null;
+
             uint count = VisibleCommandCount;
             if (count == 0)
                 return null;
@@ -614,11 +624,14 @@ namespace XREngine.Rendering.Commands
             ReadUints(_statsBuffer, values);
 
             var stats = new GpuRenderStats(values);
+            int cpuFallbackEvents = Engine.Rendering.Stats.GpuCpuFallbackEvents;
+            int cpuFallbackRecovered = Engine.Rendering.Stats.GpuCpuFallbackRecoveredCommands;
 
             if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
             {
                 Debug.Out($"{FormatDebugPrefix("Stats")} [GPU Stats] In={stats.Input} CulledOut={stats.Culled} " +
-                         $"Draws={stats.Drawn} RejFrustum={stats.FrustumRejected} RejDist={stats.DistanceRejected}");
+                         $"Draws={stats.Drawn} RejFrustum={stats.FrustumRejected} RejDist={stats.DistanceRejected} " +
+                         $"CpuFallbackEvents={cpuFallbackEvents} CpuRecovered={cpuFallbackRecovered}");
 
                 if (stats.HasBvhActivity)
                 {
@@ -630,7 +643,8 @@ namespace XREngine.Rendering.Commands
             }
 
             Dbg($"Stats in={stats.Input} culled={stats.Culled} draws={stats.Drawn} " +
-                $"frustumRej={stats.FrustumRejected} distRej={stats.DistanceRejected}", "Stats");
+                $"frustumRej={stats.FrustumRejected} distRej={stats.DistanceRejected} " +
+                $"cpuFallbackEvents={cpuFallbackEvents} cpuRecovered={cpuFallbackRecovered}", "Stats");
         }
 
         private void LogMaterialBatches(GPUScene scene, List<HybridRenderingManager.DrawBatch> batches)
@@ -790,6 +804,7 @@ namespace XREngine.Rendering.Commands
                         buffer.RangeFlags |= EBufferMapRangeFlags.Read;
                         buffer.MapBufferData();
                         _mappedHere = true;
+                        Engine.Rendering.Stats.RecordGpuBufferMapped();
                     }
 
                     var culledPtr = buffer.GetMappedAddresses().FirstOrDefault(ptr => ptr.IsValid);
@@ -818,6 +833,8 @@ namespace XREngine.Rendering.Commands
                 command = default;
                 if (_basePtr == IntPtr.Zero)
                     return false;
+
+                Engine.Rendering.Stats.RecordGpuReadbackBytes(Unsafe.SizeOf<GPUIndirectRenderCommand>());
 
                 unsafe
                 {

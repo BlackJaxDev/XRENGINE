@@ -19,19 +19,28 @@ namespace XREngine.Rendering.Commands
     {
         private const uint ComputeWorkGroupSize = 256;
 
-        // Set true to bypass GPU frustum/flag culling and treat all commands as visible (debug only)
-        // Now reads from Editor Preferences instead of hardcoded value
-        public bool ForcePassthroughCulling => Engine.EditorPreferences?.Debug?.ForceGpuPassthroughCulling ?? true;
+        // Set true to bypass GPU frustum/flag culling and treat all commands as visible (debug only).
+        // Default is OFF; passthrough must be explicitly enabled in debug preferences.
+        public bool ForcePassthroughCulling => Engine.EditorPreferences?.Debug?.ForceGpuPassthroughCulling ?? false;
+
+        private enum CullFrameMode
+        {
+            Passthrough,
+            Frustum,
+            Bvh
+        }
 
         private int _culledSanitizerLogBudget = 8;
         private int _passthroughFallbackLogBudget = 4;
-        private int _passthroughFallbackForceLogBudget = 2;
         private int _cpuFallbackRejectLogBudget = 6;
         private int _cpuFallbackDetailLogBudget = 8;
         private int _sanitizerDetailLogBudget = 4;
         private int _sanitizerSampleLogBudget = 12;
         private int _copyAtomicOverflowLogBudget = 4;
         private int _filteredCountLogBudget = 6;
+        private bool _loggedPassthroughCullMode;
+        private bool _loggedFrustumCullMode;
+        private bool _loggedBvhCullMode;
         private bool _skipGpuSubmissionThisPass;
         private string? _skipGpuSubmissionReason;
         private long _lastMaterialSnapshotTick = -1;
@@ -47,7 +56,6 @@ namespace XREngine.Rendering.Commands
         {
             _culledSanitizerLogBudget = 8;
             _passthroughFallbackLogBudget = 4;
-            _passthroughFallbackForceLogBudget = 2;
             _cpuFallbackRejectLogBudget = 6;
             _cpuFallbackDetailLogBudget = 8;
             _sanitizerDetailLogBudget = 4;
@@ -74,6 +82,8 @@ namespace XREngine.Rendering.Commands
                     values[i] = 0;
                 return;
             }
+
+            Engine.Rendering.Stats.RecordGpuReadbackBytes(values.Length * sizeof(uint));
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
 
@@ -153,6 +163,7 @@ namespace XREngine.Rendering.Commands
                     if (!buf.IsMapped)
                         return buf.GetDataRawAtIndex<uint>(index);
                     mappedTemporarily = true;
+                    Engine.Rendering.Stats.RecordGpuBufferMapped();
                 }
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
@@ -160,7 +171,7 @@ namespace XREngine.Rendering.Commands
                 var addr = buf.GetMappedAddresses().FirstOrDefault();
                 if (addr == IntPtr.Zero)
                     throw new InvalidOperationException("ReadUIntAt failed - buffer mapped address is null");
-
+                Engine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
                 return ((uint*)addr.Pointer)[index];
             }
             finally
@@ -220,6 +231,7 @@ namespace XREngine.Rendering.Commands
                     if (!buf.IsMapped)
                         return buf.GetDataRawAtIndex<uint>(0);
                     mappedTemporarily = true;
+                    Engine.Rendering.Stats.RecordGpuBufferMapped();
                 }
 
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
@@ -227,7 +239,7 @@ namespace XREngine.Rendering.Commands
                 var addr = buf.GetMappedAddresses().FirstOrDefault();
                 if (addr == IntPtr.Zero)
                     throw new InvalidOperationException("ReadUInt failed - buffer mapped address is null");
-
+                Engine.Rendering.Stats.RecordGpuReadbackBytes(sizeof(uint));
                 return *((uint*)addr.Pointer);
             }
             finally
@@ -283,6 +295,9 @@ namespace XREngine.Rendering.Commands
 
         private void UpdateVisibleCountersFromBuffer()
         {
+            if (IndirectDebug.DisableCpuReadbackCount)
+                return;
+
             if (_culledCountBuffer is null)
             {
                 VisibleCommandCount = 0;
@@ -419,17 +434,17 @@ namespace XREngine.Rendering.Commands
             // Passthrough path (testing) & copy all input commands to culled buffer and mark all visible
             if (ForcePassthroughCulling)
             {
-                Log(LogCategory.Culling, LogLevel.Debug, "Using passthrough culling path (forced)");
+                LogCullModeActivation(CullFrameMode.Passthrough);
                 PassthroughCull(gpuCommands, numCommands);
             }
             else if (ShouldUseBvhCulling(gpuCommands))
             {
-                Log(LogCategory.Culling, LogLevel.Debug, "Using BVH culling path");
+                LogCullModeActivation(CullFrameMode.Bvh);
                 BvhCull(gpuCommands, camera, numCommands);
             }
             else
             {
-                Log(LogCategory.Culling, LogLevel.Debug, "Using frustum culling path");
+                LogCullModeActivation(CullFrameMode.Frustum);
                 FrustumCull(gpuCommands, camera, numCommands);
             }
 
@@ -451,6 +466,39 @@ namespace XREngine.Rendering.Commands
             if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
                 XREngine.Debug.Out($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands ({VisibleInstanceCount} instances) in CulledSceneToRenderBuffer");
         }
+
+        private void LogCullModeActivation(CullFrameMode mode)
+        {
+            bool shouldLog;
+            string modeName;
+
+            switch (mode)
+            {
+                case CullFrameMode.Passthrough:
+                    shouldLog = !_loggedPassthroughCullMode;
+                    _loggedPassthroughCullMode = true;
+                    modeName = "passthrough";
+                    break;
+                case CullFrameMode.Bvh:
+                    shouldLog = !_loggedBvhCullMode;
+                    _loggedBvhCullMode = true;
+                    modeName = "BVH";
+                    break;
+                default:
+                    shouldLog = !_loggedFrustumCullMode;
+                    _loggedFrustumCullMode = true;
+                    modeName = "frustum";
+                    break;
+            }
+
+            if (!shouldLog)
+                return;
+
+            Log(LogCategory.Culling, LogLevel.Info, "Culling mode active: {0} (pass={1})", modeName, RenderPass);
+        }
+
+        private static void RecordCpuFallbackUsage(uint recoveredCommands)
+            => Engine.Rendering.Stats.RecordGpuCpuFallback(1, (int)Math.Min(recoveredCommands, int.MaxValue));
 
         /// <summary>
         /// GPU frustum culling mode – performs actual frustum culling on the GPU using the existing culling compute shader.
@@ -562,12 +610,13 @@ namespace XREngine.Rendering.Commands
             }
 
             // Handle CPU fallback if GPU produced no results
-            bool allowCpuFallback = Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback 
-                ?? Engine.EffectiveSettings.EnableGpuIndirectCpuFallback;
+            bool allowCpuFallback = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
+                || (debugLoggingEnabled && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
 
             if (visibleCount == 0 && RenderPass >= 0 && allowCpuFallback)
             {
                 uint cpuRecovered = CpuCopyCommandsForPass(scene, inputCount, commit: true, out uint cpuInstanceCount);
+                RecordCpuFallbackUsage(cpuRecovered);
                 if (cpuRecovered > 0)
                 {
                     visibleCount = cpuRecovered;
@@ -784,12 +833,13 @@ namespace XREngine.Rendering.Commands
             }
 
             // Handle CPU fallback if GPU produced no results
-            bool allowCpuFallback = Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback 
-                ?? Engine.EffectiveSettings.EnableGpuIndirectCpuFallback;
+            bool allowCpuFallback = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
+                || (debugLoggingEnabled && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
 
             if (visibleCount == 0 && RenderPass >= 0 && allowCpuFallback)
             {
                 uint cpuRecovered = CpuCopyCommandsForPass(scene, inputCount, commit: true, out uint cpuInstanceCount);
+                RecordCpuFallbackUsage(cpuRecovered);
                 if (cpuRecovered > 0)
                 {
                     visibleCount = cpuRecovered;
@@ -924,16 +974,11 @@ namespace XREngine.Rendering.Commands
                 _filteredCountLogBudget--;
             }
             // Check EditorPreferences first for debugging, fall back to EffectiveSettings for production
-            bool allowCpuFallback = Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback 
-                ?? Engine.EffectiveSettings.EnableGpuIndirectCpuFallback;
+            bool allowCpuFallback = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
+                || (debugLoggingEnabled && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
             if (!allowCpuFallback && debugLoggingEnabled)
             {
                 // allowCpuFallback = true;
-                // if (_passthroughFallbackForceLogBudget > 0)
-                // {
-                //     Debug.LogWarning($"{FormatDebugPrefix("Culling")} Forcing CPU fallback while GPU indirect debug logging is active (pass {RenderPass}).");
-                //     _passthroughFallbackForceLogBudget--;
-                // }
             }
 
             if (filteredCount == 0 && RenderPass >= 0)
@@ -941,6 +986,7 @@ namespace XREngine.Rendering.Commands
                 if (allowCpuFallback)
                 {
                     uint cpuRecovered = CpuCopyCommandsForPass(scene, copyCount, commit: true, out uint cpuInstanceCount);
+                    RecordCpuFallbackUsage(cpuRecovered);
                     if (cpuRecovered > 0)
                     {
                         filteredCount = cpuRecovered;

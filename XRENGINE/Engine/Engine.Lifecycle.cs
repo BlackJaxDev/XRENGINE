@@ -75,6 +75,7 @@ namespace XREngine
                 if (CurrentProject is null)
                     LoadSandboxSettings();
 
+                ValidateGpuRenderingStartupConfiguration();
                 ConfigureJobManager(GameSettings);
 
                 // Creating windows first is critical—they initialize the render context and graphics API
@@ -176,6 +177,33 @@ namespace XREngine
         /// <returns><c>true</c> if at least one window is still active.</returns>
         private static bool IsEngineStillActive()
             => Windows.Count > 0;
+
+        private static void ValidateGpuRenderingStartupConfiguration()
+        {
+            bool forcePassthrough = EditorPreferences?.Debug?.ForceGpuPassthroughCulling ?? false;
+            bool allowCpuFallback = EditorPreferences?.Debug?.AllowGpuCpuFallback
+                ?? EffectiveSettings.EnableGpuIndirectCpuFallback;
+
+            if (!forcePassthrough && !allowCpuFallback)
+                return;
+
+            EBuildConfiguration configuration = GameSettings?.BuildSettings?.Configuration ?? EBuildConfiguration.Development;
+            string profile = configuration == EBuildConfiguration.Debug ? "debug" : "non-debug";
+
+            string issue = forcePassthrough && allowCpuFallback
+                ? "passthrough culling is forced and CPU fallback is enabled"
+                : forcePassthrough
+                    ? "passthrough culling is forced"
+                    : "CPU fallback is enabled";
+
+            Debug.RenderingWarning(
+                "[GPU Render Startup Validation] Unsafe GPU rendering defaults detected ({0}, {1} build): {2}. " +
+                "For production baselines set EditorPreferences.Debug.ForceGpuPassthroughCulling=false and " +
+                "EditorPreferences.Debug.AllowGpuCpuFallback=false.",
+                configuration,
+                profile,
+                issue);
+        }
 
         #endregion
 

@@ -20,6 +20,16 @@ namespace XREngine
                 private static int _lastFrameDrawCalls;
                 private static int _lastFrameTrianglesRendered;
                 private static int _lastFrameMultiDrawCalls;
+                private static int _gpuCpuFallbackEvents;
+                private static int _gpuCpuFallbackRecoveredCommands;
+                private static int _lastFrameGpuCpuFallbackEvents;
+                private static int _lastFrameGpuCpuFallbackRecoveredCommands;
+
+                // GPU->CPU readback / mapping counters (per-frame)
+                private static int _gpuMappedBuffers;
+                private static long _gpuReadbackBytes;
+                private static int _lastFrameGpuMappedBuffers;
+                private static long _lastFrameGpuReadbackBytes;
 
                 // Render-matrix stats use a separate swap cycle aligned with SwapBuffers phase.
                 // Current = being written now, Display = last completed swap, Ready = waiting to become Display.
@@ -61,6 +71,26 @@ namespace XREngine
                 /// The number of multi-draw indirect calls in the last completed frame.
                 /// </summary>
                 public static int MultiDrawCalls => _lastFrameMultiDrawCalls;
+
+                /// <summary>
+                /// Number of GPU->CPU culling fallback events in the last completed frame.
+                /// </summary>
+                public static int GpuCpuFallbackEvents => _lastFrameGpuCpuFallbackEvents;
+
+                /// <summary>
+                /// Number of commands recovered by GPU->CPU fallback in the last completed frame.
+                /// </summary>
+                public static int GpuCpuFallbackRecoveredCommands => _lastFrameGpuCpuFallbackRecoveredCommands;
+
+                /// <summary>
+                /// Number of GPU buffers mapped for CPU access in the last completed frame.
+                /// </summary>
+                public static int GpuMappedBuffers => _lastFrameGpuMappedBuffers;
+
+                /// <summary>
+                /// Total bytes read back from GPU buffers in the last completed frame.
+                /// </summary>
+                public static long GpuReadbackBytes => _lastFrameGpuReadbackBytes;
 
                 /// <summary>
                 /// Enables collection of render-matrix statistics.
@@ -150,15 +180,45 @@ namespace XREngine
                     _lastFrameDrawCalls = _drawCalls;
                     _lastFrameTrianglesRendered = _trianglesRendered;
                     _lastFrameMultiDrawCalls = _multiDrawCalls;
+                    _lastFrameGpuCpuFallbackEvents = _gpuCpuFallbackEvents;
+                    _lastFrameGpuCpuFallbackRecoveredCommands = _gpuCpuFallbackRecoveredCommands;
+                    _lastFrameGpuMappedBuffers = _gpuMappedBuffers;
+                    _lastFrameGpuReadbackBytes = _gpuReadbackBytes;
                     _lastFrameFBOBandwidthBytes = _fboBandwidthBytes;
                     _lastFrameFBOBindCount = _fboBindCount;
 
                     _drawCalls = 0;
                     _trianglesRendered = 0;
                     _multiDrawCalls = 0;
+                    _gpuCpuFallbackEvents = 0;
+                    _gpuCpuFallbackRecoveredCommands = 0;
+                    _gpuMappedBuffers = 0;
+                    _gpuReadbackBytes = 0;
                     _fboBandwidthBytes = 0;
                     _fboBindCount = 0;
                     // Note: render-matrix stats are swapped separately via SwapRenderMatrixStats()
+                }
+
+                /// <summary>
+                /// Records that a GPU buffer was mapped for CPU access.
+                /// </summary>
+                public static void RecordGpuBufferMapped(int count = 1)
+                {
+                    if (!EnableTracking || count <= 0)
+                        return;
+
+                    Interlocked.Add(ref _gpuMappedBuffers, count);
+                }
+
+                /// <summary>
+                /// Records the number of bytes read back from GPU buffers.
+                /// </summary>
+                public static void RecordGpuReadbackBytes(long bytes)
+                {
+                    if (!EnableTracking || bytes <= 0)
+                        return;
+
+                    Interlocked.Add(ref _gpuReadbackBytes, bytes);
                 }
 
                 /// <summary>
@@ -350,6 +410,19 @@ namespace XREngine
                 {
                     if (!EnableTracking) return;
                     Interlocked.Add(ref _multiDrawCalls, count);
+                }
+
+                /// <summary>
+                /// Records usage of GPU->CPU fallback recovery during culling.
+                /// </summary>
+                public static void RecordGpuCpuFallback(int eventCount, int recoveredCommands)
+                {
+                    if (!EnableTracking || eventCount <= 0)
+                        return;
+
+                    Interlocked.Add(ref _gpuCpuFallbackEvents, eventCount);
+                    if (recoveredCommands > 0)
+                        Interlocked.Add(ref _gpuCpuFallbackRecoveredCommands, recoveredCommands);
                 }
 
                 /// <summary>

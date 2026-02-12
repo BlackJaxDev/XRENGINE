@@ -13,6 +13,8 @@ public sealed partial class RenderStatsPacket
     public int DrawCalls { get; set; }
     public int MultiDrawCalls { get; set; }
     public int TrianglesRendered { get; set; }
+    public int GpuCpuFallbackEvents { get; set; }
+    public int GpuCpuFallbackRecoveredCommands { get; set; }
 
     // VRAM
     public long AllocatedVRAMBytes { get; set; }

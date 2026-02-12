@@ -237,6 +237,7 @@ namespace XREngine.Scene
                     if (_renderableSet.Add(operation.renderable))
                     {
                         _renderables.Add(operation.renderable);
+                        operation.renderable.SwapBuffersCallback += OnRenderableSwapBuffers;
                         TrackRenderable(operation.renderable);
 
                         if (_isGpuDispatchActive)
@@ -248,6 +249,7 @@ namespace XREngine.Scene
                 else if (_renderableSet.Remove(operation.renderable))
                 {
                     UntrackRenderable(operation.renderable);
+                    operation.renderable.SwapBuffersCallback -= OnRenderableSwapBuffers;
 
                     if (_isGpuDispatchActive)
                         GPUCommands.Remove(operation.renderable);
@@ -257,6 +259,15 @@ namespace XREngine.Scene
                     _renderables.Remove(operation.renderable);
                 }
             }
+        }
+
+        private void OnRenderableSwapBuffers(RenderInfo info, RenderCommand command)
+        {
+            if (!_isGpuDispatchActive)
+                return;
+
+            if (command is IRenderCommandMesh meshCmd)
+                GPUCommands.TryUpdateMeshCommand(info, meshCmd);
         }
 
         /// <summary>
