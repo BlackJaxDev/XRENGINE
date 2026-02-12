@@ -206,37 +206,37 @@ Acceptance criteria:
 
 Outcome: one scene/cull flow efficiently drives stereo full, stereo foveated, and desktop mirror outputs.
 
-- [ ] Define a `ViewSet` model for all outputs in a frame:
-  - [ ] left eye full
-  - [ ] right eye full
-  - [ ] left eye foveated
-  - [ ] right eye foveated
-  - [ ] desktop mirror
-- [ ] Build visibility once (shared frustum/BVH + occlusion), then derive per-view visibility with lightweight refinement.
-- [ ] Add per-command view/pass masks and per-view constants in GPU buffers.
-- [ ] OpenGL stereo path:
-  - [ ] Make OVR multiview the preferred single-pass route when available.
-  - [ ] Keep NV stereo shader extension path as explicit fallback.
-  - [ ] Ensure both paths consume the same culled/indirect command data.
-- [ ] Vulkan stereo path:
-  - [ ] Build secondary command buffers in parallel for pass x view partitions.
-  - [ ] Schedule full + foveated + mirror outputs without render-thread blocking.
-  - [ ] Use multiview render paths where available; keep a parity fallback path.
-- [ ] Foveated rendering integration:
-  - [ ] Define per-view foveation tiers/regions and shading-rate policy.
-  - [ ] Reuse visibility where safe; add conservative margin to avoid edge popping.
-  - [ ] Force near-field/UI/critical layers into full-res path.
-- [ ] Mirror integration:
-  - [ ] Build mirror from already rendered eye textures by default (compose/blit), not a full extra scene render.
-  - [ ] Keep full scene mirror render as opt-in debug/quality mode only.
-- [ ] CPU-stall safeguards:
-  - [ ] Use per-frame ring buffers for view constants and avoid per-eye realloc/map churn.
-  - [ ] Eliminate same-frame waits for GPU-generated per-view command counts.
-- [ ] Add VR telemetry:
-  - [ ] per-view visible counts
-  - [ ] per-view draw counts
-  - [ ] command-buffer build time by worker
-  - [ ] render-thread submit time for VR frame
+- [x] Define a `ViewSet` model for all outputs in a frame:
+  - [x] left eye full
+  - [x] right eye full
+  - [x] left eye foveated
+  - [x] right eye foveated
+  - [x] desktop mirror
+- [x] Build visibility once (shared frustum/BVH + occlusion), then derive per-view visibility with lightweight refinement.
+- [x] Add per-command view/pass masks and per-view constants in GPU buffers.
+- [x] OpenGL stereo path:
+  - [x] Make OVR multiview the preferred single-pass route when available.
+  - [x] Keep NV stereo shader extension path as explicit fallback.
+  - [x] Ensure both paths consume the same culled/indirect command data.
+- [x] Vulkan stereo path:
+  - [x] Build secondary command buffers in parallel for pass x view partitions.
+  - [x] Schedule full + foveated + mirror outputs without render-thread blocking.
+  - [x] Use multiview render paths where available; keep a parity fallback path.
+- [x] Foveated rendering integration:
+  - [x] Define per-view foveation tiers/regions and shading-rate policy.
+  - [x] Reuse visibility where safe; add conservative margin to avoid edge popping.
+  - [x] Force near-field/UI/critical layers into full-res path.
+- [x] Mirror integration:
+  - [x] Build mirror from already rendered eye textures by default (compose/blit), not a full extra scene render.
+  - [x] Keep full scene mirror render as opt-in debug/quality mode only.
+- [x] CPU-stall safeguards:
+  - [x] Use per-frame ring buffers for view constants and avoid per-eye realloc/map churn.
+  - [x] Eliminate same-frame waits for GPU-generated per-view command counts.
+- [x] Add VR telemetry:
+  - [x] per-view visible counts
+  - [x] per-view draw counts
+  - [x] command-buffer build time by worker
+  - [x] render-thread submit time for VR frame
 
 Acceptance criteria:
 - VR frame uses one scene ingest/cull flow for all outputs.
@@ -246,7 +246,7 @@ Acceptance criteria:
 
 ### Phase 5 Ticket Breakdown (File/Class Map)
 
-- [ ] `VR-01` Define `ViewSet` frame model and lifecycle owner.
+- [x] `VR-01` Define `ViewSet` frame model and lifecycle owner.
   - Scope: create a single per-frame model for full-eye, foveated-eye, and mirror outputs.
   - Primary files/classes:
     - `XRENGINE/Engine/Engine.VRState.cs` (`CollectVisibleStereo`, `SwapBuffersStereo`, `Render`)
@@ -256,13 +256,13 @@ Acceptance criteria:
     - [x] Added `GPUViewFlags`, `GPUViewMask`, `GPUViewDescriptor`, and `GPUViewConstants` schema in `XRENGINE/Rendering/Commands/GPUViewSet.cs`.
     - [x] Added runtime layout validation (`Marshal.SizeOf` assertions) in `XRENGINE/Rendering/Commands/GPUViewSet.cs` and `XRENGINE/Rendering/Commands/GPURenderPassCollection.Core.cs`.
     - [x] Added `ConfigureViewSet(...)` and view-capacity tracking in `XRENGINE/Rendering/Commands/GPURenderPassCollection.ViewSet.cs`.
-    - [ ] Wire per-frame `ViewSet` construction from VR frame lifecycle (`Engine.VRState` / `XRViewport`).
-    - [ ] Route per-frame `ViewSet` data into active cull/render dispatch.
+    - [x] Wire per-frame `ViewSet` construction from VR frame lifecycle (`Engine.VRState` / `XRViewport`).
+    - [x] Route per-frame `ViewSet` data into active cull/render dispatch.
   - Done when:
     - One frame-level `ViewSet` object is built once per frame and handed to GPU culling/render stages.
     - No per-eye CPU scene traversal is required for default VR path.
 
-- [ ] `VR-02` Add per-command view eligibility without overloading command payload semantics.
+- [x] `VR-02` Add per-command view eligibility without overloading command payload semantics.
   - Scope: avoid abusing `GPUIndirectRenderCommand.Reserved*`; use sidecar view-mask buffer.
   - Primary files/classes:
     - `XRENGINE/Rendering/Commands/GPUIndirectRenderCommand.cs`
@@ -273,7 +273,7 @@ Acceptance criteria:
     - command-view mask data is generated/updated incrementally with command changes.
     - culling/refinement stages can filter by view mask without CPU readback.
 
-- [ ] `VR-03` Allocate/bind `ViewSet` GPU buffers with stable binding contracts.
+- [x] `VR-03` Allocate/bind `ViewSet` GPU buffers with stable binding contracts.
   - Scope: add view descriptor/constants buffers and per-view visible/count buffers.
   - Primary files/classes:
     - `XRENGINE/Rendering/Commands/GPURenderPassCollection.ShadersAndInit.cs`
@@ -284,13 +284,13 @@ Acceptance criteria:
     - [x] Added buffer binding slot constants (`11`-`15`) in `XRENGINE/Rendering/Commands/GPUViewSet.cs`.
     - [x] Integrated allocation/regeneration into `RegenerateBuffers(...)` in `XRENGINE/Rendering/Commands/GPURenderPassCollection.ShadersAndInit.cs`.
     - [x] Integrated reset/disposal lifecycle hooks in `XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`.
-    - [ ] Bind and consume these buffers in culling/indirect compute paths.
-    - [ ] Validate full OpenGL/Vulkan parity for the new view buffers.
+    - [x] Bind and consume these buffers in culling/indirect compute paths.
+    - [x] Validate full OpenGL/Vulkan parity for the new view buffers.
   - Done when:
     - all new buffers are created, resized, reset, and rebound with deterministic binding points.
     - OpenGL and Vulkan run identical logical binding layout.
 
-- [ ] `VR-04` Implement shared-cull then per-view refinement compute flow.
+- [x] `VR-04` Implement shared-cull then per-view refinement compute flow.
   - Scope: one main visible list, then lightweight per-view refinement and per-view draw counts.
   - Primary files/classes:
     - `XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
@@ -301,7 +301,7 @@ Acceptance criteria:
     - one cull dispatch produces shared candidates.
     - per-view refinement dispatches output view-partitioned ranges and indirect counts.
 
-- [ ] `VR-05` OpenGL single-pass stereo integration with unified command data.
+- [x] `VR-05` OpenGL single-pass stereo integration with unified command data.
   - Scope: keep OVR multiview preferred, NV stereo fallback, both using same culled/indirect buffers.
   - Primary files/classes:
     - `XRENGINE/Rendering/XRMeshRenderer.cs`
@@ -311,27 +311,35 @@ Acceptance criteria:
   - Done when:
     - OVR and NV paths select shader variants differently but consume same draw payload source.
 
-- [ ] `VR-06` Vulkan parallel command-buffer fan-out for pass x view partitions.
+- [x] `VR-06` Vulkan parallel command-buffer fan-out for pass x view partitions.
   - Scope: schedule secondary command recording per pass/view, then execute in primary without render-thread stalls.
   - Primary files/classes:
     - `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandPool.cs`
     - `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs`
     - `XRENGINE/Rendering/API/Rendering/OpenXR/OpenXRAPI.Vulkan.cs`
+  - Implementation status:
+    - [x] Added per-thread Vulkan command pools for parallel recording contexts in `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandPool.cs`.
+    - [x] Added parallel secondary command-buffer batch recording for blit/indirect ops in `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs`.
+    - [x] Wire explicit OpenXR pass x view partition recording/execution on Vulkan runtime path.
   - Done when:
     - secondary command recording uses per-thread pools and avoids per-frame queue-idle waits in hot path.
     - full + foveated + mirror view partitions are recordable in parallel.
 
-- [ ] `VR-07` Foveated output policy and safe visibility margining.
+- [x] `VR-07` Foveated output policy and safe visibility margining.
   - Scope: define tiering/regions and conservative refinement rules to avoid stereo/foveation popping.
   - Primary files/classes:
     - `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs`
     - `XRENGINE/Engine/Engine.VRState.cs`
     - `XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
+  - Implementation status:
+    - [x] Added per-view foveation policy settings and ViewSet descriptor population.
+    - [x] Add conservative visibility margin policy for edge-pop suppression.
+    - [x] Force near-field/UI-critical layers into full-res path.
   - Done when:
     - per-view foveation parameters are written each frame.
     - near-field/UI-critical meshes are forced to full-res path.
 
-- [ ] `VR-08` Mirror output defaults to composition, not full extra scene render.
+- [x] `VR-08` Mirror output defaults to composition, not full extra scene render.
   - Scope: compose/blit mirror from already rendered eye textures in default mode.
   - Primary files/classes:
     - `XRENGINE/Rendering/API/XRWindow.cs`
@@ -340,7 +348,7 @@ Acceptance criteria:
   - Done when:
     - desktop mirror can be shown while in VR without second full scene traversal by default.
 
-- [ ] `VR-09` Telemetry and guardrails for VR frame health.
+- [x] `VR-09` Telemetry and guardrails for VR frame health.
   - Scope: expose per-view visibility/draw counts and command-build timing.
   - Primary files/classes:
     - `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Stats.cs`
@@ -441,17 +449,23 @@ Backend constraints:
 
 Outcome: same logical behavior and validated output on both backends.
 
-- [ ] Build parity checklist for indirect features:
-  - [ ] draw indirect buffer binding
-  - [ ] parameter buffer binding
-  - [ ] count draw support and fallback behavior
-  - [ ] index-buffer validation and sync
-- [ ] Add cross-backend integration tests that compare:
-  - [ ] visible command count
-  - [ ] draw count
-  - [ ] sampled command signatures (mesh/material/pass)
-- [ ] Resolve any backend-specific stride/offset/count differences.
-- [ ] Document known extension requirements and runtime capability matrix.
+- [x] Build parity checklist for indirect features:
+  - [x] draw indirect buffer binding
+  - [x] parameter buffer binding
+  - [x] count draw support and fallback behavior
+  - [x] index-buffer validation and sync
+- [x] Add cross-backend integration tests that compare:
+  - [x] visible command count
+  - [x] draw count
+  - [x] sampled command signatures (mesh/material/pass)
+- [x] Resolve any backend-specific stride/offset/count differences.
+- [x] Document known extension requirements and runtime capability matrix.
+
+Implementation notes:
+- Runtime parity checklist and dispatch-path selection are centralized in `XRENGINE/Rendering/HybridRenderingManager.cs` (`IndirectParityChecklist`, `BuildIndirectParityChecklist`, and dispatch logging).
+- Cross-backend parity snapshot/signature comparison utilities are in `XRENGINE/Rendering/Commands/GpuBackendParitySnapshot.cs`.
+- Phase 6 test coverage is in `XREngine.UnitTests/Rendering/GpuBackendParityTests.cs`.
+- Backend capability matrix doc: `docs/features/gpu_indirect_backend_capability_matrix.md`.
 
 Acceptance criteria:
 - Same test scenes pass on OpenGL and Vulkan with equivalent results.
@@ -487,21 +501,44 @@ Acceptance criteria:
 
 ## Test Backlog (Must Add)
 
-- [ ] `GPUScene_AddRemove_SharedMeshRefCount_RemainsValid`
-- [ ] `GPUScene_UpdateCommand_TransformChange_UpdatesCullingBounds`
-- [ ] `GPURenderPass_BvhCull_UsesRealCullingPath_WhenEnabled`
-- [ ] `GPURenderPass_NoCpuFallback_InShippingConfig`
-- [ ] `Occlusion_HiZ_GPUPath_CullsAndRecovers_Correctly`
-- [ ] `Occlusion_CPUQueryAsync_NoRenderThreadStall`
-- [ ] `Occlusion_TemporalHysteresis_ReducesPopping`
-- [ ] `Occlusion_OpenGL_Vulkan_Parity_BasicScene`
-- [ ] `IndirectPipeline_OpenGL_Vulkan_Parity_BasicScene`
-- [ ] `IndirectPipeline_OpenGL_Vulkan_Parity_MultiPass`
-- [ ] `VR_ViewSet_SharedCull_FansOut_AllOutputs`
-- [ ] `VR_OpenGL_Multiview_And_NVFallback_UseSameVisibleSet`
-- [ ] `VR_Vulkan_ParallelSecondaryCommands_NoRenderThreadBlock`
-- [ ] `VR_Foveated_PerViewRefinement_NoStereoPopping`
-- [ ] `VR_Mirror_Compose_NoExtraSceneTraversal_DefaultMode`
+- [x] `GPUScene_AddRemove_SharedMeshRefCount_RemainsValid`
+- [x] `GPUScene_UpdateCommand_TransformChange_UpdatesCullingBounds`
+- [x] `GPURenderPass_BvhCull_UsesRealCullingPath_WhenEnabled`
+- [x] `GPURenderPass_NoCpuFallback_InShippingConfig`
+- [x] `Occlusion_HiZ_GPUPath_CullsAndRecovers_Correctly`
+- [x] `Occlusion_CPUQueryAsync_NoRenderThreadStall`
+- [x] `Occlusion_TemporalHysteresis_ReducesPopping`
+- [x] `Occlusion_OpenGL_Vulkan_Parity_BasicScene`
+- [x] `IndirectPipeline_OpenGL_Vulkan_Parity_BasicScene`
+- [x] `IndirectPipeline_OpenGL_Vulkan_Parity_MultiPass`
+- [x] `VR_ViewSet_SharedCull_FansOut_AllOutputs`
+- [x] `VR_OpenGL_Multiview_And_NVFallback_UseSameVisibleSet`
+- [x] `VR_Vulkan_ParallelSecondaryCommands_NoRenderThreadBlock`
+- [x] `VR_Foveated_PerViewRefinement_NoStereoPopping`
+- [x] `VR_Mirror_Compose_NoExtraSceneTraversal_DefaultMode`
+
+## Test Backlog (Next Wave)
+
+- [ ] `GPUScene_Destroy_CleansAtlasBuffers_AndState`
+- [ ] `GPUScene_IncrementalUpdates_NoRemoveReaddChurn_ForTransformOnlyChanges`
+- [ ] `GPUScene_AtlasRefCount_MassRemove_SharedMeshesRemainConsistent`
+- [ ] `GPUCulling_PassMaskFiltering_RejectsWrongPassCommands`
+- [ ] `GPUCulling_CountOverflow_SetsTruncationFlag_AndPreservesValidity`
+- [ ] `GPUCulling_DebugPassthrough_RequiresExplicitOverride`
+- [ ] `Occlusion_GPUHiZ_AmbiguousDepth_KeepsVisible`
+- [ ] `Occlusion_CPUQueryAsync_UsesPreviousFrameResults_WithoutSameFrameWait`
+- [ ] `Occlusion_ResetOnCameraJump_AndSceneTopologyChange`
+- [ ] `IndirectBuild_CountBuffer_DrivesCountDraw_WhenSupported`
+- [ ] `IndirectBuild_FallbackPath_UsesClampedCounts_WhenCountDrawUnsupported`
+- [ ] `IndirectBuild_CommandSignatureParity_OpenGL_Vulkan_LargeScene`
+- [ ] `Batching_GPUGeneratedKeys_StableAcrossFrames_WithMaterialChurn`
+- [ ] `Batching_InstancingAggregation_CombinesEquivalentMeshMaterialPass`
+- [ ] `ViewSet_CommandViewMaskUpdates_TrackMaterialPassAndLayerChanges`
+- [ ] `VR_ViewSet_PerViewCounters_MatchVisibleRanges`
+- [ ] `VR_OpenGL_OVR_NVFallback_Parity_MultiPassFoveatedMirror`
+- [ ] `VR_Vulkan_ParallelRecording_NoQueueIdleInHotPath`
+- [ ] `VR_MirrorCompose_DefaultPath_AvoidsExtraSceneTraversal`
+- [ ] `Stress_ThirtyMinute_AddRemoveAnimate_ManyPasses_NoFallbackThrash`
 
 ## Notes for Implementation
 

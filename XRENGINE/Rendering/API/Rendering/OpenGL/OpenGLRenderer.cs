@@ -144,10 +144,10 @@ namespace XREngine.Rendering.OpenGL
                 string vendor = new((sbyte*)api.GetString(StringName.Vendor));
                 string renderer = new((sbyte*)api.GetString(StringName.Renderer));
                 string shadingLanguageVersion = new((sbyte*)api.GetString(StringName.ShadingLanguageVersion));
-                Debug.Out($"OpenGL Version: {version}");
-                Debug.Out($"OpenGL Vendor: {vendor}");
-                Debug.Out($"OpenGL Renderer: {renderer}");
-                Debug.Out($"OpenGL Shading Language Version: {shadingLanguageVersion}");
+                Debug.OpenGL($"OpenGL Version: {version}");
+                Debug.OpenGL($"OpenGL Vendor: {vendor}");
+                Debug.OpenGL($"OpenGL Renderer: {renderer}");
+                Debug.OpenGL($"OpenGL Shading Language Version: {shadingLanguageVersion}");
 
                 Engine.Rendering.State.IsNVIDIA = vendor.Contains("NVIDIA");
                 Engine.Rendering.State.IsIntel = vendor.Contains("Intel");
@@ -169,7 +169,7 @@ namespace XREngine.Rendering.OpenGL
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"Failed to query GL extensions for NV ray tracing: {ex.Message}");
+                    Debug.OpenGLWarning($"Failed to query GL extensions for NV ray tracing: {ex.Message}");
                 }
 
                 Engine.Rendering.State.OpenGLExtensions = extensions;
@@ -348,7 +348,7 @@ namespace XREngine.Rendering.OpenGL
                 return;
 
             string messageStr = new((sbyte*)message);
-            Debug.LogWarning($"OPENGL {FormatSeverity(severity)} #{id} | {FormatSource(source)} {FormatType(type)} | {messageStr}", 1, 5);
+            Debug.OpenGLWarning($"OPENGL {FormatSeverity(severity)} #{id} | {FormatSource(source)} {FormatType(type)} | {messageStr}");
             bool shouldTrack = type == GLEnum.DebugTypeError;
             RecordOpenGLError(id, FormatSource(source), FormatType(type), FormatSeverity(severity), messageStr, shouldTrack);
         }
@@ -407,7 +407,7 @@ namespace XREngine.Rendering.OpenGL
             while ((error = Api.GetError()) != GLEnum.NoError)
             {
                 hadError = true;
-                Debug.LogWarning($"OpenGL error after {context}: {error}");
+                Debug.OpenGLWarning($"OpenGL error after {context}: {error}");
             }
 
             return hadError;
@@ -715,7 +715,7 @@ namespace XREngine.Rendering.OpenGL
                 if (TryGetOneTimeFBODetailDump(fbo, out var dump))
                     details = dump;
 
-                Debug.LogWarning($"FBO {name} is not complete. Status: {result}{debug}{details}", 0, 20);
+                Debug.OpenGLWarning($"FBO {name} is not complete. Status: {result}{debug}{details}");
             }
             //else
             //    Debug.Out($"FBO {name} is complete.{debug}");
@@ -1562,7 +1562,7 @@ void main()
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"Failed to initialize luminance compute shader: {ex.Message}");
+                Debug.OpenGLWarning($"Failed to initialize luminance compute shader: {ex.Message}");
                 _luminanceComputeInitialized = false;
             }
         }
@@ -1584,7 +1584,7 @@ void main()
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"Failed to initialize auto exposure compute shaders: {ex.Message}");
+                Debug.OpenGLWarning($"Failed to initialize auto exposure compute shaders: {ex.Message}");
                 _autoExposureComputeInitialized = false;
             }
         }

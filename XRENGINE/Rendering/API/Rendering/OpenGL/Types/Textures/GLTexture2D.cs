@@ -183,7 +183,7 @@ namespace XREngine.Rendering.OpenGL
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
+                Debug.OpenGLException(ex);
             }
             finally
             {
@@ -196,7 +196,7 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!Data.Resizable && !StorageSet)
             {
-                Debug.LogWarning("Texture storage not set on non-resizable texture, can't push mipmaps.");
+                Debug.OpenGLWarning("Texture storage not set on non-resizable texture, can't push mipmaps.");
                 return;
             }
 
@@ -333,7 +333,7 @@ namespace XREngine.Rendering.OpenGL
             else if (Data.MultiSample)
             {
                 if (data is not null)
-                    Debug.LogWarning("Multisample textures do not support initial data, ignoring all mipmaps.");
+                    Debug.OpenGLWarning("Multisample textures do not support initial data, ignoring all mipmaps.");
 
                 Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, w, h, Data.FixedSampleLocations);
             }

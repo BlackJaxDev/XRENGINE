@@ -27,7 +27,7 @@ namespace XREngine.Rendering.OpenGL
                 if (mat is not null)
                     return mat;
 
-                Debug.LogWarning("No material found for mesh renderer, using invalid material.");
+                Debug.OpenGLWarning("No material found for mesh renderer, using invalid material.");
                 return Renderer.GenericToAPI<GLMaterial>(Engine.Rendering.State.CurrentRenderingPipeline!.InvalidMaterial)!;
             }
 

@@ -31,6 +31,7 @@ public unsafe partial class OpenXRAPI
     /// <param name="renderCallback">Callback function to render content to each eye's texture.</param>
     public void RenderFrame(DelRenderToFBO? renderCallback)
     {
+        long submitStart = Stopwatch.GetTimestamp();
         // Render thread: only submit if the CollectVisible thread prepared a frame.
         if (!_sessionBegun)
             return;
@@ -129,6 +130,10 @@ public unsafe partial class OpenXRAPI
         var endFrameResult = CheckResult(Api.EndFrame(_session, in frameEndInfo), "xrEndFrame");
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
             Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(layer) => {endFrameResult}");
+
+        long submitEnd = Stopwatch.GetTimestamp();
+        double submitMs = (submitEnd - submitStart) * 1000.0 / Stopwatch.Frequency;
+        Engine.Rendering.Stats.RecordVrRenderSubmitTime(TimeSpan.FromMilliseconds(submitMs));
 
         Volatile.Write(ref _pendingXrFrame, 0);
         Volatile.Write(ref _pendingXrFrameCollected, 0);
@@ -610,48 +615,74 @@ public unsafe partial class OpenXRAPI
 
             int leftAdded = 0;
             int rightAdded = 0;
+            long leftBuildTicks = 0;
+            long rightBuildTicks = 0;
+
+            if (Window?.Renderer is VulkanRenderer)
+                BuildVulkanViewPartitions();
 
             // Parallel buffer generation is only enabled on the Vulkan path.
             if (_parallelRenderingEnabled && Window?.Renderer is VulkanRenderer)
             {
                 Task leftTask = Task.Run(() =>
                 {
+                    long started = Stopwatch.GetTimestamp();
                     _openXrLeftViewport!.CollectVisible(
                         collectMirrors: true,
                         worldOverride: _openXrFrameWorld,
                         cameraOverride: _openXrLeftEyeCamera,
                         allowScreenSpaceUICollectVisible: false);
                     leftAdded = _openXrLeftViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
+                    leftBuildTicks = Stopwatch.GetTimestamp() - started;
                 });
 
                 Task rightTask = Task.Run(() =>
                 {
+                    long started = Stopwatch.GetTimestamp();
                     _openXrRightViewport!.CollectVisible(
                         collectMirrors: true,
                         worldOverride: _openXrFrameWorld,
                         cameraOverride: _openXrRightEyeCamera,
                         allowScreenSpaceUICollectVisible: false);
                     rightAdded = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
+                    rightBuildTicks = Stopwatch.GetTimestamp() - started;
                 });
 
                 Task.WaitAll(leftTask, rightTask);
             }
             else
             {
+                long leftStarted = Stopwatch.GetTimestamp();
                 _openXrLeftViewport!.CollectVisible(
                     collectMirrors: true,
                     worldOverride: _openXrFrameWorld,
                     cameraOverride: _openXrLeftEyeCamera,
                     allowScreenSpaceUICollectVisible: false);
                 leftAdded = _openXrLeftViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
+                leftBuildTicks = Stopwatch.GetTimestamp() - leftStarted;
 
+                long rightStarted = Stopwatch.GetTimestamp();
                 _openXrRightViewport!.CollectVisible(
                     collectMirrors: true,
                     worldOverride: _openXrFrameWorld,
                     cameraOverride: _openXrRightEyeCamera,
                     allowScreenSpaceUICollectVisible: false);
                 rightAdded = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
+                rightBuildTicks = Stopwatch.GetTimestamp() - rightStarted;
             }
+
+            if (Window?.Renderer is VulkanRenderer)
+                RecordVulkanViewPartitionsParallel();
+
+            Engine.Rendering.Stats.RecordVrPerViewVisibleCounts(
+                (uint)Math.Max(0, leftAdded),
+                (uint)Math.Max(0, rightAdded));
+            Engine.Rendering.Stats.RecordVrPerViewDrawCounts(
+                (uint)Math.Max(0, leftAdded),
+                (uint)Math.Max(0, rightAdded));
+            Engine.Rendering.Stats.RecordVrCommandBuildTimes(
+                TimeSpan.FromSeconds(leftBuildTicks / (double)Stopwatch.Frequency),
+                TimeSpan.FromSeconds(rightBuildTicks / (double)Stopwatch.Frequency));
 
             int dbg = Interlocked.Increment(ref _openXrDebugFrameIndex);
             if (dbg == 1 || (dbg % OpenXrDebugLogEveryNFrames) == 0)

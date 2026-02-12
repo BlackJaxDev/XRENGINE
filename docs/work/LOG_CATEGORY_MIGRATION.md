@@ -150,6 +150,35 @@ Debug.LogException(ex, msg)  // Prefixed with [EXCEPTION]
 | `XRENGINE/Scene/Components/VR/VRHeadsetComponent.cs` | 30 | `Debug.VRWarning(...)` | ✅ Done |
 | `XRENGINE/Scene/Components/VR/VRDeviceModelComponent.cs` | 117 | `Debug.VRWarning(...)` | ✅ Done |
 
+### OPENGL Category ✅ COMPLETED
+
+| File | Line(s) | Current Call | Status |
+|------|---------|--------------|--------|
+| `XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs` | 147-150 | `Debug.OpenGL(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs` | 172 | `Debug.OpenGLWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs` | 351 | `Debug.OpenGLWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs` | 410 | `Debug.OpenGLWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs` | 718 | `Debug.OpenGLWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs` | 1565, 1587 | `Debug.OpenGLWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture1D.cs` | 142, 168 | `Debug.OpenGLException/Warning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture1DArray.cs` | 142, 186 | `Debug.OpenGLException/Warning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2D.cs` | 186, 199, 336 | `Debug.OpenGLException/Warning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture2DArray.cs` | 299, 343-417 | Various `Debug.OpenGL*(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTexture3D.cs` | 98, 111 | `Debug.OpenGLException/Warning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTextureCube.cs` | 196, 209, 270 | `Debug.OpenGLException/Warning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Textures/GLTextureCubeArray.cs` | 146, 194 | `Debug.OpenGLException/Warning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Render Targets/GLFrameBuffer.cs` | 88-154 | `Debug.OpenGLWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLShader.cs` | 159-323 | Various `Debug.OpenGL*(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLMaterial.cs` | 107 | `Debug.OpenGL(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgram.cs` | 358-1558 | Various `Debug.OpenGL*(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Debug.cs` | 62 | `Debug.OpenGL(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Rendering.cs` | 30 | `Debug.OpenGLWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/GLObjectBase.cs` | 97, 112, 136 | `Debug.OpenGL/OpenGLWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/GLObject.cs` | 64, 71 | `Debug.OpenGLWarning(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/GLMeshGenerationQueue.cs` | 95-119 | `Debug.OpenGLException/OpenGL(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Buffers/GLDataBuffer.cs` | 73-709 | Various `Debug.OpenGL*(...)` | ✅ Done |
+| `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Buffers/GLUploadQueue.cs` | 100 | `Debug.OpenGLWarning(...)` | ✅ Done |
+
 ### VULKAN Category ✅ COMPLETED
 
 | File | Line(s) | Current Call | Status |

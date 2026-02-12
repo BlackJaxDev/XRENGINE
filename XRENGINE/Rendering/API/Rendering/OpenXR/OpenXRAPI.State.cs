@@ -299,6 +299,30 @@ public unsafe partial class OpenXRAPI
 
     #region Vulkan parallel rendering toggles (currently mostly disabled)
 
+    private enum OpenXrViewPartitionKind
+    {
+        FullLeft,
+        FullRight,
+        FoveatedLeft,
+        FoveatedRight,
+        MirrorCompose,
+    }
+
+    private readonly struct OpenXrViewPartitionWork
+    {
+        public OpenXrViewPartitionWork(OpenXrViewPartitionKind kind, uint viewIndex)
+        {
+            Kind = kind;
+            ViewIndex = viewIndex;
+        }
+
+        public OpenXrViewPartitionKind Kind { get; }
+        public uint ViewIndex { get; }
+    }
+
+    private OpenXrViewPartitionWork[] _activeVulkanViewPartitions = new OpenXrViewPartitionWork[5];
+    private int _activeVulkanViewPartitionCount;
+
     /// <summary>
     /// Flag indicating if parallel rendering is enabled
     /// </summary>

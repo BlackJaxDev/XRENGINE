@@ -59,7 +59,7 @@ namespace XREngine.Rendering.OpenGL
                     enabled = _enabledDebugCategories.Contains(category) || _enabledDebugCategories.Contains("All");
 
                 if (enabled)
-                    Debug.Out($"[GLMeshRenderer/{category}] {msg}");
+                    Debug.OpenGL($"[GLMeshRenderer/{category}] {msg}");
             }
         }
     }

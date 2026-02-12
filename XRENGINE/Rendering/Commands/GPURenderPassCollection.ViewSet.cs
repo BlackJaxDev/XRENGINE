@@ -6,15 +6,23 @@ namespace XREngine.Rendering.Commands
 {
     public sealed partial class GPURenderPassCollection
     {
+        private const int ViewConstantsRingSize = 3;
         private XRDataBuffer? _viewDescriptorBuffer;
         private XRDataBuffer? _viewConstantsBuffer;
+        private readonly XRDataBuffer?[] _viewConstantsRing = new XRDataBuffer?[ViewConstantsRingSize];
+        private int _viewConstantsRingIndex = -1;
         private XRDataBuffer? _commandViewMaskBuffer;
         private XRDataBuffer? _perViewVisibleIndicesBuffer;
         private XRDataBuffer? _perViewDrawCountBuffer;
+        private GPUViewDescriptor[] _cachedViewDescriptors = Array.Empty<GPUViewDescriptor>();
+        private uint _cachedViewDescriptorCount;
 
         private uint _viewSetCapacity;
         private uint _perViewVisibleCapacity;
         private uint _activeViewCount;
+        private uint _indirectSourceViewId;
+        private uint _commandViewMaskPreparedCount;
+        private GPUViewMask _activeCommandViewMask;
 
         public XRDataBuffer? ViewDescriptorBuffer => _viewDescriptorBuffer;
         public XRDataBuffer? ViewConstantsBuffer => _viewConstantsBuffer;
@@ -25,6 +33,7 @@ namespace XREngine.Rendering.Commands
         public uint ViewSetCapacity => _viewSetCapacity;
         public uint PerViewVisibleCapacity => _perViewVisibleCapacity;
         public uint ActiveViewCount => _activeViewCount;
+        public uint IndirectSourceViewId => _indirectSourceViewId;
 
         public void ConfigureViewSet(ReadOnlySpan<GPUViewDescriptor> descriptors, ReadOnlySpan<GPUViewConstants> constants)
         {
@@ -47,6 +56,7 @@ namespace XREngine.Rendering.Commands
                 if (requestedViewCount == 0u)
                 {
                     _activeViewCount = 0u;
+                    _indirectSourceViewId = 0u;
                     ResetPerViewDrawCounts(0u);
                     return;
                 }
@@ -56,18 +66,138 @@ namespace XREngine.Rendering.Commands
                 EnsureViewCapacity(requestedViewCount);
                 EnsurePerViewVisibleIndicesCapacity(commandCapacity, requestedViewCount);
 
+                _viewConstantsRingIndex = (_viewConstantsRingIndex + 1) % ViewConstantsRingSize;
+                _viewConstantsBuffer = _viewConstantsRing[_viewConstantsRingIndex];
+                if (_viewConstantsBuffer is null)
+                {
+                    EnsureViewConstantsRingCapacity(requestedViewCount);
+                    _viewConstantsBuffer = _viewConstantsRing[_viewConstantsRingIndex];
+                }
+
                 for (uint i = 0; i < requestedViewCount; ++i)
                 {
                     _viewDescriptorBuffer!.SetDataRawAtIndex(i, descriptors[(int)i]);
                     _viewConstantsBuffer!.SetDataRawAtIndex(i, constants[(int)i]);
                 }
 
+                EnsureCachedViewDescriptorCapacity(requestedViewCount);
+                for (uint i = 0; i < requestedViewCount; ++i)
+                    _cachedViewDescriptors[i] = descriptors[(int)i];
+                _cachedViewDescriptorCount = requestedViewCount;
+
                 _viewDescriptorBuffer!.PushSubData(0, requestedViewCount * _viewDescriptorBuffer.ElementSize);
                 _viewConstantsBuffer!.PushSubData(0, requestedViewCount * _viewConstantsBuffer.ElementSize);
 
                 _activeViewCount = requestedViewCount;
+                _indirectSourceViewId = Math.Min(_indirectSourceViewId, requestedViewCount - 1u);
+                _activeCommandViewMask = GPUViewMask.FromViewCount(requestedViewCount);
                 ResetPerViewDrawCounts(requestedViewCount);
             }
+        }
+
+        internal void SetIndirectSourceViewId(uint viewId)
+        {
+            if (_activeViewCount == 0u)
+            {
+                _indirectSourceViewId = 0u;
+                return;
+            }
+
+            _indirectSourceViewId = Math.Min(viewId, _activeViewCount - 1u);
+        }
+
+        internal void PrepareCommandViewMasks(XRDataBuffer sourceCommands, uint commandCount)
+        {
+            if (_commandViewMaskBuffer is null)
+                return;
+
+            uint safeCount = Math.Min(commandCount, _commandViewMaskBuffer.ElementCount);
+            if (safeCount == 0u)
+            {
+                _commandViewMaskPreparedCount = 0u;
+                return;
+            }
+
+            if (_activeViewCount == 0u || _cachedViewDescriptorCount == 0u)
+            {
+                GPUViewMask targetMask = GPUViewMask.AllVisible;
+                if (_commandViewMaskPreparedCount >= safeCount &&
+                    _activeCommandViewMask.BitsLo == targetMask.BitsLo &&
+                    _activeCommandViewMask.BitsHi == targetMask.BitsHi)
+                {
+                    return;
+                }
+
+                FillCommandViewMaskRange(0u, safeCount, targetMask);
+                _commandViewMaskPreparedCount = safeCount;
+                _activeCommandViewMask = targetMask;
+                return;
+            }
+
+            for (uint commandIndex = 0u; commandIndex < safeCount; ++commandIndex)
+            {
+                GPUIndirectRenderCommand command = sourceCommands.GetDataRawAtIndex<GPUIndirectRenderCommand>(commandIndex);
+                GPUViewMask commandMask = BuildCommandViewMask(command.RenderPass);
+                _commandViewMaskBuffer.SetDataRawAtIndex(commandIndex, commandMask);
+            }
+
+            uint byteLength = safeCount * _commandViewMaskBuffer.ElementSize;
+            _commandViewMaskBuffer.PushSubData(0, byteLength);
+
+            _commandViewMaskPreparedCount = safeCount;
+            _activeCommandViewMask = default;
+        }
+
+        private GPUViewMask BuildCommandViewMask(uint commandRenderPass)
+        {
+            uint maxViews = Math.Min(_activeViewCount, _cachedViewDescriptorCount);
+            if (maxViews == 0u)
+                return GPUViewMask.AllVisible;
+
+            uint bitsLo = 0u;
+            uint bitsHi = 0u;
+            for (uint viewId = 0u; viewId < maxViews; ++viewId)
+            {
+                if (!ViewAcceptsRenderPass(_cachedViewDescriptors[viewId], commandRenderPass))
+                    continue;
+
+                if (viewId < 32u)
+                    bitsLo |= 1u << (int)viewId;
+                else
+                    bitsHi |= 1u << (int)(viewId - 32u);
+            }
+
+            return new GPUViewMask(bitsLo, bitsHi);
+        }
+
+        private static bool ViewAcceptsRenderPass(in GPUViewDescriptor descriptor, uint commandRenderPass)
+        {
+            if (commandRenderPass == uint.MaxValue)
+                return true;
+
+            if (commandRenderPass < 32u)
+                return (descriptor.RenderPassMaskLo & (1u << (int)commandRenderPass)) != 0u;
+
+            if (commandRenderPass < 64u)
+                return (descriptor.RenderPassMaskHi & (1u << (int)(commandRenderPass - 32u))) != 0u;
+
+            return true;
+        }
+
+        private void EnsureCachedViewDescriptorCapacity(uint requestedCount)
+        {
+            if (_cachedViewDescriptors.Length >= requestedCount)
+                return;
+
+            Array.Resize(ref _cachedViewDescriptors, (int)requestedCount);
+        }
+
+        public uint ReadPerViewDrawCount(uint viewId)
+        {
+            if (_perViewDrawCountBuffer is null || viewId >= _perViewDrawCountBuffer.ElementCount)
+                return 0u;
+
+            return ReadUIntAt(_perViewDrawCountBuffer, viewId);
         }
 
         internal void EnsureViewSetBuffers(uint commandCapacity)
@@ -111,21 +241,9 @@ namespace XREngine.Rendering.Commands
                 ZeroStructRange<GPUViewDescriptor>(_viewDescriptorBuffer, old, requestedViewCapacity - old);
             }
 
+            EnsureViewConstantsRingCapacity(requestedViewCapacity);
             if (_viewConstantsBuffer is null)
-            {
-                _viewConstantsBuffer = CreateStructBuffer(
-                    "ViewConstantsBuffer",
-                    requestedViewCapacity,
-                    GPUViewSetLayout.ViewConstantsSize,
-                    GPUViewSetBindings.ViewConstantsBuffer);
-                ZeroStructRange<GPUViewConstants>(_viewConstantsBuffer, 0u, requestedViewCapacity);
-            }
-            else if (_viewConstantsBuffer.ElementCount < requestedViewCapacity)
-            {
-                uint old = _viewConstantsBuffer.ElementCount;
-                _viewConstantsBuffer.Resize(requestedViewCapacity);
-                ZeroStructRange<GPUViewConstants>(_viewConstantsBuffer, old, requestedViewCapacity - old);
-            }
+                _viewConstantsBuffer = _viewConstantsRing[0];
 
             if (_perViewDrawCountBuffer is null)
             {
@@ -144,6 +262,28 @@ namespace XREngine.Rendering.Commands
             }
 
             _viewSetCapacity = Math.Max(_viewSetCapacity, requestedViewCapacity);
+        }
+
+        private void EnsureViewConstantsRingCapacity(uint requestedViewCapacity)
+        {
+            for (int i = 0; i < ViewConstantsRingSize; i++)
+            {
+                if (_viewConstantsRing[i] is null)
+                {
+                    _viewConstantsRing[i] = CreateStructBuffer(
+                        $"ViewConstantsBuffer.Ring{i}",
+                        requestedViewCapacity,
+                        GPUViewSetLayout.ViewConstantsSize,
+                        GPUViewSetBindings.ViewConstantsBuffer);
+                    ZeroStructRange<GPUViewConstants>(_viewConstantsRing[i]!, 0u, requestedViewCapacity);
+                }
+                else if (_viewConstantsRing[i]!.ElementCount < requestedViewCapacity)
+                {
+                    uint old = _viewConstantsRing[i]!.ElementCount;
+                    _viewConstantsRing[i]!.Resize(requestedViewCapacity);
+                    ZeroStructRange<GPUViewConstants>(_viewConstantsRing[i]!, old, requestedViewCapacity - old);
+                }
+            }
         }
 
         private void EnsureCommandViewMaskCapacity(uint commandCapacity)
@@ -285,13 +425,18 @@ namespace XREngine.Rendering.Commands
         private void DisposeViewSetBuffers()
         {
             _viewDescriptorBuffer?.Dispose();
-            _viewConstantsBuffer?.Dispose();
+            for (int i = 0; i < ViewConstantsRingSize; i++)
+            {
+                _viewConstantsRing[i]?.Dispose();
+                _viewConstantsRing[i] = null;
+            }
             _commandViewMaskBuffer?.Dispose();
             _perViewVisibleIndicesBuffer?.Dispose();
             _perViewDrawCountBuffer?.Dispose();
 
             _viewDescriptorBuffer = null;
             _viewConstantsBuffer = null;
+            _viewConstantsRingIndex = -1;
             _commandViewMaskBuffer = null;
             _perViewVisibleIndicesBuffer = null;
             _perViewDrawCountBuffer = null;
@@ -299,6 +444,10 @@ namespace XREngine.Rendering.Commands
             _viewSetCapacity = 0u;
             _perViewVisibleCapacity = 0u;
             _activeViewCount = 0u;
+            _indirectSourceViewId = 0u;
+            _commandViewMaskPreparedCount = 0u;
+            _activeCommandViewMask = default;
+            _cachedViewDescriptorCount = 0u;
         }
     }
 }

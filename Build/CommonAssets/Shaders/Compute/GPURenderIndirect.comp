@@ -55,21 +55,76 @@ layout(std430, binding = 8) buffer StatsBuffer
     uint StatsBvhRayTimeHi;
 };
 
+struct GPUViewDescriptor
+{
+    uint ViewId;
+    uint ParentViewId;
+    uint Flags;
+    uint RenderPassMaskLo;
+    uint RenderPassMaskHi;
+    uint OutputLayer;
+    uint ViewRectX;
+    uint ViewRectY;
+    uint ViewRectW;
+    uint ViewRectH;
+    uint VisibleOffset;
+    uint VisibleCapacity;
+    vec4 FoveationA;
+    vec4 FoveationB;
+};
+
+struct GPUViewConstants
+{
+    mat4 View;
+    mat4 Projection;
+    mat4 ViewProjection;
+    mat4 PrevViewProjection;
+    vec4 CameraPositionAndNear;
+    vec4 CameraForwardAndFar;
+};
+
+layout(std430, binding = 11) readonly buffer ViewDescriptorBuffer { GPUViewDescriptor ViewDescriptors[]; };
+layout(std430, binding = 12) readonly buffer ViewConstantsBuffer { GPUViewConstants ViewConstants[]; };
+layout(std430, binding = 13) readonly buffer CommandViewMaskBuffer { uvec2 CommandViewMasks[]; };
+layout(std430, binding = 14) readonly buffer PerViewVisibleIndicesBuffer { uint PerViewVisibleIndices[]; };
+layout(std430, binding = 15) readonly buffer PerViewDrawCountBuffer { uint PerViewDrawCount[]; };
+
 // === Uniforms ===
 uniform int CurrentRenderPass;     // -1 accepts all
 uniform int MaxIndirectDraws;      // capacity in draws
 uniform uint StatsEnabled;         // 0 when stats buffer is unbound
+uniform int ActiveViewCount;
+uniform int SourceViewId;
 //uniform int UseSorted;             // 1 = use keyIndexPairs for ordering
 
 void main()
 {
     uint logicalIdx = gl_GlobalInvocationID.x;
     uint total = CulledCount; // snapshot
+    uint sourceViewId = SourceViewId < 0 ? 0u : uint(SourceViewId);
+
+    if (ActiveViewCount > 0 && sourceViewId < uint(PerViewDrawCount.length()))
+        total = min(total, PerViewDrawCount[sourceViewId]);
 
     if (logicalIdx >= total)
         return;
 
     uint idx = logicalIdx;
+    if (ActiveViewCount > 0 &&
+        sourceViewId < uint(ViewDescriptors.length()) &&
+        sourceViewId < uint(PerViewDrawCount.length()))
+    {
+        GPUViewDescriptor sourceView = ViewDescriptors[sourceViewId];
+        if (logicalIdx < sourceView.VisibleCapacity)
+        {
+            uint sourceOffset = sourceView.VisibleOffset + logicalIdx;
+            if (sourceOffset < uint(PerViewVisibleIndices.length()))
+                idx = PerViewVisibleIndices[sourceOffset];
+        }
+    }
+
+    if (idx >= CulledCount)
+        return;
     //if (UseSorted != 0)
     //{
     //    // keyIndexPairs stores [key, originalIndex] sequentially

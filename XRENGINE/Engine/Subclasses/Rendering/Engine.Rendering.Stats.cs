@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System;
 using System.Threading;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -30,6 +31,20 @@ namespace XREngine
                 private static long _gpuReadbackBytes;
                 private static int _lastFrameGpuMappedBuffers;
                 private static long _lastFrameGpuReadbackBytes;
+                private static int _vrLeftEyeDraws;
+                private static int _vrRightEyeDraws;
+                private static int _lastFrameVrLeftEyeDraws;
+                private static int _lastFrameVrRightEyeDraws;
+                private static int _vrLeftEyeVisible;
+                private static int _vrRightEyeVisible;
+                private static int _lastFrameVrLeftEyeVisible;
+                private static int _lastFrameVrRightEyeVisible;
+                private static long _vrLeftWorkerBuildTimeTicks;
+                private static long _vrRightWorkerBuildTimeTicks;
+                private static long _lastFrameVrLeftWorkerBuildTimeTicks;
+                private static long _lastFrameVrRightWorkerBuildTimeTicks;
+                private static long _vrRenderSubmitTimeTicks;
+                private static long _lastFrameVrRenderSubmitTimeTicks;
 
                 // Render-matrix stats use a separate swap cycle aligned with SwapBuffers phase.
                 // Current = being written now, Display = last completed swap, Ready = waiting to become Display.
@@ -91,6 +106,13 @@ namespace XREngine
                 /// Total bytes read back from GPU buffers in the last completed frame.
                 /// </summary>
                 public static long GpuReadbackBytes => _lastFrameGpuReadbackBytes;
+                public static int VrLeftEyeDraws => _lastFrameVrLeftEyeDraws;
+                public static int VrRightEyeDraws => _lastFrameVrRightEyeDraws;
+                public static int VrLeftEyeVisible => _lastFrameVrLeftEyeVisible;
+                public static int VrRightEyeVisible => _lastFrameVrRightEyeVisible;
+                public static double VrLeftWorkerBuildTimeMs => TimeSpan.FromTicks(_lastFrameVrLeftWorkerBuildTimeTicks).TotalMilliseconds;
+                public static double VrRightWorkerBuildTimeMs => TimeSpan.FromTicks(_lastFrameVrRightWorkerBuildTimeTicks).TotalMilliseconds;
+                public static double VrRenderSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrRenderSubmitTimeTicks).TotalMilliseconds;
 
                 /// <summary>
                 /// Enables collection of render-matrix statistics.
@@ -184,6 +206,13 @@ namespace XREngine
                     _lastFrameGpuCpuFallbackRecoveredCommands = _gpuCpuFallbackRecoveredCommands;
                     _lastFrameGpuMappedBuffers = _gpuMappedBuffers;
                     _lastFrameGpuReadbackBytes = _gpuReadbackBytes;
+                    _lastFrameVrLeftEyeDraws = _vrLeftEyeDraws;
+                    _lastFrameVrRightEyeDraws = _vrRightEyeDraws;
+                    _lastFrameVrLeftEyeVisible = _vrLeftEyeVisible;
+                    _lastFrameVrRightEyeVisible = _vrRightEyeVisible;
+                    _lastFrameVrLeftWorkerBuildTimeTicks = _vrLeftWorkerBuildTimeTicks;
+                    _lastFrameVrRightWorkerBuildTimeTicks = _vrRightWorkerBuildTimeTicks;
+                    _lastFrameVrRenderSubmitTimeTicks = _vrRenderSubmitTimeTicks;
                     _lastFrameFBOBandwidthBytes = _fboBandwidthBytes;
                     _lastFrameFBOBindCount = _fboBindCount;
 
@@ -194,6 +223,13 @@ namespace XREngine
                     _gpuCpuFallbackRecoveredCommands = 0;
                     _gpuMappedBuffers = 0;
                     _gpuReadbackBytes = 0;
+                    _vrLeftEyeDraws = 0;
+                    _vrRightEyeDraws = 0;
+                    _vrLeftEyeVisible = 0;
+                    _vrRightEyeVisible = 0;
+                    _vrLeftWorkerBuildTimeTicks = 0;
+                    _vrRightWorkerBuildTimeTicks = 0;
+                    _vrRenderSubmitTimeTicks = 0;
                     _fboBandwidthBytes = 0;
                     _fboBindCount = 0;
                     // Note: render-matrix stats are swapped separately via SwapRenderMatrixStats()
@@ -219,6 +255,41 @@ namespace XREngine
                         return;
 
                     Interlocked.Add(ref _gpuReadbackBytes, bytes);
+                }
+
+                public static void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Exchange(ref _vrLeftEyeDraws, (int)Math.Min(leftDraws, int.MaxValue));
+                    Interlocked.Exchange(ref _vrRightEyeDraws, (int)Math.Min(rightDraws, int.MaxValue));
+                }
+
+                public static void RecordVrPerViewVisibleCounts(uint leftVisible, uint rightVisible)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Exchange(ref _vrLeftEyeVisible, (int)Math.Min(leftVisible, int.MaxValue));
+                    Interlocked.Exchange(ref _vrRightEyeVisible, (int)Math.Min(rightVisible, int.MaxValue));
+                }
+
+                public static void RecordVrCommandBuildTimes(TimeSpan leftBuildTime, TimeSpan rightBuildTime)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Exchange(ref _vrLeftWorkerBuildTimeTicks, leftBuildTime.Ticks);
+                    Interlocked.Exchange(ref _vrRightWorkerBuildTimeTicks, rightBuildTime.Ticks);
+                }
+
+                public static void RecordVrRenderSubmitTime(TimeSpan submitTime)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Exchange(ref _vrRenderSubmitTimeTicks, submitTime.Ticks);
                 }
 
                 /// <summary>

@@ -296,7 +296,7 @@ namespace XREngine.Rendering.OpenGL
                 var desiredInternalFormat = Data.SizedInternalFormat;
                 if (desiredInternalFormat != firstSource.SizedInternalFormat)
                 {
-                    Debug.Out($"Adjusting texture array '{Data.Name}' internal format from {desiredInternalFormat} to {firstSource.SizedInternalFormat} to match source textures.");
+                    Debug.OpenGL($"Adjusting texture array '{Data.Name}' internal format from {desiredInternalFormat} to {firstSource.SizedInternalFormat} to match source textures.");
                     desiredInternalFormat = firstSource.SizedInternalFormat;
                     Data.SizedInternalFormat = desiredInternalFormat;
                 }
@@ -340,25 +340,25 @@ namespace XREngine.Rendering.OpenGL
 
                     if (!Api.IsTexture(srcId))
                     {
-                        Debug.LogWarning($"Skipping copy into texture array layer {layer} because source texture id {srcId} is not valid.");
+                        Debug.OpenGLWarning($"Skipping copy into texture array layer {layer} because source texture id {srcId} is not valid.");
                         continue;
                     }
 
                     if (!Api.IsTexture(BindingId))
                     {
-                        Debug.LogWarning($"Skipping copy into texture array because destination texture id {BindingId} is not valid.");
+                        Debug.OpenGLWarning($"Skipping copy into texture array because destination texture id {BindingId} is not valid.");
                         break;
                     }
 
                     if (tex.SizedInternalFormat != Data.SizedInternalFormat)
                     {
-                        Debug.LogWarning($"Skipping copy into texture array layer {layer} because source internal format {tex.SizedInternalFormat} != target {Data.SizedInternalFormat}.");
+                        Debug.OpenGLWarning($"Skipping copy into texture array layer {layer} because source internal format {tex.SizedInternalFormat} != target {Data.SizedInternalFormat}.");
                         continue;
                     }
 
                     if (tex.Width != targetWidth || tex.Height != targetHeight)
                     {
-                        Debug.LogWarning($"Skipping copy into texture array layer {layer} because source size {tex.Width}x{tex.Height} != target {targetWidth}x{targetHeight}.");
+                        Debug.OpenGLWarning($"Skipping copy into texture array layer {layer} because source size {tex.Width}x{tex.Height} != target {targetWidth}x{targetHeight}.");
                         continue;
                     }
 
@@ -414,7 +414,7 @@ namespace XREngine.Rendering.OpenGL
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
+                Debug.OpenGLException(ex);
             }
             finally
             {

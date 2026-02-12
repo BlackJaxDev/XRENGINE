@@ -139,7 +139,7 @@ namespace XREngine.Rendering.OpenGL
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
+                Debug.OpenGLException(ex);
             }
             finally
             {
@@ -183,7 +183,7 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!Data.Resizable && !_storageSet)
             {
-                Debug.LogWarning("Texture storage not set on non-resizable 1D array, can't push mipmaps.");
+                Debug.OpenGLWarning("Texture storage not set on non-resizable 1D array, can't push mipmaps.");
                 return;
             }
 

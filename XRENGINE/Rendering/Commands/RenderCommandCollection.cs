@@ -1,4 +1,6 @@
 using Extensions;
+using System;
+using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
@@ -225,13 +227,230 @@ namespace XREngine.Rendering.Commands
             if (scene is null)
                 return;
 
+            ConfigureGpuViewSet(gpuPass, renderState, camera);
+
             gpuPass.Render(scene.GPUCommands);
 
             if (scene is VisualScene3D visualScene)
             {
                 gpuPass.GetVisibleCounts(out uint draws, out uint instances, out _);
                 visualScene.RecordGpuVisibility(draws, instances);
+
+                bool allowPerViewReadback = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+                if (allowPerViewReadback && gpuPass.ActiveViewCount > 0)
+                {
+                    uint leftDraws = gpuPass.ReadPerViewDrawCount(0u);
+                    uint rightDraws = gpuPass.ActiveViewCount > 1u
+                        ? gpuPass.ReadPerViewDrawCount(1u)
+                        : 0u;
+                    Engine.Rendering.Stats.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
+                }
             }
+        }
+
+        private static void ConfigureGpuViewSet(GPURenderPassCollection gpuPass, XRRenderPipelineInstance.RenderingState renderState, XRCamera leftCamera)
+        {
+            var settings = Engine.Rendering.Settings;
+            XRCamera? rightCamera = renderState.StereoPass ? renderState.StereoRightEyeCamera : null;
+            bool stereo = renderState.StereoPass && rightCamera is not null;
+            bool includeMirror = settings.RenderWindowsWhileInVR && !settings.VrMirrorComposeFromEyeTextures;
+            bool includeFoveated = stereo && settings.EnableVrFoveatedViewSet;
+            float foveationOuter = Math.Clamp(
+                settings.VrFoveationOuterRadius + settings.VrFoveationVisibilityMargin,
+                settings.VrFoveationInnerRadius,
+                1.5f);
+            float fullResNearDistance = settings.VrFoveationForceFullResForUiAndNearField
+                ? settings.VrFoveationFullResNearDistanceMeters
+                : 0.0f;
+
+            int viewCount = stereo ? 2 : 1;
+            if (includeFoveated)
+                viewCount += 2;
+            if (includeMirror)
+                viewCount += 1;
+
+            Span<GPUViewDescriptor> descriptors = stackalloc GPUViewDescriptor[5];
+            Span<GPUViewConstants> constants = stackalloc GPUViewConstants[5];
+
+            int width = Math.Max(1, renderState.WindowViewport?.InternalWidth ?? renderState.WindowViewport?.Width ?? 1);
+            int height = Math.Max(1, renderState.WindowViewport?.InternalHeight ?? renderState.WindowViewport?.Height ?? 1);
+
+            uint passBit = gpuPass.RenderPass >= 0 && gpuPass.RenderPass < 32
+                ? (1u << gpuPass.RenderPass)
+                : uint.MaxValue;
+
+            uint cursor = 0u;
+            descriptors[(int)cursor] = CreateViewDescriptor(
+                cursor,
+                GPUViewSetLayout.InvalidViewId,
+                GPUViewFlags.StereoEyeLeft | GPUViewFlags.FullRes | GPUViewFlags.UsesSharedVisibility,
+                passBit,
+                0u,
+                0,
+                0,
+                width,
+                height,
+                0u,
+                gpuPass.CommandCapacity);
+            constants[(int)cursor] = CreateViewConstants(leftCamera);
+            cursor++;
+
+            if (stereo && rightCamera is not null)
+            {
+                descriptors[(int)cursor] = CreateViewDescriptor(
+                    cursor,
+                    GPUViewSetLayout.InvalidViewId,
+                    GPUViewFlags.StereoEyeRight | GPUViewFlags.FullRes | GPUViewFlags.UsesSharedVisibility,
+                    passBit,
+                    1u,
+                    0,
+                    0,
+                    width,
+                    height,
+                    gpuPass.CommandCapacity,
+                    gpuPass.CommandCapacity);
+                constants[(int)cursor] = CreateViewConstants(rightCamera);
+                cursor++;
+            }
+
+            if (includeFoveated)
+            {
+                descriptors[(int)cursor] = CreateViewDescriptor(
+                    cursor,
+                    0u,
+                    GPUViewFlags.StereoEyeLeft | GPUViewFlags.Foveated | GPUViewFlags.UsesSharedVisibility,
+                    passBit,
+                    0u,
+                    0,
+                    0,
+                    width,
+                    height,
+                    gpuPass.CommandCapacity * cursor,
+                    gpuPass.CommandCapacity);
+                descriptors[(int)cursor].FoveationA = new Vector4(
+                    settings.VrFoveationCenterUv,
+                    settings.VrFoveationInnerRadius,
+                    foveationOuter);
+                descriptors[(int)cursor].FoveationB = new Vector4(
+                    settings.VrFoveationShadingRates,
+                    fullResNearDistance);
+                constants[(int)cursor] = CreateViewConstants(leftCamera);
+                cursor++;
+
+                if (rightCamera is not null)
+                {
+                    descriptors[(int)cursor] = CreateViewDescriptor(
+                        cursor,
+                        1u,
+                        GPUViewFlags.StereoEyeRight | GPUViewFlags.Foveated | GPUViewFlags.UsesSharedVisibility,
+                        passBit,
+                        1u,
+                        0,
+                        0,
+                        width,
+                        height,
+                        gpuPass.CommandCapacity * cursor,
+                        gpuPass.CommandCapacity);
+                    descriptors[(int)cursor].FoveationA = new Vector4(
+                        settings.VrFoveationCenterUv,
+                        settings.VrFoveationInnerRadius,
+                        foveationOuter);
+                    descriptors[(int)cursor].FoveationB = new Vector4(
+                        settings.VrFoveationShadingRates,
+                        fullResNearDistance);
+                    constants[(int)cursor] = CreateViewConstants(rightCamera);
+                    cursor++;
+                }
+            }
+
+            if (includeMirror)
+            {
+                descriptors[(int)cursor] = CreateViewDescriptor(
+                    cursor,
+                    0u,
+                    GPUViewFlags.Mirror | GPUViewFlags.UsesSharedVisibility,
+                    passBit,
+                    0u,
+                    0,
+                    0,
+                    width,
+                    height,
+                    gpuPass.CommandCapacity * cursor,
+                    gpuPass.CommandCapacity);
+                constants[(int)cursor] = CreateViewConstants(leftCamera);
+                cursor++;
+            }
+
+            gpuPass.ConfigureViewSet(descriptors.Slice(0, (int)cursor), constants.Slice(0, (int)cursor));
+            gpuPass.SetIndirectSourceViewId(DetermineIndirectSourceViewId(renderState, leftCamera, rightCamera));
+        }
+
+        private static uint DetermineIndirectSourceViewId(
+            XRRenderPipelineInstance.RenderingState renderState,
+            XRCamera sceneCamera,
+            XRCamera? stereoRightCamera)
+        {
+            if (!renderState.StereoPass || stereoRightCamera is null)
+                return 0u;
+
+            if (sceneCamera.Parameters is XROVRCameraParameters ovrParams)
+                return ovrParams.LeftEye ? 0u : 1u;
+
+            if (ReferenceEquals(sceneCamera, stereoRightCamera))
+                return 1u;
+
+            return 0u;
+        }
+
+        private static GPUViewDescriptor CreateViewDescriptor(
+            uint viewId,
+            uint parentViewId,
+            GPUViewFlags flags,
+            uint passMaskLo,
+            uint outputLayer,
+            int rectX,
+            int rectY,
+            int rectW,
+            int rectH,
+            uint visibleOffset,
+            uint visibleCapacity)
+        {
+            return new GPUViewDescriptor
+            {
+                ViewId = viewId,
+                ParentViewId = parentViewId,
+                Flags = (uint)flags,
+                RenderPassMaskLo = passMaskLo,
+                RenderPassMaskHi = 0u,
+                OutputLayer = outputLayer,
+                ViewRectX = (uint)Math.Max(0, rectX),
+                ViewRectY = (uint)Math.Max(0, rectY),
+                ViewRectW = (uint)Math.Max(1, rectW),
+                ViewRectH = (uint)Math.Max(1, rectH),
+                VisibleOffset = visibleOffset,
+                VisibleCapacity = Math.Max(1u, visibleCapacity),
+                FoveationA = Vector4.Zero,
+                FoveationB = Vector4.Zero
+            };
+        }
+
+        private static GPUViewConstants CreateViewConstants(XRCamera camera)
+        {
+            Matrix4x4 view = camera.Transform.InverseRenderMatrix;
+            Matrix4x4 projection = camera.ProjectionMatrix;
+            Matrix4x4 viewProjection = projection * view;
+            Vector3 cameraPos = camera.Transform.WorldTranslation;
+            Vector3 cameraForward = camera.WorldForward;
+
+            return new GPUViewConstants
+            {
+                View = view,
+                Projection = projection,
+                ViewProjection = viewProjection,
+                PrevViewProjection = viewProjection,
+                CameraPositionAndNear = new Vector4(cameraPos, camera.NearZ),
+                CameraForwardAndFar = new Vector4(cameraForward, camera.FarZ)
+            };
         }
 
         public bool TryGetGpuPass(int renderPass, out GPURenderPassCollection gpuPass)

@@ -723,7 +723,13 @@ namespace XREngine.Rendering
                 bool useScenePanelMode =
                     Engine.IsEditor &&
                     Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel;
-                bool canRenderWindowViewports = !Engine.VRState.IsInVR || Engine.Rendering.Settings.RenderWindowsWhileInVR;
+                bool mirrorByComposition =
+                    Engine.VRState.IsInVR &&
+                    Engine.Rendering.Settings.RenderWindowsWhileInVR &&
+                    Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures;
+                bool canRenderWindowViewports =
+                    !Engine.VRState.IsInVR ||
+                    (Engine.Rendering.Settings.RenderWindowsWhileInVR && !mirrorByComposition);
 
                 LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports);
 
@@ -737,7 +743,7 @@ namespace XREngine.Rendering
                     RenderViewportsCallback?.Invoke();
                 }
 
-                RenderWindowViewports(useScenePanelMode, canRenderWindowViewports);
+                RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
 
                 using (var postRenderSample = Engine.Profiler.Start("XRWindow.GlobalPostRender"))
                 {
@@ -846,7 +852,7 @@ namespace XREngine.Rendering
             }
         }
 
-        private void RenderWindowViewports(bool useScenePanelMode, bool canRenderWindowViewports)
+        private void RenderWindowViewports(bool useScenePanelMode, bool canRenderWindowViewports, bool mirrorByComposition)
         {
             if (canRenderWindowViewports)
             {
@@ -868,6 +874,14 @@ namespace XREngine.Rendering
             else
             {
                 _scenePanelAdapter.EndScenePanelMode(this);
+
+                if (mirrorByComposition)
+                {
+                    var fb = Window.FramebufferSize;
+                    uint targetWidth = (uint)Math.Max(1, fb.X);
+                    uint targetHeight = (uint)Math.Max(1, fb.Y);
+                    _ = Engine.VRState.OpenXRApi?.TryRenderDesktopMirrorComposition(targetWidth, targetHeight);
+                }
             }
         }
 

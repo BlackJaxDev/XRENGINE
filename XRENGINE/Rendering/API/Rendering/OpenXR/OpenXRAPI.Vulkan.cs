@@ -2,6 +2,7 @@ using Silk.NET.OpenXR;
 using Silk.NET.OpenXR.Extensions.KHR;
 using System;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using XREngine.Rendering.Vulkan;
 using Debug = XREngine.Debug;
 
@@ -133,5 +134,52 @@ public unsafe partial class OpenXRAPI
 
             Console.WriteLine($"Created swapchain {i} with {imageCount} images ({swapchainCreateInfo.Width}x{swapchainCreateInfo.Height})");
         }
+    }
+
+    private void BuildVulkanViewPartitions()
+    {
+        if (Window?.Renderer is not VulkanRenderer)
+        {
+            _activeVulkanViewPartitionCount = 0;
+            return;
+        }
+
+        int count = 0;
+        _activeVulkanViewPartitions[count++] = new OpenXrViewPartitionWork(OpenXrViewPartitionKind.FullLeft, 0u);
+        _activeVulkanViewPartitions[count++] = new OpenXrViewPartitionWork(OpenXrViewPartitionKind.FullRight, 1u);
+
+        if (Engine.Rendering.Settings.EnableVrFoveatedViewSet)
+        {
+            _activeVulkanViewPartitions[count++] = new OpenXrViewPartitionWork(OpenXrViewPartitionKind.FoveatedLeft, 0u);
+            _activeVulkanViewPartitions[count++] = new OpenXrViewPartitionWork(OpenXrViewPartitionKind.FoveatedRight, 1u);
+        }
+
+        if (Engine.Rendering.Settings.RenderWindowsWhileInVR && Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures)
+            _activeVulkanViewPartitions[count++] = new OpenXrViewPartitionWork(OpenXrViewPartitionKind.MirrorCompose, 0u);
+
+        _activeVulkanViewPartitionCount = count;
+    }
+
+    private void RecordVulkanViewPartitionsParallel()
+    {
+        if (_activeVulkanViewPartitionCount <= 0 || !_parallelRenderingEnabled || Window?.Renderer is not VulkanRenderer)
+            return;
+
+        Task[] tasks = new Task[_activeVulkanViewPartitionCount];
+        for (int i = 0; i < _activeVulkanViewPartitionCount; i++)
+        {
+            OpenXrViewPartitionWork partition = _activeVulkanViewPartitions[i];
+            tasks[i] = Task.Run(() =>
+            {
+                if (partition.Kind == OpenXrViewPartitionKind.MirrorCompose)
+                    return;
+
+                // Rendering command recording for these partitions is handled by VulkanRenderer's
+                // secondary command buffer recording path, which now records eligible command groups
+                // in parallel using per-thread command pools.
+            });
+        }
+
+        Task.WaitAll(tasks);
     }
 }

@@ -131,6 +131,114 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Runtime snapshot of backend parity-critical indirect rendering decisions.
+        /// Used by both dispatch code and tests to validate count/fallback behavior.
+        /// </summary>
+        public readonly struct IndirectParityChecklist(
+            bool hasRenderer,
+            bool hasIndirectDrawBuffer,
+            bool hasParameterBuffer,
+            bool parameterBufferReady,
+            bool indexedVaoValid,
+            bool supportsIndirectCountDraw,
+            bool countDrawPathDisabled,
+            string backendName)
+        {
+            public bool HasRenderer { get; } = hasRenderer;
+            public bool HasIndirectDrawBuffer { get; } = hasIndirectDrawBuffer;
+            public bool HasParameterBuffer { get; } = hasParameterBuffer;
+            public bool ParameterBufferReady { get; } = parameterBufferReady;
+            public bool IndexedVaoValid { get; } = indexedVaoValid;
+            public bool SupportsIndirectCountDraw { get; } = supportsIndirectCountDraw;
+            public bool CountDrawPathDisabled { get; } = countDrawPathDisabled;
+            public string BackendName { get; } = backendName;
+
+            public bool DrawIndirectBufferBindingReady
+                => HasRenderer && HasIndirectDrawBuffer;
+
+            public bool ParameterBufferBindingReady
+                => HasRenderer && HasParameterBuffer && ParameterBufferReady;
+
+            public bool UsesCountDrawPath
+                => DrawIndirectBufferBindingReady
+                && ParameterBufferBindingReady
+                && IndexedVaoValid
+                && SupportsIndirectCountDraw
+                && !CountDrawPathDisabled;
+
+            public bool UsesFallbackPath
+                => DrawIndirectBufferBindingReady
+                && IndexedVaoValid
+                && !UsesCountDrawPath;
+
+            public bool IsSubmissionReady
+                => DrawIndirectBufferBindingReady && IndexedVaoValid;
+        }
+
+        public static IndirectParityChecklist BuildIndirectParityChecklist(
+            bool hasRenderer,
+            bool hasIndirectDrawBuffer,
+            bool hasParameterBuffer,
+            bool parameterBufferReady,
+            bool indexedVaoValid,
+            bool supportsIndirectCountDraw,
+            bool countDrawPathDisabled,
+            string backendName)
+            => new(
+                hasRenderer,
+                hasIndirectDrawBuffer,
+                hasParameterBuffer,
+                parameterBufferReady,
+                indexedVaoValid,
+                supportsIndirectCountDraw,
+                countDrawPathDisabled,
+                backendName);
+
+        private static IndirectParityChecklist BuildIndirectParityChecklist(
+            AbstractRenderer? renderer,
+            XRDataBuffer? indirectDrawBuffer,
+            XRDataBuffer? parameterBuffer,
+            XRMeshRenderer.BaseVersion? version)
+        {
+            bool hasRenderer = renderer is not null;
+            bool hasIndirectDrawBuffer = indirectDrawBuffer is not null;
+            bool hasParameterBuffer = parameterBuffer is not null;
+            bool parameterBufferReady = hasParameterBuffer && EnsureParameterBufferReady(parameterBuffer!);
+            bool indexedVaoValid = hasRenderer && renderer!.ValidateIndexedVAO(version);
+            bool supportsIndirectCountDraw = hasRenderer && renderer!.SupportsIndirectCountDraw();
+            bool countDrawPathDisabled = DebugSettings.DisableCountDrawPath;
+            string backendName = renderer?.GetType().Name ?? "None";
+
+            return BuildIndirectParityChecklist(
+                hasRenderer,
+                hasIndirectDrawBuffer,
+                hasParameterBuffer,
+                parameterBufferReady,
+                indexedVaoValid,
+                supportsIndirectCountDraw,
+                countDrawPathDisabled,
+                backendName);
+        }
+
+        private static void LogIndirectParityChecklist(in IndirectParityChecklist checklist)
+        {
+            if (!IsEnabled(LogCategory.Validation, LogLevel.Info))
+                return;
+
+            Log(
+                LogCategory.Validation,
+                LogLevel.Info,
+                "Indirect parity backend={0} drawBufferReady={1} paramBufferReady={2} supportsCount={3} countDisabled={4} indexedVaoValid={5} path={6}",
+                checklist.BackendName,
+                checklist.DrawIndirectBufferBindingReady,
+                checklist.ParameterBufferBindingReady,
+                checklist.SupportsIndirectCountDraw,
+                checklist.CountDrawPathDisabled,
+                checklist.IndexedVaoValid,
+                checklist.UsesCountDrawPath ? "CountDraw" : "Fallback");
+        }
+
+        /// <summary>
         /// Render using the selected pipeline
         /// </summary>
         public void Render(
@@ -297,7 +405,9 @@ namespace XREngine.Rendering
             }
 
             // Validate element buffer presence (required for *ElementsIndirect* variants)
-            if (!renderer.ValidateIndexedVAO(version))
+            IndirectParityChecklist parity = BuildIndirectParityChecklist(renderer, indirectDrawBuffer, parameterBuffer, version);
+
+            if (!parity.IndexedVaoValid)
             {
                 Warn(LogCategory.VAO, "Indirect draw aborted: no index (element) buffer bound to VAO. Skipping MultiDrawElementsIndirect.");
                 renderer.BindVAOForRenderer(null);
@@ -321,8 +431,9 @@ namespace XREngine.Rendering
             renderer.BindDrawIndirectBuffer(indirectDrawBuffer);
 
             uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
-            bool parameterReady = parameterBuffer is not null && EnsureParameterBufferReady(parameterBuffer);
-            bool useCount = parameterReady && !DebugSettings.DisableCountDrawPath && renderer.SupportsIndirectCountDraw();
+            bool useCount = parity.UsesCountDrawPath;
+
+            LogIndirectParityChecklist(parity);
 
             GpuDebug(LogCategory.Draw, "Draw mode: useCount={0}, stride={1}", useCount, stride);
 
@@ -726,7 +837,9 @@ namespace XREngine.Rendering
             if (graphicsProgram is not null && vaoRenderer is not null)
                 renderer.ConfigureVAOAttributesForProgram(graphicsProgram, version);
 
-            if (!renderer.ValidateIndexedVAO(version))
+            IndirectParityChecklist parity = BuildIndirectParityChecklist(renderer, indirectDrawBuffer, parameterBuffer, version);
+
+            if (!parity.IndexedVaoValid)
             {
                 Debug.LogWarning("Indirect draw aborted: no element buffer bound to VAO.");
                 renderer.BindVAOForRenderer(null);
@@ -755,8 +868,8 @@ namespace XREngine.Rendering
                 return;
             }
 
-            bool parameterReady = parameterBuffer is not null && EnsureParameterBufferReady(parameterBuffer);
-            bool usingCountPath = parameterReady && !DebugSettings.DisableCountDrawPath && renderer.SupportsIndirectCountDraw();
+            bool usingCountPath = parity.UsesCountDrawPath;
+            LogIndirectParityChecklist(parity);
             try
             {
                 if (usingCountPath)
@@ -1087,6 +1200,8 @@ namespace XREngine.Rendering
             // Set uniforms
             _indirectCompProgram.Uniform("CurrentRenderPass", currentRenderPass);
             _indirectCompProgram.Uniform("MaxIndirectDraws", (int)indirectDrawBuffer.ElementCount);
+            _indirectCompProgram.Uniform("ActiveViewCount", (int)(renderPasses.ActiveViewCount == 0u ? 1u : renderPasses.ActiveViewCount));
+            _indirectCompProgram.Uniform("SourceViewId", (int)renderPasses.IndirectSourceViewId);
             if (logGpu)
                 GpuDebug("Set uniforms: CurrentRenderPass={0}, MaxIndirectDraws={1}", currentRenderPass, indirectDrawBuffer.ElementCount);
 

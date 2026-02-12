@@ -104,7 +104,7 @@ namespace XREngine.Rendering.OpenGL
                     if (lights != null)
                         lights.SetForwardLightingUniforms(program.Data);
                     else
-                        Debug.Out($"[ForwardLighting] Skipped: RenderingWorld={world != null}, Lights={lights != null}");
+                        Debug.OpenGL($"[ForwardLighting] Skipped: RenderingWorld={world != null}, Lights={lights != null}");
                 }
 
                 if (reqs.HasFlag(EUniformRequirements.RenderTime))

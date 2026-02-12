@@ -61,14 +61,14 @@ namespace XREngine.Rendering.OpenGL
                 {
                     if (Cache.ContainsKey(id))
                     {
-                        Debug.LogWarning($"OpenGL {Type} object with binding id {id} already exists in cache.");
+                        Debug.OpenGLWarning($"OpenGL {Type} object with binding id {id} already exists in cache.");
                         Cache[id] = this;
                     }
                     else
                         Cache.Add(id, this);
                 }
                 else
-                    Debug.LogWarning($"Failed to generate OpenGL {Type} object.");
+                    Debug.OpenGLWarning($"Failed to generate OpenGL {Type} object.");
                 return id;
             }
             protected override void DeleteObject()
