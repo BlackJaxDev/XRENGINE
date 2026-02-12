@@ -92,12 +92,12 @@ namespace XREngine.Rendering.OpenGL
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogException(ex, $"GLMeshGenerationQueue: Failed to generate mesh renderer");
+                        Debug.OpenGLException(ex, $"GLMeshGenerationQueue: Failed to generate mesh renderer");
                     }
                 }
 
                 if (generated > 0)
-                    Debug.Out($"[GLMeshGenerationQueue] Generated {generated} mesh(es) in {sw.Elapsed.TotalMilliseconds:F2}ms, {_pendingGeneration.Count} remaining");
+                    Debug.OpenGL($"[GLMeshGenerationQueue] Generated {generated} mesh(es) in {sw.Elapsed.TotalMilliseconds:F2}ms, {_pendingGeneration.Count} remaining");
             }
 
             /// <summary>
@@ -116,7 +116,7 @@ namespace XREngine.Rendering.OpenGL
                         }
                         catch (Exception ex)
                         {
-                            Debug.LogException(ex, $"GLMeshGenerationQueue: Failed to generate mesh renderer during flush");
+                            Debug.OpenGLException(ex, $"GLMeshGenerationQueue: Failed to generate mesh renderer during flush");
                         }
                     }
                 }

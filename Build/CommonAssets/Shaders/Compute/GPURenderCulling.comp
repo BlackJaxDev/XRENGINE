@@ -23,73 +23,171 @@ layout(local_size_x = 256) in;
 */
 
 // === Buffers ===
-// Input commands (unsorted, uncropped). Count is provided via uniform.
 layout(std430, binding = 0) buffer InputCommandsBuffer { float inCommands[]; };
-// Output culled commands (densely packed). Uses atomic counter to append.
 layout(std430, binding = 1) buffer CulledCommandsBuffer { float outCommands[]; };
-// Atomic counters storing number of written culled commands and total instances, plus overflow marker.
 layout(std430, binding = 2) buffer CulledCountBuffer
 {
     uint CulledCount;
     uint CulledInstanceCount;
     uint CulledOverflow;
 };
-// Overflow / debug flag (0 = ok, 1 = overflow / truncated) for culling stage (legacy path).
 layout(std430, binding = 3) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
-// Optional statistics buffer (binding = 8) shared across stages
 layout(std430, binding = 8) buffer StatsBuffer {
-    uint StatsInputCount;        // 0
-    uint StatsCulledCount;       // 1
-    uint StatsDrawCount;         // 2 (written in indirect stage)
-    uint StatsRejectedFrustum;   // 3
-    uint StatsRejectedDistance;  // 4
-    uint StatsBvhBuildCount;     // 5
-    uint StatsBvhRefitCount;     // 6
-    uint StatsBvhCullCount;      // 7
-    uint StatsBvhRayCount;       // 8
-    uint StatsBvhBuildTimeLo;    // 9
-    uint StatsBvhBuildTimeHi;    // 10
-    uint StatsBvhRefitTimeLo;    // 11
-    uint StatsBvhRefitTimeHi;    // 12
-    uint StatsBvhCullTimeLo;     // 13
-    uint StatsBvhCullTimeHi;     // 14
-    uint StatsBvhRayTimeLo;      // 15
-    uint StatsBvhRayTimeHi;      // 16
+    uint StatsInputCount;
+    uint StatsCulledCount;
+    uint StatsDrawCount;
+    uint StatsRejectedFrustum;
+    uint StatsRejectedDistance;
+    uint StatsBvhBuildCount;
+    uint StatsBvhRefitCount;
+    uint StatsBvhCullCount;
+    uint StatsBvhRayCount;
+    uint StatsBvhBuildTimeLo;
+    uint StatsBvhBuildTimeHi;
+    uint StatsBvhRefitTimeLo;
+    uint StatsBvhRefitTimeHi;
+    uint StatsBvhCullTimeLo;
+    uint StatsBvhCullTimeHi;
+    uint StatsBvhRayTimeLo;
+    uint StatsBvhRayTimeHi;
 };
 
+struct GPUViewDescriptor
+{
+    uint ViewId;
+    uint ParentViewId;
+    uint Flags;
+    uint RenderPassMaskLo;
+    uint RenderPassMaskHi;
+    uint OutputLayer;
+    uint ViewRectX;
+    uint ViewRectY;
+    uint ViewRectW;
+    uint ViewRectH;
+    uint VisibleOffset;
+    uint VisibleCapacity;
+    vec4 FoveationA;
+    vec4 FoveationB;
+};
+
+struct GPUViewConstants
+{
+    mat4 View;
+    mat4 Projection;
+    mat4 ViewProjection;
+    mat4 PrevViewProjection;
+    vec4 CameraPositionAndNear;
+    vec4 CameraForwardAndFar;
+};
+
+layout(std430, binding = 11) readonly buffer ViewDescriptorBuffer { GPUViewDescriptor ViewDescriptors[]; };
+layout(std430, binding = 12) readonly buffer ViewConstantsBuffer { GPUViewConstants ViewConstants[]; };
+layout(std430, binding = 13) readonly buffer CommandViewMaskBuffer { uvec2 CommandViewMasks[]; };
+layout(std430, binding = 14) buffer PerViewVisibleIndicesBuffer { uint PerViewVisibleIndices[]; };
+layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCounts[]; };
+
 // === Uniforms ===
-uniform vec4 FrustumPlanes[6];      // Normalized planes (xyz = normal, w = -d)
-uniform float MaxRenderDistance;    // Max allowed render distance (distance metric squared)
-uniform uint CameraLayerMask;       // Active camera layer mask
-uniform int  CurrentRenderPass;     // -1 = accept all passes, else match command RenderPass
-uniform int  InputCommandCount;     // Number of source commands
-uniform int  MaxCulledCommands;     // Capacity (in commands) of outCommands buffer
-uniform uint DisabledFlagsMask;     // Bitmask: discard if (Flags & DisabledFlagsMask)!=0
-uniform vec3 CameraPosition;        // World-space camera position (for distance metric)
-// === Flag bit layout (must match C# GPUCommandFlags) ===
+uniform vec4 FrustumPlanes[6];
+uniform float MaxRenderDistance;
+uniform uint CameraLayerMask;
+uniform int  CurrentRenderPass;
+uniform int  InputCommandCount;
+uniform int  MaxCulledCommands;
+uniform uint DisabledFlagsMask;
+uniform vec3 CameraPosition;
+uniform int ActiveViewCount;
+
 #define FLAG_TRANSPARENT    (1u<<0)
 #define FLAG_CAST_SHADOW    (1u<<1)
 #define FLAG_SKINNED        (1u<<2)
 #define FLAG_DYNAMIC        (1u<<3)
 #define FLAG_DOUBLE_SIDED   (1u<<4)
 
-
-// === Constants ===
 const int COMMAND_FLOATS = 48;
-
-// Direct field extraction performed inline to avoid parameterized unsized array issues in some GLSL drivers.
 
 bool FrustumSphereVisible(vec3 center, float radius)
 {
-    // Sphere vs plane: dot(n, p) + d >= -r  (plane.w stores d term already)
     for (int i = 0; i < 6; ++i)
     {
         vec4 p = FrustumPlanes[i];
-        float dist = dot(p.xyz, center) + p.w; // plane eq n.x*x + n.y*y + n.z*z + d
+        float dist = dot(p.xyz, center) + p.w;
         if (dist < -radius)
             return false;
     }
     return true;
+}
+
+bool ViewMaskContains(uvec2 mask, uint viewId)
+{
+    if (viewId < 32u)
+        return (mask.x & (1u << viewId)) != 0u;
+
+    uint hi = viewId - 32u;
+    if (hi >= 32u)
+        return false;
+
+    return (mask.y & (1u << hi)) != 0u;
+}
+
+bool ViewPassMatches(uint viewId)
+{
+    if (viewId >= uint(ActiveViewCount) || viewId >= ViewDescriptors.length())
+        return false;
+
+    GPUViewDescriptor vd = ViewDescriptors[viewId];
+    if (CurrentRenderPass < 0)
+        return true;
+
+    if (CurrentRenderPass < 32)
+        return (vd.RenderPassMaskLo & (1u << uint(CurrentRenderPass))) != 0u;
+
+    uint hi = uint(CurrentRenderPass - 32);
+    if (hi >= 32u)
+        return true;
+
+    return (vd.RenderPassMaskHi & (1u << hi)) != 0u;
+}
+
+void AppendPerView(uint sourceCommandIndex, uint culledCommandIndex, vec3 commandCenter, uint commandFlags)
+{
+    if (ActiveViewCount <= 0)
+        return;
+
+    if (sourceCommandIndex >= CommandViewMasks.length())
+        return;
+
+    uvec2 mask = CommandViewMasks[sourceCommandIndex];
+    uint maxViews = min(uint(ActiveViewCount), min(uint(64), uint(PerViewDrawCounts.length())));
+    for (uint viewId = 0u; viewId < maxViews; ++viewId)
+    {
+        if (!ViewMaskContains(mask, viewId))
+            continue;
+        if (!ViewPassMatches(viewId))
+            continue;
+
+        GPUViewDescriptor vd = ViewDescriptors[viewId];
+        bool foveated = (vd.Flags & (1u << 3u)) != 0u;
+        if (foveated)
+        {
+            vec3 cameraPosition = ViewConstants[viewId].CameraPositionAndNear.xyz;
+            vec3 toCenter = commandCenter - cameraPosition;
+            float perViewDistanceSq = dot(toCenter, toCenter);
+            float fullResNearDistance = vd.FoveationB.w;
+            if (fullResNearDistance > 0.0 && perViewDistanceSq <= (fullResNearDistance * fullResNearDistance))
+                continue;
+
+            if ((commandFlags & FLAG_TRANSPARENT) != 0u)
+                continue;
+        }
+
+        uint local = atomicAdd(PerViewDrawCounts[viewId], 1u);
+        if (local < vd.VisibleCapacity)
+        {
+            uint dst = vd.VisibleOffset + local;
+            if (dst < PerViewVisibleIndices.length())
+                PerViewVisibleIndices[dst] = culledCommandIndex;
+        }
+    }
 }
 
 void main()
@@ -98,28 +196,23 @@ void main()
     if (idx >= uint(InputCommandCount))
         return;
 
-    // Thread 0 seeds input count (race-benign if repeated)
     if (idx == 0u)
         StatsInputCount = uint(InputCommandCount);
 
     int base = int(idx) * COMMAND_FLOATS;
-    // Bounds safety against malformed counts
     if (base + COMMAND_FLOATS > inCommands.length())
         return;
 
-    // Read frequently used fields (offsets updated for 48-float struct with PrevWorldMatrix)
-    vec4 bs = vec4(inCommands[base+32], inCommands[base+33], inCommands[base+34], inCommands[base+35]); // bounding sphere
+    vec4 bs = vec4(inCommands[base+32], inCommands[base+33], inCommands[base+34], inCommands[base+35]);
     vec3 center = bs.xyz;
     float radius = bs.w;
     uint layerMask = floatBitsToUint(inCommands[base+43]);
     uint renderPass = floatBitsToUint(inCommands[base+40]);
     uint instanceCount = floatBitsToUint(inCommands[base+39]);
-    // Compute distance metric (squared distance from camera to bounding sphere center)
     vec3 toCenter = center - CameraPosition;
     float renderDistance = dot(toCenter, toCenter);
     uint flags = floatBitsToUint(inCommands[base+45]);
 
-    // Basic validity / trivially reject
     if (instanceCount == 0u) return;
     if ((layerMask & CameraLayerMask) == 0u) return;
     if (DisabledFlagsMask != 0u && (flags & DisabledFlagsMask) != 0u) return;
@@ -133,29 +226,27 @@ void main()
         return;
     }
 
-    // Append
     uint outIndex = atomicAdd(CulledCount, 1u);
     if (outIndex >= uint(MaxCulledCommands))
     {
-        // Track how many commands overflow the visible buffer and leave a sentinel for CPU-side inspection.
         atomicAdd(CullingOverflowFlag, 1u);
         if (MaxCulledCommands > 0)
         {
             uint sentinelIndex = uint(MaxCulledCommands - 1);
             int sentinelBase = int(sentinelIndex) * COMMAND_FLOATS;
-            outCommands[sentinelBase + 36] = uintBitsToFloat(0xFFFFFFFFu); // MeshID sentinel
-            outCommands[sentinelBase + 38] = uintBitsToFloat(0xFFFFFFFFu); // MaterialID sentinel
-            outCommands[sentinelBase + 39] = uintBitsToFloat(0u);          // InstanceCount = 0
+            outCommands[sentinelBase + 36] = uintBitsToFloat(0xFFFFFFFFu);
+            outCommands[sentinelBase + 38] = uintBitsToFloat(0xFFFFFFFFu);
+            outCommands[sentinelBase + 39] = uintBitsToFloat(0u);
         }
         return;
     }
 
     int outBase = int(outIndex) * COMMAND_FLOATS;
-    // Copy 48 floats (loop keeps code small; driver may unroll)
     for (int i = 0; i < COMMAND_FLOATS; ++i)
         outCommands[outBase + i] = inCommands[base + i];
-    // Overwrite computed distance metric at slot 42
     outCommands[outBase + 42] = renderDistance;
+
+    AppendPerView(idx, outIndex, center, flags);
 
     atomicAdd(CulledInstanceCount, instanceCount);
     atomicAdd(StatsCulledCount, 1u);

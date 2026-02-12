@@ -156,13 +156,13 @@ namespace XREngine.Rendering.OpenGL
                 string? trueScript = ResolveFullSource();
                 if (trueScript is null)
                 {
-                    Debug.LogWarning("Shader source is null after resolving includes.");
+                    Debug.OpenGLWarning("Shader source is null after resolving includes.");
                     return;
                 }
 
                 Api.ShaderSource(BindingId, trueScript);
                 if (compile && !Compile(out _))
-                    Debug.LogWarning(GetFullSource(true));
+                    Debug.OpenGLWarning(GetFullSource(true));
             }
 
             public string GetFullSource(bool lineNumbers)
@@ -199,9 +199,9 @@ namespace XREngine.Rendering.OpenGL
                 if (printLogInfo)
                 {
                     if (!string.IsNullOrEmpty(info))
-                        Debug.LogWarning(info);
+                        Debug.OpenGLWarning(info);
                     else if (!IsCompiled)
-                        Debug.LogWarning("Unable to compile shader, but no error was returned.");
+                        Debug.OpenGLWarning("Unable to compile shader, but no error was returned.");
                     //else
                     //    Debug.Out("Shader compiled successfully.");
                 }
@@ -230,7 +230,7 @@ namespace XREngine.Rendering.OpenGL
                     src = Shaders.ShaderSnippets.ResolveSnippets(src);
 
                 if (resolvedPaths.Count > 0)
-                    Debug.Out($"Resolved {resolvedPaths.Count} includes:{Environment.NewLine}{string.Join(Environment.NewLine, resolvedPaths.Select(x => $" - {x}"))}");
+                    Debug.OpenGL($"Resolved {resolvedPaths.Count} includes:{Environment.NewLine}{string.Join(Environment.NewLine, resolvedPaths.Select(x => $" - {x}"))}");
                 
                 return src;
             }
@@ -308,7 +308,7 @@ namespace XREngine.Rendering.OpenGL
                             if (resolvedPaths.Contains(includePath))
                             {
                                 //Infinite recursion, path already visited
-                                Debug.Out($"Infinite include recursion detected; the path '{includePath}' will not be included again.");
+                                Debug.OpenGL($"Infinite include recursion detected; the path '{includePath}' will not be included again.");
                                 fileText = string.Empty;
                             }
                             else
@@ -320,7 +320,7 @@ namespace XREngine.Rendering.OpenGL
                         }
                         catch (Exception ex)
                         {
-                            Debug.Out(ex.Message);
+                            Debug.OpenGL(ex.Message);
                             fileText = string.Empty;
                         }
                     }

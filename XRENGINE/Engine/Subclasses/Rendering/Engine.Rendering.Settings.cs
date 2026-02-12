@@ -346,6 +346,15 @@ namespace XREngine
                 private bool _preferNVStereo = true;
                 private bool _renderVRSinglePassStereo = false;
                 private bool _renderWindowsWhileInVR = true;
+                private bool _vrMirrorComposeFromEyeTextures = true;
+                private bool _enableVrFoveatedViewSet = false;
+                private Vector2 _vrFoveationCenterUv = new(0.5f, 0.5f);
+                private float _vrFoveationInnerRadius = 0.35f;
+                private float _vrFoveationOuterRadius = 0.85f;
+                private Vector3 _vrFoveationShadingRates = new(1.0f, 0.7f, 0.5f);
+                private float _vrFoveationVisibilityMargin = 0.05f;
+                private bool _vrFoveationForceFullResForUiAndNearField = true;
+                private float _vrFoveationFullResNearDistanceMeters = 1.5f;
                 private bool _populateVertexDataInParallel = false;
                 private bool _processMeshImportsAsynchronously = true;
                 private bool _useInterleavedMeshBuffer = false;
@@ -943,6 +952,107 @@ namespace XREngine
                 {
                     get => _renderWindowsWhileInVR;
                     set => SetField(ref _renderWindowsWhileInVR, value);
+                }
+
+                /// <summary>
+                /// If true, desktop mirror output while in VR is composed from already rendered eye textures.
+                /// When false, the desktop window follows the legacy full-scene viewport render path.
+                /// </summary>
+                [Category("VR")]
+                [Description("If true, desktop mirror output while in VR is composed from already rendered eye textures. Disable for legacy full-scene mirror rendering.")]
+                public bool VrMirrorComposeFromEyeTextures
+                {
+                    get => _vrMirrorComposeFromEyeTextures;
+                    set => SetField(ref _vrMirrorComposeFromEyeTextures, value);
+                }
+
+                /// <summary>
+                /// If true, ViewSet generation adds per-eye foveated views in addition to full-resolution stereo views.
+                /// </summary>
+                [Category("VR")]
+                [Description("If true, ViewSet generation adds per-eye foveated views in addition to full-resolution stereo views.")]
+                public bool EnableVrFoveatedViewSet
+                {
+                    get => _enableVrFoveatedViewSet;
+                    set => SetField(ref _enableVrFoveatedViewSet, value);
+                }
+
+                /// <summary>
+                /// UV-space center for per-eye foveated shading policy.
+                /// </summary>
+                [Category("VR")]
+                [Description("UV-space center for per-eye foveated shading policy.")]
+                public Vector2 VrFoveationCenterUv
+                {
+                    get => _vrFoveationCenterUv;
+                    set => SetField(ref _vrFoveationCenterUv, value);
+                }
+
+                /// <summary>
+                /// Inner foveation radius in normalized UV space.
+                /// </summary>
+                [Category("VR")]
+                [Description("Inner foveation radius in normalized UV space.")]
+                public float VrFoveationInnerRadius
+                {
+                    get => _vrFoveationInnerRadius;
+                    set => SetField(ref _vrFoveationInnerRadius, Math.Clamp(value, 0.0f, 1.0f));
+                }
+
+                /// <summary>
+                /// Outer foveation radius in normalized UV space.
+                /// </summary>
+                [Category("VR")]
+                [Description("Outer foveation radius in normalized UV space.")]
+                public float VrFoveationOuterRadius
+                {
+                    get => _vrFoveationOuterRadius;
+                    set => SetField(ref _vrFoveationOuterRadius, Math.Clamp(value, 0.0f, 1.5f));
+                }
+
+                /// <summary>
+                /// Per-tier shading-rate policy for foveated views: X=inner, Y=mid, Z=outer.
+                /// 1.0 means full rate; lower values indicate reduced shading rate.
+                /// </summary>
+                [Category("VR")]
+                [Description("Per-tier shading-rate policy for foveated views: X=inner, Y=mid, Z=outer. 1.0 means full rate; lower values indicate reduced shading rate.")]
+                public Vector3 VrFoveationShadingRates
+                {
+                    get => _vrFoveationShadingRates;
+                    set => SetField(ref _vrFoveationShadingRates, value);
+                }
+
+                /// <summary>
+                /// Conservative visibility margin applied to foveated outer radius to reduce edge popping.
+                /// </summary>
+                [Category("VR")]
+                [Description("Conservative visibility margin applied to foveated outer radius to reduce edge popping.")]
+                public float VrFoveationVisibilityMargin
+                {
+                    get => _vrFoveationVisibilityMargin;
+                    set => SetField(ref _vrFoveationVisibilityMargin, Math.Clamp(value, 0.0f, 0.5f));
+                }
+
+                /// <summary>
+                /// If true, near-field and UI-critical content is forced into full-resolution stereo views.
+                /// </summary>
+                [Category("VR")]
+                [Description("If true, near-field and UI-critical content is forced into full-resolution stereo views.")]
+                public bool VrFoveationForceFullResForUiAndNearField
+                {
+                    get => _vrFoveationForceFullResForUiAndNearField;
+                    set => SetField(ref _vrFoveationForceFullResForUiAndNearField, value);
+                }
+
+                /// <summary>
+                /// Near-distance threshold (meters) below which foveated views defer content to full-resolution views.
+                /// </summary>
+                [Category("VR")]
+                [Description("Near-distance threshold (meters) below which foveated views defer content to full-resolution views.")]
+                public float VrFoveationFullResNearDistanceMeters
+                {
+                    get => _vrFoveationFullResNearDistanceMeters;
+                    set => SetField(ref _vrFoveationFullResNearDistanceMeters, Math.Clamp(value, 0.0f, 10.0f));
                 }
 
                 private PhysicsGpuMemorySettings _physicsGpuMemorySettings = new();

@@ -97,7 +97,7 @@ namespace XREngine.Rendering.OpenGL
                 {
                     buffer._hasPendingUpload = false;
                     _pendingBuffers.TryRemove(buffer, out _);
-                    Debug.LogWarning("GLUploadQueue: Failed to generate buffer for upload.");
+                    Debug.OpenGLWarning("GLUploadQueue: Failed to generate buffer for upload.");
                     return;
                 }
 

@@ -79,6 +79,38 @@ layout(std430, binding = 9) buffer CompareBuffer { uint CompareVisible[]; };
 
 // Optional packed cluster plane buffer (vec4 planes, same packing as clustered lighting).
 layout(std430, binding = 10) readonly buffer ClusterPlaneBuffer { vec4 ClusterPlaneData[]; };
+struct GPUViewDescriptor
+{
+    uint ViewId;
+    uint ParentViewId;
+    uint Flags;
+    uint RenderPassMaskLo;
+    uint RenderPassMaskHi;
+    uint OutputLayer;
+    uint ViewRectX;
+    uint ViewRectY;
+    uint ViewRectW;
+    uint ViewRectH;
+    uint VisibleOffset;
+    uint VisibleCapacity;
+    vec4 FoveationA;
+    vec4 FoveationB;
+};
+
+struct GPUViewConstants
+{
+    mat4 View;
+    mat4 Projection;
+    mat4 ViewProjection;
+    mat4 PrevViewProjection;
+    vec4 CameraPositionAndNear;
+    vec4 CameraForwardAndFar;
+};
+layout(std430, binding = 11) readonly buffer ViewDescriptorBuffer { GPUViewDescriptor ViewDescriptors[]; };
+layout(std430, binding = 12) readonly buffer ViewConstantsBuffer { GPUViewConstants ViewConstants[]; };
+layout(std430, binding = 13) readonly buffer CommandViewMaskBuffer { uvec2 CommandViewMasks[]; };
+layout(std430, binding = 14) buffer PerViewVisibleIndicesBuffer { uint PerViewVisibleIndices[]; };
+layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCounts[]; };
 
 // === Uniforms ===
 uniform vec4 FrustumPlanes[PLANES_PER_FRUSTUM];       // Camera frustum planes (xyz = normal, w = d)
@@ -96,6 +128,7 @@ uniform uint DisabledFlagsMask;                        // Bitmask of disallowed 
 uniform vec3 CameraPosition;                           // World-space camera position
 uniform uint StatsEnabled;                             // 1 when stats buffer is bound
 uniform uint OverflowDebugEnabled;                     // 1 when OverflowDebug buffer is bound
+uniform int ActiveViewCount;
 
 // Flag bit layout (matches GPUIndirectRenderFlags)
 #define FLAG_TRANSPARENT    (1u<<0)
@@ -158,6 +191,79 @@ bool SphereVisible(vec3 center, float radius)
     return true;
 }
 
+bool ViewMaskContains(uvec2 mask, uint viewId)
+{
+    if (viewId < 32u)
+        return (mask.x & (1u << viewId)) != 0u;
+
+    uint hi = viewId - 32u;
+    if (hi >= 32u)
+        return false;
+
+    return (mask.y & (1u << hi)) != 0u;
+}
+
+bool ViewPassMatches(uint viewId)
+{
+    if (viewId >= uint(ActiveViewCount) || viewId >= ViewDescriptors.length())
+        return false;
+
+    GPUViewDescriptor vd = ViewDescriptors[viewId];
+    if (CurrentRenderPass < 0)
+        return true;
+
+    if (CurrentRenderPass < 32)
+        return (vd.RenderPassMaskLo & (1u << uint(CurrentRenderPass))) != 0u;
+
+    uint hi = uint(CurrentRenderPass - 32);
+    if (hi >= 32u)
+        return true;
+
+    return (vd.RenderPassMaskHi & (1u << hi)) != 0u;
+}
+
+void AppendPerView(uint sourceCommandIndex, uint culledCommandIndex, vec3 commandCenter, uint commandFlags)
+{
+    if (ActiveViewCount <= 0)
+        return;
+
+    if (sourceCommandIndex >= CommandViewMasks.length())
+        return;
+
+    uvec2 mask = CommandViewMasks[sourceCommandIndex];
+    uint maxViews = min(uint(ActiveViewCount), min(uint(64), uint(PerViewDrawCounts.length())));
+    for (uint viewId = 0u; viewId < maxViews; ++viewId)
+    {
+        if (!ViewMaskContains(mask, viewId))
+            continue;
+        if (!ViewPassMatches(viewId))
+            continue;
+
+        GPUViewDescriptor vd = ViewDescriptors[viewId];
+        bool foveated = (vd.Flags & (1u << 3u)) != 0u;
+        if (foveated)
+        {
+            vec3 cameraPosition = ViewConstants[viewId].CameraPositionAndNear.xyz;
+            vec3 toCenter = commandCenter - cameraPosition;
+            float perViewDistanceSq = dot(toCenter, toCenter);
+            float fullResNearDistance = vd.FoveationB.w;
+            if (fullResNearDistance > 0.0 && perViewDistanceSq <= (fullResNearDistance * fullResNearDistance))
+                continue;
+
+            if ((commandFlags & FLAG_TRANSPARENT) != 0u)
+                continue;
+        }
+
+        uint local = atomicAdd(PerViewDrawCounts[viewId], 1u);
+        if (local < vd.VisibleCapacity)
+        {
+            uint dst = vd.VisibleOffset + local;
+            if (dst < PerViewVisibleIndices.length())
+                PerViewVisibleIndices[dst] = culledCommandIndex;
+        }
+    }
+}
+
 void LogOverflow(uint marker)
 {
     if (OverflowDebugEnabled == 0u)
@@ -205,6 +311,9 @@ void AppendVisible(uint cmdIndex, float renderDistance, uint instanceCount)
         if (outIndex < CompareVisible.length())
             CompareVisible[outIndex] = cmdIndex;
     }
+
+    uint flags = floatBitsToUint(inCommands[inBase + 45]);
+    AppendPerView(cmdIndex, outIndex, center, flags);
 }
 
 void main()

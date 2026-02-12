@@ -193,7 +193,7 @@ namespace XREngine.Rendering.Models.Materials.Textures
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
+                Debug.OpenGLException(ex);
             }
             finally
             {
@@ -206,7 +206,7 @@ namespace XREngine.Rendering.Models.Materials.Textures
         {
             if (!Data.Resizable && !_storageSet)
             {
-                Debug.LogWarning("Texture storage not set on non-resizable texture, can't push mipmaps.");
+                Debug.OpenGLWarning("Texture storage not set on non-resizable texture, can't push mipmaps.");
                 return;
             }
 
@@ -267,7 +267,7 @@ namespace XREngine.Rendering.Models.Materials.Textures
             void* ptr = bmp.Address.Pointer;
             if (ptr is null)
             {
-                Debug.LogWarning("Texture data source is null.");
+                Debug.OpenGLWarning("Texture data source is null.");
                 return;
             }
 

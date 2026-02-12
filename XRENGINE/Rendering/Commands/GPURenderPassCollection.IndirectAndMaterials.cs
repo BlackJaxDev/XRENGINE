@@ -212,6 +212,8 @@ namespace XREngine.Rendering.Commands
             _indirectRenderTaskShader.Uniform("MaxIndirectDraws", (int)_indirectDrawBuffer!.ElementCount);
             _indirectRenderTaskShader.Uniform("AtlasAll16Bit", 0);
             _indirectRenderTaskShader.Uniform("StatsEnabled", _statsBuffer is not null ? 1u : 0u);
+            _indirectRenderTaskShader.Uniform("ActiveViewCount", (int)(_activeViewCount == 0u ? 1u : _activeViewCount));
+            _indirectRenderTaskShader.Uniform("SourceViewId", (int)_indirectSourceViewId);
         }
 
         private void BindIndirectShaderBuffers(GPUScene scene)
@@ -231,6 +233,7 @@ namespace XREngine.Rendering.Commands
             }
 
             _statsBuffer?.BindTo(_indirectRenderTaskShader!, 8);
+            BindViewSetBuffers(_indirectRenderTaskShader!);
         }
 
         private List<HybridRenderingManager.DrawBatch>? BuildGpuBatchesAndInstancing(GPUScene scene)

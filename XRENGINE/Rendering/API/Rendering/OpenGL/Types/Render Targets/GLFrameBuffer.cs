@@ -85,7 +85,7 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!Engine.IsRenderThread)
             {
-                Debug.LogWarning("Can't bind framebuffer from non-render thread.");
+                Debug.OpenGLWarning("Can't bind framebuffer from non-render thread.");
                 return;
             }
             
@@ -96,7 +96,7 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!Engine.IsRenderThread)
             {
-                Debug.LogWarning("Can't unbind framebuffer from non-render thread.");
+                Debug.OpenGLWarning("Can't unbind framebuffer from non-render thread.");
                 return;
             }
 
@@ -107,7 +107,7 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!Engine.IsRenderThread)
             {
-                Debug.LogWarning("Can't bind framebuffer from non-render thread.");
+                Debug.OpenGLWarning("Can't bind framebuffer from non-render thread.");
                 return;
             }
 
@@ -117,7 +117,7 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!Engine.IsRenderThread)
             {
-                Debug.LogWarning("Can't unbind framebuffer from non-render thread.");
+                Debug.OpenGLWarning("Can't unbind framebuffer from non-render thread.");
                 return;
             }
 
@@ -129,7 +129,7 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!Engine.IsRenderThread)
             {
-                Debug.LogWarning("Can't bind framebuffer from non-render thread.");
+                Debug.OpenGLWarning("Can't bind framebuffer from non-render thread.");
                 return;
             }
 
@@ -140,7 +140,7 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!Engine.IsRenderThread)
             {
-                Debug.LogWarning("Can't unbind framebuffer from non-render thread.");
+                Debug.OpenGLWarning("Can't unbind framebuffer from non-render thread.");
                 return;
             }
 
@@ -151,7 +151,7 @@ namespace XREngine.Rendering.OpenGL
         {
             if (!Engine.IsRenderThread)
             {
-                Debug.LogWarning("Can't set framebuffer draw buffers from non-render thread.");
+                Debug.OpenGLWarning("Can't set framebuffer draw buffers from non-render thread.");
                 return;
             }
 

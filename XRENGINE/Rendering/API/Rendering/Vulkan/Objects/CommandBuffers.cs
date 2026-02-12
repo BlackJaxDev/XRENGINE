@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 
@@ -13,6 +14,7 @@ namespace XREngine.Rendering.Vulkan
         private readonly Dictionary<nint, CommandPool> _oneTimeCommandPools = new();
         private readonly object _oneTimeSubmitLock = new();
         private bool _enableSecondaryCommandBuffers = true;
+        private bool _enableParallelSecondaryCommandBufferRecording = true;
 
         private sealed class ComputeTransientResources
         {
@@ -335,8 +337,9 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            foreach (var op in ops)
+            for (int opIndex = 0; opIndex < ops.Length; opIndex++)
             {
+                var op = ops[opIndex];
                 if (!hasActiveContext || !Equals(activeContext, op.Context))
                 {
                     EndActiveRenderPass();
@@ -381,7 +384,39 @@ namespace XREngine.Rendering.Vulkan
                     case BlitOp blit:
                         EndActiveRenderPass();
                         if (_enableSecondaryCommandBuffers)
-                            ExecuteSecondaryCommandBuffer(commandBuffer, "Blit", secondary => RecordBlitOp(secondary, imageIndex, blit));
+                        {
+                            int runEnd = opIndex;
+                            if (_enableParallelSecondaryCommandBufferRecording)
+                            {
+                                while (runEnd + 1 < ops.Length &&
+                                       ops[runEnd + 1] is BlitOp &&
+                                       Equals(ops[runEnd + 1].Context, activeContext) &&
+                                       EnsureValidPassIndex(ops[runEnd + 1].PassIndex, ops[runEnd + 1].GetType().Name, ops[runEnd + 1].Context.PassMetadata) == opPassIndex &&
+                                       ops[runEnd + 1].Context.SchedulingIdentity == opSchedulingIdentity)
+                                {
+                                    runEnd++;
+                                }
+                            }
+
+                            int runCount = runEnd - opIndex + 1;
+                            if (runCount > 1)
+                            {
+                                ExecuteSecondaryCommandBufferBatchParallel(
+                                    commandBuffer,
+                                    "BlitBatch",
+                                    runCount,
+                                    (relativeIndex, secondary) =>
+                                    {
+                                        BlitOp blitOp = (BlitOp)ops[opIndex + relativeIndex];
+                                        RecordBlitOp(secondary, imageIndex, blitOp);
+                                    });
+                                opIndex = runEnd;
+                            }
+                            else
+                            {
+                                ExecuteSecondaryCommandBuffer(commandBuffer, "Blit", secondary => RecordBlitOp(secondary, imageIndex, blit));
+                            }
+                        }
                         else
                         {
                             CmdBeginLabel(commandBuffer, "Blit");
@@ -418,7 +453,39 @@ namespace XREngine.Rendering.Vulkan
                     case IndirectDrawOp indirectOp:
                         EndActiveRenderPass();
                         if (_enableSecondaryCommandBuffers)
-                            ExecuteSecondaryCommandBuffer(commandBuffer, "IndirectDraw", secondary => RecordIndirectDrawOp(secondary, indirectOp));
+                        {
+                            int runEnd = opIndex;
+                            if (_enableParallelSecondaryCommandBufferRecording)
+                            {
+                                while (runEnd + 1 < ops.Length &&
+                                       ops[runEnd + 1] is IndirectDrawOp &&
+                                       Equals(ops[runEnd + 1].Context, activeContext) &&
+                                       EnsureValidPassIndex(ops[runEnd + 1].PassIndex, ops[runEnd + 1].GetType().Name, ops[runEnd + 1].Context.PassMetadata) == opPassIndex &&
+                                       ops[runEnd + 1].Context.SchedulingIdentity == opSchedulingIdentity)
+                                {
+                                    runEnd++;
+                                }
+                            }
+
+                            int runCount = runEnd - opIndex + 1;
+                            if (runCount > 1)
+                            {
+                                ExecuteSecondaryCommandBufferBatchParallel(
+                                    commandBuffer,
+                                    "IndirectDrawBatch",
+                                    runCount,
+                                    (relativeIndex, secondary) =>
+                                    {
+                                        IndirectDrawOp runOp = (IndirectDrawOp)ops[opIndex + relativeIndex];
+                                        RecordIndirectDrawOp(secondary, runOp);
+                                    });
+                                opIndex = runEnd;
+                            }
+                            else
+                            {
+                                ExecuteSecondaryCommandBuffer(commandBuffer, "IndirectDraw", secondary => RecordIndirectDrawOp(secondary, indirectOp));
+                            }
+                        }
                         else
                         {
                             CmdBeginLabel(commandBuffer, "IndirectDraw");
@@ -1001,13 +1068,16 @@ namespace XREngine.Rendering.Vulkan
             CmdBeginLabel(primaryCommandBuffer, label);
             CommandBuffer secondary = default;
             bool allocated = false;
+            CommandPool pool = default;
 
             try
             {
+                pool = GetThreadCommandPool();
+
                 CommandBufferAllocateInfo allocInfo = new()
                 {
                     SType = StructureType.CommandBufferAllocateInfo,
-                    CommandPool = commandPool,
+                    CommandPool = pool,
                     Level = CommandBufferLevel.Secondary,
                     CommandBufferCount = 1
                 };
@@ -1033,8 +1103,120 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
-                if (allocated)
-                    Api!.FreeCommandBuffers(device, commandPool, 1, ref secondary);
+                if (allocated && pool.Handle != 0)
+                    Api!.FreeCommandBuffers(device, pool, 1, ref secondary);
+
+                CmdEndLabel(primaryCommandBuffer);
+            }
+        }
+
+        private void ExecuteSecondaryCommandBufferBatchParallel(
+            CommandBuffer primaryCommandBuffer,
+            string label,
+            int count,
+            Action<int, CommandBuffer> recorder)
+        {
+            if (count <= 0)
+                return;
+
+            if (count == 1)
+            {
+                ExecuteSecondaryCommandBuffer(primaryCommandBuffer, label, cmd => recorder(0, cmd));
+                return;
+            }
+
+            CmdBeginLabel(primaryCommandBuffer, label);
+            CommandBuffer[] secondaryBuffers = new CommandBuffer[count];
+            CommandPool[] ownerPools = new CommandPool[count];
+            bool[] allocated = new bool[count];
+            Exception? firstError = null;
+            object errorLock = new();
+
+            try
+            {
+                Task[] tasks = new Task[count];
+                for (int i = 0; i < count; i++)
+                {
+                    int index = i;
+                    tasks[index] = Task.Run(() =>
+                    {
+                        if (firstError is not null)
+                            return;
+
+                        CommandBuffer secondary = default;
+                        bool localAllocated = false;
+                        CommandPool pool = default;
+
+                        try
+                        {
+                            pool = GetThreadCommandPool();
+                            CommandBufferAllocateInfo allocInfo = new()
+                            {
+                                SType = StructureType.CommandBufferAllocateInfo,
+                                CommandPool = pool,
+                                Level = CommandBufferLevel.Secondary,
+                                CommandBufferCount = 1
+                            };
+
+                            Api!.AllocateCommandBuffers(device, ref allocInfo, out secondary);
+                            localAllocated = secondary.Handle != 0;
+
+                            CommandBufferBeginInfo beginInfo = new()
+                            {
+                                SType = StructureType.CommandBufferBeginInfo,
+                                Flags = CommandBufferUsageFlags.OneTimeSubmitBit
+                            };
+
+                            if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
+                                throw new Exception("Failed to begin Vulkan secondary command buffer.");
+
+                            recorder(index, secondary);
+
+                            if (Api!.EndCommandBuffer(secondary) != Result.Success)
+                                throw new Exception("Failed to end Vulkan secondary command buffer.");
+
+                            secondaryBuffers[index] = secondary;
+                            ownerPools[index] = pool;
+                            allocated[index] = localAllocated;
+                        }
+                        catch (Exception ex)
+                        {
+                            lock (errorLock)
+                            {
+                                firstError ??= ex;
+                            }
+
+                            if (localAllocated && pool.Handle != 0)
+                            {
+                                try
+                                {
+                                    Api!.FreeCommandBuffers(device, pool, 1, ref secondary);
+                                }
+                                catch
+                                {
+                                }
+                            }
+                        }
+                    });
+                }
+
+                Task.WaitAll(tasks);
+
+                if (firstError is not null)
+                    throw firstError;
+
+                fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
+                    Api!.CmdExecuteCommands(primaryCommandBuffer, (uint)count, secondaryPtr);
+            }
+            finally
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    if (!allocated[i] || ownerPools[i].Handle == 0 || secondaryBuffers[i].Handle == 0)
+                        continue;
+
+                    Api!.FreeCommandBuffers(device, ownerPools[i], 1, ref secondaryBuffers[i]);
+                }
 
                 CmdEndLabel(primaryCommandBuffer);
             }

@@ -621,6 +621,90 @@ public unsafe partial class OpenXRAPI
         EnsureOpenXrViewports(width, height);
     }
 
+    internal bool TryRenderDesktopMirrorComposition(uint targetWidth, uint targetHeight)
+    {
+        if (_gl is null || Window?.Renderer is not OpenGLRenderer renderer)
+            return false;
+
+        if (_viewportMirrorColor is null)
+            return false;
+
+        var srcApiTex = renderer.GetOrCreateAPIRenderObject(_viewportMirrorColor, generateNow: true) as IGLTexture;
+        if (srcApiTex is null || srcApiTex.BindingId == 0)
+            return false;
+
+        if (_blitReadFbo == 0)
+            _blitReadFbo = _gl.GenFramebuffer();
+
+        int prevReadFbo = 0;
+        int prevDrawFbo = 0;
+        int prevReadBuffer = 0;
+        bool prevScissorEnabled = false;
+        bool captured = false;
+
+        try
+        {
+            prevReadFbo = _gl.GetInteger(GetPName.ReadFramebufferBinding);
+            prevDrawFbo = _gl.GetInteger(GetPName.DrawFramebufferBinding);
+            prevReadBuffer = _gl.GetInteger(GetPName.ReadBuffer);
+            prevScissorEnabled = _gl.IsEnabled(EnableCap.ScissorTest);
+            captured = true;
+        }
+        catch
+        {
+            captured = false;
+        }
+
+        try
+        {
+            _gl.Disable(EnableCap.ScissorTest);
+            _gl.ColorMask(true, true, true, true);
+
+            _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _blitReadFbo);
+            _gl.FramebufferTexture(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.ColorAttachment0, srcApiTex.BindingId, 0);
+            _gl.ReadBuffer(GLEnum.ColorAttachment0);
+
+            _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, 0);
+            _gl.BlitFramebuffer(
+                0,
+                0,
+                (int)_viewportMirrorWidth,
+                (int)_viewportMirrorHeight,
+                0,
+                0,
+                (int)Math.Max(1u, targetWidth),
+                (int)Math.Max(1u, targetHeight),
+                ClearBufferMask.ColorBufferBit,
+                BlitFramebufferFilter.Linear);
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (captured)
+            {
+                try
+                {
+                    if (prevScissorEnabled)
+                        _gl.Enable(EnableCap.ScissorTest);
+                    else
+                        _gl.Disable(EnableCap.ScissorTest);
+
+                    _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, (uint)prevReadFbo);
+                    _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, (uint)prevDrawFbo);
+                    _gl.ReadBuffer((GLEnum)prevReadBuffer);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
     private void EnsureOpenXrViewports(uint width, uint height)
     {
         _openXrLeftViewport ??= new XRViewport(Window)

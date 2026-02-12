@@ -94,7 +94,7 @@ namespace XREngine.Rendering.OpenGL
 
                 if (!Engine.IsRenderThread)
                 {
-                    Debug.LogWarning("Attempted to generate OpenGL object from non-render thread. Enqueuing task to main thread, but this may break subsequent generation-dependent calls on the current thread.");
+                    Debug.OpenGLWarning("Attempted to generate OpenGL object from non-render thread. Enqueuing task to main thread, but this may break subsequent generation-dependent calls on the current thread.");
                     Engine.EnqueueMainThreadTask(Generate);
                     return;
                 }
@@ -109,7 +109,7 @@ namespace XREngine.Rendering.OpenGL
                     _hasSentInvalidationWarning = false;
                 }
                 else
-                    Debug.Out("Failed to generate OpenGL object.");
+                    Debug.OpenGL("Failed to generate OpenGL object.");
             }
 
             protected internal virtual void PreDeleted() { }
@@ -133,7 +133,7 @@ namespace XREngine.Rendering.OpenGL
                         return bindingId;
                     else
                     {
-                        Debug.LogWarning($"Failed to generate object of type {Type}.");
+                        Debug.OpenGLWarning($"Failed to generate object of type {Type}.");
                         return InvalidBindingId;
                     }
                     //}

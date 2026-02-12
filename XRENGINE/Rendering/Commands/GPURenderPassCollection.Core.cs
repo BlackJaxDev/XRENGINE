@@ -462,6 +462,7 @@ namespace XREngine.Rendering.Commands
         public XRDataBuffer? IndirectOverflowFlagBuffer => _indirectOverflowFlagBuffer;
         public XRDataBuffer? TruncationFlagBuffer => _truncationFlagBuffer;
         public XRDataBuffer? StatsBuffer => _statsBuffer;
+        public uint CommandCapacity => _lastMaxCommands == 0u ? GPUScene.MinCommandCount : _lastMaxCommands;
 
         // Returns the current scene material map (ID -> XRMaterial)
         public IReadOnlyDictionary<uint, XRMaterial> GetMaterialMap(GPUScene scene)

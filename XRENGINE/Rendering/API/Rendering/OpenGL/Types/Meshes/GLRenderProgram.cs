@@ -355,7 +355,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                     else
                     {
-                        Debug.LogWarning("Cannot dispatch compute shader, program is not linked.");
+                        Debug.OpenGLWarning("Cannot dispatch compute shader, program is not linked.");
                         return;
                     }
                 }
@@ -532,7 +532,7 @@ namespace XREngine.Rendering.OpenGL
 
                 if (_loggedEmptyBindingBatches.TryAdd(key, 1))
                 {
-                    Debug.LogError($"[Shader Binding] Program '{programName}' rendered material '{matName}' with no uniforms or samplers bound. " +
+                    Debug.OpenGLError($"[Shader Binding] Program '{programName}' rendered material '{matName}' with no uniforms or samplers bound. " +
                         "Check that material parameter and sampler names match the shader.");
                 }
             }
@@ -601,7 +601,7 @@ namespace XREngine.Rendering.OpenGL
                     string[] parts = name.Split('-');
                     if (parts.Length != 3)
                     {
-                        Debug.LogWarning($"Invalid binary shader cache file name, deleting: {name}");
+                        Debug.OpenGLWarning($"Invalid binary shader cache file name, deleting: {name}");
                         File.Delete(filePath);
                         continue;
                     }
@@ -609,7 +609,7 @@ namespace XREngine.Rendering.OpenGL
                     string fileVer = parts[2];
                     if (!string.Equals(currentVer, fileVer, StringComparison.OrdinalIgnoreCase))
                     {
-                        Debug.LogWarning($"Binary shader cache file version mismatch, deleting: {fileVer} / {currentVer}");
+                        Debug.OpenGLWarning($"Binary shader cache file version mismatch, deleting: {fileVer} / {currentVer}");
                         File.Delete(filePath);
                         continue;
                     }
@@ -741,7 +741,7 @@ namespace XREngine.Rendering.OpenGL
                         var error = Api.GetError();
                         if (error != GLEnum.NoError)
                         {
-                            Debug.LogWarning($"Failed to load cached program binary with format {format} and hash {Hash}: {error}. Deleting from cache.");
+                            Debug.OpenGLWarning($"Failed to load cached program binary with format {format} and hash {Hash}: {error}. Deleting from cache.");
                             DeleteFromBinaryShaderCache(Hash, format);
                         }
                         else
@@ -766,7 +766,7 @@ namespace XREngine.Rendering.OpenGL
 
                         if (_shaderCache.Values.Any(x => !x.IsCompiled))
                         {
-                            Debug.LogWarning($"Failed to compile program with hash {Hash}.");
+                            Debug.OpenGLWarning($"Failed to compile program with hash {Hash}.");
                             Failed.Add(Hash);
                             //TODO: return invalid material until shaders are compiled
                             return false;
@@ -789,12 +789,12 @@ namespace XREngine.Rendering.OpenGL
                                 if (noErrors)
                                 {
                                     noErrors = false;
-                                    Debug.LogWarning("One or more shaders failed to compile, can't link program.");
+                                    Debug.OpenGLWarning("One or more shaders failed to compile, can't link program.");
                                 }
 
                                 string? text = shader.Data.Source.Text;
                                 if (text is not null)
-                                    Debug.Out(text);
+                                    Debug.OpenGL(text);
                             }
                         }
                         if (noErrors)
@@ -848,7 +848,7 @@ namespace XREngine.Rendering.OpenGL
             private void PrintLinkDebug(uint bindingId)
             {
                 Api.GetProgramInfoLog(bindingId, out string info);
-                Debug.Out(string.IsNullOrWhiteSpace(info)
+                Debug.OpenGL(string.IsNullOrWhiteSpace(info)
                     ? "Unable to link program, but no error was returned."
                     : info);
 
@@ -1530,7 +1530,7 @@ namespace XREngine.Rendering.OpenGL
                     string key = $"{Data.Name ?? BindingId.ToString()}:{name}:{textureUnit}";
                     if (_loggedUniformMismatches.TryAdd(key, 1))
                     {
-                        Debug.LogWarning($"[Shader Texture Binding] Sampler '{name}' not found in program '{Data.Name ?? BindingId.ToString()}' for texture unit {textureUnit}. " +
+                        Debug.OpenGLWarning($"[Shader Texture Binding] Sampler '{name}' not found in program '{Data.Name ?? BindingId.ToString()}' for texture unit {textureUnit}. " +
                             $"Texture: '{texture.Name}', SamplerName: '{texture.SamplerName}'. " +
                             $"Binding anyway due to fixed sampler binding.");
                     }
@@ -1555,7 +1555,7 @@ namespace XREngine.Rendering.OpenGL
                     {
                         string texName = texture.Data?.Name ?? "unknown";
                         string samplerName = (texture.Data as XRTexture)?.SamplerName ?? "null";
-                        Debug.LogWarning($"[Shader Texture Binding] Sampler '{name}' not found in program '{Data.Name ?? BindingId.ToString()}' for texture unit {textureUnit}. " +
+                        Debug.OpenGLWarning($"[Shader Texture Binding] Sampler '{name}' not found in program '{Data.Name ?? BindingId.ToString()}' for texture unit {textureUnit}. " +
                             $"Texture: '{texName}', SamplerName: '{samplerName}'. " +
                             $"Binding anyway due to fixed sampler binding.");
                     }

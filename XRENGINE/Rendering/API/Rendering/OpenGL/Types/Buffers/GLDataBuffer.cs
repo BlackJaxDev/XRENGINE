@@ -70,7 +70,7 @@ namespace XREngine.Rendering.OpenGL
                 else if (rend is null && Data.Target == EBufferTarget.ArrayBuffer && IsGpuBufferLoggingEnabled())
                 {
                     // Suppress noisy warning; atlas / generic buffers can legitimately be created before a renderer binds them.
-                    Debug.Out($"{GetDescribingName()} generated (no active mesh renderer yet) � delaying attribute binding.");
+                    Debug.OpenGL($"{GetDescribingName()} generated (no active mesh renderer yet) – delaying attribute binding.");
                 }
 
                 if (Data.Resizable)
@@ -98,7 +98,7 @@ namespace XREngine.Rendering.OpenGL
                 }
                 catch (Exception e)
                 {
-                    Debug.LogException(e, "Error binding buffer.");
+                    Debug.OpenGLException(e, "Error binding buffer.");
                 }
             }
 
@@ -113,7 +113,7 @@ namespace XREngine.Rendering.OpenGL
                 // Profiler instrumentation removed from this hot path
                 if (vertexProgram is null)
                 {
-                    Debug.LogWarning("[GLDataBuffer] Cannot bind buffer without an active GLRenderProgram.");
+                    Debug.OpenGLWarning("[GLDataBuffer] Cannot bind buffer without an active GLRenderProgram.");
                     return;
                 }
 
@@ -125,7 +125,7 @@ namespace XREngine.Rendering.OpenGL
                             uint vaoId = arrayBufferLink?.BindingId ?? 0;
                             if (vaoId == 0)
                             {
-                                Debug.LogWarning($"Failed to bind buffer {GetDescribingName()} to mesh renderer.");
+                                Debug.OpenGLWarning($"Failed to bind buffer {GetDescribingName()} to mesh renderer.");
                                 return;
                             }
 
@@ -135,7 +135,7 @@ namespace XREngine.Rendering.OpenGL
                             else if (!TryGetAttributeLocation(vertexProgram, out bindingIndex))
                             {
                                 string programName = vertexProgram.Data?.Name ?? "<unnamed>";
-                                Debug.Out($"[GLDataBuffer] Attribute '{Data.AttributeName}' missing in program '{programName}' while binding buffer '{GetDescribingName()}'.");
+                                Debug.OpenGL($"[GLDataBuffer] Attribute '{Data.AttributeName}' missing in program '{programName}' while binding buffer '{GetDescribingName()}'.");
                                 return;
                             }
 
@@ -163,7 +163,7 @@ namespace XREngine.Rendering.OpenGL
                                             : "<no shaders>";
                                         string key = $"{vertexProgram.BindingId}:{programName}:{name}:{GetDescribingName()}";
                                         if (_missingInterleavedLogs.TryAdd(key, 0))
-                                            Debug.Out($"[GLDataBuffer] Interleaved attribute '{name}' missing in program '{programName}' (id {vertexProgram.BindingId}) for buffer '{GetDescribingName()}'. Shaders: [{shaderNames}]");
+                                            Debug.OpenGL($"[GLDataBuffer] Interleaved attribute '{name}' missing in program '{programName}' (id {vertexProgram.BindingId}) for buffer '{GetDescribingName()}'. Shaders: [{shaderNames}]");
                                     }
                                 }
                                 // Bind the interleaved buffer once
@@ -213,7 +213,7 @@ namespace XREngine.Rendering.OpenGL
 
                 if (string.IsNullOrWhiteSpace(attributeName))
                 {
-                    Debug.LogWarning($"{GetDescribingName()} has no attribute name.");
+                    Debug.OpenGLWarning($"{GetDescribingName()} has no attribute name.");
                     return uint.MaxValue;
                 }
 
@@ -455,7 +455,7 @@ namespace XREngine.Rendering.OpenGL
                         int clamped = (int)lastPushed - offset;
                         if (clamped <= 0)
                         {
-                            Debug.LogWarning($"PushSubData called with offset {offset} and length {length}, with an offset that exceeds the last fully-pushed length of {lastPushed}. Ignoring call.");
+                            Debug.OpenGLWarning($"PushSubData called with offset {offset} and length {length}, with an offset that exceeds the last fully-pushed length of {lastPushed}. Ignoring call.");
                             return;
                         }
 
@@ -527,12 +527,12 @@ namespace XREngine.Rendering.OpenGL
                 var glRange = (uint)ToGLEnum(Data.RangeFlags);
                 var glStorage = (uint)ToGLEnum(Data.StorageFlags);
                 if (IsGpuBufferLoggingEnabled())
-                    Debug.Out($"[GLBuffer/Map] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={length} target={Data.Target} storage={StorageFlagsString()} (0x{glStorage:X}) range={RangeFlagsString()} (0x{glRange:X})");
+                    Debug.OpenGL($"[GLBuffer/Map] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={length} target={Data.Target} storage={StorageFlagsString()} (0x{glStorage:X}) range={RangeFlagsString()} (0x{glRange:X})");
 
                 var addr = Api.MapNamedBufferRange(id, IntPtr.Zero, length, glRange);
                 if (addr is null)
                 {
-                    Debug.LogWarning($"[GLBuffer/Map] {GetDescribingName()} name={BufferNameOrTarget()} returned null pointer.");
+                    Debug.OpenGLWarning($"[GLBuffer/Map] {GetDescribingName()} name={BufferNameOrTarget()} returned null pointer.");
                     return;
                 }
                 GPUSideSource = new DataSource(addr, length);
@@ -560,7 +560,7 @@ namespace XREngine.Rendering.OpenGL
                 var existingSource = Data.ClientSideSource;
                 var glStorage = (uint)ToGLEnum(Data.StorageFlags);
                 if (IsGpuBufferLoggingEnabled())
-                    Debug.Out($"[GLBuffer/Storage] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={(existingSource?.Length ?? Data.Length)} storage={StorageFlagsString()} (0x{glStorage:X})");
+                    Debug.OpenGL($"[GLBuffer/Storage] {GetDescribingName()} name={BufferNameOrTarget()} id={id} len={(existingSource?.Length ?? Data.Length)} storage={StorageFlagsString()} (0x{glStorage:X})");
                 if (existingSource is not null)
                     Api.NamedBufferStorage(id, length = existingSource.Length, existingSource.Address.Pointer, glStorage);
                 else
@@ -581,7 +581,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 if (IsGpuBufferLoggingEnabled())
-                    Debug.Out($"[GLBuffer/Unmap] {GetDescribingName()} name={BufferNameOrTarget()} id={BindingId}");
+                    Debug.OpenGL($"[GLBuffer/Unmap] {GetDescribingName()} name={BufferNameOrTarget()} id={BindingId}");
                 Api.UnmapNamedBuffer(BindingId);
                 Data.ActivelyMapping.Remove(this);
 
@@ -706,7 +706,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 if (program is null)
                 {
-                    Debug.LogWarning($"Failed to bind SSBO {GetDescribingName()} to program {program?.GetDescribingName() ?? "null"}.");
+                    Debug.OpenGLWarning($"Failed to bind SSBO {GetDescribingName()} to program {program?.GetDescribingName() ?? "null"}.");
                     return;
                 }
 

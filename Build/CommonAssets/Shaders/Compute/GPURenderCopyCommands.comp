@@ -12,6 +12,7 @@ uniform int DebugMaxSamples;
 uniform int DebugInstanceStride;
 uniform uint OutputCapacity;
 uniform int BoundsCheckEnabled;
+uniform int ActiveViewCount;
 
 // Input command buffer: tightly packed float[48] per command (GPUIndirectRenderCommand)
 layout(std430, binding = 0) readonly buffer InCommands
@@ -43,9 +44,97 @@ layout(std430, binding = 4) buffer OverflowFlag
     uint OverflowData[];
 };
 
+struct GPUViewDescriptor
+{
+    uint ViewId;
+    uint ParentViewId;
+    uint Flags;
+    uint RenderPassMaskLo;
+    uint RenderPassMaskHi;
+    uint OutputLayer;
+    uint ViewRectX;
+    uint ViewRectY;
+    uint ViewRectW;
+    uint ViewRectH;
+    uint VisibleOffset;
+    uint VisibleCapacity;
+    vec4 FoveationA;
+    vec4 FoveationB;
+};
+
+struct GPUViewConstants
+{
+    mat4 View;
+    mat4 Projection;
+    mat4 ViewProjection;
+    mat4 PrevViewProjection;
+    vec4 CameraPositionAndNear;
+    vec4 CameraForwardAndFar;
+};
+
+layout(std430, binding = 11) readonly buffer ViewDescriptorBuffer { GPUViewDescriptor ViewDescriptors[]; };
+layout(std430, binding = 12) readonly buffer ViewConstantsBuffer { GPUViewConstants ViewConstants[]; };
+layout(std430, binding = 13) readonly buffer CommandViewMaskBuffer { uvec2 CommandViewMasks[]; };
+layout(std430, binding = 14) buffer PerViewVisibleIndicesBuffer { uint PerViewVisibleIndices[]; };
+layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCounts[]; };
+
+#define FLAG_TRANSPARENT    (1u<<0)
+
 const uint CommandStride = 48u;
 const uint RenderPassIndex = 40u;
 const uint InstanceCountIndex = 39u;
+
+bool ViewMaskContains(uvec2 mask, uint viewId)
+{
+    if (viewId < 32u)
+        return (mask.x & (1u << viewId)) != 0u;
+
+    uint hi = viewId - 32u;
+    if (hi >= 32u)
+        return false;
+
+    return (mask.y & (1u << hi)) != 0u;
+}
+
+void AppendPerView(uint sourceCommandIndex, uint culledCommandIndex, vec3 commandCenter, uint commandFlags)
+{
+    if (ActiveViewCount <= 0)
+        return;
+
+    if (sourceCommandIndex >= CommandViewMasks.length())
+        return;
+
+    uvec2 mask = CommandViewMasks[sourceCommandIndex];
+    uint maxViews = min(uint(ActiveViewCount), min(uint(64), uint(PerViewDrawCounts.length())));
+    for (uint viewId = 0u; viewId < maxViews; ++viewId)
+    {
+        if (!ViewMaskContains(mask, viewId))
+            continue;
+
+        GPUViewDescriptor vd = ViewDescriptors[viewId];
+        bool foveated = (vd.Flags & (1u << 3u)) != 0u;
+        if (foveated)
+        {
+            vec3 cameraPosition = ViewConstants[viewId].CameraPositionAndNear.xyz;
+            vec3 toCenter = commandCenter - cameraPosition;
+            float perViewDistanceSq = dot(toCenter, toCenter);
+            float fullResNearDistance = vd.FoveationB.w;
+            if (fullResNearDistance > 0.0 && perViewDistanceSq <= (fullResNearDistance * fullResNearDistance))
+                continue;
+
+            if ((commandFlags & FLAG_TRANSPARENT) != 0u)
+                continue;
+        }
+
+        uint local = atomicAdd(PerViewDrawCounts[viewId], 1u);
+        if (local < vd.VisibleCapacity)
+        {
+            uint dst = vd.VisibleOffset + local;
+            if (dst < PerViewVisibleIndices.length())
+                PerViewVisibleIndices[dst] = culledCommandIndex;
+        }
+    }
+}
 
 void main()
 {
@@ -115,4 +204,8 @@ void main()
     // But keep a simple loop for clarity and flexibility
     for (uint i = 0u; i < CommandStride; ++i)
         OutData[outBase + i] = InData[inBase + i];
+
+    uint flags = floatBitsToUint(InData[inBase + 45u]);
+    vec3 center = vec3(InData[inBase + 32u], InData[inBase + 33u], InData[inBase + 34u]);
+    AppendPerView(cmdIndex, outIndex, center, flags);
 }

@@ -536,6 +536,7 @@ namespace XREngine.Rendering.Commands
 
             uint capacity = CulledSceneToRenderBuffer.ElementCount;
             uint inputCount = Math.Min(numCommands, capacity);
+            uint activeViewCount = _activeViewCount == 0u ? 1u : _activeViewCount;
 
             if (inputCount == 0)
             {
@@ -543,6 +544,8 @@ namespace XREngine.Rendering.Commands
                 Dbg("FrustumCull: no commands", "Culling");
                 return;
             }
+
+            PrepareCommandViewMasks(src, inputCount);
 
             bool debugLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
@@ -578,6 +581,7 @@ namespace XREngine.Rendering.Commands
             _cullingComputeShader.Uniform("MaxCulledCommands", (int)capacity);
             _cullingComputeShader.Uniform("DisabledFlagsMask", 0u);
             _cullingComputeShader.Uniform("CameraPosition", camera.Transform?.WorldTranslation ?? System.Numerics.Vector3.Zero);
+            _cullingComputeShader.Uniform("ActiveViewCount", (int)activeViewCount);
 
             // Bind buffers
             _cullingComputeShader.BindBuffer(src, 0);
@@ -587,6 +591,7 @@ namespace XREngine.Rendering.Commands
                 _cullingComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 3);
             if (_statsBuffer is not null)
                 _cullingComputeShader.BindBuffer(_statsBuffer, 8);
+            BindViewSetBuffers(_cullingComputeShader);
 
             // Dispatch compute shader
             (uint x, uint y, uint z) = ComputeDispatch.ForCommands(inputCount);
@@ -742,6 +747,7 @@ namespace XREngine.Rendering.Commands
 
             uint capacity = CulledSceneToRenderBuffer.ElementCount;
             uint inputCount = Math.Min(numCommands, capacity);
+            uint activeViewCount = _activeViewCount == 0u ? 1u : _activeViewCount;
 
             if (inputCount == 0)
             {
@@ -749,6 +755,8 @@ namespace XREngine.Rendering.Commands
                 Dbg("BvhCull: no commands", "Culling");
                 return;
             }
+
+            PrepareCommandViewMasks(src, inputCount);
 
             bool debugLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
@@ -790,6 +798,7 @@ namespace XREngine.Rendering.Commands
             _bvhFrustumCullProgram.Uniform("StatsEnabled", _statsBuffer is not null ? 1u : 0u);
             _bvhFrustumCullProgram.Uniform("OverflowDebugEnabled", 0u);
             _bvhFrustumCullProgram.Uniform("ENABLE_CPU_GPU_COMPARE", 0u); // OpenGL-compatible uniform (was Vulkan specialization constant)
+            _bvhFrustumCullProgram.Uniform("ActiveViewCount", (int)activeViewCount);
 
             // Bind command buffers (same as linear culling)
             _bvhFrustumCullProgram.BindBuffer(src, 0);
@@ -806,6 +815,7 @@ namespace XREngine.Rendering.Commands
             // Bind optional buffers
             if (_statsBuffer is not null)
                 _bvhFrustumCullProgram.BindBuffer(_statsBuffer, 8);
+            BindViewSetBuffers(_bvhFrustumCullProgram);
 
             // Dispatch based on leaf count (each thread processes one leaf)
             // BVH has (N+1)/2 leaves for N nodes
@@ -903,6 +913,7 @@ namespace XREngine.Rendering.Commands
 
             uint capacity = CulledSceneToRenderBuffer.ElementCount;
             uint copyCount = Math.Min(numCommands, capacity);
+            uint activeViewCount = _activeViewCount == 0u ? 1u : _activeViewCount;
 
             if (copyCount == 0)
             {
@@ -910,6 +921,8 @@ namespace XREngine.Rendering.Commands
                 Dbg("Cull passthrough no commands", "Culling");
                 return;
             }
+
+            PrepareCommandViewMasks(src, copyCount);
 
             bool debugLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
@@ -942,6 +955,7 @@ namespace XREngine.Rendering.Commands
             _copyCommandsProgram.Uniform("CopyCount", copyCount);
             _copyCommandsProgram.Uniform("TargetPass", RenderPass);
             _copyCommandsProgram.Uniform("OutputCapacity", capacity);
+            _copyCommandsProgram.Uniform("ActiveViewCount", (int)activeViewCount);
             int boundsCheckEnabled = (IndirectDebug.ValidateCopyCommandAtomicBounds && _cullingOverflowFlagBuffer is not null) ? 1 : 0;
             _copyCommandsProgram.Uniform("BoundsCheckEnabled", boundsCheckEnabled);
             _copyCommandsProgram.BindBuffer(src, 0);
@@ -949,6 +963,7 @@ namespace XREngine.Rendering.Commands
             _copyCommandsProgram.BindBuffer(_culledCountBuffer!, 2);
             if (_cullingOverflowFlagBuffer is not null)
                 _copyCommandsProgram.BindBuffer(_cullingOverflowFlagBuffer, 4);
+            BindViewSetBuffers(_copyCommandsProgram);
 
             (uint x, uint y, uint z) = ComputeDispatch.ForCommands(copyCount);
             {
