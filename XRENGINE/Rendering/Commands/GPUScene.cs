@@ -97,6 +97,44 @@ namespace XREngine.Rendering.Commands
 
         #endregion
 
+        #region Bounds Helpers
+
+        private static float ComputeMaxAxisScale(in Matrix4x4 m)
+        {
+            // System.Numerics uses basis columns for Vector3.Transform:
+            // x' = x*M11 + y*M21 + z*M31 + M41, etc.
+            Vector3 xAxis = new(m.M11, m.M21, m.M31);
+            Vector3 yAxis = new(m.M12, m.M22, m.M32);
+            Vector3 zAxis = new(m.M13, m.M23, m.M33);
+
+            float sx = xAxis.Length();
+            float sy = yAxis.Length();
+            float sz = zAxis.Length();
+
+            float s = MathF.Max(sx, MathF.Max(sy, sz));
+            if (float.IsNaN(s) || float.IsInfinity(s) || s < 0f)
+                return 0f;
+
+            return s;
+        }
+
+        private static void SetWorldSpaceBoundingSphere(ref GPUIndirectRenderCommand cmd, in AABB localBounds, in Matrix4x4 modelMatrix)
+        {
+            Vector3 localCenter = localBounds.Center;
+            float localRadius = localBounds.HalfExtents.Length();
+
+            Vector3 worldCenter = Vector3.Transform(localCenter, modelMatrix);
+            float maxScale = ComputeMaxAxisScale(modelMatrix);
+            float worldRadius = localRadius * maxScale;
+
+            if (float.IsNaN(worldRadius) || float.IsInfinity(worldRadius) || worldRadius < 0f)
+                worldRadius = 0f;
+
+            cmd.SetBoundingSphere(worldCenter, worldRadius);
+        }
+
+        #endregion
+
         #region Mesh Atlas State
 
         // -------------------------------------------------------------------------
@@ -130,6 +168,12 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Maps each mesh to its offsets within the atlas (firstVertex, firstIndex, indexCount).</summary>
         private readonly Dictionary<XRMesh, (int firstVertex, int firstIndex, int indexCount)> _atlasMeshOffsets = [];
+
+        /// <summary>
+        /// Tracks how many active GPU commands reference each mesh resident in the atlas.
+        /// Atlas geometry is only removed when this reaches zero.
+        /// </summary>
+        private readonly Dictionary<XRMesh, int> _atlasMeshRefCounts = [];
 
         /// <summary>Version number incremented on each atlas rebuild for change detection.</summary>
         private uint _atlasVersion = 0;
@@ -220,6 +264,12 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Remaining log entries for command roundtrip mismatch warnings.</summary>
         private int _commandRoundtripMismatchLogBudget = 4;
+
+        /// <summary>Remaining log entries for command update details.</summary>
+        private int _commandUpdateLogBudget = 16;
+
+        /// <summary>Remaining log entries for command update warnings/errors.</summary>
+        private int _commandUpdateErrorLogBudget = 24;
 
         /// <summary>Checks if GPU scene logging is enabled in settings.</summary>
         private static bool IsGpuSceneLoggingEnabled()
@@ -706,6 +756,26 @@ namespace XREngine.Rendering.Commands
             _allLoadedCommandsBuffer = null;
             _updatingCommandsBuffer?.Destroy();
             _updatingCommandsBuffer = null;
+
+            _atlasPositions?.Destroy();
+            _atlasPositions = null;
+            _atlasNormals?.Destroy();
+            _atlasNormals = null;
+            _atlasTangents?.Destroy();
+            _atlasTangents = null;
+            _atlasUV0?.Destroy();
+            _atlasUV0 = null;
+            _atlasIndices?.Destroy();
+            _atlasIndices = null;
+            _atlasDirty = false;
+            _atlasVertexCount = 0;
+            _atlasIndexCount = 0;
+            _atlasMeshOffsets.Clear();
+            _atlasMeshRefCounts.Clear();
+            _indirectFaceIndices.Clear();
+            _atlasVersion = 0;
+            _atlasIndexElementSize = IndexSize.FourBytes;
+
             _commandAabbBuffer?.Destroy();
             _commandAabbBuffer = null;
             _commandAabbProgram?.Destroy();
@@ -727,10 +797,13 @@ namespace XREngine.Rendering.Commands
             _commandIndicesPerMeshCommand.Clear();
             _commandIndexLookup.Clear();
             _meshToIndexRemap.Clear();
+            _meshDebugLabels.Clear();
+            _unsupportedMeshMessages.Clear();
             _bvhReady = false;
             _bvhDirty = false;
             _bvhNodeCount = 0;
             _bvhPrimitiveCount = 0;
+            _bvhRefitPending = false;
         }
 
         #endregion
@@ -1262,9 +1335,22 @@ namespace XREngine.Rendering.Commands
 
         private bool AddSubmeshToAtlas(XRMesh mesh, uint meshID, string meshLabel, out string? failureReason)
         {
+            if (!EnsureSubmeshInAtlas(mesh, meshID, meshLabel, out failureReason))
+                return false;
+
+            IncrementAtlasMeshRefCount(mesh);
+            return true;
+        }
+
+        /// <summary>
+        /// Ensures atlas geometry + MeshDataBuffer entry exist for a mesh, but does NOT change atlas lifetime.
+        /// Use this for hydration and validation code paths.
+        /// </summary>
+        private bool EnsureSubmeshInAtlas(XRMesh mesh, uint meshID, string meshLabel, out string? failureReason)
+        {
             failureReason = null;
-            //Ensure mesh geometry recorded in atlas buffers: vertex + index data
-            //Increasees vertex & index counts and adds offsets to _atlasMeshOffsets
+
+            // Ensure mesh geometry recorded in atlas buffers: vertex + index data
             if (!AppendMeshToAtlas(mesh, meshLabel, out failureReason))
             {
                 EnsureMeshDataCapacity(meshID + 1);
@@ -1282,7 +1368,7 @@ namespace XREngine.Rendering.Commands
                 return false;
             }
 
-            //Update length of mesh data buffer if needed - this provides indices into the atlas data
+            // Update length of mesh data buffer if needed - this provides indices into the atlas data
             EnsureMeshDataCapacity(meshID + 1); // +1 because index-based capacity
             (int vFirst, int iFirst, int iCount) = atlas;
             if (iCount <= 0)
@@ -1292,6 +1378,7 @@ namespace XREngine.Rendering.Commands
                 _meshDataDirty = true;
                 return false;
             }
+
             MeshDataEntry entry = new()
             {
                 IndexCount = (uint)iCount,
@@ -1303,6 +1390,54 @@ namespace XREngine.Rendering.Commands
 
             _meshDataDirty = true;
             return true;
+        }
+
+        private void IncrementAtlasMeshRefCount(XRMesh mesh)
+        {
+            if (mesh is null)
+                return;
+
+            if (!_atlasMeshRefCounts.TryGetValue(mesh, out int count))
+                count = 0;
+
+            _atlasMeshRefCounts[mesh] = count + 1;
+        }
+
+        private void DecrementAtlasMeshRefCount(uint meshID, string context)
+        {
+            if (meshID == 0)
+                return;
+
+            if (!_idToMesh.TryGetValue(meshID, out var mesh) || mesh is null)
+            {
+                if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
+                    Debug.LogWarning($"[GPUScene] {context}: unable to resolve MeshID={meshID} for atlas refcount decrement.");
+                return;
+            }
+
+            if (!_atlasMeshRefCounts.TryGetValue(mesh, out int count))
+            {
+                if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
+                    Debug.LogWarning($"[GPUScene] {context}: atlas refcount missing for mesh '{mesh.Name ?? "<unnamed>"}' (MeshID={meshID}); treating as 0.");
+                count = 0;
+            }
+
+            count -= 1;
+            if (count > 0)
+            {
+                _atlasMeshRefCounts[mesh] = count;
+                return;
+            }
+
+            _atlasMeshRefCounts.Remove(mesh);
+
+            // Clear MeshData entry for safety (prevents stale atlas offsets from being consumed).
+            EnsureMeshDataCapacity(meshID + 1);
+            MeshDataBuffer.Set(meshID, default(MeshDataEntry));
+            _meshDataDirty = true;
+
+            // Remove atlas geometry only when no commands reference it.
+            RemoveSubmeshFromAtlas(mesh);
         }
 
         private readonly Dictionary<uint, (IRenderCommandMesh command, int subMeshIndex)> _commandIndexLookup = [];
@@ -1343,7 +1478,7 @@ namespace XREngine.Rendering.Commands
                     ? storedLabel
                     : mesh.Name ?? $"Mesh_{meshID}";
 
-                if (!AddSubmeshToAtlas(mesh, meshID, meshLabel, out var hydrationFailure))
+                if (!EnsureSubmeshInAtlas(mesh, meshID, meshLabel, out var hydrationFailure))
                 {
                     hydrationFailure ??= "atlas registration failed during lookup";
                     SceneLog($"TryGetMeshDataEntry: meshID={meshID} atlas hydration failed for '{meshLabel}' reason={hydrationFailure}.");
@@ -1422,9 +1557,17 @@ namespace XREngine.Rendering.Commands
                 {
                     UpdatingCommandsBuffer.PushSubData();
 
+                    if (_meshDataDirty)
+                    {
+                        MeshDataBuffer.PushSubData();
+                        _meshDataDirty = false;
+                    }
+
                     // Mark BVH dirty so it gets rebuilt before next cull pass
                     if (_useInternalBvh)
                         MarkBvhDirty();
+
+                    RebuildAtlasIfDirty();
                 }
             }
         }
@@ -1437,14 +1580,19 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
+            // Capture removed command before we overwrite slots (swap-remove).
+            GPUIndirectRenderCommand removedCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(targetIndex);
+            uint removedMeshId = removedCommand.MeshID;
+
             uint lastIndex = UpdatingCommandCount - 1;
+
+            // Remove the lookup entry for the removed command early.
+            _commandIndexLookup.Remove(targetIndex);
             if (targetIndex < lastIndex)
             {
                 GPUIndirectRenderCommand lastCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(lastIndex);
                 lastCommand.Reserved1 = targetIndex;
                 UpdatingCommandsBuffer.SetDataRawAtIndex(targetIndex, lastCommand);
-
-                RemoveSubmeshFromAtlasAt(targetIndex);
 
                 if (_commandIndexLookup.TryGetValue(lastIndex, out var movedCommand))
                 {
@@ -1461,33 +1609,20 @@ namespace XREngine.Rendering.Commands
                     if (_commandIndicesPerMeshCommand.TryGetValue(movedCommand.command, out var list) && list.Count > 0)
                         movedCommand.command.GPUCommandIndex = list[0];
                 }
+                else
+                {
+                    if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
+                        Debug.LogWarning($"[GPUScene] RemoveCommandAtIndex: missing lookup for moved lastIndex={lastIndex} -> targetIndex={targetIndex}.");
+                }
             }
             else
             {
                 _commandIndexLookup.Remove(lastIndex);
             }
 
-            _commandIndexLookup.Remove(targetIndex);
+            // Update mesh atlas lifetime after structural changes.
+            DecrementAtlasMeshRefCount(removedMeshId, "RemoveCommandAtIndex");
             --UpdatingCommandCount;
-        }
-
-        private void RemoveSubmeshFromAtlasAt(uint targetIndex)
-        {
-            if (!_commandIndexLookup.TryGetValue(targetIndex, out var targetCommand))
-                return;
-
-            var submeshIndex = targetCommand.subMeshIndex;
-            var command = targetCommand.command;
-
-            var meshes = command.Mesh?.GetMeshes();
-            if (meshes is null || submeshIndex < 0 || submeshIndex >= meshes.Length)
-                return;
-
-            var mesh = meshes[submeshIndex].mesh;
-            if (mesh is null)
-                return;
-            
-            RemoveSubmeshFromAtlas(mesh);
         }
 
         //TODO: Optimize to avoid frequent resizes (eg, remove and add right after each other at the boundary)
@@ -1585,6 +1720,8 @@ namespace XREngine.Rendering.Commands
             GetOrCreateMeshID(mesh, out uint meshID);
             GetOrCreateMaterialID(material, out uint materialID);
 
+            Matrix4x4 modelMatrix = command.WorldMatrixIsModelMatrix ? command.WorldMatrix : Matrix4x4.Identity;
+
             var gpuCommand = new GPUIndirectRenderCommand
             {
                 MeshID = meshID,
@@ -1594,8 +1731,8 @@ namespace XREngine.Rendering.Commands
                 InstanceCount = command.Instances == 0 ? 1u : command.Instances,
                 LayerMask = 0xFFFFFFFF,
                 RenderDistance = 0f,
-                WorldMatrix = command.WorldMatrix,
-                PrevWorldMatrix = command.WorldMatrix, // Initialize to current; will be updated on subsequent frames
+                WorldMatrix = modelMatrix,
+                PrevWorldMatrix = modelMatrix, // Initialize to current; will be updated on subsequent frames
                 Flags = 0,
                 LODLevel = 0,
                 ShaderProgramID = 0,
@@ -1603,18 +1740,8 @@ namespace XREngine.Rendering.Commands
                 Reserved1 = 0
             };
 
-            if (command.Mesh != null)
-            {
-                AABB? bounds = command.Mesh?.Mesh?.Bounds;
-                if (bounds.HasValue)
-                {
-                    var center = bounds.Value.Center;
-                    var radius = bounds.Value.HalfExtents.Length();
-                    gpuCommand.SetBoundingSphere(center, radius);
-                }
-                else
-                    gpuCommand.SetBoundingSphere(Vector3.Zero, 0.0f);
-            }
+            // Bounds: world-space (center + radius), conservative for non-uniform scale.
+            SetWorldSpaceBoundingSphere(ref gpuCommand, mesh.Bounds, modelMatrix);
 
             gpuCommand.RenderDistance = command.RenderDistance.ClampMin(0.0f);
 
@@ -1625,11 +1752,213 @@ namespace XREngine.Rendering.Commands
                     flags |= (uint)GPUIndirectRenderFlags.CastShadow;
                 if (info3d.ReceivesShadows)
                     flags |= (uint)GPUIndirectRenderFlags.ReceiveShadows;
+
+                // LayerMask is consumed by GPU culling paths (GPURenderCulling*.comp).
+                gpuCommand.LayerMask = 1u << info3d.Layer;
             }
 
             gpuCommand.Flags = flags;
             return gpuCommand;
         }
+
+        #region Command Updates (Phase 1)
+
+        /// <summary>
+        /// Updates existing GPU commands for a single mesh render command.
+        /// Intended to be called during the swap/collect phases (single-threaded) to keep GPU state correct
+        /// under transform/material/pass churn without remove/re-add.
+        /// </summary>
+        public bool TryUpdateMeshCommand(RenderInfo renderInfo, IRenderCommandMesh meshCmd)
+        {
+            if (renderInfo is null || meshCmd is null)
+                return false;
+
+            bool rebuildRenderable = false;
+            bool anyChanged = false;
+
+            using (_lock.EnterScope())
+            {
+                if (!_commandIndicesPerMeshCommand.TryGetValue(meshCmd, out var indices) || indices.Count == 0)
+                    return false;
+
+                // If this command is now excluded from GPU indirect, remove its indices.
+                var topMaterial = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
+                if (topMaterial?.RenderOptions?.ExcludeFromGpuIndirect == true)
+                {
+                    if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
+                        Debug.LogWarning($"[GPUScene] ExcludeFromGpuIndirect became true; removing mesh command. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
+
+                    RemoveMeshCommandIndices(meshCmd, indices);
+                    return true;
+                }
+
+                var subMeshes = meshCmd.Mesh?.GetMeshes();
+                if (subMeshes is null || subMeshes.Length == 0)
+                {
+                    if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
+                        Debug.LogWarning($"[GPUScene] Mesh command lost submeshes; removing. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
+
+                    RemoveMeshCommandIndices(meshCmd, indices);
+                    return true;
+                }
+
+                Matrix4x4 modelMatrix = meshCmd.WorldMatrixIsModelMatrix ? meshCmd.WorldMatrix : Matrix4x4.Identity;
+
+                uint minIndex = uint.MaxValue;
+                uint maxIndex = 0;
+
+                for (int i = 0; i < indices.Count; i++)
+                {
+                    uint index = indices[i];
+                    if (index >= UpdatingCommandCount)
+                        continue;
+
+                    if (!_commandIndexLookup.TryGetValue(index, out var lookup))
+                        continue;
+
+                    int subMeshIndex = lookup.subMeshIndex;
+                    if ((uint)subMeshIndex >= (uint)subMeshes.Length)
+                    {
+                        rebuildRenderable = true;
+                        break;
+                    }
+
+                    (XRMesh? mesh, XRMaterial? mat) = subMeshes[subMeshIndex];
+                    XRMaterial? material = meshCmd.MaterialOverride ?? mat;
+                    if (mesh is null || material is null)
+                    {
+                        rebuildRenderable = true;
+                        break;
+                    }
+
+                    if (_unsupportedMeshMessages.ContainsKey(mesh))
+                    {
+                        RemoveMeshCommandIndices(meshCmd, indices);
+                        return true;
+                    }
+
+                    if (!ValidateMeshForGpu(mesh, out var validationFailure))
+                    {
+                        string meshLabel = EnsureMeshDebugLabel(mesh, meshCmd.Mesh, renderInfo, subMeshIndex);
+                        RecordUnsupportedMesh(mesh, meshLabel, validationFailure);
+
+                        RemoveMeshCommandIndices(meshCmd, indices);
+                        return true;
+                    }
+
+                    GetOrCreateMeshID(mesh, out uint newMeshID);
+                    GetOrCreateMaterialID(material, out uint newMaterialID);
+
+                    if (!_atlasMeshOffsets.ContainsKey(mesh))
+                    {
+                        string meshLabel = EnsureMeshDebugLabel(mesh, meshCmd.Mesh, renderInfo, subMeshIndex);
+                        if (!EnsureSubmeshInAtlas(mesh, newMeshID, meshLabel, out var atlasFailure))
+                        {
+                            atlasFailure ??= "atlas registration failed";
+                            RecordUnsupportedMesh(mesh, meshLabel, atlasFailure);
+                            RemoveMeshCommandIndices(meshCmd, indices);
+                            return true;
+                        }
+                    }
+
+                    var existing = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(index);
+                    var updated = existing;
+
+                    updated.PrevWorldMatrix = existing.WorldMatrix;
+                    updated.WorldMatrix = modelMatrix;
+                    SetWorldSpaceBoundingSphere(ref updated, mesh.Bounds, modelMatrix);
+
+                    updated.MeshID = newMeshID;
+                    updated.SubmeshID = (newMeshID << 16) | ((uint)subMeshIndex & 0xFFFF);
+                    updated.MaterialID = newMaterialID;
+                    updated.InstanceCount = meshCmd.Instances == 0 ? 1u : meshCmd.Instances;
+                    updated.RenderPass = (uint)meshCmd.RenderPass;
+                    updated.RenderDistance = meshCmd.RenderDistance.ClampMin(0.0f);
+                    updated.Reserved1 = index;
+
+                    uint flags = 0;
+                    if (renderInfo is RenderInfo3D info3d)
+                    {
+                        if (info3d.CastsShadows)
+                            flags |= (uint)GPUIndirectRenderFlags.CastShadow;
+                        if (info3d.ReceivesShadows)
+                            flags |= (uint)GPUIndirectRenderFlags.ReceiveShadows;
+
+                        updated.LayerMask = 1u << info3d.Layer;
+                    }
+                    updated.Flags = flags;
+
+                    if (existing.MeshID != newMeshID)
+                    {
+                        IncrementAtlasMeshRefCount(mesh);
+                        DecrementAtlasMeshRefCount(existing.MeshID, "TryUpdateMeshCommand(mesh changed)");
+                    }
+
+                    if (!existing.Equals(updated))
+                    {
+                        UpdatingCommandsBuffer.SetDataRawAtIndex(index, updated);
+                        anyChanged = true;
+                        minIndex = Math.Min(minIndex, index);
+                        maxIndex = Math.Max(maxIndex, index);
+                    }
+                }
+
+                if (!rebuildRenderable)
+                {
+                    if (!anyChanged)
+                        return false;
+
+                    uint elementSize = UpdatingCommandsBuffer.ElementSize;
+                    if (elementSize == 0)
+                        elementSize = (uint)(CommandFloatCount * sizeof(float));
+
+                    uint byteOffset = minIndex * elementSize;
+                    uint byteCount = (maxIndex - minIndex + 1) * elementSize;
+                    UpdatingCommandsBuffer.PushSubData((int)byteOffset, byteCount);
+
+                    if (_meshDataDirty)
+                    {
+                        MeshDataBuffer.PushSubData();
+                        _meshDataDirty = false;
+                    }
+
+                    if (_useInternalBvh)
+                    {
+                        bool canRefit = _bvhReady && !_bvhDirty && _gpuBvhTree is not null && _bvhPrimitiveCount == _updatingCommandCount;
+                        if (canRefit)
+                            _bvhRefitPending = true;
+                        else
+                            MarkBvhDirty();
+                    }
+
+                    RebuildAtlasIfDirty();
+                }
+            }
+
+            if (rebuildRenderable)
+            {
+                if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
+                    Debug.LogWarning($"[GPUScene] Rebuilding renderable GPU commands due to structural mismatch. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
+
+                Remove(renderInfo);
+                Add(renderInfo);
+                return true;
+            }
+
+            return anyChanged;
+        }
+
+        private void RemoveMeshCommandIndices(IRenderCommandMesh meshCmd, List<uint> indices)
+        {
+            foreach (uint idx in indices.OrderByDescending(v => v))
+                RemoveCommandAtIndex(idx);
+
+            indices.Clear();
+            _commandIndicesPerMeshCommand.Remove(meshCmd);
+            meshCmd.GPUCommandIndex = uint.MaxValue;
+        }
+
+        #endregion
 
         private string EnsureMeshDebugLabel(XRMesh mesh, XRMeshRenderer? renderer, RenderInfo renderInfo, int subMeshIndex)
         {

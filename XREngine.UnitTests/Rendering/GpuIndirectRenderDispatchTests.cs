@@ -63,6 +63,17 @@ public class GpuIndirectRenderDispatchTests
 
     private static bool ShowWindow => IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_TEST_WINDOWS"));
 
+    [SetUp]
+    public void EnableCpuReadbackForAssertions()
+    {
+        GPURenderPassCollection.ConfigureIndirectDebug(d =>
+        {
+            d.DisableCpuReadbackCount = false;
+            d.EnableCpuBatching = false;
+            d.ForceCpuFallbackCount = false;
+        });
+    }
+
     #region Shader Loading Tests
 
     [Test]

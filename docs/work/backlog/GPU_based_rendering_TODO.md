@@ -102,27 +102,27 @@ Current blockers:
 
 Outcome: stop shipping with debug behavior and establish measurable baseline.
 
-- [ ] Change passthrough default to off for non-debug/shipping configurations.
-- [ ] Keep passthrough available only via explicit debug override.
-- [ ] Add one runtime log line per frame mode: passthrough, frustum, or BVH culling.
-- [ ] Add counters for CPU fallback usage and expose them in GPU stats/debug UI.
-- [ ] Add config validation on startup to warn on unsafe defaults.
+- [x] Change passthrough default to off for non-debug/shipping configurations.
+- [x] Keep passthrough available only via explicit debug override.
+- [x] Add one runtime log line per frame mode: passthrough, frustum, or BVH culling.
+- [x] Add counters for CPU fallback usage and expose them in GPU stats/debug UI.
+- [x] Add config validation on startup to warn on unsafe defaults.
 
 ## Phase 1 - Correctness First (Scene -> Atlas -> Cull)
 
 Outcome: all data written to GPU is valid and stays valid through add/remove/move.
 
-- [ ] Implement command update API in `GPUScene` for existing commands.
-  - [ ] Update world matrix, previous world matrix, bounds, material ID, pass, instance count, flags.
-  - [ ] Avoid remove/re-add churn for simple transform updates.
-- [ ] Hook dirty command updates from scene/render-info collection.
-- [ ] Fix bounding sphere computation to world space (including scale).
-  - [ ] Use conservative radius for non-uniform scale.
-- [ ] Add mesh atlas reference counting.
-  - [ ] Increment on first use by command.
-  - [ ] Decrement on command removal.
-  - [ ] Remove atlas data only at zero ref count.
-- [ ] Ensure `Destroy()` cleans atlas buffers and related state.
+- [x] Implement command update API in `GPUScene` for existing commands.
+  - [x] Update world matrix, previous world matrix, bounds, material ID, pass, instance count, flags.
+  - [x] Avoid remove/re-add churn for simple transform updates.
+- [x] Hook dirty command updates from scene/render-info collection.
+- [x] Fix bounding sphere computation to world space (including scale).
+  - [x] Use conservative radius for non-uniform scale.
+- [x] Add mesh atlas reference counting.
+  - [x] Increment on first use by command.
+  - [x] Decrement on command removal.
+  - [x] Remove atlas data only at zero ref count.
+- [x] Ensure `Destroy()` cleans atlas buffers and related state.
 
 Acceptance criteria:
 - Moving objects remain correctly culled and rendered across many frames.
@@ -133,14 +133,14 @@ Acceptance criteria:
 
 Outcome: render loop no longer depends on CPU readback/mapping for core decisions.
 
-- [ ] Remove CPU-side culled-buffer inspection for normal batch building.
-- [ ] Keep CPU sanitizer/fallback as debug-only path guarded by explicit setting.
-- [ ] Avoid per-frame mapping of count/command buffers in shipping mode.
-- [ ] Use GPU count buffer directly for draw submission.
-- [ ] Add profiling markers that report:
-  - [ ] number of mapped buffers in frame
-  - [ ] bytes read back from GPU
-  - [ ] number of CPU fallback events
+- [x] Remove CPU-side culled-buffer inspection for normal batch building.
+- [x] Keep CPU sanitizer/fallback as debug-only path guarded by explicit setting.
+- [x] Avoid per-frame mapping of count/command buffers in shipping mode.
+- [x] Use GPU count buffer directly for draw submission.
+- [x] Add profiling markers that report:
+  - [x] number of mapped buffers in frame
+  - [x] bytes read back from GPU
+  - [x] number of CPU fallback events
 
 Acceptance criteria:
 - Shipping mode performs zero large-buffer readbacks for culling/batching.
@@ -252,6 +252,12 @@ Acceptance criteria:
     - `XRENGINE/Engine/Engine.VRState.cs` (`CollectVisibleStereo`, `SwapBuffersStereo`, `Render`)
     - `XRENGINE/Rendering/XRViewport.cs` (`RenderStereo`)
     - `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.Settings.cs` (runtime mode switches)
+  - Implementation status:
+    - [x] Added `GPUViewFlags`, `GPUViewMask`, `GPUViewDescriptor`, and `GPUViewConstants` schema in `XRENGINE/Rendering/Commands/GPUViewSet.cs`.
+    - [x] Added runtime layout validation (`Marshal.SizeOf` assertions) in `XRENGINE/Rendering/Commands/GPUViewSet.cs` and `XRENGINE/Rendering/Commands/GPURenderPassCollection.Core.cs`.
+    - [x] Added `ConfigureViewSet(...)` and view-capacity tracking in `XRENGINE/Rendering/Commands/GPURenderPassCollection.ViewSet.cs`.
+    - [ ] Wire per-frame `ViewSet` construction from VR frame lifecycle (`Engine.VRState` / `XRViewport`).
+    - [ ] Route per-frame `ViewSet` data into active cull/render dispatch.
   - Done when:
     - One frame-level `ViewSet` object is built once per frame and handed to GPU culling/render stages.
     - No per-eye CPU scene traversal is required for default VR path.
@@ -273,6 +279,13 @@ Acceptance criteria:
     - `XRENGINE/Rendering/Commands/GPURenderPassCollection.ShadersAndInit.cs`
     - `XRENGINE/Rendering/Commands/GPURenderPassCollection.Core.cs`
     - `XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
+  - Implementation status:
+    - [x] Added buffer scaffolding: `ViewDescriptorBuffer`, `ViewConstantsBuffer`, `CommandViewMaskBuffer`, `PerViewVisibleIndicesBuffer`, `PerViewDrawCountBuffer` in `XRENGINE/Rendering/Commands/GPURenderPassCollection.ViewSet.cs`.
+    - [x] Added buffer binding slot constants (`11`-`15`) in `XRENGINE/Rendering/Commands/GPUViewSet.cs`.
+    - [x] Integrated allocation/regeneration into `RegenerateBuffers(...)` in `XRENGINE/Rendering/Commands/GPURenderPassCollection.ShadersAndInit.cs`.
+    - [x] Integrated reset/disposal lifecycle hooks in `XRENGINE/Rendering/Commands/GPURenderPassCollection.IndirectAndMaterials.cs`.
+    - [ ] Bind and consume these buffers in culling/indirect compute paths.
+    - [ ] Validate full OpenGL/Vulkan parity for the new view buffers.
   - Done when:
     - all new buffers are created, resized, reset, and rebound with deterministic binding points.
     - OpenGL and Vulkan run identical logical binding layout.

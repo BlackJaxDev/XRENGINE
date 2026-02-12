@@ -786,6 +786,10 @@ namespace XREngine.Rendering
                 return false;
             }
 
+            // Phase 2: do not map/unmap by default. Mapping can cause CPU stalls and isn't needed for
+            // MultiDrawElementsIndirectCount / vkCmdDrawIndirectCount-style submission.
+            requireMapped = requireMapped || DebugSettings.ForceParameterRemap;
+
             if (requireMapped)
             {
                 if (parameterBuffer.ActivelyMapping.Count == 0)
@@ -798,10 +802,7 @@ namespace XREngine.Rendering
                     }
                 }
             }
-            else if (parameterBuffer.ActivelyMapping.Count > 0)
-            {
-                parameterBuffer.UnmapBufferData();
-            }
+            // If the buffer is already mapped (e.g. diagnostics), leave it mapped unless forced.
 
             return true;
         }
@@ -857,8 +858,11 @@ namespace XREngine.Rendering
                 visibleCount = culledCapacity;
 
             Matrix4x4 modelMatrix = Matrix4x4.Identity;
-            if (visibleCount > 0 && TryReadWorldMatrix(culledBuffer, 0, out Matrix4x4 firstWorldMatrix))
-                modelMatrix = firstWorldMatrix;
+            if (!DebugSettings.DisableCpuReadbackCount)
+            {
+                if (visibleCount > 0 && TryReadWorldMatrix(culledBuffer, 0, out Matrix4x4 firstWorldMatrix))
+                    modelMatrix = firstWorldMatrix;
+            }
 
             uint indirectCapacity = indirectDrawBuffer.ElementCount;
             uint maxDrawAllowed = visibleCount > 0
@@ -1049,10 +1053,16 @@ namespace XREngine.Rendering
 
             _indirectCompProgram.Uniform("StatsEnabled", statsEnabled ? 1u : 0u);
 
-            if (visibleCount == 0)
+            var rendererForCount = AbstractRenderer.Current;
+            bool supportsCountDraw = rendererForCount is not null && rendererForCount.SupportsIndirectCountDraw();
+            bool canSubmitWithoutCpuCount = parameterBuffer is not null && supportsCountDraw && !DebugSettings.DisableCountDrawPath;
+
+            // Phase 2: visibleCount may be intentionally not read back (to avoid CPU stalls).
+            // Only require a CPU-visible count when we cannot use the GPU count-draw path.
+            if (visibleCount == 0 && !canSubmitWithoutCpuCount)
             {
                 if (logGpu)
-                    GpuDebug("VisibleCommandCount == 0; skipping GPU indirect build path.");
+                    GpuDebug("VisibleCommandCount == 0 and count-draw unavailable; skipping GPU indirect build path.");
                 return;
             }
 
@@ -1063,6 +1073,11 @@ namespace XREngine.Rendering
                 GpuDebug("Set uniforms: CurrentRenderPass={0}, MaxIndirectDraws={1}", currentRenderPass, indirectDrawBuffer.ElementCount);
 
             uint dispatchCount = visibleCount;
+            if (dispatchCount == 0)
+                dispatchCount = maxDrawAllowed;
+
+            if (dispatchCount == 0)
+                dispatchCount = 1;
             if (logGpu)
                 GpuDebug("Dispatch command count: {0}", dispatchCount);
 
@@ -1083,7 +1098,7 @@ namespace XREngine.Rendering
                 EMemoryBarrierMask.BufferUpdate);
             //Debug.Out("Memory barrier issued");
 
-            //if (DebugSettings.DumpIndirectArguments)
+            if (DebugSettings.DumpIndirectArguments && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
                 DumpGpuIndirectArguments(renderPasses, indirectDrawBuffer, maxDrawAllowed, parameterBuffer, visibleCount);
 
             //ClearIndirectTail(indirectDrawBuffer, parameterBuffer, maxDrawAllowed);
