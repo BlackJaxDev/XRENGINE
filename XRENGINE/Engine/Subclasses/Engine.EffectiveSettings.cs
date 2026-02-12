@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using XREngine.Data.Core;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine
 {
@@ -73,6 +74,16 @@ namespace XREngine
             #endregion
 
             #region Rendering Settings
+
+            /// <summary>
+            /// Gets the effective Vulkan GPU-driven profile selection.
+            /// Resolved from: Project Override > Engine Default.
+            /// </summary>
+            public static EVulkanGpuDrivenProfile VulkanGpuDrivenProfile
+                => OverrideableSettingExtensions.ResolveCascade(
+                    Rendering.Settings.VulkanGpuDrivenProfile,
+                    GameSettings?.VulkanGpuDrivenProfileOverride,
+                    null);
 
             /// <summary>
             /// Gets the effective GPU render dispatch setting.

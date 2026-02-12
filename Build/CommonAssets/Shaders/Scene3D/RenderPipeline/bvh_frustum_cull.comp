@@ -276,7 +276,7 @@ void LogOverflow(uint marker)
     atomicCompSwap(OverflowDebug[0], 0u, marker);
 }
 
-void AppendVisible(uint cmdIndex, float renderDistance, uint instanceCount)
+void AppendVisible(uint cmdIndex, vec3 center, float renderDistance, uint instanceCount)
 {
     uint outIndex = atomicAdd(CulledCount, 1u);
     if (outIndex >= uint(MaxCulledCommands))
@@ -411,6 +411,6 @@ void main()
             continue;
         }
 
-        AppendVisible(cmdIndex, renderDistance, instanceCount);
+        AppendVisible(cmdIndex, center, renderDistance, instanceCount);
     }
 }

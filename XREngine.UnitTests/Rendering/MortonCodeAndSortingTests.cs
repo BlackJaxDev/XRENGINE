@@ -53,11 +53,13 @@ public class MortonCodeAndSortingTests
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
-        source.ShouldContain("SortByDistance");
-        source.ShouldContain("SortDirection");
-        source.ShouldContain("UseMaterialBatchKey");
-        source.ShouldContain("keyIndexOut");
+        source.ShouldContain("CurrentRenderPass");
+        source.ShouldContain("MaxSortKeys");
+        source.ShouldContain("StateBitMask");
+        source.ShouldContain("sortKeys");
+        source.ShouldContain("packedPassPipelineState");
         source.ShouldContain("COMMAND_FLOATS = 48");
+        source.ShouldContain("KEY_UINTS = 4");
     }
 
     [Test]
@@ -91,10 +93,11 @@ public class MortonCodeAndSortingTests
     {
         string source = LoadShaderSource("Compute/GPURenderBuildKeys.comp");
 
-        // Verify material-major sorting key generation
-        source.ShouldContain("UseMaterialBatchKey");
-        source.ShouldContain("materialID << 12");
-        source.ShouldContain("depthQ & 0xFFFu");
+        // Verify material + mesh lanes are emitted for downstream batching/sorting.
+        source.ShouldContain("uint materialID = floatBitsToUint(culled[base + 38u])");
+        source.ShouldContain("uint meshID = floatBitsToUint(culled[base + 36u])");
+        source.ShouldContain("sortKeys[outBase + 1u] = materialID");
+        source.ShouldContain("sortKeys[outBase + 2u] = meshID");
     }
 
     #endregion

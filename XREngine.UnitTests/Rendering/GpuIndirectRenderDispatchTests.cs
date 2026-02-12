@@ -122,8 +122,10 @@ public class GpuIndirectRenderDispatchTests
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
-        source.ShouldContain("SortByDistance");
-        source.ShouldContain("keyIndexOut");
+        source.ShouldContain("CurrentRenderPass");
+        source.ShouldContain("MaxSortKeys");
+        source.ShouldContain("StateBitMask");
+        source.ShouldContain("sortKeys");
     }
 
     [Test]

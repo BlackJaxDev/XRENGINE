@@ -80,6 +80,7 @@ namespace XREngine
 
                 // Creating windows first is critical—they initialize the render context and graphics API
                 CreateWindows(startupSettings.StartupWindows);
+                Rendering.LogVulkanFeatureProfileFingerprint(force: true);
                 Rendering.SecondaryContext.InitializeIfSupported(Windows.FirstOrDefault());
                 XRWindow.AnyWindowFocusChanged += WindowFocusChanged;
 

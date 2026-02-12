@@ -1,8 +1,6 @@
 using NUnit.Framework;
 using Shouldly;
-using Silk.NET.Maths;
 using Silk.NET.OpenGL;
-using Silk.NET.Windowing;
 using System.Numerics;
 using System.Runtime.InteropServices;
 
@@ -16,96 +14,8 @@ namespace XREngine.UnitTests.Rendering;
 /// SSBO side effects.
 /// </summary>
 [TestFixture]
-public class SurfelGiComputeIntegrationTests
+public class SurfelGiComputeIntegrationTests : GpuTestBase
 {
-    private const int Width = 64;
-    private const int Height = 64;
-
-    private static bool IsHeadless =>
-        Environment.GetEnvironmentVariable("XR_HEADLESS_TEST") == "1" ||
-        Environment.GetEnvironmentVariable("CI") == "true";
-
-    private static string ShaderBasePath
-    {
-        get
-        {
-            var dir = AppContext.BaseDirectory;
-            for (int i = 0; i < 10; i++)
-            {
-                var candidate = Path.Combine(dir, "Build", "CommonAssets", "Shaders");
-                if (Directory.Exists(candidate))
-                    return candidate;
-                dir = Path.GetDirectoryName(dir) ?? dir;
-            }
-            return @"D:\Documents\XRENGINE\Build\CommonAssets\Shaders";
-        }
-    }
-
-    private static (GL?, IWindow?) CreateGLContext()
-    {
-        if (IsHeadless)
-            return (null, null);
-
-        var options = WindowOptions.Default;
-        options.Size = new Vector2D<int>(Width, Height);
-        options.IsVisible = false;
-        options.API = new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 6));
-
-        IWindow? window = null;
-        GL? gl = null;
-
-        try
-        {
-            window = Window.Create(options);
-            window.Initialize();
-            window.MakeCurrent();
-            window.DoEvents();
-            gl = GL.GetApi(window);
-        }
-        catch
-        {
-            window?.Close();
-            window?.Dispose();
-            return (null, null);
-        }
-
-        return (gl, window);
-    }
-
-    private static uint CompileComputeShader(GL gl, string source)
-    {
-        uint shader = gl.CreateShader(ShaderType.ComputeShader);
-        gl.ShaderSource(shader, source);
-        gl.CompileShader(shader);
-
-        gl.GetShader(shader, ShaderParameterName.CompileStatus, out int status);
-        if (status == 0)
-        {
-            string infoLog = gl.GetShaderInfoLog(shader);
-            gl.DeleteShader(shader);
-            throw new InvalidOperationException($"Failed to compile compute shader:\n{infoLog}");
-        }
-
-        return shader;
-    }
-
-    private static uint CreateComputeProgram(GL gl, uint computeShader)
-    {
-        uint program = gl.CreateProgram();
-        gl.AttachShader(program, computeShader);
-        gl.LinkProgram(program);
-
-        gl.GetProgram(program, ProgramPropertyARB.LinkStatus, out int status);
-        if (status == 0)
-        {
-            string infoLog = gl.GetProgramInfoLog(program);
-            gl.DeleteProgram(program);
-            throw new InvalidOperationException($"Failed to link compute program:\n{infoLog}");
-        }
-
-        return program;
-    }
-
     private static string ShaderPath(params string[] parts)
         => Path.Combine([ShaderBasePath, ..parts]);
 

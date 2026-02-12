@@ -16,7 +16,10 @@ public unsafe partial class VulkanRenderer
     public Queue PresentQueue => presentQueue;
 
     private void DestroyLogicalDevice()
-        => Api!.DestroyDevice(device, null);
+    {
+        DestroyCachedDescriptorSetLayouts();
+        Api!.DestroyDevice(device, null);
+    }
 
     /// <summary>
     /// Checks if an optional device extension is supported by the physical device.
@@ -160,6 +163,8 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private void LoadOptionalDeviceExtensions(string[] enabledExtensions)
     {
+        _supportsDescriptorIndexing = enabledExtensions.Contains("VK_EXT_descriptor_indexing");
+
         // Check if VK_KHR_draw_indirect_count was enabled
         if (enabledExtensions.Contains("VK_KHR_draw_indirect_count"))
         {
@@ -174,5 +179,8 @@ public unsafe partial class VulkanRenderer
                 _supportsDrawIndirectCount = false;
             }
         }
+
+        if (_supportsDescriptorIndexing)
+            Debug.Vulkan("[Vulkan] VK_EXT_descriptor_indexing enabled for descriptor update-after-bind support.");
     }
 }

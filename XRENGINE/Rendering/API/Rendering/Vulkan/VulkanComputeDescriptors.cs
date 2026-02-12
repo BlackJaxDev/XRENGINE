@@ -20,6 +20,7 @@ public unsafe partial class VulkanRenderer
         public DescriptorPool Pool;
         public uint MaxAllocations;
         public uint AllocatedAllocations;
+        public bool UsesUpdateAfterBind;
     }
 
     private readonly record struct ComputeDescriptorCacheKey(ulong SchemaKey, ulong BindingKey);
@@ -71,6 +72,7 @@ public unsafe partial class VulkanRenderer
         ulong bindingKey,
         DescriptorSetLayout[] layouts,
         DescriptorPoolSize[] perAllocationPoolSizes,
+        bool usesUpdateAfterBind,
         out DescriptorSet[] descriptorSets,
         out bool isNewAllocation)
     {
@@ -93,7 +95,7 @@ public unsafe partial class VulkanRenderer
             if (cache.CachedSets.TryGetValue(key, out descriptorSets))
                 return true;
 
-            if (!TryAllocateDescriptorSetBatch(cache, schemaKey, layouts, perAllocationPoolSizes, out descriptorSets))
+            if (!TryAllocateDescriptorSetBatch(cache, schemaKey, layouts, perAllocationPoolSizes, usesUpdateAfterBind, out descriptorSets))
                 return false;
 
             cache.CachedSets[key] = descriptorSets;
@@ -107,10 +109,11 @@ public unsafe partial class VulkanRenderer
         ulong schemaKey,
         DescriptorSetLayout[] layouts,
         DescriptorPoolSize[] perAllocationPoolSizes,
+        bool usesUpdateAfterBind,
         out DescriptorSet[] descriptorSets)
     {
         descriptorSets = Array.Empty<DescriptorSet>();
-        const uint baseAllocationCapacity = 32;
+        const uint baseAllocationCapacity = 64;
 
         if (!cache.PoolsBySchema.TryGetValue(schemaKey, out List<ComputeDescriptorPoolBlock>? blocks))
         {
@@ -120,6 +123,9 @@ public unsafe partial class VulkanRenderer
 
         foreach (ComputeDescriptorPoolBlock block in blocks)
         {
+            if (block.UsesUpdateAfterBind != usesUpdateAfterBind)
+                continue;
+
             if (block.AllocatedAllocations >= block.MaxAllocations)
                 continue;
 
@@ -143,10 +149,10 @@ public unsafe partial class VulkanRenderer
         uint targetAllocations = blocks.Count switch
         {
             <= 0 => baseAllocationCapacity,
-            _ => baseAllocationCapacity + (uint)(blocks.Count * 16)
+            _ => Math.Min(blocks[^1].MaxAllocations * 2u, 512u)
         };
 
-        if (!TryCreateDescriptorPoolBlock(targetAllocations, layouts, perAllocationPoolSizes, out ComputeDescriptorPoolBlock? newBlock))
+        if (!TryCreateDescriptorPoolBlock(targetAllocations, layouts, perAllocationPoolSizes, usesUpdateAfterBind, out ComputeDescriptorPoolBlock? newBlock))
             return false;
 
         blocks.Add(newBlock);
@@ -163,6 +169,7 @@ public unsafe partial class VulkanRenderer
         uint allocationCapacity,
         DescriptorSetLayout[] layouts,
         DescriptorPoolSize[] perAllocationPoolSizes,
+        bool usesUpdateAfterBind,
         out ComputeDescriptorPoolBlock? block)
     {
         block = null;
@@ -184,7 +191,9 @@ public unsafe partial class VulkanRenderer
             DescriptorPoolCreateInfo poolInfo = new()
             {
                 SType = StructureType.DescriptorPoolCreateInfo,
-                Flags = DescriptorPoolCreateFlags.FreeDescriptorSetBit,
+                Flags = usesUpdateAfterBind
+                    ? DescriptorPoolCreateFlags.FreeDescriptorSetBit | DescriptorPoolCreateFlags.UpdateAfterBindBit
+                    : DescriptorPoolCreateFlags.FreeDescriptorSetBit,
                 PoolSizeCount = (uint)poolSizes.Length,
                 PPoolSizes = poolSizesPtr,
                 MaxSets = allocationCapacity * (uint)layouts.Length
@@ -197,7 +206,8 @@ public unsafe partial class VulkanRenderer
             {
                 Pool = descriptorPool,
                 MaxAllocations = allocationCapacity,
-                AllocatedAllocations = 0
+                AllocatedAllocations = 0,
+                UsesUpdateAfterBind = usesUpdateAfterBind
             };
 
             return true;

@@ -6,6 +6,7 @@ using NUnit.Framework;
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
+[Explicit("Requires vendor native DLLs deployed in the local test runtime path")]
 public class NativeInteropSmokeTests
 {
     [Test]

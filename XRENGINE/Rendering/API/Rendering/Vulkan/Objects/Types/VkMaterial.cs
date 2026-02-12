@@ -237,6 +237,9 @@ namespace XREngine.Rendering.Vulkan
                     DescriptorPoolCreateInfo poolInfo = new()
                     {
                         SType = StructureType.DescriptorPoolCreateInfo,
+                        Flags = program.DescriptorSetsRequireUpdateAfterBind
+                            ? DescriptorPoolCreateFlags.UpdateAfterBindBit
+                            : 0,
                         PoolSizeCount = (uint)poolSizes.Length,
                         PPoolSizes = poolSizesPtr,
                         MaxSets = (uint)(setCount * frameCount),

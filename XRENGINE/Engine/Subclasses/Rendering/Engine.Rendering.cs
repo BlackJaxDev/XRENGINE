@@ -16,6 +16,8 @@ namespace XREngine
     {
         public static partial class Rendering
         {
+            private static string? _lastVulkanFeatureFingerprint;
+
             //TODO: create objects for only relevant windows that house the viewports that this object is visible in
 
             /// <summary>
@@ -148,6 +150,7 @@ namespace XREngine
                 }
 
                 Engine.InvokeOnMainThread(() => Apply(), "Engine.Rendering.ApplyGpuRenderDispatchPreference", true);
+                LogVulkanFeatureProfileFingerprint();
             }
 
             public static bool IsVulkanRendererActive()
@@ -169,22 +172,22 @@ namespace XREngine
 
             public static bool ResolveGpuRenderDispatchPreference(bool requestedGpuDispatch)
             {
-                if (!requestedGpuDispatch)
-                    return false;
+                bool resolved = VulkanFeatureProfile.ResolveGpuRenderDispatchPreference(requestedGpuDispatch);
+                if (!resolved && requestedGpuDispatch && IsVulkanRendererActive())
+                {
+                    XREngine.Debug.RenderingWarningEvery(
+                        "RenderDispatch.VulkanProfileDisabled",
+                        TimeSpan.FromSeconds(2),
+                        "[RenderDispatch] GPU render dispatch disabled by Vulkan feature profile {0}.",
+                        VulkanFeatureProfile.ActiveProfile);
+                }
 
-                if (!IsVulkanRendererActive())
-                    return true;
-
-                XREngine.Debug.RenderingWarningEvery(
-                    "RenderDispatch.VulkanCpuPath",
-                    TimeSpan.FromSeconds(2),
-                    "[RenderDispatch] GPU render dispatch forced off while Vulkan renderer is active (CPU octree path target).");
-                return false;
+                return resolved;
             }
 
             public static void ApplyGpuBvhPreference()
             {
-                bool useGpuBvh = Engine.EffectiveSettings.UseGpuBvh;
+                bool useGpuBvh = VulkanFeatureProfile.ResolveGpuBvhPreference(Engine.EffectiveSettings.UseGpuBvh);
 
                 void Apply()
                 {
@@ -193,6 +196,51 @@ namespace XREngine
                 }
 
                 Engine.InvokeOnMainThread(() => Apply(), "Engine.Rendering.ApplyGpuBvhPreference", true);
+                LogVulkanFeatureProfileFingerprint();
+            }
+
+            public static void LogVulkanFeatureProfileFingerprint(bool force = false)
+            {
+                if (!IsVulkanRendererActive())
+                    return;
+
+                var configuredProfile = Engine.EffectiveSettings.VulkanGpuDrivenProfile;
+                var activeProfile = VulkanFeatureProfile.ActiveProfile;
+
+                bool requestedGpuDispatch = Engine.EffectiveSettings.GPURenderDispatch;
+                bool effectiveGpuDispatch = VulkanFeatureProfile.ResolveGpuRenderDispatchPreference(requestedGpuDispatch);
+
+                bool requestedGpuBvh = Engine.EffectiveSettings.UseGpuBvh;
+                bool effectiveGpuBvh = VulkanFeatureProfile.ResolveGpuBvhPreference(requestedGpuBvh);
+
+                EOcclusionCullingMode requestedOcclusion = Engine.EffectiveSettings.GpuOcclusionCullingMode;
+                EOcclusionCullingMode effectiveOcclusion = VulkanFeatureProfile.ResolveOcclusionCullingMode(requestedOcclusion);
+
+                bool effectiveComputePasses = VulkanFeatureProfile.ResolveComputeDependentPassesPreference(true);
+                bool effectiveImGui = VulkanFeatureProfile.ResolveImGuiPreference(true);
+                bool supportsIndirectCount = AbstractRenderer.Current?.SupportsIndirectCountDraw() == true;
+                string dispatchPath = effectiveGpuDispatch ? "GPUDriven" : "CPUFallback";
+
+                string fingerprint = string.Format(
+                    "[VulkanProfile] Configured={0} Active={1} ComputePasses={2} GpuDispatch={3}(requested={4}) GpuBvh={5}(requested={6}) Occlusion={7}->{8} ImGui={9} DrawIndirectCountExt={10} DispatchPath={11}",
+                    configuredProfile,
+                    activeProfile,
+                    effectiveComputePasses,
+                    effectiveGpuDispatch,
+                    requestedGpuDispatch,
+                    effectiveGpuBvh,
+                    requestedGpuBvh,
+                    requestedOcclusion,
+                    effectiveOcclusion,
+                    effectiveImGui,
+                    supportsIndirectCount,
+                    dispatchPath);
+
+                if (!force && string.Equals(_lastVulkanFeatureFingerprint, fingerprint, StringComparison.Ordinal))
+                    return;
+
+                _lastVulkanFeatureFingerprint = fingerprint;
+                XREngine.Debug.Rendering(fingerprint);
             }
 
             public static void ApplyNvidiaDlssPreference()

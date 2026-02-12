@@ -38,6 +38,7 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<uint, XRDataBuffer> _buffersByBinding = new();
         private readonly HashSet<string> _computeWarnings = new(StringComparer.Ordinal);
         private Pipeline _computePipeline;
+        private bool _descriptorSetsRequireUpdateAfterBind;
 
         public override VkObjectType Type => VkObjectType.Program;
         public override bool IsGenerated => true;
@@ -46,6 +47,7 @@ public unsafe partial class VulkanRenderer
         public IReadOnlyList<DescriptorSetLayout> DescriptorSetLayouts => _descriptorSetLayouts;
         public IReadOnlyList<DescriptorBindingInfo> DescriptorBindings => _programDescriptorBindings;
         public IReadOnlyDictionary<string, AutoUniformBlockInfo> AutoUniformBlocks => _autoUniformBlocks;
+        public bool DescriptorSetsRequireUpdateAfterBind => _descriptorSetsRequireUpdateAfterBind;
 
         protected override uint CreateObjectInternal() => CacheObject(this);
 
@@ -442,6 +444,7 @@ public unsafe partial class VulkanRenderer
             _descriptorSetLayouts = result.Layouts;
             _programDescriptorBindings.Clear();
             _programDescriptorBindings.AddRange(result.Bindings);
+            _descriptorSetsRequireUpdateAfterBind = result.RequiresUpdateAfterBind;
             _autoUniformBlocks.Clear();
             foreach (VkShader shader in _shaderCache.Values)
             {
@@ -497,7 +500,7 @@ public unsafe partial class VulkanRenderer
             if (_descriptorSetLayouts.Length > 0)
             {
                 foreach (DescriptorSetLayout layout in _descriptorSetLayouts)
-                    Api!.DestroyDescriptorSetLayout(Device, layout, null);
+                    Renderer.ReleaseCachedDescriptorSetLayout(layout);
 
                 _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
             }
@@ -509,6 +512,7 @@ public unsafe partial class VulkanRenderer
             }
 
             _programDescriptorBindings.Clear();
+            _descriptorSetsRequireUpdateAfterBind = false;
             IsLinked = false;
         }
 
@@ -696,6 +700,7 @@ public unsafe partial class VulkanRenderer
                     bindingFingerprint,
                     layoutArray,
                     poolSizes,
+                    _descriptorSetsRequireUpdateAfterBind,
                     out descriptorSets,
                     out bool isNewAllocation))
                 {
@@ -743,6 +748,9 @@ public unsafe partial class VulkanRenderer
                 DescriptorPoolCreateInfo poolInfo = new()
                 {
                     SType = StructureType.DescriptorPoolCreateInfo,
+                    Flags = _descriptorSetsRequireUpdateAfterBind
+                        ? DescriptorPoolCreateFlags.FreeDescriptorSetBit | DescriptorPoolCreateFlags.UpdateAfterBindBit
+                        : DescriptorPoolCreateFlags.FreeDescriptorSetBit,
                     MaxSets = (uint)_descriptorSetLayouts.Length,
                     PoolSizeCount = (uint)poolSizes.Length,
                     PPoolSizes = poolSizesPtr,
@@ -1389,30 +1397,28 @@ public unsafe partial class VulkanRenderer
             }
 
             if (builders.Count == 0)
-                return new DescriptorLayoutBuildResult(Array.Empty<DescriptorSetLayout>(), new List<DescriptorBindingInfo>());
+                return new DescriptorLayoutBuildResult(Array.Empty<DescriptorSetLayout>(), new List<DescriptorBindingInfo>(), false);
 
             List<DescriptorSetLayout> layouts = new();
-            foreach (IGrouping<uint, DescriptorSetLayoutBindingBuilder> group in builders.Values.GroupBy(b => b.Set).OrderBy(g => g.Key))
+            bool requiresUpdateAfterBind = false;
+            uint maxDeclaredSet = builders.Values.Max(b => b.Set);
+            uint maxSet = Math.Max(maxDeclaredSet, DescriptorSetTierCount - 1);
+
+            Dictionary<uint, List<DescriptorSetLayoutBindingBuilder>> groupsBySet = builders.Values
+                .GroupBy(b => b.Set)
+                .ToDictionary(g => g.Key, g => g.OrderBy(b => b.Binding).ToList());
+
+            for (uint setIndex = 0; setIndex <= maxSet; setIndex++)
             {
-                DescriptorSetLayoutBinding[] vkBindings = group
-                    .OrderBy(b => b.Binding)
-                    .Select(b => b.ToBinding())
-                    .ToArray();
+                DescriptorSetLayoutBinding[] vkBindings = groupsBySet.TryGetValue(setIndex, out List<DescriptorSetLayoutBindingBuilder>? setBuilders)
+                    ? [.. setBuilders.Select(b => b.ToBinding())]
+                    : Array.Empty<DescriptorSetLayoutBinding>();
 
-                fixed (DescriptorSetLayoutBinding* bindingsPtr = vkBindings)
-                {
-                    DescriptorSetLayoutCreateInfo layoutInfo = new()
-                    {
-                        SType = StructureType.DescriptorSetLayoutCreateInfo,
-                        BindingCount = (uint)vkBindings.Length,
-                        PBindings = bindingsPtr,
-                    };
+                if (!renderer.TryAcquireCachedDescriptorSetLayout(vkBindings, out DescriptorSetLayout layout, out bool usesUpdateAfterBind))
+                    throw new InvalidOperationException($"Failed to create descriptor set layout for program '{programName}'.");
 
-                    if (renderer.Api!.CreateDescriptorSetLayout(device, ref layoutInfo, null, out DescriptorSetLayout layout) != Result.Success)
-                        throw new InvalidOperationException($"Failed to create descriptor set layout for program '{programName}'.");
-
-                    layouts.Add(layout);
-                }
+                requiresUpdateAfterBind |= usesUpdateAfterBind;
+                layouts.Add(layout);
             }
 
             List<DescriptorBindingInfo> mergedBindings = builders.Values
@@ -1421,7 +1427,7 @@ public unsafe partial class VulkanRenderer
                 .Select(b => b.ToDescriptorBindingInfo())
                 .ToList();
 
-            return new DescriptorLayoutBuildResult(layouts.ToArray(), mergedBindings);
+            return new DescriptorLayoutBuildResult(layouts.ToArray(), mergedBindings, requiresUpdateAfterBind);
         }
 
         private sealed class DescriptorSetLayoutBindingBuilder
@@ -1462,7 +1468,7 @@ public unsafe partial class VulkanRenderer
                 => new(Set, Binding, DescriptorType, StageFlags, Count, string.Empty);
         }
 
-        private readonly record struct DescriptorLayoutBuildResult(DescriptorSetLayout[] Layouts, List<DescriptorBindingInfo> Bindings);
+        private readonly record struct DescriptorLayoutBuildResult(DescriptorSetLayout[] Layouts, List<DescriptorBindingInfo> Bindings, bool RequiresUpdateAfterBind);
 
         private static readonly EProgramStageMask[] StageOrder =
         {

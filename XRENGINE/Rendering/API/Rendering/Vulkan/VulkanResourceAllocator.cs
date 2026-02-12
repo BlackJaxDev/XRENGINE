@@ -152,9 +152,9 @@ internal sealed class VulkanResourceAllocator
 
     public bool TryGetImage(string resourceName, out Image image)
     {
-        if (TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup group) && group.IsAllocated)
+        if (TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup? group) && group?.IsAllocated == true)
         {
-            image = group.Image;
+            image = group?.Image ?? default;
             return image.Handle != 0;
         }
 
@@ -164,10 +164,10 @@ internal sealed class VulkanResourceAllocator
 
     public bool TryGetBuffer(string resourceName, out Buffer buffer, out ulong size)
     {
-        if (TryGetPhysicalBufferGroupForResource(resourceName, out VulkanPhysicalBufferGroup group) && group.IsAllocated)
+        if (TryGetPhysicalBufferGroupForResource(resourceName, out VulkanPhysicalBufferGroup? group) && group?.IsAllocated == true)
         {
-            buffer = group.Buffer;
-            size = group.SizeInBytes;
+            buffer = group?.Buffer ?? default;
+            size = group?.SizeInBytes ?? 0;
             return buffer.Handle != 0;
         }
 
@@ -178,10 +178,10 @@ internal sealed class VulkanResourceAllocator
 
     public bool TryEnsureImage(string resourceName, VulkanRenderer renderer, out Image image)
     {
-        if (TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup group))
+        if (TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup? group))
         {
-            group.EnsureAllocated(renderer);
-            image = group.Image;
+            group?.EnsureAllocated(renderer);
+            image = group?.Image ?? default;
             return image.Handle != 0;
         }
 
@@ -191,11 +191,11 @@ internal sealed class VulkanResourceAllocator
 
     public bool TryEnsureBuffer(string resourceName, VulkanRenderer renderer, out Buffer buffer, out ulong size)
     {
-        if (TryGetPhysicalBufferGroupForResource(resourceName, out VulkanPhysicalBufferGroup group))
+        if (TryGetPhysicalBufferGroupForResource(resourceName, out VulkanPhysicalBufferGroup? group))
         {
-            group.EnsureAllocated(renderer);
-            buffer = group.Buffer;
-            size = group.SizeInBytes;
+            group?.EnsureAllocated(renderer);
+            buffer = group?.Buffer ?? default;
+            size = group?.SizeInBytes ?? 0;
             return buffer.Handle != 0;
         }
 
@@ -276,10 +276,10 @@ internal sealed class VulkanResourceAllocator
 
             string fboName = segments[1];
             string slot = segments.Length >= 3 ? segments[2] : "color";
-            if (!planner.TryGetFrameBufferDescriptor(fboName, out FrameBufferResourceDescriptor descriptor))
+            if (!planner.TryGetFrameBufferDescriptor(fboName, out FrameBufferResourceDescriptor? descriptor))
                 yield break;
 
-            foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)
+            foreach (FrameBufferAttachmentDescriptor attachment in descriptor?.Attachments ?? [])
             {
                 if (MatchesSlot(attachment.Attachment, slot) && !string.IsNullOrWhiteSpace(attachment.ResourceName))
                     yield return attachment.ResourceName;
