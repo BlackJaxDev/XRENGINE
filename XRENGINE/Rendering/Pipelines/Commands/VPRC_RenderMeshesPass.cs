@@ -1,4 +1,5 @@
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -57,10 +58,26 @@ namespace XREngine.Rendering.Pipelines.Commands
             ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, true, camera);
             ActivePipelineInstance.MeshRenderCommands.RenderGPU(_renderPass);
 
-            // Safety net: if the GPU-indirect path fails/early-outs (common during init/validation),
-            // fall back to CPU mesh rendering for this pass so viewports (e.g. VR eyes) don't go blank.
+            // Safety net fallback is diagnostics-only for Vulkan shipping profiles.
             if (ActivePipelineInstance.MeshRenderCommands.TryGetGpuPass(_renderPass, out var gpuPass) && gpuPass.VisibleCommandCount == 0)
-                ActivePipelineInstance.MeshRenderCommands.RenderCPUMeshOnly(_renderPass);
+            {
+                bool allowCpuSafetyNet = !VulkanFeatureProfile.IsActive ||
+                    VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;
+
+                if (allowCpuSafetyNet)
+                {
+                    ActivePipelineInstance.MeshRenderCommands.RenderCPUMeshOnly(_renderPass);
+                }
+                else
+                {
+                    Engine.Rendering.Stats.RecordGpuCpuFallback(1, 0);
+                    if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+                    {
+                        XREngine.Debug.LogWarning(
+                            $"[GPU-PIPELINE] Render pass {_renderPass} produced zero visible GPU commands; CPU mesh safety-net suppressed for profile {VulkanFeatureProfile.ActiveProfile}.");
+                    }
+                }
+            }
         }
 
         private void RenderCPU()

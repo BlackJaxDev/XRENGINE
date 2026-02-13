@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Vulkan
         private readonly object _oneTimeSubmitLock = new();
         private bool _enableSecondaryCommandBuffers = true;
         private bool _enableParallelSecondaryCommandBufferRecording = true;
+        private int _parallelSecondaryIndirectRunThreshold = 4;
 
         private sealed class ComputeTransientResources
         {
@@ -328,12 +329,59 @@ namespace XREngine.Rendering.Vulkan
 
                 var imageBarriers = _barrierPlanner.GetBarriersForPass(passIndex);
                 var bufferBarriers = _barrierPlanner.GetBufferBarriersForPass(passIndex);
+                int queueOwnershipTransfers = 0;
+                int stageFlushes = 0;
+
+                for (int i = 0; i < imageBarriers.Count; i++)
+                {
+                    VulkanBarrierPlanner.PlannedImageBarrier planned = imageBarriers[i];
+                    if (planned.SrcQueueFamilyIndex != Vk.QueueFamilyIgnored &&
+                        planned.DstQueueFamilyIndex != Vk.QueueFamilyIgnored &&
+                        planned.SrcQueueFamilyIndex != planned.DstQueueFamilyIndex)
+                    {
+                        queueOwnershipTransfers++;
+                    }
+
+                    if (planned.Previous.StageMask != planned.Next.StageMask)
+                        stageFlushes++;
+                }
+
+                for (int i = 0; i < bufferBarriers.Count; i++)
+                {
+                    VulkanBarrierPlanner.PlannedBufferBarrier planned = bufferBarriers[i];
+                    if (planned.SrcQueueFamilyIndex != Vk.QueueFamilyIgnored &&
+                        planned.DstQueueFamilyIndex != Vk.QueueFamilyIgnored &&
+                        planned.SrcQueueFamilyIndex != planned.DstQueueFamilyIndex)
+                    {
+                        queueOwnershipTransfers++;
+                    }
+
+                    if (planned.Previous.StageMask != planned.Next.StageMask)
+                        stageFlushes++;
+                }
+
                 if (imageBarriers.Count > 0 || bufferBarriers.Count > 0)
                 {
                     CmdBeginLabel(commandBuffer, "PassBarriers");
                     EmitPlannedImageBarriers(commandBuffer, imageBarriers);
                     EmitPlannedBufferBarriers(commandBuffer, bufferBarriers);
                     CmdEndLabel(commandBuffer);
+
+                    Engine.Rendering.Stats.RecordVulkanBarrierPlannerPass(
+                        imageBarrierCount: imageBarriers.Count,
+                        bufferBarrierCount: bufferBarriers.Count,
+                        queueOwnershipTransfers: queueOwnershipTransfers,
+                        stageFlushes: stageFlushes);
+
+                    Debug.VulkanEvery(
+                        $"Vulkan.PassBarrierSummary.{passIndex}",
+                        TimeSpan.FromSeconds(2),
+                        "Pass barrier summary: pass={0} image={1} buffer={2} queueTransfers={3} stageFlushes={4}",
+                        passIndex,
+                        imageBarriers.Count,
+                        bufferBarriers.Count,
+                        queueOwnershipTransfers,
+                        stageFlushes);
                 }
             }
 
@@ -468,7 +516,11 @@ namespace XREngine.Rendering.Vulkan
                             }
 
                             int runCount = runEnd - opIndex + 1;
-                            if (runCount > 1)
+                            bool useParallelSecondary =
+                                _enableParallelSecondaryCommandBufferRecording &&
+                                runCount >= Math.Max(_parallelSecondaryIndirectRunThreshold, 2);
+
+                            if (runCount > 1 && useParallelSecondary)
                             {
                                 ExecuteSecondaryCommandBufferBatchParallel(
                                     commandBuffer,
@@ -479,11 +531,36 @@ namespace XREngine.Rendering.Vulkan
                                         IndirectDrawOp runOp = (IndirectDrawOp)ops[opIndex + relativeIndex];
                                         RecordIndirectDrawOp(secondary, runOp);
                                     });
+                                Engine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
+                                    usedSecondary: true,
+                                    usedParallel: true,
+                                    opCount: runCount);
+                                opIndex = runEnd;
+                            }
+                            else if (runCount > 1)
+                            {
+                                for (int relativeIndex = 0; relativeIndex < runCount; relativeIndex++)
+                                {
+                                    IndirectDrawOp runOp = (IndirectDrawOp)ops[opIndex + relativeIndex];
+                                    ExecuteSecondaryCommandBuffer(commandBuffer, "IndirectDraw", secondary => RecordIndirectDrawOp(secondary, runOp));
+                                }
+
+                                Engine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
+                                    usedSecondary: true,
+                                    usedParallel: false,
+                                    opCount: runCount);
                                 opIndex = runEnd;
                             }
                             else
                             {
-                                ExecuteSecondaryCommandBuffer(commandBuffer, "IndirectDraw", secondary => RecordIndirectDrawOp(secondary, indirectOp));
+                                CmdBeginLabel(commandBuffer, "IndirectDraw");
+                                RecordIndirectDrawOp(commandBuffer, indirectOp);
+                                CmdEndLabel(commandBuffer);
+
+                                Engine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
+                                    usedSecondary: false,
+                                    usedParallel: false,
+                                    opCount: 1);
                             }
                         }
                         else
@@ -491,6 +568,11 @@ namespace XREngine.Rendering.Vulkan
                             CmdBeginLabel(commandBuffer, "IndirectDraw");
                             RecordIndirectDrawOp(commandBuffer, indirectOp);
                             CmdEndLabel(commandBuffer);
+
+                            Engine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
+                                usedSecondary: false,
+                                usedParallel: false,
+                                opCount: 1);
                         }
                         break;
 
@@ -732,6 +814,32 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        private bool PlannerCoversIndirectBufferTransition(int passIndex, Silk.NET.Vulkan.Buffer indirectBuffer)
+        {
+            IReadOnlyList<VulkanBarrierPlanner.PlannedBufferBarrier> plannedBarriers = _barrierPlanner.GetBufferBarriersForPass(passIndex);
+            if (plannedBarriers.Count == 0)
+                return false;
+
+            for (int i = 0; i < plannedBarriers.Count; i++)
+            {
+                VulkanBarrierPlanner.PlannedBufferBarrier planned = plannedBarriers[i];
+                if (!TryResolveTrackedBuffer(planned.ResourceName, out Silk.NET.Vulkan.Buffer plannedBuffer, out _))
+                    continue;
+
+                if (plannedBuffer.Handle != indirectBuffer.Handle)
+                    continue;
+
+                bool transitionsToIndirectRead =
+                    (planned.Next.AccessMask & AccessFlags.IndirectCommandReadBit) != 0 ||
+                    (planned.Next.StageMask & PipelineStageFlags.DrawIndirectBit) != 0;
+
+                if (transitionsToIndirectRead)
+                    return true;
+            }
+
+            return false;
+        }
+
         private void RecordIndirectDrawOp(CommandBuffer commandBuffer, IndirectDrawOp op)
         {
             var indirectBuffer = op.IndirectBuffer.BufferHandle;
@@ -741,28 +849,52 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            // Emit memory barrier to ensure indirect buffer data is visible
-            MemoryBarrier memoryBarrier = new()
+            bool plannerCoversIndirectBarrier = PlannerCoversIndirectBufferTransition(op.PassIndex, indirectBuffer.Value);
+            if (!plannerCoversIndirectBarrier)
             {
-                SType = StructureType.MemoryBarrier,
-                SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit,
-                DstAccessMask = AccessFlags.IndirectCommandReadBit,
-            };
+                MemoryBarrier memoryBarrier = new()
+                {
+                    SType = StructureType.MemoryBarrier,
+                    SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit,
+                    DstAccessMask = AccessFlags.IndirectCommandReadBit,
+                };
 
-            Api!.CmdPipelineBarrier(
-                commandBuffer,
-                PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
-                PipelineStageFlags.DrawIndirectBit,
-                DependencyFlags.None,
-                1,
-                &memoryBarrier,
-                0,
-                null,
-                0,
-                null);
+                Api!.CmdPipelineBarrier(
+                    commandBuffer,
+                    PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
+                    PipelineStageFlags.DrawIndirectBit,
+                    DependencyFlags.None,
+                    1,
+                    &memoryBarrier,
+                    0,
+                    null,
+                    0,
+                    null);
+
+                Engine.Rendering.Stats.RecordVulkanAdhocBarrier(emittedCount: 1, redundantCount: 0);
+            }
+            else
+            {
+                Engine.Rendering.Stats.RecordVulkanAdhocBarrier(emittedCount: 0, redundantCount: 1);
+                Debug.VulkanWarningEvery(
+                    "Vulkan.IndirectBarrier.Overlap",
+                    TimeSpan.FromSeconds(2),
+                    "Indirect barrier overlap detected and suppressed: pass={0} drawCount={1}",
+                    op.PassIndex,
+                    op.DrawCount);
+            }
 
             // Calculate the byte offset into the indirect buffer
             ulong bufferOffset = op.ByteOffset;
+
+            if (op.DrawCount == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.Indirect.ZeroDrawCount",
+                    TimeSpan.FromSeconds(1),
+                    "RecordIndirectDrawOp skipped: drawCount was zero.");
+                return;
+            }
 
             if (op.UseCount && _supportsDrawIndirectCount && _khrDrawIndirectCount is not null)
             {
@@ -783,21 +915,28 @@ namespace XREngine.Rendering.Vulkan
                     0, // Offset into parameter buffer where count is stored
                     op.DrawCount,
                     op.Stride);
+
+                Engine.Rendering.Stats.RecordVulkanIndirectSubmission(
+                    usedCountPath: true,
+                    usedLoopFallback: false,
+                    apiCalls: 1,
+                    submittedDraws: op.DrawCount);
             }
             else
             {
-                // Standard indirect draw - issue one draw per command in the buffer
-                // Vulkan's vkCmdDrawIndexedIndirect can only do one draw at a time, 
-                // so we need to loop for multi-draw semantics
-                for (uint i = 0; i < op.DrawCount; i++)
-                {
-                    Api!.CmdDrawIndexedIndirect(
-                        commandBuffer,
-                        indirectBuffer.Value,
-                        bufferOffset + (i * op.Stride),
-                        1,
-                        op.Stride);
-                }
+                // Prefer contiguous multi-draw in the non-count path.
+                Api!.CmdDrawIndexedIndirect(
+                    commandBuffer,
+                    indirectBuffer.Value,
+                    bufferOffset,
+                    op.DrawCount,
+                    op.Stride);
+
+                Engine.Rendering.Stats.RecordVulkanIndirectSubmission(
+                    usedCountPath: false,
+                    usedLoopFallback: false,
+                    apiCalls: 1,
+                    submittedDraws: op.DrawCount);
             }
         }
 

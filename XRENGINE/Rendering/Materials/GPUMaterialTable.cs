@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -25,8 +26,12 @@ namespace XREngine.Rendering.Materials
     /// </summary>
     public class GPUMaterialTable : XRBase, IDisposable
     {
+        private static readonly uint[] EmptyEntryWords = new uint[12];
+        private readonly HashSet<uint> _activeMaterialIds = [];
+
         public XRDataBuffer Buffer { get; }
         public uint Capacity { get; private set; }
+        public IReadOnlyCollection<uint> ActiveMaterialIds => _activeMaterialIds;
 
         public GPUMaterialTable(uint initialCapacity = 128)
         {
@@ -63,7 +68,38 @@ namespace XREngine.Rendering.Materials
             scratch[10] = 0u;
             scratch[11] = 0u;
             Buffer.SetDataArrayRawAtIndex(materialID, scratch.ToArray());
+            _activeMaterialIds.Add(materialID);
             return materialID;
+        }
+
+        public bool Remove(uint materialID)
+        {
+            if (materialID >= Capacity)
+                return false;
+
+            if (!_activeMaterialIds.Remove(materialID))
+                return false;
+
+            Buffer.SetDataArrayRawAtIndex(materialID, EmptyEntryWords);
+            return true;
+        }
+
+        public uint TrimTrailingUnused(uint minimumCapacity = 128u)
+        {
+            uint safeMinimum = Math.Max(1u, minimumCapacity);
+            uint maxActive = 0u;
+            foreach (uint materialID in _activeMaterialIds)
+            {
+                if (materialID > maxActive)
+                    maxActive = materialID;
+            }
+
+            uint targetCapacity = Math.Max(safeMinimum, maxActive + 1u);
+            if (targetCapacity >= Capacity)
+                return Capacity;
+
+            Resize(targetCapacity);
+            return Capacity;
         }
 
         private void PackULong(ulong value, Span<uint> dst, int offset)

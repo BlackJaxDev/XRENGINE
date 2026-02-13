@@ -413,9 +413,9 @@ namespace XREngine.Core.Files
 
         public static byte[] GetAsset(string archiveFilePath, string assetPath)
         {
-            using FileMap map = FileMap.FromFile(archiveFilePath, FileMapProtect.Read);
             unsafe
             {
+                using FileMap map = FileMap.FromFile(archiveFilePath, FileMapProtect.Read);
                 using var reader = new CookedBinaryReader((byte*)map.Address, map.Length);
                 if (reader.ReadInt32() != Magic)
                     throw new InvalidOperationException("Invalid asset archive format.");

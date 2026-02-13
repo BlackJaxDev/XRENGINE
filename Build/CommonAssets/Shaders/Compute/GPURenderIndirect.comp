@@ -55,6 +55,8 @@ layout(std430, binding = 8) buffer StatsBuffer
     uint StatsBvhRayTimeHi;
 };
 
+layout(std430, binding = 9) readonly buffer CulledHotCommandsBuffer { uint culledHot[]; };
+
 struct GPUViewDescriptor
 {
     uint ViewId;
@@ -95,6 +97,7 @@ uniform int MaxIndirectDraws;      // capacity in draws
 uniform uint StatsEnabled;         // 0 when stats buffer is unbound
 uniform int ActiveViewCount;
 uniform int SourceViewId;
+uniform int UseHotCommands;
 //uniform int UseSorted;             // 1 = use keyIndexPairs for ordering
 
 void main()
@@ -134,8 +137,24 @@ void main()
     //}
 
     int base = int(idx) * COMMAND_FLOATS;
-    uint renderPass = floatBitsToUint(culled[base + 40]);
-    uint instanceCount = floatBitsToUint(culled[base + 39]);
+    int hotBase = int(idx) * 16;
+
+    uint renderPass;
+    uint instanceCount;
+    uint meshID;
+
+    if (UseHotCommands != 0)
+    {
+        renderPass = culledHot[hotBase + 8];
+        instanceCount = culledHot[hotBase + 7];
+        meshID = culledHot[hotBase + 4];
+    }
+    else
+    {
+        renderPass = floatBitsToUint(culled[base + 40]);
+        instanceCount = floatBitsToUint(culled[base + 39]);
+        meshID = floatBitsToUint(culled[base + 36]);
+    }
 
     // Defensive pass filter (culling shader should already filter by pass, but keep this to avoid
     // drawing mixed-pass command buffers if that assumption ever changes).
@@ -172,7 +191,6 @@ void main()
         return;
 
     // MeshDataBuffer is indexed by MeshID (uint4 per mesh): [IndexCount, FirstIndex, BaseVertex, BaseInstance]
-    uint meshID = floatBitsToUint(culled[base + 36]);
     uint submeshOffset = meshID * 4u;
     if (submeshOffset + 3u >= submeshData.length())
         return;

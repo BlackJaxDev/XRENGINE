@@ -15,29 +15,10 @@ namespace XREngine.UnitTests.Rendering;
 /// fallback paths, and render state isolation between batches.
 /// </summary>
 [TestFixture]
-public class IndirectRenderingAdditionalTests
+public class IndirectRenderingAdditionalTests : GpuTestBase
 {
-    private const int Width = 256;
-    private const int Height = 256;
-
-    private static bool IsTrue(string? v)
-    {
-        if (string.IsNullOrWhiteSpace(v))
-            return false;
-        v = v.Trim();
-        return v.Equals("1") || v.Equals("true", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool ShowWindow => IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_TEST_WINDOWS"));
-
-    private static int ShowWindowDurationMs
-    {
-        get
-        {
-            var env = Environment.GetEnvironmentVariable("XR_SHOW_TEST_WINDOW_MS");
-            return int.TryParse(env, out var ms) ? ms : 2000;
-        }
-    }
+    protected override int Width => 256;
+    protected override int Height => 256;
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct DrawElementsIndirectCommand
@@ -1023,50 +1004,5 @@ public class IndirectRenderingAdditionalTests
 
     #endregion
 
-    #region Helper Methods
-
-    private static uint CreateProgram(GL gl, string vertexSource, string fragmentSource)
-    {
-        uint vertexShader = CompileShader(gl, ShaderType.VertexShader, vertexSource);
-        uint fragmentShader = CompileShader(gl, ShaderType.FragmentShader, fragmentSource);
-
-        uint program = gl.CreateProgram();
-        gl.AttachShader(program, vertexShader);
-        gl.AttachShader(program, fragmentShader);
-        gl.LinkProgram(program);
-
-        gl.GetProgram(program, ProgramPropertyARB.LinkStatus, out int status);
-        if (status == 0)
-        {
-            string infoLog = gl.GetProgramInfoLog(program);
-            gl.DeleteShader(vertexShader);
-            gl.DeleteShader(fragmentShader);
-            gl.DeleteProgram(program);
-            throw new InvalidOperationException($"Program link failed: {infoLog}");
-        }
-
-        gl.DeleteShader(vertexShader);
-        gl.DeleteShader(fragmentShader);
-
-        return program;
-    }
-
-    private static uint CompileShader(GL gl, ShaderType type, string source)
-    {
-        uint shader = gl.CreateShader(type);
-        gl.ShaderSource(shader, source);
-        gl.CompileShader(shader);
-
-        gl.GetShader(shader, ShaderParameterName.CompileStatus, out int status);
-        if (status == 0)
-        {
-            string infoLog = gl.GetShaderInfoLog(shader);
-            gl.DeleteShader(shader);
-            throw new InvalidOperationException($"Shader compilation failed ({type}): {infoLog}");
-        }
-
-        return shader;
-    }
-
-    #endregion
+    // CompileShader, CreateProgram, LinkProgram inherited from GpuTestBase
 }

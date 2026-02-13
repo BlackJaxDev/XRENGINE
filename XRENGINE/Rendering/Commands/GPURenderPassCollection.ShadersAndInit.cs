@@ -133,6 +133,7 @@ namespace XREngine.Rendering.Commands
             _buildGpuBatchesComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderBuildBatches.comp", EShaderType.Compute));
             //RadixIndexSortComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderRadixIndexSort.comp", EShaderType.Compute));
             _indirectRenderTaskShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderIndirect.comp", EShaderType.Compute));
+            _buildHotCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderBuildHotCommands.comp", EShaderType.Compute));
             _resetCountersComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderResetCounters.comp", EShaderType.Compute));
             _extractSoAComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderExtractSoA.comp", EShaderType.Compute));
             _soACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderCullingSoA.comp", EShaderType.Compute));
@@ -362,6 +363,27 @@ namespace XREngine.Rendering.Commands
             {
                 _culledSceneToRenderBuffer?.Destroy();
                 _culledSceneToRenderBuffer = MakeCulledSceneToRenderBuffer(capacity);
+            }
+
+            if (IsHotCommandLayoutEnabled())
+            {
+                if (_sourceHotCommandBuffer is null || _sourceHotCommandBuffer.ElementCount != capacity)
+                {
+                    _sourceHotCommandBuffer?.Destroy();
+                    _sourceHotCommandBuffer = MakeHotCommandBuffer("SourceHotCommands", capacity);
+                }
+
+                if (_culledHotCommandBuffer is null || _culledHotCommandBuffer.ElementCount != capacity)
+                {
+                    _culledHotCommandBuffer?.Destroy();
+                    _culledHotCommandBuffer = MakeHotCommandBuffer("CulledHotCommands", capacity);
+                }
+
+                if (_occlusionCulledHotBuffer is null || _occlusionCulledHotBuffer.ElementCount != capacity)
+                {
+                    _occlusionCulledHotBuffer?.Destroy();
+                    _occlusionCulledHotBuffer = MakeHotCommandBuffer("OcclusionCulledHotCommands", capacity);
+                }
             }
 
             // Track remap needs per-buffer

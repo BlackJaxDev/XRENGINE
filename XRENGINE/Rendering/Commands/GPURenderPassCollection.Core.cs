@@ -8,6 +8,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Materials;
+using XREngine.Rendering.Vulkan;
 using static XREngine.Rendering.GpuDispatchLogger;
 
 namespace XREngine.Rendering.Commands
@@ -139,6 +140,12 @@ namespace XREngine.Rendering.Commands
             /// Enables bounds checking for the copy shader's atomic counter to detect overflow.
             /// </summary>
             public bool ValidateCopyCommandAtomicBounds { get; set; } = true;
+
+            /// <summary>
+            /// Enables compact hot-command buffers for culling/occlusion/indirect stages.
+            /// Falls back to legacy 48-float command reads when disabled.
+            /// </summary>
+            public bool EnableHotCommandLayout { get; set; } = true;
         }
 
         private static readonly IndirectDebugSettings _indirectDebug = new();
@@ -151,6 +158,24 @@ namespace XREngine.Rendering.Commands
 
             lock (_indirectDebug)
                 configure(_indirectDebug);
+        }
+
+        private static bool IsShippingHotOnlyProfile()
+            => VulkanFeatureProfile.IsActive && VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.ShippingFast;
+
+        private static bool IsHotCommandLayoutEnabled()
+            => IndirectDebug.EnableHotCommandLayout || IsShippingHotOnlyProfile();
+
+        private static bool IsHotCommandLayoutRequired()
+            => IsShippingHotOnlyProfile();
+
+        private static uint ComputeBoundedDoublingCapacity(uint currentCapacity, uint minimumRequired)
+        {
+            ulong current = Math.Max((ulong)currentCapacity, 1UL);
+            ulong doubled = current * 2UL;
+            ulong required = Math.Max((ulong)minimumRequired, doubled);
+            ulong bounded = Math.Min(required, int.MaxValue);
+            return (uint)bounded;
         }
 
         private static readonly HashSet<string> _debugCategories = new(StringComparer.OrdinalIgnoreCase)
@@ -269,6 +294,12 @@ namespace XREngine.Rendering.Commands
     private XRDataBuffer? _indirectDrawBuffer;         // DrawElementsIndirectCommand array
     private XRDataBuffer? _culledSceneToRenderBuffer;  // Compacted visible commands
     private XRDataBuffer? _passFilterDebugBuffer;      // Optional GPU pass-filter instrumentation
+    private XRDataBuffer? _sourceHotCommandBuffer;     // Hot source commands (16 uints)
+    private XRDataBuffer? _culledHotCommandBuffer;     // Hot compacted visible commands
+    private XRDataBuffer? _occlusionCulledHotBuffer;   // Hot ping-pong output for occlusion refine
+    private bool _sourceCommandsUseHotLayout;
+    private bool _culledHotCommandsValid;
+    private bool _culledCommandsUseHotLayout;
 
         // Synchronization & lifecycle
         private readonly Lock _lock = new();
@@ -293,6 +324,27 @@ namespace XREngine.Rendering.Commands
                 false)
             {
                 Usage = EBufferUsage.StreamDraw, //We're copying commands from the gpu scene buffer to this one every frame, preferably culled using the camera
+                DisposeOnPush = false,
+                Resizable = false,
+                StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read,
+                RangeFlags = EBufferMapRangeFlags.Read,
+            };
+            buffer.Generate();
+            return buffer;
+        }
+
+        private static XRDataBuffer MakeHotCommandBuffer(string name, uint capacity)
+        {
+            XRDataBuffer buffer = new(
+                name,
+                EBufferTarget.ShaderStorageBuffer,
+                capacity,
+                EComponentType.UInt,
+                GPUScene.CommandHotUIntCount,
+                false,
+                false)
+            {
+                Usage = EBufferUsage.StreamDraw,
                 DisposeOnPush = false,
                 Resizable = false,
                 StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read,
@@ -331,6 +383,7 @@ namespace XREngine.Rendering.Commands
         public XRRenderProgram? _buildGpuBatchesComputeShader;
         //public XRRenderProgram? RadixIndexSortComputeShader;
         public XRRenderProgram? _indirectRenderTaskShader;
+        public XRRenderProgram? _buildHotCommandsProgram;
         public XRRenderProgram? _resetCountersComputeShader;
         public XRRenderProgram? _debugDrawProgram;
         private XRRenderProgram? _copyCommandsProgram; // new: passthrough copy

@@ -456,7 +456,7 @@ public unsafe partial class VulkanRenderer
         _resourceAllocator.AllocatePhysicalBuffers(this);
 
         _compiledRenderGraph = _renderGraphCompiler.Compile(context.PassMetadata);
-        VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership = BuildQueueOwnershipConfig();
+        VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership = BuildQueueOwnershipConfig(context.PassMetadata);
         _barrierPlanner.Rebuild(
             context.PassMetadata,
             _resourcePlanner,
@@ -465,17 +465,53 @@ public unsafe partial class VulkanRenderer
             queueOwnership);
     }
 
-    private VulkanBarrierPlanner.QueueOwnershipConfig BuildQueueOwnershipConfig()
+    private VulkanBarrierPlanner.QueueOwnershipConfig BuildQueueOwnershipConfig(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
-        uint graphicsFamily = FamilyQueueIndices.GraphicsFamilyIndex ?? 0u;
+        QueueFamilyIndices familyIndices = FamilyQueueIndices;
+        uint graphicsFamily = familyIndices.GraphicsFamilyIndex ?? 0u;
+        uint candidateComputeFamily = familyIndices.ComputeFamilyIndex ?? graphicsFamily;
+        uint candidateTransferFamily = familyIndices.TransferFamilyIndex ?? candidateComputeFamily;
 
-        // The current backend records all work into command buffers sourced from the graphics
-        // queue family. Keep ownership in that family until async compute/transfer submission
-        // paths are implemented.
+        EVulkanGpuDrivenProfile profile = VulkanFeatureProfile.ActiveProfile;
+        bool hasMetadata = passMetadata is { Count: > 0 };
+        int computePassCount = hasMetadata ? passMetadata!.Count(p => p.Stage == RenderGraphPassStage.Compute) : 0;
+        int transferUsageCount = hasMetadata
+            ? passMetadata!.Sum(p => p.ResourceUsages.Count(u => u.ResourceType is RenderPassResourceType.TransferSource or RenderPassResourceType.TransferDestination))
+            : 0;
+
+        bool preferComputeOwnership = VulkanFeatureProfile.IsActive && profile is EVulkanGpuDrivenProfile.DevParity or EVulkanGpuDrivenProfile.Diagnostics;
+        bool preferTransferOwnership = VulkanFeatureProfile.IsActive && profile == EVulkanGpuDrivenProfile.Diagnostics;
+
+        bool useComputeOwnership =
+            preferComputeOwnership &&
+            candidateComputeFamily != graphicsFamily &&
+            computePassCount >= 2;
+
+        bool useTransferOwnership =
+            preferTransferOwnership &&
+            candidateTransferFamily != graphicsFamily &&
+            transferUsageCount >= 4;
+
+        uint computeFamily = useComputeOwnership ? candidateComputeFamily : graphicsFamily;
+        uint transferFamily = useTransferOwnership ? candidateTransferFamily : computeFamily;
+
+        Debug.VulkanEvery(
+            "Vulkan.QueueOwnership.Policy",
+            TimeSpan.FromSeconds(2),
+            "Queue ownership policy: profile={0} gfx={1} compute={2} transfer={3} useCompute={4} useTransfer={5} computePasses={6} transferUsages={7}",
+            profile,
+            graphicsFamily,
+            computeFamily,
+            transferFamily,
+            useComputeOwnership,
+            useTransferOwnership,
+            computePassCount,
+            transferUsageCount);
+
         return new VulkanBarrierPlanner.QueueOwnershipConfig(
             graphicsFamily,
-            graphicsFamily,
-            graphicsFamily);
+            computeFamily,
+            transferFamily);
     }
 
     internal void AllocatePhysicalImage(VulkanPhysicalImageGroup group, ref Image image, ref DeviceMemory memory)

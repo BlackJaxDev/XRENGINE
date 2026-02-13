@@ -25,12 +25,56 @@ namespace XREngine
                 private static int _gpuCpuFallbackRecoveredCommands;
                 private static int _lastFrameGpuCpuFallbackEvents;
                 private static int _lastFrameGpuCpuFallbackRecoveredCommands;
+                private static int _vulkanIndirectCountPathCalls;
+                private static int _vulkanIndirectNonCountPathCalls;
+                private static int _vulkanIndirectLoopFallbackCalls;
+                private static int _vulkanIndirectApiCalls;
+                private static long _vulkanIndirectSubmittedDraws;
+                private static int _vulkanIndirectRequestedBatches;
+                private static int _vulkanIndirectMergedBatches;
+                private static int _vulkanIndirectPrimaryRecordOps;
+                private static int _vulkanIndirectSecondaryRecordOps;
+                private static int _vulkanIndirectParallelSecondaryRecordOps;
+                private static int _vulkanPlannedImageBarriers;
+                private static int _vulkanPlannedBufferBarriers;
+                private static int _vulkanQueueOwnershipTransfers;
+                private static int _vulkanBarrierStageFlushes;
+                private static int _vulkanAdhocBarrierEmits;
+                private static int _vulkanAdhocBarrierRedundant;
+                private static int _lastFrameVulkanIndirectCountPathCalls;
+                private static int _lastFrameVulkanIndirectNonCountPathCalls;
+                private static int _lastFrameVulkanIndirectLoopFallbackCalls;
+                private static int _lastFrameVulkanIndirectApiCalls;
+                private static long _lastFrameVulkanIndirectSubmittedDraws;
+                private static int _lastFrameVulkanIndirectRequestedBatches;
+                private static int _lastFrameVulkanIndirectMergedBatches;
+                private static int _lastFrameVulkanIndirectPrimaryRecordOps;
+                private static int _lastFrameVulkanIndirectSecondaryRecordOps;
+                private static int _lastFrameVulkanIndirectParallelSecondaryRecordOps;
+                private static int _lastFrameVulkanPlannedImageBarriers;
+                private static int _lastFrameVulkanPlannedBufferBarriers;
+                private static int _lastFrameVulkanQueueOwnershipTransfers;
+                private static int _lastFrameVulkanBarrierStageFlushes;
+                private static int _lastFrameVulkanAdhocBarrierEmits;
+                private static int _lastFrameVulkanAdhocBarrierRedundant;
 
                 // GPU->CPU readback / mapping counters (per-frame)
                 private static int _gpuMappedBuffers;
                 private static long _gpuReadbackBytes;
                 private static int _lastFrameGpuMappedBuffers;
                 private static long _lastFrameGpuReadbackBytes;
+                private static int _rtxIoDecompressCalls;
+                private static int _rtxIoCopyIndirectCalls;
+                private static long _rtxIoCompressedBytes;
+                private static long _rtxIoDecompressedBytes;
+                private static long _rtxIoCopyBytes;
+                private static long _rtxIoSubmissionTimeTicks;
+                private static int _lastFrameRtxIoDecompressCalls;
+                private static int _lastFrameRtxIoCopyIndirectCalls;
+                private static long _lastFrameRtxIoCompressedBytes;
+                private static long _lastFrameRtxIoDecompressedBytes;
+                private static long _lastFrameRtxIoCopyBytes;
+                private static long _lastFrameRtxIoSubmissionTimeTicks;
                 private static int _vrLeftEyeDraws;
                 private static int _vrRightEyeDraws;
                 private static int _lastFrameVrLeftEyeDraws;
@@ -106,6 +150,32 @@ namespace XREngine
                 /// Total bytes read back from GPU buffers in the last completed frame.
                 /// </summary>
                 public static long GpuReadbackBytes => _lastFrameGpuReadbackBytes;
+                public static int RtxIoDecompressCalls => _lastFrameRtxIoDecompressCalls;
+                public static int RtxIoCopyIndirectCalls => _lastFrameRtxIoCopyIndirectCalls;
+                public static long RtxIoCompressedBytes => _lastFrameRtxIoCompressedBytes;
+                public static long RtxIoDecompressedBytes => _lastFrameRtxIoDecompressedBytes;
+                public static long RtxIoCopyBytes => _lastFrameRtxIoCopyBytes;
+                public static double RtxIoSubmissionTimeMs => TimeSpan.FromTicks(_lastFrameRtxIoSubmissionTimeTicks).TotalMilliseconds;
+                public static int VulkanIndirectCountPathCalls => _lastFrameVulkanIndirectCountPathCalls;
+                public static int VulkanIndirectNonCountPathCalls => _lastFrameVulkanIndirectNonCountPathCalls;
+                public static int VulkanIndirectLoopFallbackCalls => _lastFrameVulkanIndirectLoopFallbackCalls;
+                public static int VulkanIndirectApiCalls => _lastFrameVulkanIndirectApiCalls;
+                public static long VulkanIndirectSubmittedDraws => _lastFrameVulkanIndirectSubmittedDraws;
+                public static int VulkanIndirectRequestedBatches => _lastFrameVulkanIndirectRequestedBatches;
+                public static int VulkanIndirectMergedBatches => _lastFrameVulkanIndirectMergedBatches;
+                public static int VulkanIndirectPrimaryRecordOps => _lastFrameVulkanIndirectPrimaryRecordOps;
+                public static int VulkanIndirectSecondaryRecordOps => _lastFrameVulkanIndirectSecondaryRecordOps;
+                public static int VulkanIndirectParallelSecondaryRecordOps => _lastFrameVulkanIndirectParallelSecondaryRecordOps;
+                public static int VulkanPlannedImageBarriers => _lastFrameVulkanPlannedImageBarriers;
+                public static int VulkanPlannedBufferBarriers => _lastFrameVulkanPlannedBufferBarriers;
+                public static int VulkanQueueOwnershipTransfers => _lastFrameVulkanQueueOwnershipTransfers;
+                public static int VulkanBarrierStageFlushes => _lastFrameVulkanBarrierStageFlushes;
+                public static int VulkanAdhocBarrierEmits => _lastFrameVulkanAdhocBarrierEmits;
+                public static int VulkanAdhocBarrierRedundant => _lastFrameVulkanAdhocBarrierRedundant;
+                public static double VulkanIndirectBatchMergeRatio
+                    => _lastFrameVulkanIndirectRequestedBatches <= 0
+                        ? 1.0
+                        : (double)_lastFrameVulkanIndirectMergedBatches / _lastFrameVulkanIndirectRequestedBatches;
                 public static int VrLeftEyeDraws => _lastFrameVrLeftEyeDraws;
                 public static int VrRightEyeDraws => _lastFrameVrRightEyeDraws;
                 public static int VrLeftEyeVisible => _lastFrameVrLeftEyeVisible;
@@ -206,6 +276,28 @@ namespace XREngine
                     _lastFrameGpuCpuFallbackRecoveredCommands = _gpuCpuFallbackRecoveredCommands;
                     _lastFrameGpuMappedBuffers = _gpuMappedBuffers;
                     _lastFrameGpuReadbackBytes = _gpuReadbackBytes;
+                    _lastFrameRtxIoDecompressCalls = _rtxIoDecompressCalls;
+                    _lastFrameRtxIoCopyIndirectCalls = _rtxIoCopyIndirectCalls;
+                    _lastFrameRtxIoCompressedBytes = _rtxIoCompressedBytes;
+                    _lastFrameRtxIoDecompressedBytes = _rtxIoDecompressedBytes;
+                    _lastFrameRtxIoCopyBytes = _rtxIoCopyBytes;
+                    _lastFrameRtxIoSubmissionTimeTicks = _rtxIoSubmissionTimeTicks;
+                    _lastFrameVulkanIndirectCountPathCalls = _vulkanIndirectCountPathCalls;
+                    _lastFrameVulkanIndirectNonCountPathCalls = _vulkanIndirectNonCountPathCalls;
+                    _lastFrameVulkanIndirectLoopFallbackCalls = _vulkanIndirectLoopFallbackCalls;
+                    _lastFrameVulkanIndirectApiCalls = _vulkanIndirectApiCalls;
+                    _lastFrameVulkanIndirectSubmittedDraws = _vulkanIndirectSubmittedDraws;
+                    _lastFrameVulkanIndirectRequestedBatches = _vulkanIndirectRequestedBatches;
+                    _lastFrameVulkanIndirectMergedBatches = _vulkanIndirectMergedBatches;
+                    _lastFrameVulkanIndirectPrimaryRecordOps = _vulkanIndirectPrimaryRecordOps;
+                    _lastFrameVulkanIndirectSecondaryRecordOps = _vulkanIndirectSecondaryRecordOps;
+                    _lastFrameVulkanIndirectParallelSecondaryRecordOps = _vulkanIndirectParallelSecondaryRecordOps;
+                    _lastFrameVulkanPlannedImageBarriers = _vulkanPlannedImageBarriers;
+                    _lastFrameVulkanPlannedBufferBarriers = _vulkanPlannedBufferBarriers;
+                    _lastFrameVulkanQueueOwnershipTransfers = _vulkanQueueOwnershipTransfers;
+                    _lastFrameVulkanBarrierStageFlushes = _vulkanBarrierStageFlushes;
+                    _lastFrameVulkanAdhocBarrierEmits = _vulkanAdhocBarrierEmits;
+                    _lastFrameVulkanAdhocBarrierRedundant = _vulkanAdhocBarrierRedundant;
                     _lastFrameVrLeftEyeDraws = _vrLeftEyeDraws;
                     _lastFrameVrRightEyeDraws = _vrRightEyeDraws;
                     _lastFrameVrLeftEyeVisible = _vrLeftEyeVisible;
@@ -223,6 +315,28 @@ namespace XREngine
                     _gpuCpuFallbackRecoveredCommands = 0;
                     _gpuMappedBuffers = 0;
                     _gpuReadbackBytes = 0;
+                    _rtxIoDecompressCalls = 0;
+                    _rtxIoCopyIndirectCalls = 0;
+                    _rtxIoCompressedBytes = 0;
+                    _rtxIoDecompressedBytes = 0;
+                    _rtxIoCopyBytes = 0;
+                    _rtxIoSubmissionTimeTicks = 0;
+                    _vulkanIndirectCountPathCalls = 0;
+                    _vulkanIndirectNonCountPathCalls = 0;
+                    _vulkanIndirectLoopFallbackCalls = 0;
+                    _vulkanIndirectApiCalls = 0;
+                    _vulkanIndirectSubmittedDraws = 0;
+                    _vulkanIndirectRequestedBatches = 0;
+                    _vulkanIndirectMergedBatches = 0;
+                    _vulkanIndirectPrimaryRecordOps = 0;
+                    _vulkanIndirectSecondaryRecordOps = 0;
+                    _vulkanIndirectParallelSecondaryRecordOps = 0;
+                    _vulkanPlannedImageBarriers = 0;
+                    _vulkanPlannedBufferBarriers = 0;
+                    _vulkanQueueOwnershipTransfers = 0;
+                    _vulkanBarrierStageFlushes = 0;
+                    _vulkanAdhocBarrierEmits = 0;
+                    _vulkanAdhocBarrierRedundant = 0;
                     _vrLeftEyeDraws = 0;
                     _vrRightEyeDraws = 0;
                     _vrLeftEyeVisible = 0;
@@ -255,6 +369,37 @@ namespace XREngine
                         return;
 
                     Interlocked.Add(ref _gpuReadbackBytes, bytes);
+                }
+
+                public static void RecordRtxIoDecompression(long compressedBytes, long decompressedBytes, TimeSpan submissionTime)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _rtxIoDecompressCalls);
+
+                    if (compressedBytes > 0)
+                        Interlocked.Add(ref _rtxIoCompressedBytes, compressedBytes);
+
+                    if (decompressedBytes > 0)
+                        Interlocked.Add(ref _rtxIoDecompressedBytes, decompressedBytes);
+
+                    if (submissionTime.Ticks > 0)
+                        Interlocked.Add(ref _rtxIoSubmissionTimeTicks, submissionTime.Ticks);
+                }
+
+                public static void RecordRtxIoCopyIndirect(long copiedBytes, TimeSpan submissionTime)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Increment(ref _rtxIoCopyIndirectCalls);
+
+                    if (copiedBytes > 0)
+                        Interlocked.Add(ref _rtxIoCopyBytes, copiedBytes);
+
+                    if (submissionTime.Ticks > 0)
+                        Interlocked.Add(ref _rtxIoSubmissionTimeTicks, submissionTime.Ticks);
                 }
 
                 public static void RecordVrPerViewDrawCounts(uint leftDraws, uint rightDraws)
@@ -494,6 +639,85 @@ namespace XREngine
                     Interlocked.Add(ref _gpuCpuFallbackEvents, eventCount);
                     if (recoveredCommands > 0)
                         Interlocked.Add(ref _gpuCpuFallbackRecoveredCommands, recoveredCommands);
+                }
+
+                public static void RecordVulkanIndirectSubmission(bool usedCountPath, bool usedLoopFallback, int apiCalls, uint submittedDraws)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    if (usedCountPath)
+                        Interlocked.Increment(ref _vulkanIndirectCountPathCalls);
+                    else
+                        Interlocked.Increment(ref _vulkanIndirectNonCountPathCalls);
+
+                    if (usedLoopFallback)
+                        Interlocked.Increment(ref _vulkanIndirectLoopFallbackCalls);
+
+                    if (apiCalls > 0)
+                        Interlocked.Add(ref _vulkanIndirectApiCalls, apiCalls);
+
+                    if (submittedDraws > 0)
+                        Interlocked.Add(ref _vulkanIndirectSubmittedDraws, submittedDraws);
+                }
+
+                public static void RecordVulkanIndirectBatchMerge(int requestedBatchCount, int mergedBatchCount)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    if (requestedBatchCount > 0)
+                        Interlocked.Add(ref _vulkanIndirectRequestedBatches, requestedBatchCount);
+
+                    if (mergedBatchCount > 0)
+                        Interlocked.Add(ref _vulkanIndirectMergedBatches, mergedBatchCount);
+                }
+
+                public static void RecordVulkanIndirectRecordingMode(bool usedSecondary, bool usedParallel, int opCount)
+                {
+                    if (!EnableTracking || opCount <= 0)
+                        return;
+
+                    if (!usedSecondary)
+                    {
+                        Interlocked.Add(ref _vulkanIndirectPrimaryRecordOps, opCount);
+                        return;
+                    }
+
+                    if (usedParallel)
+                        Interlocked.Add(ref _vulkanIndirectParallelSecondaryRecordOps, opCount);
+                    else
+                        Interlocked.Add(ref _vulkanIndirectSecondaryRecordOps, opCount);
+                }
+
+                public static void RecordVulkanBarrierPlannerPass(int imageBarrierCount, int bufferBarrierCount, int queueOwnershipTransfers, int stageFlushes)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    if (imageBarrierCount > 0)
+                        Interlocked.Add(ref _vulkanPlannedImageBarriers, imageBarrierCount);
+
+                    if (bufferBarrierCount > 0)
+                        Interlocked.Add(ref _vulkanPlannedBufferBarriers, bufferBarrierCount);
+
+                    if (queueOwnershipTransfers > 0)
+                        Interlocked.Add(ref _vulkanQueueOwnershipTransfers, queueOwnershipTransfers);
+
+                    if (stageFlushes > 0)
+                        Interlocked.Add(ref _vulkanBarrierStageFlushes, stageFlushes);
+                }
+
+                public static void RecordVulkanAdhocBarrier(int emittedCount, int redundantCount)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    if (emittedCount > 0)
+                        Interlocked.Add(ref _vulkanAdhocBarrierEmits, emittedCount);
+
+                    if (redundantCount > 0)
+                        Interlocked.Add(ref _vulkanAdhocBarrierRedundant, redundantCount);
                 }
 
                 /// <summary>

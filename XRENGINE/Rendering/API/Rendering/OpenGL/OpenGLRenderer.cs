@@ -175,6 +175,10 @@ namespace XREngine.Rendering.OpenGL
                 Engine.Rendering.State.OpenGLExtensions = extensions;
                 // Ray tracing / DLSS / XeSS are Vulkan-focused; do not probe GL_NV_ray_tracing on OpenGL startup.
                 Engine.Rendering.State.HasNvRayTracing = false;
+                Engine.Rendering.State.HasVulkanRayTracing = false;
+                Engine.Rendering.State.HasVulkanMemoryDecompression = false;
+                Engine.Rendering.State.HasVulkanCopyMemoryIndirect = false;
+                Engine.Rendering.State.HasVulkanRtxIo = false;
             }
 
             GLRenderProgram.ReadBinaryShaderCache(version);

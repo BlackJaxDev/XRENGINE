@@ -26,6 +26,8 @@ layout(std430, binding = 3) buffer OutCountBuffer
 };
 
 layout(std430, binding = 4) buffer OverflowFlagBuffer { uint OcclusionOverflowFlag; };
+layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer { uint inHotCommands[]; };
+layout(std430, binding = 10) writeonly buffer OutputHotCommandsBuffer { uint outHotCommands[]; };
 
 // Optional stats buffer (shared layout)
 layout(std430, binding = 8) buffer StatsBuffer {
@@ -54,13 +56,23 @@ uniform mat4 ViewProj;
 uniform int HiZMaxMip;
 uniform uint IsReversedDepth; // 1 if camera uses reversed Z
 uniform int MaxOutputCommands;
+uniform int UseHotCommands;
 
 const int COMMAND_FLOATS = 48;
+const int HOT_UINTS = 16;
 
 bool IsValidCommand(int base)
 {
     // Minimal validity: InstanceCount > 0
-    uint instanceCount = floatBitsToUint(inCommands[base + 39]);
+    uint instanceCount;
+    if (UseHotCommands != 0)
+    {
+        int hotBase = (base / COMMAND_FLOATS) * HOT_UINTS;
+        instanceCount = inHotCommands[hotBase + 7];
+    }
+    else
+        instanceCount = floatBitsToUint(inCommands[base + 39]);
+
     return instanceCount != 0u;
 }
 
@@ -209,11 +221,23 @@ void main()
     if (base + COMMAND_FLOATS > inCommands.length())
         return;
 
+    int hotBase = int(idx) * HOT_UINTS;
+
     if (!IsValidCommand(base))
         return;
 
-    vec3 center = vec3(inCommands[base + 32], inCommands[base + 33], inCommands[base + 34]);
-    float radius = inCommands[base + 35];
+    vec3 center;
+    float radius;
+    if (UseHotCommands != 0)
+    {
+        center = vec3(uintBitsToFloat(inHotCommands[hotBase + 0]), uintBitsToFloat(inHotCommands[hotBase + 1]), uintBitsToFloat(inHotCommands[hotBase + 2]));
+        radius = uintBitsToFloat(inHotCommands[hotBase + 3]);
+    }
+    else
+    {
+        center = vec3(inCommands[base + 32], inCommands[base + 33], inCommands[base + 34]);
+        radius = inCommands[base + 35];
+    }
 
     bool occluded = HiZOccluded(center, radius);
     if (occluded)
@@ -231,6 +255,15 @@ void main()
     for (int i = 0; i < COMMAND_FLOATS; ++i)
         outCommands[outBase + i] = inCommands[base + i];
 
-    uint instanceCount = floatBitsToUint(inCommands[base + 39]);
+    if (UseHotCommands != 0)
+    {
+        int outHotBase = int(outIndex) * HOT_UINTS;
+        for (int i = 0; i < HOT_UINTS; ++i)
+            outHotCommands[outHotBase + i] = inHotCommands[hotBase + i];
+    }
+
+    uint instanceCount = UseHotCommands != 0
+        ? inHotCommands[hotBase + 7]
+        : floatBitsToUint(inCommands[base + 39]);
     atomicAdd(OutInstanceCount, instanceCount);
 }

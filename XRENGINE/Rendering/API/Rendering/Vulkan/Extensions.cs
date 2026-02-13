@@ -1,6 +1,8 @@
 using Silk.NET.Core.Native;
+using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.EXT;
 using Silk.NET.Vulkan.Extensions.KHR;
+using Silk.NET.Vulkan.Extensions.NV;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -16,6 +18,24 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private bool _supportsDrawIndirectCount;
         private bool _supportsDescriptorIndexing;
+        private bool _supportsRuntimeDescriptorArray;
+        private bool _supportsDescriptorBindingPartiallyBound;
+        private bool _supportsDescriptorBindingUpdateAfterBind;
+        private NVMemoryDecompression? _nvMemoryDecompression;
+        private NVCopyMemoryIndirect? _nvCopyMemoryIndirect;
+        private bool _supportsBufferDeviceAddress;
+        private bool _supportsNvMemoryDecompression;
+        private bool _supportsNvCopyMemoryIndirect;
+        private MemoryDecompressionMethodFlagsNV _nvMemoryDecompressionMethods;
+        private ulong _nvMaxMemoryDecompressionIndirectCount;
+        private ulong _nvCopyMemoryIndirectSupportedQueues;
+
+        public bool SupportsNvMemoryDecompression => _supportsNvMemoryDecompression && _nvMemoryDecompression is not null;
+        public bool SupportsNvCopyMemoryIndirect => _supportsNvCopyMemoryIndirect && _nvCopyMemoryIndirect is not null;
+        public bool SupportsBufferDeviceAddress => _supportsBufferDeviceAddress;
+        public MemoryDecompressionMethodFlagsNV NvMemoryDecompressionMethods => _nvMemoryDecompressionMethods;
+        public ulong NvMaxMemoryDecompressionIndirectCount => _nvMaxMemoryDecompressionIndirectCount;
+        public ulong NvCopyMemoryIndirectSupportedQueues => _nvCopyMemoryIndirectSupportedQueues;
 
         private readonly string[] deviceExtensions =
         [
@@ -28,7 +48,9 @@ namespace XREngine.Rendering.Vulkan
         private readonly string[] optionalDeviceExtensions =
         [
             "VK_KHR_draw_indirect_count",
-            "VK_EXT_descriptor_indexing"
+            "VK_EXT_descriptor_indexing",
+            "VK_NV_memory_decompression",
+            "VK_NV_copy_memory_indirect"
         ];
 
         private string[] GetRequiredExtensions()

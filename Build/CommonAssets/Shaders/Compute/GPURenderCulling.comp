@@ -32,6 +32,8 @@ layout(std430, binding = 2) buffer CulledCountBuffer
     uint CulledOverflow;
 };
 layout(std430, binding = 3) buffer OverflowFlagBuffer { uint CullingOverflowFlag; };
+layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer { uint inHotCommands[]; };
+layout(std430, binding = 10) writeonly buffer CulledHotCommandsBuffer { uint outHotCommands[]; };
 layout(std430, binding = 8) buffer StatsBuffer {
     uint StatsInputCount;
     uint StatsCulledCount;
@@ -96,6 +98,7 @@ uniform int  MaxCulledCommands;
 uniform uint DisabledFlagsMask;
 uniform vec3 CameraPosition;
 uniform int ActiveViewCount;
+uniform int UseHotCommands;
 
 #define FLAG_TRANSPARENT    (1u<<0)
 #define FLAG_CAST_SHADOW    (1u<<1)
@@ -104,6 +107,7 @@ uniform int ActiveViewCount;
 #define FLAG_DOUBLE_SIDED   (1u<<4)
 
 const int COMMAND_FLOATS = 48;
+const int HOT_UINTS = 16;
 
 bool FrustumSphereVisible(vec3 center, float radius)
 {
@@ -203,15 +207,37 @@ void main()
     if (base + COMMAND_FLOATS > inCommands.length())
         return;
 
-    vec4 bs = vec4(inCommands[base+32], inCommands[base+33], inCommands[base+34], inCommands[base+35]);
-    vec3 center = bs.xyz;
-    float radius = bs.w;
-    uint layerMask = floatBitsToUint(inCommands[base+43]);
-    uint renderPass = floatBitsToUint(inCommands[base+40]);
-    uint instanceCount = floatBitsToUint(inCommands[base+39]);
+    int hotBase = int(idx) * HOT_UINTS;
+
+    vec3 center;
+    float radius;
+    uint layerMask;
+    uint renderPass;
+    uint instanceCount;
+    uint flags;
+
+    if (UseHotCommands != 0)
+    {
+        center = vec3(uintBitsToFloat(inHotCommands[hotBase + 0]), uintBitsToFloat(inHotCommands[hotBase + 1]), uintBitsToFloat(inHotCommands[hotBase + 2]));
+        radius = uintBitsToFloat(inHotCommands[hotBase + 3]);
+        layerMask = inHotCommands[hotBase + 9];
+        renderPass = inHotCommands[hotBase + 8];
+        instanceCount = inHotCommands[hotBase + 7];
+        flags = inHotCommands[hotBase + 10];
+    }
+    else
+    {
+        vec4 bs = vec4(inCommands[base+32], inCommands[base+33], inCommands[base+34], inCommands[base+35]);
+        center = bs.xyz;
+        radius = bs.w;
+        layerMask = floatBitsToUint(inCommands[base+43]);
+        renderPass = floatBitsToUint(inCommands[base+40]);
+        instanceCount = floatBitsToUint(inCommands[base+39]);
+        flags = floatBitsToUint(inCommands[base+45]);
+    }
+
     vec3 toCenter = center - CameraPosition;
     float renderDistance = dot(toCenter, toCenter);
-    uint flags = floatBitsToUint(inCommands[base+45]);
 
     if (instanceCount == 0u) return;
     if ((layerMask & CameraLayerMask) == 0u) return;
@@ -245,6 +271,16 @@ void main()
     for (int i = 0; i < COMMAND_FLOATS; ++i)
         outCommands[outBase + i] = inCommands[base + i];
     outCommands[outBase + 42] = renderDistance;
+
+    if (UseHotCommands != 0)
+    {
+        int outHotBase = int(outIndex) * HOT_UINTS;
+        for (int i = 0; i < HOT_UINTS; ++i)
+            outHotCommands[outHotBase + i] = inHotCommands[hotBase + i];
+
+        outHotCommands[outHotBase + 13] = floatBitsToUint(renderDistance);
+        outHotCommands[outHotBase + 14] = idx;
+    }
 
     AppendPerView(idx, outIndex, center, flags);
 

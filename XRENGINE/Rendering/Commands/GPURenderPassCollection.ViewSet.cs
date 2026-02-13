@@ -92,6 +92,7 @@ namespace XREngine.Rendering.Commands
                 _indirectSourceViewId = Math.Min(_indirectSourceViewId, requestedViewCount - 1u);
                 _activeCommandViewMask = GPUViewMask.FromViewCount(requestedViewCount);
                 ResetPerViewDrawCounts(requestedViewCount);
+                ValidateViewSetContractOrThrow();
             }
         }
 
@@ -420,6 +421,59 @@ namespace XREngine.Rendering.Commands
                 : Math.Min(activeViewCount, _viewSetCapacity);
 
             ZeroUIntRange(_perViewDrawCountBuffer, 0u, resetCount);
+        }
+
+        private void ValidateViewSetContractOrThrow()
+        {
+            if (_activeViewCount == 0u)
+                return;
+
+            if (_activeViewCount > _viewSetCapacity)
+                throw new InvalidOperationException($"Active view count {_activeViewCount} exceeds view set capacity {_viewSetCapacity}.");
+
+            if (_cachedViewDescriptorCount < _activeViewCount)
+                throw new InvalidOperationException($"Cached view descriptor count {_cachedViewDescriptorCount} is smaller than active view count {_activeViewCount}.");
+
+            if (_indirectSourceViewId >= _activeViewCount)
+                throw new InvalidOperationException($"Indirect source view {_indirectSourceViewId} is outside active view range [0, {_activeViewCount - 1u}].");
+
+            if (_perViewDrawCountBuffer is null || _perViewDrawCountBuffer.ElementCount < _activeViewCount)
+                throw new InvalidOperationException("Per-view draw count buffer is missing or undersized for active view count.");
+
+            uint commandCapacity = Math.Max(CommandCapacity, 1u);
+            uint requiredVisibleCapacity = GPUViewSetLayout.ComputePerViewVisibleCapacity(commandCapacity, _activeViewCount);
+            if (_perViewVisibleCapacity < requiredVisibleCapacity)
+            {
+                throw new InvalidOperationException(
+                    $"Per-view visible capacity {_perViewVisibleCapacity} is below required {requiredVisibleCapacity} (commands={commandCapacity}, views={_activeViewCount}).");
+            }
+
+            for (uint i = 0u; i < _activeViewCount; ++i)
+            {
+                GPUViewDescriptor descriptor = _cachedViewDescriptors[i];
+
+                if (descriptor.ViewId != i)
+                    throw new InvalidOperationException($"View descriptor index {i} has mismatched ViewId {descriptor.ViewId}.");
+
+                if (descriptor.ParentViewId != GPUViewSetLayout.InvalidViewId && descriptor.ParentViewId >= _activeViewCount)
+                {
+                    throw new InvalidOperationException(
+                        $"View {i} parent {descriptor.ParentViewId} is outside active view range [0, {_activeViewCount - 1u}] and not InvalidViewId.");
+                }
+
+                if (descriptor.VisibleCapacity == 0u)
+                    throw new InvalidOperationException($"View {i} has zero visible capacity.");
+
+                if (descriptor.VisibleOffset > _perViewVisibleCapacity ||
+                    descriptor.VisibleCapacity > (_perViewVisibleCapacity - descriptor.VisibleOffset))
+                {
+                    throw new InvalidOperationException(
+                        $"View {i} visible range [{descriptor.VisibleOffset}, {descriptor.VisibleOffset + descriptor.VisibleCapacity}) exceeds per-view visible capacity {_perViewVisibleCapacity}.");
+                }
+
+                if (descriptor.RenderPassMaskLo == 0u && descriptor.RenderPassMaskHi == 0u)
+                    throw new InvalidOperationException($"View {i} has an empty render pass mask.");
+            }
         }
 
         private void DisposeViewSetBuffers()

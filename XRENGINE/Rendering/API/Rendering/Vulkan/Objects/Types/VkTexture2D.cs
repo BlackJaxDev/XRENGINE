@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
+using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -432,6 +433,18 @@ public unsafe partial class VulkanRenderer
                 ImageExtent = extent,
             };
 
+            if (Renderer.TryCopyBufferToImageViaIndirectNv(
+                buffer,
+                srcOffset: 0,
+                _image,
+                ImageLayout.TransferDstOptimal,
+                region.ImageSubresource,
+                region.ImageOffset,
+                region.ImageExtent))
+            {
+                return;
+            }
+
             using var scope = Renderer.NewCommandScope();
             Api!.CmdCopyBufferToImage(scope.CommandBuffer, buffer, _image, ImageLayout.TransferDstOptimal, 1, ref region);
         }
@@ -551,11 +564,87 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
+            bool preferIndirectCopy = Renderer.SupportsNvCopyMemoryIndirect && Renderer.SupportsBufferDeviceAddress;
+            BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit;
+            if (preferIndirectCopy)
+                usage |= BufferUsageFlags.ShaderDeviceAddressBit;
+
             (buffer, memory) = Renderer.CreateBuffer(
                 data.Length,
-                BufferUsageFlags.TransferSrcBit,
+                usage,
                 MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-                data.Address);
+                data.Address,
+                preferIndirectCopy);
+            return true;
+        }
+
+        /// <summary>
+        /// Creates a Vulkan staging buffer and fills it directly from a file via DirectStorage.
+        /// Reads file data straight into the mapped Vulkan host-visible memory, eliminating the
+        /// intermediate managed byte[] allocation.
+        /// <para>
+        /// This is the Vulkan equivalent of DirectStorage's D3D12 <c>DestinationBuffer</c>:
+        /// since DirectStorage GPU destinations require <c>ID3D12Resource*</c>, Vulkan engines
+        /// achieve the same effect by reading into a mapped staging buffer, then issuing
+        /// <c>CmdCopyBufferToImage</c> to transfer to device-local memory.
+        /// </para>
+        /// Use this for pre-cooked binary texture data (DDS, KTX, raw pixel blobs) that
+        /// does not require CPU-side decoding.
+        /// </summary>
+        /// <param name="filePath">Path to the source file.</param>
+        /// <param name="offset">Byte offset within the file.</param>
+        /// <param name="length">Number of bytes to read.</param>
+        /// <param name="buffer">The created staging buffer.</param>
+        /// <param name="memory">The staging buffer's device memory.</param>
+        /// <returns><c>true</c> if successful; <c>false</c> if the file could not be read.</returns>
+        protected bool TryCreateStagingBufferFromFile(
+            string filePath, long offset, int length,
+            out Buffer buffer, out DeviceMemory memory)
+        {
+            buffer = default;
+            memory = default;
+
+            if (string.IsNullOrWhiteSpace(filePath) || length <= 0)
+                return false;
+
+            bool preferIndirectCopy = Renderer.SupportsNvCopyMemoryIndirect && Renderer.SupportsBufferDeviceAddress;
+            BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit;
+            if (preferIndirectCopy)
+                usage |= BufferUsageFlags.ShaderDeviceAddressBit;
+
+            // Allocate a host-visible staging buffer WITHOUT copying any data yet.
+            (buffer, memory) = Renderer.CreateBufferRaw(
+                (ulong)length,
+                usage,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                preferIndirectCopy);
+
+            // Map the staging buffer memory.
+            void* mappedPtr = null;
+            if (Api!.MapMemory(Device, memory, 0, (ulong)length, 0, &mappedPtr) != Result.Success)
+            {
+                Renderer.DestroyBuffer(buffer, memory);
+                buffer = default;
+                memory = default;
+                return false;
+            }
+
+            try
+            {
+                // Read file data directly into the mapped staging buffer via DirectStorage.
+                // Falls back to RandomAccess I/O if DirectStorage is unavailable.
+                DirectStorageIO.TryReadInto(filePath, offset, length, mappedPtr);
+            }
+            catch
+            {
+                Api.UnmapMemory(Device, memory);
+                Renderer.DestroyBuffer(buffer, memory);
+                buffer = default;
+                memory = default;
+                return false;
+            }
+
+            Api.UnmapMemory(Device, memory);
             return true;
         }
 

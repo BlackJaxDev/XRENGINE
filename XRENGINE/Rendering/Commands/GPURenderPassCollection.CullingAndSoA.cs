@@ -11,6 +11,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Compute;
+using XREngine.Rendering.Vulkan;
 using static XREngine.Rendering.GpuDispatchLogger;
 
 namespace XREngine.Rendering.Commands
@@ -27,7 +28,8 @@ namespace XREngine.Rendering.Commands
         {
             Passthrough,
             Frustum,
-            Bvh
+            Bvh,
+            SoA
         }
 
         private int _culledSanitizerLogBudget = 8;
@@ -38,6 +40,7 @@ namespace XREngine.Rendering.Commands
         private int _sanitizerSampleLogBudget = 12;
         private int _copyAtomicOverflowLogBudget = 4;
         private int _filteredCountLogBudget = 6;
+        private int _shippingPolicyLogBudget = 8;
         private bool _loggedPassthroughCullMode;
         private bool _loggedFrustumCullMode;
         private bool _loggedBvhCullMode;
@@ -62,6 +65,7 @@ namespace XREngine.Rendering.Commands
             _sanitizerSampleLogBudget = 12;
             _copyAtomicOverflowLogBudget = 4;
             _filteredCountLogBudget = 6;
+            _shippingPolicyLogBudget = 8;
 
             _loggedGpuHiZOcclusionScaffold = false;
             _loggedCpuQueryAsyncScaffold = false;
@@ -435,13 +439,21 @@ namespace XREngine.Rendering.Commands
             {
                 VisibleCommandCount = 0;
                 VisibleInstanceCount = 0;
+                _sourceCommandsUseHotLayout = false;
+                _culledHotCommandsValid = false;
                 Dbg("Cull: no commands","Culling");
                 Log(LogCategory.Culling, LogLevel.Debug, "Cull: no commands - early exit");
                 return;
             }
 
-            // Passthrough path (testing) & copy all input commands to culled buffer and mark all visible
-            if (ForcePassthroughCulling)
+            BuildSourceHotCommandBuffer(gpuCommands, numCommands);
+            _culledHotCommandsValid = false;
+
+            if (ShouldExtractSoAForCurrentPolicy(numCommands))
+                ExtractSoA(gpuCommands);
+
+            // Passthrough path is diagnostics-only on Vulkan runtime profiles.
+            if (ShouldUsePassthroughCulling())
             {
                 LogCullModeActivation(CullFrameMode.Passthrough);
                 PassthroughCull(gpuCommands, numCommands);
@@ -495,6 +507,11 @@ namespace XREngine.Rendering.Commands
                     _loggedBvhCullMode = true;
                     modeName = "BVH";
                     break;
+                case CullFrameMode.SoA:
+                    shouldLog = !_loggedFrustumCullMode;
+                    _loggedFrustumCullMode = true;
+                    modeName = "SoA";
+                    break;
                 default:
                     shouldLog = !_loggedFrustumCullMode;
                     _loggedFrustumCullMode = true;
@@ -508,8 +525,90 @@ namespace XREngine.Rendering.Commands
             Log(LogCategory.Culling, LogLevel.Info, "Culling mode active: {0} (pass={1})", modeName, RenderPass);
         }
 
+        private bool ShouldExtractSoAForCurrentPolicy(uint commandCount)
+        {
+            if (_extractSoAComputeShader is null)
+                return false;
+
+            return Engine.EffectiveSettings.GpuCullingDataLayout switch
+            {
+                EGpuCullingDataLayout.SoA => true,
+                EGpuCullingDataLayout.Auto => commandCount >= 4096u,
+                _ => false,
+            };
+        }
+
+        private void BuildSourceHotCommandBuffer(GPUScene scene, uint inputCount)
+        {
+            _sourceCommandsUseHotLayout = false;
+
+            if (!IsHotCommandLayoutEnabled() ||
+                _buildHotCommandsProgram is null ||
+                _sourceHotCommandBuffer is null ||
+                inputCount == 0u)
+                return;
+
+            _buildHotCommandsProgram.Uniform("InputCount", (int)inputCount);
+            _buildHotCommandsProgram.BindBuffer(scene.AllLoadedCommandsBuffer, 0);
+            _buildHotCommandsProgram.BindBuffer(_sourceHotCommandBuffer, 1);
+
+            uint groups = Math.Max(1u, ComputeDispatch.ForCommands(inputCount).Item1);
+            _buildHotCommandsProgram.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+
+            _sourceCommandsUseHotLayout = true;
+        }
+
         private static void RecordCpuFallbackUsage(uint recoveredCommands)
             => Engine.Rendering.Stats.RecordGpuCpuFallback(1, (int)Math.Min(recoveredCommands, int.MaxValue));
+
+        private bool ShouldUsePassthroughCulling()
+        {
+            if (!ForcePassthroughCulling)
+                return false;
+
+            if (!VulkanFeatureProfile.IsActive)
+                return true;
+
+            if (VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics)
+                return true;
+
+            if (_shippingPolicyLogBudget > 0)
+            {
+                Debug.LogWarning($"{FormatDebugPrefix("Culling")} Passthrough culling request ignored for profile {VulkanFeatureProfile.ActiveProfile}; canonical GPU cull path remains active.");
+                _shippingPolicyLogBudget--;
+            }
+
+            return false;
+        }
+
+        private bool ShouldAllowCpuFallback(bool debugLoggingEnabled)
+        {
+            bool fallbackRequested = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
+                || (debugLoggingEnabled && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
+
+            if (!fallbackRequested)
+                return false;
+
+            if (!VulkanFeatureProfile.IsActive)
+                return true;
+
+            return VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;
+        }
+
+        private void LogCpuFallbackSuppressed(string stageName)
+        {
+            RecordCpuFallbackUsage(0u);
+            if (_passthroughFallbackLogBudget <= 0)
+                return;
+
+            string profileName = VulkanFeatureProfile.IsActive
+                ? VulkanFeatureProfile.ActiveProfile.ToString()
+                : "non-vulkan";
+
+            Debug.LogWarning($"{FormatDebugPrefix("Culling")} {stageName} returned 0 for pass {RenderPass}; CPU fallback suppressed by profile {profileName}.");
+            _passthroughFallbackLogBudget--;
+        }
 
         /// <summary>
         /// GPU frustum culling mode – performs actual frustum culling on the GPU using the existing culling compute shader.
@@ -583,12 +682,33 @@ namespace XREngine.Rendering.Commands
             _cullingComputeShader.Uniform("CameraPosition", camera.Transform?.WorldTranslation ?? System.Numerics.Vector3.Zero);
             _cullingComputeShader.Uniform("ActiveViewCount", (int)activeViewCount);
 
+            bool requireHotCommands = IsHotCommandLayoutRequired();
+            bool useHotCommands = _sourceCommandsUseHotLayout &&
+                _sourceHotCommandBuffer is not null &&
+                _culledHotCommandBuffer is not null;
+
+            if (requireHotCommands && !useHotCommands)
+            {
+                ResetVisibleCounters();
+                _skipGpuSubmissionThisPass = true;
+                _skipGpuSubmissionReason = "ShippingFast profile requires hot-command layout for frustum culling.";
+                Debug.LogWarning($"{FormatDebugPrefix("Culling")} {_skipGpuSubmissionReason}");
+                return;
+            }
+
+            _cullingComputeShader.Uniform("UseHotCommands", useHotCommands ? 1 : 0);
+
             // Bind buffers
             _cullingComputeShader.BindBuffer(src, 0);
             _cullingComputeShader.BindBuffer(dst, 1);
             _cullingComputeShader.BindBuffer(_culledCountBuffer!, 2);
             if (_cullingOverflowFlagBuffer is not null)
                 _cullingComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 3);
+            if (useHotCommands)
+            {
+                _cullingComputeShader.BindBuffer(_sourceHotCommandBuffer!, 9);
+                _cullingComputeShader.BindBuffer(_culledHotCommandBuffer!, 10);
+            }
             if (_statsBuffer is not null)
                 _cullingComputeShader.BindBuffer(_statsBuffer, 8);
             BindViewSetBuffers(_cullingComputeShader);
@@ -601,6 +721,7 @@ namespace XREngine.Rendering.Commands
             }
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            _culledHotCommandsValid = useHotCommands;
 
             // Check for overflow
             if (_cullingOverflowFlagBuffer is not null)
@@ -626,23 +747,27 @@ namespace XREngine.Rendering.Commands
             }
 
             // Handle CPU fallback if GPU produced no results
-            bool allowCpuFallback = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
-                || (debugLoggingEnabled && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
+            bool allowCpuFallback = ShouldAllowCpuFallback(debugLoggingEnabled);
 
-            if (visibleCount == 0 && RenderPass >= 0 && allowCpuFallback)
+            if (visibleCount == 0 && RenderPass >= 0)
             {
-                uint cpuRecovered = CpuCopyCommandsForPass(scene, inputCount, commit: true, out uint cpuInstanceCount);
-                RecordCpuFallbackUsage(cpuRecovered);
-                if (cpuRecovered > 0)
+                if (allowCpuFallback)
                 {
-                    visibleCount = cpuRecovered;
-                    WriteVisibleCounters(cpuRecovered, cpuInstanceCount);
-                    if (_passthroughFallbackLogBudget > 0)
+                    uint cpuRecovered = CpuCopyCommandsForPass(scene, inputCount, commit: true, out uint cpuInstanceCount);
+                    RecordCpuFallbackUsage(cpuRecovered);
+                    if (cpuRecovered > 0)
                     {
-                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU frustum cull returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
-                        _passthroughFallbackLogBudget--;
+                        visibleCount = cpuRecovered;
+                        WriteVisibleCounters(cpuRecovered, cpuInstanceCount);
+                        if (_passthroughFallbackLogBudget > 0)
+                        {
+                            Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU frustum cull returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
+                            _passthroughFallbackLogBudget--;
+                        }
                     }
                 }
+                else
+                    LogCpuFallbackSuppressed("GPU frustum cull");
             }
 
             VisibleCommandCount = Math.Min(visibleCount, inputCount);
@@ -800,6 +925,22 @@ namespace XREngine.Rendering.Commands
             _bvhFrustumCullProgram.Uniform("ENABLE_CPU_GPU_COMPARE", 0u); // OpenGL-compatible uniform (was Vulkan specialization constant)
             _bvhFrustumCullProgram.Uniform("ActiveViewCount", (int)activeViewCount);
 
+            bool requireHotCommands = IsHotCommandLayoutRequired();
+            bool useHotCommands = _sourceCommandsUseHotLayout &&
+                _sourceHotCommandBuffer is not null &&
+                _culledHotCommandBuffer is not null;
+
+            if (requireHotCommands && !useHotCommands)
+            {
+                ResetVisibleCounters();
+                _skipGpuSubmissionThisPass = true;
+                _skipGpuSubmissionReason = "ShippingFast profile requires hot-command layout for BVH culling.";
+                Debug.LogWarning($"{FormatDebugPrefix("Culling")} {_skipGpuSubmissionReason}");
+                return;
+            }
+
+            _bvhFrustumCullProgram.Uniform("UseHotCommands", useHotCommands ? 1u : 0u);
+
             // Bind command buffers (same as linear culling)
             _bvhFrustumCullProgram.BindBuffer(src, 0);
             _bvhFrustumCullProgram.BindBuffer(dst, 1);
@@ -811,6 +952,11 @@ namespace XREngine.Rendering.Commands
             _bvhFrustumCullProgram.BindBuffer(bvhNodes, 4);
             _bvhFrustumCullProgram.BindBuffer(bvhRanges, 5);
             _bvhFrustumCullProgram.BindBuffer(bvhMorton, 6);
+            if (useHotCommands)
+            {
+                _bvhFrustumCullProgram.BindBuffer(_sourceHotCommandBuffer!, 9);
+                _bvhFrustumCullProgram.BindBuffer(_culledHotCommandBuffer!, 10);
+            }
 
             // Bind optional buffers
             if (_statsBuffer is not null)
@@ -829,6 +975,7 @@ namespace XREngine.Rendering.Commands
             }
 
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            _culledHotCommandsValid = useHotCommands;
 
             // Check for overflow
             if (_cullingOverflowFlagBuffer is not null)
@@ -854,23 +1001,27 @@ namespace XREngine.Rendering.Commands
             }
 
             // Handle CPU fallback if GPU produced no results
-            bool allowCpuFallback = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
-                || (debugLoggingEnabled && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
+            bool allowCpuFallback = ShouldAllowCpuFallback(debugLoggingEnabled);
 
-            if (visibleCount == 0 && RenderPass >= 0 && allowCpuFallback)
+            if (visibleCount == 0 && RenderPass >= 0)
             {
-                uint cpuRecovered = CpuCopyCommandsForPass(scene, inputCount, commit: true, out uint cpuInstanceCount);
-                RecordCpuFallbackUsage(cpuRecovered);
-                if (cpuRecovered > 0)
+                if (allowCpuFallback)
                 {
-                    visibleCount = cpuRecovered;
-                    WriteVisibleCounters(cpuRecovered, cpuInstanceCount);
-                    if (_passthroughFallbackLogBudget > 0)
+                    uint cpuRecovered = CpuCopyCommandsForPass(scene, inputCount, commit: true, out uint cpuInstanceCount);
+                    RecordCpuFallbackUsage(cpuRecovered);
+                    if (cpuRecovered > 0)
                     {
-                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU BVH cull returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
-                        _passthroughFallbackLogBudget--;
+                        visibleCount = cpuRecovered;
+                        WriteVisibleCounters(cpuRecovered, cpuInstanceCount);
+                        if (_passthroughFallbackLogBudget > 0)
+                        {
+                            Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU BVH cull returned 0; CPU fallback restored {cpuRecovered} commands for pass {RenderPass}.");
+                            _passthroughFallbackLogBudget--;
+                        }
                     }
                 }
+                else
+                    LogCpuFallbackSuppressed("GPU BVH cull");
             }
 
             VisibleCommandCount = Math.Min(visibleCount, inputCount);
@@ -999,13 +1150,7 @@ namespace XREngine.Rendering.Commands
                 Debug.Out($"{FormatDebugPrefix("Culling")} Copy shader reported filteredCount={filteredCount} (copyCount={copyCount})");
                 _filteredCountLogBudget--;
             }
-            // Check EditorPreferences first for debugging, fall back to EffectiveSettings for production
-            bool allowCpuFallback = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
-                || (debugLoggingEnabled && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
-            if (!allowCpuFallback && debugLoggingEnabled)
-            {
-                // allowCpuFallback = true;
-            }
+            bool allowCpuFallback = ShouldAllowCpuFallback(debugLoggingEnabled);
 
             if (filteredCount == 0 && RenderPass >= 0)
             {
@@ -1027,11 +1172,7 @@ namespace XREngine.Rendering.Commands
                 }
                 else
                 {
-                    if (_passthroughFallbackLogBudget > 0)
-                    {
-                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} GPU pass filter returned 0 for pass {RenderPass}; CPU fallback disabled (set EditorPreferences.Debug.AllowGpuCpuFallback to true to allow recovery).");
-                        _passthroughFallbackLogBudget--;
-                    }
+                    LogCpuFallbackSuppressed("GPU pass filter");
                     if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
                         LogCommandPassSample(scene, copyCount);
                 }
@@ -1268,9 +1409,20 @@ namespace XREngine.Rendering.Commands
             }
 
             _extractSoAComputeShader.Uniform("InputCommandCount", (int)count);
+            bool requireHotCommands = IsHotCommandLayoutRequired();
+            bool useHotCommands = _sourceCommandsUseHotLayout && _sourceHotCommandBuffer is not null;
+            if (requireHotCommands && !useHotCommands)
+            {
+                Debug.LogWarning($"{FormatDebugPrefix("SoA")} ShippingFast profile requires hot-command layout for SoA extraction.");
+                return;
+            }
+
+            _extractSoAComputeShader.Uniform("UseHotCommands", useHotCommands ? 1 : 0);
             _extractSoAComputeShader.BindBuffer(scene.AllLoadedCommandsBuffer, 0);
             _extractSoAComputeShader.BindBuffer(spheres, 1);
             _extractSoAComputeShader.BindBuffer(meta, 2);
+            if (useHotCommands)
+                _extractSoAComputeShader.BindBuffer(_sourceHotCommandBuffer!, 3);
 
             uint groups = (count + ComputeWorkGroupSize - 1) / ComputeWorkGroupSize;
             _extractSoAComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);

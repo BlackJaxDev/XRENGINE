@@ -1381,8 +1381,15 @@ public unsafe partial class VulkanRenderer
 
         private static DescriptorLayoutBuildResult BuildDescriptorLayoutsShared(VulkanRenderer renderer, Device device, IEnumerable<DescriptorBindingInfo> bindings, string programName)
         {
+            List<DescriptorBindingInfo> reflectedBindings = bindings.ToList();
+            if (VulkanFeatureProfile.EnableDescriptorContractValidation &&
+                !VulkanDescriptorContracts.TryValidateContract(reflectedBindings, out string contractError))
+            {
+                throw new InvalidOperationException($"Descriptor contract validation failed for program '{programName}': {contractError}");
+            }
+
             Dictionary<(uint set, uint binding), DescriptorSetLayoutBindingBuilder> builders = new();
-            foreach (DescriptorBindingInfo binding in bindings)
+            foreach (DescriptorBindingInfo binding in reflectedBindings)
             {
                 var key = (binding.Set, binding.Binding);
                 if (!builders.TryGetValue(key, out DescriptorSetLayoutBindingBuilder? builder))

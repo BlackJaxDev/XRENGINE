@@ -36,6 +36,29 @@ Primary blocker: Vulkan feature policy currently prevents normal GPU-driven exec
 
 ---
 
+## RTX IO Vulkan Integration Status (2026-02)
+
+- [x] Added Vulkan runtime negotiation for `VK_NV_memory_decompression` in logical-device creation.
+- [x] Added Vulkan runtime negotiation for `VK_NV_copy_memory_indirect` in logical-device creation.
+- [x] Added feature/profile gating for RTX IO-style Vulkan decompression (`VulkanFeatureProfile.EnableRtxIoVulkanDecompression`).
+- [x] Added feature/profile gating for RTX IO-style Vulkan indirect copy (`VulkanFeatureProfile.EnableRtxIoVulkanCopyMemoryIndirect`).
+- [x] Added engine runtime state flags (`HasVulkanMemoryDecompression`, `HasVulkanRtxIo`).
+- [x] Added direct command helpers to submit `vkCmdDecompressMemoryNV` / `vkCmdDecompressMemoryIndirectCountNV` through the Vulkan renderer.
+- [x] Added direct command helpers to submit `vkCmdCopyMemoryIndirectNV` / `vkCmdCopyMemoryToImageIndirectNV` through the Vulkan renderer.
+- [x] Integrate compressed asset containers (GDeflate blocks + metadata) into mesh/texture import/build pipeline.
+- [x] Wire decompression command calls into texture/mesh upload jobs when compressed payloads are detected.
+- [x] Wire indirect copy command calls into texture/mesh upload jobs when command-buffer-driven copy batches are available.
+- [x] Add perf telemetry for compressed bytes, decompressed bytes, and decompression command timing.
+
+Notes:
+- Indirect copy is now wired into Vulkan upload paths (`VkDataBuffer` buffer uploads and `VkTexture2D` buffer→image uploads), with automatic fallback to classic copy commands.
+- Decompression call wiring is active for compressed mesh-buffer payloads tagged as GDeflate (`XRDataBuffer` compressed payload metadata + `VkDataBuffer` upload path), with fallback when unsupported.
+- Authoring GDeflate payloads is now backed by DirectStorage's `IDStorageCompressionCodec` in `Compression.TryCompressGDeflate` / `Compression.TryDecompressGDeflate` on Windows; non-Windows paths still fall back to non-GDeflate encodings.
+
+Current runtime-layer status: **finalized** for Vulkan RTX IO extension negotiation + command submission APIs and Windows content-pipeline GDeflate authoring/decode support; non-Windows authoring continues to use non-GDeflate fallbacks.
+
+---
+
 ## Guiding Contract
 
 ### Runtime Profiles
@@ -115,24 +138,24 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 1.1 Non-Count Path Multi-Draw Upgrade
 
-- [ ] Replace normal fallback per-draw loops with contiguous multi-draw call:
+- [x] Replace normal fallback per-draw loops with contiguous multi-draw call:
   - `CmdDrawIndexedIndirect(..., drawCount=N, stride)`
-- [ ] Keep per-draw loop only for explicit debug slicing or non-contiguous windows.
-- [ ] Emit reason tag + telemetry when loop fallback is used.
+- [x] Keep per-draw loop only for explicit debug slicing or non-contiguous windows.
+- [x] Emit reason tag + telemetry when loop fallback is used.
 
 **Primary file:**
 - `XRENGINE/Rendering/API/Rendering/Vulkan/Objects/CommandBuffers.cs`
 
 ### 1.2 IndirectCount Preferred Path
 
-- [ ] Make count-based draw path default when extension support is available.
-- [ ] Validate `maxDrawCount` uses buffer capacity rather than visible count.
-- [ ] Add per-frame telemetry for path usage and effective draw counts.
+- [x] Make count-based draw path default when extension support is available.
+- [x] Validate `maxDrawCount` uses buffer capacity rather than visible count.
+- [x] Add per-frame telemetry for path usage and effective draw counts.
 
 ### 1.3 Batched Submission Refinement
 
-- [ ] Merge compatible material batches into fewer Vulkan indirect submissions where state compatibility allows.
-- [ ] Track merge ratio and API-call reduction.
+- [x] Merge compatible material batches into fewer Vulkan indirect submissions where state compatibility allows.
+- [x] Track merge ratio and API-call reduction.
 
 **Primary file:**
 - `XRENGINE/Rendering/HybridRenderingManager.cs`
@@ -154,9 +177,9 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 2.1 RenderGraph-First Barrier Ownership
 
-- [ ] Define synchronization ownership policy: render graph + planner are authoritative.
-- [ ] Remove or gate ad-hoc indirect-draw barriers when planner already covers transitions.
-- [ ] Keep backend-local barriers only for documented exceptional transitions.
+- [x] Define synchronization ownership policy: render graph + planner are authoritative.
+- [x] Remove or gate ad-hoc indirect-draw barriers when planner already covers transitions.
+- [x] Keep backend-local barriers only for documented exceptional transitions.
 
 **Primary files:**
 - `XRENGINE/Rendering/RenderGraph/RenderGraphSynchronization.cs`
@@ -165,15 +188,15 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 2.2 Barrier Diagnostics and Metrics
 
-- [ ] Add counters: image barriers, buffer barriers, queue ownership transfers, merged/redundant barriers, stage flushes.
-- [ ] Warn on overlap/conflicts between planned and ad-hoc barriers in debug profile.
-- [ ] Add per-pass barrier summaries under debug categories.
+- [x] Add counters: image barriers, buffer barriers, queue ownership transfers, merged/redundant barriers, stage flushes.
+- [x] Warn on overlap/conflicts between planned and ad-hoc barriers in debug profile.
+- [x] Add per-pass barrier summaries under debug categories.
 
 ### 2.3 Queue Ownership Policy Rollout
 
-- [ ] Start with graphics-family baseline.
-- [ ] Add profile-gated compute/transfer ownership transitions.
-- [ ] Skip transfers when queues are identical or overlap overhead outweighs benefits.
+- [x] Start with graphics-family baseline.
+- [x] Add profile-gated compute/transfer ownership transitions.
+- [x] Skip transfers when queues are identical or overlap overhead outweighs benefits.
 
 ### Exit Criteria
 
@@ -186,11 +209,11 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 3.1 Canonical Production Path
 
-- [ ] Define shipping culling pipeline order:
+- [x] Define shipping culling pipeline order:
   1. Frustum or BVH-frustum
   2. GPU Hi-Z refine
   3. Indirect build
-- [ ] Mark CPU query occlusion and passthrough culling as diagnostics tooling in shipping profile.
+- [x] Mark CPU query occlusion and passthrough culling as diagnostics tooling in shipping profile.
 
 **Primary files:**
 - `XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
@@ -198,8 +221,8 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 3.2 CPU Fallback Semantics
 
-- [ ] In `ShippingFast`, replace silent CPU auto-recovery with strict counters + warnings.
-- [ ] Keep fallback experimentation in `Diagnostics` profile only.
+- [x] In `ShippingFast`, replace silent CPU auto-recovery with strict counters + warnings.
+- [x] Keep fallback experimentation in `Diagnostics` profile only.
 
 **Primary files:**
 - `XRENGINE/Rendering/Commands/GPURenderPassCollection.CullingAndSoA.cs`
@@ -207,8 +230,8 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 3.3 Per-View Contract Validation
 
-- [ ] Assert per-view offsets/capacities, view mask/pass mask, source view IDs, and deterministic draw-count flow.
-- [ ] Validate stereo/foveated/mirror behavior for deterministic submission.
+- [x] Assert per-view offsets/capacities, view mask/pass mask, source view IDs, and deterministic draw-count flow.
+- [x] Validate stereo/foveated/mirror behavior for deterministic submission.
 
 **Primary files:**
 - `XRENGINE/Rendering/Commands/RenderCommandCollection.cs`
@@ -217,14 +240,14 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 3.4 Depth Pyramid Reliability
 
-- [ ] Validate Vulkan depth pyramid mip chain correctness and inter-mip synchronization.
-- [ ] Ensure depth pyramid is shared per frame unless multi-view constraints require separation.
-- [ ] Add temporal invalidation for teleport/projection jumps/scene loads.
+- [x] Validate Vulkan depth pyramid mip chain correctness and inter-mip synchronization.
+- [x] Ensure depth pyramid is shared per frame unless multi-view constraints require separation.
+- [x] Add temporal invalidation for teleport/projection jumps/scene loads.
 
 ### Exit Criteria
 
-- [ ] One predictable shipping cull/occlusion pipeline.
-- [ ] No hidden CPU rescue path in shipping profile.
+- [x] One predictable shipping cull/occlusion pipeline.
+- [x] No hidden CPU rescue path in shipping profile.
 
 ---
 
@@ -232,11 +255,12 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 4.1 Hot/Cold Command Layout Split
 
-- [ ] Split 48-float command payload into:
-  - Hot buffer (target 48–64B) for culling + indirect build
-  - Cold buffer for matrices and extended metadata
-- [ ] Update culling/indirect compute to consume hot data only.
-- [ ] Keep vertex fetch path correct via source-index/baseInstance mapping.
+- [x] Add compact hot command payload and hot buffer allocation/wiring in render-pass lifecycle.
+- [x] Add hot command build compute stage for source/culled paths.
+- [x] Keep vertex fetch path correct via source-index/baseInstance mapping.
+- [x] Add hot-data consumption path in culling/occlusion/indirect shaders with guarded fallback.
+- [x] Complete full cold-buffer migration for matrices/extended metadata.
+- [x] Switch production path to hot-only (remove legacy 48-float fallback from shipping path).
 
 **Primary files:**
 - `XRENGINE/Rendering/Data/Rendering/GPUIndirectRenderCommand*`
@@ -246,19 +270,20 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 4.2 SoA Culling Enablement
 
-- [ ] Re-enable SoA configuration and route data extraction pipeline.
-- [ ] Benchmark AoS vs hot/cold vs SoA on representative command counts.
+- [x] Route SoA extraction pipeline to consume hot command buffers when available.
+- [x] Re-enable SoA configuration/policy toggle for runtime selection.
+- [x] Benchmark AoS vs hot/cold vs SoA on representative command counts.
 
 ### 4.3 Overflow and Tail Handling
 
-- [ ] Validate overflow flag/sentinel handling on Vulkan path.
-- [ ] Clarify tail-clearing policy for non-count mode vs count mode.
-- [ ] Enforce growth policy on overflow (bounded doubling, no crash).
+- [x] Validate overflow flag/sentinel handling on Vulkan path.
+- [x] Clarify tail-clearing policy for non-count mode vs count mode.
+- [x] Enforce growth policy on overflow (bounded doubling, no crash).
 
 ### Exit Criteria
 
-- [ ] Reduced culling/indirect bandwidth pressure.
-- [ ] Output parity preserved.
+- [x] Reduced culling/indirect bandwidth pressure.
+- [x] Output parity preserved.
 
 ---
 
@@ -266,30 +291,30 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 5.1 Descriptor Indexing Enablement
 
-- [ ] Enable Vulkan descriptor indexing features needed for large runtime descriptor arrays.
-- [ ] Add capability checks and profile-gated feature enablement.
+- [x] Enable Vulkan descriptor indexing features needed for large runtime descriptor arrays.
+- [x] Add capability checks and profile-gated feature enablement.
 
 ### 5.2 Bindless Material Table
 
-- [ ] Implement global material texture table indexed by stable material IDs.
-- [ ] Use update-after-bind policy for additions and controlled compaction for removals.
-- [ ] Enforce residency guarantees prior to draw submission.
+- [x] Implement global material texture table indexed by stable material IDs.
+- [x] Use update-after-bind policy for additions and controlled compaction for removals.
+- [x] Enforce residency guarantees prior to draw submission.
 
 ### 5.3 Descriptor Contract Validation
 
-- [ ] Formalize descriptor contract per pass type (global/material/per-draw/per-pass).
-- [ ] Validate against reflected shader layout to prevent schema drift.
+- [x] Formalize descriptor contract per pass type (global/material/per-draw/per-pass).
+- [x] Validate against reflected shader layout to prevent schema drift.
 
 ### 5.4 Optional Vulkan Geometry Fetch Fast Lane (Experimental)
 
-- [ ] Prototype buffer-device-address style geometry fetch path.
-- [ ] Compare against atlas-based baseline for setup overhead, memory behavior, and maintainability.
-- [ ] Keep opt-in unless clearly superior.
+- [x] Prototype buffer-device-address style geometry fetch path.
+- [x] Compare against atlas-based baseline for setup overhead, memory behavior, and maintainability.
+- [x] Keep opt-in unless clearly superior.
 
 ### Exit Criteria
 
-- [ ] Descriptor churn and rebind cost reduced on GPU-driven scenes.
-- [ ] Descriptor contract stable across compute and raster passes.
+- [x] Descriptor churn and rebind cost reduced on GPU-driven scenes.
+- [x] Descriptor contract stable across compute and raster passes.
 
 ---
 
@@ -551,7 +576,7 @@ Phase 11 should start early and run incrementally with all implementation phases
 
 - [ ] Phase 1.2/1.3 telemetry + parity hardening
 - [ ] Phase 2.1/2.2 barrier ownership + diagnostics
-- [ ] Phase 3.1 canonical production cull/occlusion policy
+- [x] Phase 3.1 canonical production cull/occlusion policy
 - [ ] Phase 11.3/11.6 first migration batch (host-side + shader path compatibility)
 
 ---
