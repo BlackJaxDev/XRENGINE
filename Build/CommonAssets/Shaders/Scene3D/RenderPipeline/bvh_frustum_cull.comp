@@ -453,7 +453,6 @@ void main()
             continue;
         }
 
-        AppendVisible(cmdIndex, center, renderDistance, instanceCount);
         AppendVisible(cmdIndex, center, renderDistance, instanceCount, flags);
     }
 }

@@ -46,6 +46,7 @@ namespace XREngine.Rendering.Commands
         public const int BuildBatchesIndirectOverflow = 11;
         public const int BuildBatchesTruncation = 12;
         public const int BuildBatchesStats = 13;
+        public const int BuildBatchesSortScratch = 14;
     }
 
     public static class GPUBatchingLayout

@@ -501,6 +501,7 @@ namespace XREngine.Rendering.Commands
     {
         // GPU-generated sort keys (uint4 per visible command): packed pass/pipeline/state, material, mesh, source index.
         private XRDataBuffer? _keyIndexBufferA;
+        private XRDataBuffer? _keyIndexScratchBuffer;
 
         // Expose batches for the current pass for HybridRenderingManager
         public IReadOnlyList<HybridRenderingManager.DrawBatch>? CurrentBatches { get; private set; }

@@ -825,10 +825,41 @@ namespace XREngine.Rendering.Commands
         private void EnsureGpuDrivenBatchingBuffers(uint capacity)
         {
             EnsureSortKeyBuffer(capacity);
+            EnsureSortScratchBuffer(capacity);
             EnsureBatchRangeBuffer(capacity);
             EnsureBatchCountBuffer();
             EnsureInstanceDataBuffers(capacity);
             EnsureMaterialAggregationBuffer(1u);
+        }
+
+        private void EnsureSortScratchBuffer(uint capacity)
+        {
+            if (_keyIndexScratchBuffer is null ||
+                _keyIndexScratchBuffer.ComponentType != EComponentType.UInt ||
+                _keyIndexScratchBuffer.ComponentCount != GPUBatchingLayout.SortKeyUIntCount)
+            {
+                _keyIndexScratchBuffer?.Destroy();
+                _keyIndexScratchBuffer = new XRDataBuffer(
+                    "GPUSortScratch_Pass",
+                    EBufferTarget.ShaderStorageBuffer,
+                    capacity,
+                    EComponentType.UInt,
+                    GPUBatchingLayout.SortKeyUIntCount,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true,
+                    BindingIndexOverride = (uint)GPUBatchingBindings.BuildBatchesSortScratch
+                };
+                _keyIndexScratchBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
+                _keyIndexScratchBuffer.Generate();
+                return;
+            }
+
+            if (_keyIndexScratchBuffer.ElementCount < capacity)
+                _keyIndexScratchBuffer.Resize(capacity);
         }
 
         private void EnsureSortKeyBuffer(uint capacity)

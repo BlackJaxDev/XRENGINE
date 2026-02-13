@@ -328,6 +328,11 @@ namespace XREngine.Rendering.Commands
             _buildKeysComputeShader.Uniform("MaxSortKeys", (int)_keyIndexBufferA.ElementCount);
             _buildKeysComputeShader.Uniform("StateBitMask", 0x0FFFu);
 
+            var sortDomain = GpuSortPolicy.ResolveSortDomain(RenderPass, Engine.Rendering.Settings.GpuSortDomainPolicy);
+            var sortDirection = GpuSortPolicy.ResolveSortDirection(sortDomain);
+            _buildKeysComputeShader.Uniform("SortDomain", (int)sortDomain);
+            _buildKeysComputeShader.Uniform("SortDirection", (int)sortDirection);
+
             CulledSceneToRenderBuffer.BindTo(_buildKeysComputeShader, GPUBatchingBindings.BuildKeysInputCommands);
             _culledCountBuffer.BindTo(_buildKeysComputeShader, GPUBatchingBindings.BuildKeysCulledCount);
             _keyIndexBufferA.BindTo(_buildKeysComputeShader, GPUBatchingBindings.BuildKeysSortKeys);
@@ -340,6 +345,7 @@ namespace XREngine.Rendering.Commands
         {
             if (_buildGpuBatchesComputeShader is null ||
                 _keyIndexBufferA is null ||
+                _keyIndexScratchBuffer is null ||
                 _gpuBatchRangeBuffer is null ||
                 _gpuBatchCountBuffer is null ||
                 _instanceTransformBuffer is null ||
@@ -358,11 +364,13 @@ namespace XREngine.Rendering.Commands
             _buildGpuBatchesComputeShader.Uniform("CurrentRenderPass", RenderPass);
             _buildGpuBatchesComputeShader.Uniform("EnableInstancingAggregation", EnableGpuDrivenInstancing ? 1u : 0u);
             _buildGpuBatchesComputeShader.Uniform("StatsEnabled", _statsBuffer is not null ? 1u : 0u);
+            _buildGpuBatchesComputeShader.Uniform("RadixSortThreshold", 1024);
 
             CulledSceneToRenderBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesInputCommands);
             scene.MeshDataBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesMeshData);
             _culledCountBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesCulledCount);
             _keyIndexBufferA.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesSortKeys);
+            _keyIndexScratchBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesSortScratch);
             _indirectDrawBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesIndirectDraws);
             _drawCountBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesDrawCount);
             _gpuBatchRangeBuffer.BindTo(_buildGpuBatchesComputeShader, GPUBatchingBindings.BuildBatchesBatchRanges);
@@ -1161,6 +1169,7 @@ namespace XREngine.Rendering.Commands
             _occlusionCulledHotBuffer?.Dispose();
             _passFilterDebugBuffer?.Dispose();
             _materialIDsBuffer?.Dispose();
+            _keyIndexScratchBuffer?.Dispose();
             DisposeViewSetBuffers();
 
             _hiZDepthPyramidOwned?.Destroy();
