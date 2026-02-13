@@ -322,20 +322,20 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 6.1 Need Assessment
 
-- [ ] Decide required sorting domains:
+- [x] Decide required sorting domains:
   - opaque front-to-back
   - transparent back-to-front
   - material/state grouping
 
 ### 6.2 Restore Chosen GPU Sort Path
 
-- [ ] Restore one production algorithm (prefer radix for large-N).
-- [ ] Re-enable host dispatch and key encoding flow.
-- [ ] Validate deterministic correctness on controlled scenes.
+- [x] Restore one production algorithm (prefer radix for large-N).
+- [x] Re-enable host dispatch and key encoding flow.
+- [x] Validate deterministic correctness on controlled scenes.
 
 ### Exit Criteria
 
-- [ ] Sorting is either intentionally omitted with evidence, or restored and validated.
+- [x] Sorting is either intentionally omitted with evidence, or restored and validated.
 
 ---
 

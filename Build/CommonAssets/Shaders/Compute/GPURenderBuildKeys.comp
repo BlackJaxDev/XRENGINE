@@ -17,6 +17,21 @@ layout(std430, binding = 2) writeonly buffer SortKeyBuffer { uint sortKeys[]; };
 uniform int CurrentRenderPass;
 uniform int MaxSortKeys;
 uniform uint StateBitMask;
+uniform int SortDomain;
+uniform int SortDirection;
+
+const int SORT_DOMAIN_MATERIAL_STATE = 0;
+const int SORT_DOMAIN_OPAQUE_FRONT_TO_BACK = 1;
+const int SORT_DOMAIN_TRANSPARENT_BACK_TO_FRONT = 2;
+
+uint EncodeDistanceKey(float renderDistance)
+{
+    uint raw = floatBitsToUint(max(renderDistance, 0.0));
+    if (SortDirection != 0)
+        return ~raw;
+
+    return raw;
+}
 
 void main()
 {
@@ -41,6 +56,7 @@ void main()
     uint materialID = floatBitsToUint(culled[base + 38u]);
     uint meshID = floatBitsToUint(culled[base + 36u]);
     uint shaderProgramID = floatBitsToUint(culled[base + 41u]);
+    float renderDistance = culled[base + 42u];
     uint flags = floatBitsToUint(culled[base + 45u]);
 
     uint stateBits = flags & StateBitMask;
@@ -49,9 +65,24 @@ void main()
         ((shaderProgramID & 0x0FFFu) << 12u) |
         (stateBits & 0x0FFFu);
 
+    uint primarySortKey;
+    uint secondarySortKey;
+
+    if (SortDomain == SORT_DOMAIN_OPAQUE_FRONT_TO_BACK ||
+        SortDomain == SORT_DOMAIN_TRANSPARENT_BACK_TO_FRONT)
+    {
+        primarySortKey = EncodeDistanceKey(renderDistance);
+        secondarySortKey = materialID;
+    }
+    else
+    {
+        primarySortKey = materialID;
+        secondarySortKey = meshID;
+    }
+
     uint outBase = logicalIdx * KEY_UINTS;
     sortKeys[outBase + 0u] = packedPassPipelineState;
-    sortKeys[outBase + 1u] = materialID;
-    sortKeys[outBase + 2u] = meshID;
+    sortKeys[outBase + 1u] = primarySortKey;
+    sortKeys[outBase + 2u] = secondarySortKey;
     sortKeys[outBase + 3u] = logicalIdx;
 }

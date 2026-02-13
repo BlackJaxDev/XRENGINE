@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Physics.Physx;
@@ -215,6 +216,7 @@ namespace XREngine
 
                 EOcclusionCullingMode requestedOcclusion = Engine.EffectiveSettings.GpuOcclusionCullingMode;
                 EOcclusionCullingMode effectiveOcclusion = VulkanFeatureProfile.ResolveOcclusionCullingMode(requestedOcclusion);
+                EGpuSortDomainPolicy sortPolicy = Engine.Rendering.Settings.GpuSortDomainPolicy;
 
                 bool effectiveComputePasses = VulkanFeatureProfile.ResolveComputeDependentPassesPreference(true);
                 bool effectiveImGui = VulkanFeatureProfile.ResolveImGuiPreference(true);
@@ -222,7 +224,7 @@ namespace XREngine
                 string dispatchPath = effectiveGpuDispatch ? "GPUDriven" : "CPUFallback";
 
                 string fingerprint = string.Format(
-                    "[VulkanProfile] Configured={0} Active={1} ComputePasses={2} GpuDispatch={3}(requested={4}) GpuBvh={5}(requested={6}) Occlusion={7}->{8} ImGui={9} DrawIndirectCountExt={10} DispatchPath={11}",
+                    "[VulkanProfile] Configured={0} Active={1} ComputePasses={2} GpuDispatch={3}(requested={4}) GpuBvh={5}(requested={6}) Occlusion={7}->{8} SortPolicy={9} ImGui={10} DrawIndirectCountExt={11} DispatchPath={12}",
                     configuredProfile,
                     activeProfile,
                     effectiveComputePasses,
@@ -232,6 +234,7 @@ namespace XREngine
                     requestedGpuBvh,
                     requestedOcclusion,
                     effectiveOcclusion,
+                    sortPolicy,
                     effectiveImGui,
                     supportsIndirectCount,
                     dispatchPath);

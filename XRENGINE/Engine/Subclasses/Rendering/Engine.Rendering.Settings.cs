@@ -10,6 +10,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.DLSS;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
@@ -304,6 +305,7 @@ namespace XREngine
                 private bool _validateVulkanDescriptorContracts = true;
                 private EVulkanGeometryFetchMode _vulkanGeometryFetchMode = EVulkanGeometryFetchMode.Atlas;
                 private EGpuCullingDataLayout _gpuCullingDataLayout = EGpuCullingDataLayout.AoSHot;
+                private EGpuSortDomainPolicy _gpuSortDomainPolicy = EGpuSortDomainPolicy.OpaqueFrontToBackTransparentBackToFront;
                 private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.Disabled;
                 private bool _cacheGpuHiZOcclusionOncePerFrame = false;
                 private uint _bvhLeafMaxPrims = 4u;
@@ -833,6 +835,19 @@ namespace XREngine
                 }
 
                 /// <summary>
+                /// Selects GPU sorting domains for command ordering before indirect draw generation.
+                /// </summary>
+                [Category("Culling")]
+                [Description("Selects GPU sorting domains for command ordering before indirect draw generation.")]
+                public EGpuSortDomainPolicy GpuSortDomainPolicy
+                {
+                    get => _gpuSortDomainPolicy;
+                    set => SetField(ref _gpuSortDomainPolicy, value,
+                        null,
+                        _ => Rendering.LogVulkanFeatureProfileFingerprint());
+                }
+
+                /// <summary>
                 /// Selects which occlusion culling path to run for GPU indirect rendering.
                 /// </summary>
                 [Category("Occlusion")]
@@ -1244,6 +1259,9 @@ namespace XREngine
                     Engine.Rendering.ApplyGpuBvhPreference();
                     Engine.Rendering.LogVulkanFeatureProfileFingerprint();
                 }
+
+                if (applyAll || propertyName == nameof(EngineSettings.GpuSortDomainPolicy))
+                    Engine.Rendering.LogVulkanFeatureProfileFingerprint();
 
                 if (applyAll || propertyName == nameof(EngineSettings.EnableNvidiaDlss)
                     || propertyName == nameof(EngineSettings.DlssQuality)

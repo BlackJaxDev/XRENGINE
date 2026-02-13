@@ -47,6 +47,7 @@ layout(std430, binding = 13) buffer StatsBuffer
     uint StatsBvhRayTimeLo;
     uint StatsBvhRayTimeHi;
 };
+layout(std430, binding = 14) buffer SortScratchBuffer { uint sortScratch[]; };
 
 uniform int MaxIndirectDraws;
 uniform int MaxBatchRanges;
@@ -54,6 +55,7 @@ uniform int MaxInstanceTransforms;
 uniform int CurrentRenderPass;
 uniform uint EnableInstancingAggregation;
 uniform uint StatsEnabled;
+uniform int RadixSortThreshold;
 
 uvec4 LoadKey(uint index)
 {
@@ -80,6 +82,127 @@ bool KeyLess(uvec4 a, uvec4 b)
     if (a.y != b.y) return a.y < b.y;
     if (a.z != b.z) return a.z < b.z;
     return a.w < b.w;
+}
+
+uvec4 LoadScratchKey(uint index)
+{
+    uint base = index * KEY_UINTS;
+    return uvec4(
+        sortScratch[base + 0u],
+        sortScratch[base + 1u],
+        sortScratch[base + 2u],
+        sortScratch[base + 3u]);
+}
+
+void StoreScratchKey(uint index, uvec4 key)
+{
+    uint base = index * KEY_UINTS;
+    sortScratch[base + 0u] = key.x;
+    sortScratch[base + 1u] = key.y;
+    sortScratch[base + 2u] = key.z;
+    sortScratch[base + 3u] = key.w;
+}
+
+uvec4 LoadKeyFromBuffer(uint index, bool useScratch)
+{
+    return useScratch ? LoadScratchKey(index) : LoadKey(index);
+}
+
+void StoreKeyToBuffer(uint index, uvec4 key, bool writeToScratch)
+{
+    if (writeToScratch)
+        StoreScratchKey(index, key);
+    else
+        StoreKey(index, key);
+}
+
+uint ExtractComponent(uvec4 key, uint component)
+{
+    if (component == 0u) return key.x;
+    if (component == 1u) return key.y;
+    if (component == 2u) return key.z;
+    return key.w;
+}
+
+void SortKeysInsertion(uint total)
+{
+    for (uint i = 1u; i < total; ++i)
+    {
+        uvec4 key = LoadKey(i);
+        uint j = i;
+
+        while (j > 0u)
+        {
+            uvec4 prev = LoadKey(j - 1u);
+            if (!KeyLess(key, prev))
+                break;
+
+            StoreKey(j, prev);
+            --j;
+        }
+
+        StoreKey(j, key);
+    }
+}
+
+void SortKeysRadix(uint total)
+{
+    uint scratchEntries = uint(sortScratch.length()) / KEY_UINTS;
+    if (scratchEntries < total)
+    {
+        SortKeysInsertion(total);
+        return;
+    }
+
+    bool inputIsScratch = false;
+    bool outputToScratch = true;
+
+    uint histogram[256];
+    uint offsets[256];
+    uint cursor[256];
+
+    for (uint component = 3u; component < 4u; --component)
+    {
+        for (uint bytePass = 0u; bytePass < 4u; ++bytePass)
+        {
+            uint shift = bytePass * 8u;
+
+            for (uint i = 0u; i < 256u; ++i)
+                histogram[i] = 0u;
+
+            for (uint i = 0u; i < total; ++i)
+            {
+                uvec4 key = LoadKeyFromBuffer(i, inputIsScratch);
+                uint digit = (ExtractComponent(key, component) >> shift) & 0xFFu;
+                histogram[digit] += 1u;
+            }
+
+            uint running = 0u;
+            for (uint i = 0u; i < 256u; ++i)
+            {
+                offsets[i] = running;
+                cursor[i] = running;
+                running += histogram[i];
+            }
+
+            for (uint i = 0u; i < total; ++i)
+            {
+                uvec4 key = LoadKeyFromBuffer(i, inputIsScratch);
+                uint digit = (ExtractComponent(key, component) >> shift) & 0xFFu;
+                uint outIndex = cursor[digit]++;
+                StoreKeyToBuffer(outIndex, key, outputToScratch);
+            }
+
+            inputIsScratch = !inputIsScratch;
+            outputToScratch = !outputToScratch;
+        }
+    }
+
+    if (inputIsScratch)
+    {
+        for (uint i = 0u; i < total; ++i)
+            StoreKey(i, LoadScratchKey(i));
+    }
 }
 
 void CopyInstanceWorldMatrix(uint instanceIndex, uint commandBase)
@@ -134,24 +257,11 @@ void main()
         return;
     }
 
-    // In-place insertion sort over key tuples.
-    for (uint i = 1u; i < total; ++i)
-    {
-        uvec4 key = LoadKey(i);
-        uint j = i;
-
-        while (j > 0u)
-        {
-            uvec4 prev = LoadKey(j - 1u);
-            if (!KeyLess(key, prev))
-                break;
-
-            StoreKey(j, prev);
-            --j;
-        }
-
-        StoreKey(j, key);
-    }
+    uint radixThreshold = RadixSortThreshold <= 0 ? 0u : uint(RadixSortThreshold);
+    if (radixThreshold > 0u && total >= radixThreshold)
+        SortKeysRadix(total);
+    else
+        SortKeysInsertion(total);
 
     uint drawWrite = 0u;
     uint batchWrite = 0u;

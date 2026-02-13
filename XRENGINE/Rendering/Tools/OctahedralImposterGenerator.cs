@@ -155,10 +155,18 @@ public sealed class OctahedralImposterGenerator
             // Allocate GPU storage up front so FBO attachments are complete
             viewArray.PushData();
 
-            XRTexture2D? depthTexture = settings.CaptureDepth
+            bool useDepthTexture = settings.CaptureDepth && AbstractRenderer.Current is OpenGLRenderer;
+            XRTexture2D? depthTexture = useDepthTexture
                 ? new XRTexture2D(settings.SheetSize, settings.SheetSize, EPixelInternalFormat.DepthComponent32f, EPixelFormat.DepthComponent, EPixelType.Float, false)
                 {
                     FrameBufferAttachment = EFrameBufferAttachment.DepthAttachment,
+                    Name = "ImpostorDepth"
+                }
+                : null;
+
+            XRRenderBuffer? depthBuffer = settings.CaptureDepth && !useDepthTexture
+                ? new XRRenderBuffer(settings.SheetSize, settings.SheetSize, ERenderBufferStorage.Depth24Stencil8)
+                {
                     Name = "ImpostorDepth"
                 }
                 : null;
@@ -176,7 +184,8 @@ public sealed class OctahedralImposterGenerator
                     s_captureDirections[i],
                     i,
                     viewArray,
-                    depthTexture);
+                    depthTexture,
+                    depthBuffer);
                 if (!ok)
                     return null;
             }
@@ -228,7 +237,8 @@ public sealed class OctahedralImposterGenerator
         Vector3 axis,
         int viewIndex,
         XRTexture2DArray colorArray,
-        XRTexture2D? sharedDepth)
+        XRTexture2D? sharedDepthTexture,
+        XRRenderBuffer? sharedDepthBuffer)
     {
         Vector3 halfExtents = bounds.Size * 0.5f;
         float maxHalfExtent = MathF.Max(halfExtents.X, MathF.Max(halfExtents.Y, halfExtents.Z));
@@ -238,11 +248,15 @@ public sealed class OctahedralImposterGenerator
             ? colorArray.Textures[viewIndex]
             : null;
 
-        XRFrameBuffer fbo = sharedDepth is null
+        XRFrameBuffer fbo = sharedDepthTexture is null && sharedDepthBuffer is null
             ? new XRFrameBuffer((colorArray, EFrameBufferAttachment.ColorAttachment0, 0, viewIndex))
-            : new XRFrameBuffer(
-                (colorArray, EFrameBufferAttachment.ColorAttachment0, 0, viewIndex),
-                (sharedDepth, EFrameBufferAttachment.DepthAttachment, 0, -1));
+            : sharedDepthTexture is not null
+                ? new XRFrameBuffer(
+                    (colorArray, EFrameBufferAttachment.ColorAttachment0, 0, viewIndex),
+                    (sharedDepthTexture, EFrameBufferAttachment.DepthAttachment, 0, -1))
+                : new XRFrameBuffer(
+                    (colorArray, EFrameBufferAttachment.ColorAttachment0, 0, viewIndex),
+                    (sharedDepthBuffer!, EFrameBufferAttachment.DepthStencilAttachment, 0, -1));
 
         Vector3 normalizedAxis = Vector3.Normalize(axis);
         float eyeDistance = paddedHalfExtent + maxHalfExtent; // sit just outside the padded bounds
@@ -309,8 +323,8 @@ public sealed class OctahedralImposterGenerator
             // Ordering matters: keep in sync with Build/CommonAssets/Shaders/Tools/OctahedralImposterBlend.fs.
             // The runtime shader relies on this exact layout when selecting sampler bindings.
             // 1. World axes (6)
-            // 2. Mid-axes (12) – 45° between the primary axes
-            // 3. Elevated diagonals (8) – 45° above/below the edge directions
+            // 2. Mid-axes (12) ï¿½ 45ï¿½ between the primary axes
+            // 3. Elevated diagonals (8) ï¿½ 45ï¿½ above/below the edge directions
 
             Vector3.UnitX,
             -Vector3.UnitX,
