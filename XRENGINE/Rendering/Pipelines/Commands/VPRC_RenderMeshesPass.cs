@@ -61,8 +61,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             // Safety net fallback is diagnostics-only for Vulkan shipping profiles.
             if (ActivePipelineInstance.MeshRenderCommands.TryGetGpuPass(_renderPass, out var gpuPass) && gpuPass.VisibleCommandCount == 0)
             {
-                bool allowCpuSafetyNet = !VulkanFeatureProfile.IsActive ||
-                    VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;
+                bool allowCpuSafetyNet = !VulkanFeatureProfile.EnforceStrictNoFallbacks &&
+                    (!VulkanFeatureProfile.IsActive ||
+                    VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics);
 
                 if (allowCpuSafetyNet)
                 {

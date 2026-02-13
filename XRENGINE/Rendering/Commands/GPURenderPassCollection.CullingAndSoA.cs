@@ -584,6 +584,9 @@ namespace XREngine.Rendering.Commands
 
         private bool ShouldAllowCpuFallback(bool debugLoggingEnabled)
         {
+            if (VulkanFeatureProfile.EnforceStrictNoFallbacks)
+                return false;
+
             bool fallbackRequested = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
                 || (debugLoggingEnabled && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
 
