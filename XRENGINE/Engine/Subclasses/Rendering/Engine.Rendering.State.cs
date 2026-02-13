@@ -249,6 +249,24 @@ namespace XREngine
                 public static bool HasVulkanRayTracing { get; internal set; }
 
                 /// <summary>
+                /// True when Vulkan memory decompression is available and enabled
+                /// (e.g., VK_NV_memory_decompression).
+                /// </summary>
+                public static bool HasVulkanMemoryDecompression { get; internal set; }
+
+                /// <summary>
+                /// True when Vulkan indirect GPU copy is available and enabled
+                /// (e.g., VK_NV_copy_memory_indirect).
+                /// </summary>
+                public static bool HasVulkanCopyMemoryIndirect { get; internal set; }
+
+                /// <summary>
+                /// True when the Vulkan RTX IO-style path is available for GPU-side decompression.
+                /// This currently maps to Vulkan memory decompression availability.
+                /// </summary>
+                public static bool HasVulkanRtxIo { get; internal set; }
+
+                /// <summary>
                 /// All OpenGL extensions reported by the current OpenGL context (via GL_NUM_EXTENSIONS + glGetStringi).
                 /// Empty when not using OpenGL or if enumeration failed.
                 /// </summary>

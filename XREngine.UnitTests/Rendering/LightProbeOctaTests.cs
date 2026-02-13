@@ -15,37 +15,10 @@ namespace XREngine.UnitTests.Rendering;
 /// produce non-black output when given valid input.
 /// </summary>
 [TestFixture]
-public class LightProbeOctaTests
+public class LightProbeOctaTests : GpuTestBase
 {
-    private const int Width = 256;
-    private const int Height = 256;
-
-    private static bool IsTrue(string? v)
-    {
-        if (string.IsNullOrWhiteSpace(v))
-            return false;
-
-        v = v.Trim();
-        return
-            v.Equals("1") ||
-            v.Equals("true", StringComparison.OrdinalIgnoreCase) ||
-            v.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
-            v.Equals("on", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool ShowWindow
-    {
-        get
-        {
-            bool hide = IsTrue(Environment.GetEnvironmentVariable("XR_HIDE_TEST_WINDOWS")) ||
-                        IsTrue(NUnit.Framework.TestContext.Parameters.Get("HideWindow", "false"));
-            if (hide) return false;
-
-            bool showParam = IsTrue(NUnit.Framework.TestContext.Parameters.Get("ShowWindow", "false"));
-            bool showEnv = IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_TEST_WINDOWS"));
-            return showParam || showEnv;
-        }
-    }
+    protected override int Width => 256;
+    protected override int Height => 256;
 
     /// <summary>
     /// Tests that the FullscreenTri.vs + CubemapToOctahedron.fs shaders properly render
@@ -91,7 +64,7 @@ public class LightProbeOctaTests
             gl.BindTexture(TextureTarget.TextureCubeMap, cubemap);
             gl.Uniform1(gl.GetUniformLocation(program, "Texture0"), 0);
 
-            gl.Viewport(0, 0, Width, Height);
+            gl.Viewport(0, 0, (uint)Width, (uint)Height);
             gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
             gl.Clear(ClearBufferMask.ColorBufferBit);
             gl.Disable(EnableCap.DepthTest);
@@ -398,9 +371,7 @@ public class LightProbeOctaTests
             }
             """;
 
-        return LinkProgram(gl,
-            CompileShader(gl, ShaderType.VertexShader, vertexSource),
-            CompileShader(gl, ShaderType.FragmentShader, fragmentSource));
+        return CreateProgram(gl, vertexSource, fragmentSource);
     }
 
     private static uint CreateIrradianceOctaProgram(GL gl)
@@ -494,48 +465,10 @@ public class LightProbeOctaTests
             }
             """;
 
-        return LinkProgram(gl,
-            CompileShader(gl, ShaderType.VertexShader, vertexSource),
-            CompileShader(gl, ShaderType.FragmentShader, fragmentSource));
+        return CreateProgram(gl, vertexSource, fragmentSource);
     }
 
-    private static uint CompileShader(GL gl, ShaderType type, string source)
-    {
-        uint shader = gl.CreateShader(type);
-        gl.ShaderSource(shader, source);
-        gl.CompileShader(shader);
-
-        gl.GetShader(shader, ShaderParameterName.CompileStatus, out int status);
-        if (status == 0)
-        {
-            string infoLog = gl.GetShaderInfoLog(shader);
-            gl.DeleteShader(shader);
-            throw new InvalidOperationException($"Failed to compile {type}: {infoLog}");
-        }
-
-        return shader;
-    }
-
-    private static uint LinkProgram(GL gl, uint vertexShader, uint fragmentShader)
-    {
-        uint program = gl.CreateProgram();
-        gl.AttachShader(program, vertexShader);
-        gl.AttachShader(program, fragmentShader);
-        gl.LinkProgram(program);
-
-        gl.GetProgram(program, ProgramPropertyARB.LinkStatus, out int status);
-        if (status == 0)
-        {
-            string infoLog = gl.GetProgramInfoLog(program);
-            gl.DeleteProgram(program);
-            throw new InvalidOperationException($"Failed to link program: {infoLog}");
-        }
-
-        gl.DeleteShader(vertexShader);
-        gl.DeleteShader(fragmentShader);
-
-        return program;
-    }
+    // CompileShader, LinkProgram, CreateProgram inherited from GpuTestBase
 
     private static (byte Red, byte Green, byte Blue) ReadPixel(GL gl, int x, int y)
     {

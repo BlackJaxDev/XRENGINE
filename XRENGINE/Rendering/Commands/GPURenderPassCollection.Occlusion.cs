@@ -28,6 +28,7 @@ namespace XREngine.Rendering.Commands
         private EOcclusionCullingMode _lastLoggedOcclusionMode = (EOcclusionCullingMode)(-1);
         private bool _loggedGpuHiZOcclusionScaffold;
         private bool _loggedCpuQueryAsyncScaffold;
+        private bool _loggedCpuQueryModeSuppressedByProfile;
 
         private static readonly AsyncOcclusionQueryManager s_cpuOcclusionQueryManager = new();
         private readonly List<(uint SourceCommandIndex, XRRenderQuery Query)> _cpuOcclusionPending = [];
@@ -37,6 +38,10 @@ namespace XREngine.Rendering.Commands
         private Vector3 _cpuOcclusionLastCameraPosition;
         private Matrix4x4 _cpuOcclusionLastProjection;
         private bool _cpuOcclusionHasCameraState;
+        private uint _gpuHiZLastSceneCommandCount;
+        private Vector3 _gpuHiZLastCameraPosition;
+        private Matrix4x4 _gpuHiZLastProjection;
+        private bool _gpuHiZHasCameraState;
 
         private readonly Dictionary<uint, TemporalOcclusionState> _temporalOcclusion = [];
 
@@ -88,7 +93,26 @@ namespace XREngine.Rendering.Commands
             if (ForcePassthroughCulling)
                 return EOcclusionCullingMode.Disabled;
 
-            return VulkanFeatureProfile.ResolveOcclusionCullingMode(Engine.EffectiveSettings.GpuOcclusionCullingMode);
+            EOcclusionCullingMode mode = VulkanFeatureProfile.ResolveOcclusionCullingMode(Engine.EffectiveSettings.GpuOcclusionCullingMode);
+            if (!VulkanFeatureProfile.IsActive)
+                return mode;
+
+            if (mode == EOcclusionCullingMode.CpuQueryAsync && VulkanFeatureProfile.ActiveProfile != EVulkanGpuDrivenProfile.Diagnostics)
+            {
+                if (!_loggedCpuQueryModeSuppressedByProfile)
+                {
+                    _loggedCpuQueryModeSuppressedByProfile = true;
+                    Log(LogCategory.Culling, LogLevel.Warning,
+                        "Occlusion mode {0} suppressed for profile {1}; using {2} canonical path.",
+                        EOcclusionCullingMode.CpuQueryAsync,
+                        VulkanFeatureProfile.ActiveProfile,
+                        EOcclusionCullingMode.GpuHiZ);
+                }
+
+                return EOcclusionCullingMode.GpuHiZ;
+            }
+
+            return mode;
         }
 
         private void ApplyOcclusionCulling(GPUScene scene, XRCamera? camera)
@@ -219,12 +243,17 @@ namespace XREngine.Rendering.Commands
 
             bool isReverseZ = camera.IsReversedDepth;
             bool cacheOncePerFrame = Engine.Rendering.Settings.CacheGpuHiZOcclusionOncePerFrame;
+            bool invalidateTemporalHiZ = ShouldInvalidateGpuHiZTemporalState(scene, camera);
+            uint temporalInvalidations = invalidateTemporalHiZ ? 1u : 0u;
             if (cacheOncePerFrame)
             {
                 var shared = _hiZSharedCache.GetValue(pipeline, static _ => new HiZSharedState());
                 EnsureSharedHiZDepthPyramid(shared, depth2D);
                 _hiZDepthPyramid = shared.Pyramid;
                 _hiZMaxMip = shared.MaxMip;
+
+                if (invalidateTemporalHiZ)
+                    shared.LastBuiltFrameId = ulong.MaxValue;
 
                 if (_hiZDepthPyramid is null)
                 {
@@ -267,7 +296,22 @@ namespace XREngine.Rendering.Commands
                 uint visibleAfter = VisibleCommandCount;
                 occluded = candidates > visibleAfter ? (candidates - visibleAfter) : 0u;
             }
-            RecordOcclusionFrameStats(candidates, occluded, 0u, 0u);
+            RecordOcclusionFrameStats(candidates, occluded, 0u, temporalInvalidations);
+        }
+
+        private bool ShouldInvalidateGpuHiZTemporalState(GPUScene scene, XRCamera camera)
+        {
+            bool sceneChanged = scene.TotalCommandCount != _gpuHiZLastSceneCommandCount;
+            if (sceneChanged)
+                _gpuHiZLastSceneCommandCount = scene.TotalCommandCount;
+
+            bool cameraChanged = HasSignificantCameraChange(
+                camera,
+                ref _gpuHiZHasCameraState,
+                ref _gpuHiZLastCameraPosition,
+                ref _gpuHiZLastProjection);
+
+            return sceneChanged || cameraChanged;
         }
 
         private void EnsureHiZDepthPyramid(XRTexture2D depthTexture)
@@ -432,6 +476,19 @@ namespace XREngine.Rendering.Commands
             _hiZOcclusionProgram.Uniform("IsReversedDepth", reversed);
             _hiZOcclusionProgram.Uniform("MaxOutputCommands", (int)CulledSceneToRenderBuffer!.ElementCount);
 
+            bool requireHotCommands = IsHotCommandLayoutRequired();
+            bool useHotCommands = _culledHotCommandsValid &&
+                _culledHotCommandBuffer is not null &&
+                _occlusionCulledHotBuffer is not null;
+
+            if (requireHotCommands && !useHotCommands)
+            {
+                Debug.LogWarning($"{FormatDebugPrefix("Culling")} ShippingFast profile requires hot-command layout for Hi-Z occlusion refine; refine pass skipped.");
+                return;
+            }
+
+            _hiZOcclusionProgram.Uniform("UseHotCommands", useHotCommands ? 1 : 0);
+
             // Bind pyramid and buffers
             _hiZOcclusionProgram.Sampler("HiZDepth", _hiZDepthPyramid, 0);
             _hiZOcclusionProgram.BindBuffer(CulledSceneToRenderBuffer!, 0);
@@ -439,6 +496,11 @@ namespace XREngine.Rendering.Commands
             _hiZOcclusionProgram.BindBuffer(_culledCountBuffer!, 2);
             _hiZOcclusionProgram.BindBuffer(_cullCountScratchBuffer!, 3);
             _hiZOcclusionProgram.BindBuffer(_occlusionOverflowFlagBuffer!, 4);
+            if (useHotCommands)
+            {
+                _hiZOcclusionProgram.BindBuffer(_culledHotCommandBuffer!, 9);
+                _hiZOcclusionProgram.BindBuffer(_occlusionCulledHotBuffer!, 10);
+            }
             if (_statsBuffer is not null)
                 _hiZOcclusionProgram.BindBuffer(_statsBuffer, 8);
 
@@ -456,6 +518,8 @@ namespace XREngine.Rendering.Commands
             _copyCount3Program.BindBuffer(_culledCountBuffer!, 1);
             _copyCount3Program.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
+            _culledHotCommandsValid = useHotCommands;
+
             // Update VisibleCommandCount/InstanceCount from final count buffer in debug/readback mode.
             UpdateVisibleCountersFromBuffer(_culledCountBuffer);
         }
@@ -467,6 +531,9 @@ namespace XREngine.Rendering.Commands
 
             // After occlusion, the refined buffer becomes the active culled buffer.
             (_culledSceneToRenderBuffer, _occlusionCulledBuffer) = (_occlusionCulledBuffer, _culledSceneToRenderBuffer);
+
+            if (_culledHotCommandsValid && _culledHotCommandBuffer is not null && _occlusionCulledHotBuffer is not null)
+                (_culledHotCommandBuffer, _occlusionCulledHotBuffer) = (_occlusionCulledHotBuffer, _culledHotCommandBuffer);
         }
 
         private void ApplyCpuQueryAsyncOcclusionScaffold(GPUScene scene, XRCamera? camera, uint candidates)
@@ -490,7 +557,11 @@ namespace XREngine.Rendering.Commands
                 ResetTemporalOcclusionState();
             }
 
-            if (HasSignificantCameraChange(camera))
+            if (HasSignificantCameraChange(
+                camera,
+                ref _cpuOcclusionHasCameraState,
+                ref _cpuOcclusionLastCameraPosition,
+                ref _cpuOcclusionLastProjection))
             {
                 temporalOverrides += (uint)_temporalOcclusion.Count;
                 ResetTemporalOcclusionState();
@@ -513,28 +584,32 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private bool HasSignificantCameraChange(XRCamera camera)
+        private static bool HasSignificantCameraChange(
+            XRCamera camera,
+            ref bool hasCameraState,
+            ref Vector3 lastCameraPosition,
+            ref Matrix4x4 lastProjection)
         {
             Vector3 position = camera.Transform.WorldTranslation;
             Matrix4x4 projection = camera.ProjectionMatrix;
 
-            if (!_cpuOcclusionHasCameraState)
+            if (!hasCameraState)
             {
-                _cpuOcclusionHasCameraState = true;
-                _cpuOcclusionLastCameraPosition = position;
-                _cpuOcclusionLastProjection = projection;
+                hasCameraState = true;
+                lastCameraPosition = position;
+                lastProjection = projection;
                 return false;
             }
 
-            bool movedFar = Vector3.DistanceSquared(_cpuOcclusionLastCameraPosition, position) > (TemporalCameraJumpDistance * TemporalCameraJumpDistance);
+            bool movedFar = Vector3.DistanceSquared(lastCameraPosition, position) > (TemporalCameraJumpDistance * TemporalCameraJumpDistance);
 
             float projDelta =
-                MathF.Abs(_cpuOcclusionLastProjection.M11 - projection.M11) +
-                MathF.Abs(_cpuOcclusionLastProjection.M22 - projection.M22);
+                MathF.Abs(lastProjection.M11 - projection.M11) +
+                MathF.Abs(lastProjection.M22 - projection.M22);
             bool projectionChanged = projDelta > TemporalProjectionDeltaThreshold;
 
-            _cpuOcclusionLastCameraPosition = position;
-            _cpuOcclusionLastProjection = projection;
+            lastCameraPosition = position;
+            lastProjection = projection;
             return movedFar || projectionChanged;
         }
 

@@ -931,6 +931,9 @@ namespace XREngine.Rendering.Commands
         /// <summary>Number of float components per GPU command (192 bytes).</summary>
         public const int CommandFloatCount = 48;
 
+        /// <summary>Number of uint components per hot GPU command (64 bytes).</summary>
+        public const int CommandHotUIntCount = 16;
+
         /// <summary>Number of components in the visible count buffer.</summary>
         public const uint VisibleCountComponents = 3;
 
@@ -1059,6 +1062,21 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Gets the current allocated capacity of the command buffer.</summary>
         public uint AllocatedMaxCommandCount => AllLoadedCommandsBuffer.ElementCount;
+
+        /// <summary>
+        /// Ensures command buffers can hold at least <paramref name="requiredCapacity"/> entries.
+        /// Uses the existing power-of-two growth policy and never shrinks.
+        /// </summary>
+        public uint EnsureCommandCapacity(uint requiredCapacity)
+        {
+            uint safeRequired = Math.Max(requiredCapacity, MinCommandCount);
+            using (_lock.EnterScope())
+            {
+                VerifyUpdatingBufferSize(safeRequired);
+                VerifyCommandBufferSize(safeRequired);
+                return AllLoadedCommandsBuffer.ElementCount;
+            }
+        }
 
         /// <summary>Maps mesh commands to their GPU command indices (for multi-submesh support).</summary>
         private readonly Dictionary<IRenderCommandMesh, List<uint>> _commandIndicesPerMeshCommand = [];

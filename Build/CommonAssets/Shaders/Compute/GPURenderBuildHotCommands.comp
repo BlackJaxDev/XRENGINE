@@ -1,0 +1,50 @@
+#version 460 core
+
+layout(local_size_x = 256) in;
+
+const uint COMMAND_FLOATS = 48u;
+const uint HOT_UINTS = 16u;
+
+layout(std430, binding = 0) readonly buffer InCommands
+{
+    float InData[];
+};
+
+layout(std430, binding = 1) writeonly buffer OutHotCommands
+{
+    uint OutData[];
+};
+
+uniform int InputCount;
+
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    uint total = InputCount > 0 ? uint(InputCount) : 0u;
+
+    if (idx >= total)
+        return;
+
+    uint inBase = idx * COMMAND_FLOATS;
+    uint outBase = idx * HOT_UINTS;
+
+    OutData[outBase + 0u] = floatBitsToUint(InData[inBase + 32u]); // BoundingSphere.x
+    OutData[outBase + 1u] = floatBitsToUint(InData[inBase + 33u]); // BoundingSphere.y
+    OutData[outBase + 2u] = floatBitsToUint(InData[inBase + 34u]); // BoundingSphere.z
+    OutData[outBase + 3u] = floatBitsToUint(InData[inBase + 35u]); // BoundingSphere.r
+
+    OutData[outBase + 4u] = floatBitsToUint(InData[inBase + 36u]); // MeshID
+    OutData[outBase + 5u] = floatBitsToUint(InData[inBase + 37u]); // SubmeshID
+    OutData[outBase + 6u] = floatBitsToUint(InData[inBase + 38u]); // MaterialID
+    OutData[outBase + 7u] = floatBitsToUint(InData[inBase + 39u]); // InstanceCount
+
+    OutData[outBase + 8u] = floatBitsToUint(InData[inBase + 40u]); // RenderPass
+    OutData[outBase + 9u] = floatBitsToUint(InData[inBase + 43u]); // LayerMask
+    OutData[outBase + 10u] = floatBitsToUint(InData[inBase + 45u]); // Flags
+    OutData[outBase + 11u] = floatBitsToUint(InData[inBase + 44u]); // LODLevel
+
+    OutData[outBase + 12u] = floatBitsToUint(InData[inBase + 41u]); // ShaderProgramID
+    OutData[outBase + 13u] = floatBitsToUint(InData[inBase + 42u]); // RenderDistance
+    OutData[outBase + 14u] = idx;                                    // SourceCommandIndex
+    OutData[outBase + 15u] = 0u;                                     // Reserved
+}

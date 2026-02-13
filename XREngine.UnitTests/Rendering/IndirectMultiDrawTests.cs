@@ -10,28 +10,17 @@ using Assert = NUnit.Framework.Assert;
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture]
-public class IndirectMultiDrawTests
+public class IndirectMultiDrawTests : GpuTestBase
 {
-    private const int Width = 256;
-    private const int Height = 256;
+    private const int FixedWidth = 256;
+    private const int FixedHeight = 256;
+    protected override int Width => FixedWidth;
+    protected override int Height => FixedHeight;
     private static readonly Vector3 LeftCubeOffset = new(-1.2f, 0f, 0f);
     private static readonly Vector3 RightCubeOffset = new(1.2f, 0f, 0f);
 
-    private static bool IsTrue(string? v)
-    {
-        if (string.IsNullOrWhiteSpace(v))
-            return false;
-
-        v = v.Trim();
-        return
-            v.Equals("1") ||
-            v.Equals("true", StringComparison.OrdinalIgnoreCase) ||
-            v.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
-            v.Equals("on", StringComparison.OrdinalIgnoreCase);
-    }
-
-    // Defaults: show window and block until close
-    private static bool ShowWindow
+    // This fixture defaults to showing windows (inverted from base) and supports blocking.
+    private new static bool ShowWindow
     {
         get
         {
@@ -39,7 +28,6 @@ public class IndirectMultiDrawTests
                         IsTrue(NUnit.Framework.TestContext.Parameters.Get("HideWindow", "false"));
             if (hide) return false;
 
-            // default true unless explicitly disabled
             bool showParam = IsTrue(NUnit.Framework.TestContext.Parameters.Get("ShowWindow", "true"));
             bool showEnv = IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_TEST_WINDOWS")) ||
                            IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_GL_TEST"));
@@ -55,14 +43,13 @@ public class IndirectMultiDrawTests
                            IsTrue(NUnit.Framework.TestContext.Parameters.Get("ShowWindowNoBlock", "false"));
             if (noBlock) return false;
 
-            // default false - only block if explicitly requested
             bool blockParam = IsTrue(NUnit.Framework.TestContext.Parameters.Get("ShowWindowBlock", "false"));
             bool blockEnv = IsTrue(Environment.GetEnvironmentVariable("XR_SHOW_TEST_BLOCK"));
             return blockParam || blockEnv;
         }
     }
 
-    private static int ShowWindowDurationMs
+    private new static int ShowWindowDurationMs
     {
         get
         {
@@ -656,7 +643,7 @@ public class IndirectMultiDrawTests
 
     private static Matrix4x4 BuildMvpMatrix()
     {
-        var projection = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 4f, Width / (float)Height, 0.1f, 10f);
+        var projection = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 4f, FixedWidth / (float)FixedHeight, 0.1f, 10f);
         var view = Matrix4x4.CreateLookAt(new Vector3(0f, 0f, 4f), Vector3.Zero, Vector3.UnitY);
         return Matrix4x4.Multiply(view, projection);
     }
@@ -693,54 +680,19 @@ public class IndirectMultiDrawTests
         Vector4 clip = Vector4.Transform(new Vector4(position, 1f), mvp);
         if (MathF.Abs(clip.W) < 1e-6f)
         {
-            return (Width / 2, Height / 2);
+            return (FixedWidth / 2, FixedHeight / 2);
         }
 
         float ndcX = clip.X / clip.W;
         float ndcY = clip.Y / clip.W;
 
-        float screenX = ((ndcX * 0.5f) + 0.5f) * (Width - 1);
-        float screenY = ((ndcY * 0.5f) + 0.5f) * (Height - 1);
+        float screenX = ((ndcX * 0.5f) + 0.5f) * (FixedWidth - 1);
+        float screenY = ((ndcY * 0.5f) + 0.5f) * (FixedHeight - 1);
 
-        int clampedX = (int)Math.Clamp(screenX, 0f, Width - 1);
-        int clampedY = (int)Math.Clamp(screenY, 0f, Width - 1);
+        int clampedX = (int)Math.Clamp(screenX, 0f, FixedWidth - 1);
+        int clampedY = (int)Math.Clamp(screenY, 0f, FixedWidth - 1);
 
         return (clampedX, clampedY);
-    }
-
-    private static uint CompileShader(GL gl, ShaderType type, string source)
-    {
-        uint shader = gl.CreateShader(type);
-        gl.ShaderSource(shader, source);
-        gl.CompileShader(shader);
-
-        gl.GetShader(shader, ShaderParameterName.CompileStatus, out int status);
-        if (status == 0)
-        {
-            string infoLog = gl.GetShaderInfoLog(shader);
-            gl.DeleteShader(shader);
-            throw new InvalidOperationException($"Failed to compile {type}: {infoLog}");
-        }
-
-        return shader;
-    }
-
-    private static uint LinkProgram(GL gl, uint vertexShader, uint fragmentShader)
-    {
-        uint program = gl.CreateProgram();
-        gl.AttachShader(program, vertexShader);
-        gl.AttachShader(program, fragmentShader);
-        gl.LinkProgram(program);
-
-        gl.GetProgram(program, ProgramPropertyARB.LinkStatus, out int status);
-        if (status == 0)
-        {
-            string infoLog = gl.GetProgramInfoLog(program);
-            gl.DeleteProgram(program);
-            throw new InvalidOperationException($"Failed to link program: {infoLog}");
-        }
-
-        return program;
     }
 
     private const string VertexShaderSource = "#version 450 core\n" +
@@ -849,7 +801,7 @@ public class IndirectMultiDrawTests
 
     private static Matrix4x4 BuildEightCubesMvpMatrix()
     {
-        var projection = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 4f, Width / (float)Height, 0.1f, 10f);
+        var projection = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 4f, FixedWidth / (float)FixedHeight, 0.1f, 10f);
         var view = Matrix4x4.CreateLookAt(new Vector3(0f, 0f, 6f), Vector3.Zero, Vector3.UnitY);
         return Matrix4x4.Multiply(view, projection);
     }

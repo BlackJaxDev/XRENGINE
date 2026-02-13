@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
@@ -7,6 +8,8 @@ using XREngine.Data;
 using XREngine.Data.Lists.Unsafe;
 using XREngine.Rendering;
 using XREngine.Rendering.Compute;
+using XREngine.Rendering.Materials;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using static XREngine.Rendering.GpuDispatchLogger;
 
@@ -21,6 +24,8 @@ namespace XREngine.Rendering.Commands
 
         internal static Action? ResetCountersHook { get; set; }
         private int _resolveMaterialLogBudget = 16;
+        private readonly HashSet<uint> _lastMaterialTableIds = [];
+        private int _materialResidencyLogBudget = 12;
         
         /// <summary>
         /// When true, sorts commands by material ID on CPU to create contiguous batches.
@@ -92,6 +97,12 @@ namespace XREngine.Rendering.Commands
             if (batches is not null)
                 Log(LogCategory.Materials, LogLevel.Info, "Material batches={0}, visible commands={1}", batches.Count, VisibleCommandCount);
 
+            if (!PrepareMaterialTableAndValidateResidency(scene, batches))
+            {
+                Dbg("Render abort - material table residency validation failed", "Materials");
+                return;
+            }
+
             _renderManager.Render(this, camera, scene, _indirectDrawBuffer!, _indirectRenderer, RenderPass, _drawCountBuffer, batches);
             
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render submission done");
@@ -99,7 +110,7 @@ namespace XREngine.Rendering.Commands
 
             _useBufferAForRender = !_useBufferAForRender;
 
-            PostRenderDiagnostics();
+            PostRenderDiagnostics(scene);
             
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render end");
             Dbg("Render end", "Lifecycle");
@@ -190,6 +201,14 @@ namespace XREngine.Rendering.Commands
             // Phase 2: avoid CPU readback of visible counters in the hot path.
             // Indirect compute shaders consume the GPU-written count buffer directly.
             UpdateVisibleCountersFromBuffer();
+            BuildCulledHotCommandBuffer();
+
+            if (IsHotCommandLayoutRequired() && !_culledCommandsUseHotLayout)
+            {
+                Dbg("BuildIndirect abort - ShippingFast requires hot command layout but hot culled buffer is unavailable", "Indirect");
+                return;
+            }
+
             BindIndirectShaderUniforms();
             BindIndirectShaderBuffers(scene);
 
@@ -214,6 +233,7 @@ namespace XREngine.Rendering.Commands
             _indirectRenderTaskShader.Uniform("StatsEnabled", _statsBuffer is not null ? 1u : 0u);
             _indirectRenderTaskShader.Uniform("ActiveViewCount", (int)(_activeViewCount == 0u ? 1u : _activeViewCount));
             _indirectRenderTaskShader.Uniform("SourceViewId", (int)_indirectSourceViewId);
+            _indirectRenderTaskShader.Uniform("UseHotCommands", _culledCommandsUseHotLayout ? 1 : 0);
         }
 
         private void BindIndirectShaderBuffers(GPUScene scene)
@@ -233,7 +253,39 @@ namespace XREngine.Rendering.Commands
             }
 
             _statsBuffer?.BindTo(_indirectRenderTaskShader!, 8);
+            if (_culledCommandsUseHotLayout)
+                _culledHotCommandBuffer?.BindTo(_indirectRenderTaskShader!, 9);
             BindViewSetBuffers(_indirectRenderTaskShader!);
+        }
+
+        private void BuildCulledHotCommandBuffer()
+        {
+            _culledCommandsUseHotLayout = false;
+
+            if (!IsHotCommandLayoutEnabled() ||
+                _buildHotCommandsProgram is null ||
+                _culledHotCommandBuffer is null ||
+                _culledSceneToRenderBuffer is null ||
+                _culledCountBuffer is null)
+                return;
+
+            uint maxInput = _culledSceneToRenderBuffer.ElementCount;
+            if (maxInput == 0u)
+                return;
+
+            uint inputCount = IndirectDebug.DisableCpuReadbackCount
+                ? maxInput
+                : Math.Max(VisibleCommandCount, 1u);
+
+            _buildHotCommandsProgram.Uniform("InputCount", (int)inputCount);
+            _buildHotCommandsProgram.BindBuffer(_culledSceneToRenderBuffer, 0);
+            _buildHotCommandsProgram.BindBuffer(_culledHotCommandBuffer, 1);
+
+            uint groups = Math.Max(1u, ComputeDispatch.ForCommands(inputCount).Item1);
+            _buildHotCommandsProgram.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+
+            _culledCommandsUseHotLayout = true;
         }
 
         private List<HybridRenderingManager.DrawBatch>? BuildGpuBatchesAndInstancing(GPUScene scene)
@@ -444,6 +496,119 @@ namespace XREngine.Rendering.Commands
         #endregion
 
         #region Material ID Management
+
+        private bool PrepareMaterialTableAndValidateResidency(GPUScene scene, IReadOnlyList<HybridRenderingManager.DrawBatch>? batches)
+        {
+            if (!VulkanFeatureProfile.EnableBindlessMaterialTable)
+                return true;
+
+            _materialTable ??= new GPUMaterialTable(128);
+            bool allResident = true;
+
+            HashSet<uint> currentIds = [.. scene.MaterialMap.Keys];
+            foreach (uint removedId in _lastMaterialTableIds)
+            {
+                if (currentIds.Contains(removedId))
+                    continue;
+
+                _materialTable.Remove(removedId);
+            }
+
+            foreach (var (materialId, material) in scene.MaterialMap)
+            {
+                GPUMaterialEntry entry = BuildMaterialEntry(material, out bool resident);
+                _materialTable.AddOrUpdate(materialId, entry);
+                allResident &= resident;
+            }
+
+            _materialTable.TrimTrailingUnused(128u);
+            _materialTable.Buffer.PushSubData();
+
+            _lastMaterialTableIds.Clear();
+            foreach (uint materialId in currentIds)
+                _lastMaterialTableIds.Add(materialId);
+
+            SetMaterialTable(_materialTable);
+
+            if (!allResident)
+            {
+                _skipGpuSubmissionThisPass = true;
+                _skipGpuSubmissionReason = "Material residency guarantee failed before indirect draw submission.";
+                if (_materialResidencyLogBudget > 0)
+                {
+                    Debug.LogWarning($"{FormatDebugPrefix("Materials")} {_skipGpuSubmissionReason}");
+                    _materialResidencyLogBudget--;
+                }
+
+                return false;
+            }
+
+            if (VulkanFeatureProfile.ActiveGeometryFetchMode == EVulkanGeometryFetchMode.BufferDeviceAddressPrototype && _materialResidencyLogBudget > 0)
+            {
+                Debug.LogWarning($"{FormatDebugPrefix("Materials")} Vulkan geometry fetch prototype is selected but atlas path remains active pending benchmark sign-off.");
+                _materialResidencyLogBudget--;
+            }
+
+            return true;
+        }
+
+        private static GPUMaterialEntry BuildMaterialEntry(XRMaterial? material, out bool resident)
+        {
+            resident = true;
+            uint flags = 0u;
+
+            if (material is null)
+            {
+                resident = false;
+                return new GPUMaterialEntry { Flags = flags };
+            }
+
+            XRTexture? albedo = material.Textures.Count > 0 ? material.Textures[0] : null;
+            XRTexture? normal = material.Textures.Count > 1 ? material.Textures[1] : null;
+            XRTexture? rm = material.Textures.Count > 2 ? material.Textures[2] : null;
+
+            if (albedo is not null)
+            {
+                flags |= 1u << 0;
+                resident &= IsTextureResident(albedo);
+            }
+
+            if (normal is not null)
+            {
+                flags |= 1u << 1;
+                resident &= IsTextureResident(normal);
+            }
+
+            if (rm is not null)
+            {
+                flags |= 1u << 2;
+                resident &= IsTextureResident(rm);
+            }
+
+            if (resident)
+                flags |= 1u << 31;
+
+            return new GPUMaterialEntry
+            {
+                Flags = flags,
+                AlbedoHandle = 0ul,
+                NormalHandle = 0ul,
+                RMHandle = 0ul,
+                Padding0 = 0u,
+                Padding1 = 0u,
+                Padding2 = 0u,
+            };
+        }
+
+        private static bool IsTextureResident(XRTexture texture)
+        {
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is null)
+                return false;
+
+            AbstractRenderAPIObject? apiObject = renderer.GetOrCreateAPIRenderObject(texture, generateNow: true);
+            return apiObject is not null && apiObject.IsGenerated;
+        }
 
         /// <summary>
         /// Collects all material IDs from the scene's commands into a dedicated buffer.
@@ -812,14 +977,14 @@ namespace XREngine.Rendering.Commands
 
         #region Diagnostics & Logging
 
-        private void PostRenderDiagnostics()
+        private void PostRenderDiagnostics(GPUScene scene)
         {
             _ = BvhGpuProfiler.Instance.ResolveAndPublish(Engine.Time.Timer.Render.LastTimestamp, _statsBuffer);
-            CheckOverflowFlags();
+            CheckOverflowFlags(scene);
             LogGpuStats();
         }
 
-        private void CheckOverflowFlags()
+        private void CheckOverflowFlags(GPUScene scene)
         {
             if (_cullingOverflowFlagBuffer is null || _indirectOverflowFlagBuffer is null || _truncationFlagBuffer is null)
                 return;
@@ -832,6 +997,16 @@ namespace XREngine.Rendering.Commands
             {
                 Debug.LogWarning($"{FormatDebugPrefix("Stats")} GPU Render Overflow: Culling={cullOv} Indirect={indOv} Trunc={trunc}");
                 Dbg($"Overflow flags cull={cullOv} indirect={indOv} trunc={trunc}", "Stats");
+
+                uint currentCapacity = scene.AllocatedMaxCommandCount;
+                uint minimumRequired = Math.Max(Math.Max(scene.TotalCommandCount, VisibleCommandCount), 1u);
+                uint requestedCapacity = ComputeBoundedDoublingCapacity(currentCapacity, minimumRequired);
+
+                if (requestedCapacity > currentCapacity)
+                {
+                    uint finalCapacity = scene.EnsureCommandCapacity(requestedCapacity);
+                    Debug.LogWarning($"{FormatDebugPrefix("Stats")} Overflow growth policy requested capacity increase {currentCapacity} -> {finalCapacity} (required={minimumRequired}).");
+                }
             }
 
             LogValidationDetails(cullOv);
@@ -981,6 +1156,9 @@ namespace XREngine.Rendering.Commands
             _materialAggregationBuffer?.Dispose();
             _culledSceneToRenderBuffer?.Dispose();
             _occlusionCulledBuffer?.Dispose();
+            _sourceHotCommandBuffer?.Dispose();
+            _culledHotCommandBuffer?.Dispose();
+            _occlusionCulledHotBuffer?.Dispose();
             _passFilterDebugBuffer?.Dispose();
             _materialIDsBuffer?.Dispose();
             DisposeViewSetBuffers();
@@ -996,6 +1174,7 @@ namespace XREngine.Rendering.Commands
             _buildKeysComputeShader?.Destroy();
             _buildGpuBatchesComputeShader?.Destroy();
             _indirectRenderTaskShader?.Destroy();
+            _buildHotCommandsProgram?.Destroy();
             _indirectRenderer?.Destroy();
 
             _hiZInitProgram?.Destroy();

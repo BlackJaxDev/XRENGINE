@@ -1,6 +1,7 @@
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
+using Silk.NET.Vulkan.Extensions.NV;
 using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Vulkan;
@@ -10,10 +11,14 @@ public unsafe partial class VulkanRenderer
     private Device device;
     private Queue graphicsQueue;
     private Queue presentQueue;
+    private Queue computeQueue;
+    private Queue transferQueue;
 
     public Device Device => device;
     public Queue GraphicsQueue => graphicsQueue;
     public Queue PresentQueue => presentQueue;
+    public Queue ComputeQueue => computeQueue;
+    public Queue TransferQueue => transferQueue;
 
     private void DestroyLogicalDevice()
     {
@@ -48,6 +53,140 @@ public unsafe partial class VulkanRenderer
         return false;
     }
 
+    private unsafe void QueryDescriptorIndexingCapabilities()
+    {
+        _supportsRuntimeDescriptorArray = false;
+        _supportsDescriptorBindingPartiallyBound = false;
+        _supportsDescriptorBindingUpdateAfterBind = false;
+
+        PhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures = new()
+        {
+            SType = StructureType.PhysicalDeviceDescriptorIndexingFeatures,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &descriptorIndexingFeatures,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+
+        _supportsRuntimeDescriptorArray = descriptorIndexingFeatures.RuntimeDescriptorArray;
+        _supportsDescriptorBindingPartiallyBound = descriptorIndexingFeatures.DescriptorBindingPartiallyBound;
+        _supportsDescriptorBindingUpdateAfterBind = descriptorIndexingFeatures.DescriptorBindingSampledImageUpdateAfterBind ||
+            descriptorIndexingFeatures.DescriptorBindingStorageBufferUpdateAfterBind ||
+            descriptorIndexingFeatures.DescriptorBindingUniformBufferUpdateAfterBind;
+    }
+
+    private unsafe void QueryNvMemoryDecompressionCapabilities(
+        bool extensionEnabled,
+        out bool featureSupported,
+        out MemoryDecompressionMethodFlagsNV decompressionMethods,
+        out ulong maxDecompressionIndirectCount)
+    {
+        featureSupported = false;
+        decompressionMethods = 0;
+        maxDecompressionIndirectCount = 0;
+
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceMemoryDecompressionFeaturesNV memoryDecompressionFeatures = new()
+        {
+            SType = StructureType.PhysicalDeviceMemoryDecompressionFeaturesNV,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &memoryDecompressionFeatures,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = memoryDecompressionFeatures.MemoryDecompression;
+
+        PhysicalDeviceMemoryDecompressionPropertiesNV memoryDecompressionProperties = new()
+        {
+            SType = StructureType.PhysicalDeviceMemoryDecompressionPropertiesNV,
+            PNext = null,
+        };
+
+        PhysicalDeviceProperties2 properties2 = new()
+        {
+            SType = StructureType.PhysicalDeviceProperties2,
+            PNext = &memoryDecompressionProperties,
+        };
+
+        Api!.GetPhysicalDeviceProperties2(_physicalDevice, &properties2);
+        decompressionMethods = (MemoryDecompressionMethodFlagsNV)memoryDecompressionProperties.DecompressionMethods;
+        maxDecompressionIndirectCount = memoryDecompressionProperties.MaxDecompressionIndirectCount;
+    }
+
+    private unsafe void QueryNvCopyMemoryIndirectCapabilities(
+        bool extensionEnabled,
+        out bool featureSupported,
+        out ulong supportedQueues)
+    {
+        featureSupported = false;
+        supportedQueues = 0;
+
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceCopyMemoryIndirectFeaturesNV copyMemoryIndirectFeatures = new()
+        {
+            SType = StructureType.PhysicalDeviceCopyMemoryIndirectFeaturesNV,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &copyMemoryIndirectFeatures,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = copyMemoryIndirectFeatures.IndirectCopy;
+
+        PhysicalDeviceCopyMemoryIndirectPropertiesNV copyMemoryIndirectProperties = new()
+        {
+            SType = StructureType.PhysicalDeviceCopyMemoryIndirectPropertiesNV,
+            PNext = null,
+        };
+
+        PhysicalDeviceProperties2 properties2 = new()
+        {
+            SType = StructureType.PhysicalDeviceProperties2,
+            PNext = &copyMemoryIndirectProperties,
+        };
+
+        Api!.GetPhysicalDeviceProperties2(_physicalDevice, &properties2);
+        supportedQueues = (ulong)copyMemoryIndirectProperties.SupportedQueues;
+    }
+
+    private unsafe void QueryBufferDeviceAddressCapabilities(out bool featureSupported)
+    {
+        featureSupported = false;
+
+        PhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatures = new()
+        {
+            SType = StructureType.PhysicalDeviceBufferDeviceAddressFeatures,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &bufferDeviceAddressFeatures,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = bufferDeviceAddressFeatures.BufferDeviceAddress;
+    }
+
     /// <summary>
     /// Creates a logical device interface to the physical device with specific 
     /// queue families and extensions.
@@ -68,7 +207,13 @@ public unsafe partial class VulkanRenderer
         var indices = FamilyQueueIndices;
 
         // Create an array of queue family indices needed by this device
-        var uniqueQueueFamilies = new[] { indices.GraphicsFamilyIndex!.Value, indices.PresentFamilyIndex!.Value };
+        var uniqueQueueFamilies = new[]
+        {
+            indices.GraphicsFamilyIndex!.Value,
+            indices.PresentFamilyIndex!.Value,
+            indices.ComputeFamilyIndex ?? indices.GraphicsFamilyIndex!.Value,
+            indices.TransferFamilyIndex ?? indices.ComputeFamilyIndex ?? indices.GraphicsFamilyIndex!.Value
+        };
         // Remove duplicates (graphics and present queue might be the same family)
         uniqueQueueFamilies = [.. uniqueQueueFamilies.Distinct()];
 
@@ -116,6 +261,117 @@ public unsafe partial class VulkanRenderer
 
         var extensionsArray = extensionsToEnable.ToArray();
 
+        bool descriptorIndexingExtensionEnabled = extensionsArray.Contains("VK_EXT_descriptor_indexing");
+        bool descriptorIndexingRequestedByProfile = VulkanFeatureProfile.EnableDescriptorIndexing;
+        QueryDescriptorIndexingCapabilities();
+
+        bool descriptorIndexingCapabilityReady =
+            _supportsRuntimeDescriptorArray &&
+            _supportsDescriptorBindingPartiallyBound &&
+            _supportsDescriptorBindingUpdateAfterBind;
+
+        bool enableDescriptorIndexing = descriptorIndexingExtensionEnabled &&
+            descriptorIndexingRequestedByProfile &&
+            descriptorIndexingCapabilityReady;
+
+        bool nvMemoryDecompressionExtensionEnabled = extensionsArray.Contains("VK_NV_memory_decompression");
+        bool nvMemoryDecompressionRequestedByProfile = VulkanFeatureProfile.EnableRtxIoVulkanDecompression;
+
+        QueryNvMemoryDecompressionCapabilities(
+            nvMemoryDecompressionExtensionEnabled,
+            out bool nvMemoryDecompressionFeatureSupported,
+            out MemoryDecompressionMethodFlagsNV nvMemoryDecompressionMethods,
+            out ulong nvMaxDecompressionIndirectCount);
+
+        bool enableNvMemoryDecompression =
+            nvMemoryDecompressionExtensionEnabled &&
+            nvMemoryDecompressionRequestedByProfile &&
+            nvMemoryDecompressionFeatureSupported;
+
+        bool nvCopyMemoryIndirectExtensionEnabled = extensionsArray.Contains("VK_NV_copy_memory_indirect");
+        bool nvCopyMemoryIndirectRequestedByProfile = VulkanFeatureProfile.EnableRtxIoVulkanCopyMemoryIndirect;
+
+        QueryNvCopyMemoryIndirectCapabilities(
+            nvCopyMemoryIndirectExtensionEnabled,
+            out bool nvCopyMemoryIndirectFeatureSupported,
+            out ulong nvCopyMemoryIndirectSupportedQueues);
+
+        bool enableNvCopyMemoryIndirect =
+            nvCopyMemoryIndirectExtensionEnabled &&
+            nvCopyMemoryIndirectRequestedByProfile &&
+            nvCopyMemoryIndirectFeatureSupported;
+
+        QueryBufferDeviceAddressCapabilities(out bool bufferDeviceAddressFeatureSupported);
+        bool enableBufferDeviceAddress = enableNvCopyMemoryIndirect && bufferDeviceAddressFeatureSupported;
+
+        _nvMemoryDecompressionMethods = enableNvMemoryDecompression ? nvMemoryDecompressionMethods : 0;
+        _nvMaxMemoryDecompressionIndirectCount = enableNvMemoryDecompression ? nvMaxDecompressionIndirectCount : 0;
+        _nvCopyMemoryIndirectSupportedQueues = enableNvCopyMemoryIndirect ? nvCopyMemoryIndirectSupportedQueues : 0;
+
+        PhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceDescriptorIndexingFeatures,
+            PNext = null,
+            RuntimeDescriptorArray = enableDescriptorIndexing,
+            DescriptorBindingPartiallyBound = enableDescriptorIndexing,
+            DescriptorBindingSampledImageUpdateAfterBind = enableDescriptorIndexing,
+            DescriptorBindingStorageBufferUpdateAfterBind = enableDescriptorIndexing,
+            DescriptorBindingUniformBufferUpdateAfterBind = enableDescriptorIndexing,
+        };
+
+        PhysicalDeviceMemoryDecompressionFeaturesNV memoryDecompressionFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceMemoryDecompressionFeaturesNV,
+            PNext = null,
+            MemoryDecompression = enableNvMemoryDecompression,
+        };
+
+        PhysicalDeviceCopyMemoryIndirectFeaturesNV copyMemoryIndirectFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceCopyMemoryIndirectFeaturesNV,
+            PNext = null,
+            IndirectCopy = enableNvCopyMemoryIndirect,
+        };
+
+        PhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceBufferDeviceAddressFeatures,
+            PNext = null,
+            BufferDeviceAddress = enableBufferDeviceAddress,
+        };
+
+        void* enabledFeaturesPNext = null;
+        if (enableDescriptorIndexing)
+        {
+            descriptorIndexingFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &descriptorIndexingFeatureEnable;
+        }
+
+        if (enableNvMemoryDecompression)
+        {
+            memoryDecompressionFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &memoryDecompressionFeatureEnable;
+        }
+
+        if (enableNvCopyMemoryIndirect)
+        {
+            copyMemoryIndirectFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &copyMemoryIndirectFeatureEnable;
+        }
+
+        if (enableBufferDeviceAddress)
+        {
+            bufferDeviceAddressFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &bufferDeviceAddressFeatureEnable;
+        }
+
+        PhysicalDeviceFeatures2 featureChain = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = enabledFeaturesPNext,
+            Features = deviceFeatures,
+        };
+
         // Configure the logical device creation
         DeviceCreateInfo createInfo = new()
         {
@@ -123,7 +379,8 @@ public unsafe partial class VulkanRenderer
             QueueCreateInfoCount = (uint)uniqueQueueFamilies.Length,
             PQueueCreateInfos = queueCreateInfos,
 
-            PEnabledFeatures = &deviceFeatures,
+            PNext = &featureChain,
+            PEnabledFeatures = null,
 
             // Enable required device extensions (e.g., swapchain)
             EnabledExtensionCount = (uint)extensionsArray.Length,
@@ -143,12 +400,51 @@ public unsafe partial class VulkanRenderer
         if (Api!.CreateDevice(_physicalDevice, in createInfo, null, out device) != Result.Success)
             throw new Exception("Failed to create logical device.");
 
+        _supportsDescriptorIndexing = enableDescriptorIndexing;
+        _supportsNvMemoryDecompression = enableNvMemoryDecompression;
+        _supportsNvCopyMemoryIndirect = enableNvCopyMemoryIndirect;
+        _supportsBufferDeviceAddress = enableBufferDeviceAddress;
+
+        if (descriptorIndexingExtensionEnabled && !enableDescriptorIndexing)
+        {
+            Debug.VulkanWarning(
+                "[Vulkan] Descriptor indexing extension present but disabled (requested={0}, runtimeArray={1}, partiallyBound={2}, updateAfterBind={3}).",
+                descriptorIndexingRequestedByProfile,
+                _supportsRuntimeDescriptorArray,
+                _supportsDescriptorBindingPartiallyBound,
+                _supportsDescriptorBindingUpdateAfterBind);
+        }
+
+            if (nvMemoryDecompressionExtensionEnabled && !enableNvMemoryDecompression)
+            {
+                Debug.VulkanWarning(
+                "[Vulkan] VK_NV_memory_decompression present but disabled (requested={0}, featureSupported={1}).",
+                nvMemoryDecompressionRequestedByProfile,
+                nvMemoryDecompressionFeatureSupported);
+            }
+
+            if (nvCopyMemoryIndirectExtensionEnabled && !enableNvCopyMemoryIndirect)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] VK_NV_copy_memory_indirect present but disabled (requested={0}, featureSupported={1}).",
+                    nvCopyMemoryIndirectRequestedByProfile,
+                    nvCopyMemoryIndirectFeatureSupported);
+            }
+
+            if (enableNvCopyMemoryIndirect && !enableBufferDeviceAddress)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] VK_NV_copy_memory_indirect enabled but buffer device address is unavailable; indirect copy commands will be disabled.");
+            }
+
         // Load optional extensions
         LoadOptionalDeviceExtensions(extensionsArray);
 
         // Retrieve handles to the queues we need
         Api!.GetDeviceQueue(device, indices.GraphicsFamilyIndex!.Value, 0, out graphicsQueue);
         Api!.GetDeviceQueue(device, indices.PresentFamilyIndex!.Value, 0, out presentQueue);
+        Api!.GetDeviceQueue(device, indices.ComputeFamilyIndex ?? indices.GraphicsFamilyIndex!.Value, 0, out computeQueue);
+        Api!.GetDeviceQueue(device, indices.TransferFamilyIndex ?? indices.ComputeFamilyIndex ?? indices.GraphicsFamilyIndex!.Value, 0, out transferQueue);
 
         // Clean up allocated memory for validation layer names
         if (EnableValidationLayers)
@@ -163,7 +459,7 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private void LoadOptionalDeviceExtensions(string[] enabledExtensions)
     {
-        _supportsDescriptorIndexing = enabledExtensions.Contains("VK_EXT_descriptor_indexing");
+        bool descriptorIndexingExtensionLoaded = enabledExtensions.Contains("VK_EXT_descriptor_indexing");
 
         // Check if VK_KHR_draw_indirect_count was enabled
         if (enabledExtensions.Contains("VK_KHR_draw_indirect_count"))
@@ -180,7 +476,53 @@ public unsafe partial class VulkanRenderer
             }
         }
 
-        if (_supportsDescriptorIndexing)
+        if (enabledExtensions.Contains("VK_NV_memory_decompression") && _supportsNvMemoryDecompression)
+        {
+            if (Api!.TryGetDeviceExtension(instance, device, out _nvMemoryDecompression))
+            {
+                _supportsNvMemoryDecompression = true;
+                Debug.Vulkan(
+                    "[Vulkan] VK_NV_memory_decompression loaded successfully (methodsMask=0x{0:X}, maxIndirectCount={1}).",
+                    _nvMemoryDecompressionMethods,
+                    _nvMaxMemoryDecompressionIndirectCount);
+            }
+            else
+            {
+                Debug.VulkanWarning("[Vulkan] Failed to load VK_NV_memory_decompression extension handle.");
+                _supportsNvMemoryDecompression = false;
+                _nvMemoryDecompressionMethods = 0;
+                _nvMaxMemoryDecompressionIndirectCount = 0;
+            }
+        }
+
+        if (enabledExtensions.Contains("VK_NV_copy_memory_indirect") && _supportsNvCopyMemoryIndirect)
+        {
+            if (Api!.TryGetDeviceExtension(instance, device, out _nvCopyMemoryIndirect))
+            {
+                _supportsNvCopyMemoryIndirect = true;
+                Debug.Vulkan(
+                    "[Vulkan] VK_NV_copy_memory_indirect loaded successfully (supportedQueuesMask=0x{0:X}).",
+                    _nvCopyMemoryIndirectSupportedQueues);
+            }
+            else
+            {
+                Debug.VulkanWarning("[Vulkan] Failed to load VK_NV_copy_memory_indirect extension handle.");
+                _supportsNvCopyMemoryIndirect = false;
+                _nvCopyMemoryIndirectSupportedQueues = 0;
+            }
+        }
+
+        if (_supportsNvCopyMemoryIndirect && !_supportsBufferDeviceAddress)
+        {
+            _supportsNvCopyMemoryIndirect = false;
+            _nvCopyMemoryIndirectSupportedQueues = 0;
+        }
+
+        Engine.Rendering.State.HasVulkanMemoryDecompression = SupportsNvMemoryDecompression;
+        Engine.Rendering.State.HasVulkanCopyMemoryIndirect = SupportsNvCopyMemoryIndirect;
+        Engine.Rendering.State.HasVulkanRtxIo = SupportsNvMemoryDecompression || SupportsNvCopyMemoryIndirect;
+
+        if (descriptorIndexingExtensionLoaded && _supportsDescriptorIndexing)
             Debug.Vulkan("[Vulkan] VK_EXT_descriptor_indexing enabled for descriptor update-after-bind support.");
     }
 }

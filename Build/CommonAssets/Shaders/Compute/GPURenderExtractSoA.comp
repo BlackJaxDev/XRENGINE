@@ -10,20 +10,42 @@ const int COMMAND_FLOATS = 48; // Updated for PrevWorldMatrix
 layout(std430, binding = 0) buffer InCommands { float inCommands[]; };
 layout(std430, binding = 1) buffer OutBoundingSpheres { vec4 outSpheres[]; };
 layout(std430, binding = 2) buffer OutMetadata { uvec4 outMeta[]; };
+layout(std430, binding = 3) readonly buffer InHotCommands { uint inHotCommands[]; };
 
 uniform int InputCommandCount;
+uniform int UseHotCommands;
+
+const int HOT_UINTS = 16;
 
 void main(){
     uint idx = gl_GlobalInvocationID.x;
     if(idx >= uint(InputCommandCount)) return;
     int base = int(idx) * COMMAND_FLOATS;
     if(base + COMMAND_FLOATS > inCommands.length()) return;
-    // Updated offsets for 48-float struct
-    vec4 sphere = vec4(inCommands[base+32], inCommands[base+33], inCommands[base+34], inCommands[base+35]);
-    uint instanceCount = uint(inCommands[base+39]);
-    uint renderPass = uint(inCommands[base+40]);
-    uint layerMask = uint(inCommands[base+43]);
-    uint flags = uint(inCommands[base+45]);
+    int hotBase = int(idx) * HOT_UINTS;
+    vec4 sphere;
+    uint instanceCount;
+    uint renderPass;
+    uint layerMask;
+    uint flags;
+
+    if (UseHotCommands != 0)
+    {
+        sphere = vec4(uintBitsToFloat(inHotCommands[hotBase + 0]), uintBitsToFloat(inHotCommands[hotBase + 1]), uintBitsToFloat(inHotCommands[hotBase + 2]), uintBitsToFloat(inHotCommands[hotBase + 3]));
+        instanceCount = inHotCommands[hotBase + 7];
+        renderPass = inHotCommands[hotBase + 8];
+        layerMask = inHotCommands[hotBase + 9];
+        flags = inHotCommands[hotBase + 10];
+    }
+    else
+    {
+        // Updated offsets for 48-float struct
+        sphere = vec4(inCommands[base+32], inCommands[base+33], inCommands[base+34], inCommands[base+35]);
+        instanceCount = uint(inCommands[base+39]);
+        renderPass = uint(inCommands[base+40]);
+        layerMask = uint(inCommands[base+43]);
+        flags = uint(inCommands[base+45]);
+    }
     outSpheres[idx] = sphere;
     outMeta[idx] = uvec4(instanceCount, renderPass, layerMask, flags);
 }

@@ -16,6 +16,12 @@ namespace XREngine.Rendering
     [MemoryPackable]
     public partial class XRDataBuffer : GenericRenderObject, IDisposable
     {
+        public enum EBufferCompressionCodec : byte
+        {
+            None = 0,
+            GDeflate = 1,
+        }
+
         public delegate void DelPushSubData(int offset, uint length);
         public delegate void DelSetBlockName(XRRenderProgram program, string blockName);
         public delegate void DelSetBlockIndex(uint blockIndex);
@@ -299,6 +305,55 @@ namespace XREngine.Rendering
         {
             get => _disposeOnPush;
             set => SetField(ref _disposeOnPush, value);
+        }
+
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        private DataSource? _gpuCompressedSource;
+
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public DataSource? GpuCompressedSource => _gpuCompressedSource;
+
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public EBufferCompressionCodec GpuCompressionCodec { get; private set; } = EBufferCompressionCodec.None;
+
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public uint GpuCompressedDecodedLength { get; private set; }
+
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public bool HasGpuCompressedPayload
+            => _gpuCompressedSource is not null &&
+               _gpuCompressedSource.Length > 0 &&
+               GpuCompressionCodec != EBufferCompressionCodec.None &&
+               GpuCompressedDecodedLength > 0;
+
+        public void SetGpuCompressedPayload(EBufferCompressionCodec codec, ReadOnlySpan<byte> encodedPayload, uint decodedLength)
+        {
+            if (codec == EBufferCompressionCodec.None)
+                throw new ArgumentException("Compression codec must not be None.", nameof(codec));
+            if (encodedPayload.IsEmpty)
+                throw new ArgumentException("Encoded payload cannot be empty.", nameof(encodedPayload));
+            if (decodedLength == 0)
+                throw new ArgumentException("Decoded length must be greater than zero.", nameof(decodedLength));
+
+            ClearGpuCompressedPayload();
+
+            byte[] encodedCopy = encodedPayload.ToArray();
+            _gpuCompressedSource = new DataSource(encodedCopy);
+            GpuCompressionCodec = codec;
+            GpuCompressedDecodedLength = decodedLength;
+        }
+
+        public void ClearGpuCompressedPayload()
+        {
+            _gpuCompressedSource?.Dispose();
+            _gpuCompressedSource = null;
+            GpuCompressionCodec = EBufferCompressionCodec.None;
+            GpuCompressedDecodedLength = 0;
         }
 
         /// <summary>
@@ -861,6 +916,8 @@ namespace XREngine.Rendering
                 _clientSideSource = null;
             }
 
+            ClearGpuCompressedPayload();
+
             //_vaoId = 0;
             _disposedValue = true;
         }
@@ -875,6 +932,14 @@ namespace XREngine.Rendering
                 _normalize = _normalize,
                 _clientSideSource = cloneBuffer ? _clientSideSource?.Clone() : _clientSideSource,
             };
+
+            if (_gpuCompressedSource is not null)
+            {
+                clone._gpuCompressedSource = cloneBuffer ? _gpuCompressedSource.Clone() : _gpuCompressedSource;
+                clone.GpuCompressionCodec = GpuCompressionCodec;
+                clone.GpuCompressedDecodedLength = GpuCompressedDecodedLength;
+            }
+
             return clone;
         }
 
@@ -910,6 +975,9 @@ namespace XREngine.Rendering
 
             _clientSideSource?.Dispose();
             _clientSideSource = newSource;
+
+            if (!copyData)
+                ClearGpuCompressedPayload();
 
             //TODO: inform api objects this changed
 

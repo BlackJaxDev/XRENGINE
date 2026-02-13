@@ -47,6 +47,91 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void SetBoundingSphere(Vector3 center, float radius)
             => BoundingSphere = new Vector4(center, radius);
+
+        public GPUIndirectRenderCommandHot ToHot(uint sourceCommandIndex)
+            => new()
+            {
+                BoundingSphere = BoundingSphere,
+                MeshID = MeshID,
+                SubmeshID = SubmeshID,
+                MaterialID = MaterialID,
+                InstanceCount = InstanceCount,
+                RenderPass = RenderPass,
+                LayerMask = LayerMask,
+                Flags = Flags,
+                LODLevel = LODLevel,
+                ShaderProgramID = ShaderProgramID,
+                RenderDistance = RenderDistance,
+                SourceCommandIndex = sourceCommandIndex,
+                Reserved0 = Reserved0,
+            };
+
+        public GPUIndirectRenderCommandCold ToCold()
+            => new()
+            {
+                WorldMatrix = WorldMatrix,
+                PrevWorldMatrix = PrevWorldMatrix,
+                ShaderProgramID = ShaderProgramID,
+                RenderDistance = RenderDistance,
+                Reserved0 = Reserved0,
+                Reserved1 = Reserved1,
+            };
+
+        public static GPUIndirectRenderCommand FromHotCold(in GPUIndirectRenderCommandHot hot, in GPUIndirectRenderCommandCold cold)
+            => new()
+            {
+                WorldMatrix = cold.WorldMatrix,
+                PrevWorldMatrix = cold.PrevWorldMatrix,
+                BoundingSphere = hot.BoundingSphere,
+                MeshID = hot.MeshID,
+                SubmeshID = hot.SubmeshID,
+                MaterialID = hot.MaterialID,
+                InstanceCount = hot.InstanceCount,
+                RenderPass = hot.RenderPass,
+                ShaderProgramID = cold.ShaderProgramID,
+                RenderDistance = cold.RenderDistance,
+                LayerMask = hot.LayerMask,
+                LODLevel = hot.LODLevel,
+                Flags = hot.Flags,
+                Reserved0 = cold.Reserved0,
+                Reserved1 = cold.Reserved1,
+            };
+    }
+
+    /// <summary>
+    /// Hot-path GPU command payload used by culling/occlusion/indirect build stages.
+    /// Keeps frequently accessed fields in a compact 64-byte struct (16 uints).
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GPUIndirectRenderCommandHot
+    {
+        public Vector4 BoundingSphere;           // 16 bytes
+        public uint MeshID;                      // 20
+        public uint SubmeshID;                   // 24
+        public uint MaterialID;                  // 28
+        public uint InstanceCount;               // 32
+        public uint RenderPass;                  // 36
+        public uint LayerMask;                   // 40
+        public uint Flags;                       // 44
+        public uint LODLevel;                    // 48
+        public uint ShaderProgramID;             // 52
+        public float RenderDistance;             // 56 (squared distance in culling path)
+        public uint SourceCommandIndex;          // 60 (stable source index for baseInstance mapping)
+        public uint Reserved0;                   // 64
+    }
+
+    /// <summary>
+    /// Cold-path GPU command payload used for matrix and extended metadata reads.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GPUIndirectRenderCommandCold
+    {
+        public Matrix4x4 WorldMatrix;            // 64 bytes
+        public Matrix4x4 PrevWorldMatrix;        // 64 bytes
+        public uint ShaderProgramID;             // 4 bytes
+        public float RenderDistance;             // 4 bytes
+        public uint Reserved0;                   // 4 bytes
+        public uint Reserved1;                   // 4 bytes
     }
     
     /// <summary>

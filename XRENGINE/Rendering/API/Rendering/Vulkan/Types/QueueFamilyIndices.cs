@@ -7,6 +7,8 @@ public unsafe partial class VulkanRenderer
     {
         public uint? GraphicsFamilyIndex { get; set; }
         public uint? PresentFamilyIndex { get; set; }
+        public uint? ComputeFamilyIndex { get; set; }
+        public uint? TransferFamilyIndex { get; set; }
 
         public readonly bool IsComplete()
             => GraphicsFamilyIndex.HasValue && PresentFamilyIndex.HasValue;
@@ -35,6 +37,19 @@ public unsafe partial class VulkanRenderer
             if (queueFamily.QueueFlags.HasFlag(QueueFlags.GraphicsBit))
                 indices.GraphicsFamilyIndex = i;
 
+            if (queueFamily.QueueFlags.HasFlag(QueueFlags.ComputeBit) &&
+                (!indices.ComputeFamilyIndex.HasValue || !queueFamily.QueueFlags.HasFlag(QueueFlags.GraphicsBit)))
+            {
+                indices.ComputeFamilyIndex = i;
+            }
+
+            if (queueFamily.QueueFlags.HasFlag(QueueFlags.TransferBit) &&
+                (!indices.TransferFamilyIndex.HasValue ||
+                 (!queueFamily.QueueFlags.HasFlag(QueueFlags.GraphicsBit) && !queueFamily.QueueFlags.HasFlag(QueueFlags.ComputeBit))))
+            {
+                indices.TransferFamilyIndex = i;
+            }
+
             khrSurface!.GetPhysicalDeviceSurfaceSupport(device, i, surface, out var presentSupport);
 
             if (presentSupport)
@@ -43,6 +58,9 @@ public unsafe partial class VulkanRenderer
             if (indices.IsComplete())
                 break;
         }
+
+        indices.ComputeFamilyIndex ??= indices.GraphicsFamilyIndex;
+        indices.TransferFamilyIndex ??= indices.ComputeFamilyIndex ?? indices.GraphicsFamilyIndex;
 
         return indices;
     }

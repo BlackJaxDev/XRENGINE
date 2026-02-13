@@ -291,38 +291,73 @@ namespace XREngine.Rendering
             Log(LogCategory.Draw, LogLevel.Info, msg);
         }
 
-        //private static bool TryReadDrawCount(XRDataBuffer? parameterBuffer, out uint drawCount)
-        //{
-        //    drawCount = 0;
-        //    return false; // GPU pipeline operates without CPU readbacks.
-        //}
+        private static List<DrawBatch> CoalesceContiguousBatches(IReadOnlyList<DrawBatch> batches)
+        {
+            if (batches.Count <= 1)
+                return [.. batches];
 
-        //private static void ClearIndirectTail(XRDataBuffer indirectDrawBuffer, XRDataBuffer? parameterBuffer, uint maxCommands)
-        //{
-        //    if (maxCommands == 0 || 
-        //        indirectDrawBuffer is null || 
-        //        DebugSettings.SkipIndirectTailClear || 
-        //        !TryReadDrawCount(parameterBuffer, out uint drawCount) ||
-        //        drawCount >= maxCommands)
-        //        return;
+            List<DrawBatch> merged = new(batches.Count);
+            DrawBatch current = batches[0];
 
-        //    uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
-        //    uint staleCount = maxCommands - drawCount;
-        //    ulong byteOffset = (ulong)drawCount * stride;
-        //    ulong byteLength = (ulong)staleCount * stride;
+            for (int index = 1; index < batches.Count; index++)
+            {
+                DrawBatch next = batches[index];
+                bool contiguous = current.Offset + current.Count == next.Offset;
+                bool sameMaterial = current.MaterialID == next.MaterialID;
 
-        //    if (byteLength == 0 || byteOffset > int.MaxValue || byteLength > uint.MaxValue)
-        //    {
-        //        Debug.LogWarning($"Skipping indirect tail clear: offset={byteOffset} length={byteLength} exceeds CPU copy limits.");
-        //        return;
-        //    }
+                if (contiguous && sameMaterial)
+                {
+                    current = new DrawBatch(current.Offset, current.Count + next.Count, current.MaterialID);
+                    continue;
+                }
 
-        //    var zeroCommand = default(DrawElementsIndirectCommand);
-        //    for (uint i = 0; i < staleCount; ++i)
-        //        indirectDrawBuffer.SetDataRawAtIndex(drawCount + i, zeroCommand);
+                merged.Add(current);
+                current = next;
+            }
 
-        //    indirectDrawBuffer.PushSubData((int)byteOffset, (uint)byteLength);
-        //}
+            merged.Add(current);
+            return merged;
+        }
+
+        private static bool TryReadDrawCount(XRDataBuffer? parameterBuffer, out uint drawCount)
+        {
+            drawCount = 0u;
+            if (parameterBuffer is null)
+                return false;
+
+            try
+            {
+                drawCount = parameterBuffer.GetDataRawAtIndex<uint>(0);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void ClearIndirectTail(XRDataBuffer indirectDrawBuffer, uint drawCount, uint maxCommands)
+        {
+            if (maxCommands == 0 || drawCount >= maxCommands)
+                return;
+
+            uint stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
+            uint staleCount = maxCommands - drawCount;
+            ulong byteOffset = (ulong)drawCount * stride;
+            ulong byteLength = (ulong)staleCount * stride;
+
+            if (byteLength == 0 || byteOffset > int.MaxValue || byteLength > uint.MaxValue)
+            {
+                Debug.LogWarning($"Skipping indirect tail clear: offset={byteOffset} length={byteLength} exceeds CPU copy limits.");
+                return;
+            }
+
+            var zeroCommand = default(DrawElementsIndirectCommand);
+            for (uint i = 0; i < staleCount; ++i)
+                indirectDrawBuffer.SetDataRawAtIndex(drawCount + i, zeroCommand);
+
+            indirectDrawBuffer.PushSubData((int)byteOffset, (uint)byteLength);
+        }
 
         private static void DispatchRenderIndirect(
             XRDataBuffer? indirectDrawBuffer,
@@ -458,8 +493,14 @@ namespace XREngine.Rendering
                 }
                 else
                 {
+                    if (drawCount == 0 && TryReadDrawCount(parameterBuffer, out uint gpuDrawCount))
+                        drawCount = gpuDrawCount;
+
                     if (drawCount == 0)
                         drawCount = maxCommands;
+
+                    if (!DebugSettings.SkipIndirectTailClear && drawCount < maxCommands)
+                        ClearIndirectTail(indirectDrawBuffer, drawCount, maxCommands);
                     
                     LogMultiDrawIndirect(false, drawCount, stride);
                     renderer.MultiDrawElementsIndirect(drawCount, stride);
@@ -2239,7 +2280,17 @@ namespace XREngine.Rendering
             //    ClearIndirectTail(indirectDrawBuffer, parameterBuffer, indirectDrawBuffer.ElementCount);
             //}
 
-            var activeBatches = overrideBatches ?? batches;
+            var activeBatches = CoalesceContiguousBatches(overrideBatches ?? batches);
+            Engine.Rendering.Stats.RecordVulkanIndirectBatchMerge(batches.Count, activeBatches.Count);
+
+            if (activeBatches.Count != batches.Count)
+            {
+                GpuDebug(
+                    LogCategory.Draw,
+                    "Coalesced draw batches for indirect dispatch: requested={0}, merged={1}",
+                    batches.Count,
+                    activeBatches.Count);
+            }
             XRDataBuffer? instanceTransformBuffer = renderPasses.InstanceTransformBuffer;
             XRDataBuffer? instanceSourceIndexBuffer = renderPasses.InstanceSourceIndexBuffer;
             bool useGpuInstanceTransforms =

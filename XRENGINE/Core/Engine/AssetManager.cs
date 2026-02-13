@@ -131,6 +131,7 @@ namespace XREngine
                 GameAssetsPath = cwdAssets;
 
             VerifyDirectoryExists(GameAssetsPath);
+            Debug.Out($"Asset IO backend: {(DirectStorageIO.IsEnabled ? "DirectStorage-ready" : "Standard")} ({DirectStorageIO.Status})");
 
             // Best-effort defaults for sandbox mode. Project load will overwrite these.
             EnsureGameMetadataPathInitialized();
@@ -2250,7 +2251,7 @@ namespace XREngine
             {
                 transferMode = RemoteJobTransferMode.PushDataToRemote;
                 if (File.Exists(filePath))
-                    payload = await File.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false);
+                    payload = await DirectStorageIO.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false);
             }
 
             var request = new RemoteJobRequest

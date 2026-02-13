@@ -83,6 +83,51 @@ public static class VulkanFeatureProfile
             _ => false,
         };
 
+    private static bool ProfileAllowsDescriptorIndexing
+        => ActiveProfile switch
+        {
+            EVulkanGpuDrivenProfile.ShippingFast => true,
+            EVulkanGpuDrivenProfile.DevParity => true,
+            EVulkanGpuDrivenProfile.Diagnostics => true,
+            _ => false,
+        };
+
+    private static bool ProfileAllowsBindlessMaterialTable
+        => ActiveProfile switch
+        {
+            EVulkanGpuDrivenProfile.ShippingFast => true,
+            EVulkanGpuDrivenProfile.DevParity => true,
+            EVulkanGpuDrivenProfile.Diagnostics => true,
+            _ => false,
+        };
+
+    private static bool ProfileAllowsDescriptorContractValidation
+        => ActiveProfile switch
+        {
+            EVulkanGpuDrivenProfile.ShippingFast => false,
+            EVulkanGpuDrivenProfile.DevParity => true,
+            EVulkanGpuDrivenProfile.Diagnostics => true,
+            _ => false,
+        };
+
+    private static bool ProfileAllowsRtxIoVulkanDecompression
+        => ActiveProfile switch
+        {
+            EVulkanGpuDrivenProfile.ShippingFast => true,
+            EVulkanGpuDrivenProfile.DevParity => true,
+            EVulkanGpuDrivenProfile.Diagnostics => true,
+            _ => false,
+        };
+
+    private static bool ProfileAllowsRtxIoVulkanCopyMemoryIndirect
+        => ActiveProfile switch
+        {
+            EVulkanGpuDrivenProfile.ShippingFast => true,
+            EVulkanGpuDrivenProfile.DevParity => true,
+            EVulkanGpuDrivenProfile.Diagnostics => true,
+            _ => false,
+        };
+
     public static bool ResolveComputeDependentPassesPreference(bool requested)
     {
         if (!requested)
@@ -113,6 +158,57 @@ public static class VulkanFeatureProfile
             return false;
 
         return !IsActive || ProfileAllowsImGui;
+    }
+
+    public static bool ResolveDescriptorIndexingPreference(bool requested)
+    {
+        if (!requested)
+            return false;
+
+        return !IsActive || ProfileAllowsDescriptorIndexing;
+    }
+
+    public static bool ResolveBindlessMaterialTablePreference(bool requested)
+    {
+        if (!requested)
+            return false;
+
+        return !IsActive || ProfileAllowsBindlessMaterialTable;
+    }
+
+    public static bool ResolveDescriptorContractValidationPreference(bool requested)
+    {
+        if (!requested)
+            return false;
+
+        return !IsActive || ProfileAllowsDescriptorContractValidation;
+    }
+
+    public static bool ResolveRtxIoVulkanDecompressionPreference(bool requested)
+    {
+        if (!requested)
+            return false;
+
+        return !IsActive || ProfileAllowsRtxIoVulkanDecompression;
+    }
+
+    public static bool ResolveRtxIoVulkanCopyMemoryIndirectPreference(bool requested)
+    {
+        if (!requested)
+            return false;
+
+        return !IsActive || ProfileAllowsRtxIoVulkanCopyMemoryIndirect;
+    }
+
+    public static EVulkanGeometryFetchMode ResolveGeometryFetchMode(EVulkanGeometryFetchMode requested)
+    {
+        if (!IsActive)
+            return requested;
+
+        if (requested == EVulkanGeometryFetchMode.BufferDeviceAddressPrototype && ActiveProfile != EVulkanGpuDrivenProfile.Diagnostics)
+            return EVulkanGeometryFetchMode.Atlas;
+
+        return requested;
     }
 
     public static EOcclusionCullingMode ResolveOcclusionCullingMode(EOcclusionCullingMode requested)
@@ -154,4 +250,22 @@ public static class VulkanFeatureProfile
     /// </summary>
     public static bool EnableImGui
         => ResolveImGuiPreference(true);
+
+    public static bool EnableDescriptorIndexing
+        => ResolveDescriptorIndexingPreference(Engine.EffectiveSettings.EnableVulkanDescriptorIndexing);
+
+    public static bool EnableBindlessMaterialTable
+        => ResolveBindlessMaterialTablePreference(Engine.EffectiveSettings.EnableVulkanBindlessMaterialTable);
+
+    public static bool EnableDescriptorContractValidation
+        => ResolveDescriptorContractValidationPreference(Engine.EffectiveSettings.ValidateVulkanDescriptorContracts);
+
+    public static bool EnableRtxIoVulkanDecompression
+        => ResolveRtxIoVulkanDecompressionPreference(true);
+
+    public static bool EnableRtxIoVulkanCopyMemoryIndirect
+        => ResolveRtxIoVulkanCopyMemoryIndirectPreference(true);
+
+    public static EVulkanGeometryFetchMode ActiveGeometryFetchMode
+        => ResolveGeometryFetchMode(Engine.EffectiveSettings.VulkanGeometryFetchMode);
 }

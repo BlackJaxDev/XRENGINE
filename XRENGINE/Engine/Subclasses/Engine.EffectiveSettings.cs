@@ -86,6 +86,30 @@ namespace XREngine
                     null);
 
             /// <summary>
+            /// Gets whether Vulkan descriptor indexing should be enabled when supported.
+            /// </summary>
+            public static bool EnableVulkanDescriptorIndexing
+                => Rendering.Settings.EnableVulkanDescriptorIndexing;
+
+            /// <summary>
+            /// Gets whether Vulkan material-table population is enabled.
+            /// </summary>
+            public static bool EnableVulkanBindlessMaterialTable
+                => Rendering.Settings.EnableVulkanBindlessMaterialTable;
+
+            /// <summary>
+            /// Gets whether Vulkan descriptor contracts should be validated.
+            /// </summary>
+            public static bool ValidateVulkanDescriptorContracts
+                => Rendering.Settings.ValidateVulkanDescriptorContracts;
+
+            /// <summary>
+            /// Gets optional Vulkan geometry fetch strategy.
+            /// </summary>
+            public static EVulkanGeometryFetchMode VulkanGeometryFetchMode
+                => Rendering.Settings.VulkanGeometryFetchMode;
+
+            /// <summary>
             /// Gets the effective GPU render dispatch setting.
             /// Resolved from: User Override > Project Setting (GPURenderDispatch is a project-level primary setting)
             /// </summary>
@@ -111,6 +135,12 @@ namespace XREngine
                     Rendering.Settings.UseGpuBvh,
                     GameSettings?.UseGpuBvhOverride,
                     null);
+
+            /// <summary>
+            /// Gets the active GPU culling data layout mode.
+            /// </summary>
+            public static EGpuCullingDataLayout GpuCullingDataLayout
+                => Rendering.Settings.GpuCullingDataLayout;
 
             /// <summary>
             /// Gets the active occlusion culling mode for GPU indirect rendering.

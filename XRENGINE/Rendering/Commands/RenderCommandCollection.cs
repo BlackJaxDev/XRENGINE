@@ -381,8 +381,41 @@ namespace XREngine.Rendering.Commands
                 cursor++;
             }
 
+            ValidateViewDescriptorLayout(descriptors.Slice(0, (int)cursor), gpuPass.CommandCapacity);
             gpuPass.ConfigureViewSet(descriptors.Slice(0, (int)cursor), constants.Slice(0, (int)cursor));
-            gpuPass.SetIndirectSourceViewId(DetermineIndirectSourceViewId(renderState, leftCamera, rightCamera));
+            uint requestedSourceView = DetermineIndirectSourceViewId(renderState, leftCamera, rightCamera);
+            gpuPass.SetIndirectSourceViewId(requestedSourceView);
+
+            if (requestedSourceView != gpuPass.IndirectSourceViewId)
+            {
+                throw new InvalidOperationException(
+                    $"Indirect source view id {requestedSourceView} was clamped to {gpuPass.IndirectSourceViewId} for active views {gpuPass.ActiveViewCount}.");
+            }
+        }
+
+        private static void ValidateViewDescriptorLayout(ReadOnlySpan<GPUViewDescriptor> descriptors, uint commandCapacity)
+        {
+            uint expectedOffset = 0u;
+            for (int i = 0; i < descriptors.Length; i++)
+            {
+                GPUViewDescriptor descriptor = descriptors[i];
+                if (descriptor.ViewId != (uint)i)
+                    throw new InvalidOperationException($"View descriptor order mismatch at index {i}; found ViewId={descriptor.ViewId}.");
+
+                if (descriptor.VisibleOffset != expectedOffset)
+                {
+                    throw new InvalidOperationException(
+                        $"View {descriptor.ViewId} visible offset {descriptor.VisibleOffset} does not match expected {expectedOffset}.");
+                }
+
+                if (descriptor.VisibleCapacity != commandCapacity)
+                {
+                    throw new InvalidOperationException(
+                        $"View {descriptor.ViewId} visible capacity {descriptor.VisibleCapacity} does not match command capacity {commandCapacity}.");
+                }
+
+                expectedOffset += commandCapacity;
+            }
         }
 
         private static uint DetermineIndirectSourceViewId(

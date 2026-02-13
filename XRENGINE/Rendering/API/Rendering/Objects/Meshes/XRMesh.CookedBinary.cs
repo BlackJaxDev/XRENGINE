@@ -443,6 +443,9 @@ public partial class XRMesh : ICookedBinarySerializable
                 usesLongLength = decodedLength > int.MaxValue;
                 encodedData = EncodeLzma(buffer, decodedLength, usesLongLength, out encodedLength);
                 break;
+            case MeshBufferEncoding.GDeflate:
+                encodedData = EncodeGDeflate(buffer, decodedLength, out encodedLength);
+                break;
             default:
                 throw new NotSupportedException($"Unsupported mesh buffer encoding '{encoding}'.");
         }
@@ -590,6 +593,9 @@ public partial class XRMesh : ICookedBinarySerializable
                 break;
             case MeshBufferEncoding.Lzma:
                 DecodeLzma(encoded, buffer, decodedLength, useLongLength);
+                break;
+            case MeshBufferEncoding.GDeflate:
+                buffer.SetGpuCompressedPayload(XRDataBuffer.EBufferCompressionCodec.GDeflate, encoded, decodedLength);
                 break;
             default:
                 throw new NotSupportedException($"Unsupported mesh buffer encoding '{encoding}'.");
@@ -928,6 +934,16 @@ public partial class XRMesh : ICookedBinarySerializable
         return encoded;
     }
 
+    private byte[] EncodeGDeflate(XRDataBuffer buffer, uint decodedLength, out uint encodedLength)
+    {
+        ReadOnlySpan<byte> source = GetBufferSpan(buffer, decodedLength);
+        if (!Compression.TryCompressGDeflate(source, out byte[] encoded))
+            throw new NotSupportedException("GDeflate encoder is not available. Integrate a GDeflate encoder in Compression.TryCompressGDeflate to emit mesh streams with MeshBufferEncoding.GDeflate.");
+
+        encodedLength = (uint)encoded.Length;
+        return encoded;
+    }
+
     private void DecodeLzma(ReadOnlySpan<byte> encoded, XRDataBuffer buffer, uint decodedLength, bool useLongLength)
     {
         byte[] encodedArray = encoded.ToArray();
@@ -988,7 +1004,8 @@ public partial class XRMesh : ICookedBinarySerializable
     {
         Raw = 0,
         Snorm16 = 1,
-        Lzma = 2
+        Lzma = 2,
+        GDeflate = 3
     }
 
     private sealed class BufferPlan

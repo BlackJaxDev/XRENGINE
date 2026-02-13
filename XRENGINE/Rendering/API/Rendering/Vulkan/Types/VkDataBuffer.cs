@@ -1,6 +1,7 @@
 using Extensions;
 using Silk.NET.Vulkan;
 using System.Runtime.CompilerServices;
+using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using Buffer = Silk.NET.Vulkan.Buffer;
@@ -121,17 +122,40 @@ namespace XREngine.Rendering.Vulkan
                     // --- Staging buffer pattern for device-local ---
                     if (ShouldUseDeviceLocal(Data.Usage))
                     {
+                        bool preferIndirectCopy = Renderer.SupportsNvCopyMemoryIndirect && Renderer.SupportsBufferDeviceAddress;
+
                         // Create device-local buffer first.
-                        var (deviceBuffer, deviceMemory) = Renderer.CreateBuffer(_bufferSize, usage | BufferUsageFlags.TransferDstBit, MemoryPropertyFlags.DeviceLocalBit, null);
+                        BufferUsageFlags deviceUsage = usage | BufferUsageFlags.TransferDstBit;
+                        if (preferIndirectCopy)
+                            deviceUsage |= BufferUsageFlags.ShaderDeviceAddressBit;
+
+                        var (deviceBuffer, deviceMemory) = Renderer.CreateBuffer(
+                            _bufferSize,
+                            deviceUsage,
+                            MemoryPropertyFlags.DeviceLocalBit,
+                            null,
+                            preferIndirectCopy);
                         _vkBuffer = deviceBuffer;
                         _vkMemory = deviceMemory;
 
+                        if (TryUploadGpuCompressedPayload(deviceBuffer))
+                        {
+                            // GPU-side decompression upload succeeded; no staging copy required.
+                        }
                         // If CPU-side data exists, upload through a transient staging buffer.
-                        if (_bufferSize > 0 && TryGetUploadSlice(0, (uint)_bufferSize, out VoidPtr sourceSlice))
+                        else if (_bufferSize > 0 && TryGetUploadSlice(0, (uint)_bufferSize, out VoidPtr sourceSlice))
                         {
                             BufferUsageFlags stagingUsage = BufferUsageFlags.TransferSrcBit;
+                            if (preferIndirectCopy)
+                                stagingUsage |= BufferUsageFlags.ShaderDeviceAddressBit;
+
                             MemoryPropertyFlags stagingProps = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
-                            var (stagingBuffer, stagingMemory) = Renderer.CreateBuffer(_bufferSize, stagingUsage, stagingProps, sourceSlice);
+                            var (stagingBuffer, stagingMemory) = Renderer.CreateBuffer(
+                                _bufferSize,
+                                stagingUsage,
+                                stagingProps,
+                                sourceSlice,
+                                preferIndirectCopy);
                             try
                             {
                                 Renderer.CopyBuffer(stagingBuffer, deviceBuffer, _bufferSize);
@@ -196,12 +220,30 @@ namespace XREngine.Rendering.Vulkan
                 // For device-local, use staging buffer for subdata
                 if (ShouldUseDeviceLocal(Data.Usage))
                 {
+                    if (Data.HasGpuCompressedPayload)
+                    {
+                        // Partial sub-updates are not meaningful for compressed payload uploads.
+                        // Re-run full upload path so decompression/copy logic remains consistent.
+                        PushData();
+                        return;
+                    }
+
                     if (!TryGetUploadSlice(offset, clampedLength, out VoidPtr sourceSlice))
                         return;
 
+                    bool preferIndirectCopy = Renderer.SupportsNvCopyMemoryIndirect && Renderer.SupportsBufferDeviceAddress;
+
                     BufferUsageFlags stagingUsage = BufferUsageFlags.TransferSrcBit;
+                    if (preferIndirectCopy)
+                        stagingUsage |= BufferUsageFlags.ShaderDeviceAddressBit;
+
                     MemoryPropertyFlags stagingProps = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
-                    var (stagingBuffer, stagingMemory) = Renderer.CreateBuffer(clampedLength, stagingUsage, stagingProps, sourceSlice);
+                    var (stagingBuffer, stagingMemory) = Renderer.CreateBuffer(
+                        clampedLength,
+                        stagingUsage,
+                        stagingProps,
+                        sourceSlice,
+                        preferIndirectCopy);
                     try
                     {
                         Renderer.CopyBuffer(stagingBuffer, _vkBuffer, clampedLength, (ulong)offset);
@@ -221,6 +263,53 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 Renderer.TrackBufferBinding(Data);
+            }
+
+            private bool TryUploadGpuCompressedPayload(Buffer deviceBuffer)
+            {
+                if (!Data.HasGpuCompressedPayload || Data.GpuCompressedSource is null)
+                    return false;
+
+                if (Data.GpuCompressionCodec != XRDataBuffer.EBufferCompressionCodec.GDeflate)
+                    return false;
+
+                if (!Renderer.SupportsNvMemoryDecompression || !Renderer.SupportsBufferDeviceAddress)
+                    return false;
+
+                ulong decodedLength = _bufferSize;
+                ulong expectedDecodedLength = Data.GpuCompressedDecodedLength;
+                if (decodedLength == 0 || expectedDecodedLength == 0 || expectedDecodedLength != decodedLength)
+                    return false;
+
+                DataSource compressedSource = Data.GpuCompressedSource;
+                ulong compressedLength = compressedSource.Length;
+                if (compressedLength == 0)
+                    return false;
+
+                BufferUsageFlags stagingUsage = BufferUsageFlags.TransferSrcBit | BufferUsageFlags.ShaderDeviceAddressBit;
+                MemoryPropertyFlags stagingProps = MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
+
+                var (compressedBuffer, compressedMemory) = Renderer.CreateBuffer(
+                    compressedLength,
+                    stagingUsage,
+                    stagingProps,
+                    compressedSource.Address,
+                    enableDeviceAddress: true);
+
+                try
+                {
+                    return Renderer.TryDecompressBufferGDeflateNv(
+                        compressedBuffer,
+                        srcOffset: 0,
+                        compressedSize: compressedLength,
+                        dstBuffer: deviceBuffer,
+                        dstOffset: 0,
+                        decompressedSize: decodedLength);
+                }
+                finally
+                {
+                    Renderer.DestroyBuffer(compressedBuffer, compressedMemory);
+                }
             }
             public void PushSubData() => PushSubData(0, Data.Length);
 
@@ -487,6 +576,9 @@ namespace XREngine.Rendering.Vulkan
             if (stagingBuffer is null || vkBuffer is null)
                 throw new ArgumentNullException("Buffers cannot be null for copy operation.");
 
+            if (TryCopyBufferViaIndirectNv(stagingBuffer.Value, vkBuffer.Value, length, 0, offset))
+                return;
+
             using var scope = NewCommandScope();
             BufferCopy copyRegion = new()
             {
@@ -527,6 +619,9 @@ namespace XREngine.Rendering.Vulkan
             if (stagingBuffer is null || deviceBuffer is null)
                 throw new ArgumentNullException("Buffers cannot be null for copy operation.");
 
+            if (TryCopyBufferViaIndirectNv(stagingBuffer.Value, deviceBuffer.Value, bufferSize, 0, 0))
+                return;
+
             using var scope = NewCommandScope();
             BufferCopy copyRegion = new()
             {
@@ -550,7 +645,8 @@ namespace XREngine.Rendering.Vulkan
             ulong bufferSize,
             BufferUsageFlags stagingUsage,
             MemoryPropertyFlags stagingProps,
-            VoidPtr dataPtr)
+            VoidPtr dataPtr,
+            bool enableDeviceAddress = false)
         {
             if (bufferSize == 0)
                 throw new ArgumentException("Buffer size must be greater than zero.", nameof(bufferSize));
@@ -558,7 +654,7 @@ namespace XREngine.Rendering.Vulkan
             if (_stagingManager.CanPool(stagingUsage, stagingProps))
                 return _stagingManager.Acquire(this, bufferSize, stagingUsage, stagingProps, dataPtr);
 
-            (Buffer stagingBuffer, DeviceMemory stagingMemory) = CreateBufferRaw(bufferSize, stagingUsage, stagingProps);
+            (Buffer stagingBuffer, DeviceMemory stagingMemory) = CreateBufferRaw(bufferSize, stagingUsage, stagingProps, enableDeviceAddress);
 
             // Map the buffer if needed.
             if (dataPtr != null)
@@ -576,8 +672,12 @@ namespace XREngine.Rendering.Vulkan
         internal (Buffer buffer, DeviceMemory memory) CreateBufferRaw(
             ulong bufferSize,
             BufferUsageFlags usage,
-            MemoryPropertyFlags properties)
+            MemoryPropertyFlags properties,
+            bool enableDeviceAddress = false)
         {
+            if (enableDeviceAddress)
+                usage |= BufferUsageFlags.ShaderDeviceAddressBit;
+
             BufferCreateInfo bufferInfo = new()
             {
                 SType = StructureType.BufferCreateInfo,
@@ -596,6 +696,17 @@ namespace XREngine.Rendering.Vulkan
                 AllocationSize = memoryRequirements.Size,
                 MemoryTypeIndex = FindMemoryType(memoryRequirements.MemoryTypeBits, properties)
             };
+
+            MemoryAllocateFlagsInfo memoryAllocateFlagsInfo = new()
+            {
+                SType = StructureType.MemoryAllocateFlagsInfo,
+                PNext = null,
+                Flags = MemoryAllocateFlags.DeviceAddressBit,
+                DeviceMask = 0,
+            };
+
+            if (enableDeviceAddress)
+                memoryInfo.PNext = &memoryAllocateFlagsInfo;
 
             if (Api.AllocateMemory(device, ref memoryInfo, null, out DeviceMemory memory) != Result.Success)
             {
@@ -631,6 +742,64 @@ namespace XREngine.Rendering.Vulkan
             {
                 Api.UnmapMemory(device, memory);
             }
+        }
+
+        /// <summary>
+        /// Creates a staging buffer and fills it directly from a file via DirectStorage,
+        /// reading file data straight into mapped Vulkan host-visible memory.
+        /// <para>
+        /// This is the Vulkan equivalent of DirectStorage's D3D12 <c>DestinationBuffer</c>:
+        /// file data goes NVMe → mapped staging buffer → <c>CmdCopyBuffer</c> → device-local.
+        /// There is no intermediate managed <c>byte[]</c> allocation.
+        /// </para>
+        /// Use this for pre-cooked binary data (raw vertex/index buffers, DDS textures, etc.)
+        /// that does not need CPU-side decoding.
+        /// </summary>
+        /// <param name="filePath">Source file path.</param>
+        /// <param name="offset">Byte offset in the file.</param>
+        /// <param name="length">Number of bytes to read.</param>
+        /// <param name="stagingBuffer">The created staging buffer (TransferSrc, HostVisible).</param>
+        /// <param name="stagingMemory">The staging buffer's device memory.</param>
+        /// <returns><c>true</c> if successful.</returns>
+        public bool TryCreateStagingBufferFromFile(
+            string filePath, long offset, int length,
+            out Buffer stagingBuffer, out DeviceMemory stagingMemory)
+        {
+            stagingBuffer = default;
+            stagingMemory = default;
+
+            if (string.IsNullOrWhiteSpace(filePath) || length <= 0)
+                return false;
+
+            (stagingBuffer, stagingMemory) = CreateBufferRaw(
+                (ulong)length,
+                BufferUsageFlags.TransferSrcBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
+
+            void* mappedPtr = null;
+            if (Api!.MapMemory(device, stagingMemory, 0, (ulong)length, 0, &mappedPtr) != Result.Success)
+            {
+                DestroyBufferRaw(stagingBuffer, stagingMemory);
+                stagingBuffer = default;
+                stagingMemory = default;
+                return false;
+            }
+
+            try
+            {
+                DirectStorageIO.TryReadInto(filePath, offset, length, mappedPtr);
+            }
+            catch
+            {
+                Api.UnmapMemory(device, stagingMemory);
+                DestroyBufferRaw(stagingBuffer, stagingMemory);
+                stagingBuffer = default;
+                stagingMemory = default;
+                return false;
+            }
+
+            Api.UnmapMemory(device, stagingMemory);
+            return true;
         }
 
         internal void DestroyBufferRaw(Buffer? buffer, DeviceMemory? memory)

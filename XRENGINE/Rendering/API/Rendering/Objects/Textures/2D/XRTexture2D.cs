@@ -49,7 +49,10 @@ namespace XREngine.Rendering
 
             try
             {
-                var sourceImage = new MagickImage(filePath);
+                // Pre-read the image file via DirectStorage (bypasses Windows I/O stack on NVMe),
+                // then decode from the in-memory bytes. Falls back to RandomAccess automatically.
+                byte[] fileBytes = DirectStorageIO.ReadAllBytes(filePath);
+                var sourceImage = new MagickImage(fileBytes);
                 Mipmaps = GetMipmapsFromImage(sourceImage);
                 AutoGenerateMipmaps = false;
                 Resizable = false;
@@ -75,6 +78,75 @@ namespace XREngine.Rendering
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Loads texture data from pre-read file bytes. Used when file data has already been
+        /// read from disk (e.g., via <see cref="DirectStorageIO.ReadBatch"/>).
+        /// </summary>
+        public bool Load3rdPartyFromData(byte[] fileData)
+        {
+            try
+            {
+                var sourceImage = new MagickImage(fileData);
+                Mipmaps = GetMipmapsFromImage(sourceImage);
+                AutoGenerateMipmaps = false;
+                Resizable = false;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to load texture from pre-read data ({fileData.Length} bytes). {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Batch-reads multiple texture files via DirectStorage in a single Submit() call,
+        /// then loads each texture from the pre-read bytes. This maximizes NVMe throughput
+        /// when many textures need to load at once (e.g., during model import).
+        /// </summary>
+        /// <param name="entries">Pairs of (file path, target texture to populate).</param>
+        /// <param name="cancellationToken">Optional cancellation token.</param>
+        public static void BatchLoad(ReadOnlySpan<(string filePath, XRTexture2D target)> entries, CancellationToken cancellationToken = default)
+        {
+            if (entries.Length == 0)
+                return;
+
+            // Phase 1: Batch-read all files in a single DirectStorage submit.
+            using var batch = new DirectStorageIO.ReadBatch();
+            var indices = new int[entries.Length];
+            for (int i = 0; i < entries.Length; i++)
+            {
+                string path = entries[i].filePath;
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path) || HasAssetExtension(path))
+                {
+                    indices[i] = -1; // Will fall back to individual Load3rdParty.
+                    continue;
+                }
+
+                indices[i] = batch.AddFile(path);
+            }
+
+            if (batch.Count > 0)
+                batch.Execute(cancellationToken);
+
+            // Phase 2: Decode each pre-read file through MagickImage.
+            for (int i = 0; i < entries.Length; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (filePath, target) = entries[i];
+
+                if (indices[i] >= 0 && batch.TryGetResult(indices[i], out byte[]? data) && data is { Length: > 0 })
+                {
+                    if (!target.Load3rdPartyFromData(data))
+                        target.Load3rdParty(filePath); // Fallback to full load path.
+                }
+                else
+                {
+                    target.Load3rdParty(filePath);
+                }
+            }
         }
 
         public static EnumeratorJob ScheduleLoadJob(

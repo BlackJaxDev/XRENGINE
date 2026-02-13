@@ -299,6 +299,11 @@ namespace XREngine
                 private int _shaderConfigVersion = 0;
                 private bool _useGpuBvh = false;
                 private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Auto;
+                private bool _enableVulkanDescriptorIndexing = true;
+                private bool _enableVulkanBindlessMaterialTable = true;
+                private bool _validateVulkanDescriptorContracts = true;
+                private EVulkanGeometryFetchMode _vulkanGeometryFetchMode = EVulkanGeometryFetchMode.Atlas;
+                private EGpuCullingDataLayout _gpuCullingDataLayout = EGpuCullingDataLayout.AoSHot;
                 private EOcclusionCullingMode _gpuOcclusionCullingMode = EOcclusionCullingMode.Disabled;
                 private bool _cacheGpuHiZOcclusionOncePerFrame = false;
                 private uint _bvhLeafMaxPrims = 4u;
@@ -768,6 +773,63 @@ namespace XREngine
                             Rendering.ApplyGpuBvhPreference();
                             Rendering.LogVulkanFeatureProfileFingerprint();
                         });
+                }
+
+                /// <summary>
+                /// Enables Vulkan descriptor indexing for large runtime descriptor arrays when supported.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Enables Vulkan descriptor indexing for large runtime descriptor arrays when supported.")]
+                public bool EnableVulkanDescriptorIndexing
+                {
+                    get => _enableVulkanDescriptorIndexing;
+                    set => SetField(ref _enableVulkanDescriptorIndexing, value,
+                        null,
+                        _ => Rendering.LogVulkanFeatureProfileFingerprint());
+                }
+
+                /// <summary>
+                /// Enables global material-table population path for GPU-driven rendering.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Enables global material-table population path for GPU-driven rendering.")]
+                public bool EnableVulkanBindlessMaterialTable
+                {
+                    get => _enableVulkanBindlessMaterialTable;
+                    set => SetField(ref _enableVulkanBindlessMaterialTable, value);
+                }
+
+                /// <summary>
+                /// Validates descriptor contract tiers against reflected shader bindings.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Validates descriptor contract tiers against reflected shader bindings.")]
+                public bool ValidateVulkanDescriptorContracts
+                {
+                    get => _validateVulkanDescriptorContracts;
+                    set => SetField(ref _validateVulkanDescriptorContracts, value);
+                }
+
+                /// <summary>
+                /// Selects optional Vulkan geometry fetch strategy.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Selects optional Vulkan geometry fetch strategy. Prototype path must remain opt-in until validated.")]
+                public EVulkanGeometryFetchMode VulkanGeometryFetchMode
+                {
+                    get => _vulkanGeometryFetchMode;
+                    set => SetField(ref _vulkanGeometryFetchMode, value);
+                }
+
+                /// <summary>
+                /// Selects the GPU command data layout policy used before culling.
+                /// </summary>
+                [Category("Culling")]
+                [Description("Selects the GPU command data layout policy used before culling. SoA mode enables extraction for runtime experimentation/benchmarking.")]
+                public EGpuCullingDataLayout GpuCullingDataLayout
+                {
+                    get => _gpuCullingDataLayout;
+                    set => SetField(ref _gpuCullingDataLayout, value);
                 }
 
                 /// <summary>

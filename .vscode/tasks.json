@@ -281,6 +281,24 @@
             "problemMatcher": "$msCompile"
         },
         {
+            "label": "test-vulkan-phase3-regression",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "test",
+                "${workspaceFolder}/XREngine.UnitTests/XREngine.UnitTests.csproj",
+                "-c",
+                "Debug",
+                "--filter",
+                "FullyQualifiedName~XREngine.UnitTests.Rendering.GpuIndirectPhase3PolicyTests|FullyQualifiedName~XREngine.UnitTests.Rendering.GpuIndirectPhase3ScaffoldTests|FullyQualifiedName~XREngine.UnitTests.Rendering.GpuCullingPipelineTests|FullyQualifiedName~XREngine.UnitTests.Rendering.GpuRenderingBacklogTests"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": "$msCompile"
+        },
+        {
             "label": "build-profiler",
             "command": "dotnet",
             "type": "shell",
