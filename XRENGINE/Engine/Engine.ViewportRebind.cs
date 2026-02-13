@@ -137,7 +137,7 @@ namespace XREngine
                     }
 
                     // Ensure viewports are linked to this window and have a world override.
-                    foreach (var viewport in window.Viewports)
+                    foreach (var viewport in EnumerateActiveViewports(window))
                     {
                         viewport.Window = window;
 

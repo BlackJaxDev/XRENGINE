@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -79,7 +79,7 @@ public class GpuIndirectRenderDispatchTests
     [Test]
     public void GPURenderIndirectShader_Loads_Successfully()
     {
-        string source = LoadShaderSource("Compute/GPURenderIndirect.comp");
+        string source = LoadShaderSource("Compute/Indirect/GPURenderIndirect.comp");
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
@@ -93,7 +93,7 @@ public class GpuIndirectRenderDispatchTests
     [Test]
     public void GPURenderCullingShader_Loads_Successfully()
     {
-        string source = LoadShaderSource("Compute/GPURenderCulling.comp");
+        string source = LoadShaderSource("Compute/Culling/GPURenderCulling.comp");
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
@@ -106,7 +106,7 @@ public class GpuIndirectRenderDispatchTests
     [Test]
     public void GPURenderResetCountersShader_Loads_Successfully()
     {
-        string source = LoadShaderSource("Compute/GPURenderResetCounters.comp");
+        string source = LoadShaderSource("Compute/Indirect/GPURenderResetCounters.comp");
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
@@ -118,7 +118,7 @@ public class GpuIndirectRenderDispatchTests
     [Test]
     public void GPURenderBuildKeysShader_Loads_Successfully()
     {
-        string source = LoadShaderSource("Compute/GPURenderBuildKeys.comp");
+        string source = LoadShaderSource("Compute/Indirect/GPURenderBuildKeys.comp");
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
@@ -131,7 +131,7 @@ public class GpuIndirectRenderDispatchTests
     [Test]
     public void GPURenderRadixIndexSortShader_Loads_Successfully()
     {
-        string source = LoadShaderSource("Compute/GPURenderRadixIndexSort.comp");
+        string source = LoadShaderSource("Compute/Sorting/GPURenderRadixIndexSort.comp");
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
@@ -899,3 +899,4 @@ public class GpuIndirectRenderDispatchTests
 
     #endregion
 }
+

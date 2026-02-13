@@ -51,6 +51,7 @@ public unsafe partial class VulkanRenderer
         Sampler IVkImageDescriptorSource.DescriptorSampler => _sampler;
         Format IVkImageDescriptorSource.DescriptorFormat => ResolvedFormat;
         ImageAspectFlags IVkImageDescriptorSource.DescriptorAspect => AspectFlags;
+        ImageUsageFlags IVkImageDescriptorSource.DescriptorUsage => Usage;
         SampleCountFlags IVkImageDescriptorSource.DescriptorSamples => SampleCount;
 
         protected internal Format ResolvedFormat => _formatOverride ?? Format;
@@ -139,6 +140,7 @@ public unsafe partial class VulkanRenderer
         private void RefreshLayout()
         {
             _layout = NormalizeLayout(DescribeTexture());
+            AspectFlags = NormalizeAspectMaskForFormat(Format, AspectFlags);
             _layoutInitialized = true;
         }
 
@@ -166,9 +168,11 @@ public unsafe partial class VulkanRenderer
                 _memory = group.Memory;
                 _extentOverride = group.ResolvedExtent;
                 _formatOverride = group.Format;
+                Usage = group.Usage;
                 _arrayLayersOverride = Math.Max(group.Template.Layers, 1u);
                 _mipLevelsOverride = 1;
                 _ownsImageMemory = false;
+                AspectFlags = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
                 _currentImageLayout = ImageLayout.Undefined;
                 return;
             }
@@ -180,6 +184,7 @@ public unsafe partial class VulkanRenderer
             _arrayLayersOverride = null;
             _mipLevelsOverride = null;
             _ownsImageMemory = true;
+            AspectFlags = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
             _currentImageLayout = ImageLayout.Undefined;
         }
 
@@ -234,8 +239,11 @@ public unsafe partial class VulkanRenderer
         {
             DestroyView(ref _view);
 
+            ImageAspectFlags normalizedAspect = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
+            AspectFlags = normalizedAspect;
+
             AttachmentViewKey descriptor = key == default
-                ? new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, DefaultViewType, AspectFlags)
+                ? new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, DefaultViewType, normalizedAspect)
                 : key;
 
             _view = CreateView(descriptor);
@@ -243,6 +251,8 @@ public unsafe partial class VulkanRenderer
 
         private ImageView CreateView(AttachmentViewKey descriptor)
         {
+            ImageAspectFlags aspectMask = NormalizeAspectMaskForFormat(ResolvedFormat, descriptor.AspectMask);
+
             ImageViewCreateInfo viewInfo = new()
             {
                 SType = StructureType.ImageViewCreateInfo,
@@ -252,7 +262,7 @@ public unsafe partial class VulkanRenderer
                 Components = new ComponentMapping(ComponentSwizzle.Identity, ComponentSwizzle.Identity, ComponentSwizzle.Identity, ComponentSwizzle.Identity),
                 SubresourceRange = new ImageSubresourceRange
                 {
-                    AspectMask = descriptor.AspectMask,
+                    AspectMask = aspectMask,
                     BaseMipLevel = descriptor.BaseMipLevel,
                     LevelCount = descriptor.LevelCount,
                     BaseArrayLayer = descriptor.BaseArrayLayer,
@@ -263,6 +273,32 @@ public unsafe partial class VulkanRenderer
             if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
                 throw new Exception("Failed to create image view.");
             return created;
+        }
+
+        private static ImageAspectFlags NormalizeAspectMaskForFormat(Format format, ImageAspectFlags requested)
+        {
+            bool isDepthStencil = format is Format.D16Unorm or Format.X8D24UnormPack32 or Format.D32Sfloat or Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
+            if (!isDepthStencil)
+            {
+                ImageAspectFlags colorMask = requested & ImageAspectFlags.ColorBit;
+                return colorMask != ImageAspectFlags.None ? colorMask : ImageAspectFlags.ColorBit;
+            }
+
+            bool hasStencil = format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
+            ImageAspectFlags supported = hasStencil
+                ? (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)
+                : ImageAspectFlags.DepthBit;
+
+            ImageAspectFlags normalized = requested & supported;
+            if (normalized == ImageAspectFlags.None)
+                normalized = supported;
+
+            // Without separateDepthStencilLayouts support, depth-stencil formats that include
+            // stencil must transition both aspects together.
+            if (hasStencil && (normalized & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0)
+                normalized = ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit;
+
+            return normalized;
         }
 
         private void DestroyView(ref ImageView view)

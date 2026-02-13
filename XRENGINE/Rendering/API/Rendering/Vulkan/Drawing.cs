@@ -1094,6 +1094,41 @@ namespace XREngine.Rendering.Vulkan
         {
             _vkDebugFrameCounter++;
 
+            // The deferred rendering model means frame ops change every frame (they are drained
+            // and consumed during recording). We MUST re-record the command buffer each frame to
+            // pick up the latest ops. Without this, a frame where no EnqueueFrameOp was called
+            // (e.g., pipeline threw before any op) would leave the dirty flag false and resubmit
+            // a stale command buffer that references old ops. This also ensures DrainFrameOps()
+            // always runs, preventing stale ops from accumulating in the queue.
+            MarkCommandBuffersDirty();
+
+            // Some platforms/drivers do not reliably emit out-of-date/suboptimal or resize callbacks
+            // on every size transition. Proactively compare the live framebuffer size to the current
+            // swapchain extent and trigger a rebuild when they diverge.
+            var liveFramebufferSize = Window!.FramebufferSize;
+            var liveWindowSize = Window.Size;
+            uint liveSurfaceWidth = (uint)Math.Max(Math.Max(liveFramebufferSize.X, liveWindowSize.X), 0);
+            uint liveSurfaceHeight = (uint)Math.Max(Math.Max(liveFramebufferSize.Y, liveWindowSize.Y), 0);
+
+            if (liveSurfaceWidth > 0 && liveSurfaceHeight > 0 &&
+                (liveSurfaceWidth != swapChainExtent.Width || liveSurfaceHeight != swapChainExtent.Height))
+            {
+                _frameBufferInvalidated = true;
+
+                Debug.VulkanEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.SizeMismatch",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Detected surface/swapchain size mismatch: WindowFB={0}x{1} Window={2}x{3} LiveSurface={4}x{5} Swapchain={6}x{7}. Scheduling swapchain recreate.",
+                    liveFramebufferSize.X,
+                    liveFramebufferSize.Y,
+                    liveWindowSize.X,
+                    liveWindowSize.Y,
+                    liveSurfaceWidth,
+                    liveSurfaceHeight,
+                    swapChainExtent.Width,
+                    swapChainExtent.Height);
+            }
+
             // If the window resized (or other framebuffer-dependent state changed), rebuild swapchain resources
             // before we acquire/record/submit. Waiting until after present can cause visible stretching/borders.
             if (_frameBufferInvalidated)
@@ -1130,6 +1165,11 @@ namespace XREngine.Rendering.Vulkan
                 _lastPresentedImageIndex);
 
             if (result == Result.ErrorOutOfDateKhr)
+            {
+                RecreateSwapChain();
+                return;
+            }
+            else if (result == Result.SuboptimalKhr)
             {
                 RecreateSwapChain();
                 return;
@@ -1932,6 +1972,22 @@ namespace XREngine.Rendering.Vulkan
                 or Format.D16UnormS8Uint
                 or Format.X8D24UnormPack32;
 
+        private static bool IsCombinedDepthStencilFormat(Format format)
+            => format is Format.D24UnormS8Uint
+                or Format.D32SfloatS8Uint
+                or Format.D16UnormS8Uint;
+
+        private static ImageAspectFlags NormalizeBarrierAspectMask(Format format, ImageAspectFlags aspectMask)
+        {
+            if (!IsCombinedDepthStencilFormat(format))
+                return aspectMask;
+
+            if ((aspectMask & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) == 0)
+                return aspectMask;
+
+            return aspectMask | ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit;
+        }
+
         private BlitImageInfo ResolveSwapchainBlitImage(uint swapchainImageIndex, bool wantColor, bool wantDepth, bool wantStencil)
         {
             if (wantColor && swapChainImages is not null && swapchainImageIndex < swapChainImages.Length)
@@ -2045,6 +2101,8 @@ namespace XREngine.Rendering.Vulkan
             PipelineStageFlags srcStage,
             PipelineStageFlags dstStage)
         {
+            ImageAspectFlags barrierAspectMask = NormalizeBarrierAspectMask(info.Format, info.AspectMask);
+
             ImageMemoryBarrier barrier = new()
             {
                 SType = StructureType.ImageMemoryBarrier,
@@ -2057,7 +2115,7 @@ namespace XREngine.Rendering.Vulkan
                 Image = info.Image,
                 SubresourceRange = new ImageSubresourceRange
                 {
-                    AspectMask = info.AspectMask,
+                    AspectMask = barrierAspectMask,
                     BaseMipLevel = info.MipLevel,
                     LevelCount = 1,
                     BaseArrayLayer = info.BaseArrayLayer,

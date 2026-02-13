@@ -542,6 +542,9 @@ public unsafe partial class VulkanRenderer
             if (!Link())
                 throw new InvalidOperationException($"Program '{Data.Name ?? "UnnamedProgram"}' is not linkable.");
 
+            if (pipelineCache.Handle == 0)
+                pipelineCache = Renderer.ActivePipelineCache;
+
             PipelineShaderStageCreateInfo[] stages = GetShaderStages(GraphicsStageMask).ToArray();
             if (stages.Length == 0)
                 throw new InvalidOperationException("Graphics pipeline creation requires at least one graphics shader stage.");
@@ -565,6 +568,9 @@ public unsafe partial class VulkanRenderer
             if (!Link())
                 throw new InvalidOperationException($"Program '{Data.Name ?? "UnnamedProgram"}' is not linkable.");
 
+            if (pipelineCache.Handle == 0)
+                pipelineCache = Renderer.ActivePipelineCache;
+
             PipelineShaderStageCreateInfo computeStage = GetShaderStages(EProgramStageMask.ComputeShaderBit).SingleOrDefault();
             if (computeStage.Module.Handle == 0)
                 throw new InvalidOperationException("Compute pipeline creation requires a compute shader stage.");
@@ -579,17 +585,63 @@ public unsafe partial class VulkanRenderer
             return pipeline;
         }
 
+        public ulong ComputeGraphicsPipelineFingerprint()
+        {
+            HashCode hash = new();
+            hash.Add(_pipelineLayout.Handle);
+
+            foreach (PipelineShaderStageCreateInfo stage in GetShaderStages(GraphicsStageMask))
+            {
+                hash.Add((int)stage.Stage);
+                hash.Add(stage.Module.Handle);
+            }
+
+            DescriptorBindingInfo[] bindings = _programDescriptorBindings
+                .OrderBy(static binding => binding.Set)
+                .ThenBy(static binding => binding.Binding)
+                .ToArray();
+
+            for (int i = 0; i < bindings.Length; i++)
+            {
+                DescriptorBindingInfo binding = bindings[i];
+                hash.Add(binding.Set);
+                hash.Add(binding.Binding);
+                hash.Add((int)binding.DescriptorType);
+                hash.Add(binding.Count);
+                hash.Add((int)binding.StageFlags);
+            }
+
+            return unchecked((ulong)hash.ToHashCode());
+        }
+
+        public ulong ComputeComputePipelineFingerprint()
+        {
+            HashCode hash = new();
+            hash.Add(_pipelineLayout.Handle);
+
+            PipelineShaderStageCreateInfo computeStage = GetShaderStages(EProgramStageMask.ComputeShaderBit).SingleOrDefault();
+            hash.Add((int)computeStage.Stage);
+            hash.Add(computeStage.Module.Handle);
+
+            return unchecked((ulong)hash.ToHashCode());
+        }
+
         public Pipeline GetOrCreateComputePipeline()
         {
             if (_computePipeline.Handle != 0)
+            {
+                Engine.Rendering.Stats.RecordVulkanPipelineCacheLookup(cacheHit: true);
                 return _computePipeline;
+            }
+
+            Engine.Rendering.Stats.RecordVulkanPipelineCacheLookup(cacheHit: false);
 
             ComputePipelineCreateInfo pipelineInfo = new()
             {
                 SType = StructureType.ComputePipelineCreateInfo
             };
 
-            _computePipeline = CreateComputePipeline(ref pipelineInfo);
+            _computePipeline = CreateComputePipeline(ref pipelineInfo, Renderer.ActivePipelineCache);
             return _computePipeline;
         }
 
@@ -719,18 +771,12 @@ public unsafe partial class VulkanRenderer
             if (shouldUpdateDescriptorData)
                 UpdateComputeDescriptorSets(descriptorSets, pendingWriteArray, bufferArray, imageArray, texelArray);
 
-            fixed (DescriptorSet* setPtr = descriptorSets)
-            {
-                Api!.CmdBindDescriptorSets(
-                    commandBuffer,
-                    PipelineBindPoint.Compute,
-                    _pipelineLayout,
-                    0,
-                    (uint)descriptorSets.Length,
-                    setPtr,
-                    0,
-                    null);
-            }
+            Renderer.BindDescriptorSetsTracked(
+                commandBuffer,
+                PipelineBindPoint.Compute,
+                _pipelineLayout,
+                0,
+                descriptorSets);
 
             return true;
         }
@@ -1008,7 +1054,7 @@ public unsafe partial class VulkanRenderer
                 if (!snapshot.Images.TryGetValue(binding.Binding, out ProgramImageBinding imageBinding))
                     return false;
 
-                if (!TryResolveTextureDescriptor(imageBinding.Texture, includeSampler: false, ImageLayout.General, out imageInfo))
+                if (!TryResolveTextureDescriptor(imageBinding.Texture, includeSampler: false, requiresSampledUsage: false, ImageLayout.General, out imageInfo))
                     return false;
 
                 return true;
@@ -1023,7 +1069,8 @@ public unsafe partial class VulkanRenderer
             }
 
             bool includeSampler = binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler;
-            return TryResolveTextureDescriptor(texture, includeSampler, ImageLayout.ShaderReadOnlyOptimal, out imageInfo);
+            bool requiresSampledUsage = binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler or DescriptorType.SampledImage;
+            return TryResolveTextureDescriptor(texture, includeSampler, requiresSampledUsage, ImageLayout.ShaderReadOnlyOptimal, out imageInfo);
         }
 
         private bool TryResolveComputeTexelBuffer(DescriptorBindingInfo binding, ComputeDispatchSnapshot snapshot, out BufferView texelView)
@@ -1040,7 +1087,7 @@ public unsafe partial class VulkanRenderer
             return TryResolveTexelBufferDescriptor(texture, out texelView);
         }
 
-        private bool TryResolveTextureDescriptor(XRTexture texture, bool includeSampler, ImageLayout layout, out DescriptorImageInfo imageInfo)
+        private bool TryResolveTextureDescriptor(XRTexture texture, bool includeSampler, bool requiresSampledUsage, ImageLayout layout, out DescriptorImageInfo imageInfo)
         {
             imageInfo = default;
             if (texture is null)
@@ -1048,6 +1095,17 @@ public unsafe partial class VulkanRenderer
 
             if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
                 return false;
+
+            if (requiresSampledUsage && (source.DescriptorUsage & ImageUsageFlags.SampledBit) == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Descriptor.NoSampledUsage.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Skipping sampled descriptor bind for texture '{0}' (usage={1}) because VK_IMAGE_USAGE_SAMPLED_BIT is not set.",
+                    texture.Name ?? texture.GetDescribingName(),
+                    source.DescriptorUsage);
+                return false;
+            }
 
             imageInfo = new DescriptorImageInfo
             {

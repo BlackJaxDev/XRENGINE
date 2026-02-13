@@ -8,6 +8,14 @@ public enum EVulkanGpuDrivenProfile
     Diagnostics,
 }
 
+public enum EVulkanQueueOverlapMode
+{
+    Auto = 0,
+    GraphicsOnly,
+    GraphicsCompute,
+    GraphicsComputeTransfer,
+}
+
 /// <summary>
 /// Centralised feature-gate queries for the Vulkan CPU-octree render path.
 /// Pipelines and render commands should consult this profile to decide whether
@@ -268,6 +276,23 @@ public static class VulkanFeatureProfile
 
     public static EVulkanGeometryFetchMode ActiveGeometryFetchMode
         => ResolveGeometryFetchMode(Engine.EffectiveSettings.VulkanGeometryFetchMode);
+
+    public static EVulkanQueueOverlapMode ResolveQueueOverlapMode(EVulkanQueueOverlapMode requested)
+    {
+        if (requested != EVulkanQueueOverlapMode.Auto)
+            return requested;
+
+        if (!IsActive)
+            return EVulkanQueueOverlapMode.GraphicsOnly;
+
+        return ActiveProfile switch
+        {
+            EVulkanGpuDrivenProfile.ShippingFast => EVulkanQueueOverlapMode.GraphicsOnly,
+            EVulkanGpuDrivenProfile.DevParity => EVulkanQueueOverlapMode.GraphicsCompute,
+            EVulkanGpuDrivenProfile.Diagnostics => EVulkanQueueOverlapMode.GraphicsComputeTransfer,
+            _ => EVulkanQueueOverlapMode.GraphicsOnly,
+        };
+    }
 
     /// <summary>
     /// Returns <c>true</c> when the active GPU-driven profile enforces strict no-fallback behavior

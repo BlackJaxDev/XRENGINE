@@ -35,6 +35,8 @@ namespace XREngine.Rendering.Commands
 
         private void MapBuffers()
         {
+            bool allowReadbackMappings = ShouldCaptureDiagnosticReadbacksForPass();
+
             // Determine if any buffer specifically needs to be remapped
             bool anyFlagged = _culledCountNeedsMap || _drawCountNeedsMap || _cullingOverflowNeedsMap || _indirectOverflowNeedsMap || _statsNeedsMap || _truncationNeedsMap;
 
@@ -50,6 +52,13 @@ namespace XREngine.Rendering.Commands
             // If nothing is flagged but we haven't mapped yet, perform initial mapping for any existing buffers
             if (!anyFlagged && !_buffersMapped)
             {
+                if (!allowReadbackMappings)
+                {
+                    _buffersMapped = true;
+                    Dbg("MapBuffers skipped (diagnostic readbacks disabled)", "Buffers");
+                    return;
+                }
+
                 // Do NOT map parameter buffers; only map SSBO/flag buffers for readback
                 if (_cullingOverflowFlagBuffer is not null)
                     EnsurePersistentReadbackMapping(_cullingOverflowFlagBuffer);
@@ -76,6 +85,17 @@ namespace XREngine.Rendering.Commands
             {
                 // Skip mapping for parameter buffers; just clear the flag
                 _drawCountNeedsMap = false;
+            }
+
+            if (!allowReadbackMappings)
+            {
+                _cullingOverflowNeedsMap = false;
+                _indirectOverflowNeedsMap = false;
+                _statsNeedsMap = false;
+                _truncationNeedsMap = false;
+                _buffersMapped = true;
+                Dbg("MapBuffers skipped flagged readback mappings (diagnostic readbacks disabled)", "Buffers");
+                return;
             }
 
             if (_cullingOverflowNeedsMap && _cullingOverflowFlagBuffer is not null)
@@ -128,25 +148,25 @@ namespace XREngine.Rendering.Commands
         {
             Dbg("GenerateShaders start","Lifecycle");
 
-            _cullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderCulling.comp", EShaderType.Compute));
-            _buildKeysComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderBuildKeys.comp", EShaderType.Compute));
-            _buildGpuBatchesComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderBuildBatches.comp", EShaderType.Compute));
-            //RadixIndexSortComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderRadixIndexSort.comp", EShaderType.Compute));
-            _indirectRenderTaskShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderIndirect.comp", EShaderType.Compute));
-            _buildHotCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderBuildHotCommands.comp", EShaderType.Compute));
-            _resetCountersComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderResetCounters.comp", EShaderType.Compute));
-            _extractSoAComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderExtractSoA.comp", EShaderType.Compute));
-            _soACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderCullingSoA.comp", EShaderType.Compute));
-            //HiZSoACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderHiZSoACulling.comp", EShaderType.Compute));
-            //_gatherProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderGather.comp", EShaderType.Compute));
-            _copyCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderCopyCommands.comp", EShaderType.Compute));
+            _cullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderCulling.comp", EShaderType.Compute));
+            _buildKeysComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildKeys.comp", EShaderType.Compute));
+            _buildGpuBatchesComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildBatches.comp", EShaderType.Compute));
+            //RadixIndexSortComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Sorting/GPURenderRadixIndexSort.comp", EShaderType.Compute));
+            _indirectRenderTaskShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderIndirect.comp", EShaderType.Compute));
+            _buildHotCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildHotCommands.comp", EShaderType.Compute));
+            _resetCountersComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderResetCounters.comp", EShaderType.Compute));
+            _extractSoAComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderExtractSoA.comp", EShaderType.Compute));
+            _soACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderCullingSoA.comp", EShaderType.Compute));
+            //HiZSoACullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderHiZSoACulling.comp", EShaderType.Compute));
+            //_gatherProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Debug/GPURenderGather.comp", EShaderType.Compute));
+            _copyCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderCopyCommands.comp", EShaderType.Compute));
             _bvhFrustumCullProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Scene3D/RenderPipeline/bvh_frustum_cull.comp", EShaderType.Compute));
 
             // Phase 3: Hi-Z occlusion pyramid + refinement
-            _hiZInitProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderHiZInit.comp", EShaderType.Compute));
-            _hiZGenProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/HiZGen.comp", EShaderType.Compute));
-            _hiZOcclusionProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderOcclusionHiZ.comp", EShaderType.Compute));
-            _copyCount3Program = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/GPURenderCopyCount3.comp", EShaderType.Compute));
+            _hiZInitProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Occlusion/GPURenderHiZInit.comp", EShaderType.Compute));
+            _hiZGenProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Occlusion/HiZGen.comp", EShaderType.Compute));
+            _hiZOcclusionProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Occlusion/GPURenderOcclusionHiZ.comp", EShaderType.Compute));
+            _copyCount3Program = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderCopyCount3.comp", EShaderType.Compute));
 
             Dbg("GenerateShaders complete","Lifecycle");
         }

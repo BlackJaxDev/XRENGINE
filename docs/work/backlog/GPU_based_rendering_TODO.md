@@ -463,7 +463,7 @@ Outcome: same logical behavior and validated output on both backends.
 
 Implementation notes:
 - Runtime parity checklist and dispatch-path selection are centralized in `XRENGINE/Rendering/HybridRenderingManager.cs` (`IndirectParityChecklist`, `BuildIndirectParityChecklist`, and dispatch logging).
-- Cross-backend parity snapshot/signature comparison utilities are in `XRENGINE/Rendering/Commands/GpuBackendParitySnapshot.cs`.
+- Cross-backend parity snapshot/signature comparison utilities are in `XRENGINE/Rendering/Commands/GPURendering/Validation/GpuBackendParityValidator.cs`.
 - Phase 6 test coverage is in `XREngine.UnitTests/Rendering/GpuBackendParityTests.cs`.
 - Backend capability matrix doc: `docs/features/gpu_indirect_backend_capability_matrix.md`.
 

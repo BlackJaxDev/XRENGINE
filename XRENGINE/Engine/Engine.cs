@@ -284,6 +284,116 @@ namespace XREngine
         /// </summary>
         public static IEventListReadOnly<XRWindow> Windows => _windows;
 
+        public enum EViewportEnumerationMode
+        {
+            ExcludeVrEyeViewports,
+            IncludeVrEyeViewports,
+        }
+
+        /// <summary>
+        /// Enumerates all active viewports across all active windows.
+        /// </summary>
+        public static IEnumerable<XRViewport> EnumerateActiveViewports(EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
+        {
+            foreach (XRWindow window in _windows)
+                foreach (XRViewport viewport in window.Viewports)
+                    yield return viewport;
+
+            if (mode != EViewportEnumerationMode.IncludeVrEyeViewports)
+                yield break;
+
+            XRViewport? leftEye = VRState.LeftEyeViewport;
+            if (leftEye is not null && !IsViewportInAnyActiveWindow(leftEye))
+                yield return leftEye;
+
+            XRViewport? rightEye = VRState.RightEyeViewport;
+            if (rightEye is not null && !IsViewportInAnyActiveWindow(rightEye))
+                yield return rightEye;
+        }
+
+        /// <summary>
+        /// Enumerates all active viewports from the render thread and returns a stable snapshot.
+        /// </summary>
+        /// <remarks>
+        /// If called from a non-render thread, work is enqueued to the render thread and this method blocks
+        /// until the snapshot has been produced.
+        /// </remarks>
+        public static IReadOnlyList<XRViewport> EnumerateActiveViewportsOnMainThread(EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
+        {
+            if (IsRenderThread)
+                return [.. EnumerateActiveViewports(mode)];
+
+            var completion = new TaskCompletionSource<IReadOnlyList<XRViewport>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            EnqueueMainThreadTask(() =>
+            {
+                try
+                {
+                    completion.TrySetResult([.. EnumerateActiveViewports(mode)]);
+                }
+                catch (Exception ex)
+                {
+                    completion.TrySetException(ex);
+                }
+            }, "Engine.EnumerateActiveViewportsOnMainThread");
+
+            return completion.Task.GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Enumerates active viewports for a specific active window.
+        /// </summary>
+        public static IEnumerable<XRViewport> EnumerateActiveViewports(XRWindow? window, EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
+        {
+            if (window is null)
+                yield break;
+
+            foreach (XRViewport viewport in window.Viewports)
+                yield return viewport;
+
+            if (mode != EViewportEnumerationMode.IncludeVrEyeViewports)
+                yield break;
+
+            XRViewport? leftEye = VRState.LeftEyeViewport;
+            if (leftEye is not null && ReferenceEquals(leftEye.Window, window) && !window.Viewports.Contains(leftEye))
+                yield return leftEye;
+
+            XRViewport? rightEye = VRState.RightEyeViewport;
+            if (rightEye is not null && ReferenceEquals(rightEye.Window, window) && !window.Viewports.Contains(rightEye))
+                yield return rightEye;
+        }
+
+        /// <summary>
+        /// Enumerates all active (window, viewport) pairs across active windows.
+        /// </summary>
+        public static IEnumerable<(XRWindow Window, XRViewport Viewport)> EnumerateActiveWindowViewports(EViewportEnumerationMode mode = EViewportEnumerationMode.ExcludeVrEyeViewports)
+        {
+            foreach (XRWindow window in _windows)
+                foreach (XRViewport viewport in window.Viewports)
+                    yield return (window, viewport);
+
+            if (mode != EViewportEnumerationMode.IncludeVrEyeViewports)
+                yield break;
+
+            XRViewport? leftEye = VRState.LeftEyeViewport;
+            if (leftEye?.Window is XRWindow leftWindow && !leftWindow.Viewports.Contains(leftEye))
+                yield return (leftWindow, leftEye);
+
+            XRViewport? rightEye = VRState.RightEyeViewport;
+            if (rightEye?.Window is XRWindow rightWindow && !rightWindow.Viewports.Contains(rightEye))
+                yield return (rightWindow, rightEye);
+        }
+
+        private static bool IsViewportInAnyActiveWindow(XRViewport viewport)
+        {
+            foreach (XRWindow window in _windows)
+            {
+                if (window.Viewports.Contains(viewport))
+                    return true;
+            }
+
+            return false;
+        }
+
         #endregion
 
         #region Delegate Types

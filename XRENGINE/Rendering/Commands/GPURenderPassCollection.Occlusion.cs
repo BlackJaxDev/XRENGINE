@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
@@ -117,6 +118,18 @@ namespace XREngine.Rendering.Commands
 
         private void ApplyOcclusionCulling(GPUScene scene, XRCamera? camera)
         {
+            Stopwatch occlusionStopwatch = Stopwatch.StartNew();
+            void RecordOcclusionTiming()
+            {
+                if (!occlusionStopwatch.IsRunning)
+                    return;
+
+                occlusionStopwatch.Stop();
+                Engine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
+                    Engine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Occlusion,
+                    occlusionStopwatch.Elapsed);
+            }
+
             EOcclusionCullingMode mode = ResolveActiveOcclusionMode();
             LogOcclusionModeActivation(mode);
 
@@ -126,23 +139,30 @@ namespace XREngine.Rendering.Commands
             _lastLoggedOcclusionMode = mode;
 
             if (mode == EOcclusionCullingMode.Disabled)
+            {
+                RecordOcclusionTiming();
                 return;
+            }
 
             // Pass-awareness: keep shadow/depth contributors out of occlusion hiding to avoid missing required passes.
             if (Engine.Rendering.State.IsShadowPass)
             {
                 RecordOcclusionFrameStats(0u, 0u, 0u, 0u);
+                RecordOcclusionTiming();
                 return;
             }
 
             // In shipping mode we often avoid CPU readback of VisibleCommandCount.
             // When readback is disabled, run occlusion using buffer capacity; the compute shader gates on GPU count.
             uint candidates = VisibleCommandCount;
-            if (candidates == 0u && IndirectDebug.DisableCpuReadbackCount)
+            if (candidates == 0u && IsCpuReadbackCountDisabledForPass())
                 candidates = CulledSceneToRenderBuffer?.ElementCount ?? 0u;
 
             if (candidates == 0u)
+            {
+                RecordOcclusionTiming();
                 return;
+            }
 
             switch (mode)
             {
@@ -154,6 +174,8 @@ namespace XREngine.Rendering.Commands
                     ApplyCpuQueryAsyncOcclusionScaffold(scene, camera, candidates);
                     break;
             }
+
+                    RecordOcclusionTiming();
         }
 
         private void LogOcclusionModeActivation(EOcclusionCullingMode mode)
@@ -291,7 +313,7 @@ namespace XREngine.Rendering.Commands
             // Stats: we conservatively report all candidates tested; accepted is the number removed.
             // Avoid CPU readbacks here; in shipping mode we may not have a CPU-visible count.
             uint occluded = 0u;
-            if (!IndirectDebug.DisableCpuReadbackCount)
+            if (!IsCpuReadbackCountDisabledForPass())
             {
                 uint visibleAfter = VisibleCommandCount;
                 occluded = candidates > visibleAfter ? (candidates - visibleAfter) : 0u;
@@ -505,7 +527,7 @@ namespace XREngine.Rendering.Commands
                 _hiZOcclusionProgram.BindBuffer(_statsBuffer, 8);
 
             // Dispatch: conservatively for capacity when CPU readback is disabled.
-            uint dispatchCount = IndirectDebug.DisableCpuReadbackCount
+            uint dispatchCount = IsCpuReadbackCountDisabledForPass()
                 ? CulledSceneToRenderBuffer!.ElementCount
                 : VisibleCommandCount;
 

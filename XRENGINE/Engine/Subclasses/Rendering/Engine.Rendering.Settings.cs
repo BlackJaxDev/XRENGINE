@@ -300,6 +300,7 @@ namespace XREngine
                 private int _shaderConfigVersion = 0;
                 private bool _useGpuBvh = false;
                 private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Auto;
+                private EVulkanQueueOverlapMode _vulkanQueueOverlapMode = EVulkanQueueOverlapMode.Auto;
                 private bool _enableVulkanDescriptorIndexing = true;
                 private bool _enableVulkanBindlessMaterialTable = true;
                 private bool _validateVulkanDescriptorContracts = true;
@@ -775,6 +776,20 @@ namespace XREngine
                             Rendering.ApplyGpuBvhPreference();
                             Rendering.LogVulkanFeatureProfileFingerprint();
                         });
+                }
+
+                /// <summary>
+                /// Selects Vulkan queue overlap policy for queue-family ownership transitions.
+                /// Auto resolves from active profile and runtime metrics.
+                /// </summary>
+                [Category("Vulkan")]
+                [Description("Selects Vulkan queue overlap policy for queue-family ownership transitions. Auto resolves from active profile and runtime metrics.")]
+                public EVulkanQueueOverlapMode VulkanQueueOverlapMode
+                {
+                    get => _vulkanQueueOverlapMode;
+                    set => SetField(ref _vulkanQueueOverlapMode, value,
+                        null,
+                        _ => Rendering.LogVulkanFeatureProfileFingerprint());
                 }
 
                 /// <summary>
@@ -1259,6 +1274,9 @@ namespace XREngine
                     Engine.Rendering.ApplyGpuBvhPreference();
                     Engine.Rendering.LogVulkanFeatureProfileFingerprint();
                 }
+
+                if (applyAll || propertyName == nameof(EngineSettings.VulkanQueueOverlapMode))
+                    Engine.Rendering.LogVulkanFeatureProfileFingerprint();
 
                 if (applyAll || propertyName == nameof(EngineSettings.GpuSortDomainPolicy))
                     Engine.Rendering.LogVulkanFeatureProfileFingerprint();

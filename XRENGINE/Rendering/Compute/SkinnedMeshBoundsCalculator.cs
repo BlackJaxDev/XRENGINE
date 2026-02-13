@@ -14,7 +14,7 @@ namespace XREngine.Rendering.Compute;
 
 internal sealed class SkinnedMeshBoundsCalculator : IDisposable
 {
-    private const string ShaderPath = "Compute/SkinnedBounds.comp";
+    private const string ShaderPath = "Compute/Animation/SkinnedBounds.comp";
     private static readonly Lazy<SkinnedMeshBoundsCalculator> _instance = new(() => new SkinnedMeshBoundsCalculator());
 
     public static SkinnedMeshBoundsCalculator Instance => _instance.Value;

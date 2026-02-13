@@ -735,7 +735,19 @@ namespace XREngine.Rendering
 
                 using (var preRenderSample = Engine.Profiler.Start("XRWindow.GlobalPreRender"))
                 {
-                    TargetWorldInstance?.GlobalPreRender();
+                    try
+                    {
+                        TargetWorldInstance?.GlobalPreRender();
+                    }
+                    catch (Exception preRenderEx)
+                    {
+                        string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
+                        Debug.RenderingWarningEvery(
+                            keyBase + ".GlobalPreRenderException",
+                            TimeSpan.FromSeconds(1),
+                            "[RenderDiag] GlobalPreRender failed (Vulkan present will still run). {0}",
+                            preRenderEx);
+                    }
                 }
 
                 using (var renderCallbackSample = Engine.Profiler.Start("XRWindow.RenderViewportsCallback"))
@@ -743,14 +755,47 @@ namespace XREngine.Rendering
                     RenderViewportsCallback?.Invoke();
                 }
 
-                RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
+                // Viewport/pipeline rendering is isolated so that exceptions during scene rendering
+                // do not prevent Vulkan's WindowRenderCallback (acquire/record/submit/present) from
+                // executing. In OpenGL the window swap is handled by Silk.NET automatically, but
+                // Vulkan requires explicit present — skipping it leaves the window uninitialized (white).
+                bool viewportRenderFailed = false;
+                try
+                {
+                    RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
+                }
+                catch (Exception vpEx)
+                {
+                    viewportRenderFailed = true;
+                    string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
+                    Debug.RenderingWarningEvery(
+                        keyBase + ".ViewportException",
+                        TimeSpan.FromSeconds(1),
+                        "[RenderDiag] Viewport/pipeline rendering failed (Vulkan present will still run). {0}",
+                        vpEx);
+                }
 
                 using (var postRenderSample = Engine.Profiler.Start("XRWindow.GlobalPostRender"))
                 {
-                    TargetWorldInstance?.GlobalPostRender();
+                    try
+                    {
+                        TargetWorldInstance?.GlobalPostRender();
+                    }
+                    catch (Exception postRenderEx)
+                    {
+                        string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
+                        Debug.RenderingWarningEvery(
+                            keyBase + ".GlobalPostRenderException",
+                            TimeSpan.FromSeconds(1),
+                            "[RenderDiag] GlobalPostRender failed (Vulkan present will still run). {0}",
+                            postRenderEx);
+                    }
                 }
 
                 // Allow the renderer to perform any per-window end-of-frame work (e.g., Vulkan acquire/submit/present).
+                // This MUST run even when viewport rendering fails, otherwise Vulkan never presents and the window
+                // shows uninitialized (white) content. With empty/partial frame ops, the Vulkan backend will at
+                // minimum clear to the background color and render the debug triangle + ImGui overlay.
                 Renderer.RenderWindow(delta);
 
                 using (var postViewportsSample = Engine.Profiler.Start("XRWindow.PostRenderViewportsCallback"))
@@ -758,9 +803,12 @@ namespace XREngine.Rendering
                     PostRenderViewportsCallback?.Invoke();
                 }
 
-                // Successful frame: clear circuit breaker state.
-                _consecutiveRenderFailures = 0;
-                _renderDisabledUntilUtc = default;
+                // Successful frame: clear circuit breaker state (viewport failures don't block present).
+                if (!viewportRenderFailed)
+                {
+                    _consecutiveRenderFailures = 0;
+                    _renderDisabledUntilUtc = default;
+                }
             }
             catch (Exception ex)
             {

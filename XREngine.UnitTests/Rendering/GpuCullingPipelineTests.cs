@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -67,7 +67,7 @@ public class GpuCullingPipelineTests
     [Test]
     public void GPURenderCullingShader_Loads_AndContainsExpectedFunctions()
     {
-        string source = LoadShaderSource("Compute/GPURenderCulling.comp");
+        string source = LoadShaderSource("Compute/Culling/GPURenderCulling.comp");
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("FrustumSphereVisible");
@@ -80,7 +80,7 @@ public class GpuCullingPipelineTests
     [Test]
     public void GPURenderHiZSoACullingShader_Loads_Successfully()
     {
-        string source = LoadShaderSource("Compute/GPURenderHiZSoACulling.comp");
+        string source = LoadShaderSource("Compute/Culling/GPURenderHiZSoACulling.comp");
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
@@ -92,7 +92,7 @@ public class GpuCullingPipelineTests
     [Test]
     public void GPURenderHiZInitShader_Loads_AndContainsExpectedBindings()
     {
-        string source = LoadShaderSource("Compute/GPURenderHiZInit.comp");
+        string source = LoadShaderSource("Compute/Occlusion/GPURenderHiZInit.comp");
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("depthTexture");
@@ -103,7 +103,7 @@ public class GpuCullingPipelineTests
     [Test]
     public void GPURenderOcclusionHiZShader_Loads_AndContainsExpectedUniforms()
     {
-        string source = LoadShaderSource("Compute/GPURenderOcclusionHiZ.comp");
+        string source = LoadShaderSource("Compute/Occlusion/GPURenderOcclusionHiZ.comp");
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("HiZOccluded");
@@ -115,7 +115,7 @@ public class GpuCullingPipelineTests
     [Test]
     public void GPURenderCopyCount3Shader_Loads_AndContainsExpectedBuffers()
     {
-        string source = LoadShaderSource("Compute/GPURenderCopyCount3.comp");
+        string source = LoadShaderSource("Compute/Indirect/GPURenderCopyCount3.comp");
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("SrcCountBuffer");
@@ -126,7 +126,7 @@ public class GpuCullingPipelineTests
     [Test]
     public void CullingShader_FlagBitLayout_MatchesCSharpFlags()
     {
-        string source = LoadShaderSource("Compute/GPURenderCulling.comp");
+        string source = LoadShaderSource("Compute/Culling/GPURenderCulling.comp");
 
         // Verify flag constants match the C# GPUIndirectRenderFlags enum
         source.ShouldContain("FLAG_TRANSPARENT    (1u<<0)");
@@ -139,7 +139,7 @@ public class GpuCullingPipelineTests
     [Test]
     public void CullingShader_CommandLayout_Matches48Floats()
     {
-        string source = LoadShaderSource("Compute/GPURenderCulling.comp");
+        string source = LoadShaderSource("Compute/Culling/GPURenderCulling.comp");
 
         source.ShouldContain("COMMAND_FLOATS = 48");
         source.ShouldContain("192 bytes"); // 48 * 4 = 192
@@ -148,7 +148,7 @@ public class GpuCullingPipelineTests
     [Test]
     public void CullingShader_StatsBuffer_LayoutMatchesExpected()
     {
-        string source = LoadShaderSource("Compute/GPURenderCulling.comp");
+        string source = LoadShaderSource("Compute/Culling/GPURenderCulling.comp");
 
         // StatsBuffer layout must match C# GpuStatsLayout
         source.ShouldContain("StatsInputCount");
@@ -189,7 +189,7 @@ public class GpuCullingPipelineTests
         
         var planes = ExtractFrustumPlanes(projection);
         
-        // Verify planes are normalized (normal length ≈ 1)
+        // Verify planes are normalized (normal length â‰ˆ 1)
         foreach (var plane in planes)
         {
             var normal = new Vector3(plane.X, plane.Y, plane.Z);
@@ -784,3 +784,4 @@ public class GpuCullingPipelineTests
 
     #endregion
 }
+

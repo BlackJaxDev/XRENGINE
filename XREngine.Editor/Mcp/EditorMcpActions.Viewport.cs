@@ -150,13 +150,10 @@ namespace XREngine.Editor.Mcp
                 var camera = node?.GetComponent<CameraComponent>();
                 if (camera is not null)
                 {
-                    foreach (var window in Engine.Windows)
+                    foreach (var viewport in Engine.EnumerateActiveViewports())
                     {
-                        foreach (var viewport in window.Viewports)
-                        {
-                            if (ReferenceEquals(viewport.CameraComponent, camera))
-                                return viewport;
-                        }
+                        if (ReferenceEquals(viewport.CameraComponent, camera))
+                            return viewport;
                     }
                 }
             }

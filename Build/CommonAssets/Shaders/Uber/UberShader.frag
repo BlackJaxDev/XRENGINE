@@ -4,38 +4,24 @@
 
 #include "common.glsl"
 #include "uniforms.glsl"
-#include "pbr.glsl"
-#include "decals.glsl"
-#include "matcap.glsl"
-#include "emission.glsl"
-#include "specular.glsl"
-#include "details.glsl"
-#include "backface.glsl"
-#include "glitter.glsl"
-#include "flipbook.glsl"
-#include "subsurface.glsl"
-#include "dissolve.glsl"
-#include "parallax.glsl"
 
 // ============================================
 // Fragment Inputs
 // ============================================
-in VS_OUT {
-    vec4 uv01;
-    vec4 uv23;
-    vec3 worldPos;
-    vec3 worldNormal;
-    vec3 worldTangent;
-    float tangentSign;
-    vec4 vertexColor;
-    vec3 localPos;
-    vec3 viewDir;
-} fs_in;
+in vec4 v_Uv01;
+in vec4 v_Uv23;
+in vec3 v_WorldPos;
+in vec3 v_WorldNormal;
+in vec3 v_WorldTangent;
+in float v_TangentSign;
+in vec4 v_VertexColor;
+in vec3 v_LocalPos;
+in vec3 v_ViewDir;
 
 // ============================================
 // Fragment Output
 // ============================================
-layout(location = 0) out vec4 FragColor;
+out vec4 FragColor;
 
 // ============================================
 // Internal Data Structures
@@ -74,6 +60,19 @@ struct FragmentData {
     float alpha;
     vec3 emission;
 };
+
+#include "pbr.glsl"
+#include "decals.glsl"
+#include "matcap.glsl"
+#include "emission.glsl"
+#include "specular.glsl"
+#include "details.glsl"
+#include "backface.glsl"
+#include "glitter.glsl"
+#include "flipbook.glsl"
+#include "subsurface.glsl"
+#include "dissolve.glsl"
+#include "parallax.glsl"
 
 // ============================================
 // UV Selection Helper
@@ -507,23 +506,23 @@ vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
 void main() {
     // Initialize mesh data
     ToonMesh mesh;
-    mesh.uv[0] = fs_in.uv01.xy;
-    mesh.uv[1] = fs_in.uv01.zw;
-    mesh.uv[2] = fs_in.uv23.xy;
-    mesh.uv[3] = fs_in.uv23.zw;
-    mesh.worldPos = fs_in.worldPos;
-    mesh.localPos = fs_in.localPos;
-    mesh.vertexNormal = normalize(fs_in.worldNormal);
-    mesh.vertexColor = fs_in.vertexColor;
-    mesh.viewDir = normalize(fs_in.viewDir);
+    mesh.uv[0] = v_Uv01.xy;
+    mesh.uv[1] = v_Uv01.zw;
+    mesh.uv[2] = v_Uv23.xy;
+    mesh.uv[3] = v_Uv23.zw;
+    mesh.worldPos = v_WorldPos;
+    mesh.localPos = v_LocalPos;
+    mesh.vertexNormal = normalize(v_WorldNormal);
+    mesh.vertexColor = v_VertexColor;
+    mesh.viewDir = normalize(v_ViewDir);
     mesh.isFrontFace = gl_FrontFacing ? 1.0 : -1.0;
     
     // Flip normal for back faces
     mesh.vertexNormal *= mesh.isFrontFace;
     
     // Build TBN matrix
-    vec3 bitangent = cross(mesh.vertexNormal, fs_in.worldTangent) * fs_in.tangentSign;
-    mesh.TBN = mat3(fs_in.worldTangent, bitangent, mesh.vertexNormal);
+    vec3 bitangent = cross(mesh.vertexNormal, v_WorldTangent) * v_TangentSign;
+    mesh.TBN = mat3(v_WorldTangent, bitangent, mesh.vertexNormal);
     
     // Apply parallax mapping to UVs (before any texture sampling)
     if (_EnableParallax > 0.5) {
@@ -572,9 +571,16 @@ void main() {
     }
     
     // Apply detail textures (before lighting)
-    if (_EnableDetailTextures > 0.5) {
-        fragData.baseColor = applyDetailTextures(mesh.uv[0], fragData.baseColor);
-        // Detail normal would be applied in calculateNormal if enabled
+    if (_DetailEnabled > 0.5) {
+        vec2 detailUV = transformUV(mesh.uv[0], _DetailTex_ST);
+        detailUV = panUV(detailUV, _DetailTexPan, u_Time);
+        vec3 detailColor = texture(_DetailTex, detailUV).rgb * _DetailTint + _DetailBrightness;
+
+        vec2 detailMaskUV = transformUV(mesh.uv[0], _DetailMask_ST);
+        float detailMask = texture(_DetailMask, detailMaskUV).r;
+        float detailStrength = saturate(_DetailTexIntensity * detailMask);
+
+        fragData.baseColor = mix(fragData.baseColor, fragData.baseColor * detailColor, detailStrength);
     }
     
     // Calculate lighting
@@ -582,7 +588,13 @@ void main() {
     
     // Apply back face coloring
     if (_EnableBackFace > 0.5) {
-        applyBackFace(mesh, fragData.baseColor, fragData.alpha, fragData.emission);
+        if (mesh.isFrontFace < 0.0) {
+            vec4 backTex = texture(_BackFaceTexture, mesh.uv[0]);
+            vec3 backColor = mix(_BackFaceColor.rgb, backTex.rgb * _BackFaceColor.rgb, saturate(_BackFaceBlendMode));
+            fragData.baseColor = mix(fragData.baseColor, backColor, _BackFaceColor.a);
+            fragData.alpha = clamp(fragData.alpha * _BackFaceAlpha, 0.0, 1.0);
+            fragData.emission += backColor * _BackFaceEmission;
+        }
     }
     
     // Apply shading
@@ -590,7 +602,11 @@ void main() {
     
     // Apply subsurface scattering
     if (_EnableSSS > 0.5) {
-        vec3 sss = calculateSSS(mesh.uv[0], mesh.worldNormal, mesh.viewDir, light.direction, light.color, light.indirectColor);
+        float backLight = max(0.0, dot(-mesh.worldNormal, light.direction));
+        float viewWrap = pow(max(0.0, dot(mesh.viewDir, -light.direction)), max(_SSSPower, 0.001));
+        float thickness = texture(_SSSThicknessMap, mesh.uv[0]).r;
+        float sssStrength = backLight * viewWrap * _SSSScale * mix(1.0, thickness, 0.5);
+        vec3 sss = _SSSColor.rgb * (light.color + light.indirectColor * _SSSAmbient) * sssStrength;
         fragData.finalColor += sss;
     }
     
@@ -625,14 +641,27 @@ void main() {
     
     // Apply glitter/sparkle
     if (_EnableGlitter > 0.5) {
-        vec3 glitter = calculateGlitter(mesh.uv[0], mesh.worldPos, mesh.worldNormal, mesh.viewDir, light.direction);
+        vec2 glitterUV = mesh.uv[0] * max(_GlitterDensity, 0.001);
+        float glitterNoise = hash21(floor(glitterUV) + vec2(u_Time * _GlitterSpeed));
+        float nDotV = saturate(dot(mesh.worldNormal, mesh.viewDir));
+        float angleMask = smoothstep(_GlitterMinAngle, _GlitterMaxAngle, 1.0 - nDotV);
+        float glitterMask = texture(_GlitterMask, mesh.uv[0]).r;
+        float glitterStrength = pow(glitterNoise, max(_GlitterSize, 0.001)) * _GlitterBrightness * angleMask * glitterMask;
+        vec3 glitter = _GlitterColor.rgb * glitterStrength;
         fragData.finalColor += glitter;
         fragData.emission += glitter; // Glitter is emissive
     }
     
     // Apply flipbook animation (additive blend)
     if (_EnableFlipbook > 0.5 && _FlipbookBlendMode > 0.5) {
-        vec4 flipbookColor = calculateFlipbook(mesh.uv[0]);
+        vec4 flipbookColor = simpleFlipbook(
+            _FlipbookTexture,
+            mesh.uv[0],
+            int(max(_FlipbookColumns, 1.0)),
+            int(max(_FlipbookRows, 1.0)),
+            _FlipbookFrameRate,
+            u_Time
+        );
         fragData.finalColor += flipbookColor.rgb * flipbookColor.a;
     }
     

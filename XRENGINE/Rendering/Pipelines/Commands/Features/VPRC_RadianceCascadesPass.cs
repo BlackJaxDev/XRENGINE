@@ -23,8 +23,8 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_RadianceCascadesPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;
-        private const string MonoShaderPath = "Compute/RadianceCascades/RadianceCascades.comp";
-        private const string StereoShaderPath = "Compute/RadianceCascades/RadianceCascadesStereo.comp";
+        private const string MonoShaderPath = "Compute/GI/RadianceCascades/RadianceCascades.comp";
+        private const string StereoShaderPath = "Compute/GI/RadianceCascades/RadianceCascadesStereo.comp";
 
         private XRRenderProgram? _computeProgram;
         private XRRenderProgram? _computeProgramStereo;

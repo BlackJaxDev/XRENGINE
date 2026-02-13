@@ -126,7 +126,7 @@ public class GpuSceneBvhTests
     public void BvhRaycastShader_Loads_Successfully()
     {
         // Act
-        string source = LoadShaderSource("Compute/bvh_raycast.comp");
+        string source = LoadShaderSource("Compute/BVH/bvh_raycast.comp");
 
         // Assert
         source.ShouldNotBeNullOrEmpty();
@@ -153,7 +153,7 @@ public class GpuSceneBvhTests
     public void BvhAnyhitShader_Loads_Successfully()
     {
         // Act
-        string source = LoadShaderSource("Compute/bvh_anyhit.comp");
+        string source = LoadShaderSource("Compute/BVH/bvh_anyhit.comp");
 
         // Assert
         source.ShouldNotBeNullOrEmpty();
@@ -163,7 +163,7 @@ public class GpuSceneBvhTests
     public void BvhClosesthitShader_Loads_Successfully()
     {
         // Act
-        string source = LoadShaderSource("Compute/bvh_closesthit.comp");
+        string source = LoadShaderSource("Compute/BVH/bvh_closesthit.comp");
 
         // Assert
         source.ShouldNotBeNullOrEmpty();

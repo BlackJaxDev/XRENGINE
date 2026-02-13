@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using NUnit.Framework;
 using Shouldly;
@@ -52,13 +52,13 @@ public sealed class GpuIndirectPhase6SortingTests
         hostSource.ShouldContain("_buildKeysComputeShader.Uniform(\"SortDomain\"");
         hostSource.ShouldContain("_buildKeysComputeShader.Uniform(\"SortDirection\"");
 
-        string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/GPURenderBuildKeys.comp");
+        string shaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderBuildKeys.comp");
         shaderSource.ShouldContain("uniform int SortDomain;");
         shaderSource.ShouldContain("uniform int SortDirection;");
         shaderSource.ShouldContain("SORT_DOMAIN_TRANSPARENT_BACK_TO_FRONT");
         shaderSource.ShouldContain("EncodeDistanceKey(renderDistance)");
 
-        string batchShaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/GPURenderBuildBatches.comp");
+        string batchShaderSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderBuildBatches.comp");
         batchShaderSource.ShouldContain("uniform int RadixSortThreshold;");
         batchShaderSource.ShouldContain("SortKeysRadix(uint total)");
         batchShaderSource.ShouldContain("layout(std430, binding = 14) buffer SortScratchBuffer");
@@ -86,3 +86,4 @@ public sealed class GpuIndirectPhase6SortingTests
         throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
     }
 }
+

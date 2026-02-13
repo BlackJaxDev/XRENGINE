@@ -165,13 +165,15 @@ public static partial class EditorImGuiUI
         ImGui.End();
 
         // Draw shared profiler panels
-        if (_showProfilerTree) _engineProfilerRenderer!.DrawProfilerTreePanel(ref _showProfilerTree, allowClose: false);
-        if (_showFpsDropSpikes) _engineProfilerRenderer!.DrawFpsDropSpikesPanel(ref _showFpsDropSpikes, allowClose: false);
-        if (_showRenderStats) _engineProfilerRenderer!.DrawRenderStatsPanel(ref _showRenderStats, allowClose: false);
-        if (_showThreadAllocations) _engineProfilerRenderer!.DrawThreadAllocationsPanel(ref _showThreadAllocations, allowClose: false);
-        if (_showBvhMetrics) _engineProfilerRenderer!.DrawBvhMetricsPanel(ref _showBvhMetrics, allowClose: false);
-        if (_showJobSystem) _engineProfilerRenderer!.DrawJobSystemPanel(ref _showJobSystem, allowClose: false);
-        if (_showMainThreadInvokes) _engineProfilerRenderer!.DrawMainThreadInvokesPanel(ref _showMainThreadInvokes, allowClose: false);
+        _engineProfilerRenderer!.DrawCorePanels(
+            ref _showProfilerTree,
+            ref _showFpsDropSpikes,
+            ref _showRenderStats,
+            ref _showThreadAllocations,
+            ref _showBvhMetrics,
+            ref _showJobSystem,
+            ref _showMainThreadInvokes,
+            allowClose: false);
     }
 
     private static void RequestProfilerDockLayoutReset()

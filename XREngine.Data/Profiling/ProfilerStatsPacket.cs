@@ -16,6 +16,20 @@ public sealed partial class RenderStatsPacket
     public int GpuCpuFallbackEvents { get; set; }
     public int GpuCpuFallbackRecoveredCommands { get; set; }
 
+    // Vulkan phase-7 telemetry
+    public int VulkanPipelineBinds { get; set; }
+    public int VulkanDescriptorBinds { get; set; }
+    public int VulkanPushConstantWrites { get; set; }
+    public int VulkanVertexBufferBinds { get; set; }
+    public int VulkanIndexBufferBinds { get; set; }
+    public int VulkanPipelineBindSkips { get; set; }
+    public int VulkanDescriptorBindSkips { get; set; }
+    public int VulkanVertexBufferBindSkips { get; set; }
+    public int VulkanIndexBufferBindSkips { get; set; }
+    public int VulkanPipelineCacheLookupHits { get; set; }
+    public int VulkanPipelineCacheLookupMisses { get; set; }
+    public double VulkanPipelineCacheLookupHitRate { get; set; }
+
     // VRAM
     public long AllocatedVRAMBytes { get; set; }
     public long AllocatedBufferBytes { get; set; }

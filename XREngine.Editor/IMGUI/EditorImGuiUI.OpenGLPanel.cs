@@ -119,7 +119,7 @@ public static partial class EditorImGuiUI
                     windowTitle = $"Window 0x{window.GetHashCode():X}";
 
                 // Iterate viewports to find pipeline ownership
-                foreach (var viewport in window.Viewports)
+                foreach (var viewport in Engine.EnumerateActiveViewports(window))
                 {
                     var pipelineInstance = viewport?.RenderPipelineInstance;
                     var pipeline = pipelineInstance?.Pipeline;

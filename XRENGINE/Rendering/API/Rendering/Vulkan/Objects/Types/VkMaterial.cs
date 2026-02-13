@@ -97,18 +97,12 @@ namespace XREngine.Rendering.Vulkan
                 if (sets.Length == 0)
                     return true;
 
-                fixed (DescriptorSet* setPtr = sets)
-                {
-                    Api!.CmdBindDescriptorSets(
-                        commandBuffer,
-                        PipelineBindPoint.Graphics,
-                        program.PipelineLayout,
-                        firstSet,
-                        (uint)sets.Length,
-                        setPtr,
-                        0,
-                        null);
-                }
+                Renderer.BindDescriptorSetsTracked(
+                    commandBuffer,
+                    PipelineBindPoint.Graphics,
+                    program.PipelineLayout,
+                    firstSet,
+                    sets);
 
                 return true;
             }

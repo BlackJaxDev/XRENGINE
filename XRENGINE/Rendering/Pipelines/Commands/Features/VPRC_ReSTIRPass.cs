@@ -132,19 +132,19 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_initialProgram is null)
             {
                 _initialProgram = new XRRenderProgram(true, false,
-                    ShaderHelper.LoadEngineShader(Path.Combine("Compute", "RESTIR", "InitialSampling.comp"), EShaderType.Compute));
+                    ShaderHelper.LoadEngineShader(Path.Combine("Compute", "GI", "RESTIR", "InitialSampling.comp"), EShaderType.Compute));
             }
 
             if (_resampleProgram is null)
             {
                 _resampleProgram = new XRRenderProgram(true, false,
-                    ShaderHelper.LoadEngineShader(Path.Combine("Compute", "RESTIR", "GIResampling.comp"), EShaderType.Compute));
+                    ShaderHelper.LoadEngineShader(Path.Combine("Compute", "GI", "RESTIR", "GIResampling.comp"), EShaderType.Compute));
             }
 
             if (_finalProgram is null)
             {
                 _finalProgram = new XRRenderProgram(true, false,
-                    ShaderHelper.LoadEngineShader(Path.Combine("Compute", "RESTIR", "FinalShading.comp"), EShaderType.Compute));
+                    ShaderHelper.LoadEngineShader(Path.Combine("Compute", "GI", "RESTIR", "FinalShading.comp"), EShaderType.Compute));
             }
 
             return _initialProgram is not null && _resampleProgram is not null && _finalProgram is not null;

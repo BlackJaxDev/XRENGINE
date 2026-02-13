@@ -110,6 +110,12 @@ namespace XREngine
                 => Rendering.Settings.VulkanGeometryFetchMode;
 
             /// <summary>
+            /// Gets active Vulkan queue overlap mode selection.
+            /// </summary>
+            public static EVulkanQueueOverlapMode VulkanQueueOverlapMode
+                => Rendering.Settings.VulkanQueueOverlapMode;
+
+            /// <summary>
             /// Gets the effective GPU render dispatch setting.
             /// Resolved from: User Override > Project Setting (GPURenderDispatch is a project-level primary setting)
             /// </summary>

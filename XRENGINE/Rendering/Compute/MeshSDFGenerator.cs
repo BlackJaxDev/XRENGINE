@@ -99,7 +99,7 @@ namespace XREngine.Rendering.Compute
             try
             {
                 // Load the compute shader
-                _meshSDFShader = ShaderHelper.LoadEngineShader("Compute/MeshSDFGen.comp", EShaderType.Compute);
+                _meshSDFShader = ShaderHelper.LoadEngineShader("Compute/SDF/MeshSDFGen.comp", EShaderType.Compute);
                 
                 // Create the render program
                 _computeProgram = new XRRenderProgram(true, false, _meshSDFShader);

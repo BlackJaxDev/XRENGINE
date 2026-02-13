@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
@@ -28,6 +29,23 @@ public unsafe partial class VulkanRenderer
     private XRFrameBuffer? _boundDrawFrameBuffer;
     private XRFrameBuffer? _boundReadFrameBuffer;
     private EReadBufferMode _readBufferMode = EReadBufferMode.ColorAttachment0;
+    private EVulkanQueueOverlapMode _autoQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
+    private EVulkanQueueOverlapMode _lastResolvedQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
+    private int _queueOverlapPromotionStabilityFrames;
+    private int _queueOverlapFramesInMode;
+    private long _lastQueueOverlapSampleTimestamp;
+    private ulong _lastQueueOverlapSampleFrameId = ulong.MaxValue;
+    private double _queueOverlapFrameDeltaEmaMs = -1.0;
+    private double _queueOverlapModeStartFrameDeltaMs = -1.0;
+
+    private readonly record struct QueueOverlapMetrics(
+        int ComputePassCount,
+        int TransferUsageCount,
+        int OverlapCandidatePassCount,
+        int TransferCost,
+        int QueueOwnershipTransfers,
+        int BarrierStageFlushes,
+        TimeSpan FrameDelta);
 
     internal Viewport GetCurrentViewport()
         => _state.GetViewport();
@@ -473,45 +491,198 @@ public unsafe partial class VulkanRenderer
         uint candidateTransferFamily = familyIndices.TransferFamilyIndex ?? candidateComputeFamily;
 
         EVulkanGpuDrivenProfile profile = VulkanFeatureProfile.ActiveProfile;
-        bool hasMetadata = passMetadata is { Count: > 0 };
-        int computePassCount = hasMetadata ? passMetadata!.Count(p => p.Stage == RenderGraphPassStage.Compute) : 0;
-        int transferUsageCount = hasMetadata
-            ? passMetadata!.Sum(p => p.ResourceUsages.Count(u => u.ResourceType is RenderPassResourceType.TransferSource or RenderPassResourceType.TransferDestination))
-            : 0;
+        QueueOverlapMetrics metrics = CaptureQueueOverlapMetrics(passMetadata);
 
-        bool preferComputeOwnership = VulkanFeatureProfile.IsActive && profile is EVulkanGpuDrivenProfile.DevParity or EVulkanGpuDrivenProfile.Diagnostics;
-        bool preferTransferOwnership = VulkanFeatureProfile.IsActive && profile == EVulkanGpuDrivenProfile.Diagnostics;
+        bool promotedMode;
+        bool demotedMode;
+        EVulkanQueueOverlapMode overlapMode = ResolveQueueOverlapMode(profile, metrics, out promotedMode, out demotedMode);
 
         bool useComputeOwnership =
-            preferComputeOwnership &&
+            overlapMode is EVulkanQueueOverlapMode.GraphicsCompute or EVulkanQueueOverlapMode.GraphicsComputeTransfer &&
             candidateComputeFamily != graphicsFamily &&
-            computePassCount >= 2;
+            metrics.ComputePassCount >= 2;
 
         bool useTransferOwnership =
-            preferTransferOwnership &&
+            overlapMode == EVulkanQueueOverlapMode.GraphicsComputeTransfer &&
             candidateTransferFamily != graphicsFamily &&
-            transferUsageCount >= 4;
+            candidateTransferFamily != candidateComputeFamily &&
+            metrics.TransferUsageCount >= 4;
 
         uint computeFamily = useComputeOwnership ? candidateComputeFamily : graphicsFamily;
         uint transferFamily = useTransferOwnership ? candidateTransferFamily : computeFamily;
 
+        Engine.Rendering.Stats.RecordVulkanQueueOverlapWindow(
+            metrics.OverlapCandidatePassCount,
+            metrics.TransferCost,
+            metrics.FrameDelta,
+            promotedMode,
+            demotedMode);
+
+        _lastResolvedQueueOverlapMode = overlapMode;
+
         Debug.VulkanEvery(
             "Vulkan.QueueOwnership.Policy",
             TimeSpan.FromSeconds(2),
-            "Queue ownership policy: profile={0} gfx={1} compute={2} transfer={3} useCompute={4} useTransfer={5} computePasses={6} transferUsages={7}",
+            "Queue ownership policy: profile={0} mode={1} gfx={2} compute={3} transfer={4} useCompute={5} useTransfer={6} computePasses={7} overlapCandidates={8} transferUsages={9} transferCost={10} qTransfers={11} stageFlushes={12} frameDeltaMs={13:F3}",
             profile,
+            overlapMode,
             graphicsFamily,
             computeFamily,
             transferFamily,
             useComputeOwnership,
             useTransferOwnership,
-            computePassCount,
-            transferUsageCount);
+            metrics.ComputePassCount,
+            metrics.OverlapCandidatePassCount,
+            metrics.TransferUsageCount,
+            metrics.TransferCost,
+            metrics.QueueOwnershipTransfers,
+            metrics.BarrierStageFlushes,
+            metrics.FrameDelta.TotalMilliseconds);
 
         return new VulkanBarrierPlanner.QueueOwnershipConfig(
             graphicsFamily,
             computeFamily,
             transferFamily);
+    }
+
+    private QueueOverlapMetrics CaptureQueueOverlapMetrics(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+    {
+        bool hasMetadata = passMetadata is { Count: > 0 };
+        int computePassCount = hasMetadata ? passMetadata!.Count(static p => p.Stage == RenderGraphPassStage.Compute) : 0;
+        int transferUsageCount = hasMetadata
+            ? passMetadata!.Sum(static p => p.ResourceUsages.Count(static u => u.ResourceType is RenderPassResourceType.TransferSource or RenderPassResourceType.TransferDestination))
+            : 0;
+        int overlapCandidatePassCount = hasMetadata
+            ? passMetadata!.Count(IsQueueOverlapCandidatePass)
+            : 0;
+
+        int queueOwnershipTransfers = Engine.Rendering.Stats.VulkanQueueOwnershipTransfers;
+        int stageFlushes = Engine.Rendering.Stats.VulkanBarrierStageFlushes;
+        int transferCost = transferUsageCount + queueOwnershipTransfers + stageFlushes;
+
+        TimeSpan frameDelta = TimeSpan.Zero;
+        ulong frameId = Engine.Rendering.State.RenderFrameId;
+        if (_lastQueueOverlapSampleFrameId != frameId)
+        {
+            long now = Stopwatch.GetTimestamp();
+            if (_lastQueueOverlapSampleTimestamp != 0)
+            {
+                long elapsedTicks = now - _lastQueueOverlapSampleTimestamp;
+                if (elapsedTicks > 0)
+                    frameDelta = TimeSpan.FromSeconds(elapsedTicks / (double)Stopwatch.Frequency);
+            }
+
+            _lastQueueOverlapSampleTimestamp = now;
+            _lastQueueOverlapSampleFrameId = frameId;
+        }
+
+        return new QueueOverlapMetrics(
+            computePassCount,
+            transferUsageCount,
+            overlapCandidatePassCount,
+            transferCost,
+            queueOwnershipTransfers,
+            stageFlushes,
+            frameDelta);
+    }
+
+    private static bool IsQueueOverlapCandidatePass(RenderPassMetadata pass)
+    {
+        if (pass.Stage != RenderGraphPassStage.Compute)
+            return false;
+
+        string name = pass.Name ?? string.Empty;
+        return name.Contains("hiz", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("occlusion", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("indirect", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private EVulkanQueueOverlapMode ResolveQueueOverlapMode(EVulkanGpuDrivenProfile profile, in QueueOverlapMetrics metrics, out bool promotedMode, out bool demotedMode)
+    {
+        promotedMode = false;
+        demotedMode = false;
+
+        EVulkanQueueOverlapMode requestedMode = Engine.EffectiveSettings.VulkanQueueOverlapMode;
+        if (requestedMode != EVulkanQueueOverlapMode.Auto)
+        {
+            _autoQueueOverlapMode = requestedMode;
+            _queueOverlapPromotionStabilityFrames = 0;
+            _queueOverlapFramesInMode = 0;
+            _queueOverlapModeStartFrameDeltaMs = -1.0;
+            return requestedMode;
+        }
+
+        if (!VulkanFeatureProfile.IsActive)
+        {
+            _autoQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly;
+            return _autoQueueOverlapMode;
+        }
+
+        bool hasFrameDelta = metrics.FrameDelta.Ticks > 0;
+        if (hasFrameDelta)
+        {
+            double frameDeltaMs = metrics.FrameDelta.TotalMilliseconds;
+            _queueOverlapFrameDeltaEmaMs = _queueOverlapFrameDeltaEmaMs < 0.0
+                ? frameDeltaMs
+                : (_queueOverlapFrameDeltaEmaMs * 0.85) + (frameDeltaMs * 0.15);
+        }
+
+        bool hasComputeCandidates = metrics.ComputePassCount >= 2 && metrics.OverlapCandidatePassCount >= 1;
+        bool hasTransferCandidates = metrics.TransferUsageCount >= 4;
+
+        EVulkanQueueOverlapMode desiredMode = profile switch
+        {
+            EVulkanGpuDrivenProfile.Diagnostics when hasComputeCandidates && hasTransferCandidates => EVulkanQueueOverlapMode.GraphicsComputeTransfer,
+            EVulkanGpuDrivenProfile.Diagnostics when hasComputeCandidates => EVulkanQueueOverlapMode.GraphicsCompute,
+            EVulkanGpuDrivenProfile.DevParity when hasComputeCandidates => EVulkanQueueOverlapMode.GraphicsCompute,
+            _ => EVulkanQueueOverlapMode.GraphicsOnly,
+        };
+
+        _queueOverlapFramesInMode++;
+        if (_queueOverlapModeStartFrameDeltaMs < 0.0 && hasFrameDelta)
+            _queueOverlapModeStartFrameDeltaMs = metrics.FrameDelta.TotalMilliseconds;
+
+        bool transferCostHealthy = metrics.TransferCost <= 768;
+        bool frameDeltaHealthy = _queueOverlapFrameDeltaEmaMs < 0.0 || _queueOverlapFrameDeltaEmaMs <= 40.0;
+
+        if (desiredMode > _autoQueueOverlapMode && transferCostHealthy && frameDeltaHealthy)
+        {
+            _queueOverlapPromotionStabilityFrames++;
+            int threshold = _autoQueueOverlapMode == EVulkanQueueOverlapMode.GraphicsOnly ? 24 : 48;
+            if (_queueOverlapPromotionStabilityFrames >= threshold)
+            {
+                _autoQueueOverlapMode = _autoQueueOverlapMode == EVulkanQueueOverlapMode.GraphicsOnly
+                    ? EVulkanQueueOverlapMode.GraphicsCompute
+                    : EVulkanQueueOverlapMode.GraphicsComputeTransfer;
+
+                _queueOverlapPromotionStabilityFrames = 0;
+                _queueOverlapFramesInMode = 0;
+                _queueOverlapModeStartFrameDeltaMs = _queueOverlapFrameDeltaEmaMs;
+                promotedMode = true;
+            }
+        }
+        else
+        {
+            _queueOverlapPromotionStabilityFrames = 0;
+        }
+
+        bool frameRegressed = hasFrameDelta && _queueOverlapModeStartFrameDeltaMs > 0.0 &&
+            metrics.FrameDelta.TotalMilliseconds > _queueOverlapModeStartFrameDeltaMs * 1.15;
+        bool queueCostTooHigh = metrics.QueueOwnershipTransfers > 256 || metrics.BarrierStageFlushes > 768;
+
+        if (_autoQueueOverlapMode > EVulkanQueueOverlapMode.GraphicsOnly && _queueOverlapFramesInMode >= 12 && (frameRegressed || queueCostTooHigh))
+        {
+            _autoQueueOverlapMode = _autoQueueOverlapMode == EVulkanQueueOverlapMode.GraphicsComputeTransfer
+                ? EVulkanQueueOverlapMode.GraphicsCompute
+                : EVulkanQueueOverlapMode.GraphicsOnly;
+
+            _queueOverlapPromotionStabilityFrames = 0;
+            _queueOverlapFramesInMode = 0;
+            _queueOverlapModeStartFrameDeltaMs = _queueOverlapFrameDeltaEmaMs;
+            demotedMode = true;
+        }
+
+        return _autoQueueOverlapMode;
     }
 
     internal void AllocatePhysicalImage(VulkanPhysicalImageGroup group, ref Image image, ref DeviceMemory memory)
@@ -655,6 +826,16 @@ public unsafe partial class VulkanRenderer
 
         if (passIndex != int.MinValue && (!hasMetadata || passDefinedInMetadata))
             return passIndex;
+
+        if (passIndex == int.MinValue)
+        {
+            int currentPassIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
+            bool currentPassDefined = currentPassIndex != int.MinValue &&
+                (!hasMetadata || passMetadata!.Any(m => m.PassIndex == currentPassIndex));
+
+            if (currentPassDefined)
+                return currentPassIndex;
+        }
 
         int fallback = hasMetadata
             ? passMetadata!.OrderBy(m => m.PassIndex).First().PassIndex

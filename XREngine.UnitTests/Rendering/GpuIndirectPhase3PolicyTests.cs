@@ -64,7 +64,7 @@ public sealed class GpuIndirectPhase3PolicyTests
     [Test]
     public void Phase3_MeshPassSafetyNet_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/VPRC_RenderMeshesPass.cs");
+        string source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs");
 
         source.ShouldContain("VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics");
         source.ShouldContain("Engine.Rendering.Stats.RecordGpuCpuFallback(1, 0);");

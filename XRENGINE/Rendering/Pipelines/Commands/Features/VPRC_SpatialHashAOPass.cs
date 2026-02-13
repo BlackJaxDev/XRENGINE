@@ -23,8 +23,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private const uint HashMapScale = 2u;
         private const uint LocalGroupSize = 8u;
-        private const string ComputeShaderFile = "SpatialHashAO.comp";
-        private const string ComputeShaderFileStereo = "SpatialHashAOStereo.comp";
+        private const string ComputeShaderFile = "AO/SpatialHashAO.comp";
+        private const string ComputeShaderFileStereo = "AO/SpatialHashAOStereo.comp";
 
         public const int DefaultSamples = 96;
         public const uint DefaultNoiseWidth = 4u;

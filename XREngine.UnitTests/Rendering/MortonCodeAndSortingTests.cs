@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
@@ -49,7 +49,7 @@ public class MortonCodeAndSortingTests
     [Test]
     public void GPURenderBuildKeysShader_Loads_AndContainsSortingLogic()
     {
-        string source = LoadShaderSource("Compute/GPURenderBuildKeys.comp");
+        string source = LoadShaderSource("Compute/Indirect/GPURenderBuildKeys.comp");
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
@@ -67,7 +67,7 @@ public class MortonCodeAndSortingTests
     [Test]
     public void GPURenderRadixIndexSortShader_Loads_AndContainsRadixPhases()
     {
-        string source = LoadShaderSource("Compute/GPURenderRadixIndexSort.comp");
+        string source = LoadShaderSource("Compute/Sorting/GPURenderRadixIndexSort.comp");
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
@@ -82,7 +82,7 @@ public class MortonCodeAndSortingTests
     [Test]
     public void RadixSortShader_Constants_MatchExpectedValues()
     {
-        string source = LoadShaderSource("Compute/GPURenderRadixIndexSort.comp");
+        string source = LoadShaderSource("Compute/Sorting/GPURenderRadixIndexSort.comp");
 
         // Verify radix sort constants
         source.ShouldContain("RADIX_BITS = 8u");
@@ -93,7 +93,7 @@ public class MortonCodeAndSortingTests
     [Test]
     public void BuildKeysShader_SupportsMaterialBatching()
     {
-        string source = LoadShaderSource("Compute/GPURenderBuildKeys.comp");
+        string source = LoadShaderSource("Compute/Indirect/GPURenderBuildKeys.comp");
 
         // Verify material + mesh lanes are emitted for downstream batching/sorting.
         source.ShouldContain("uint materialID = floatBitsToUint(culled[base + 38u])");
@@ -736,3 +736,4 @@ public class MortonCodeAndSortingTests
 
     #endregion
 }
+
