@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -283,7 +284,7 @@ namespace XREngine.Rendering.Commands
                 AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
             }
 
-            if (IndirectDebug.LogCountBufferWrites && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+            if (IsCountBufferWriteLoggingEnabledForPass())
             {
                 string label = buf.AttributeName ?? buf.Target.ToString();
                 Debug.Out($"{FormatDebugPrefix("Indirect")} [Indirect/Count] {label} <= {value}");
@@ -307,7 +308,7 @@ namespace XREngine.Rendering.Commands
 
         private void UpdateVisibleCountersFromBuffer(XRDataBuffer? countBuffer)
         {
-            if (IndirectDebug.DisableCpuReadbackCount)
+            if (IsCpuReadbackCountDisabledForPass())
                 return;
 
             if (countBuffer is null)
@@ -363,7 +364,7 @@ namespace XREngine.Rendering.Commands
 
         private unsafe void DumpPassFilterDebug(uint sampleCount)
         {
-            if (!Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+            if (!IsDebugLoggingEnabledForPass())
                 return;
 
             if (_passFilterDebugBuffer is null || sampleCount == 0)
@@ -425,6 +426,18 @@ namespace XREngine.Rendering.Commands
         public void Cull(GPUScene gpuCommands, XRCamera? camera)
         {
             using var timing = BeginTiming("GPURenderPassCollection.Cull");
+            Stopwatch cullStopwatch = Stopwatch.StartNew();
+
+            void RecordCullTiming()
+            {
+                if (!cullStopwatch.IsRunning)
+                    return;
+
+                cullStopwatch.Stop();
+                Engine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
+                    Engine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Cull,
+                    cullStopwatch.Elapsed);
+            }
             
             LogCullingStart("Cull", gpuCommands.TotalCommandCount);
             Dbg("Cull invoked","Culling");
@@ -443,6 +456,7 @@ namespace XREngine.Rendering.Commands
                 _culledHotCommandsValid = false;
                 Dbg("Cull: no commands","Culling");
                 Log(LogCategory.Culling, LogLevel.Debug, "Cull: no commands - early exit");
+                RecordCullTiming();
                 return;
             }
 
@@ -481,13 +495,16 @@ namespace XREngine.Rendering.Commands
 
                 string reason = _skipGpuSubmissionReason ?? "command corruption detected";
                 Warn(LogCategory.Culling, "Skipping GPU submission: {0}", reason);
+                RecordCullTiming();
                 return;
             }
 
             LogCullingResult("Cull", numCommands, VisibleCommandCount, VisibleInstanceCount);
 
-            if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+            if (IsDebugLoggingEnabledForPass())
                 XREngine.Debug.Out($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands ({VisibleInstanceCount} instances) in CulledSceneToRenderBuffer");
+
+            RecordCullTiming();
         }
 
         private void LogCullModeActivation(CullFrameMode mode)
@@ -582,13 +599,21 @@ namespace XREngine.Rendering.Commands
             return false;
         }
 
-        private bool ShouldAllowCpuFallback(bool debugLoggingEnabled)
+        private bool ShouldAllowCpuFallback()
         {
+            if (_passPolicySnapshotValid)
+            {
+                if (VulkanFeatureProfile.EnforceStrictNoFallbacks)
+                    return false;
+
+                return _passAllowCpuFallback;
+            }
+
             if (VulkanFeatureProfile.EnforceStrictNoFallbacks)
                 return false;
 
             bool fallbackRequested = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
-                || (debugLoggingEnabled && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
+                || (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
 
             if (!fallbackRequested)
                 return false;
@@ -601,7 +626,7 @@ namespace XREngine.Rendering.Commands
 
         private void LogCpuFallbackSuppressed(string stageName)
         {
-            RecordCpuFallbackUsage(0u);
+            RecordForbiddenFallback($"{stageName} attempted CPU recovery with strict no-fallback profile.");
             if (_passthroughFallbackLogBudget <= 0)
                 return;
 
@@ -649,9 +674,9 @@ namespace XREngine.Rendering.Commands
 
             PrepareCommandViewMasks(src, inputCount);
 
-            bool debugLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+            bool debugLoggingEnabled = IsDebugLoggingEnabledForPass();
 
-            if (IndirectDebug.ProbeSourceCommandsBeforeCopy)
+            if (IsSourceCommandProbeEnabledForPass())
                 DumpSourceCommandProbe(scene, inputCount);
 
             // Reset counters before dispatch
@@ -727,7 +752,7 @@ namespace XREngine.Rendering.Commands
             _culledHotCommandsValid = useHotCommands;
 
             // Check for overflow
-            if (_cullingOverflowFlagBuffer is not null)
+            if (_cullingOverflowFlagBuffer is not null && ShouldCaptureDiagnosticReadbacksForPass())
             {
                 uint overflowCount = ReadUInt(_cullingOverflowFlagBuffer);
                 if (overflowCount > 0)
@@ -750,7 +775,7 @@ namespace XREngine.Rendering.Commands
             }
 
             // Handle CPU fallback if GPU produced no results
-            bool allowCpuFallback = ShouldAllowCpuFallback(debugLoggingEnabled);
+            bool allowCpuFallback = ShouldAllowCpuFallback();
 
             if (visibleCount == 0 && RenderPass >= 0)
             {
@@ -886,9 +911,9 @@ namespace XREngine.Rendering.Commands
 
             PrepareCommandViewMasks(src, inputCount);
 
-            bool debugLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+            bool debugLoggingEnabled = IsDebugLoggingEnabledForPass();
 
-            if (IndirectDebug.ProbeSourceCommandsBeforeCopy)
+            if (IsSourceCommandProbeEnabledForPass())
                 DumpSourceCommandProbe(scene, inputCount);
 
             // Reset counters before dispatch
@@ -981,7 +1006,7 @@ namespace XREngine.Rendering.Commands
             _culledHotCommandsValid = useHotCommands;
 
             // Check for overflow
-            if (_cullingOverflowFlagBuffer is not null)
+            if (_cullingOverflowFlagBuffer is not null && ShouldCaptureDiagnosticReadbacksForPass())
             {
                 uint overflowCount = ReadUInt(_cullingOverflowFlagBuffer);
                 if (overflowCount > 0)
@@ -1004,7 +1029,7 @@ namespace XREngine.Rendering.Commands
             }
 
             // Handle CPU fallback if GPU produced no results
-            bool allowCpuFallback = ShouldAllowCpuFallback(debugLoggingEnabled);
+            bool allowCpuFallback = ShouldAllowCpuFallback();
 
             if (visibleCount == 0 && RenderPass >= 0)
             {
@@ -1078,9 +1103,9 @@ namespace XREngine.Rendering.Commands
 
             PrepareCommandViewMasks(src, copyCount);
 
-            bool debugLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+            bool debugLoggingEnabled = IsDebugLoggingEnabledForPass();
 
-            if (IndirectDebug.ProbeSourceCommandsBeforeCopy)
+            if (IsSourceCommandProbeEnabledForPass())
                 DumpSourceCommandProbe(scene, copyCount);
 
             // Copy commands
@@ -1110,7 +1135,7 @@ namespace XREngine.Rendering.Commands
             _copyCommandsProgram.Uniform("TargetPass", RenderPass);
             _copyCommandsProgram.Uniform("OutputCapacity", capacity);
             _copyCommandsProgram.Uniform("ActiveViewCount", (int)activeViewCount);
-            int boundsCheckEnabled = (IndirectDebug.ValidateCopyCommandAtomicBounds && _cullingOverflowFlagBuffer is not null) ? 1 : 0;
+            int boundsCheckEnabled = (IsCopyBoundsValidationEnabledForPass() && _cullingOverflowFlagBuffer is not null) ? 1 : 0;
             _copyCommandsProgram.Uniform("BoundsCheckEnabled", boundsCheckEnabled);
             _copyCommandsProgram.BindBuffer(src, 0);
             _copyCommandsProgram.BindBuffer(dst, 1);
@@ -1130,7 +1155,7 @@ namespace XREngine.Rendering.Commands
             if (debugSamples > 0)
                 DumpPassFilterDebug(debugSamples);
 
-            if (boundsCheckEnabled == 1 && _cullingOverflowFlagBuffer is not null)
+            if (boundsCheckEnabled == 1 && _cullingOverflowFlagBuffer is not null && ShouldCaptureDiagnosticReadbacksForPass())
             {
                 uint overflowMarker = ReadUInt(_cullingOverflowFlagBuffer);
                 if (overflowMarker != 0u)
@@ -1153,7 +1178,7 @@ namespace XREngine.Rendering.Commands
                 Debug.Out($"{FormatDebugPrefix("Culling")} Copy shader reported filteredCount={filteredCount} (copyCount={copyCount})");
                 _filteredCountLogBudget--;
             }
-            bool allowCpuFallback = ShouldAllowCpuFallback(debugLoggingEnabled);
+            bool allowCpuFallback = ShouldAllowCpuFallback();
 
             if (filteredCount == 0 && RenderPass >= 0)
             {
@@ -1176,7 +1201,7 @@ namespace XREngine.Rendering.Commands
                 else
                 {
                     LogCpuFallbackSuppressed("GPU pass filter");
-                    if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+                    if (IsDebugLoggingEnabledForPass())
                         LogCommandPassSample(scene, copyCount);
                 }
             }
@@ -1521,7 +1546,7 @@ namespace XREngine.Rendering.Commands
                     byte* src = basePtr + (i * elementSize);
                     GPUIndirectRenderCommand cmd = Unsafe.ReadUnaligned<GPUIndirectRenderCommand>(src);
 
-                    if ((Engine.EffectiveSettings.EnableGpuIndirectDebugLogging) && _sanitizerSampleLogBudget > 0)
+                    if (IsDebugLoggingEnabledForPass() && _sanitizerSampleLogBudget > 0)
                     {
                         if (Interlocked.Decrement(ref _sanitizerSampleLogBudget) >= 0)
                         {
@@ -1635,7 +1660,7 @@ namespace XREngine.Rendering.Commands
 
         private void RunGpuCpuValidation(GPUScene scene, uint copyCount, uint gpuVisibleCount)
         {
-            if (!Engine.EffectiveSettings.EnableGpuIndirectValidationLogging)
+            if (!IsValidationLoggingEnabledForPass())
                 return;
 
             List<(uint MeshId, uint MaterialId, uint Pass)> cpu = BuildCpuVisibilitySignatures(scene, copyCount, out uint cpuVisibleCount);
@@ -1650,7 +1675,7 @@ namespace XREngine.Rendering.Commands
             var missingOnGpu = cpuSet.Except(gpuSet).Take(ValidationSignatureLogLimit).ToList();
             var extraOnGpu = gpuSet.Except(cpuSet).Take(ValidationSignatureLogLimit).ToList();
 
-            bool logDebug = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+            bool logDebug = IsDebugLoggingEnabledForPass();
 
             if (missingOnGpu.Count > 0 && logDebug)
             {
@@ -1792,7 +1817,7 @@ namespace XREngine.Rendering.Commands
 
         private void LogMaterialSnapshot(GPUScene scene, IReadOnlyCollection<uint> missingMaterialIds)
         {
-            if (!(Engine.EffectiveSettings.EnableGpuIndirectDebugLogging))
+            if (!IsDebugLoggingEnabledForPass())
                 return;
 
             const long SnapshotCooldownMs = 1_500;

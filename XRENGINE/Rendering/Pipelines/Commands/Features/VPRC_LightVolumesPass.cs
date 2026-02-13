@@ -18,8 +18,8 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_LightVolumesPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;
-        private const string MonoShaderPath = "Compute/LightVolumes/LightVolumes.comp";
-        private const string StereoShaderPath = "Compute/LightVolumes/LightVolumesStereo.comp";
+        private const string MonoShaderPath = "Compute/GI/LightVolumes/LightVolumes.comp";
+        private const string StereoShaderPath = "Compute/GI/LightVolumes/LightVolumesStereo.comp";
 
         private XRRenderProgram? _computeProgram;
         private XRRenderProgram? _computeProgramStereo;

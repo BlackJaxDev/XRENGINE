@@ -343,22 +343,22 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 7.1 Pipeline Cache Maturity
 
-- [ ] Audit/implement Vulkan pipeline cache usage for graphics and compute.
-- [ ] Key cache by pass/shader/layout/state hashes.
-- [ ] Prewarm common permutations; persist cache to disk.
+- [x] Audit/implement Vulkan pipeline cache usage for graphics and compute.
+- [x] Key cache by pass/shader/layout/state hashes.
+- [x] Prewarm common permutations; persist cache to disk.
 
 ### 7.2 State Churn Reduction
 
-- [ ] Profile pipeline binds, descriptor binds, push constants, vertex buffer binds.
-- [ ] Collapse per-material binding churn with material-table + index-driven fetch.
+- [x] Profile pipeline binds, descriptor binds, push constants, vertex buffer binds.
+- [x] Collapse per-material binding churn with material-table + index-driven fetch.
 
 ### 7.3 Dynamic Rendering Evaluation
 
-- [ ] Evaluate dynamic rendering adoption feasibility and compatibility tradeoffs.
+- [x] Evaluate dynamic rendering adoption feasibility and compatibility tradeoffs.
 
 ### Exit Criteria
 
-- [ ] Stable pipeline cache behavior and reduced per-batch state churn.
+- [x] Stable pipeline cache behavior and reduced per-batch state churn.
 
 ---
 
@@ -366,20 +366,20 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 8.1 Overlap Policy
 
-- [ ] Define staged queue modes:
+- [x] Define staged queue modes:
   - `GraphicsOnly`
   - `Graphics+Compute`
   - `Graphics+Compute+Transfer`
-- [ ] Identify candidate overlap passes (Hi-Z generation, occlusion refine, indirect build).
+- [x] Identify candidate overlap passes (Hi-Z generation, occlusion refine, indirect build).
 
 ### 8.2 Metrics-First Promotion
 
-- [ ] Track overlap windows, transfer costs, barrier counts, and frame-time deltas.
-- [ ] Promote overlap only when gain passes threshold and remains stable.
+- [x] Track overlap windows, transfer costs, barrier counts, and frame-time deltas.
+- [x] Promote overlap only when gain passes threshold and remains stable.
 
 ### Exit Criteria
 
-- [ ] Overlap is scene-selective, measurable, and net-positive.
+- [x] Overlap is scene-selective, measurable, and net-positive.
 
 ---
 
@@ -387,14 +387,14 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 9.1 Golden-Scene Parity Suite
 
-- [ ] Add deterministic golden scenes with expected counts:
+- [x] Add deterministic golden scenes with expected counts:
   - requested
   - culled
   - visible
   - emitted indirect
   - consumed draws
   - overflow/truncation markers
-- [ ] Validate across:
+- [x] Validate across:
   - backend parity (OpenGL vs Vulkan)
   - count vs non-count parity
   - profile parity (`DevParity` vs `ShippingFast`)
@@ -402,25 +402,25 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 9.2 Timing and Stage Profiling
 
-- [ ] Add Vulkan timestamp queries around reset/cull/occlusion/indirect/draw stages.
-- [ ] Report per-stage GPU ms per frame.
+- [x] Add Vulkan timestamp queries around reset/cull/occlusion/indirect/draw stages.
+- [x] Report per-stage GPU ms per frame.
 
 ### 9.3 Indirect Effectiveness Telemetry
 
-- [ ] Track per-frame counters:
+- [x] Track per-frame counters:
   - requested draws
   - culled draws
   - emitted indirect draws
   - consumed draws (diagnostic mode readback)
   - overflow count
-- [ ] Report cull efficiency and regression alerts.
+- [x] Report cull efficiency and regression alerts.
 
 ### 9.4 Anti-Pattern and Invariant Tests
 
-- [ ] Add source-level tests to guard against:
+- [x] Add source-level tests to guard against:
   - default-path per-draw Vulkan indirect loops
   - unconditional CPU fallback in shipping profile
-- [ ] Assert frame-op dependency order, no circular dependencies, descriptor schema consistency, pass-order determinism.
+- [x] Assert frame-op dependency order, no circular dependencies, descriptor schema consistency, pass-order determinism.
 
 **Primary tests:**
 - `XREngine.UnitTests/Rendering/GpuRenderingBacklogTests.cs`
@@ -430,7 +430,7 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### Exit Criteria
 
-- [ ] CI matrix catches parity/perf regressions before merge.
+- [x] CI matrix catches parity/perf regressions before merge.
 
 ---
 
@@ -438,22 +438,25 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 10.1 No Silent Fallback in Shipping Profile
 
-- [ ] Any forbidden fallback increments explicit counters and emits bounded warnings.
-- [ ] CI fails when forbidden fallback counters are non-zero on golden scenes.
+- [x] Any forbidden fallback increments explicit counters and emits bounded warnings.
+- [x] CI fails when forbidden fallback counters are non-zero on golden scenes.
 
 ### 10.2 Diagnostic Cost Isolation
 
-- [ ] Ensure debug toggles are evaluated at pass setup, not per-draw.
-- [ ] Ensure disabled diagnostics allocate nothing and perform no readbacks.
+- [x] Ensure debug toggles are evaluated at pass setup, not per-draw.
+- [x] Ensure disabled diagnostics allocate nothing and perform no readbacks.
 
 ### 10.3 Capacity and Overflow Policy
 
-- [ ] Document command/indirect/count buffer capacities and growth behavior.
-- [ ] Enforce bounded growth and graceful truncation behavior under overflow.
+- [x] Document command/indirect/count buffer capacities and growth behavior.
+- [x] Enforce bounded growth and graceful truncation behavior under overflow.
+
+Reference:
+- `docs/work/refactor/VulkanGpuDrivenCapacityPolicy.md`
 
 ### Exit Criteria
 
-- [ ] Shipping profile is deterministic, fast, and fallback-explicit.
+- [x] Shipping profile is deterministic, fast, and fallback-explicit.
 
 ---
 
@@ -461,12 +464,12 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 11.1 Mesh Rendering Path Separation
 
-- [ ] Split mesh rendering command/pipeline files by explicit path intent:
+- [x] Split mesh rendering command/pipeline files by explicit path intent:
   - Traditional path files use `Traditional` in class/file naming.
   - Meshlet path files use `Meshlet` in class/file naming.
   - Shared orchestration remains in neutral `MeshRendering` files.
-- [ ] Remove ambiguous names where behavior is path-specific.
-- [ ] Add thin path-router entry points so callers do not encode path details.
+- [x] Remove ambiguous names where behavior is path-specific.
+- [x] Add thin path-router entry points so callers do not encode path details.
 
 **Target organization (example):**
 - `XRENGINE/Rendering/Pipelines/Commands/MeshRendering/Traditional/*`
@@ -475,14 +478,14 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 11.2 Compute Shader Grouping by Function
 
-- [ ] Reorganize compute shaders into function-based folders:
+- [x] Reorganize compute shaders into function-based folders:
   - `Culling` (frustum/BVH/SoA)
   - `Indirect` (reset/build/count support)
   - `Occlusion` (Hi-Z/depth pyramid/refine)
   - `Sorting` (radix/keys/gather)
   - `Debug` (diagnostic-only shader utilities)
-- [ ] Keep shader names prefixed by subsystem and operation, using one naming scheme.
-- [ ] Add compatibility include/alias map during migration to avoid immediate breakage.
+- [x] Keep shader names prefixed by subsystem and operation, using one naming scheme.
+- [x] Add compatibility include/alias map during migration to avoid immediate breakage.
 
 **Target organization (example):**
 - `Build/CommonAssets/Shaders/Compute/Culling/*`
@@ -493,33 +496,33 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 11.3 Host-Side File Taxonomy for GPU Rendering
 
-- [ ] Group host-side GPU rendering code by domain, not by historical growth:
+- [x] Group host-side GPU rendering code by domain, not by historical growth:
   - `Policy` (profiles, feature gates, settings)
   - `Dispatch` (pass setup and dispatch wiring)
   - `Resources` (buffers/descriptors/pools)
   - `Validation` (parity checks/assertions)
   - `Telemetry` (timers/counters/diagnostics)
-- [ ] Keep backend-agnostic interfaces near shared domain code; backend-specific implementations under backend folders.
-- [ ] Ensure each file has a single primary responsibility.
+- [x] Keep backend-agnostic interfaces near shared domain code; backend-specific implementations under backend folders.
+- [x] Ensure each file has a single primary responsibility.
 
 ### 11.4 Naming and Suffix Convention Standardization
 
-- [ ] Introduce naming rules for renderer files and shader files:
+- [x] Introduce naming rules for renderer files and shader files:
   - Path intent suffixes: `Traditional`, `Meshlet`, `Shared`.
   - Role suffixes: `Policy`, `Dispatcher`, `Resources`, `Validator`, `Stats`.
   - Shader operation prefixes: `Cull`, `Indirect`, `Occlusion`, `Sort`, `Debug`.
-- [ ] Ban generic file names that hide behavior (for example: `Helpers`, `Misc`, `Temp`).
-- [ ] Add CI lint/check to flag new files violating naming convention.
+- [x] Ban generic file names that hide behavior (for example: `Helpers`, `Misc`, `Temp`).
+- [x] Add CI lint/check to flag new files violating naming convention.
 
 ### 11.5 Documentation and Discoverability
 
-- [ ] Add a rendering code map document that explains:
+- [x] Add a rendering code map document that explains:
   - where to modify traditional rendering flow
   - where to modify meshlet rendering flow
   - where each compute shader stage lives
   - how data flows host → compute → indirect draw
-- [ ] Add folder-level README files in major rendering and compute directories.
-- [ ] Maintain migration table (old path → new path) until all references are updated.
+- [x] Add folder-level README files in major rendering and compute directories.
+- [x] Maintain migration table (old path → new path) until all references are updated.
 
 **Primary docs:**
 - `docs/architecture/rendering/RenderingCodeMap.md` (new)
@@ -527,16 +530,16 @@ Create explicit profile policy for GPU-driven behavior:
 
 ### 11.6 Migration Execution Safety
 
-- [ ] Perform moves in small batches with build + shader compile checks at each batch.
-- [ ] Keep temporary compatibility hooks for moved shaders/files until all call sites are migrated.
-- [ ] Add tests that validate resolved shader paths and pass registration after reorganization.
+- [x] Perform moves in small batches with build + shader compile checks at each batch.
+- [x] Keep temporary compatibility hooks for moved shaders/files until all call sites are migrated.
+- [x] Add tests that validate resolved shader paths and pass registration after reorganization.
 - [ ] Remove compatibility hooks only after parity matrix passes.
 
 ### Exit Criteria
 
-- [ ] A new contributor can locate traditional vs meshlet rendering code paths in under 5 minutes.
-- [ ] Compute shaders are grouped by function with no ambiguous placement.
-- [ ] Naming conventions are enforced by CI checks.
+- [x] A new contributor can locate traditional vs meshlet rendering code paths in under 5 minutes.
+- [x] Compute shaders are grouped by function with no ambiguous placement.
+- [x] Naming conventions are enforced by CI checks.
 - [ ] Refactor causes no regression in parity or performance baselines.
 
 ---

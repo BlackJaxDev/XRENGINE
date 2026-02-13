@@ -183,6 +183,8 @@ public unsafe partial class VulkanRenderer
 		private readonly record struct PipelineKey(
 					PrimitiveTopology Topology,
 					ulong RenderPassHandle,
+					ulong ProgramPipelineHash,
+					ulong VertexLayoutHash,
 					bool DepthTestEnabled,
 					bool DepthWriteEnabled,
 					CompareOp DepthCompareOp,
@@ -548,6 +550,7 @@ public unsafe partial class VulkanRenderer
 
 			_generatedProgram?.Destroy();
 			_generatedProgram = new XRRenderProgram(linkNow: false, separable: false, shaders);
+			_generatedProgram.AllowLink();
 			_program = Renderer.GenericToAPI<VkRenderProgram>(_generatedProgram);
 
 			if (_program is null)
@@ -634,9 +637,21 @@ public unsafe partial class VulkanRenderer
 			if (_pipelineDirty)
 				DestroyPipelines();
 
+			_descriptorDirty = true; // Pipeline/program changes invalidate descriptor sets
+
+			if (!EnsureProgram(material))
+				return false;
+
+			BuildVertexInputState();
+
+			ulong programPipelineHash = _program!.ComputeGraphicsPipelineFingerprint();
+			ulong vertexLayoutHash = ComputeVertexLayoutHash();
+
 			PipelineKey key = new(
 				topology,
 				renderPass.Handle,
+				programPipelineHash,
+				vertexLayoutHash,
 				draw.DepthTestEnabled,
 				draw.DepthWriteEnabled,
 				draw.DepthCompareOp,
@@ -656,14 +671,12 @@ public unsafe partial class VulkanRenderer
 				draw.ColorWriteMask);
 
 			if (_pipelines.TryGetValue(key, out pipeline) && pipeline.Handle != 0 && !_pipelineDirty)
+			{
+				Engine.Rendering.Stats.RecordVulkanPipelineCacheLookup(cacheHit: true);
 				return true;
+			}
 
-			_descriptorDirty = true; // Pipeline/program changes invalidate descriptor sets
-
-			if (!EnsureProgram(material))
-				return false;
-
-			BuildVertexInputState();
+			Engine.Rendering.Stats.RecordVulkanPipelineCacheLookup(cacheHit: false);
 
 			var vertexInput = new PipelineVertexInputStateCreateInfo
 			{
@@ -781,7 +794,7 @@ public unsafe partial class VulkanRenderer
 							Subpass = 0,
 						};
 
-							pipeline = _program!.CreateGraphicsPipeline(ref pipelineInfo);
+							pipeline = _program!.CreateGraphicsPipeline(ref pipelineInfo, Renderer.ActivePipelineCache);
 							_pipelines[key] = pipeline;
 						_pipelineDirty = false;
 						_meshDirty = false;
@@ -833,9 +846,7 @@ public unsafe partial class VulkanRenderer
 					offsets[i] = 0;
 				}
 
-				fixed (VkBufferHandle* bufPtr = buffers)
-				fixed (ulong* offPtr = offsets)
-					Api!.CmdBindVertexBuffers(commandBuffer, 0, (uint)buffers.Length, bufPtr, offPtr);
+				Renderer.BindVertexBuffersTracked(commandBuffer, 0, buffers, offsets);
 			}
 
 			bool uniformsNotified = false;
@@ -852,7 +863,7 @@ public unsafe partial class VulkanRenderer
 				if (!EnsurePipeline(material, topology, drawCopy, renderPass, out var pipeline))
 					return false;
 
-				Api!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, pipeline);
+				Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
 				if (!uniformsNotified && _program?.Data is { } programData)
 				{
@@ -862,7 +873,7 @@ public unsafe partial class VulkanRenderer
 
 				BindDescriptorsIfAvailable(commandBuffer, material, drawCopy);
 
-				Api!.CmdBindIndexBuffer(commandBuffer, indexHandle, 0, ToVkIndexType(size));
+				Renderer.BindIndexBufferTracked(commandBuffer, indexHandle, 0, ToVkIndexType(size));
 				Api!.CmdDrawIndexed(commandBuffer, indexCount, drawInstances, 0, 0, 0);
 
 				Engine.Rendering.Stats.IncrementDrawCalls();
@@ -880,7 +891,7 @@ public unsafe partial class VulkanRenderer
 				uint vertexCount = (uint)Math.Max(Mesh.VertexCount, 0);
 				if (vertexCount > 0 && EnsurePipeline(material, PrimitiveTopology.TriangleList, drawCopy, renderPass, out var pipeline))
 				{
-					Api!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, pipeline);
+					Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
 					if (!uniformsNotified && _program?.Data is { } programData)
 					{
@@ -926,8 +937,31 @@ public unsafe partial class VulkanRenderer
 			if (sets.Length == 0)
 				return;
 
-			fixed (DescriptorSet* setPtr = sets)
-				Api!.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics, _program.PipelineLayout, 0, (uint)sets.Length, setPtr, 0, null);
+			Renderer.BindDescriptorSetsTracked(commandBuffer, PipelineBindPoint.Graphics, _program.PipelineLayout, 0, sets);
+		}
+
+		private ulong ComputeVertexLayoutHash()
+		{
+			HashCode hash = new();
+			hash.Add(_vertexBindings.Length);
+			hash.Add(_vertexAttributes.Length);
+
+			for (int i = 0; i < _vertexBindings.Length; i++)
+			{
+				hash.Add(_vertexBindings[i].Binding);
+				hash.Add(_vertexBindings[i].Stride);
+				hash.Add((int)_vertexBindings[i].InputRate);
+			}
+
+			for (int i = 0; i < _vertexAttributes.Length; i++)
+			{
+				hash.Add(_vertexAttributes[i].Location);
+				hash.Add(_vertexAttributes[i].Binding);
+				hash.Add((int)_vertexAttributes[i].Format);
+				hash.Add(_vertexAttributes[i].Offset);
+			}
+
+			return unchecked((ulong)hash.ToHashCode());
 		}
 
 		private int ResolveCommandBufferIndex(CommandBuffer commandBuffer)

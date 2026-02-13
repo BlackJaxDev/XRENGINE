@@ -36,7 +36,7 @@ namespace XREngine
             IReadOnlyCollection<XRMaterial> Materials,
             IReadOnlyCollection<XRMesh> Meshes);
 
-        public delegate XRMaterial DelMakeMaterialAction(List<TextureSlot> textures, string name);
+        public delegate XRMaterial DelMakeMaterialAction(XRTexture[] textureList, List<TextureSlot> textures, string name);
 
         public DelMakeMaterialAction MakeMaterialAction { get; set; } = MakeMaterialDefault;
 
@@ -118,27 +118,38 @@ namespace XREngine
 
         private readonly ConcurrentDictionary<string, XRTexture2D> _texturePathCache = new();
 
-        private XRMaterial MakeMaterialInternal(List<TextureSlot> textures, string name)
+        private XRMaterial MakeMaterialInternal(XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
-            return MakeMaterialAction(textures, name);
+            return MakeMaterialAction(textureList, textures, name);
         }
 
-        public static XRMaterial MakeMaterialDefault(List<TextureSlot> textures, string name)
+        public static XRMaterial MakeMaterialDefault(XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
             bool transp = textures.Any(x => (x.Flags & 0x2) != 0 || x.TextureType == TextureType.Opacity);
+            bool hasAnyTexture = textureList.Any(x => x is not null);
+
+            int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
+            if (diffuseIndex < 0)
+                diffuseIndex = Array.FindIndex(textureList, t => t is not null);
+            if (diffuseIndex < 0)
+                diffuseIndex = 0;
+
+            XRTexture? diffuse = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
 
             // Default material allocates the same number of texture slots as were discovered.
             // Texture loading/binding is handled elsewhere.
-            var mat = new XRMaterial(new XRTexture?[textures.Count]);
+            var mat = new XRMaterial();
 
-            if (textures.Count > 0)
+            if (hasAnyTexture)
             {
                 if (transp)
                 {
+                    mat.Textures = [diffuse];
                     mat.Shaders.Add(ShaderHelper.UnlitTextureFragForward()!);
                 }
                 else
                 {
+                    mat.Textures = [diffuse];
                     mat.Shaders.Add(ShaderHelper.LitTextureFragDeferred()!);
                     mat.Parameters =
                     [
@@ -154,6 +165,7 @@ namespace XREngine
             {
                 // Show the material as magenta if no textures are present.
                 mat.Shaders.Add(ShaderHelper.LitColorFragDeferred()!);
+                mat.Textures = [];
                 mat.Parameters =
                 [
                     new ShaderVector3(ColorF3.Magenta, "BaseColor"),
@@ -191,19 +203,8 @@ namespace XREngine
             ShadingMode mode,
             Dictionary<string, List<MaterialProperty>> properties)
         {
-            // Create the material (shaders/params/etc.)
-            XRMaterial mat = MakeMaterialInternal(textures, name);
-
-            // Load textures immediately (placeholders + scheduled async decode) and bind them.
-            // This ensures the default import path produces textured materials without requiring
-            // callers to manually invoke LoadTextures/FillTextures.
-            if (textures.Count > 0)
-            {
-                XRTexture[] textureList = LoadTextures(modelFilePath, textures);
-                FillTextures(mat, textureList);
-            }
-
-            return mat;
+            XRTexture[] textureList = textures.Count > 0 ? LoadTextures(modelFilePath, textures) : [];
+            return MakeMaterialInternal(textureList, textures, name);
         }
 
         public XRTexture[] LoadTextures(string modelFilePath, List<TextureSlot> textures)
@@ -641,6 +642,13 @@ namespace XREngine
             };
         }
 
+        public static XRMaterial MakeMaterialDeferred(XRTexture[] textureList, List<TextureSlot> textures, string name)
+        {
+            XRMaterial mat = new(textureList);
+            MakeMaterialDeferred(mat, textureList, textures, name);
+            return mat;
+        }
+
         public static void MakeMaterialForwardPlusTextured(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
             bool transp = textures.Any(x => (x.Flags & 0x2) != 0 || x.TextureType == TextureType.Opacity);
@@ -737,6 +745,13 @@ namespace XREngine
             };
         }
 
+        public static XRMaterial MakeMaterialForwardPlusTextured(XRTexture[] textureList, List<TextureSlot> textures, string name)
+        {
+            XRMaterial mat = new(textureList);
+            MakeMaterialForwardPlusTextured(mat, textureList, textures, name);
+            return mat;
+        }
+
         public static void MakeMaterialForwardPlusUberShader(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
             int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
@@ -818,6 +833,13 @@ namespace XREngine
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
                 RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights,
             };
+        }
+
+        public static XRMaterial MakeMaterialForwardPlusUberShader(XRTexture[] textureList, List<TextureSlot> textures, string name)
+        {
+            XRMaterial mat = new(textureList);
+            MakeMaterialForwardPlusUberShader(mat, textureList, textures, name);
+            return mat;
         }
 
         private readonly List<Func<IEnumerable>> _meshProcessRoutines = [];

@@ -23,8 +23,10 @@ namespace XREngine
                 private static int _lastFrameMultiDrawCalls;
                 private static int _gpuCpuFallbackEvents;
                 private static int _gpuCpuFallbackRecoveredCommands;
+                private static int _forbiddenGpuFallbackEvents;
                 private static int _lastFrameGpuCpuFallbackEvents;
                 private static int _lastFrameGpuCpuFallbackRecoveredCommands;
+                private static int _lastFrameForbiddenGpuFallbackEvents;
                 private static int _vulkanIndirectCountPathCalls;
                 private static int _vulkanIndirectNonCountPathCalls;
                 private static int _vulkanIndirectLoopFallbackCalls;
@@ -39,8 +41,34 @@ namespace XREngine
                 private static int _vulkanPlannedBufferBarriers;
                 private static int _vulkanQueueOwnershipTransfers;
                 private static int _vulkanBarrierStageFlushes;
+                private static int _vulkanOverlapCandidatePasses;
+                private static int _vulkanOverlapTransferCosts;
+                private static long _vulkanOverlapFrameDeltaMicros;
+                private static int _vulkanOverlapModePromotions;
+                private static int _vulkanOverlapModeDemotions;
                 private static int _vulkanAdhocBarrierEmits;
                 private static int _vulkanAdhocBarrierRedundant;
+                private static int _vulkanPipelineBinds;
+                private static int _vulkanDescriptorBinds;
+                private static int _vulkanPushConstantWrites;
+                private static int _vulkanVertexBufferBinds;
+                private static int _vulkanIndexBufferBinds;
+                private static int _vulkanPipelineBindSkips;
+                private static int _vulkanDescriptorBindSkips;
+                private static int _vulkanVertexBufferBindSkips;
+                private static int _vulkanIndexBufferBindSkips;
+                private static int _vulkanPipelineCacheLookupHits;
+                private static int _vulkanPipelineCacheLookupMisses;
+                private static long _vulkanRequestedDraws;
+                private static long _vulkanCulledDraws;
+                private static long _vulkanEmittedIndirectDraws;
+                private static long _vulkanConsumedDraws;
+                private static long _vulkanOverflowCount;
+                private static long _vulkanStageResetTicks;
+                private static long _vulkanStageCullTicks;
+                private static long _vulkanStageOcclusionTicks;
+                private static long _vulkanStageIndirectTicks;
+                private static long _vulkanStageDrawTicks;
                 private static int _lastFrameVulkanIndirectCountPathCalls;
                 private static int _lastFrameVulkanIndirectNonCountPathCalls;
                 private static int _lastFrameVulkanIndirectLoopFallbackCalls;
@@ -55,8 +83,34 @@ namespace XREngine
                 private static int _lastFrameVulkanPlannedBufferBarriers;
                 private static int _lastFrameVulkanQueueOwnershipTransfers;
                 private static int _lastFrameVulkanBarrierStageFlushes;
+                private static int _lastFrameVulkanOverlapCandidatePasses;
+                private static int _lastFrameVulkanOverlapTransferCosts;
+                private static long _lastFrameVulkanOverlapFrameDeltaMicros;
+                private static int _lastFrameVulkanOverlapModePromotions;
+                private static int _lastFrameVulkanOverlapModeDemotions;
                 private static int _lastFrameVulkanAdhocBarrierEmits;
                 private static int _lastFrameVulkanAdhocBarrierRedundant;
+                private static int _lastFrameVulkanPipelineBinds;
+                private static int _lastFrameVulkanDescriptorBinds;
+                private static int _lastFrameVulkanPushConstantWrites;
+                private static int _lastFrameVulkanVertexBufferBinds;
+                private static int _lastFrameVulkanIndexBufferBinds;
+                private static int _lastFrameVulkanPipelineBindSkips;
+                private static int _lastFrameVulkanDescriptorBindSkips;
+                private static int _lastFrameVulkanVertexBufferBindSkips;
+                private static int _lastFrameVulkanIndexBufferBindSkips;
+                private static int _lastFrameVulkanPipelineCacheLookupHits;
+                private static int _lastFrameVulkanPipelineCacheLookupMisses;
+                private static long _lastFrameVulkanRequestedDraws;
+                private static long _lastFrameVulkanCulledDraws;
+                private static long _lastFrameVulkanEmittedIndirectDraws;
+                private static long _lastFrameVulkanConsumedDraws;
+                private static long _lastFrameVulkanOverflowCount;
+                private static long _lastFrameVulkanStageResetTicks;
+                private static long _lastFrameVulkanStageCullTicks;
+                private static long _lastFrameVulkanStageOcclusionTicks;
+                private static long _lastFrameVulkanStageIndirectTicks;
+                private static long _lastFrameVulkanStageDrawTicks;
 
                 // GPU->CPU readback / mapping counters (per-frame)
                 private static int _gpuMappedBuffers;
@@ -142,6 +196,12 @@ namespace XREngine
                 public static int GpuCpuFallbackRecoveredCommands => _lastFrameGpuCpuFallbackRecoveredCommands;
 
                 /// <summary>
+                /// Number of forbidden fallback attempts observed in the last completed frame.
+                /// Forbidden fallbacks indicate shipping-profile behavior would have fallen back but was blocked.
+                /// </summary>
+                public static int ForbiddenGpuFallbackEvents => _lastFrameForbiddenGpuFallbackEvents;
+
+                /// <summary>
                 /// Number of GPU buffers mapped for CPU access in the last completed frame.
                 /// </summary>
                 public static int GpuMappedBuffers => _lastFrameGpuMappedBuffers;
@@ -170,8 +230,43 @@ namespace XREngine
                 public static int VulkanPlannedBufferBarriers => _lastFrameVulkanPlannedBufferBarriers;
                 public static int VulkanQueueOwnershipTransfers => _lastFrameVulkanQueueOwnershipTransfers;
                 public static int VulkanBarrierStageFlushes => _lastFrameVulkanBarrierStageFlushes;
+                public static int VulkanOverlapCandidatePasses => _lastFrameVulkanOverlapCandidatePasses;
+                public static int VulkanOverlapTransferCosts => _lastFrameVulkanOverlapTransferCosts;
+                public static double VulkanOverlapFrameDeltaMs => _lastFrameVulkanOverlapFrameDeltaMicros / 1000.0;
+                public static int VulkanOverlapModePromotions => _lastFrameVulkanOverlapModePromotions;
+                public static int VulkanOverlapModeDemotions => _lastFrameVulkanOverlapModeDemotions;
                 public static int VulkanAdhocBarrierEmits => _lastFrameVulkanAdhocBarrierEmits;
                 public static int VulkanAdhocBarrierRedundant => _lastFrameVulkanAdhocBarrierRedundant;
+                                public static int VulkanPipelineBinds => _lastFrameVulkanPipelineBinds;
+                                public static int VulkanDescriptorBinds => _lastFrameVulkanDescriptorBinds;
+                                public static int VulkanPushConstantWrites => _lastFrameVulkanPushConstantWrites;
+                                public static int VulkanVertexBufferBinds => _lastFrameVulkanVertexBufferBinds;
+                                public static int VulkanIndexBufferBinds => _lastFrameVulkanIndexBufferBinds;
+                                public static int VulkanPipelineBindSkips => _lastFrameVulkanPipelineBindSkips;
+                                public static int VulkanDescriptorBindSkips => _lastFrameVulkanDescriptorBindSkips;
+                                public static int VulkanVertexBufferBindSkips => _lastFrameVulkanVertexBufferBindSkips;
+                                public static int VulkanIndexBufferBindSkips => _lastFrameVulkanIndexBufferBindSkips;
+                                public static int VulkanPipelineCacheLookupHits => _lastFrameVulkanPipelineCacheLookupHits;
+                                public static int VulkanPipelineCacheLookupMisses => _lastFrameVulkanPipelineCacheLookupMisses;
+                                public static long VulkanRequestedDraws => _lastFrameVulkanRequestedDraws;
+                                public static long VulkanCulledDraws => _lastFrameVulkanCulledDraws;
+                                public static long VulkanEmittedIndirectDraws => _lastFrameVulkanEmittedIndirectDraws;
+                                public static long VulkanConsumedDraws => _lastFrameVulkanConsumedDraws;
+                                public static long VulkanOverflowCount => _lastFrameVulkanOverflowCount;
+                                public static double VulkanCullEfficiency
+                                    => _lastFrameVulkanRequestedDraws <= 0
+                                    ? 1.0
+                                    : Math.Max(0.0, 1.0 - ((double)_lastFrameVulkanCulledDraws / _lastFrameVulkanRequestedDraws));
+                                public static double VulkanResetStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageResetTicks).TotalMilliseconds;
+                                public static double VulkanCullStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageCullTicks).TotalMilliseconds;
+                                public static double VulkanOcclusionStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageOcclusionTicks).TotalMilliseconds;
+                                public static double VulkanIndirectStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageIndirectTicks).TotalMilliseconds;
+                                public static double VulkanDrawStageMs => TimeSpan.FromTicks(_lastFrameVulkanStageDrawTicks).TotalMilliseconds;
+                                public static double VulkanPipelineCacheLookupHitRate
+                                        => (_lastFrameVulkanPipelineCacheLookupHits + _lastFrameVulkanPipelineCacheLookupMisses) <= 0
+                                                ? 1.0
+                                                : (double)_lastFrameVulkanPipelineCacheLookupHits /
+                                                    (_lastFrameVulkanPipelineCacheLookupHits + _lastFrameVulkanPipelineCacheLookupMisses);
                 public static double VulkanIndirectBatchMergeRatio
                     => _lastFrameVulkanIndirectRequestedBatches <= 0
                         ? 1.0
@@ -274,6 +369,7 @@ namespace XREngine
                     _lastFrameMultiDrawCalls = _multiDrawCalls;
                     _lastFrameGpuCpuFallbackEvents = _gpuCpuFallbackEvents;
                     _lastFrameGpuCpuFallbackRecoveredCommands = _gpuCpuFallbackRecoveredCommands;
+                    _lastFrameForbiddenGpuFallbackEvents = _forbiddenGpuFallbackEvents;
                     _lastFrameGpuMappedBuffers = _gpuMappedBuffers;
                     _lastFrameGpuReadbackBytes = _gpuReadbackBytes;
                     _lastFrameRtxIoDecompressCalls = _rtxIoDecompressCalls;
@@ -296,8 +392,34 @@ namespace XREngine
                     _lastFrameVulkanPlannedBufferBarriers = _vulkanPlannedBufferBarriers;
                     _lastFrameVulkanQueueOwnershipTransfers = _vulkanQueueOwnershipTransfers;
                     _lastFrameVulkanBarrierStageFlushes = _vulkanBarrierStageFlushes;
+                    _lastFrameVulkanOverlapCandidatePasses = _vulkanOverlapCandidatePasses;
+                    _lastFrameVulkanOverlapTransferCosts = _vulkanOverlapTransferCosts;
+                    _lastFrameVulkanOverlapFrameDeltaMicros = _vulkanOverlapFrameDeltaMicros;
+                    _lastFrameVulkanOverlapModePromotions = _vulkanOverlapModePromotions;
+                    _lastFrameVulkanOverlapModeDemotions = _vulkanOverlapModeDemotions;
                     _lastFrameVulkanAdhocBarrierEmits = _vulkanAdhocBarrierEmits;
                     _lastFrameVulkanAdhocBarrierRedundant = _vulkanAdhocBarrierRedundant;
+                    _lastFrameVulkanPipelineBinds = _vulkanPipelineBinds;
+                    _lastFrameVulkanDescriptorBinds = _vulkanDescriptorBinds;
+                    _lastFrameVulkanPushConstantWrites = _vulkanPushConstantWrites;
+                    _lastFrameVulkanVertexBufferBinds = _vulkanVertexBufferBinds;
+                    _lastFrameVulkanIndexBufferBinds = _vulkanIndexBufferBinds;
+                    _lastFrameVulkanPipelineBindSkips = _vulkanPipelineBindSkips;
+                    _lastFrameVulkanDescriptorBindSkips = _vulkanDescriptorBindSkips;
+                    _lastFrameVulkanVertexBufferBindSkips = _vulkanVertexBufferBindSkips;
+                    _lastFrameVulkanIndexBufferBindSkips = _vulkanIndexBufferBindSkips;
+                    _lastFrameVulkanPipelineCacheLookupHits = _vulkanPipelineCacheLookupHits;
+                    _lastFrameVulkanPipelineCacheLookupMisses = _vulkanPipelineCacheLookupMisses;
+                    _lastFrameVulkanRequestedDraws = _vulkanRequestedDraws;
+                    _lastFrameVulkanCulledDraws = _vulkanCulledDraws;
+                    _lastFrameVulkanEmittedIndirectDraws = _vulkanEmittedIndirectDraws;
+                    _lastFrameVulkanConsumedDraws = _vulkanConsumedDraws;
+                    _lastFrameVulkanOverflowCount = _vulkanOverflowCount;
+                    _lastFrameVulkanStageResetTicks = _vulkanStageResetTicks;
+                    _lastFrameVulkanStageCullTicks = _vulkanStageCullTicks;
+                    _lastFrameVulkanStageOcclusionTicks = _vulkanStageOcclusionTicks;
+                    _lastFrameVulkanStageIndirectTicks = _vulkanStageIndirectTicks;
+                    _lastFrameVulkanStageDrawTicks = _vulkanStageDrawTicks;
                     _lastFrameVrLeftEyeDraws = _vrLeftEyeDraws;
                     _lastFrameVrRightEyeDraws = _vrRightEyeDraws;
                     _lastFrameVrLeftEyeVisible = _vrLeftEyeVisible;
@@ -313,6 +435,7 @@ namespace XREngine
                     _multiDrawCalls = 0;
                     _gpuCpuFallbackEvents = 0;
                     _gpuCpuFallbackRecoveredCommands = 0;
+                    _forbiddenGpuFallbackEvents = 0;
                     _gpuMappedBuffers = 0;
                     _gpuReadbackBytes = 0;
                     _rtxIoDecompressCalls = 0;
@@ -335,8 +458,34 @@ namespace XREngine
                     _vulkanPlannedBufferBarriers = 0;
                     _vulkanQueueOwnershipTransfers = 0;
                     _vulkanBarrierStageFlushes = 0;
+                    _vulkanOverlapCandidatePasses = 0;
+                    _vulkanOverlapTransferCosts = 0;
+                    _vulkanOverlapFrameDeltaMicros = 0;
+                    _vulkanOverlapModePromotions = 0;
+                    _vulkanOverlapModeDemotions = 0;
                     _vulkanAdhocBarrierEmits = 0;
                     _vulkanAdhocBarrierRedundant = 0;
+                    _vulkanPipelineBinds = 0;
+                    _vulkanDescriptorBinds = 0;
+                    _vulkanPushConstantWrites = 0;
+                    _vulkanVertexBufferBinds = 0;
+                    _vulkanIndexBufferBinds = 0;
+                    _vulkanPipelineBindSkips = 0;
+                    _vulkanDescriptorBindSkips = 0;
+                    _vulkanVertexBufferBindSkips = 0;
+                    _vulkanIndexBufferBindSkips = 0;
+                    _vulkanPipelineCacheLookupHits = 0;
+                    _vulkanPipelineCacheLookupMisses = 0;
+                    _vulkanRequestedDraws = 0;
+                    _vulkanCulledDraws = 0;
+                    _vulkanEmittedIndirectDraws = 0;
+                    _vulkanConsumedDraws = 0;
+                    _vulkanOverflowCount = 0;
+                    _vulkanStageResetTicks = 0;
+                    _vulkanStageCullTicks = 0;
+                    _vulkanStageOcclusionTicks = 0;
+                    _vulkanStageIndirectTicks = 0;
+                    _vulkanStageDrawTicks = 0;
                     _vrLeftEyeDraws = 0;
                     _vrRightEyeDraws = 0;
                     _vrLeftEyeVisible = 0;
@@ -641,6 +790,17 @@ namespace XREngine
                         Interlocked.Add(ref _gpuCpuFallbackRecoveredCommands, recoveredCommands);
                 }
 
+                /// <summary>
+                /// Records a forbidden fallback attempt (fallback blocked by profile policy).
+                /// </summary>
+                public static void RecordForbiddenGpuFallback(int eventCount = 1)
+                {
+                    if (!EnableTracking || eventCount <= 0)
+                        return;
+
+                    Interlocked.Add(ref _forbiddenGpuFallbackEvents, eventCount);
+                }
+
                 public static void RecordVulkanIndirectSubmission(bool usedCountPath, bool usedLoopFallback, int apiCalls, uint submittedDraws)
                 {
                     if (!EnableTracking)
@@ -708,6 +868,30 @@ namespace XREngine
                         Interlocked.Add(ref _vulkanBarrierStageFlushes, stageFlushes);
                 }
 
+                public static void RecordVulkanQueueOverlapWindow(int overlapCandidatePasses, int transferCost, TimeSpan frameDelta, bool promotedMode, bool demotedMode)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    if (overlapCandidatePasses > 0)
+                        Interlocked.Add(ref _vulkanOverlapCandidatePasses, overlapCandidatePasses);
+
+                    if (transferCost > 0)
+                        Interlocked.Add(ref _vulkanOverlapTransferCosts, transferCost);
+
+                    if (frameDelta.Ticks > 0)
+                    {
+                        long micros = Math.Max(1L, frameDelta.Ticks / 10L);
+                        Interlocked.Add(ref _vulkanOverlapFrameDeltaMicros, micros);
+                    }
+
+                    if (promotedMode)
+                        Interlocked.Increment(ref _vulkanOverlapModePromotions);
+
+                    if (demotedMode)
+                        Interlocked.Increment(ref _vulkanOverlapModeDemotions);
+                }
+
                 public static void RecordVulkanAdhocBarrier(int emittedCount, int redundantCount)
                 {
                     if (!EnableTracking)
@@ -718,6 +902,111 @@ namespace XREngine
 
                     if (redundantCount > 0)
                         Interlocked.Add(ref _vulkanAdhocBarrierRedundant, redundantCount);
+                }
+
+                public static void RecordVulkanBindChurn(
+                    int pipelineBinds = 0,
+                    int descriptorBinds = 0,
+                    int pushConstantWrites = 0,
+                    int vertexBufferBinds = 0,
+                    int indexBufferBinds = 0,
+                    int pipelineBindSkips = 0,
+                    int descriptorBindSkips = 0,
+                    int vertexBufferBindSkips = 0,
+                    int indexBufferBindSkips = 0)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    if (pipelineBinds > 0)
+                        Interlocked.Add(ref _vulkanPipelineBinds, pipelineBinds);
+                    if (descriptorBinds > 0)
+                        Interlocked.Add(ref _vulkanDescriptorBinds, descriptorBinds);
+                    if (pushConstantWrites > 0)
+                        Interlocked.Add(ref _vulkanPushConstantWrites, pushConstantWrites);
+                    if (vertexBufferBinds > 0)
+                        Interlocked.Add(ref _vulkanVertexBufferBinds, vertexBufferBinds);
+                    if (indexBufferBinds > 0)
+                        Interlocked.Add(ref _vulkanIndexBufferBinds, indexBufferBinds);
+                    if (pipelineBindSkips > 0)
+                        Interlocked.Add(ref _vulkanPipelineBindSkips, pipelineBindSkips);
+                    if (descriptorBindSkips > 0)
+                        Interlocked.Add(ref _vulkanDescriptorBindSkips, descriptorBindSkips);
+                    if (vertexBufferBindSkips > 0)
+                        Interlocked.Add(ref _vulkanVertexBufferBindSkips, vertexBufferBindSkips);
+                    if (indexBufferBindSkips > 0)
+                        Interlocked.Add(ref _vulkanIndexBufferBindSkips, indexBufferBindSkips);
+                }
+
+                public static void RecordVulkanPipelineCacheLookup(bool cacheHit)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    if (cacheHit)
+                        Interlocked.Increment(ref _vulkanPipelineCacheLookupHits);
+                    else
+                        Interlocked.Increment(ref _vulkanPipelineCacheLookupMisses);
+                }
+
+                public static void RecordVulkanIndirectEffectiveness(
+                    uint requestedDraws,
+                    uint culledDraws,
+                    uint emittedIndirectDraws,
+                    uint consumedDraws,
+                    uint overflowCount)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    if (requestedDraws > 0)
+                        Interlocked.Add(ref _vulkanRequestedDraws, requestedDraws);
+
+                    if (culledDraws > 0)
+                        Interlocked.Add(ref _vulkanCulledDraws, culledDraws);
+
+                    if (emittedIndirectDraws > 0)
+                        Interlocked.Add(ref _vulkanEmittedIndirectDraws, emittedIndirectDraws);
+
+                    if (consumedDraws > 0)
+                        Interlocked.Add(ref _vulkanConsumedDraws, consumedDraws);
+
+                    if (overflowCount > 0)
+                        Interlocked.Add(ref _vulkanOverflowCount, overflowCount);
+                }
+
+                public enum EVulkanGpuDrivenStageTiming
+                {
+                    Reset = 0,
+                    Cull,
+                    Occlusion,
+                    Indirect,
+                    Draw
+                }
+
+                public static void RecordVulkanGpuDrivenStageTiming(EVulkanGpuDrivenStageTiming stage, TimeSpan elapsed)
+                {
+                    if (!EnableTracking || elapsed.Ticks <= 0)
+                        return;
+
+                    switch (stage)
+                    {
+                        case EVulkanGpuDrivenStageTiming.Reset:
+                            Interlocked.Add(ref _vulkanStageResetTicks, elapsed.Ticks);
+                            break;
+                        case EVulkanGpuDrivenStageTiming.Cull:
+                            Interlocked.Add(ref _vulkanStageCullTicks, elapsed.Ticks);
+                            break;
+                        case EVulkanGpuDrivenStageTiming.Occlusion:
+                            Interlocked.Add(ref _vulkanStageOcclusionTicks, elapsed.Ticks);
+                            break;
+                        case EVulkanGpuDrivenStageTiming.Indirect:
+                            Interlocked.Add(ref _vulkanStageIndirectTicks, elapsed.Ticks);
+                            break;
+                        case EVulkanGpuDrivenStageTiming.Draw:
+                            Interlocked.Add(ref _vulkanStageDrawTicks, elapsed.Ticks);
+                            break;
+                    }
                 }
 
                 /// <summary>

@@ -26,6 +26,7 @@ namespace XREngine.Rendering.Vulkan
         private bool _supportsBufferDeviceAddress;
         private bool _supportsNvMemoryDecompression;
         private bool _supportsNvCopyMemoryIndirect;
+        private bool _supportsDynamicRendering;
         private MemoryDecompressionMethodFlagsNV _nvMemoryDecompressionMethods;
         private ulong _nvMaxMemoryDecompressionIndirectCount;
         private ulong _nvCopyMemoryIndirectSupportedQueues;
@@ -33,6 +34,7 @@ namespace XREngine.Rendering.Vulkan
         public bool SupportsNvMemoryDecompression => _supportsNvMemoryDecompression && _nvMemoryDecompression is not null;
         public bool SupportsNvCopyMemoryIndirect => _supportsNvCopyMemoryIndirect && _nvCopyMemoryIndirect is not null;
         public bool SupportsBufferDeviceAddress => _supportsBufferDeviceAddress;
+        public bool SupportsDynamicRendering => _supportsDynamicRendering;
         public MemoryDecompressionMethodFlagsNV NvMemoryDecompressionMethods => _nvMemoryDecompressionMethods;
         public ulong NvMaxMemoryDecompressionIndirectCount => _nvMaxMemoryDecompressionIndirectCount;
         public ulong NvCopyMemoryIndirectSupportedQueues => _nvCopyMemoryIndirectSupportedQueues;
@@ -49,6 +51,7 @@ namespace XREngine.Rendering.Vulkan
         [
             "VK_KHR_draw_indirect_count",
             "VK_EXT_descriptor_indexing",
+            "VK_KHR_dynamic_rendering",
             "VK_NV_memory_decompression",
             "VK_NV_copy_memory_indirect"
         ];

@@ -161,7 +161,7 @@ namespace XREngine.Scene.Prefabs
                 return defaultMakeTexture(path);
             }
 
-            XRMaterial GetOrCreateMaterialRemapped(List<TextureSlot> textures, string name)
+            XRMaterial GetOrCreateMaterialRemapped(XRTexture[] textureList, List<TextureSlot> textures, string name)
             {
                 Dictionary<string, string> materialRemap = opts.MaterialNameRemap ?? [];
                 if (materialRemap.TryGetValue(name, out string? replacementPath) &&
@@ -173,7 +173,7 @@ namespace XREngine.Scene.Prefabs
                         return replacementMat;
                 }
 
-                return CreateMaterial(importer, filePath, textures, name);
+                return CreateMaterial(textureList, textures, name);
             }
 
             importer.MakeMaterialAction = GetOrCreateMaterialRemapped;
@@ -200,9 +200,8 @@ namespace XREngine.Scene.Prefabs
             return RootNode is not null;
         }
 
-        private static XRMaterial CreateMaterial(ModelImporter importer, string modelFilePath, List<TextureSlot> textures, string name)
+        private static XRMaterial CreateMaterial(XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
-            XRTexture[] textureList = importer.LoadTextures(modelFilePath, textures);
             XRMaterial mat = new(textureList);
             ModelImporter.FillTextures(mat, textureList);
 

@@ -152,9 +152,9 @@ public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
         {
             string shaderPath = Mode switch
             {
-                EVisualizationMode.SurfelCircles => "Compute/SurfelGI/DebugCircles.comp",
-                EVisualizationMode.GridHeatmap => "Compute/SurfelGI/DebugGrid.comp",
-                _ => "Compute/SurfelGI/DebugCircles.comp"
+                EVisualizationMode.SurfelCircles => "Compute/GI/SurfelGI/DebugCircles.comp",
+                EVisualizationMode.GridHeatmap => "Compute/GI/SurfelGI/DebugGrid.comp",
+                _ => "Compute/GI/SurfelGI/DebugCircles.comp"
             };
 
             var shader = XRShader.EngineShader(shaderPath, EShaderType.Compute);

@@ -150,11 +150,26 @@ public unsafe partial class VulkanRenderer
 
             if (clearDepth || clearStencil)
             {
-                ImageAspectFlags aspects = ImageAspectFlags.None;
+                ImageAspectFlags requestedAspects = ImageAspectFlags.None;
                 if (clearDepth)
-                    aspects |= ImageAspectFlags.DepthBit;
+                    requestedAspects |= ImageAspectFlags.DepthBit;
                 if (clearStencil)
-                    aspects |= ImageAspectFlags.StencilBit;
+                    requestedAspects |= ImageAspectFlags.StencilBit;
+
+                ImageAspectFlags supportedDepthStencilAspects = ImageAspectFlags.None;
+                for (int i = 0; i < _attachmentSignature.Length; i++)
+                {
+                    var sig = _attachmentSignature[i];
+                    if (sig.Role is AttachmentRole.Depth or AttachmentRole.Stencil)
+                    {
+                        supportedDepthStencilAspects = sig.AspectMask;
+                        break;
+                    }
+                }
+
+                ImageAspectFlags aspects = requestedAspects & supportedDepthStencilAspects;
+                if (aspects == ImageAspectFlags.None)
+                    return count;
 
                 destination[count++] = new ClearAttachment
                 {

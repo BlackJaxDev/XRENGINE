@@ -88,6 +88,9 @@ public unsafe partial class VulkanRenderer
         {
             EnsureLayouts();
 
+            if (pipelineCache.Handle == 0)
+                pipelineCache = Renderer.ActivePipelineCache;
+
             PipelineShaderStageCreateInfo[] stages = EnumerateShaderStages(GraphicsStageMask).ToArray();
             if (stages.Length == 0)
                 throw new InvalidOperationException("Graphics pipeline creation requires configured shader stages.");
@@ -109,6 +112,9 @@ public unsafe partial class VulkanRenderer
         public Pipeline CreateComputePipeline(ref ComputePipelineCreateInfo pipelineInfo, PipelineCache pipelineCache = default)
         {
             EnsureLayouts();
+
+            if (pipelineCache.Handle == 0)
+                pipelineCache = Renderer.ActivePipelineCache;
 
             PipelineShaderStageCreateInfo computeStage = EnumerateShaderStages(EProgramStageMask.ComputeShaderBit).SingleOrDefault();
             if (computeStage.Module.Handle == 0)

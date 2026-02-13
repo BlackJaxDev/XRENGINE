@@ -3,39 +3,35 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
+using MIConvexHull;
+using YamlDotNet.Serialization;
+using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
-using XREngine.Rendering.Info;
-using XREngine.Components.Capture.Lights;
-using XREngine.Scene.Transforms;
 using XREngine.Rendering.Commands;
-using YamlDotNet.Serialization;
-using MIConvexHull;
-using XREngine.Data.Colors;
+using XREngine.Rendering.Info;
 using XREngine.Rendering.Lightmapping;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Scene
 {
     public class Lights3DCollection(XRWorldInstance world) : XRBase
     {
-        public bool IBLCaptured { get; private set; } = false;
+        #region Constants
 
-        private bool _capturing = false;
+        private const float ProbePositionQuantization = 0.001f;
 
-        private ITriangulation<LightProbeComponent, LightProbeCell>? _cells;
+        #endregion
 
-        [YamlIgnore]
-        public Octree<LightProbeCell> LightProbeTree { get; } = new(new AABB());
-        public LightmapBakeManager LightmapBaking { get; } = new LightmapBakeManager(world);
-
-        public XRWorldInstance World { get; } = world;
+        #region Static Fields
 
         /// <summary>
         /// A 1x1 white texture used as a fallback shadow map when shadows are disabled.
@@ -44,36 +40,70 @@ namespace XREngine.Scene
         private static XRTexture2D? _dummyShadowMap;
         private static XRTexture2D DummyShadowMap => _dummyShadowMap ??= new XRTexture2D(1, 1, ColorF4.White);
 
-        /// <summary>
-        /// All spotlights that are not baked and need to be rendered.
-        /// </summary>
-        public EventList<SpotLightComponent> DynamicSpotLights { get; } = new() { ThreadSafe = true };
-        /// <summary>
-        /// All point lights that are not baked and need to be rendered.
-        /// </summary>
-        public EventList<PointLightComponent> DynamicPointLights { get; } = new() { ThreadSafe = true };
-        /// <summary>
-        /// All directional lights that are not baked and need to be rendered.
-        /// </summary>
-        public EventList<DirectionalLightComponent> DynamicDirectionalLights { get; } = new() { ThreadSafe = true };
-        /// <summary>
-        /// All light probes in the scene.
-        /// </summary>
-        public EventList<LightProbeComponent> LightProbes { get; } = new() { ThreadSafe = true };
+        private static bool _loggedForwardLightingOnce = false;
+        private static bool _loggedShadowMapEnabledOnce = false;
 
-        private const float ProbePositionQuantization = 0.001f;
+        #endregion
 
+        #region Instance Fields
+
+        private bool _capturing = false;
+        private ITriangulation<LightProbeComponent, LightProbeCell>? _cells;
+        private XRMeshRenderer? _instancedCellRenderer;
         private readonly List<PreparedFrustum> _frustumScratch = new(6);
-
         private readonly ConcurrentQueue<SceneCaptureComponentBase> _captureQueue = new();
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagUpdating = [];
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagRendering = [];
         private readonly Stopwatch _captureBudgetStopwatch = new();
 
+        // When shadow collection is culled by camera frusta, some lights may be intentionally skipped.
+        // If we still swap their internal shadow-viewport buffers, we can end up swapping in an empty
+        // visibility buffer (depending on viewport implementation), causing shadows to flicker on/off.
+        // Track which lights actually collected this tick so SwapBuffers can preserve the last good buffers.
+        private readonly HashSet<LightComponent> _shadowLightsCollectedThisTick = new();
+
+        #endregion
+
+        #region Properties
+
+        public XRWorldInstance World { get; } = world;
+        public bool IBLCaptured { get; private set; } = false;
+        public bool RenderingShadowMaps { get; private set; } = false;
+        public bool CollectingVisibleShadowMaps { get; private set; } = false;
+
         /// <summary>
         /// Budget in milliseconds for processing capture work (collect + render) per frame on the main thread.
         /// </summary>
         public double CaptureBudgetMilliseconds { get; set; } = 2.0;
+
+        [YamlIgnore]
+        public Octree<LightProbeCell> LightProbeTree { get; } = new(new AABB());
+        public LightmapBakeManager LightmapBaking { get; } = new LightmapBakeManager(world);
+
+        #endregion
+
+        #region Light Collections
+
+        /// <summary>
+        /// All directional lights that are not baked and need to be rendered.
+        /// </summary>
+        public EventList<DirectionalLightComponent> DynamicDirectionalLights { get; } = new() { ThreadSafe = true };
+        /// <summary>
+        /// All point lights that are not baked and need to be rendered.
+        /// </summary>
+        public EventList<PointLightComponent> DynamicPointLights { get; } = new() { ThreadSafe = true };
+        /// <summary>
+        /// All spotlights that are not baked and need to be rendered.
+        /// </summary>
+        public EventList<SpotLightComponent> DynamicSpotLights { get; } = new() { ThreadSafe = true };
+        /// <summary>
+        /// All light probes in the scene.
+        /// </summary>
+        public EventList<LightProbeComponent> LightProbes { get; } = new() { ThreadSafe = true };
+
+        #endregion
+
+        #region Scene Capture
 
         public List<SceneCaptureComponentBase> CaptureComponents { get; } = [];
 
@@ -89,10 +119,9 @@ namespace XREngine.Scene
             _captureQueue.Enqueue(component);
         }
 
-        public bool RenderingShadowMaps { get; private set; } = false;
+        #endregion
 
-        private static bool _loggedForwardLightingOnce = false;
-        private static bool _loggedShadowMapEnabledOnce = false;
+        #region Forward Lighting
 
         internal void SetForwardLightingUniforms(XRRenderProgram program)
         {
@@ -211,13 +240,9 @@ namespace XREngine.Scene
             program.Sampler("ShadowMap", forwardShadowTex ?? DummyShadowMap, forwardShadowMapUnit);
         }
 
-        public bool CollectingVisibleShadowMaps { get; private set; } = false;
+        #endregion
 
-        // When shadow collection is culled by camera frusta, some lights may be intentionally skipped.
-        // If we still swap their internal shadow-viewport buffers, we can end up swapping in an empty
-        // visibility buffer (depending on viewport implementation), causing shadows to flicker on/off.
-        // Track which lights actually collected this tick so SwapBuffers can preserve the last good buffers.
-        private readonly HashSet<LightComponent> _shadowLightsCollectedThisTick = new();
+        #region Shadow Collection & Culling
 
         public void CollectVisibleItems()
         {
@@ -236,28 +261,25 @@ namespace XREngine.Scene
             if (cullByCameraFrusta)
             {
                 List<(Frustum Frustum, Vector3 Position, float MaxDistance)> cameraFrustumScratch = new(4);
-                foreach (XRWindow window in Engine.Windows)
+                foreach ((XRWindow window, XRViewport viewport) in Engine.EnumerateActiveWindowViewports())
                 {
                     if (!ReferenceEquals(window.TargetWorldInstance, World))
                         continue;
 
-                    foreach (XRViewport viewport in window.Viewports)
-                    {
-                        if (!ReferenceEquals(viewport.World, World))
-                            continue;
+                    if (!ReferenceEquals(viewport.World, World))
+                        continue;
 
-                        XRCamera? camera = viewport.ActiveCamera;
-                        if (camera is null)
-                            continue;
+                    XRCamera? camera = viewport.ActiveCamera;
+                    if (camera is null)
+                        continue;
 
-                        float maxDist = camera.ShadowCollectMaxDistance;
-                        if (float.IsFinite(maxDist))
-                            maxDist = MathF.Min(maxDist, camera.FarZ);
-                        else
-                            maxDist = camera.FarZ;
+                    float maxDist = camera.ShadowCollectMaxDistance;
+                    if (float.IsFinite(maxDist))
+                        maxDist = MathF.Min(maxDist, camera.FarZ);
+                    else
+                        maxDist = camera.FarZ;
 
-                        cameraFrustumScratch.Add((camera.WorldFrustum(), camera.Transform.WorldTranslation, maxDist));
-                    }
+                    cameraFrustumScratch.Add((camera.WorldFrustum(), camera.Transform.WorldTranslation, maxDist));
                 }
 
                 if (cameraFrustumScratch.Count > 0)
@@ -455,6 +477,10 @@ namespace XREngine.Scene
             return false;
         }
 
+        #endregion
+
+        #region Buffer Management
+
         public void SwapBuffers()
         {
             using var sample = Engine.Profiler.Start("Lights3DCollection.SwapBuffers");
@@ -515,6 +541,10 @@ namespace XREngine.Scene
                 }
             }
         }
+
+        #endregion
+
+        #region Camera-Light Intersections
 
         /// <summary>
         /// Tests the active player camera frustum against each light's shadow frusta and records intersection AABBs for cascaded shadows.
@@ -604,6 +634,10 @@ namespace XREngine.Scene
             }
         }
 
+        #endregion
+
+        #region Shadow Map Rendering
+
         public void RenderShadowMaps(bool collectVisibleNow)
         {
             using var sample = Engine.Profiler.Start("Lights3DCollection.RenderShadowMaps");
@@ -634,6 +668,10 @@ namespace XREngine.Scene
                 capture.Render();
             }
         }
+
+        #endregion
+
+        #region Light Management
 
         public void Clear()
         {
@@ -688,6 +726,10 @@ namespace XREngine.Scene
             }
         }
 
+        #endregion
+
+        #region Light Probe Capture
+
         /// <summary>
         /// Renders the scene from each light probe's perspective.
         /// </summary>
@@ -731,7 +773,9 @@ namespace XREngine.Scene
             }
         }
 
-        private XRMeshRenderer? _instancedCellRenderer;
+        #endregion
+
+        #region Light Probe Triangulation
 
         /// <summary>
         /// Triangulates the light probes to form a Delaunay triangulation and adds the tetrahedron cells to the render tree.
@@ -833,6 +877,10 @@ namespace XREngine.Scene
             return distinct.Values.ToList();
         }
 
+        #endregion
+
+        #region Light Probe Rendering & Queries
+
         public void RenderCells(ICollection<LightProbeCell> probes)
         {
             int count = probes.Count;
@@ -880,6 +928,10 @@ namespace XREngine.Scene
                     for (int z = 0; z < probeCount.Z; ++z)
                         new SceneNode(parent, $"Probe[{x},{y},{z}]", new Transform(localMin + baseInc + new Vector3(x, y, z) * probeInc)).AddComponent<LightProbeComponent>();
         }
+
+        #endregion
+
+        #region Nested Types
 
         /// <summary>
         /// Represents a tetrehedron consisting of 4 light probes, searchable within the octree
@@ -984,5 +1036,7 @@ namespace XREngine.Scene
 
             return cell.Vertices;
         }
+
+        #endregion
     }
 }

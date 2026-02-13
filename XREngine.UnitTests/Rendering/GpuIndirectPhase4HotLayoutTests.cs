@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using NUnit.Framework;
@@ -98,11 +98,11 @@ public sealed class GpuIndirectPhase4HotLayoutTests
     [Test]
     public void Phase4_ShaderHotLayoutContracts_ArePresent()
     {
-        string buildHot = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/GPURenderBuildHotCommands.comp");
-        string culling = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/GPURenderCulling.comp");
-        string occlusion = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/GPURenderOcclusionHiZ.comp");
+        string buildHot = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderBuildHotCommands.comp");
+        string culling = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Culling/GPURenderCulling.comp");
+        string occlusion = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Occlusion/GPURenderOcclusionHiZ.comp");
         string bvh = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/bvh_frustum_cull.comp");
-        string extractSoA = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/GPURenderExtractSoA.comp");
+        string extractSoA = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Culling/GPURenderExtractSoA.comp");
 
         buildHot.ShouldContain("uniform int InputCount;");
         buildHot.ShouldContain("const uint HOT_UINTS = 16u;");
@@ -165,3 +165,4 @@ public sealed class GpuIndirectPhase4HotLayoutTests
         throw new FileNotFoundException($"Could not resolve workspace path for '{relativePath}' from test base directory '{AppContext.BaseDirectory}'.");
     }
 }
+

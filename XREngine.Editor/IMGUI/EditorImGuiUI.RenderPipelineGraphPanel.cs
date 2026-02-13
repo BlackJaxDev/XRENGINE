@@ -152,21 +152,15 @@ public static partial class EditorImGuiUI
 
     private static RenderPipeline? TryGetActiveRenderPipeline()
     {
-        foreach (var window in Engine.Windows)
+        foreach (var viewport in Engine.EnumerateActiveViewports())
         {
-            if (window is null)
-                continue;
+            var pipeline = viewport?.RenderPipeline;
+            if (pipeline is not null)
+                return pipeline;
 
-            foreach (var viewport in window.Viewports)
-            {
-                var pipeline = viewport?.RenderPipeline;
-                if (pipeline is not null)
-                    return pipeline;
-
-                var cameraPipeline = viewport?.ActiveCamera?.RenderPipeline;
-                if (cameraPipeline is not null)
-                    return cameraPipeline;
-            }
+            var cameraPipeline = viewport?.ActiveCamera?.RenderPipeline;
+            if (cameraPipeline is not null)
+                return cameraPipeline;
         }
 
         return null;

@@ -71,7 +71,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "GPURenderIndirect.comp");
+            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "Indirect", "GPURenderIndirect.comp");
             if (!File.Exists(shaderPath))
             {
                 Assert.Inconclusive($"Shader file not found: {shaderPath}");
@@ -108,7 +108,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "GPURenderCulling.comp");
+            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "Culling", "GPURenderCulling.comp");
             if (!File.Exists(shaderPath))
             {
                 Assert.Inconclusive($"Shader file not found: {shaderPath}");
@@ -551,7 +551,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "GPURenderIndirect.comp");
+            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "Indirect", "GPURenderIndirect.comp");
             if (!File.Exists(shaderPath))
             {
                 Assert.Inconclusive($"Shader file not found: {shaderPath}");
@@ -705,7 +705,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "GPURenderIndirect.comp");
+            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "Indirect", "GPURenderIndirect.comp");
             if (!File.Exists(shaderPath))
             {
                 Assert.Inconclusive($"Shader file not found: {shaderPath}");
@@ -830,7 +830,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "GPURenderCulling.comp");
+            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "Culling", "GPURenderCulling.comp");
             if (!File.Exists(shaderPath))
             {
                 Assert.Inconclusive($"Shader file not found: {shaderPath}");
@@ -1033,7 +1033,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "GPURenderResetCounters.comp");
+            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "Indirect", "GPURenderResetCounters.comp");
             if (!File.Exists(shaderPath))
             {
                 Assert.Inconclusive($"Shader file not found: {shaderPath}");
@@ -1149,7 +1149,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "GPURenderBuildKeys.comp");
+            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "Indirect", "GPURenderBuildKeys.comp");
             if (!File.Exists(shaderPath))
             {
                 Assert.Inconclusive($"Shader file not found: {shaderPath}");
@@ -1261,7 +1261,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "GPURenderCopyCommands.comp");
+            string shaderPath = Path.Combine(ShaderBasePath, "Compute", "Indirect", "GPURenderCopyCommands.comp");
             if (!File.Exists(shaderPath))
             {
                 Assert.Inconclusive($"Shader file not found: {shaderPath}");
@@ -1366,8 +1366,8 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
 
         try
         {
-            string cullPath = Path.Combine(ShaderBasePath, "Compute", "GPURenderCulling.comp");
-            string indirectPath = Path.Combine(ShaderBasePath, "Compute", "GPURenderIndirect.comp");
+            string cullPath = Path.Combine(ShaderBasePath, "Compute", "Culling", "GPURenderCulling.comp");
+            string indirectPath = Path.Combine(ShaderBasePath, "Compute", "Indirect", "GPURenderIndirect.comp");
             if (!File.Exists(cullPath) || !File.Exists(indirectPath))
             {
                 Assert.Inconclusive($"Required shader(s) missing: {cullPath} or {indirectPath}");

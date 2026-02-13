@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
@@ -43,23 +44,35 @@ namespace XREngine.Rendering.Commands
         public void Render(GPUScene scene)
         {
             using var renderTiming = BeginTiming("GPURenderPassCollection.Render");
+            CapturePassPolicySnapshot();
             
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render begin (pass={0})", RenderPass);
             Dbg("Render begin", "Lifecycle");
 
             if (!TryInitializeRender(scene, out XRCamera? camera))
+            {
+                ClearPassPolicySnapshot();
                 return;
+            }
 
             _gpuBatchingPreparedThisFrame = false;
+            Stopwatch resetStopwatch = Stopwatch.StartNew();
             ResetCounters();
+            resetStopwatch.Stop();
+            Engine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
+                Engine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Reset,
+                resetStopwatch.Elapsed);
+
             Cull(scene, camera);
 
             // Phase 2: do not early-out based on CPU-visible counters.
             // The default submission path uses GPU-written count buffers; a 0 count naturally results in no draws.
 
             bool strictNoFallbacks = VulkanFeatureProfile.EnforceStrictNoFallbacks;
-            bool useCpuBatchFallback = !strictNoFallbacks && (!EnableGpuDrivenBatching || IndirectDebug.EnableCpuBatching);
+            bool cpuBatchingEnabled = IsCpuBatchingEnabledForPass();
+            bool useCpuBatchFallback = !strictNoFallbacks && (!EnableGpuDrivenBatching || cpuBatchingEnabled);
             List<HybridRenderingManager.DrawBatch>? batches;
+            TimeSpan indirectStageElapsed = TimeSpan.Zero;
 
             if (useCpuBatchFallback)
             {
@@ -67,7 +80,12 @@ namespace XREngine.Rendering.Commands
                     PopulateMaterialIDs(scene);
 
                 using (BeginTiming("BuildIndirectCommandBuffer"))
+                {
+                    Stopwatch indirectStopwatch = Stopwatch.StartNew();
                     BuildIndirectCommandBuffer(scene);
+                    indirectStopwatch.Stop();
+                    indirectStageElapsed += indirectStopwatch.Elapsed;
+                }
 
                 using var batchTiming = BeginTiming("BuildMaterialBatchesCpuFallback");
                 batches = BuildMaterialBatches(scene);
@@ -76,8 +94,14 @@ namespace XREngine.Rendering.Commands
             }
             else
             {
+                if (!EnableGpuDrivenBatching && strictNoFallbacks)
+                    RecordForbiddenFallback("CPU material batch fallback requested while strict no-fallbacks is active.");
+
                 using var batchTiming = BeginTiming("BuildGpuBatchesAndInstancing");
+                Stopwatch indirectStopwatch = Stopwatch.StartNew();
                 batches = BuildGpuBatchesAndInstancing(scene);
+                indirectStopwatch.Stop();
+                indirectStageElapsed += indirectStopwatch.Elapsed;
                 CurrentBatches = batches;
                 _gpuBatchingPreparedThisFrame = batches is not null;
 
@@ -88,8 +112,16 @@ namespace XREngine.Rendering.Commands
                         Debug.LogWarning($"{FormatDebugPrefix("Materials")} GPU batching produced no batch ranges. " +
                                          "Enable IndirectDebug.EnableCpuBatching for emergency fallback diagnostics.");
                     }
+                    ClearPassPolicySnapshot();
                     return;
                 }
+            }
+
+            if (indirectStageElapsed > TimeSpan.Zero)
+            {
+                Engine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
+                    Engine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Indirect,
+                    indirectStageElapsed);
             }
 
             Log(LogCategory.Indirect, LogLevel.Info, "Indirect build complete - visible={0}", VisibleCommandCount);
@@ -104,7 +136,12 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
+            Stopwatch drawStopwatch = Stopwatch.StartNew();
             _renderManager.Render(this, camera, scene, _indirectDrawBuffer!, _indirectRenderer, RenderPass, _drawCountBuffer, batches);
+            drawStopwatch.Stop();
+            Engine.Rendering.Stats.RecordVulkanGpuDrivenStageTiming(
+                Engine.Rendering.Stats.EVulkanGpuDrivenStageTiming.Draw,
+                drawStopwatch.Elapsed);
             
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render submission done");
             Dbg("Render submission done", "Lifecycle");
@@ -115,6 +152,7 @@ namespace XREngine.Rendering.Commands
             
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render end");
             Dbg("Render end", "Lifecycle");
+            ClearPassPolicySnapshot();
         }
 
         /// <summary>
@@ -214,7 +252,7 @@ namespace XREngine.Rendering.Commands
             BindIndirectShaderBuffers(scene);
 
             uint dispatchCommands = VisibleCommandCount;
-            if (IndirectDebug.DisableCpuReadbackCount)
+            if (IsCpuReadbackCountDisabledForPass())
             {
                 // When we don't read counts back, conservatively dispatch for the max indirect capacity.
                 dispatchCommands = _indirectDrawBuffer!.ElementCount;
@@ -274,7 +312,7 @@ namespace XREngine.Rendering.Commands
             if (maxInput == 0u)
                 return;
 
-            uint inputCount = IndirectDebug.DisableCpuReadbackCount
+            uint inputCount = IsCpuReadbackCountDisabledForPass()
                 ? maxInput
                 : Math.Max(VisibleCommandCount, 1u);
 
@@ -321,7 +359,7 @@ namespace XREngine.Rendering.Commands
             if (_buildKeysComputeShader is null || _keyIndexBufferA is null || _culledCountBuffer is null)
                 return;
 
-            uint dispatchCommands = IndirectDebug.DisableCpuReadbackCount
+            uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
                 ? _keyIndexBufferA.ElementCount
                 : Math.Max(VisibleCommandCount, 1u);
 
@@ -656,7 +694,7 @@ namespace XREngine.Rendering.Commands
         {
             // Phase 2: CPU-side mapping of the culled command buffer is debug-only.
             // Default path is a single submit using GPU-generated counts.
-            if (!IndirectDebug.EnableCpuBatching)
+            if (!IsCpuBatchingEnabledForPass())
                 return null;
 
             uint count = VisibleCommandCount;
@@ -988,19 +1026,37 @@ namespace XREngine.Rendering.Commands
 
         private void PostRenderDiagnostics(GPUScene scene)
         {
+            if (!ShouldCaptureDiagnosticReadbacksForPass())
+            {
+                uint requestedDraws = scene.TotalCommandCount;
+                uint emittedDraws = VisibleCommandCount;
+                uint culledDraws = requestedDraws > emittedDraws ? requestedDraws - emittedDraws : 0u;
+                Engine.Rendering.Stats.RecordVulkanIndirectEffectiveness(
+                    requestedDraws,
+                    culledDraws,
+                    emittedDraws,
+                    emittedDraws,
+                    overflowCount: 0u);
+                return;
+            }
+
             _ = BvhGpuProfiler.Instance.ResolveAndPublish(Engine.Time.Timer.Render.LastTimestamp, _statsBuffer);
-            CheckOverflowFlags(scene);
-            LogGpuStats();
+            uint overflowCount = CheckOverflowFlags(scene);
+            LogGpuStats(overflowCount);
         }
 
-        private void CheckOverflowFlags(GPUScene scene)
+        private uint CheckOverflowFlags(GPUScene scene)
         {
+            if (!ShouldCaptureDiagnosticReadbacksForPass())
+                return 0u;
+
             if (_cullingOverflowFlagBuffer is null || _indirectOverflowFlagBuffer is null || _truncationFlagBuffer is null)
-                return;
+                return 0u;
 
             uint cullOv = ReadUInt(_cullingOverflowFlagBuffer);
             uint indOv = ReadUInt(_indirectOverflowFlagBuffer);
             uint trunc = ReadUInt(_truncationFlagBuffer);
+            uint overflowTotal = cullOv + indOv + trunc;
 
             if (cullOv != 0 || indOv != 0 || trunc != 0)
             {
@@ -1019,14 +1075,15 @@ namespace XREngine.Rendering.Commands
             }
 
             LogValidationDetails(cullOv);
+            return overflowTotal;
         }
 
         private void LogValidationDetails(uint cullOv)
         {
-            if (!Engine.EffectiveSettings.EnableGpuIndirectValidationLogging || _culledSceneToRenderBuffer is null)
+            if (!IsValidationLoggingEnabledForPass() || _culledSceneToRenderBuffer is null)
                 return;
 
-            if (cullOv > 0 && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+            if (cullOv > 0 && IsDebugLoggingEnabledForPass())
             {
                 Debug.Out($"{FormatDebugPrefix("Validation")} Culling overflow count={cullOv} " +
                          $"(capacity={_culledSceneToRenderBuffer.ElementCount}, visible={VisibleCommandCount})");
@@ -1044,9 +1101,9 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private void LogGpuStats()
+        private void LogGpuStats(uint overflowCount)
         {
-            if (_statsBuffer is null)
+            if (_statsBuffer is null || !ShouldCaptureDiagnosticReadbacksForPass())
                 return;
 
             Span<uint> values = stackalloc uint[(int)GpuStatsLayout.FieldCount];
@@ -1055,8 +1112,18 @@ namespace XREngine.Rendering.Commands
             var stats = new GpuRenderStats(values);
             int cpuFallbackEvents = Engine.Rendering.Stats.GpuCpuFallbackEvents;
             int cpuFallbackRecovered = Engine.Rendering.Stats.GpuCpuFallbackRecoveredCommands;
+            uint consumedDrawCount = 0u;
+            if (!IsCpuReadbackCountDisabledForPass() && _drawCountBuffer is not null)
+                consumedDrawCount = ReadUIntAt(_drawCountBuffer, 0u);
 
-            if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+            Engine.Rendering.Stats.RecordVulkanIndirectEffectiveness(
+                requestedDraws: stats.Input,
+                culledDraws: stats.Culled,
+                emittedIndirectDraws: stats.Drawn,
+                consumedDraws: consumedDrawCount,
+                overflowCount: overflowCount);
+
+            if (IsDebugLoggingEnabledForPass())
             {
                 Debug.Out($"{FormatDebugPrefix("Stats")} [GPU Stats] In={stats.Input} CulledOut={stats.Culled} " +
                          $"Draws={stats.Drawn} RejFrustum={stats.FrustumRejected} RejDist={stats.DistanceRejected} " +
@@ -1102,7 +1169,7 @@ namespace XREngine.Rendering.Commands
 
         private void DumpIndirectSummary(uint drawReported)
         {
-            if (!Engine.EffectiveSettings.EnableGpuIndirectDebugLogging)
+            if (!IsDebugLoggingEnabledForPass())
                 return;
 
             uint sampleCount = Math.Min(drawReported == 0 ? VisibleCommandCount : drawReported, 8u);

@@ -282,7 +282,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         if (!UseBatchedDispatcher)
         {
             // Load compute shaders
-            _mainPhysicsShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain.comp", EShaderType.Compute);
+            _mainPhysicsShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain/PhysicsChain.comp", EShaderType.Compute);
             _skipUpdateParticlesShader = ShaderHelper.LoadEngineShader("Compute/PhysicsChain/SkipUpdateParticles.comp", EShaderType.Compute);
 
             // Create render programs

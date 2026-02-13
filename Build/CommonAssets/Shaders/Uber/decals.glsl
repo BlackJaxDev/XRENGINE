@@ -464,7 +464,7 @@ void applyDecal(
     }
     
     // Blend color
-    baseColor = lerp(baseColor, blendDecalColor(baseColor, decalColor.rgb, decal.blendMode), decalAlphaMixed);
+    baseColor = mix(baseColor, blendDecalColor(baseColor, decalColor.rgb, decal.blendMode), decalAlphaMixed);
     
     // Add emission
     emission += decalColor.rgb * decalColor.a * max(decal.emissionStrength, 0.0);

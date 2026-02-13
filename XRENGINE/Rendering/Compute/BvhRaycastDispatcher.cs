@@ -240,9 +240,9 @@ public sealed class BvhRaycastDispatcher
     {
         return variant switch
         {
-            BvhRaycastVariant.AnyHit => _anyHitProgram ??= new XRRenderProgram(true, false, _anyHitShader ??= ShaderHelper.LoadEngineShader("Compute/bvh_anyhit.comp", EShaderType.Compute)),
-            BvhRaycastVariant.ClosestHit => _closestHitProgram ??= new XRRenderProgram(true, false, _closestHitShader ??= ShaderHelper.LoadEngineShader("Compute/bvh_closesthit.comp", EShaderType.Compute)),
-            _ => _raycastProgram ??= new XRRenderProgram(true, false, _raycastShader ??= ShaderHelper.LoadEngineShader("Compute/bvh_raycast.comp", EShaderType.Compute))
+            BvhRaycastVariant.AnyHit => _anyHitProgram ??= new XRRenderProgram(true, false, _anyHitShader ??= ShaderHelper.LoadEngineShader("Compute/BVH/bvh_anyhit.comp", EShaderType.Compute)),
+            BvhRaycastVariant.ClosestHit => _closestHitProgram ??= new XRRenderProgram(true, false, _closestHitShader ??= ShaderHelper.LoadEngineShader("Compute/BVH/bvh_closesthit.comp", EShaderType.Compute)),
+            _ => _raycastProgram ??= new XRRenderProgram(true, false, _raycastShader ??= ShaderHelper.LoadEngineShader("Compute/BVH/bvh_raycast.comp", EShaderType.Compute))
         };
     }
 

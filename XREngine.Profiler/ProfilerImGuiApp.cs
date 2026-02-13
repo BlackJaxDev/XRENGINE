@@ -3,6 +3,7 @@ using ImGuiNET;
 using Silk.NET.Input;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ImGui;
+using Silk.NET.Maths;
 using Silk.NET.Windowing;
 using XREngine.Profiler.UI;
 
@@ -50,6 +51,9 @@ internal sealed class ProfilerImGuiApp : IDisposable
         _renderer = new ProfilerPanelRenderer(_receiver);
         _receiver.Start();
 
+        _window.FramebufferResize += OnFramebufferResize;
+        OnFramebufferResize(_window.FramebufferSize);
+
         Console.WriteLine($"[Profiler] Listening on UDP port {port}");
     }
 
@@ -73,10 +77,26 @@ internal sealed class ProfilerImGuiApp : IDisposable
 
     public void Dispose()
     {
+        _window.FramebufferResize -= OnFramebufferResize;
         _receiver.Dispose();
         _imgui.Dispose();
         _input.Dispose();
         _gl.Dispose();
+    }
+
+    private void OnFramebufferResize(Vector2D<int> size)
+    {
+        int width = Math.Max(size.X, 1);
+        int height = Math.Max(size.Y, 1);
+        _gl.Viewport(0, 0, (uint)width, (uint)height);
+
+        var io = ImGui.GetIO();
+        io.DisplaySize = new Vector2(width, height);
+
+        var windowSize = _window.Size;
+        float scaleX = windowSize.X > 0 ? (float)width / windowSize.X : 1.0f;
+        float scaleY = windowSize.Y > 0 ? (float)height / windowSize.Y : 1.0f;
+        io.DisplayFramebufferScale = new Vector2(scaleX, scaleY);
     }
 
     // ─────────────────── ImGui UI ───────────────────
@@ -86,14 +106,15 @@ internal sealed class ProfilerImGuiApp : IDisposable
         DrawMainMenuBar();
         DrawDockSpace();
 
-        if (_showProfilerTree) _renderer.DrawProfilerTreePanel(ref _showProfilerTree);
-        if (_showFpsDropSpikes) _renderer.DrawFpsDropSpikesPanel(ref _showFpsDropSpikes);
-        if (_showRenderStats) _renderer.DrawRenderStatsPanel(ref _showRenderStats);
-        if (_showThreadAllocations) _renderer.DrawThreadAllocationsPanel(ref _showThreadAllocations);
-        if (_showBvhMetrics) _renderer.DrawBvhMetricsPanel(ref _showBvhMetrics);
-        if (_showJobSystem) _renderer.DrawJobSystemPanel(ref _showJobSystem);
-        if (_showMainThreadInvokes) _renderer.DrawMainThreadInvokesPanel(ref _showMainThreadInvokes);
-        if (_showConnectionInfo) _renderer.DrawConnectionInfoPanel(ref _showConnectionInfo);
+        _renderer.DrawCorePanelsWithConnectionInfo(
+            ref _showProfilerTree,
+            ref _showFpsDropSpikes,
+            ref _showRenderStats,
+            ref _showThreadAllocations,
+            ref _showBvhMetrics,
+            ref _showJobSystem,
+            ref _showMainThreadInvokes,
+            ref _showConnectionInfo);
 
         // Show centered "waiting for data" overlay when not connected
         if (!_receiver.IsConnected)

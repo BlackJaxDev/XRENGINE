@@ -23,6 +23,7 @@ public unsafe partial class VulkanRenderer
     private void DestroyLogicalDevice()
     {
         DestroyCachedDescriptorSetLayouts();
+        DestroyVulkanPipelineCache();
         Api!.DestroyDevice(device, null);
     }
 
@@ -187,6 +188,34 @@ public unsafe partial class VulkanRenderer
         featureSupported = bufferDeviceAddressFeatures.BufferDeviceAddress;
     }
 
+    private unsafe void QueryDynamicRenderingCapabilities(
+        bool extensionEnabled,
+        out bool featureSupported,
+        out bool promotedToCore)
+    {
+        featureSupported = false;
+        promotedToCore = false;
+
+        Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
+        promotedToCore = properties.ApiVersion >= Vk.Version13;
+
+        PhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures = new()
+        {
+            SType = StructureType.PhysicalDeviceDynamicRenderingFeatures,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &dynamicRenderingFeatures,
+        };
+
+        Api.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+
+        featureSupported = dynamicRenderingFeatures.DynamicRendering && (promotedToCore || extensionEnabled);
+    }
+
     /// <summary>
     /// Creates a logical device interface to the physical device with specific 
     /// queue families and extensions.
@@ -304,6 +333,13 @@ public unsafe partial class VulkanRenderer
         QueryBufferDeviceAddressCapabilities(out bool bufferDeviceAddressFeatureSupported);
         bool enableBufferDeviceAddress = enableNvCopyMemoryIndirect && bufferDeviceAddressFeatureSupported;
 
+        bool dynamicRenderingExtensionEnabled = extensionsArray.Contains("VK_KHR_dynamic_rendering");
+        QueryDynamicRenderingCapabilities(
+            dynamicRenderingExtensionEnabled,
+            out bool dynamicRenderingFeatureSupported,
+            out bool dynamicRenderingPromotedToCore);
+        bool enableDynamicRenderingFeature = dynamicRenderingFeatureSupported;
+
         _nvMemoryDecompressionMethods = enableNvMemoryDecompression ? nvMemoryDecompressionMethods : 0;
         _nvMaxMemoryDecompressionIndirectCount = enableNvMemoryDecompression ? nvMaxDecompressionIndirectCount : 0;
         _nvCopyMemoryIndirectSupportedQueues = enableNvCopyMemoryIndirect ? nvCopyMemoryIndirectSupportedQueues : 0;
@@ -340,6 +376,13 @@ public unsafe partial class VulkanRenderer
             BufferDeviceAddress = enableBufferDeviceAddress,
         };
 
+        PhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceDynamicRenderingFeatures,
+            PNext = null,
+            DynamicRendering = enableDynamicRenderingFeature,
+        };
+
         void* enabledFeaturesPNext = null;
         if (enableDescriptorIndexing)
         {
@@ -363,6 +406,12 @@ public unsafe partial class VulkanRenderer
         {
             bufferDeviceAddressFeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &bufferDeviceAddressFeatureEnable;
+        }
+
+        if (enableDynamicRenderingFeature)
+        {
+            dynamicRenderingFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &dynamicRenderingFeatureEnable;
         }
 
         PhysicalDeviceFeatures2 featureChain = new()
@@ -404,6 +453,7 @@ public unsafe partial class VulkanRenderer
         _supportsNvMemoryDecompression = enableNvMemoryDecompression;
         _supportsNvCopyMemoryIndirect = enableNvCopyMemoryIndirect;
         _supportsBufferDeviceAddress = enableBufferDeviceAddress;
+        _supportsDynamicRendering = dynamicRenderingFeatureSupported;
 
         if (descriptorIndexingExtensionEnabled && !enableDescriptorIndexing)
         {
@@ -517,6 +567,19 @@ public unsafe partial class VulkanRenderer
             _supportsNvCopyMemoryIndirect = false;
             _nvCopyMemoryIndirectSupportedQueues = 0;
         }
+
+        if (_supportsDynamicRendering)
+        {
+            Debug.Vulkan(
+                "[Vulkan] Dynamic rendering capability available; current renderer remains render-pass based pending compatibility migration.");
+        }
+        else
+        {
+            Debug.Vulkan(
+                "[Vulkan] Dynamic rendering capability unavailable on this runtime/profile combination.");
+        }
+
+        CreateVulkanPipelineCache();
 
         Engine.Rendering.State.HasVulkanMemoryDecompression = SupportsNvMemoryDecompression;
         Engine.Rendering.State.HasVulkanCopyMemoryIndirect = SupportsNvCopyMemoryIndirect;

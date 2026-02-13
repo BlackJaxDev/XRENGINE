@@ -114,7 +114,7 @@ namespace XREngine.Rendering
             _indirectCompProgram = new XRRenderProgram(
                 linkNow: false,
                 separable: false,
-                ShaderHelper.LoadEngineShader("Compute\\GPURenderIndirect.comp", EShaderType.Compute)
+                ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderIndirect.comp", EShaderType.Compute)
             );
             _indirectCompProgram.AllowLink();
         }

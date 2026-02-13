@@ -86,27 +86,24 @@ namespace XREngine
             {
                 bool preferDebug = Engine.EditorPreferences?.Debug?.UseDebugOpaquePipeline ?? false;
 
-                foreach (XRWindow window in Engine.Windows)
+                foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                 {
-                    foreach (XRViewport viewport in window.Viewports)
+                    RenderPipeline? pipeline = viewport.RenderPipeline;
+
+                    if (pipeline is null)
                     {
-                        RenderPipeline? pipeline = viewport.RenderPipeline;
+                        viewport.RenderPipeline = NewRenderPipeline();
+                        continue;
+                    }
 
-                        if (pipeline is null)
-                        {
-                            viewport.RenderPipeline = NewRenderPipeline();
-                            continue;
-                        }
-
-                        if (preferDebug)
-                        {
-                            if (pipeline is DefaultRenderPipeline defaultPipeline && !defaultPipeline.Stereo)
-                                viewport.RenderPipeline = new DebugOpaqueRenderPipeline();
-                        }
-                        else if (pipeline is DebugOpaqueRenderPipeline)
-                        {
-                            viewport.RenderPipeline = new DefaultRenderPipeline();
-                        }
+                    if (preferDebug)
+                    {
+                        if (pipeline is DefaultRenderPipeline defaultPipeline && !defaultPipeline.Stereo)
+                            viewport.RenderPipeline = new DebugOpaqueRenderPipeline();
+                    }
+                    else if (pipeline is DebugOpaqueRenderPipeline)
+                    {
+                        viewport.RenderPipeline = new DefaultRenderPipeline();
                     }
                 }
             }
@@ -115,13 +112,10 @@ namespace XREngine
             {
                 var mode = Engine.UserSettings.GlobalIlluminationMode;
 
-                foreach (XRWindow window in Engine.Windows)
+                foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                 {
-                    foreach (XRViewport viewport in window.Viewports)
-                    {
-                        if (viewport.RenderPipeline is DefaultRenderPipeline defaultPipeline)
-                            defaultPipeline.GlobalIlluminationMode = mode;
-                    }
+                    if (viewport.RenderPipeline is DefaultRenderPipeline defaultPipeline)
+                        defaultPipeline.GlobalIlluminationMode = mode;
                 }
             }
 
@@ -134,19 +128,16 @@ namespace XREngine
                     foreach (var worldInstance in Engine.WorldInstances)
                         worldInstance?.ApplyRenderDispatchPreference(useGpu);
 
-                    foreach (XRWindow window in Engine.Windows)
+                    foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                     {
-                        foreach (XRViewport viewport in window.Viewports)
-                        {
-                            RenderPipeline? pipeline = viewport.RenderPipeline;
-                            if (pipeline is null)
-                                continue;
+                        RenderPipeline? pipeline = viewport.RenderPipeline;
+                        if (pipeline is null)
+                            continue;
 
-                            if (pipeline is DebugOpaqueRenderPipeline debugPipeline)
-                                debugPipeline.GpuRenderDispatch = useGpu;
-                            else
-                                ApplyGpuRenderDispatchToPipeline(pipeline, useGpu);
-                        }
+                        if (pipeline is DebugOpaqueRenderPipeline debugPipeline)
+                            debugPipeline.GpuRenderDispatch = useGpu;
+                        else
+                            ApplyGpuRenderDispatchToPipeline(pipeline, useGpu);
                     }
                 }
 
@@ -217,6 +208,8 @@ namespace XREngine
                 EOcclusionCullingMode requestedOcclusion = Engine.EffectiveSettings.GpuOcclusionCullingMode;
                 EOcclusionCullingMode effectiveOcclusion = VulkanFeatureProfile.ResolveOcclusionCullingMode(requestedOcclusion);
                 EGpuSortDomainPolicy sortPolicy = Engine.Rendering.Settings.GpuSortDomainPolicy;
+                EVulkanQueueOverlapMode requestedQueueOverlap = Engine.EffectiveSettings.VulkanQueueOverlapMode;
+                EVulkanQueueOverlapMode effectiveQueueOverlap = VulkanFeatureProfile.ResolveQueueOverlapMode(requestedQueueOverlap);
 
                 bool effectiveComputePasses = VulkanFeatureProfile.ResolveComputeDependentPassesPreference(true);
                 bool effectiveImGui = VulkanFeatureProfile.ResolveImGuiPreference(true);
@@ -224,7 +217,7 @@ namespace XREngine
                 string dispatchPath = effectiveGpuDispatch ? "GPUDriven" : "CPUFallback";
 
                 string fingerprint = string.Format(
-                    "[VulkanProfile] Configured={0} Active={1} ComputePasses={2} GpuDispatch={3}(requested={4}) GpuBvh={5}(requested={6}) Occlusion={7}->{8} SortPolicy={9} ImGui={10} DrawIndirectCountExt={11} DispatchPath={12}",
+                    "[VulkanProfile] Configured={0} Active={1} ComputePasses={2} GpuDispatch={3}(requested={4}) GpuBvh={5}(requested={6}) Occlusion={7}->{8} SortPolicy={9} QueueOverlap={10}(requested={11}) ImGui={12} DrawIndirectCountExt={13} DispatchPath={14}",
                     configuredProfile,
                     activeProfile,
                     effectiveComputePasses,
@@ -235,6 +228,8 @@ namespace XREngine
                     requestedOcclusion,
                     effectiveOcclusion,
                     sortPolicy,
+                    effectiveQueueOverlap,
+                    requestedQueueOverlap,
                     effectiveImGui,
                     supportsIndirectCount,
                     dispatchPath);
@@ -250,15 +245,12 @@ namespace XREngine
             {
                 void Apply()
                 {
-                    foreach (XRWindow window in Engine.Windows)
+                    foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                     {
-                        foreach (XRViewport viewport in window.Viewports)
-                        {
-                            if (!NvidiaDlssManager.IsSupported || !Settings.EnableNvidiaDlss)
-                                NvidiaDlssManager.ResetViewport(viewport);
-                            else
-                                NvidiaDlssManager.ApplyToViewport(viewport, Settings);
-                        }
+                        if (!NvidiaDlssManager.IsSupported || !Settings.EnableNvidiaDlss)
+                            NvidiaDlssManager.ResetViewport(viewport);
+                        else
+                            NvidiaDlssManager.ApplyToViewport(viewport, Settings);
                     }
                 }
 
@@ -269,15 +261,12 @@ namespace XREngine
             {
                 void Apply()
                 {
-                    foreach (XRWindow window in Engine.Windows)
+                    foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                     {
-                        foreach (XRViewport viewport in window.Viewports)
-                        {
-                            if (!IntelXessManager.IsSupported || !EffectiveSettings.EnableIntelXess)
-                                IntelXessManager.ResetViewport(viewport);
-                            else
-                                IntelXessManager.ApplyToViewport(viewport, Settings);
-                        }
+                        if (!IntelXessManager.IsSupported || !EffectiveSettings.EnableIntelXess)
+                            IntelXessManager.ResetViewport(viewport);
+                        else
+                            IntelXessManager.ApplyToViewport(viewport, Settings);
                     }
                 }
 

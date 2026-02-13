@@ -144,6 +144,27 @@ Recommended dependency direction:
 
 ---
 
+## Host → Compute → Indirect Draw Flow
+
+The current high-level execution flow is:
+
+1. Host-side pass orchestration (`GPURendering/*`) prepares per-frame resources and policy.
+2. Compute stages execute in order:
+  - culling (`Compute/Culling/*`)
+  - optional occlusion/depth pyramid (`Compute/Occlusion/*`)
+  - key/batch/command construction (`Compute/Indirect/*`)
+  - optional ordering (`Compute/Sorting/*`)
+3. Indirect command/count buffers are consumed by mesh rendering path dispatchers.
+4. Traditional or meshlet draw submission executes from the prepared indirect buffers.
+
+Primary ownership in this phase:
+
+- Host orchestration: `XRENGINE/Rendering/Commands/GPURendering/`
+- Path execution: `XRENGINE/Rendering/Pipelines/Commands/MeshRendering/{Traditional,Meshlet,Shared}/`
+- Compute stages: `Build/CommonAssets/Shaders/Compute/`
+
+---
+
 ## Migration Plan (Safe Batches)
 
 ## Batch 1 — Conventions and map
@@ -189,7 +210,47 @@ Recommended dependency direction:
 
 | Old Path | New Path | Batch | Status |
 |---|---|---|---|
-| (fill in) | (fill in) | (1-5) | Planned |
+| `Build/CommonAssets/Shaders/Compute/LightVolumes.comp` | `Build/CommonAssets/Shaders/Compute/GI/LightVolumes/LightVolumes.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/LightVolumesStereo.comp` | `Build/CommonAssets/Shaders/Compute/GI/LightVolumes/LightVolumesStereo.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/RadianceCascades.comp` | `Build/CommonAssets/Shaders/Compute/GI/RadianceCascades/RadianceCascades.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/RadianceCascadesStereo.comp` | `Build/CommonAssets/Shaders/Compute/GI/RadianceCascades/RadianceCascadesStereo.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/InitialSampling.comp` | `Build/CommonAssets/Shaders/Compute/GI/RESTIR/InitialSampling.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GIResampling.comp` | `Build/CommonAssets/Shaders/Compute/GI/RESTIR/GIResampling.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/FinalShading.comp` | `Build/CommonAssets/Shaders/Compute/GI/RESTIR/FinalShading.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/SurfelGI/Init.comp` | `Build/CommonAssets/Shaders/Compute/GI/SurfelGI/Init.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/SurfelGI/Spawn.comp` | `Build/CommonAssets/Shaders/Compute/GI/SurfelGI/Spawn.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/SurfelGI/Recycle.comp` | `Build/CommonAssets/Shaders/Compute/GI/SurfelGI/Recycle.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/SurfelGI/Shade.comp` | `Build/CommonAssets/Shaders/Compute/GI/SurfelGI/Shade.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/SurfelGI/BuildGrid.comp` | `Build/CommonAssets/Shaders/Compute/GI/SurfelGI/BuildGrid.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/SurfelGI/ResetGrid.comp` | `Build/CommonAssets/Shaders/Compute/GI/SurfelGI/ResetGrid.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/SurfelGI/DebugGrid.comp` | `Build/CommonAssets/Shaders/Compute/GI/SurfelGI/DebugGrid.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/SurfelGI/DebugCircles.comp` | `Build/CommonAssets/Shaders/Compute/GI/SurfelGI/DebugCircles.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderCulling.comp` | `Build/CommonAssets/Shaders/Compute/Culling/GPURenderCulling.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderCullingSoA.comp` | `Build/CommonAssets/Shaders/Compute/Culling/GPURenderCullingSoA.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderExtractSoA.comp` | `Build/CommonAssets/Shaders/Compute/Culling/GPURenderExtractSoA.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderHiZSoACulling.comp` | `Build/CommonAssets/Shaders/Compute/Culling/GPURenderHiZSoACulling.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderIndirect.comp` | `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderIndirect.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderBuildKeys.comp` | `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderBuildKeys.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderBuildBatches.comp` | `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderBuildBatches.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderBuildHotCommands.comp` | `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderBuildHotCommands.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderCopyCommands.comp` | `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderCopyCommands.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderCopyCount3.comp` | `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderCopyCount3.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderResetCounters.comp` | `Build/CommonAssets/Shaders/Compute/Indirect/GPURenderResetCounters.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderOcclusionHiZ.comp` | `Build/CommonAssets/Shaders/Compute/Occlusion/GPURenderOcclusionHiZ.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderHiZInit.comp` | `Build/CommonAssets/Shaders/Compute/Occlusion/GPURenderHiZInit.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/HiZGen.comp` | `Build/CommonAssets/Shaders/Compute/Occlusion/HiZGen.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderRadixIndexSort.comp` | `Build/CommonAssets/Shaders/Compute/Sorting/GPURenderRadixIndexSort.comp` | 2 | Moved |
+| `Build/CommonAssets/Shaders/Compute/GPURenderGather.comp` | `Build/CommonAssets/Shaders/Compute/Debug/GPURenderGather.comp` | 2 | Moved |
+| `XRENGINE/Rendering/Commands/GpuSortPolicy.cs` | `XRENGINE/Rendering/Commands/GPURendering/Policy/GpuSortPolicy.cs` | 4 | Moved |
+| `XRENGINE/Rendering/Commands/GPUBatchingLayout.cs` | `XRENGINE/Rendering/Commands/GPURendering/Resources/GPUBatchingResources.cs` | 4 | Moved/Renamed |
+| `XRENGINE/Rendering/Commands/GpuBackendParitySnapshot.cs` | `XRENGINE/Rendering/Commands/GPURendering/Validation/GpuBackendParityValidator.cs` | 4 | Moved/Renamed |
+| `Build/CommonAssets/Shaders/Compute/Skinning.comp` | `Build/CommonAssets/Shaders/Compute/Unused/Skinning.comp` | 5 | Quarantined |
+| `Build/CommonAssets/Shaders/Compute/HiZCull.comp` | `Build/CommonAssets/Shaders/Compute/Unused/HiZCull.comp` | 5 | Quarantined |
+| `Build/CommonAssets/Shaders/Compute/GPURenderSorting.comp` | `Build/CommonAssets/Shaders/Compute/Unused/GPURenderSorting.comp` | 5 | Quarantined |
+| `Build/CommonAssets/Shaders/Compute/GPURenderRadixSort.comp` | `Build/CommonAssets/Shaders/Compute/Unused/GPURenderRadixSort.comp` | 5 | Quarantined |
+| `Build/CommonAssets/Shaders/Compute/MeshSDFGen_Advanced.comp` | `Build/CommonAssets/Shaders/Compute/Unused/MeshSDFGen_Advanced.comp` | 5 | Quarantined |
+| `Build/CommonAssets/Shaders/Compute/ApplyConstraints.comp` | `Build/CommonAssets/Shaders/Compute/Unused/ApplyConstraints.comp` | 5 | Quarantined |
+| `Build/CommonAssets/Shaders/Compute/CalculateParticles.comp` | `Build/CommonAssets/Shaders/Compute/Unused/CalculateParticles.comp` | 5 | Quarantined |
 
 ---
 

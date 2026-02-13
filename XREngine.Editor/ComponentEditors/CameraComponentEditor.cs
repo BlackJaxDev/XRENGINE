@@ -191,13 +191,10 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         // Authoritative viewport bindings: scan live windows.
         var boundViewports = new List<XRViewport>();
-        foreach (var window in Engine.Windows)
+        foreach (var vp in Engine.EnumerateActiveViewports())
         {
-            foreach (var vp in window.Viewports)
-            {
-                if (ReferenceEquals(vp.CameraComponent, component))
-                    boundViewports.Add(vp);
-            }
+            if (ReferenceEquals(vp.CameraComponent, component))
+                boundViewports.Add(vp);
         }
 
         // Status indicator with color

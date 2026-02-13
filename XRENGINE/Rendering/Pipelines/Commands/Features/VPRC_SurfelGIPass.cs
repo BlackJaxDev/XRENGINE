@@ -179,37 +179,37 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             if (_initProgram is null)
             {
-                var shader = XRShader.EngineShader("Compute/SurfelGI/Init.comp", EShaderType.Compute);
+                var shader = XRShader.EngineShader("Compute/GI/SurfelGI/Init.comp", EShaderType.Compute);
                 _initProgram = new XRRenderProgram(true, false, shader);
             }
 
             if (_recycleProgram is null)
             {
-                var shader = XRShader.EngineShader("Compute/SurfelGI/Recycle.comp", EShaderType.Compute);
+                var shader = XRShader.EngineShader("Compute/GI/SurfelGI/Recycle.comp", EShaderType.Compute);
                 _recycleProgram = new XRRenderProgram(true, false, shader);
             }
 
             if (_resetGridProgram is null)
             {
-                var shader = XRShader.EngineShader("Compute/SurfelGI/ResetGrid.comp", EShaderType.Compute);
+                var shader = XRShader.EngineShader("Compute/GI/SurfelGI/ResetGrid.comp", EShaderType.Compute);
                 _resetGridProgram = new XRRenderProgram(true, false, shader);
             }
 
             if (_buildGridProgram is null)
             {
-                var shader = XRShader.EngineShader("Compute/SurfelGI/BuildGrid.comp", EShaderType.Compute);
+                var shader = XRShader.EngineShader("Compute/GI/SurfelGI/BuildGrid.comp", EShaderType.Compute);
                 _buildGridProgram = new XRRenderProgram(true, false, shader);
             }
 
             if (_spawnProgram is null)
             {
-                var shader = XRShader.EngineShader("Compute/SurfelGI/Spawn.comp", EShaderType.Compute);
+                var shader = XRShader.EngineShader("Compute/GI/SurfelGI/Spawn.comp", EShaderType.Compute);
                 _spawnProgram = new XRRenderProgram(true, false, shader);
             }
 
             if (_shadeProgram is null)
             {
-                var shader = XRShader.EngineShader("Compute/SurfelGI/Shade.comp", EShaderType.Compute);
+                var shader = XRShader.EngineShader("Compute/GI/SurfelGI/Shade.comp", EShaderType.Compute);
                 _shadeProgram = new XRRenderProgram(true, false, shader);
             }
 

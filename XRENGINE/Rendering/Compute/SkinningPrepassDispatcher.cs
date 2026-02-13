@@ -14,8 +14,8 @@ namespace XREngine.Rendering.Compute;
 /// </summary>
 internal sealed class SkinningPrepassDispatcher : IDisposable
 {
-    private const string ShaderPath = "Compute/SkinningPrepass.comp";
-    private const string InterleavedShaderPath = "Compute/SkinningPrepassInterleaved.comp";
+    private const string ShaderPath = "Compute/Animation/SkinningPrepass.comp";
+    private const string InterleavedShaderPath = "Compute/Animation/SkinningPrepassInterleaved.comp";
     private const uint ThreadGroupSize = 256u;
 
     private static readonly Lazy<SkinningPrepassDispatcher> _instance = new(() => new SkinningPrepassDispatcher());

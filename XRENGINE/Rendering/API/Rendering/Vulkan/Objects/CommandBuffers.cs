@@ -10,11 +10,14 @@ namespace XREngine.Rendering.Vulkan
     {
         private CommandBuffer[]? _commandBuffers;
         private List<ComputeTransientResources>[]? _computeTransientResources;
+        private List<DeferredSecondaryCommandBuffer>[]? _deferredSecondaryCommandBuffers;
         private readonly object _oneTimeCommandPoolsLock = new();
         private readonly Dictionary<nint, CommandPool> _oneTimeCommandPools = new();
         private readonly object _oneTimeSubmitLock = new();
-        private bool _enableSecondaryCommandBuffers = true;
-        private bool _enableParallelSecondaryCommandBufferRecording = true;
+        private readonly object _commandBindStateLock = new();
+        private readonly Dictionary<ulong, CommandBufferBindState> _commandBindStates = new();
+        private bool _enableSecondaryCommandBuffers = false;
+        private bool _enableParallelSecondaryCommandBufferRecording = false;
         private int _parallelSecondaryIndirectRunThreshold = 4;
 
         private sealed class ComputeTransientResources
@@ -23,12 +26,210 @@ namespace XREngine.Rendering.Vulkan
             public List<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> UniformBuffers { get; } = [];
         }
 
+        private readonly struct DeferredSecondaryCommandBuffer
+        {
+            public DeferredSecondaryCommandBuffer(CommandPool pool, CommandBuffer commandBuffer)
+            {
+                Pool = pool;
+                CommandBuffer = commandBuffer;
+            }
+
+            public CommandPool Pool { get; }
+            public CommandBuffer CommandBuffer { get; }
+        }
+
+        private struct CommandBufferBindState
+        {
+            public ulong GraphicsPipeline;
+            public ulong ComputePipeline;
+            public ulong GraphicsDescriptorSignature;
+            public ulong ComputeDescriptorSignature;
+            public ulong VertexBufferSignature;
+            public ulong IndexBuffer;
+            public ulong IndexOffset;
+            public IndexType IndexType;
+        }
+
+        internal void ResetCommandBufferBindState(CommandBuffer commandBuffer)
+        {
+            ulong key = (ulong)commandBuffer.Handle;
+            lock (_commandBindStateLock)
+                _commandBindStates[key] = default;
+        }
+
+        internal void BindPipelineTracked(CommandBuffer commandBuffer, PipelineBindPoint bindPoint, Pipeline pipeline)
+        {
+            if (pipeline.Handle == 0)
+                return;
+
+            bool shouldBind = true;
+            ulong key = (ulong)commandBuffer.Handle;
+            lock (_commandBindStateLock)
+            {
+                _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
+                ulong handle = pipeline.Handle;
+                if (bindPoint == PipelineBindPoint.Graphics)
+                {
+                    shouldBind = state.GraphicsPipeline != handle;
+                    if (shouldBind)
+                        state.GraphicsPipeline = handle;
+                }
+                else
+                {
+                    shouldBind = state.ComputePipeline != handle;
+                    if (shouldBind)
+                        state.ComputePipeline = handle;
+                }
+
+                if (shouldBind)
+                    _commandBindStates[key] = state;
+            }
+
+            if (!shouldBind)
+            {
+                Engine.Rendering.Stats.RecordVulkanBindChurn(pipelineBindSkips: 1);
+                return;
+            }
+
+            Api!.CmdBindPipeline(commandBuffer, bindPoint, pipeline);
+            Engine.Rendering.Stats.RecordVulkanBindChurn(pipelineBinds: 1);
+        }
+
+        internal void BindDescriptorSetsTracked(
+            CommandBuffer commandBuffer,
+            PipelineBindPoint bindPoint,
+            PipelineLayout layout,
+            uint firstSet,
+            DescriptorSet[] sets)
+        {
+            if (sets.Length == 0)
+                return;
+
+            HashCode hash = new();
+            hash.Add((int)bindPoint);
+            hash.Add(layout.Handle);
+            hash.Add(firstSet);
+            for (int i = 0; i < sets.Length; i++)
+                hash.Add(sets[i].Handle);
+
+            ulong signature = unchecked((ulong)hash.ToHashCode());
+            bool shouldBind = true;
+            ulong key = (ulong)commandBuffer.Handle;
+
+            lock (_commandBindStateLock)
+            {
+                _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
+                if (bindPoint == PipelineBindPoint.Graphics)
+                {
+                    shouldBind = state.GraphicsDescriptorSignature != signature;
+                    if (shouldBind)
+                        state.GraphicsDescriptorSignature = signature;
+                }
+                else
+                {
+                    shouldBind = state.ComputeDescriptorSignature != signature;
+                    if (shouldBind)
+                        state.ComputeDescriptorSignature = signature;
+                }
+
+                if (shouldBind)
+                    _commandBindStates[key] = state;
+            }
+
+            if (!shouldBind)
+            {
+                Engine.Rendering.Stats.RecordVulkanBindChurn(descriptorBindSkips: 1);
+                return;
+            }
+
+            fixed (DescriptorSet* setPtr = sets)
+                Api!.CmdBindDescriptorSets(commandBuffer, bindPoint, layout, firstSet, (uint)sets.Length, setPtr, 0, null);
+
+            Engine.Rendering.Stats.RecordVulkanBindChurn(descriptorBinds: 1);
+        }
+
+        internal void BindVertexBuffersTracked(
+            CommandBuffer commandBuffer,
+            uint firstBinding,
+            Silk.NET.Vulkan.Buffer[] buffers,
+            ulong[] offsets)
+        {
+            if (buffers.Length == 0)
+                return;
+
+            HashCode hash = new();
+            hash.Add(firstBinding);
+            hash.Add(buffers.Length);
+            for (int i = 0; i < buffers.Length; i++)
+            {
+                hash.Add(buffers[i].Handle);
+                hash.Add(offsets[i]);
+            }
+
+            ulong signature = unchecked((ulong)hash.ToHashCode());
+            bool shouldBind;
+            ulong key = (ulong)commandBuffer.Handle;
+            lock (_commandBindStateLock)
+            {
+                _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
+                shouldBind = state.VertexBufferSignature != signature;
+                if (shouldBind)
+                {
+                    state.VertexBufferSignature = signature;
+                    _commandBindStates[key] = state;
+                }
+            }
+
+            if (!shouldBind)
+            {
+                Engine.Rendering.Stats.RecordVulkanBindChurn(vertexBufferBindSkips: 1);
+                return;
+            }
+
+            fixed (Silk.NET.Vulkan.Buffer* bufferPtr = buffers)
+            fixed (ulong* offsetPtr = offsets)
+                Api!.CmdBindVertexBuffers(commandBuffer, firstBinding, (uint)buffers.Length, bufferPtr, offsetPtr);
+
+            Engine.Rendering.Stats.RecordVulkanBindChurn(vertexBufferBinds: 1);
+        }
+
+        internal void BindIndexBufferTracked(CommandBuffer commandBuffer, Silk.NET.Vulkan.Buffer indexBuffer, ulong offset, IndexType indexType)
+        {
+            if (indexBuffer.Handle == 0)
+                return;
+
+            bool shouldBind;
+            ulong key = (ulong)commandBuffer.Handle;
+            lock (_commandBindStateLock)
+            {
+                _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
+                shouldBind = state.IndexBuffer != indexBuffer.Handle || state.IndexOffset != offset || state.IndexType != indexType;
+                if (shouldBind)
+                {
+                    state.IndexBuffer = indexBuffer.Handle;
+                    state.IndexOffset = offset;
+                    state.IndexType = indexType;
+                    _commandBindStates[key] = state;
+                }
+            }
+
+            if (!shouldBind)
+            {
+                Engine.Rendering.Stats.RecordVulkanBindChurn(indexBufferBindSkips: 1);
+                return;
+            }
+
+            Api!.CmdBindIndexBuffer(commandBuffer, indexBuffer, offset, indexType);
+            Engine.Rendering.Stats.RecordVulkanBindChurn(indexBufferBinds: 1);
+        }
+
         private void DestroyCommandBuffers()
         {
             if (_commandBuffers is null)
                 return;
 
             DestroyComputeTransientResources();
+            DestroyDeferredSecondaryCommandBuffers();
             DestroyComputeDescriptorCaches();
 
             fixed (CommandBuffer* commandBuffersPtr = _commandBuffers)
@@ -39,6 +240,53 @@ namespace XREngine.Rendering.Vulkan
 
             _commandBuffers = null;
             _commandBufferDirtyFlags = null;
+        }
+
+        private void DestroyDeferredSecondaryCommandBuffers()
+        {
+            if (_deferredSecondaryCommandBuffers is null)
+                return;
+
+            for (int i = 0; i < _deferredSecondaryCommandBuffers.Length; i++)
+                ReleaseDeferredSecondaryCommandBuffers((uint)i);
+
+            _deferredSecondaryCommandBuffers = null;
+        }
+
+        private void ReleaseDeferredSecondaryCommandBuffers(uint imageIndex)
+        {
+            if (_deferredSecondaryCommandBuffers is null || imageIndex >= _deferredSecondaryCommandBuffers.Length)
+                return;
+
+            List<DeferredSecondaryCommandBuffer>? deferred = _deferredSecondaryCommandBuffers[imageIndex];
+            if (deferred is null || deferred.Count == 0)
+                return;
+
+            foreach (DeferredSecondaryCommandBuffer entry in deferred)
+            {
+                CommandBuffer secondary = entry.CommandBuffer;
+                if (secondary.Handle == 0 || entry.Pool.Handle == 0)
+                    continue;
+
+                Api!.FreeCommandBuffers(device, entry.Pool, 1, ref secondary);
+            }
+
+            deferred.Clear();
+        }
+
+        private void DeferSecondaryCommandBufferFree(uint imageIndex, CommandPool pool, CommandBuffer commandBuffer)
+        {
+            if (commandBuffer.Handle == 0 || pool.Handle == 0)
+                return;
+
+            if (_deferredSecondaryCommandBuffers is null || imageIndex >= _deferredSecondaryCommandBuffers.Length)
+            {
+                Api!.FreeCommandBuffers(device, pool, 1, ref commandBuffer);
+                return;
+            }
+
+            _deferredSecondaryCommandBuffers[imageIndex] ??= [];
+            _deferredSecondaryCommandBuffers[imageIndex]!.Add(new DeferredSecondaryCommandBuffer(pool, commandBuffer));
         }
 
         private void DestroyComputeTransientResources()
@@ -121,6 +369,7 @@ namespace XREngine.Rendering.Vulkan
 
             AllocateCommandBufferDirtyFlags();
             _computeTransientResources = new List<ComputeTransientResources>[_commandBuffers.Length];
+            _deferredSecondaryCommandBuffers = new List<DeferredSecondaryCommandBuffer>[_commandBuffers.Length];
             InitializeComputeDescriptorCaches(_commandBuffers.Length);
         }
 
@@ -143,6 +392,7 @@ namespace XREngine.Rendering.Vulkan
         {
             var commandBuffer = _commandBuffers![imageIndex];
 
+            ReleaseDeferredSecondaryCommandBuffers(imageIndex);
             Api!.ResetCommandBuffer(commandBuffer, 0);
             CleanupComputeTransientResources(imageIndex);
 
@@ -153,6 +403,8 @@ namespace XREngine.Rendering.Vulkan
 
             if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
                 throw new Exception("Failed to begin recording command buffer.");
+
+            ResetCommandBufferBindState(commandBuffer);
 
             CmdBeginLabel(commandBuffer, $"FrameCmd[{imageIndex}]");
 
@@ -191,13 +443,26 @@ namespace XREngine.Rendering.Vulkan
             int drawCount = 0;
             int blitCount = 0;
             int computeCount = 0;
+            int swapchainWriteCount = 0;
             foreach (var op in ops)
             {
                 switch (op)
                 {
-                    case ClearOp: clearCount++; break;
-                    case MeshDrawOp: drawCount++; break;
-                    case BlitOp: blitCount++; break;
+                    case ClearOp clear:
+                        clearCount++;
+                        if (clear.Target is null && (clear.ClearColor || clear.ClearDepth || clear.ClearStencil))
+                            swapchainWriteCount++;
+                        break;
+                    case MeshDrawOp meshDraw:
+                        drawCount++;
+                        if (meshDraw.Target is null)
+                            swapchainWriteCount++;
+                        break;
+                    case BlitOp blit:
+                        blitCount++;
+                        if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit))
+                            swapchainWriteCount++;
+                        break;
                     case ComputeDispatchOp: computeCount++; break;
                 }
             }
@@ -205,12 +470,13 @@ namespace XREngine.Rendering.Vulkan
             Debug.VulkanEvery(
                 $"Vulkan.FrameOps.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
-                "[Vulkan] FrameOps: total={0} clears={1} draws={2} blits={3} computes={4}",
+                "[Vulkan] FrameOps: total={0} clears={1} draws={2} blits={3} computes={4} swapchainWrites={5}",
                 ops.Length,
                 clearCount,
                 drawCount,
                 blitCount,
-                computeCount);
+                computeCount,
+                swapchainWriteCount);
 
             bool renderPassActive = false;
             XRFrameBuffer? activeTarget = null;
@@ -388,6 +654,8 @@ namespace XREngine.Rendering.Vulkan
             for (int opIndex = 0; opIndex < ops.Length; opIndex++)
             {
                 var op = ops[opIndex];
+                try
+                {
                 if (!hasActiveContext || !Equals(activeContext, op.Context))
                 {
                     EndActiveRenderPass();
@@ -453,6 +721,7 @@ namespace XREngine.Rendering.Vulkan
                                     commandBuffer,
                                     "BlitBatch",
                                     runCount,
+                                    imageIndex,
                                     (relativeIndex, secondary) =>
                                     {
                                         BlitOp blitOp = (BlitOp)ops[opIndex + relativeIndex];
@@ -462,7 +731,7 @@ namespace XREngine.Rendering.Vulkan
                             }
                             else
                             {
-                                ExecuteSecondaryCommandBuffer(commandBuffer, "Blit", secondary => RecordBlitOp(secondary, imageIndex, blit));
+                                ExecuteSecondaryCommandBuffer(commandBuffer, "Blit", imageIndex, secondary => RecordBlitOp(secondary, imageIndex, blit));
                             }
                         }
                         else
@@ -526,6 +795,7 @@ namespace XREngine.Rendering.Vulkan
                                     commandBuffer,
                                     "IndirectDrawBatch",
                                     runCount,
+                                    imageIndex,
                                     (relativeIndex, secondary) =>
                                     {
                                         IndirectDrawOp runOp = (IndirectDrawOp)ops[opIndex + relativeIndex];
@@ -542,7 +812,7 @@ namespace XREngine.Rendering.Vulkan
                                 for (int relativeIndex = 0; relativeIndex < runCount; relativeIndex++)
                                 {
                                     IndirectDrawOp runOp = (IndirectDrawOp)ops[opIndex + relativeIndex];
-                                    ExecuteSecondaryCommandBuffer(commandBuffer, "IndirectDraw", secondary => RecordIndirectDrawOp(secondary, runOp));
+                                    ExecuteSecondaryCommandBuffer(commandBuffer, "IndirectDraw", imageIndex, secondary => RecordIndirectDrawOp(secondary, runOp));
                                 }
 
                                 Engine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
@@ -579,7 +849,7 @@ namespace XREngine.Rendering.Vulkan
                     case ComputeDispatchOp computeOp:
                         EndActiveRenderPass();
                         if (_enableSecondaryCommandBuffers)
-                            ExecuteSecondaryCommandBuffer(commandBuffer, "ComputeDispatch", secondary => RecordComputeDispatchOp(secondary, imageIndex, computeOp));
+                            ExecuteSecondaryCommandBuffer(commandBuffer, "ComputeDispatch", imageIndex, secondary => RecordComputeDispatchOp(secondary, imageIndex, computeOp));
                         else
                         {
                             CmdBeginLabel(commandBuffer, "ComputeDispatch");
@@ -587,6 +857,27 @@ namespace XREngine.Rendering.Vulkan
                             CmdEndLabel(commandBuffer);
                         }
                         break;
+                }
+                }
+                catch (Exception opEx)
+                {
+                    // If an individual frame op fails to record (e.g. partially-initialised FBO,
+                    // shader compilation error during deferred pipeline setup, etc.), skip it and
+                    // continue recording the remaining ops.  The final swapchain render pass +
+                    // debug triangle / ImGui overlay will still present a valid frame.
+                    EndActiveRenderPass();
+                    if (renderPassLabelActive)
+                    {
+                        CmdEndLabel(commandBuffer);
+                        renderPassLabelActive = false;
+                    }
+
+                    Debug.VulkanEvery(
+                        $"Vulkan.FrameOpError.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Frame op recording failed for {0}: {1}",
+                        op.GetType().Name,
+                        opEx.Message);
                 }
             }
 
@@ -627,7 +918,7 @@ namespace XREngine.Rendering.Vulkan
             Api!.CmdSetViewport(commandBuffer, 0, 1, &swapViewport);
             Api!.CmdSetScissor(commandBuffer, 0, 1, &swapScissor);
 
-            if (drawCount == 0 && blitCount == 0)
+            if (swapchainWriteCount == 0)
             {
                 CmdBeginLabel(commandBuffer, "DebugTriangle");
                 RenderDebugTriangle(commandBuffer);
@@ -689,11 +980,18 @@ namespace XREngine.Rendering.Vulkan
 
                 if (op.ClearDepth || op.ClearStencil)
                 {
-                    ImageAspectFlags aspects = ImageAspectFlags.None;
+                    ImageAspectFlags requestedAspects = ImageAspectFlags.None;
                     if (op.ClearDepth)
-                        aspects |= ImageAspectFlags.DepthBit;
+                        requestedAspects |= ImageAspectFlags.DepthBit;
                     if (op.ClearStencil)
-                        aspects |= ImageAspectFlags.StencilBit;
+                        requestedAspects |= ImageAspectFlags.StencilBit;
+
+                    // Only emit aspects actually supported by the swapchain depth attachment view.
+                    // Example: VK_FORMAT_D32_SFLOAT does not support stencil clears.
+                    ImageAspectFlags aspects = requestedAspects & _swapchainDepthAspect;
+
+                    if (aspects == ImageAspectFlags.None)
+                        goto SkipSwapchainDepthClear;
 
                     attachments[count++] = new ClearAttachment
                     {
@@ -708,6 +1006,8 @@ namespace XREngine.Rendering.Vulkan
                         }
                     };
                 }
+
+            SkipSwapchainDepthClear:
 
                 if (count > 0)
                     Api!.CmdClearAttachments(commandBuffer, count, attachments, 1, rectPtr);
@@ -959,7 +1259,7 @@ namespace XREngine.Rendering.Vulkan
             if (pipeline.Handle == 0)
                 return;
 
-            Api!.CmdBindPipeline(commandBuffer, PipelineBindPoint.Compute, pipeline);
+            BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline);
 
             if (op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, out DescriptorPool descriptorPool, out var tempBuffers))
                 RegisterComputeTransientResources(imageIndex, descriptorPool, tempBuffers);
@@ -1202,12 +1502,13 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void ExecuteSecondaryCommandBuffer(CommandBuffer primaryCommandBuffer, string label, Action<CommandBuffer> recorder)
+        private void ExecuteSecondaryCommandBuffer(CommandBuffer primaryCommandBuffer, string label, uint imageIndex, Action<CommandBuffer> recorder)
         {
             CmdBeginLabel(primaryCommandBuffer, label);
             CommandBuffer secondary = default;
             bool allocated = false;
             CommandPool pool = default;
+            bool executedInPrimary = false;
 
             try
             {
@@ -1230,8 +1531,23 @@ namespace XREngine.Rendering.Vulkan
                     Flags = CommandBufferUsageFlags.OneTimeSubmitBit
                 };
 
+                CommandBufferInheritanceInfo inheritanceInfo = new()
+                {
+                    SType = StructureType.CommandBufferInheritanceInfo,
+                    RenderPass = default,
+                    Subpass = 0,
+                    Framebuffer = default,
+                    OcclusionQueryEnable = Vk.False,
+                    QueryFlags = QueryControlFlags.None,
+                    PipelineStatistics = QueryPipelineStatisticFlags.None
+                };
+
+                beginInfo.PInheritanceInfo = &inheritanceInfo;
+
                 if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
                     throw new Exception("Failed to begin Vulkan secondary command buffer.");
+
+                ResetCommandBufferBindState(secondary);
 
                 recorder(secondary);
 
@@ -1239,11 +1555,17 @@ namespace XREngine.Rendering.Vulkan
                     throw new Exception("Failed to end Vulkan secondary command buffer.");
 
                 Api!.CmdExecuteCommands(primaryCommandBuffer, 1, &secondary);
+                executedInPrimary = true;
             }
             finally
             {
                 if (allocated && pool.Handle != 0)
-                    Api!.FreeCommandBuffers(device, pool, 1, ref secondary);
+                {
+                    if (executedInPrimary)
+                        DeferSecondaryCommandBufferFree(imageIndex, pool, secondary);
+                    else
+                        Api!.FreeCommandBuffers(device, pool, 1, ref secondary);
+                }
 
                 CmdEndLabel(primaryCommandBuffer);
             }
@@ -1253,6 +1575,7 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer primaryCommandBuffer,
             string label,
             int count,
+            uint imageIndex,
             Action<int, CommandBuffer> recorder)
         {
             if (count <= 0)
@@ -1260,7 +1583,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (count == 1)
             {
-                ExecuteSecondaryCommandBuffer(primaryCommandBuffer, label, cmd => recorder(0, cmd));
+                ExecuteSecondaryCommandBuffer(primaryCommandBuffer, label, imageIndex, cmd => recorder(0, cmd));
                 return;
             }
 
@@ -1270,6 +1593,7 @@ namespace XREngine.Rendering.Vulkan
             bool[] allocated = new bool[count];
             Exception? firstError = null;
             object errorLock = new();
+            bool executedInPrimary = false;
 
             try
             {
@@ -1306,8 +1630,23 @@ namespace XREngine.Rendering.Vulkan
                                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit
                             };
 
+                            CommandBufferInheritanceInfo inheritanceInfo = new()
+                            {
+                                SType = StructureType.CommandBufferInheritanceInfo,
+                                RenderPass = default,
+                                Subpass = 0,
+                                Framebuffer = default,
+                                OcclusionQueryEnable = Vk.False,
+                                QueryFlags = QueryControlFlags.None,
+                                PipelineStatistics = QueryPipelineStatisticFlags.None
+                            };
+
+                            beginInfo.PInheritanceInfo = &inheritanceInfo;
+
                             if (Api!.BeginCommandBuffer(secondary, ref beginInfo) != Result.Success)
                                 throw new Exception("Failed to begin Vulkan secondary command buffer.");
+
+                            ResetCommandBufferBindState(secondary);
 
                             recorder(index, secondary);
 
@@ -1346,6 +1685,8 @@ namespace XREngine.Rendering.Vulkan
 
                 fixed (CommandBuffer* secondaryPtr = secondaryBuffers)
                     Api!.CmdExecuteCommands(primaryCommandBuffer, (uint)count, secondaryPtr);
+
+                executedInPrimary = true;
             }
             finally
             {
@@ -1354,7 +1695,10 @@ namespace XREngine.Rendering.Vulkan
                     if (!allocated[i] || ownerPools[i].Handle == 0 || secondaryBuffers[i].Handle == 0)
                         continue;
 
-                    Api!.FreeCommandBuffers(device, ownerPools[i], 1, ref secondaryBuffers[i]);
+                    if (executedInPrimary)
+                        DeferSecondaryCommandBufferFree(imageIndex, ownerPools[i], secondaryBuffers[i]);
+                    else
+                        Api!.FreeCommandBuffers(device, ownerPools[i], 1, ref secondaryBuffers[i]);
                 }
 
                 CmdEndLabel(primaryCommandBuffer);
@@ -1404,6 +1748,7 @@ namespace XREngine.Rendering.Vulkan
             };
 
             Api!.BeginCommandBuffer(commandBuffer, ref beginInfo);
+            ResetCommandBufferBindState(commandBuffer);
 
             lock (_oneTimeCommandPoolsLock)
                 _oneTimeCommandPools[commandBuffer.Handle] = pool;

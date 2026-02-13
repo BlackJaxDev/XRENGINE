@@ -109,10 +109,10 @@ public static partial class UnitTestingWorld
 
                         ModelImporter.DelMakeMaterialAction makeMaterialAction = Toggles.StaticModelMaterialMode switch
                         {
-                            StaticModelMaterialMode.Deferred => ModelImporter.MakeMaterialDefault,
-                            StaticModelMaterialMode.ForwardPlusTextured => ModelImporter.MakeMaterialDefault,
-                            StaticModelMaterialMode.ForwardPlusUberShader => ModelImporter.MakeMaterialDefault,
-                            _ => ModelImporter.MakeMaterialDefault,
+                            StaticModelMaterialMode.Deferred => ModelImporter.MakeMaterialDeferred,
+                            StaticModelMaterialMode.ForwardPlusTextured => ModelImporter.MakeMaterialForwardPlusTextured,
+                            StaticModelMaterialMode.ForwardPlusUberShader => ModelImporter.MakeMaterialForwardPlusUberShader,
+                            _ => ModelImporter.MakeMaterialDeferred,
                         };
 
                         _ = ModelImporter.ScheduleImportJob(

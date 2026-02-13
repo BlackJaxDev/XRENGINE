@@ -14,6 +14,7 @@ namespace XREngine.Rendering.Vulkan
             private Sampler _sampler;
             private Format _format = Format.R8G8B8A8Unorm;
             private ImageAspectFlags _aspect = ImageAspectFlags.ColorBit;
+            private ImageUsageFlags _usage = ImageUsageFlags.SampledBit;
             private SampleCountFlags _samples = SampleCountFlags.Count1Bit;
             private BufferView _texelBufferView;
             private Format _texelBufferFormat = Format.Undefined;
@@ -34,6 +35,7 @@ namespace XREngine.Rendering.Vulkan
             Sampler IVkImageDescriptorSource.DescriptorSampler => _sampler;
             Format IVkImageDescriptorSource.DescriptorFormat => _format;
             ImageAspectFlags IVkImageDescriptorSource.DescriptorAspect => _aspect;
+            ImageUsageFlags IVkImageDescriptorSource.DescriptorUsage => _usage;
             SampleCountFlags IVkImageDescriptorSource.DescriptorSamples => _samples;
             BufferView IVkTexelBufferDescriptorSource.DescriptorBufferView => _texelBufferView;
             Format IVkTexelBufferDescriptorSource.DescriptorBufferFormat => _texelBufferFormat;
@@ -56,6 +58,7 @@ namespace XREngine.Rendering.Vulkan
                 _sampler = default;
                 _format = Format.R8G8B8A8Unorm;
                 _aspect = ImageAspectFlags.ColorBit;
+                _usage = ImageUsageFlags.SampledBit;
                 _samples = SampleCountFlags.Count1Bit;
                 _texelBufferView = default;
                 _texelBufferFormat = Format.Undefined;
@@ -121,6 +124,7 @@ namespace XREngine.Rendering.Vulkan
                     _sampler = default;
                     _format = texelSource.DescriptorBufferFormat;
                     _aspect = ImageAspectFlags.None;
+                    _usage = 0;
                     _samples = SampleCountFlags.Count1Bit;
                     _texelBufferView = texelSource.DescriptorBufferView;
                     _texelBufferFormat = texelSource.DescriptorBufferFormat;
@@ -136,7 +140,8 @@ namespace XREngine.Rendering.Vulkan
                 _image = source.DescriptorImage;
                 _sampler = source.DescriptorSampler;
                 _format = source.DescriptorFormat;
-                _aspect = source.DescriptorAspect == ImageAspectFlags.None ? ImageAspectFlags.ColorBit : source.DescriptorAspect;
+                _usage = source.DescriptorUsage;
+                _aspect = NormalizeAspectMaskForFormat(_format, source.DescriptorAspect);
                 _samples = source.DescriptorSamples;
                 _texelBufferView = default;
                 _texelBufferFormat = Format.Undefined;
@@ -147,7 +152,7 @@ namespace XREngine.Rendering.Vulkan
                 ImageViewType viewType = ResolveViewType(Data.TextureTarget);
                 ImageSubresourceRange subresourceRange = new()
                 {
-                    AspectMask = _aspect,
+                    AspectMask = NormalizeAspectMaskForFormat(_format, _aspect),
                     BaseMipLevel = Data.MinLevel,
                     LevelCount = Math.Max(Data.NumLevels, 1u),
                     BaseArrayLayer = Data.MinLayer,
@@ -165,6 +170,30 @@ namespace XREngine.Rendering.Vulkan
 
                 if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
                     throw new InvalidOperationException("Failed to create Vulkan texture view.");
+            }
+
+            private static ImageAspectFlags NormalizeAspectMaskForFormat(Format format, ImageAspectFlags requested)
+            {
+                bool isDepthStencil = format is Format.D16Unorm or Format.X8D24UnormPack32 or Format.D32Sfloat or Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
+                if (!isDepthStencil)
+                {
+                    ImageAspectFlags colorMask = requested & ImageAspectFlags.ColorBit;
+                    return colorMask != ImageAspectFlags.None ? colorMask : ImageAspectFlags.ColorBit;
+                }
+
+                bool hasStencil = format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
+                ImageAspectFlags supported = hasStencil
+                    ? (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)
+                    : ImageAspectFlags.DepthBit;
+
+                ImageAspectFlags normalized = requested & supported;
+                if (normalized == ImageAspectFlags.None)
+                    normalized = supported;
+
+                if (hasStencil && (normalized & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0)
+                    normalized = ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit;
+
+                return normalized;
             }
 
             private static ImageViewType ResolveViewType(ETextureTarget target)

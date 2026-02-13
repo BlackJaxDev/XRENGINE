@@ -10,6 +10,7 @@ public unsafe partial class VulkanRenderer
         Sampler DescriptorSampler { get; }
         Format DescriptorFormat { get; }
         ImageAspectFlags DescriptorAspect { get; }
+        ImageUsageFlags DescriptorUsage { get; }
         SampleCountFlags DescriptorSamples { get; }
     }
 

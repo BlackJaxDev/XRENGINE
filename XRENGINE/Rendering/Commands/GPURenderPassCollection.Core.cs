@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using XREngine;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -151,6 +152,18 @@ namespace XREngine.Rendering.Commands
         private static readonly IndirectDebugSettings _indirectDebug = new();
         public static IndirectDebugSettings IndirectDebug => _indirectDebug;
 
+        private bool _passPolicySnapshotValid;
+        private bool _passDebugLoggingEnabled;
+        private bool _passValidationLoggingEnabled;
+        private bool _passDisableCpuReadbackCount;
+        private bool _passEnableCpuBatching;
+        private bool _passProbeSourceCommands;
+        private bool _passLogCountBufferWrites;
+        private bool _passValidateCopyCommandAtomicBounds;
+        private bool _passAllowCpuFallback;
+        private bool _passDiagnosticReadbacksEnabled;
+        private int _forbiddenFallbackLogBudget = 8;
+
         public static void ConfigureIndirectDebug(Action<IndirectDebugSettings> configure)
         {
             if (configure is null)
@@ -168,6 +181,92 @@ namespace XREngine.Rendering.Commands
 
         private static bool IsHotCommandLayoutRequired()
             => IsShippingHotOnlyProfile();
+
+        private bool IsCpuReadbackCountDisabledForPass()
+            => _passPolicySnapshotValid
+                ? _passDisableCpuReadbackCount
+                : (IsShippingHotOnlyProfile() || IndirectDebug.DisableCpuReadbackCount);
+
+        private bool IsCpuBatchingEnabledForPass()
+            => _passPolicySnapshotValid
+                ? _passEnableCpuBatching
+                : (!IsShippingHotOnlyProfile() && IndirectDebug.EnableCpuBatching);
+
+        private bool IsSourceCommandProbeEnabledForPass()
+            => _passPolicySnapshotValid
+                ? _passProbeSourceCommands
+                : (!IsShippingHotOnlyProfile() && IndirectDebug.ProbeSourceCommandsBeforeCopy);
+
+        private bool IsCountBufferWriteLoggingEnabledForPass()
+            => _passPolicySnapshotValid
+                ? _passLogCountBufferWrites
+                : (!IsShippingHotOnlyProfile() && IndirectDebug.LogCountBufferWrites && Engine.EffectiveSettings.EnableGpuIndirectDebugLogging);
+
+        private bool IsCopyBoundsValidationEnabledForPass()
+            => _passPolicySnapshotValid
+                ? _passValidateCopyCommandAtomicBounds
+                : IndirectDebug.ValidateCopyCommandAtomicBounds;
+
+        private bool ShouldCaptureDiagnosticReadbacksForPass()
+            => _passPolicySnapshotValid
+                ? _passDiagnosticReadbacksEnabled
+                : (!IsShippingHotOnlyProfile() &&
+                    (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging ||
+                     Engine.EffectiveSettings.EnableGpuIndirectValidationLogging ||
+                     !IndirectDebug.DisableCpuReadbackCount ||
+                     IndirectDebug.EnableCpuBatching));
+
+        private bool IsDebugLoggingEnabledForPass()
+            => _passPolicySnapshotValid
+                ? _passDebugLoggingEnabled
+                : Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+
+        private bool IsValidationLoggingEnabledForPass()
+            => _passPolicySnapshotValid
+                ? _passValidationLoggingEnabled
+                : Engine.EffectiveSettings.EnableGpuIndirectValidationLogging;
+
+        private void CapturePassPolicySnapshot()
+        {
+            _passDebugLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectDebugLogging;
+            _passValidationLoggingEnabled = Engine.EffectiveSettings.EnableGpuIndirectValidationLogging;
+
+            bool shippingFast = IsShippingHotOnlyProfile();
+            _passDisableCpuReadbackCount = shippingFast || IndirectDebug.DisableCpuReadbackCount;
+            _passEnableCpuBatching = !shippingFast && IndirectDebug.EnableCpuBatching;
+            _passProbeSourceCommands = !shippingFast && IndirectDebug.ProbeSourceCommandsBeforeCopy;
+            _passLogCountBufferWrites = !shippingFast && IndirectDebug.LogCountBufferWrites && _passDebugLoggingEnabled;
+            _passValidateCopyCommandAtomicBounds = IndirectDebug.ValidateCopyCommandAtomicBounds;
+
+            bool fallbackRequested = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
+                || (_passDebugLoggingEnabled && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
+            _passAllowCpuFallback = !VulkanFeatureProfile.EnforceStrictNoFallbacks
+                && fallbackRequested
+                && (!VulkanFeatureProfile.IsActive || VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics);
+
+            _passDiagnosticReadbacksEnabled = !shippingFast
+                && (_passDebugLoggingEnabled
+                    || _passValidationLoggingEnabled
+                    || !_passDisableCpuReadbackCount
+                    || _passEnableCpuBatching);
+
+            _passPolicySnapshotValid = true;
+        }
+
+        private void ClearPassPolicySnapshot()
+            => _passPolicySnapshotValid = false;
+
+        private void RecordForbiddenFallback(string reason)
+        {
+            Engine.Rendering.Stats.RecordForbiddenGpuFallback(1);
+            if (_forbiddenFallbackLogBudget <= 0)
+                return;
+
+            if (Interlocked.Decrement(ref _forbiddenFallbackLogBudget) < 0)
+                return;
+
+            Debug.LogWarning($"{FormatDebugPrefix("Validation")} Forbidden fallback blocked in profile {VulkanFeatureProfile.ActiveProfile}: {reason}");
+        }
 
         private static uint ComputeBoundedDoublingCapacity(uint currentCapacity, uint minimumRequired)
         {
@@ -486,7 +585,7 @@ namespace XREngine.Rendering.Commands
             if (_culledCountBuffer is null)
                 return;
 
-            if (IndirectDebug.DisableCpuReadbackCount && !IndirectDebug.ForceCpuFallbackCount)
+            if (IsCpuReadbackCountDisabledForPass() && !IndirectDebug.ForceCpuFallbackCount)
                 return;
 
             drawCount = ReadUIntAt(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);

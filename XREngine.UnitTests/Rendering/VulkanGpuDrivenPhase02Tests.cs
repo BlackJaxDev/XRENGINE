@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -16,12 +16,12 @@ public sealed class VulkanGpuDrivenPhase02Tests
 {
     private static readonly string[] GpuDrivenComputeShaders =
     [
-        "Compute/GPURenderResetCounters.comp",
-        "Compute/GPURenderCulling.comp",
-        "Compute/GPURenderCullingSoA.comp",
-        "Compute/GPURenderIndirect.comp",
-        "Compute/GPURenderBuildKeys.comp",
-        "Compute/GPURenderBuildBatches.comp",
+        "Compute/Indirect/GPURenderResetCounters.comp",
+        "Compute/Culling/GPURenderCulling.comp",
+        "Compute/Culling/GPURenderCullingSoA.comp",
+        "Compute/Indirect/GPURenderIndirect.comp",
+        "Compute/Indirect/GPURenderBuildKeys.comp",
+        "Compute/Indirect/GPURenderBuildBatches.comp",
         "Scene3D/RenderPipeline/bvh_frustum_cull.comp"
     ];
 

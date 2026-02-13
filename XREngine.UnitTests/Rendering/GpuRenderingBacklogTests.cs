@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -118,7 +118,7 @@ public class GpuRenderingBacklogTests
     [Test]
     public void Occlusion_HiZ_GPUPath_CullsAndRecovers_Correctly()
     {
-        string source = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/GPURenderOcclusionHiZ.comp");
+        string source = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Occlusion/GPURenderOcclusionHiZ.comp");
 
         source.ShouldContain("SampleHiZConservative");
         source.ShouldContain("keep visible (uncertain)");
@@ -266,8 +266,8 @@ public class GpuRenderingBacklogTests
     [Test]
     public void VR_Foveated_PerViewRefinement_NoStereoPopping()
     {
-        string culling = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/GPURenderCulling.comp");
-        string copy = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/GPURenderCopyCommands.comp");
+        string culling = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Culling/GPURenderCulling.comp");
+        string copy = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderCopyCommands.comp");
         string bvh = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/bvh_frustum_cull.comp");
 
         culling.ShouldContain("fullResNearDistance");

@@ -60,9 +60,11 @@ public unsafe partial class VulkanRenderer
     private void RecreateSwapChain()
     {
         Vector2D<int> framebufferSize = Window!.FramebufferSize;
-        while (framebufferSize.X == 0 || framebufferSize.Y == 0)
+        Vector2D<int> windowSize = Window.Size;
+        while (framebufferSize.X == 0 || framebufferSize.Y == 0 || windowSize.X == 0 || windowSize.Y == 0)
         {
             framebufferSize = Window.FramebufferSize;
+            windowSize = Window.Size;
             Window.DoEvents();
         }
 
@@ -329,12 +331,19 @@ public unsafe partial class VulkanRenderer
             return capabilities.CurrentExtent;
         else
         {
-            var framebufferSize = Window!.FramebufferSize;
+            Vector2D<int> framebufferSize = Window!.FramebufferSize;
+            Vector2D<int> windowSize = Window.Size;
+
+            // Prefer the larger non-zero size signal. Some desktop configurations report a
+            // framebuffer size that reflects logical coordinates while the visible window is larger.
+            // Using the larger signal prevents persistent right/bottom black borders.
+            uint width = (uint)Math.Max(Math.Max(framebufferSize.X, windowSize.X), 1);
+            uint height = (uint)Math.Max(Math.Max(framebufferSize.Y, windowSize.Y), 1);
 
             Extent2D actualExtent = new()
             {
-                Width = (uint)framebufferSize.X,
-                Height = (uint)framebufferSize.Y
+                Width = width,
+                Height = height
             };
 
             actualExtent.Width = Math.Clamp(actualExtent.Width, capabilities.MinImageExtent.Width, capabilities.MaxImageExtent.Width);
