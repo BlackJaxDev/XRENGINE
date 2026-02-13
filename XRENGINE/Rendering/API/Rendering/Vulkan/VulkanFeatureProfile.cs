@@ -268,4 +268,11 @@ public static class VulkanFeatureProfile
 
     public static EVulkanGeometryFetchMode ActiveGeometryFetchMode
         => ResolveGeometryFetchMode(Engine.EffectiveSettings.VulkanGeometryFetchMode);
+
+    /// <summary>
+    /// Returns <c>true</c> when the active GPU-driven profile enforces strict no-fallback behavior
+    /// across rendering backends (including OpenGL).
+    /// </summary>
+    public static bool EnforceStrictNoFallbacks
+        => ActiveProfile == EVulkanGpuDrivenProfile.ShippingFast;
 }

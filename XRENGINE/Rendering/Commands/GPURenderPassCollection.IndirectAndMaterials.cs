@@ -57,7 +57,8 @@ namespace XREngine.Rendering.Commands
             // Phase 2: do not early-out based on CPU-visible counters.
             // The default submission path uses GPU-written count buffers; a 0 count naturally results in no draws.
 
-            bool useCpuBatchFallback = !EnableGpuDrivenBatching || IndirectDebug.EnableCpuBatching;
+            bool strictNoFallbacks = VulkanFeatureProfile.EnforceStrictNoFallbacks;
+            bool useCpuBatchFallback = !strictNoFallbacks && (!EnableGpuDrivenBatching || IndirectDebug.EnableCpuBatching);
             List<HybridRenderingManager.DrawBatch>? batches;
 
             if (useCpuBatchFallback)
