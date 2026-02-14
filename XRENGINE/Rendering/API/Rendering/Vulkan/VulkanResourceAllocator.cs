@@ -437,6 +437,9 @@ internal sealed class VulkanResourceAllocator
                 usage |= ImageUsageFlags.TransferDstBit;
         }
 
+        if ((usage & ImageUsageFlags.DepthStencilAttachmentBit) != 0)
+            usage |= ImageUsageFlags.SampledBit;
+
         if (!matchedProfile)
         {
             // Infer attachment type from FBO attachment descriptors in the resource planner

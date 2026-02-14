@@ -57,7 +57,7 @@ internal readonly record struct AutoUniformRewriteResult(
 internal static class VulkanShaderAutoUniforms
 {
     private static readonly Regex FloatSuffixRegex = new(
-        @"(?<![A-Za-z_])(?<num>(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?)[fF]\b",
+        @"(?<![A-Za-z0-9_])(?<num>(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?)[fF](?![A-Za-z0-9_])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex UniformStatementRegex = new(
@@ -82,6 +82,14 @@ internal static class VulkanShaderAutoUniforms
 
     private static readonly Regex StructDeclarationRegex = new(
         @"\bstruct\s+[A-Za-z_][A-Za-z0-9_]*\s*\{[\s\S]*?\};",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex StructNameRegex = new(
+        @"\bstruct\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex FunctionDefinitionRegex = new(
+        @"(?m)^\s*[A-Za-z_][A-Za-z0-9_\s]*\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^;{}]*\)\s*\{",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly HashSet<string> OpaqueTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -251,8 +259,16 @@ internal static class VulkanShaderAutoUniforms
                 $"{instanceName}.{member.Name}");
         }
 
+        int insertionIndex = FindFirstFunctionDefinitionIndex(rewritten);
+        List<string> movedStructDeclarations = MoveRequiredStructDeclarationsBeforeInsertion(ref rewritten, layoutMembers, insertionIndex);
+        insertionIndex = FindFirstFunctionDefinitionIndex(rewritten);
+
         string block = BuildUniformBlock(blockName, instanceName, binding, layoutMembers);
-        rewritten = InsertAfterStructOrVersion(rewritten, block);
+        string insertionContent = movedStructDeclarations.Count == 0
+            ? block
+            : string.Join(Environment.NewLine + Environment.NewLine, movedStructDeclarations) + Environment.NewLine + Environment.NewLine + block;
+
+        rewritten = InsertAtPreferredLocation(rewritten, insertionContent, insertionIndex);
 
         AutoUniformBlockInfo blockInfo = new(
             blockName,
@@ -264,6 +280,77 @@ internal static class VulkanShaderAutoUniforms
             shaderType);
 
         return new AutoUniformRewriteResult(rewritten, blockInfo);
+    }
+
+    private static int FindFirstFunctionDefinitionIndex(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            return -1;
+
+        Match match = FunctionDefinitionRegex.Match(source);
+        return match.Success ? match.Index : -1;
+    }
+
+    private static List<string> MoveRequiredStructDeclarationsBeforeInsertion(
+        ref string source,
+        IReadOnlyList<AutoUniformMember> members,
+        int insertionIndex)
+    {
+        List<string> moved = [];
+        if (string.IsNullOrWhiteSpace(source))
+            return moved;
+
+        int threshold = insertionIndex < 0 ? source.Length : insertionIndex;
+        HashSet<string> requiredStructTypes = new(StringComparer.Ordinal);
+
+        foreach (AutoUniformMember member in members)
+        {
+            if (string.IsNullOrWhiteSpace(member.GlslType) || GlslTypeMap.ContainsKey(member.GlslType))
+                continue;
+
+            requiredStructTypes.Add(member.GlslType);
+        }
+
+        if (requiredStructTypes.Count == 0)
+            return moved;
+
+        Dictionary<string, Match> declarationsByName = new(StringComparer.Ordinal);
+        foreach (Match declaration in StructDeclarationRegex.Matches(source))
+        {
+            if (!declaration.Success)
+                continue;
+
+            Match nameMatch = StructNameRegex.Match(declaration.Value);
+            if (!nameMatch.Success)
+                continue;
+
+            string structName = nameMatch.Groups["name"].Value;
+            if (!declarationsByName.ContainsKey(structName))
+                declarationsByName[structName] = declaration;
+        }
+
+        List<Match> declarationsToMove = [];
+        foreach (string structType in requiredStructTypes)
+        {
+            if (!declarationsByName.TryGetValue(structType, out Match declaration))
+                continue;
+
+            if (declaration.Index >= threshold)
+                declarationsToMove.Add(declaration);
+        }
+
+        if (declarationsToMove.Count == 0)
+            return moved;
+
+        StringBuilder updated = new(source);
+        foreach (Match declaration in declarationsToMove.OrderByDescending(m => m.Index))
+        {
+            updated.Remove(declaration.Index, declaration.Length);
+            moved.Insert(0, declaration.Value.Trim());
+        }
+
+        source = updated.ToString();
+        return moved;
     }
 
     private static string BuildUniformBlock(string blockName, string instanceName, uint binding, IReadOnlyList<AutoUniformMember> members)
@@ -480,7 +567,7 @@ internal static class VulkanShaderAutoUniforms
                 bool hasBinding = existingLayout.Contains("binding", StringComparison.OrdinalIgnoreCase);
                 layoutPrefix = hasBinding
                     ? EnsureLayoutHasSet(existingLayout, VulkanRenderer.DescriptorSetMaterial)
-                    : $"layout(set = {VulkanRenderer.DescriptorSetMaterial}, binding = {nextBinding++}) ";
+                    : EnsureLayoutHasSetAndBinding(existingLayout, VulkanRenderer.DescriptorSetMaterial, nextBinding++);
             }
             else
             {
@@ -506,6 +593,29 @@ internal static class VulkanShaderAutoUniforms
             : $"{qualifiers}, set = {set}";
 
             return LayoutQualifierRegex.Replace(layout, $"layout({updatedQualifiers}) ", 1);
+    }
+
+    private static string EnsureLayoutHasSetAndBinding(string layout, uint set, uint binding)
+    {
+        Match layoutMatch = LayoutQualifierRegex.Match(layout);
+        if (!layoutMatch.Success)
+            return $"layout(set = {set}, binding = {binding}) ";
+
+        string qualifiers = layoutMatch.Groups["qualifiers"].Value.Trim();
+        bool hasSet = Regex.IsMatch(qualifiers, @"\bset\s*=", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        bool hasBinding = Regex.IsMatch(qualifiers, @"\bbinding\s*=", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        List<string> parts = string.IsNullOrWhiteSpace(qualifiers)
+            ? []
+            : qualifiers.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+        if (!hasSet)
+            parts.Add($"set = {set}");
+        if (!hasBinding)
+            parts.Add($"binding = {binding}");
+
+        string updated = parts.Count == 0 ? string.Empty : string.Join(", ", parts);
+        return LayoutQualifierRegex.Replace(layout, $"layout({updated}) ", 1);
     }
 
     private static uint GetOpaqueBindingBase(EShaderType shaderType)

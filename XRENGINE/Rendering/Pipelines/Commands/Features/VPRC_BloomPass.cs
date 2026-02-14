@@ -2,6 +2,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
+using System;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -10,6 +11,14 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// </summary>
     public class VPRC_BloomPass : ViewportRenderCommand
     {
+        private static void LogGuardFailure(string location, string reason)
+            => Debug.RenderingEvery(
+                $"ResilienceGuard.Bloom.{location}",
+                TimeSpan.FromSeconds(1),
+                "[Bloom][RESILIENCE GUARD TRIGGERED] {0}: {1}",
+                location,
+                reason);
+
         private string GetBloomBlurShaderName() =>
             Stereo ? "BloomBlurStereo.fs" : 
             "BloomBlur.fs";
@@ -50,6 +59,13 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void RegenerateFBOs(uint width, uint height)
         {
+            var instance = ActivePipelineInstance;
+            if (instance is null)
+            {
+                LogGuardFailure(nameof(RegenerateFBOs), "No active pipeline instance; skipping FBO regeneration.");
+                return;
+            }
+
             width = Math.Max(1u, width);
             height = Math.Max(1u, height);
 
@@ -123,7 +139,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 outputTexture = t;
             }
 
-            ActivePipelineInstance.SetTexture(outputTexture);
+            instance.SetTexture(outputTexture);
 
             XRMaterial bloomBlurMat = new
             (
@@ -163,24 +179,34 @@ namespace XREngine.Rendering.Pipelines.Commands
             blur8.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 3, -1));
             blur16.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 4, -1));
 
-            ActivePipelineInstance.SetFBO(blur1);
-            ActivePipelineInstance.SetFBO(blur2);
-            ActivePipelineInstance.SetFBO(blur4);
-            ActivePipelineInstance.SetFBO(blur8);
-            ActivePipelineInstance.SetFBO(blur16);
+            instance.SetFBO(blur1);
+            instance.SetFBO(blur2);
+            instance.SetFBO(blur4);
+            instance.SetFBO(blur8);
+            instance.SetFBO(blur16);
         }
 
         protected override void Execute()
         {
-            var inputFBO = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(InputFBOName);
-            if (inputFBO is null)
+            var instance = ActivePipelineInstance;
+            if (instance is null)
+            {
+                LogGuardFailure(nameof(Execute), "No active pipeline instance; bloom pass skipped.");
                 return;
+            }
 
-            var blur16 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur16FBOName);
-            var blur8 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur8FBOName);
-            var blur4 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur4FBOName);
-            var blur2 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur2FBOName);
-            var blur1 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur1FBOName);
+            var inputFBO = instance.GetFBO<XRQuadFrameBuffer>(InputFBOName);
+            if (inputFBO is null)
+            {
+                LogGuardFailure(nameof(Execute), $"Input FBO '{InputFBOName}' not found; bloom pass skipped.");
+                return;
+            }
+
+            var blur16 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur16FBOName);
+            var blur8 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur8FBOName);
+            var blur4 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur4FBOName);
+            var blur2 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur2FBOName);
+            var blur1 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur1FBOName);
 
             if (blur16 is null ||
                 blur8 is null ||
@@ -189,11 +215,21 @@ namespace XREngine.Rendering.Pipelines.Commands
                 blur1 is null)
             {
                 RegenerateFBOs(inputFBO.Width, inputFBO.Height);
-                blur16 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur16FBOName);
-                blur8 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur8FBOName);
-                blur4 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur4FBOName);
-                blur2 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur2FBOName);
-                blur1 = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(BloomBlur1FBOName);
+                blur16 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur16FBOName);
+                blur8 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur8FBOName);
+                blur4 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur4FBOName);
+                blur2 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur2FBOName);
+                blur1 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur1FBOName);
+
+                if (blur16 is null ||
+                    blur8 is null ||
+                    blur4 is null ||
+                    blur2 is null ||
+                    blur1 is null)
+                {
+                    LogGuardFailure(nameof(Execute), "Bloom blur FBO chain is incomplete after regeneration; skipping this frame.");
+                    return;
+                }
             }
             else if (inputFBO.Width != _lastWidth ||
                 inputFBO.Height != _lastHeight)
@@ -202,7 +238,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             using (blur1!.BindForWritingState())
                 inputFBO!.Render();
 
-            var tex = ActivePipelineInstance.GetTexture<XRTexture>(BloomOutputTextureName);
+            var tex = instance.GetTexture<XRTexture>(BloomOutputTextureName);
             tex?.GenerateMipmapsGPU();
 
             BloomScaledPass(blur16!, BloomRect16, 4);
@@ -213,9 +249,16 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
         private void BloomScaledPass(XRQuadFrameBuffer fbo, BoundingRectangle rect, int mipmap)
         {
+            var instance = ActivePipelineInstance;
+            if (instance is null)
+            {
+                LogGuardFailure(nameof(BloomScaledPass), "No active pipeline instance during scaled pass; skipping mip blur.");
+                return;
+            }
+
             using (fbo.BindForWritingState())
             {
-                using (ActivePipelineInstance.RenderState.PushRenderArea(rect))
+                using (instance.RenderState.PushRenderArea(rect))
                 {
                     // Blur this mip by sampling from the next higher-res mip to avoid read/write hazards.
                     int sourceMip = Math.Max(0, mipmap - 1);
@@ -224,15 +267,21 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             }
         }
-        private static void BloomBlur(XRQuadFrameBuffer fbo, int sourceMip, float dir)
+        private static void BloomBlur(XRQuadFrameBuffer? fbo, int sourceMip, float dir)
         {
-            var mat = fbo.Material;
+            if (ReferenceEquals(fbo, null))
+            {
+                LogGuardFailure(nameof(BloomBlur), "Target FBO is null; blur step skipped.");
+                return;
+            }
+
+            var mat = fbo?.Material;
             if (mat is not null)
             {
                 mat.SetFloat(0, dir);
                 mat.SetInt(1, sourceMip);
             }
-            fbo.Render();
+            fbo?.Render();
         }
 
         private static void AttachBloomUniforms(params XRQuadFrameBuffer[] targets)
@@ -243,9 +292,20 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private static void BloomBlurFbo_SettingUniforms(XRRenderProgram program)
         {
-            var camera = ActivePipelineInstance.RenderState.SceneCamera;
+            var instance = ActivePipelineInstance;
+            if (instance is null)
+            {
+                LogGuardFailure(nameof(BloomBlurFbo_SettingUniforms), "No active pipeline instance while setting blur uniforms; using safe defaults.");
+                program.Uniform("Radius", 1.0f);
+                program.Uniform("UseThreshold", false);
+                program.Uniform("BloomThreshold", 1.0f);
+                program.Uniform("BloomSoftKnee", 0.5f);
+                return;
+            }
+
+            var camera = instance.RenderState.SceneCamera;
             var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();
-            if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true)
+            if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true && bloom is not null)
             {
                 bloom.SetBlurPassUniforms(program);
                 return;

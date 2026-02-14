@@ -293,10 +293,8 @@ public unsafe partial class VulkanRenderer
             if (normalized == ImageAspectFlags.None)
                 normalized = supported;
 
-            // Without separateDepthStencilLayouts support, depth-stencil formats that include
-            // stencil must transition both aspects together.
-            if (hasStencil && (normalized & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0)
-                normalized = ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit;
+            if ((normalized & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) == ImageAspectFlags.None)
+                normalized = hasStencil ? ImageAspectFlags.DepthBit : supported;
 
             return normalized;
         }

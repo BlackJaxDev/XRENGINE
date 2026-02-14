@@ -1,5 +1,6 @@
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.UI;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -38,7 +39,7 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {
         base.DescribeRenderPass(context);
-        if (RenderPass < 0)
+        if (RenderPass < 0 && RenderPass != (int)EDefaultRenderPass.PreRender)
             return;
 
         string passName = $"RenderUIBatched_{RenderPass}";

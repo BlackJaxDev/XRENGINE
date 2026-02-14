@@ -272,12 +272,24 @@ public unsafe partial class VulkanRenderer
 
         public void SetScissor(BoundingRectangle region)
         {
-            // Convert bottom-left origin to Vulkan's top-left scissor origin.
-            int yTopLeft = (int)_currentTargetExtent.Height - (region.Y + region.Height);
+            int targetWidth = (int)Math.Max(_currentTargetExtent.Width, 1u);
+            int targetHeight = (int)Math.Max(_currentTargetExtent.Height, 1u);
+
+            int clampedX = Math.Clamp(region.X, 0, targetWidth);
+            int clampedBottomY = Math.Clamp(region.Y, 0, targetHeight);
+
+            int maxWidth = Math.Max(targetWidth - clampedX, 0);
+            int maxHeight = Math.Max(targetHeight - clampedBottomY, 0);
+
+            int clampedWidth = Math.Clamp(Math.Max(region.Width, 0), 0, maxWidth);
+            int clampedHeight = Math.Clamp(Math.Max(region.Height, 0), 0, maxHeight);
+
+            // Convert bottom-left origin to Vulkan's top-left scissor origin after clamping.
+            int yTopLeft = targetHeight - (clampedBottomY + clampedHeight);
             _scissor = new Rect2D
             {
-                Offset = new Offset2D(region.X, yTopLeft),
-                Extent = new Extent2D((uint)Math.Max(region.Width, 0), (uint)Math.Max(region.Height, 0))
+                Offset = new Offset2D(clampedX, Math.Max(yTopLeft, 0)),
+                Extent = new Extent2D((uint)clampedWidth, (uint)clampedHeight)
             };
         }
 
@@ -448,6 +460,7 @@ public unsafe partial class VulkanRenderer
     internal readonly record struct FrameOpContext(
         int PipelineIdentity,
         int ViewportIdentity,
+        XRRenderPipelineInstance? PipelineInstance,
         RenderResourceRegistry? ResourceRegistry,
         IReadOnlyCollection<RenderPassMetadata>? PassMetadata)
     {
@@ -461,6 +474,7 @@ public unsafe partial class VulkanRenderer
         return new FrameOpContext(
             pipeline?.GetHashCode() ?? 0,
             viewport?.GetHashCode() ?? 0,
+            pipeline,
             pipeline?.Resources,
             pipeline?.Pipeline?.PassMetadata);
     }
@@ -627,8 +641,8 @@ public unsafe partial class VulkanRenderer
                 : (_queueOverlapFrameDeltaEmaMs * 0.85) + (frameDeltaMs * 0.15);
         }
 
-        bool hasComputeCandidates = metrics.ComputePassCount >= 2 && metrics.OverlapCandidatePassCount >= 1;
-        bool hasTransferCandidates = metrics.TransferUsageCount >= 4;
+        bool hasComputeCandidates = metrics.ComputePassCount >= 1;
+        bool hasTransferCandidates = metrics.TransferUsageCount >= 2;
 
         EVulkanQueueOverlapMode desiredMode = profile switch
         {
@@ -642,13 +656,13 @@ public unsafe partial class VulkanRenderer
         if (_queueOverlapModeStartFrameDeltaMs < 0.0 && hasFrameDelta)
             _queueOverlapModeStartFrameDeltaMs = metrics.FrameDelta.TotalMilliseconds;
 
-        bool transferCostHealthy = metrics.TransferCost <= 768;
+        bool transferCostHealthy = metrics.TransferCost <= 1024;
         bool frameDeltaHealthy = _queueOverlapFrameDeltaEmaMs < 0.0 || _queueOverlapFrameDeltaEmaMs <= 40.0;
 
         if (desiredMode > _autoQueueOverlapMode && transferCostHealthy && frameDeltaHealthy)
         {
             _queueOverlapPromotionStabilityFrames++;
-            int threshold = _autoQueueOverlapMode == EVulkanQueueOverlapMode.GraphicsOnly ? 24 : 48;
+            int threshold = _autoQueueOverlapMode == EVulkanQueueOverlapMode.GraphicsOnly ? 8 : 16;
             if (_queueOverlapPromotionStabilityFrames >= threshold)
             {
                 _autoQueueOverlapMode = _autoQueueOverlapMode == EVulkanQueueOverlapMode.GraphicsOnly
@@ -835,6 +849,13 @@ public unsafe partial class VulkanRenderer
 
             if (currentPassDefined)
                 return currentPassIndex;
+
+            if (hasMetadata)
+            {
+                const int preRenderPass = (int)EDefaultRenderPass.PreRender;
+                if (passMetadata!.Any(m => m.PassIndex == preRenderPass))
+                    return preRenderPass;
+            }
         }
 
         int fallback = ResolveFallbackPassIndex(opName, passMetadata);

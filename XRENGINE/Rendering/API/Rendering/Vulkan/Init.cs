@@ -35,6 +35,9 @@ namespace XREngine.Rendering.Vulkan
 
         public override void CleanUp()
         {
+            if (device.Handle != 0)
+                DeviceWaitIdle();
+
             DestroyAutoExposureComputeResources();
             DisposeImGuiResources();
             DestroyAllSwapChainObjects();

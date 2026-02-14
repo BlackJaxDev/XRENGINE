@@ -206,6 +206,7 @@ public unsafe partial class VulkanRenderer
 		private XRRenderProgram? _generatedProgram;
 		private VertexInputBindingDescription[] _vertexBindings = [];
 		private VertexInputAttributeDescription[] _vertexAttributes = [];
+		private readonly Dictionary<uint, VkDataBuffer> _vertexBuffersByBinding = new();
 		private bool _buffersDirty = true;
 		private bool _pipelineDirty = true;
 		private bool _meshDirty = true;
@@ -582,6 +583,7 @@ public unsafe partial class VulkanRenderer
 		{
 			List<VertexInputBindingDescription> bindings = [];
 			List<VertexInputAttributeDescription> attributes = [];
+			_vertexBuffersByBinding.Clear();
 
 			uint nextBinding = 0;
 			uint nextLocation = 0;
@@ -598,6 +600,7 @@ public unsafe partial class VulkanRenderer
 					Stride = stride,
 					InputRate = buffer.Data.InstanceDivisor > 0 ? VertexInputRate.Instance : VertexInputRate.Vertex
 				});
+				_vertexBuffersByBinding[binding] = buffer;
 
 				if (interleaved)
 				{
@@ -837,32 +840,6 @@ public unsafe partial class VulkanRenderer
 			MeshRenderer.PushBoneMatricesToGPU();
 			MeshRenderer.PushBlendshapeWeightsToGPU();
 
-			if (_vertexBindings.Length > 0)
-			{
-				var sortedBindings = _vertexBindings.OrderBy(b => b.Binding).ToArray();
-				var resolvedBuffers = new List<(uint Binding, VkBufferHandle Buffer)>();
-				bool hasMissingVertexBinding = false;
-
-				for (int i = 0; i < sortedBindings.Length; i++)
-				{
-					uint binding = sortedBindings[i].Binding;
-					var buffer = _bufferCache.Values.FirstOrDefault(b => (b.Data.BindingIndexOverride ?? binding) == binding);
-					if (buffer?.BufferHandle is { } handle)
-						resolvedBuffers.Add((binding, handle));
-					else
-						hasMissingVertexBinding = true;
-				}
-
-				if (hasMissingVertexBinding)
-				{
-					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because one or more required vertex buffers are not bound.");
-					return;
-				}
-
-				foreach (var (binding, buffer) in resolvedBuffers)
-					Renderer.BindVertexBuffersTracked(commandBuffer, binding, [buffer], [0UL]);
-			}
-
 			bool uniformsNotified = false;
 
 			bool DrawIndexed(VkDataBuffer? indexBuffer, IndexSize size, PrimitiveTopology topology, Action<uint> onStats)
@@ -885,13 +862,17 @@ public unsafe partial class VulkanRenderer
 
 				Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
+				if (!BindVertexBuffersForCurrentPipeline(commandBuffer))
+					return false;
+
 				if (!uniformsNotified && _program?.Data is { } programData)
 				{
 					MeshRenderer.OnSettingUniforms(programData, programData);
 					uniformsNotified = true;
 				}
 
-				BindDescriptorsIfAvailable(commandBuffer, material, drawCopy);
+				if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy))
+					return false;
 
 				Renderer.BindIndexBufferTracked(commandBuffer, indexHandle, 0, ToVkIndexType(size));
 				Api!.CmdDrawIndexed(commandBuffer, indexCount, drawInstances, 0, 0, 0);
@@ -913,13 +894,17 @@ public unsafe partial class VulkanRenderer
 				{
 					Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
+					if (!BindVertexBuffersForCurrentPipeline(commandBuffer))
+						return;
+
 					if (!uniformsNotified && _program?.Data is { } programData)
 					{
 						MeshRenderer.OnSettingUniforms(programData, programData);
 						uniformsNotified = true;
 					}
 
-					BindDescriptorsIfAvailable(commandBuffer, material, drawCopy);
+					if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy))
+						return;
 
 					Api!.CmdDraw(commandBuffer, vertexCount, drawInstances, 0, 0);
 					Engine.Rendering.Stats.IncrementDrawCalls();
@@ -928,10 +913,40 @@ public unsafe partial class VulkanRenderer
 			}
 		}
 
-		private void BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw)
+		private bool BindVertexBuffersForCurrentPipeline(CommandBuffer commandBuffer)
+		{
+			if (_vertexBindings.Length == 0)
+				return true;
+
+			foreach (VertexInputBindingDescription binding in _vertexBindings.OrderBy(b => b.Binding))
+			{
+				if (!_vertexBuffersByBinding.TryGetValue(binding.Binding, out VkDataBuffer? sourceBuffer))
+				{
+					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} has no backing buffer.");
+					return false;
+				}
+
+				sourceBuffer.Generate();
+				if (sourceBuffer.BufferHandle is not { } handle || handle.Handle == 0)
+				{
+					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} buffer is not allocated.");
+					return false;
+				}
+
+				Renderer.BindVertexBuffersTracked(commandBuffer, binding.Binding, [handle], [0UL]);
+			}
+
+			return true;
+		}
+
+		private bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw)
 		{
 			if (_program is null)
-				return;
+				return true;
+
+			bool requiresDescriptors = _program.DescriptorSetLayouts.Count > 0 && _program.DescriptorBindings.Count > 0;
+			if (!requiresDescriptors)
+				return true;
 
 			int imageIndex = ResolveCommandBufferIndex(commandBuffer);
 			if (imageIndex < 0)
@@ -939,13 +954,13 @@ public unsafe partial class VulkanRenderer
 
 			if (Renderer.GetOrCreateAPIRenderObject(material, generateNow: true) is VkMaterial vkMaterial &&
 				vkMaterial.TryBindDescriptorSets(commandBuffer, _program, imageIndex))
-				return;
+				return true;
 
 			if (!EnsureDescriptorSets(material))
-				return;
+				return false;
 
 			if (_descriptorSets is null || _descriptorSets.Length == 0)
-				return;
+				return false;
 
 			if (imageIndex >= _descriptorSets.Length)
 				imageIndex = 0;
@@ -955,9 +970,10 @@ public unsafe partial class VulkanRenderer
 
 			DescriptorSet[] sets = _descriptorSets[imageIndex];
 			if (sets.Length == 0)
-				return;
+				return false;
 
 			Renderer.BindDescriptorSetsTracked(commandBuffer, PipelineBindPoint.Graphics, _program.PipelineLayout, 0, sets);
+			return true;
 		}
 
 		private ulong ComputeVertexLayoutHash()
@@ -1349,9 +1365,22 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
+			bool requiresSampledUsage = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or DescriptorType.Sampler;
+			if (requiresSampledUsage && (source.DescriptorUsage & ImageUsageFlags.SampledBit) == 0)
+			{
+				WarnOnce($"Texture for descriptor binding '{binding.Name}' is missing VK_IMAGE_USAGE_SAMPLED_BIT.");
+				return false;
+			}
+
+			if (descriptorType == DescriptorType.StorageImage && (source.DescriptorUsage & ImageUsageFlags.StorageBit) == 0)
+			{
+				WarnOnce($"Texture for descriptor binding '{binding.Name}' is missing VK_IMAGE_USAGE_STORAGE_BIT.");
+				return false;
+			}
+
 			imageInfo = new DescriptorImageInfo
 			{
-				ImageLayout = ImageLayout.ShaderReadOnlyOptimal,
+				ImageLayout = descriptorType == DescriptorType.StorageImage ? ImageLayout.General : ImageLayout.ShaderReadOnlyOptimal,
 				ImageView = source.DescriptorView,
 				Sampler = descriptorType == DescriptorType.CombinedImageSampler ? source.DescriptorSampler : default,
 			};

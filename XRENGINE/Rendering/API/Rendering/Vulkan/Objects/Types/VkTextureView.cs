@@ -190,8 +190,8 @@ namespace XREngine.Rendering.Vulkan
                 if (normalized == ImageAspectFlags.None)
                     normalized = supported;
 
-                if (hasStencil && (normalized & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0)
-                    normalized = ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit;
+                if ((normalized & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) == ImageAspectFlags.None)
+                    normalized = hasStencil ? ImageAspectFlags.DepthBit : supported;
 
                 return normalized;
             }

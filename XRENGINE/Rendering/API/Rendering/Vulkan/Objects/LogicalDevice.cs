@@ -59,6 +59,7 @@ public unsafe partial class VulkanRenderer
         _supportsRuntimeDescriptorArray = false;
         _supportsDescriptorBindingPartiallyBound = false;
         _supportsDescriptorBindingUpdateAfterBind = false;
+        _supportsDescriptorBindingStorageImageUpdateAfterBind = false;
 
         PhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures = new()
         {
@@ -76,7 +77,9 @@ public unsafe partial class VulkanRenderer
 
         _supportsRuntimeDescriptorArray = descriptorIndexingFeatures.RuntimeDescriptorArray;
         _supportsDescriptorBindingPartiallyBound = descriptorIndexingFeatures.DescriptorBindingPartiallyBound;
+        _supportsDescriptorBindingStorageImageUpdateAfterBind = descriptorIndexingFeatures.DescriptorBindingStorageImageUpdateAfterBind;
         _supportsDescriptorBindingUpdateAfterBind = descriptorIndexingFeatures.DescriptorBindingSampledImageUpdateAfterBind ||
+            descriptorIndexingFeatures.DescriptorBindingStorageImageUpdateAfterBind ||
             descriptorIndexingFeatures.DescriptorBindingStorageBufferUpdateAfterBind ||
             descriptorIndexingFeatures.DescriptorBindingUniformBufferUpdateAfterBind;
     }
@@ -407,6 +410,7 @@ public unsafe partial class VulkanRenderer
             RuntimeDescriptorArray = enableDescriptorIndexing,
             DescriptorBindingPartiallyBound = enableDescriptorIndexing,
             DescriptorBindingSampledImageUpdateAfterBind = enableDescriptorIndexing,
+            DescriptorBindingStorageImageUpdateAfterBind = enableDescriptorIndexing && _supportsDescriptorBindingStorageImageUpdateAfterBind,
             DescriptorBindingStorageBufferUpdateAfterBind = enableDescriptorIndexing,
             DescriptorBindingUniformBufferUpdateAfterBind = enableDescriptorIndexing,
         };
@@ -547,6 +551,11 @@ public unsafe partial class VulkanRenderer
                 _supportsDescriptorBindingPartiallyBound,
                 _supportsDescriptorBindingUpdateAfterBind);
         }
+            else if (enableDescriptorIndexing && !_supportsDescriptorBindingStorageImageUpdateAfterBind)
+            {
+                Debug.VulkanWarning(
+                "[Vulkan] Descriptor indexing enabled without storage-image update-after-bind support; storage image bindings will not use UPDATE_AFTER_BIND flags.");
+            }
 
             if (!enableShaderDrawParametersFeature && !shaderDrawParametersExtensionEnabled)
             {
