@@ -7,7 +7,10 @@ public unsafe partial class VulkanRenderer
     private RenderPass _renderPass;
 
     private void DestroyRenderPasses()
-        => Api!.DestroyRenderPass(device, _renderPass, null);
+    {
+        UnregisterRenderPass(_renderPass);
+        Api!.DestroyRenderPass(device, _renderPass, null);
+    }
 
     private void CreateRenderPass()
     {
@@ -79,6 +82,8 @@ public unsafe partial class VulkanRenderer
 
         if (Api!.CreateRenderPass(device, ref renderPassInfo, null, out _renderPass) != Result.Success)
             throw new Exception("Failed to create render pass.");
+
+        RegisterRenderPassColorAttachmentCount(_renderPass, 1u);
     }
 
     private (AttachmentLoadOp load, AttachmentStoreOp store) ResolveSwapchainColorAttachmentOps()

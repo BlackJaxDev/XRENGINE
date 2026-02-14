@@ -1501,6 +1501,7 @@ public unsafe partial class VulkanRenderer
             public uint Binding { get; }
             public DescriptorType DescriptorType { get; }
             public uint Count { get; }
+            public string Name { get; private set; }
             public ShaderStageFlags StageFlags { get; private set; }
 
             public DescriptorSetLayoutBindingBuilder(DescriptorBindingInfo info)
@@ -1509,13 +1510,20 @@ public unsafe partial class VulkanRenderer
                 Binding = info.Binding;
                 DescriptorType = info.DescriptorType;
                 Count = Math.Max(info.Count, 1u);
+                Name = string.IsNullOrWhiteSpace(info.Name) ? string.Empty : info.Name;
                 StageFlags = info.StageFlags;
             }
 
             public void Merge(DescriptorBindingInfo info)
             {
                 if (info.DescriptorType != DescriptorType || Math.Max(info.Count, 1u) != Count)
-                    throw new InvalidOperationException($"Conflicting descriptor definitions detected for set {Set}, binding {Binding}.");
+                {
+                    Debug.VulkanWarning($"Ignoring conflicting descriptor definition for set {Set}, binding {Binding}. Existing: {DescriptorType} x{Count}, incoming: {info.DescriptorType} x{Math.Max(info.Count, 1u)}.");
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(Name) && !string.IsNullOrWhiteSpace(info.Name))
+                    Name = info.Name;
 
                 StageFlags |= info.StageFlags;
             }
@@ -1530,7 +1538,7 @@ public unsafe partial class VulkanRenderer
                 };
 
             public DescriptorBindingInfo ToDescriptorBindingInfo()
-                => new(Set, Binding, DescriptorType, StageFlags, Count, string.Empty);
+                => new(Set, Binding, DescriptorType, StageFlags, Count, Name);
         }
 
         private readonly record struct DescriptorLayoutBuildResult(DescriptorSetLayout[] Layouts, List<DescriptorBindingInfo> Bindings, bool RequiresUpdateAfterBind);

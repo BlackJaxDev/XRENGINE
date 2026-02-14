@@ -5,14 +5,14 @@
 // ============================================
 // Vertex Inputs
 // ============================================
-in vec3 Position;
-in vec3 Normal;
-in vec4 Tangent;     // xyz: tangent, w: bitangent sign
-in vec2 TexCoord0;
-in vec2 TexCoord1;
-in vec2 TexCoord2;
-in vec2 TexCoord3;
-in vec4 Color;
+layout(location = 0) in vec3 a_Position;
+layout(location = 1) in vec3 a_Normal;
+layout(location = 2) in vec4 a_Tangent;     // xyz: tangent, w: bitangent sign
+layout(location = 3) in vec2 a_TexCoord0;
+layout(location = 4) in vec2 a_TexCoord1;
+layout(location = 5) in vec2 a_TexCoord2;
+layout(location = 6) in vec2 a_TexCoord3;
+layout(location = 7) in vec4 a_Color;
 
 // ============================================
 // Vertex Outputs
@@ -34,25 +34,25 @@ out vec3 v_ViewDir;
 
 void main() {
     // Transform position
-    vec4 worldPosition = u_ModelMatrix * vec4(Position, 1.0);
+    vec4 worldPosition = u_ModelMatrix * vec4(a_Position, 1.0);
     v_WorldPos = worldPosition.xyz;
-    v_LocalPos = Position;
+    v_LocalPos = a_Position;
     
     // Output clip position
-    gl_Position = u_ModelViewProjectionMatrix * vec4(Position, 1.0);
+    gl_Position = u_ModelViewProjectionMatrix * vec4(a_Position, 1.0);
     
     // Transform normal to world space
     mat3 normalMatrix = mat3(transpose(inverse(u_ModelMatrix)));
-    v_WorldNormal = normalize(normalMatrix * Normal);
-    v_WorldTangent = normalize(normalMatrix * Tangent.xyz);
-    v_TangentSign = Tangent.w;
+    v_WorldNormal = normalize(normalMatrix * a_Normal);
+    v_WorldTangent = normalize(normalMatrix * a_Tangent.xyz);
+    v_TangentSign = a_Tangent.w;
     
     // Pass through UVs
-    v_Uv01 = vec4(TexCoord0, TexCoord1);
-    v_Uv23 = vec4(TexCoord2, TexCoord3);
+    v_Uv01 = vec4(a_TexCoord0, a_TexCoord1);
+    v_Uv23 = vec4(a_TexCoord2, a_TexCoord3);
     
     // Vertex color
-    v_VertexColor = Color;
+    v_VertexColor = a_Color;
     
     // View direction (world space, pointing from surface to camera)
     v_ViewDir = normalize(u_CameraPosition - worldPosition.xyz);

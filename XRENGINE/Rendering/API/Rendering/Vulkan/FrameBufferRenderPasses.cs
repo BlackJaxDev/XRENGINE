@@ -83,6 +83,8 @@ public unsafe partial class VulkanRenderer
             if (Api!.CreateRenderPass(device, ref createInfo, null, out RenderPass renderPass) != Result.Success)
                 throw new Exception("Failed to create framebuffer render pass.");
 
+            RegisterRenderPassColorAttachmentCount(renderPass, (uint)colorRefs.Length);
+
             return renderPass;
         }
     }
@@ -92,7 +94,10 @@ public unsafe partial class VulkanRenderer
         foreach (RenderPass renderPass in _frameBufferRenderPasses.Values)
         {
             if (renderPass.Handle != 0)
+            {
+                UnregisterRenderPass(renderPass);
                 Api!.DestroyRenderPass(device, renderPass, null);
+            }
         }
 
         _frameBufferRenderPasses.Clear();

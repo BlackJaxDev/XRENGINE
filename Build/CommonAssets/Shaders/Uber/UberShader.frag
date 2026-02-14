@@ -21,7 +21,7 @@ in vec3 v_ViewDir;
 // ============================================
 // Fragment Output
 // ============================================
-out vec4 FragColor;
+layout(location = 0) out vec4 FragColor;
 
 // ============================================
 // Internal Data Structures

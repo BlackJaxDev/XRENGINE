@@ -35,6 +35,7 @@ namespace XREngine.Rendering.Vulkan
 
         public override void CleanUp()
         {
+            DestroyAutoExposureComputeResources();
             DisposeImGuiResources();
             DestroyAllSwapChainObjects();
             DestroyDescriptorSetLayout();

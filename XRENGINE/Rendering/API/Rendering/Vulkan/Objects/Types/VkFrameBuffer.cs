@@ -610,7 +610,7 @@ public unsafe partial class VulkanRenderer
         private static FrameBufferAttachmentSignature BuildAttachmentSignature(AttachmentSource source, AttachmentRole role, uint colorIndex)
         {
             bool hasStencil = (source.AspectMask & ImageAspectFlags.StencilBit) != 0;
-            AttachmentLoadOp stencilLoad = hasStencil ? AttachmentLoadOp.Load : AttachmentLoadOp.DontCare;
+            AttachmentLoadOp stencilLoad = AttachmentLoadOp.DontCare;
             AttachmentStoreOp stencilStore = hasStencil ? AttachmentStoreOp.Store : AttachmentStoreOp.DontCare;
             ImageLayout layout = role == AttachmentRole.Color ? ImageLayout.ColorAttachmentOptimal : ImageLayout.DepthStencilAttachmentOptimal;
 
@@ -620,11 +620,11 @@ public unsafe partial class VulkanRenderer
                 source.AspectMask,
                 role,
                 colorIndex,
-                AttachmentLoadOp.Load,
+                AttachmentLoadOp.DontCare,
                 AttachmentStoreOp.Store,
                 stencilLoad,
                 stencilStore,
-                layout,
+                ImageLayout.Undefined,
                 layout);
         }
 

@@ -145,7 +145,7 @@ public unsafe partial class VulkanRenderer
             Format = _swapchainDepthFormat,
             Tiling = ImageTiling.Optimal,
             InitialLayout = ImageLayout.Undefined,
-            Usage = ImageUsageFlags.DepthStencilAttachmentBit | ImageUsageFlags.TransferSrcBit, // TransferSrcBit for depth readback
+            Usage = ImageUsageFlags.DepthStencilAttachmentBit | ImageUsageFlags.SampledBit | ImageUsageFlags.TransferSrcBit, // TransferSrcBit for depth readback
             Samples = SampleCountFlags.Count1Bit,
             SharingMode = SharingMode.Exclusive,
         };

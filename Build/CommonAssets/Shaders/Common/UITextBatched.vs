@@ -36,7 +36,7 @@ uniform mat4 ProjMatrix_VTX;
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
 layout (location = 4) out vec2 FragUV0;
-flat out vec4 InstanceTextColor;
+layout (location = 5) flat out vec4 InstanceTextColor;
 
 out gl_PerVertex
 {

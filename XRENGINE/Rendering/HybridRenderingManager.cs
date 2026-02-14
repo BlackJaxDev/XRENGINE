@@ -24,7 +24,6 @@ namespace XREngine.Rendering
         private const uint IndirectCommandSsboBinding = 7;
         private const uint InstanceTransformSsboBinding = GPUBatchingBindings.InstanceTransformBuffer;
         private const uint InstanceSourceIndexSsboBinding = GPUBatchingBindings.InstanceSourceIndexBuffer;
-        private const uint LegacyCommandBaseInstanceFlag = GPUBatchingLayout.LegacyCommandBaseInstanceFlag;
         private const int IndirectCommandFloatCount = 48;
         private const int IndirectTextGlyphOffsetFloatIndex = 46;
         private const string GlyphTransformsBufferName = "GlyphTransformsBuffer";
@@ -1467,6 +1466,7 @@ namespace XREngine.Rendering
             }
 
             bool useTextVertexPath = TryDetectTextVertexShader(shaderList, out bool includeTextRotations);
+            bool fragmentConsumesTransformId = FragmentConsumesTransformId(shaderList);
             if (useTextVertexPath)
             {
                 GpuDebug(
@@ -1485,8 +1485,8 @@ namespace XREngine.Rendering
             }
 
             XRShader? generatedVertexShader = useTextVertexPath
-                ? CreateGpuIndirectTextVertexShader(includeTextRotations)
-                : CreateGpuIndirectVertexShader(vaoRenderer);
+                ? CreateGpuIndirectTextVertexShader(includeTextRotations, fragmentConsumesTransformId)
+                : CreateGpuIndirectVertexShader(vaoRenderer, fragmentConsumesTransformId);
             if (generatedVertexShader is not null)
                 shaderList.Add(generatedVertexShader);
 
@@ -1509,7 +1509,7 @@ namespace XREngine.Rendering
             return program;
         }
 
-        private XRShader? CreateGpuIndirectVertexShader(XRMeshRenderer? vaoRenderer)
+        private XRShader? CreateGpuIndirectVertexShader(XRMeshRenderer? vaoRenderer, bool emitTransformId)
         {
             // Build a vertex shader compatible with the engine's default fragment shader expectations,
             // but sourcing ModelMatrix from the culled command buffer via gl_BaseInstance.
@@ -1522,7 +1522,6 @@ namespace XREngine.Rendering
             sb.AppendLine($"layout(std430, binding = {InstanceSourceIndexSsboBinding}) buffer InstanceSourceIndexBuffer {{ uint instanceSourceIndex[]; }};");
             sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
             sb.AppendLine("const int INSTANCE_MATRIX_FLOATS = 16;");
-            sb.AppendLine($"const uint LEGACY_BASEINSTANCE_FLAG = {LegacyCommandBaseInstanceFlag}u;");
             sb.AppendLine();
 
             uint location = 0;
@@ -1559,7 +1558,8 @@ namespace XREngine.Rendering
                 sb.AppendLine($"layout(location={12 + i}) out vec4 {string.Format(DefaultVertexShaderGenerator.FragColorName, i)};");
 
             sb.AppendLine($"layout(location=20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
-            sb.AppendLine($"layout(location=21) out float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            if (emitTransformId)
+                sb.AppendLine($"layout(location=21) out float {DefaultVertexShaderGenerator.FragTransformIdName};");
             sb.AppendLine();
 
             sb.AppendLine($"uniform mat4 {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
@@ -1592,19 +1592,17 @@ namespace XREngine.Rendering
             sb.AppendLine();
             sb.AppendLine("uint ResolveCommandIndex(uint rawBaseInstance, uint instanceLinearIndex)");
             sb.AppendLine("{");
-            sb.AppendLine("    uint baseIndex = rawBaseInstance & (~LEGACY_BASEINSTANCE_FLAG);");
-            sb.AppendLine("    bool legacyMode = (rawBaseInstance & LEGACY_BASEINSTANCE_FLAG) != 0u;");
-            sb.AppendLine("    if (!legacyMode && UseInstanceTransformBuffer != 0 && instanceLinearIndex < uint(instanceSourceIndex.length()))");
+            sb.AppendLine("    uint baseIndex = rawBaseInstance;");
+            sb.AppendLine("    if (UseInstanceTransformBuffer != 0 && instanceLinearIndex < uint(instanceSourceIndex.length()))");
             sb.AppendLine("        return instanceSourceIndex[instanceLinearIndex];");
             sb.AppendLine("    return baseIndex;");
             sb.AppendLine("}");
             sb.AppendLine();
             sb.AppendLine("mat4 ResolveModelMatrix(uint rawBaseInstance, uint instanceLinearIndex)");
             sb.AppendLine("{");
-            sb.AppendLine("    uint baseIndex = rawBaseInstance & (~LEGACY_BASEINSTANCE_FLAG);");
-            sb.AppendLine("    bool legacyMode = (rawBaseInstance & LEGACY_BASEINSTANCE_FLAG) != 0u;");
+            sb.AppendLine("    uint baseIndex = rawBaseInstance;");
             sb.AppendLine("    uint instanceCapacity = uint(instanceWorld.length()) / uint(INSTANCE_MATRIX_FLOATS);");
-            sb.AppendLine("    if (!legacyMode && UseInstanceTransformBuffer != 0 && instanceLinearIndex < instanceCapacity)");
+            sb.AppendLine("    if (UseInstanceTransformBuffer != 0 && instanceLinearIndex < instanceCapacity)");
             sb.AppendLine("        return LoadWorldMatrixFromInstances(instanceLinearIndex);");
             sb.AppendLine("    return LoadWorldMatrixFromCommands(baseIndex);");
             sb.AppendLine("}");
@@ -1613,11 +1611,12 @@ namespace XREngine.Rendering
             sb.AppendLine("void main()");
             sb.AppendLine("{");
             sb.AppendLine("    uint rawBaseInstance = uint(gl_BaseInstance);");
-            sb.AppendLine("    uint baseIndex = rawBaseInstance & (~LEGACY_BASEINSTANCE_FLAG);");
+            sb.AppendLine("    uint baseIndex = rawBaseInstance;");
             sb.AppendLine("    uint instanceLinearIndex = baseIndex + uint(gl_InstanceID);");
             sb.AppendLine("    mat4 ModelMatrix = ResolveModelMatrix(rawBaseInstance, instanceLinearIndex);");
             sb.AppendLine("    uint commandIndex = ResolveCommandIndex(rawBaseInstance, instanceLinearIndex);");
-            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(commandIndex);");
+            if (emitTransformId)
+                sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(commandIndex);");
             sb.AppendLine("    vec4 localPos = vec4(Position, 1.0);");
             sb.AppendLine($"    {DefaultVertexShaderGenerator.FragPosLocalName} = localPos.xyz;");
             sb.AppendLine($"    mat4 viewMatrix = {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
@@ -1666,7 +1665,7 @@ namespace XREngine.Rendering
             };
         }
 
-        private XRShader CreateGpuIndirectTextVertexShader(bool includeRotations)
+        private XRShader CreateGpuIndirectTextVertexShader(bool includeRotations, bool emitTransformId)
         {
             var sb = new StringBuilder();
             sb.AppendLine("#version 460");
@@ -1681,14 +1680,14 @@ namespace XREngine.Rendering
                 sb.AppendLine("layout(std430, binding = 2) buffer GlyphRotationsBuffer { float GlyphRotations[]; };");
             sb.AppendLine($"layout(std430, binding = {IndirectCommandSsboBinding}) buffer CulledCommandsBuffer {{ float culled[]; }};");
             sb.AppendLine($"const int COMMAND_FLOATS = {IndirectCommandFloatCount};");
-            sb.AppendLine($"const uint LEGACY_BASEINSTANCE_FLAG = {LegacyCommandBaseInstanceFlag}u;");
             sb.AppendLine();
 
             sb.AppendLine("layout(location = 0) out vec3 FragPos;");
             sb.AppendLine("layout(location = 1) out vec3 FragNorm;");
             sb.AppendLine("layout(location = 4) out vec2 FragUV0;");
             sb.AppendLine($"layout(location = 20) out vec3 {DefaultVertexShaderGenerator.FragPosLocalName};");
-            sb.AppendLine($"layout(location = 21) out float {DefaultVertexShaderGenerator.FragTransformIdName};");
+            if (emitTransformId)
+                sb.AppendLine($"layout(location = 21) out float {DefaultVertexShaderGenerator.FragTransformIdName};");
             sb.AppendLine();
 
             sb.AppendLine($"uniform mat4 {EEngineUniform.ViewMatrix}{DefaultVertexShaderGenerator.VertexUniformSuffix};");
@@ -1708,7 +1707,7 @@ namespace XREngine.Rendering
             sb.AppendLine();
             sb.AppendLine("uint ResolveCommandIndex(uint rawBaseInstance)");
             sb.AppendLine("{");
-            sb.AppendLine("    return rawBaseInstance & (~LEGACY_BASEINSTANCE_FLAG);");
+            sb.AppendLine("    return rawBaseInstance;");
             sb.AppendLine("}");
             sb.AppendLine();
 
@@ -1729,7 +1728,8 @@ namespace XREngine.Rendering
             sb.AppendLine("{");
             sb.AppendLine("    uint commandIndex = ResolveCommandIndex(uint(gl_BaseInstance));");
             sb.AppendLine("    mat4 ModelMatrix = LoadWorldMatrix(commandIndex);");
-            sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(commandIndex);");
+            if (emitTransformId)
+                sb.AppendLine($"    {DefaultVertexShaderGenerator.FragTransformIdName} = uintBitsToFloat(commandIndex);");
             sb.AppendLine("    int cmdBase = int(commandIndex) * COMMAND_FLOATS;");
             sb.AppendLine($"    uint glyphBase = floatBitsToUint(culled[cmdBase + {IndirectTextGlyphOffsetFloatIndex}]);");
             sb.AppendLine("    uint glyphIndex = glyphBase + uint(gl_InstanceID);");
@@ -1785,6 +1785,26 @@ namespace XREngine.Rendering
 
                 includeRotations = source.Contains("GlyphRotationsBuffer", StringComparison.Ordinal);
                 return true;
+            }
+
+            return false;
+        }
+
+        private static bool FragmentConsumesTransformId(IEnumerable<XRShader?> shaders)
+        {
+            foreach (XRShader? shader in shaders)
+            {
+                if (shader is null || shader.Type != EShaderType.Fragment)
+                    continue;
+
+                string? source = shader.Source?.Text;
+                if (string.IsNullOrEmpty(source))
+                    continue;
+
+                if (source.Contains(DefaultVertexShaderGenerator.FragTransformIdName, StringComparison.Ordinal) ||
+                    source.Contains("location = 21", StringComparison.Ordinal) ||
+                    source.Contains("location=21", StringComparison.Ordinal))
+                    return true;
             }
 
             return false;
@@ -1921,7 +1941,7 @@ namespace XREngine.Rendering
                 if (glyphCount == 0)
                     continue;
 
-                uint culledIndex = drawCommand.BaseInstance & ~LegacyCommandBaseInstanceFlag;
+                uint culledIndex = drawCommand.BaseInstance;
                 if (culledIndex >= renderPasses.CulledSceneToRenderBuffer.ElementCount)
                 {
                     GpuWarn(LogCategory.Draw,

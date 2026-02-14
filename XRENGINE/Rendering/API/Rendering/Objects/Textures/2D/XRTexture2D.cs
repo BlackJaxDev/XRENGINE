@@ -632,14 +632,17 @@ namespace XREngine.Rendering
 
         public static Mipmap2D[] GetMipmapsFromImage(MagickImage image)
         {
-            Mipmap2D[] mips = new Mipmap2D[GetSmallestMipmapLevel(image.Width, image.Height)];
+            int mipCount = Math.Max(1, GetSmallestMipmapLevel(image.Width, image.Height) + 1);
+            Mipmap2D[] mips = new Mipmap2D[mipCount];
             mips[0] = new Mipmap2D(image);
             uint w = image.Width;
             uint h = image.Height;
             for (int i = 1; i < mips.Length; ++i)
             {
                 var clone = image.Clone();
-                clone.Resize(w >> i, h >> i);
+                uint mipWidth = Math.Max(1u, w >> i);
+                uint mipHeight = Math.Max(1u, h >> i);
+                clone.Resize(mipWidth, mipHeight);
                 mips[i] = new Mipmap2D(clone as MagickImage);
             }
             return mips;
@@ -819,17 +822,19 @@ namespace XREngine.Rendering
             Mipmap2D[] mips = new Mipmap2D[mipmapCount];
             for (uint i = 0; i < mipmapCount; ++i)
             {
+                uint clampedWidth = Math.Max(1u, width);
+                uint clampedHeight = Math.Max(1u, height);
                 Mipmap2D mipmap = new()
                 {
                     InternalFormat = internalFormat,
                     PixelFormat = format,
                     PixelType = type,
-                    Width = width,
-                    Height = height,
-                    Data = new DataSource(AllocateBytes(width, height, format, type))
+                    Width = clampedWidth,
+                    Height = clampedHeight,
+                    Data = new DataSource(AllocateBytes(clampedWidth, clampedHeight, format, type))
                 };
-                width >>= 1;
-                height >>= 1;
+                width = Math.Max(1u, width >> 1);
+                height = Math.Max(1u, height >> 1);
                 mips[i] = mipmap;
             }
             Mipmaps = mips;
@@ -876,7 +881,9 @@ namespace XREngine.Rendering
             for (int i = 0; i < mipmaps.Length; ++i)
             {
                 var image = mipmaps[i];
-                image?.Resize(width >> i, height >> i);
+                uint mipWidth = Math.Max(1u, width >> i);
+                uint mipHeight = Math.Max(1u, height >> i);
+                image?.Resize(mipWidth, mipHeight);
                 mips[i] = new Mipmap2D(image);
             }
             Mipmaps = mips;

@@ -397,10 +397,27 @@ public unsafe partial class VulkanRenderer
 
         internal void TransitionImageLayout(ImageLayout oldLayout, ImageLayout newLayout)
         {
+            oldLayout = CoerceLayoutForUsage(oldLayout);
+            newLayout = CoerceLayoutForUsage(newLayout);
             AssembleTransitionImageLayout(oldLayout, newLayout, out ImageMemoryBarrier barrier, out PipelineStageFlags src, out PipelineStageFlags dst);
             using var scope = Renderer.NewCommandScope();
             Api!.CmdPipelineBarrier(scope.CommandBuffer, src, dst, 0, 0, null, 0, null, 1, ref barrier);
             _currentImageLayout = newLayout;
+        }
+
+        private ImageLayout CoerceLayoutForUsage(ImageLayout requested)
+        {
+            if (requested != ImageLayout.ShaderReadOnlyOptimal)
+                return requested;
+
+            bool canSample = (Usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0;
+            if (canSample)
+                return requested;
+
+            if ((Usage & ImageUsageFlags.StorageBit) != 0)
+                return ImageLayout.General;
+
+            return ImageLayout.TransferSrcOptimal;
         }
 
         private void AssembleTransitionImageLayout(
