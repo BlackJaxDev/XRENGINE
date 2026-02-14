@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using System;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data;
@@ -15,6 +16,14 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         private static void Log(string message)
             => Debug.Out(EOutputVerbosity.Normal, false, "[AO][SSAO] {0}", message);
+
+        private static void LogGuardFailure(string location, string reason)
+            => Debug.RenderingEvery(
+                $"ResilienceGuard.SSAO.{location}",
+                TimeSpan.FromSeconds(1),
+                "[AO][SSAO][RESILIENCE GUARD TRIGGERED] {0}: {1}",
+                location,
+                reason);
 
         private string SSAOBlurShaderName() => 
             Stereo ? "SSAOBlurStereo.fs" : 
@@ -122,6 +131,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         protected override void Execute()
         {
             var instance = ActivePipelineInstance;
+            if (instance is null)
+            {
+                LogGuardFailure(nameof(Execute), "No active pipeline instance; SSAO pass skipped.");
+                return;
+            }
+
             var state = GetInstanceState(instance);
 
             XRTexture? normalTex = instance.GetTexture<XRTexture>(NormalTextureName);
@@ -138,7 +153,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 transformIdTex is null ||
                 depthStencilTex is null)
             {
-                Log("Skipping execute; required textures missing");
+                LogGuardFailure(
+                    nameof(Execute),
+                    $"Required textures missing (Normal={normalTex is not null}, DepthView={depthViewTex is not null}, Albedo={albedoTex is not null}, RMSE={rmseTex is not null}, TransformId={transformIdTex is not null}, DepthStencil={depthStencilTex is not null}); SSAO pass skipped.");
                 return;
             }
 
@@ -313,22 +330,35 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void SSAOGen_SetUniforms(XRRenderProgram program)
         {
-            var state = GetInstanceState(ActivePipelineInstance);
+            var instance = ActivePipelineInstance;
+            if (instance is null)
+            {
+                LogGuardFailure(nameof(SSAOGen_SetUniforms), "No active pipeline instance while setting uniforms; keeping previous/default uniforms.");
+                return;
+            }
+
+            var state = GetInstanceState(instance);
             program.Uniform("NoiseScale", state.NoiseScale);
             program.Uniform("Samples", Kernel!);
 
-            var rc = ActivePipelineInstance.RenderState.SceneCamera;
+            var rc = instance.RenderState.SceneCamera
+                ?? instance.RenderState.RenderingCamera
+                ?? instance.LastSceneCamera
+                ?? instance.LastRenderingCamera;
             if (rc is null)
+            {
+                LogGuardFailure(nameof(SSAOGen_SetUniforms), "No camera available while setting uniforms (Scene/Rendering/Last all null); SSAO camera uniforms not updated.");
                 return;
+            }
             
             rc.SetUniforms(program);
 
             if (Engine.Rendering.State.IsStereoPass)
-                ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
+                instance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
             rc.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.ScreenSpace);
 
-            var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
+            var region = instance.RenderState.CurrentRenderRegion;
             program.Uniform(EEngineUniform.ScreenWidth.ToString(), region.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToString(), region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);
@@ -386,11 +416,23 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
         {
+            if (instance is null)
+            {
+                LogGuardFailure(nameof(AllocateContainerResources), "Pipeline instance is null; resources not marked dirty.");
+                return;
+            }
+
             GetInstanceState(instance).ResourcesDirty = true;
         }
 
         internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
         {
+            if (instance is null)
+            {
+                LogGuardFailure(nameof(ReleaseContainerResources), "Pipeline instance is null; resources not released.");
+                return;
+            }
+
             if (_instanceStates.TryGetValue(instance, out var state))
             {
                 state.ResourcesDirty = true;

@@ -1054,7 +1054,7 @@ public unsafe partial class VulkanRenderer
                 if (!snapshot.Images.TryGetValue(binding.Binding, out ProgramImageBinding imageBinding))
                     return false;
 
-                if (!TryResolveTextureDescriptor(imageBinding.Texture, includeSampler: false, requiresSampledUsage: false, ImageLayout.General, out imageInfo))
+                if (!TryResolveTextureDescriptor(imageBinding.Texture, includeSampler: false, requiresSampledUsage: false, requiresStorageUsage: true, ImageLayout.General, out imageInfo))
                     return false;
 
                 return true;
@@ -1070,7 +1070,7 @@ public unsafe partial class VulkanRenderer
 
             bool includeSampler = binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler;
             bool requiresSampledUsage = binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler or DescriptorType.SampledImage;
-            return TryResolveTextureDescriptor(texture, includeSampler, requiresSampledUsage, ImageLayout.ShaderReadOnlyOptimal, out imageInfo);
+            return TryResolveTextureDescriptor(texture, includeSampler, requiresSampledUsage, requiresStorageUsage: false, ImageLayout.ShaderReadOnlyOptimal, out imageInfo);
         }
 
         private bool TryResolveComputeTexelBuffer(DescriptorBindingInfo binding, ComputeDispatchSnapshot snapshot, out BufferView texelView)
@@ -1087,7 +1087,7 @@ public unsafe partial class VulkanRenderer
             return TryResolveTexelBufferDescriptor(texture, out texelView);
         }
 
-        private bool TryResolveTextureDescriptor(XRTexture texture, bool includeSampler, bool requiresSampledUsage, ImageLayout layout, out DescriptorImageInfo imageInfo)
+        private bool TryResolveTextureDescriptor(XRTexture texture, bool includeSampler, bool requiresSampledUsage, bool requiresStorageUsage, ImageLayout layout, out DescriptorImageInfo imageInfo)
         {
             imageInfo = default;
             if (texture is null)
@@ -1102,6 +1102,17 @@ public unsafe partial class VulkanRenderer
                     $"Vulkan.Descriptor.NoSampledUsage.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
                     "[Vulkan] Skipping sampled descriptor bind for texture '{0}' (usage={1}) because VK_IMAGE_USAGE_SAMPLED_BIT is not set.",
+                    texture.Name ?? texture.GetDescribingName(),
+                    source.DescriptorUsage);
+                return false;
+            }
+
+            if (requiresStorageUsage && (source.DescriptorUsage & ImageUsageFlags.StorageBit) == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Descriptor.NoStorageUsage.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Skipping storage descriptor bind for texture '{0}' (usage={1}) because VK_IMAGE_USAGE_STORAGE_BIT is not set.",
                     texture.Name ?? texture.GetDescribingName(),
                     source.DescriptorUsage);
                 return false;

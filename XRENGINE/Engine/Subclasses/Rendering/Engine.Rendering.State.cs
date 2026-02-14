@@ -152,6 +152,8 @@ namespace XREngine
                 /// The topmost pipeline is the currently active one.
                 /// </summary>
                 private static Stack<XRRenderPipelineInstance> RenderingPipelineStack { get; } = new();
+                [ThreadStatic]
+                private static XRRenderPipelineInstance? ThreadRenderingPipelineOverride;
                 //private static Stack<XRRenderPipelineInstance> CollectingVisiblePipelineStack { get; } = new();
 
                 /// <summary>
@@ -165,6 +167,17 @@ namespace XREngine
                 {
                     RenderingPipelineStack.Push(pipeline);
                     return StateObject.New(PopRenderingPipeline);
+                }
+
+                /// <summary>
+                /// Pushes a thread-local pipeline override used when rendering work is deferred
+                /// outside the normal pipeline stack scope (e.g., Vulkan command recording).
+                /// </summary>
+                public static StateObject PushRenderingPipelineOverride(XRRenderPipelineInstance? pipeline)
+                {
+                    XRRenderPipelineInstance? previous = ThreadRenderingPipelineOverride;
+                    ThreadRenderingPipelineOverride = pipeline;
+                    return StateObject.New(() => ThreadRenderingPipelineOverride = previous);
                 }
                 //public static StateObject PushCollectingVisiblePipeline(XRRenderPipelineInstance pipeline)
                 //{
@@ -192,7 +205,8 @@ namespace XREngine
                 /// This is the render pipeline that's currently rendering a scene.
                 /// Use this to retrieve FBOs and textures from the render pipeline.
                 /// </summary>
-                public static XRRenderPipelineInstance? CurrentRenderingPipeline => RenderingPipelineStack.TryPeek(out var result) ? result : null;
+                public static XRRenderPipelineInstance? CurrentRenderingPipeline
+                    => RenderingPipelineStack.TryPeek(out var result) ? result : ThreadRenderingPipelineOverride;
 
                 /// <summary>
                 /// Logical resource registry describing textures/FBOs for the active pipeline.

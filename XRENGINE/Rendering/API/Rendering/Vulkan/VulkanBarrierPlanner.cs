@@ -124,7 +124,11 @@ internal sealed class VulkanBarrierPlanner
             if (_lastImageStates.TryGetValue(logicalResource, out PlannedImageState previousState))
             {
                 if (syncEdge is not null)
-                    previousState = PlannedImageState.FromSyncState(syncEdge.ProducerState, usage.ResourceType, group, pass.Stage);
+                {
+                    PlannedImageState syncPreviousState = PlannedImageState.FromSyncState(syncEdge.ProducerState, usage.ResourceType, group, pass.Stage);
+                    if (syncPreviousState.Layout != ImageLayout.Undefined || previousState.Layout == ImageLayout.Undefined)
+                        previousState = syncPreviousState;
+                }
 
                 if (!previousState.Equals(desiredState))
                     plannedBarrier = new PlannedImageBarrier(pass.PassIndex, logicalResource, group, previousState, desiredState, srcQueueFamily, dstQueueFamily);
@@ -473,7 +477,7 @@ internal sealed class VulkanBarrierPlanner
             => stage switch
             {
                 RenderGraphPassStage.Compute => PipelineStageFlags.ComputeShaderBit,
-                RenderGraphPassStage.Transfer => PipelineStageFlags.TransferBit,
+                RenderGraphPassStage.Transfer => PipelineStageFlags.AllCommandsBit,
                 _ => PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit
             };
 
@@ -481,7 +485,7 @@ internal sealed class VulkanBarrierPlanner
             => stage switch
             {
                 RenderGraphPassStage.Compute => PipelineStageFlags.ComputeShaderBit,
-                RenderGraphPassStage.Transfer => PipelineStageFlags.TransferBit,
+                RenderGraphPassStage.Transfer => PipelineStageFlags.AllCommandsBit,
                 _ => PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.VertexShaderBit
             };
 

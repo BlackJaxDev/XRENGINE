@@ -22,6 +22,7 @@ namespace XREngine.Rendering.Vulkan
         private bool _supportsRuntimeDescriptorArray;
         private bool _supportsDescriptorBindingPartiallyBound;
         private bool _supportsDescriptorBindingUpdateAfterBind;
+        private bool _supportsDescriptorBindingStorageImageUpdateAfterBind;
         private NVMemoryDecompression? _nvMemoryDecompression;
         private NVCopyMemoryIndirect? _nvCopyMemoryIndirect;
         private bool _supportsBufferDeviceAddress;

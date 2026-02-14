@@ -193,17 +193,32 @@ public unsafe partial class VulkanRenderer
         if (_supportsDescriptorIndexing && bindings.Length > 0)
         {
             bindingFlags = new DescriptorBindingFlags[bindings.Length];
+            bool hasUpdateAfterBindBinding = false;
             for (int i = 0; i < bindings.Length; i++)
             {
-                bindingFlags[i] = DescriptorBindingFlags.UpdateAfterBindBit | DescriptorBindingFlags.PartiallyBoundBit;
+                DescriptorBindingFlags flagsForBinding = 0;
+
+                if (_supportsDescriptorBindingPartiallyBound)
+                    flagsForBinding |= DescriptorBindingFlags.PartiallyBoundBit;
+
+                if (CanUseUpdateAfterBind(bindings[i].DescriptorType))
+                {
+                    flagsForBinding |= DescriptorBindingFlags.UpdateAfterBindBit;
+                    hasUpdateAfterBindBinding = true;
+                }
+
+                bindingFlags[i] = flagsForBinding;
             }
+
+            usesUpdateAfterBind = hasUpdateAfterBindBinding;
+            flags = hasUpdateAfterBindBinding
+                ? DescriptorSetLayoutCreateFlags.UpdateAfterBindPoolBit
+                : 0;
 
             fixed (DescriptorBindingFlags* bindingFlagsPtr = bindingFlags)
             {
                 bindingFlagsInfo.BindingCount = (uint)bindingFlags.Length;
                 bindingFlagsInfo.PBindingFlags = bindingFlagsPtr;
-                usesUpdateAfterBind = true;
-                flags = DescriptorSetLayoutCreateFlags.UpdateAfterBindPoolBit;
 
                 fixed (DescriptorSetLayoutBinding* bindingsPtr = bindings)
                 {
@@ -238,5 +253,20 @@ public unsafe partial class VulkanRenderer
         }
 
         return true;
+    }
+
+    private bool CanUseUpdateAfterBind(DescriptorType descriptorType)
+    {
+        if (!_supportsDescriptorBindingUpdateAfterBind)
+            return false;
+
+        return descriptorType switch
+        {
+            DescriptorType.SampledImage or DescriptorType.CombinedImageSampler or DescriptorType.Sampler => true,
+            DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic => true,
+            DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic => true,
+            DescriptorType.StorageImage => _supportsDescriptorBindingStorageImageUpdateAfterBind,
+            _ => false,
+        };
     }
 }

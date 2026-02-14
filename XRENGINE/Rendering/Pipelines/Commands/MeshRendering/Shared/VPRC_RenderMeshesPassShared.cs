@@ -1,4 +1,5 @@
 using XREngine.Rendering.RenderGraph;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -75,7 +76,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {
         base.DescribeRenderPass(context);
-        if (RenderPass < 0)
+        if (RenderPass < 0 && RenderPass != (int)EDefaultRenderPass.PreRender)
             return;
 
         string passName = PathIntent switch

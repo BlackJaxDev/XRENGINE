@@ -648,21 +648,21 @@ namespace XREngine.Rendering.Vulkan
             VoidPtr dataPtr,
             bool enableDeviceAddress = false)
         {
-            if (bufferSize == 0)
-                throw new ArgumentException("Buffer size must be greater than zero.", nameof(bufferSize));
+            ulong requestedSize = bufferSize;
+            ulong allocationSize = Math.Max(requestedSize, 1UL);
 
             if (_stagingManager.CanPool(stagingUsage, stagingProps))
-                return _stagingManager.Acquire(this, bufferSize, stagingUsage, stagingProps, dataPtr);
+                return _stagingManager.Acquire(this, allocationSize, stagingUsage, stagingProps, dataPtr);
 
-            (Buffer stagingBuffer, DeviceMemory stagingMemory) = CreateBufferRaw(bufferSize, stagingUsage, stagingProps, enableDeviceAddress);
+            (Buffer stagingBuffer, DeviceMemory stagingMemory) = CreateBufferRaw(allocationSize, stagingUsage, stagingProps, enableDeviceAddress);
 
             // Map the buffer if needed.
-            if (dataPtr != null)
+            if (dataPtr != null && requestedSize > 0)
             {
                 void* mappedPtr = null;
-                if (Api!.MapMemory(device, stagingMemory, 0, bufferSize, 0, &mappedPtr) != Result.Success)
+                if (Api!.MapMemory(device, stagingMemory, 0, allocationSize, 0, &mappedPtr) != Result.Success)
                     throw new Exception("Failed to map Vulkan memory.");
-                Unsafe.CopyBlock(mappedPtr, dataPtr.Pointer, (uint)bufferSize);
+                Unsafe.CopyBlock(mappedPtr, dataPtr.Pointer, (uint)requestedSize);
                 Api.UnmapMemory(device, stagingMemory);
             }
 

@@ -646,6 +646,19 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
+                bool requiresSampledUsage = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or DescriptorType.Sampler;
+                if (requiresSampledUsage && (source.DescriptorUsage & ImageUsageFlags.SampledBit) == 0)
+                {
+                    WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' is missing VK_IMAGE_USAGE_SAMPLED_BIT for descriptor type '{descriptorType}'.");
+                    return false;
+                }
+
+                if (descriptorType == DescriptorType.StorageImage && (source.DescriptorUsage & ImageUsageFlags.StorageBit) == 0)
+                {
+                    WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' is missing VK_IMAGE_USAGE_STORAGE_BIT for storage image binding.");
+                    return false;
+                }
+
                 imageInfo = new DescriptorImageInfo
                 {
                     ImageLayout = layout,

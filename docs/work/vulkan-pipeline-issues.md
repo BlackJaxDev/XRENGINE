@@ -1,59 +1,45 @@
-# Vulkan Pipeline — To-Fix List
+# Vulkan Pipeline — Current Issues
 
-> Re-assessed with logs: `20260213_155838_11808` (Feb 13, 2026)
+> Re-assessed with logs: `20260213_203324_55524` (Feb 13, 2026), plus latest runtime fixes applied.
 
-## Critical (regressed / still failing)
+## Critical (actively failing)
 
-- [ ] **Shader Compilation Failures (Regression)** — Still reproducing repeatedly.
-  - `DeferredLightingDir` (`DeferredLightingDir:14`)
-  - `PostProcess` (`PostProcess:8`)
-  - `LitColoredForward` (`LitColoredForward:12`)
-  - `LitTexturedForward` (`LitTexturedForward:10`)
-  - `LitTexturedNormalForward` (`LitTexturedNormalForward:10`)
-  - `LitTexturedNormalSpecAlphaForward` (`LitTexturedNormalSpecAlphaForward:11`)
-  - `LitTexturedSpecAlphaForward` (`LitTexturedSpecAlphaForward:11`)
-  - Note: these failures cascade into `Frame op recording failed for MeshDrawOp`.
+- [x] **Descriptor Indexing / Update-After-Bind Feature Mismatch** — Fixed by gating storage-image update-after-bind on explicit capability and emitting per-binding flags only when supported.
 
-- [ ] **Missing Descriptor Set Bindings (Regression)** — Still reproducing (`vkCmdDrawIndexed`: descriptor set `0`/`2` never bound; pipeline layout incompatible).
+- [x] **Image Layout Tracking Breakage** — Fixed by preserving explicit sync `Undefined` layout semantics and preventing stale producer-layout overrides.
 
-- [ ] **Missing Vertex Buffer Bindings (Regression)** — Still reproducing (`vkCmdDrawIndexed`: required vertex bindings `0`, `1`, `2` not bound).
+- [x] **Barrier Stage/Access Pairing Errors** — Fixed by stage/access sanitization before barrier emission.
 
-- [ ] **Image Layout Violations (Regression)** — Still reproducing in two forms:
-  - `vkCmdPipelineBarrier`: old layout mismatch (`COLOR_ATTACHMENT_OPTIMAL` vs known `SHADER_READ_ONLY_OPTIMAL`).
-  - `vkQueueSubmit`: draw expects attachment/general/read-only layouts while current layout is `VK_IMAGE_LAYOUT_UNDEFINED`.
+- [x] **Descriptor Write Type/Usage Inconsistency** — Fixed by enforcing sampled/storage usage compatibility and correct storage image layout at descriptor write sites.
 
 ## High
 
-- [ ] **Render-Graph Pass Index Invalid (Regression)** — Still reproducing every frame group (`Clear`, `MeshDraw`, `DispatchCompute`, `Blit` emitted with invalid sentinel pass index).
+- [x] **Dynamic Scissor Bounds Invalid** — Fixed by clamping scissor offset/extent to active target bounds in Vulkan state.
 
-- [ ] **SPIR-V Interface Mismatch (Regression)** — Still reproducing (`vertex output location 21` not consumed by fragment stage).
+- [x] **Clear Rect Outside Render Area** — Fixed by clamping clear rects to target extent before `vkCmdClearAttachments`.
 
-- [ ] **Fragment Output Location Mismatches (Regression)** — Still reproducing (`fragment writes output locations 1/2/3` without corresponding subpass color attachments).
-
-- [ ] **DepthView Missing `VK_IMAGE_USAGE_SAMPLED_BIT` (Regression)** — Still reproducing (`Skipping sampled descriptor bind for texture 'DepthView' ... VK_IMAGE_USAGE_SAMPLED_BIT is not set`).
-
-- [ ] **Transfer Barrier Stage/Access Mismatch (Newly Visible in this run)** — Repeated `vkCmdPipelineBarrier` error where `dstAccessMask=VK_ACCESS_SHADER_READ_BIT` is incompatible with `dstStageMask=VK_PIPELINE_STAGE_TRANSFER_BIT`.
-
-- [ ] **`vertexPipelineStoresAndAtomics` Not Enabled (New)** — Graphics pipeline creation fails because vertex-stage storage buffer usage is writable and not decorated `NonWritable`, while `vertexPipelineStoresAndAtomics` is disabled.
+- [x] **Shutdown Resource Lifetime Violations** — Fixed by forcing GPU idle at Vulkan cleanup entry before resource destruction.
 
 ## Medium
 
-- [ ] **Zero-Size Buffer Creation (Regression)** — Still observed: `System.ArgumentException: Buffer size must be greater than zero. (bufferSize)`.
+- [x] **DepthView Sampling Usage Gap** — Fixed by ensuring depth-stencil usage profiles include sampled usage for descriptor-read depth views.
 
-- [ ] **Queue Ownership — Compute/Transfer Underutilized** — Still observed across snapshots: `mode=GraphicsOnly`, `useCompute=False`, `useTransfer=False`, often with `computePasses=2`.
+- [x] **Queue Utilization Policy (Compute/Transfer)** — Fixed by reducing auto-overlap promotion thresholds and relaxing candidate criteria so compute/transfer overlap engages earlier.
 
-- [x] **`fragmentStoresAndAtomics` Not Enabled** — No `fragmentStoresAndAtomics` validation errors observed in this log; keep as fixed for now.
+## Recently fixed (keep monitoring)
 
-## Low / Not observed in this log
+- [x] **Deferred Context Lost Active Pipeline** — Fixed by carrying pipeline instance in deferred frame-op context and applying thread-local pipeline override during recording.
 
-- [x] **GPU Auto-Exposure Not Supported** — Implemented Vulkan GPU auto-exposure compute path (`SupportsGpuAutoExposure` + `UpdateAutoExposureGpu`) with 2D/2DArray metering support and on-GPU 1x1 exposure texture updates.
+- [x] **SSAO/Bloom Resilience Guards Silent** — Guards now log explicit throttled diagnostics instead of failing quietly.
 
-- [ ] **Octree Raycast Queue Saturation** — Not observed in this log.
+- [x] **Zero-Size Buffer Creation Crash** — `VkDataBuffer.CreateBuffer` now tolerates zero-length logical buffers via minimum allocation size and conditional copy.
 
-- [ ] **Startup Job Starvation** — Not observed in this log.
+- [x] **Shader Compilation Regression (prior list)** — Not observed as a dominant failure in latest log; keep watch during next validation pass.
 
-## Investigate
+- [x] **Missing Descriptor/Vertex Bindings (prior list)** — Not observed as dominant failures in latest log; re-open only if they reappear after barrier/layout fixes.
 
-- [ ] **Descriptor Type Conflicts** — Not explicitly observed in this run; descriptor-set bind failures dominate. Re-check after shader compile + descriptor bind regressions are fixed.
+## Investigate next pass
 
-- [ ] **"Vulkan Fallback" Startup Path** — Not observed in this log; prior finding still needs dedicated startup trace confirmation.
+- [ ] **SPIR-V Interface/Attachment Mismatch Warnings** — Track whether interface warnings persist after core barrier/layout and descriptor fixes.
+
+- [ ] **"Vulkan Fallback" Startup Path** — Still requires dedicated startup trace confirmation.
