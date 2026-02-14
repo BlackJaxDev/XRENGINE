@@ -837,9 +837,7 @@ public unsafe partial class VulkanRenderer
                 return currentPassIndex;
         }
 
-        int fallback = hasMetadata
-            ? passMetadata!.OrderBy(m => m.PassIndex).First().PassIndex
-            : 0;
+        int fallback = ResolveFallbackPassIndex(opName, passMetadata);
 
         string reason = passIndex == int.MinValue
             ? "invalid sentinel value"
@@ -854,6 +852,40 @@ public unsafe partial class VulkanRenderer
             fallback);
 
         return fallback;
+    }
+
+    private static int ResolveFallbackPassIndex(string opName, IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+    {
+        if (passMetadata is null || passMetadata.Count == 0)
+            return 0;
+
+        RenderGraphPassStage? preferredStage = ResolvePreferredFallbackStage(opName, passMetadata);
+        if (preferredStage.HasValue)
+        {
+            RenderPassMetadata? preferredPass = passMetadata
+                .Where(m => m.Stage == preferredStage.Value)
+                .OrderBy(m => m.PassIndex)
+                .FirstOrDefault();
+
+            if (preferredPass is not null)
+                return preferredPass.PassIndex;
+        }
+
+        return passMetadata.OrderBy(m => m.PassIndex).First().PassIndex;
+    }
+
+    private static RenderGraphPassStage? ResolvePreferredFallbackStage(string opName, IReadOnlyCollection<RenderPassMetadata> passMetadata)
+    {
+        if (opName.Contains("Compute", StringComparison.OrdinalIgnoreCase))
+            return RenderGraphPassStage.Compute;
+
+        if (opName.Contains("Blit", StringComparison.OrdinalIgnoreCase))
+        {
+            bool hasTransferPass = passMetadata.Any(m => m.Stage == RenderGraphPassStage.Transfer);
+            return hasTransferPass ? RenderGraphPassStage.Transfer : RenderGraphPassStage.Graphics;
+        }
+
+        return RenderGraphPassStage.Graphics;
     }
 
     private void EnsureFrameBufferRegistered(XRFrameBuffer frameBuffer)

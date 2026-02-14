@@ -13,6 +13,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
 using XREngine.Rendering;
+using XREngine.Rendering.Shaders;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -55,6 +56,10 @@ internal readonly record struct AutoUniformRewriteResult(
 
 internal static class VulkanShaderAutoUniforms
 {
+    private static readonly Regex FloatSuffixRegex = new(
+        @"(?<![A-Za-z_])(?<num>(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?)[fF]\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private static readonly Regex UniformStatementRegex = new(
         @"^\s*(?:layout\s*\([^)]*\)\s*)?uniform\s+(?<statement>[^;]+);",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Multiline);
@@ -70,6 +75,14 @@ internal static class VulkanShaderAutoUniforms
     private static readonly Regex LayoutQualifierRegex = new(
         @"layout\s*\((?<qualifiers>[^)]*)\)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex OpaqueUniformRegex = new(
+        @"^\s*(?<layout>layout\s*\([^)]*\)\s*)?uniform\s+(?<type>[A-Za-z_][A-Za-z0-9_]*)\s+(?<declaration>[^;{]+);",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Multiline);
+
+    private static readonly Regex StructDeclarationRegex = new(
+        @"\bstruct\s+[A-Za-z_][A-Za-z0-9_]*\s*\{[\s\S]*?\};",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly HashSet<string> OpaqueTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -142,6 +155,16 @@ internal static class VulkanShaderAutoUniforms
         if (string.IsNullOrWhiteSpace(source))
             return new AutoUniformRewriteResult(source, null);
 
+        source = ApplyVulkanSourceFixups(source);
+
+        bool enableAutoUniformRewrite = !string.Equals(
+            Environment.GetEnvironmentVariable("XRE_VK_ENABLE_AUTO_UNIFORM_REWRITE"),
+            "0",
+            StringComparison.Ordinal);
+
+        if (!enableAutoUniformRewrite)
+            return new AutoUniformRewriteResult(RewriteOpaqueUniformBindings(source, shaderType), null);
+
         Dictionary<string, uint> integralConstants = ParseIntegralConstants(source);
 
         List<(string GlslType, string Name, bool IsArray, uint ArrayLength, AutoUniformDefaultValue? DefaultValue, IReadOnlyList<AutoUniformDefaultValue>? DefaultArrayValues)> members = new();
@@ -207,6 +230,7 @@ internal static class VulkanShaderAutoUniforms
 
         output.Append(source, lastIndex, source.Length - lastIndex);
         string rewritten = output.ToString();
+        rewritten = RewriteOpaqueUniformBindings(rewritten, shaderType);
 
         if (members.Count == 0)
             return new AutoUniformRewriteResult(rewritten, null);
@@ -217,8 +241,7 @@ internal static class VulkanShaderAutoUniforms
         if (!TryComputeBlockLayout(members, out var layoutMembers, out uint blockSize))
             return new AutoUniformRewriteResult(source, null);
 
-        uint binding = FindNextBinding(rewritten);
-        uint set = 0;
+        uint binding = Math.Max(FindNextBinding(rewritten), 64u);
 
         foreach (var member in layoutMembers)
         {
@@ -228,13 +251,13 @@ internal static class VulkanShaderAutoUniforms
                 $"{instanceName}.{member.Name}");
         }
 
-        string block = BuildUniformBlock(blockName, instanceName, set, binding, layoutMembers);
-        rewritten = InsertAfterVersion(rewritten, block);
+        string block = BuildUniformBlock(blockName, instanceName, binding, layoutMembers);
+        rewritten = InsertAfterStructOrVersion(rewritten, block);
 
         AutoUniformBlockInfo blockInfo = new(
             blockName,
             instanceName,
-            set,
+            0,
             binding,
             blockSize,
             layoutMembers,
@@ -243,10 +266,10 @@ internal static class VulkanShaderAutoUniforms
         return new AutoUniformRewriteResult(rewritten, blockInfo);
     }
 
-    private static string BuildUniformBlock(string blockName, string instanceName, uint set, uint binding, IReadOnlyList<AutoUniformMember> members)
+    private static string BuildUniformBlock(string blockName, string instanceName, uint binding, IReadOnlyList<AutoUniformMember> members)
     {
         StringBuilder builder = new();
-        builder.AppendLine($"layout(set = {set}, binding = {binding}, std140) uniform {blockName}");
+        builder.AppendLine($"layout(std140, set = {VulkanRenderer.DescriptorSetGlobals}, binding = {binding}) uniform {blockName}");
         builder.AppendLine("{");
         foreach (var member in members)
         {
@@ -283,6 +306,58 @@ internal static class VulkanShaderAutoUniforms
         return builder.ToString();
     }
 
+    private static string InsertAfterStructOrVersion(string source, string block)
+    {
+        int lastStructEnd = -1;
+        foreach (Match match in StructDeclarationRegex.Matches(source))
+        {
+            if (match.Success)
+                lastStructEnd = Math.Max(lastStructEnd, match.Index + match.Length);
+        }
+
+        if (lastStructEnd >= 0)
+        {
+            string prefix = source[..lastStructEnd];
+            string suffix = source[lastStructEnd..];
+            StringBuilder builder = new(source.Length + block.Length + 16);
+            builder.Append(prefix);
+            if (!prefix.EndsWith('\n'))
+                builder.AppendLine();
+            builder.AppendLine(block);
+            if (!suffix.StartsWith('\n') && suffix.Length > 0)
+                builder.AppendLine();
+            builder.Append(suffix);
+            return builder.ToString();
+        }
+
+        return InsertAfterVersion(source, block);
+    }
+
+    private static string InsertAtPreferredLocation(string source, string block, int insertionIndex)
+    {
+        if (insertionIndex >= 0 && insertionIndex <= source.Length)
+        {
+            string prefix = source[..insertionIndex];
+            string suffix = source[insertionIndex..];
+
+            StringBuilder builder = new(source.Length + block.Length + 16);
+            builder.Append(prefix);
+
+            if (!prefix.EndsWith('\n'))
+                builder.AppendLine();
+
+            builder.AppendLine(block);
+
+            if (!suffix.StartsWith('\n') && suffix.Length > 0)
+                builder.AppendLine();
+
+            builder.Append(suffix);
+            return builder.ToString();
+        }
+
+        return InsertAfterVersion(source, block);
+    }
+
     private static bool TryExtractTypeAndDeclarators(string statement, out string glslType, out string declarators)
     {
         glslType = string.Empty;
@@ -307,16 +382,26 @@ internal static class VulkanShaderAutoUniforms
         if (string.IsNullOrWhiteSpace(declarators))
             yield break;
 
-        int depth = 0;
+        int bracketDepth = 0;
+        int parenDepth = 0;
+        int braceDepth = 0;
         int start = 0;
         for (int i = 0; i < declarators.Length; i++)
         {
             char c = declarators[i];
             if (c == '[')
-                depth++;
+                bracketDepth++;
             else if (c == ']')
-                depth = Math.Max(0, depth - 1);
-            else if (c == ',' && depth == 0)
+                bracketDepth = Math.Max(0, bracketDepth - 1);
+            else if (c == '(')
+                parenDepth++;
+            else if (c == ')')
+                parenDepth = Math.Max(0, parenDepth - 1);
+            else if (c == '{')
+                braceDepth++;
+            else if (c == '}')
+                braceDepth = Math.Max(0, braceDepth - 1);
+            else if (c == ',' && bracketDepth == 0 && parenDepth == 0 && braceDepth == 0)
             {
                 if (i > start)
                     yield return declarators[start..i];
@@ -368,12 +453,83 @@ internal static class VulkanShaderAutoUniforms
         return !string.IsNullOrWhiteSpace(name);
     }
 
+    private static string ApplyVulkanSourceFixups(string source)
+    {
+        string rewritten = source.Replace("gl_InstanceID", "gl_InstanceIndex", StringComparison.Ordinal);
+        rewritten = FloatSuffixRegex.Replace(rewritten, "${num}");
+        return rewritten;
+    }
+
+    private static string RewriteOpaqueUniformBindings(string source, EShaderType shaderType)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            return source;
+
+        uint nextBinding = Math.Max(FindNextBinding(source), GetOpaqueBindingBase(shaderType));
+        return OpaqueUniformRegex.Replace(source, match =>
+        {
+            string glslType = match.Groups["type"].Value;
+            if (!IsOpaque(glslType))
+                return match.Value;
+
+            string declaration = match.Groups["declaration"].Value.Trim();
+            string existingLayout = match.Groups["layout"].Value;
+            string layoutPrefix;
+            if (!string.IsNullOrWhiteSpace(existingLayout))
+            {
+                bool hasBinding = existingLayout.Contains("binding", StringComparison.OrdinalIgnoreCase);
+                layoutPrefix = hasBinding
+                    ? EnsureLayoutHasSet(existingLayout, VulkanRenderer.DescriptorSetMaterial)
+                    : $"layout(set = {VulkanRenderer.DescriptorSetMaterial}, binding = {nextBinding++}) ";
+            }
+            else
+            {
+                layoutPrefix = $"layout(set = {VulkanRenderer.DescriptorSetMaterial}, binding = {nextBinding++}) ";
+            }
+
+            return $"{layoutPrefix}uniform {glslType} {declaration};";
+        });
+    }
+
+    private static string EnsureLayoutHasSet(string layout, uint set)
+    {
+        if (layout.Contains("set", StringComparison.OrdinalIgnoreCase))
+            return layout;
+
+        Match layoutMatch = LayoutQualifierRegex.Match(layout);
+        if (!layoutMatch.Success)
+            return layout;
+
+        string qualifiers = layoutMatch.Groups["qualifiers"].Value.Trim();
+        string updatedQualifiers = string.IsNullOrWhiteSpace(qualifiers)
+            ? $"set = {set}"
+            : $"{qualifiers}, set = {set}";
+
+            return LayoutQualifierRegex.Replace(layout, $"layout({updatedQualifiers}) ", 1);
+    }
+
+    private static uint GetOpaqueBindingBase(EShaderType shaderType)
+        => shaderType switch
+        {
+            EShaderType.Fragment => 0u,
+            EShaderType.Vertex => 32u,
+            EShaderType.Geometry => 40u,
+            EShaderType.TessControl => 44u,
+            EShaderType.TessEvaluation => 48u,
+            EShaderType.Compute => 52u,
+            EShaderType.Task => 56u,
+            EShaderType.Mesh => 60u,
+            _ => 32u
+        };
+
     private static bool IsOpaque(string glslType)
     {
         if (OpaqueTypes.Contains(glslType))
             return true;
 
         return glslType.StartsWith("sampler", StringComparison.OrdinalIgnoreCase)
+            || glslType.StartsWith("isampler", StringComparison.OrdinalIgnoreCase)
+            || glslType.StartsWith("usampler", StringComparison.OrdinalIgnoreCase)
             || glslType.StartsWith("image", StringComparison.OrdinalIgnoreCase)
             || glslType.StartsWith("subpass", StringComparison.OrdinalIgnoreCase);
     }
@@ -803,7 +959,9 @@ internal static class VulkanShaderAutoUniforms
                 size = 64;
                 return true;
             default:
-                return false;
+                alignment = 16;
+                size = 64;
+                return true;
         }
     }
 }
@@ -824,6 +982,7 @@ internal static class VulkanShaderCompiler
         entryPoint = "main";
         string source = shader.Source?.Text ?? string.Empty;
         source = ExpandIncludes(source, shader.Source?.FilePath);
+        source = ShaderSnippets.ResolveSnippets(source);
         if (string.IsNullOrWhiteSpace(source))
             throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' does not contain GLSL source code.");
 
@@ -873,6 +1032,17 @@ internal static class VulkanShaderCompiler
             if (status != CompilationStatus.Success)
             {
                 string message = SilkMarshal.PtrToString((nint)ShadercApi.ResultGetErrorMessage(result)) ?? "Unknown error";
+                bool includePreview = string.Equals(
+                    Environment.GetEnvironmentVariable("XRE_VK_DUMP_SHADER_ON_ERROR"),
+                    "1",
+                    StringComparison.Ordinal);
+
+                if (includePreview)
+                {
+                    string preview = BuildSourcePreview(rewrittenSource, 120);
+                    throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' failed to compile: {message}{Environment.NewLine}{preview}");
+                }
+
                 throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' failed to compile: {message}");
             }
 
@@ -932,6 +1102,18 @@ internal static class VulkanShaderCompiler
         return ExpandIncludesRecursive(source, sourceDirectory, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
     }
 
+    private static string BuildSourcePreview(string source, int maxLines)
+    {
+        string[] lines = source.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        int lineCount = Math.Min(lines.Length, Math.Max(1, maxLines));
+        StringBuilder builder = new();
+        builder.AppendLine("--- Rewritten GLSL preview ---");
+        for (int i = 0; i < lineCount; i++)
+            builder.AppendLine($"{i + 1,4}: {lines[i]}");
+
+        return builder.ToString();
+    }
+
     private static string ExpandIncludesRecursive(string source, string? currentDirectory, HashSet<string> includeStack)
     {
         StringBuilder output = new(source.Length + 128);
@@ -979,6 +1161,55 @@ internal static class VulkanShaderCompiler
                 return fromCurrentDirectory;
         }
 
+        string? fromShaderRoots = FindIncludeInShaderRoots(includePath);
+        if (!string.IsNullOrWhiteSpace(fromShaderRoots))
+            return fromShaderRoots;
+
+        return null;
+    }
+
+    private static string? GetEngineShaderRoot()
+        => string.IsNullOrWhiteSpace(Engine.Assets?.EngineAssetsPath)
+            ? null
+            : Path.Combine(Engine.Assets!.EngineAssetsPath, "Shaders");
+
+    private static string? GetGameShaderRoot()
+        => string.IsNullOrWhiteSpace(Engine.Assets?.GameAssetsPath)
+            ? null
+            : Path.Combine(Engine.Assets!.GameAssetsPath, "Shaders");
+
+    private static string? FindIncludeInShaderRoots(string includePath)
+    {
+        if (string.IsNullOrWhiteSpace(includePath))
+            return null;
+
+        bool hasDirectory = includePath.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) >= 0;
+        string?[] roots = [GetEngineShaderRoot(), GetGameShaderRoot()];
+
+        foreach (string? root in roots)
+        {
+            if (string.IsNullOrWhiteSpace(root))
+                continue;
+
+            if (hasDirectory)
+            {
+                string candidate = Path.Combine(root, includePath);
+                if (File.Exists(candidate))
+                    return candidate;
+                continue;
+            }
+
+            try
+            {
+                foreach (string candidate in Directory.EnumerateFiles(root, includePath, SearchOption.AllDirectories))
+                    return candidate;
+            }
+            catch
+            {
+                // Ignore IO errors and continue trying remaining roots.
+            }
+        }
+
         return null;
     }
 }
@@ -986,8 +1217,8 @@ internal static class VulkanShaderCompiler
 internal static class VulkanShaderReflection
 {
     private static readonly Regex LayoutRegex = new(
-        "layout\\s*\\((?<qualifiers>[^)]*)\\)\\s*(?<storage>[a-zA-Z]+)\\s+(?<declaration>[^;{]+)",
-        RegexOptions.Compiled | RegexOptions.Multiline);
+        @"layout\s*\((?<qualifiers>[^)]*)\)\s*(?:(?:readonly|writeonly|coherent|volatile|restrict)\s+)*(?<storage>uniform|buffer)\s+(?<declaration>[^;{]+)",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     private static readonly Regex ArrayRegex = new(@"\\[(?<size>\\d+)\\]", RegexOptions.Compiled);
 

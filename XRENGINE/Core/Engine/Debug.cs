@@ -5,7 +5,10 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace XREngine
 {
@@ -50,6 +53,8 @@ namespace XREngine
     {
         private static readonly ConcurrentDictionary<string, DateTime> RecentMessageCache = new();
         private static readonly ConcurrentDictionary<string, long> RateLimitedMessageCache = new();
+        private static int _exceptionTracingInitialized;
+        [ThreadStatic] private static bool _handlingFirstChanceException;
         public static Queue<(string, DateTime)> Output { get; } = new Queue<(string, DateTime)>();
         public static bool AllowOutput { get; set; } = true;
 
@@ -139,6 +144,117 @@ namespace XREngine
         private static string? _logSessionId;
         private static string? _logsRootDirectory;
         private static string? _logRunDirectory;
+
+        /// <summary>
+        /// Installs debug-time global exception tracing hooks.
+        /// Captures first-chance, unobserved task, and unhandled exceptions into engine logs.
+        /// </summary>
+        public static void InitializeExceptionTracing()
+        {
+#if DEBUG || EDITOR
+            if (Interlocked.Exchange(ref _exceptionTracingInitialized, 1) != 0)
+                return;
+
+            AppDomain.CurrentDomain.FirstChanceException += CurrentDomain_FirstChanceException;
+            AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+            TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
+#endif
+        }
+
+        private static void CurrentDomain_FirstChanceException(object? sender, FirstChanceExceptionEventArgs args)
+        {
+#if DEBUG || EDITOR
+            if (_handlingFirstChanceException)
+                return;
+
+            try
+            {
+                _handlingFirstChanceException = true;
+
+                Exception ex = args.Exception;
+                if (!ShouldTraceFirstChanceException(ex))
+                    return;
+
+                string key = $"firstchance:{ex.GetType().FullName}:{ex.Message}:{GetFirstStackFrame(ex)}";
+                if (!ShouldLogEvery(key, TimeSpan.FromSeconds(2)))
+                    return;
+
+                ELogCategory category = GuessExceptionCategory(ex);
+                LogException(category, ex, "[FirstChance] Exception thrown (may be handled)");
+            }
+            catch
+            {
+                // Never allow diagnostics hooks to interfere with runtime.
+            }
+            finally
+            {
+                _handlingFirstChanceException = false;
+            }
+#endif
+        }
+
+        private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs args)
+        {
+#if DEBUG || EDITOR
+            if (args.ExceptionObject is Exception ex)
+            {
+                ELogCategory category = GuessExceptionCategory(ex);
+                LogException(category, ex, "[UnhandledException] Fatal runtime exception");
+            }
+#endif
+        }
+
+        private static void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs args)
+        {
+#if DEBUG || EDITOR
+            Exception ex = args.Exception;
+            ELogCategory category = GuessExceptionCategory(ex);
+            LogException(category, ex, "[UnobservedTaskException] Background task exception");
+#endif
+        }
+
+        private static bool ShouldTraceFirstChanceException(Exception ex)
+        {
+            if (ex is InvalidOperationException or ArgumentException)
+                return true;
+
+            string? filter = Environment.GetEnvironmentVariable("XRE_FIRST_CHANCE_EXCEPTIONS");
+            if (string.IsNullOrWhiteSpace(filter))
+                return false;
+
+            string token = filter.Trim();
+            if (token == "*")
+                return true;
+
+            string typeName = ex.GetType().FullName ?? ex.GetType().Name;
+            return typeName.Contains(token, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static ELogCategory GuessExceptionCategory(Exception ex)
+        {
+            string? stack = ex.StackTrace;
+            if (!string.IsNullOrWhiteSpace(stack))
+            {
+                if (stack.Contains("OpenGL", StringComparison.OrdinalIgnoreCase))
+                    return ELogCategory.OpenGL;
+                if (stack.Contains("Vulkan", StringComparison.OrdinalIgnoreCase))
+                    return ELogCategory.Vulkan;
+                if (stack.Contains("Rendering", StringComparison.OrdinalIgnoreCase))
+                    return ELogCategory.Rendering;
+            }
+
+            return ELogCategory.General;
+        }
+
+        private static string GetFirstStackFrame(Exception ex)
+        {
+            string? stack = ex.StackTrace;
+            if (string.IsNullOrWhiteSpace(stack))
+                return string.Empty;
+
+            string[] lines = stack.Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries);
+            return lines.Length > 0 ? lines[0].Trim() : string.Empty;
+        }
 
         /// <summary>
         /// Prints a message for debugging purposes.

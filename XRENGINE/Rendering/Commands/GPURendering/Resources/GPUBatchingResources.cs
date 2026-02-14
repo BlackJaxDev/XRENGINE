@@ -54,7 +54,6 @@ namespace XREngine.Rendering.Commands
         public const uint SortKeyUIntCount = 4;
         public const uint BatchRangeUIntCount = 4;
         public const uint InstanceTransformFloatCount = 16;
-        public const uint LegacyCommandBaseInstanceFlag = 0x80000000u;
 
         public static readonly uint SortKeyStride = (uint)Marshal.SizeOf<GPUSortKeyEntry>();
         public static readonly uint BatchRangeStride = (uint)Marshal.SizeOf<GPUBatchRangeEntry>();

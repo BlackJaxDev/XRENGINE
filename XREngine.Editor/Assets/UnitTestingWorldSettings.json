@@ -13,7 +13,7 @@
   "GPURenderDispatch": false,
   "ForceDebugOpaquePipeline": false,
   "BackgroundShader": false,
-  "StaticModelMaterialMode": "ForwardPlusUberShader",
+  "StaticModelMaterialMode": "ForwardPlusTextured",
   "RenderMeshBounds": false,
   "RenderPhysicsDebug": false,
   "VisualizeOctree": false,

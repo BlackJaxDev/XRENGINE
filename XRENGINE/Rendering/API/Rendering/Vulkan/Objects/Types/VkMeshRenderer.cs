@@ -750,7 +750,13 @@ public unsafe partial class VulkanRenderer
 					DstAlphaBlendFactor = draw.DstAlphaBlendFactor,
 				};
 
-				PipelineColorBlendAttachmentState[] blendAttachments = [colorBlendAttachment];
+				uint colorAttachmentCount = Renderer.GetRenderPassColorAttachmentCount(renderPass);
+				PipelineColorBlendAttachmentState[] blendAttachments = colorAttachmentCount == 0
+					? Array.Empty<PipelineColorBlendAttachmentState>()
+					: new PipelineColorBlendAttachmentState[colorAttachmentCount];
+
+				for (int i = 0; i < blendAttachments.Length; i++)
+					blendAttachments[i] = colorBlendAttachment;
 
 				PipelineColorBlendStateCreateInfo colorBlending = new()
 				{
@@ -762,7 +768,7 @@ public unsafe partial class VulkanRenderer
 
 				fixed (PipelineColorBlendAttachmentState* blendPtr = blendAttachments)
 				{
-					colorBlending.PAttachments = blendPtr;
+					colorBlending.PAttachments = blendAttachments.Length > 0 ? blendPtr : null;
 
 					DynamicState[] dynamicStates =
 					[
@@ -834,19 +840,27 @@ public unsafe partial class VulkanRenderer
 			if (_vertexBindings.Length > 0)
 			{
 				var sortedBindings = _vertexBindings.OrderBy(b => b.Binding).ToArray();
-				VkBufferHandle[] buffers = new VkBufferHandle[sortedBindings.Length];
-				ulong[] offsets = new ulong[sortedBindings.Length];
+				var resolvedBuffers = new List<(uint Binding, VkBufferHandle Buffer)>();
+				bool hasMissingVertexBinding = false;
 
 				for (int i = 0; i < sortedBindings.Length; i++)
 				{
 					uint binding = sortedBindings[i].Binding;
 					var buffer = _bufferCache.Values.FirstOrDefault(b => (b.Data.BindingIndexOverride ?? binding) == binding);
 					if (buffer?.BufferHandle is { } handle)
-						buffers[i] = handle;
-					offsets[i] = 0;
+						resolvedBuffers.Add((binding, handle));
+					else
+						hasMissingVertexBinding = true;
 				}
 
-				Renderer.BindVertexBuffersTracked(commandBuffer, 0, buffers, offsets);
+				if (hasMissingVertexBinding)
+				{
+					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because one or more required vertex buffers are not bound.");
+					return;
+				}
+
+				foreach (var (binding, buffer) in resolvedBuffers)
+					Renderer.BindVertexBuffersTracked(commandBuffer, binding, [buffer], [0UL]);
 			}
 
 			bool uniformsNotified = false;
@@ -855,6 +869,12 @@ public unsafe partial class VulkanRenderer
 			{
 				if (indexBuffer?.BufferHandle is not { } indexHandle)
 					return false;
+
+				if (size == IndexSize.Byte && !Renderer.SupportsIndexTypeUint8)
+				{
+					WarnOnce("Skipping indexed draw using byte-sized indices because Vulkan indexTypeUint8 is not enabled.");
+					return false;
+				}
 
 				uint indexCount = indexBuffer.Data.ElementCount;
 				if (indexCount == 0)
@@ -1033,6 +1053,9 @@ public unsafe partial class VulkanRenderer
 				DescriptorPoolCreateInfo poolInfo = new()
 				{
 					SType = StructureType.DescriptorPoolCreateInfo,
+					Flags = _program.DescriptorSetsRequireUpdateAfterBind
+						? DescriptorPoolCreateFlags.UpdateAfterBindBit
+						: 0,
 					PoolSizeCount = (uint)poolSizes.Length,
 					PPoolSizes = poolSizesPtr,
 					MaxSets = (uint)(setCount * frameCount),
@@ -1369,10 +1392,13 @@ public unsafe partial class VulkanRenderer
 			{
 				bufferInfo = default;
 				string name = binding.Name ?? string.Empty;
+				if (string.IsNullOrWhiteSpace(name))
+					return false;
+
 				uint size = GetEngineUniformSize(name);
 				if (size == 0)
 				{
-					WarnOnce($"Descriptor binding '{binding.Name}' could not be matched to an engine uniform.");
+					WarnOnce($"Descriptor binding '{name}' could not be matched to an engine uniform.");
 					return false;
 				}
 
@@ -1482,6 +1508,7 @@ public unsafe partial class VulkanRenderer
 			{
 				buffer = default;
 				memory = default;
+				size = Math.Max(size, 1u);
 
 				BufferCreateInfo bufferInfo = new()
 				{

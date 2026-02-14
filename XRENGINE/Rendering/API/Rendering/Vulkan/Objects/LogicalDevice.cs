@@ -46,7 +46,7 @@ public unsafe partial class VulkanRenderer
 
         foreach (var ext in availableExtensions)
         {
-            string name = SilkMarshal.PtrToString((nint)ext.ExtensionName);
+            string name = SilkMarshal.PtrToString((nint)ext.ExtensionName) ?? string.Empty;
             if (name == extensionName)
                 return true;
         }
@@ -216,6 +216,46 @@ public unsafe partial class VulkanRenderer
         featureSupported = dynamicRenderingFeatures.DynamicRendering && (promotedToCore || extensionEnabled);
     }
 
+    private unsafe void QueryShaderDrawParametersCapabilities(out bool featureSupported)
+    {
+        featureSupported = false;
+
+        PhysicalDeviceVulkan11Features vulkan11Features = new()
+        {
+            SType = StructureType.PhysicalDeviceVulkan11Features,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &vulkan11Features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = vulkan11Features.ShaderDrawParameters;
+    }
+
+    private unsafe void QueryIndexTypeUint8Capabilities(out bool featureSupported)
+    {
+        featureSupported = false;
+
+        PhysicalDeviceIndexTypeUint8FeaturesEXT indexTypeUint8Features = new()
+        {
+            SType = StructureType.PhysicalDeviceIndexTypeUint8FeaturesExt,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &indexTypeUint8Features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = indexTypeUint8Features.IndexTypeUint8;
+    }
+
     /// <summary>
     /// Creates a logical device interface to the physical device with specific 
     /// queue families and extensions.
@@ -271,6 +311,12 @@ public unsafe partial class VulkanRenderer
         {
             deviceFeatures.SamplerAnisotropy = Vk.True;
             _supportsAnisotropy = true;
+        }
+
+        if (supportedFeatures.FragmentStoresAndAtomics)
+        {
+            deviceFeatures.FragmentStoresAndAtomics = Vk.True;
+            _supportsFragmentStoresAndAtomics = true;
         }
 
         // Build the list of extensions to enable (required + supported optional)
@@ -340,6 +386,16 @@ public unsafe partial class VulkanRenderer
             out bool dynamicRenderingPromotedToCore);
         bool enableDynamicRenderingFeature = dynamicRenderingFeatureSupported;
 
+        bool shaderDrawParametersExtensionEnabled = extensionsArray.Contains("VK_KHR_shader_draw_parameters");
+        QueryShaderDrawParametersCapabilities(out bool shaderDrawParametersFeatureSupported);
+        bool enableShaderDrawParametersFeature = shaderDrawParametersFeatureSupported;
+
+        bool indexTypeUint8ExtensionEnabled =
+            extensionsArray.Contains("VK_EXT_index_type_uint8") ||
+            extensionsArray.Contains("VK_KHR_index_type_uint8");
+        QueryIndexTypeUint8Capabilities(out bool indexTypeUint8FeatureSupported);
+        bool enableIndexTypeUint8Feature = indexTypeUint8FeatureSupported;
+
         _nvMemoryDecompressionMethods = enableNvMemoryDecompression ? nvMemoryDecompressionMethods : 0;
         _nvMaxMemoryDecompressionIndirectCount = enableNvMemoryDecompression ? nvMaxDecompressionIndirectCount : 0;
         _nvCopyMemoryIndirectSupportedQueues = enableNvCopyMemoryIndirect ? nvCopyMemoryIndirectSupportedQueues : 0;
@@ -383,6 +439,20 @@ public unsafe partial class VulkanRenderer
             DynamicRendering = enableDynamicRenderingFeature,
         };
 
+        PhysicalDeviceVulkan11Features vulkan11FeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceVulkan11Features,
+            PNext = null,
+            ShaderDrawParameters = enableShaderDrawParametersFeature,
+        };
+
+        PhysicalDeviceIndexTypeUint8FeaturesEXT indexTypeUint8FeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceIndexTypeUint8FeaturesExt,
+            PNext = null,
+            IndexTypeUint8 = enableIndexTypeUint8Feature,
+        };
+
         void* enabledFeaturesPNext = null;
         if (enableDescriptorIndexing)
         {
@@ -412,6 +482,18 @@ public unsafe partial class VulkanRenderer
         {
             dynamicRenderingFeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &dynamicRenderingFeatureEnable;
+        }
+
+        if (enableShaderDrawParametersFeature)
+        {
+            vulkan11FeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &vulkan11FeatureEnable;
+        }
+
+        if (enableIndexTypeUint8Feature)
+        {
+            indexTypeUint8FeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &indexTypeUint8FeatureEnable;
         }
 
         PhysicalDeviceFeatures2 featureChain = new()
@@ -454,6 +536,7 @@ public unsafe partial class VulkanRenderer
         _supportsNvCopyMemoryIndirect = enableNvCopyMemoryIndirect;
         _supportsBufferDeviceAddress = enableBufferDeviceAddress;
         _supportsDynamicRendering = dynamicRenderingFeatureSupported;
+        _supportsIndexTypeUint8 = enableIndexTypeUint8Feature;
 
         if (descriptorIndexingExtensionEnabled && !enableDescriptorIndexing)
         {
@@ -464,6 +547,14 @@ public unsafe partial class VulkanRenderer
                 _supportsDescriptorBindingPartiallyBound,
                 _supportsDescriptorBindingUpdateAfterBind);
         }
+
+            if (!enableShaderDrawParametersFeature && !shaderDrawParametersExtensionEnabled)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Draw parameters support unavailable (shaderDrawParametersFeature={0}, extensionEnabled={1}). Shaders using gl_BaseVertex/gl_BaseInstance may fail.",
+                    shaderDrawParametersFeatureSupported,
+                    shaderDrawParametersExtensionEnabled);
+            }
 
             if (nvMemoryDecompressionExtensionEnabled && !enableNvMemoryDecompression)
             {
@@ -485,6 +576,14 @@ public unsafe partial class VulkanRenderer
             {
                 Debug.VulkanWarning(
                     "[Vulkan] VK_NV_copy_memory_indirect enabled but buffer device address is unavailable; indirect copy commands will be disabled.");
+            }
+
+            if (!enableIndexTypeUint8Feature)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] UINT8 index type unsupported or disabled (featureSupported={0}, extensionEnabled={1}). Byte-sized index buffers will be skipped.",
+                    indexTypeUint8FeatureSupported,
+                    indexTypeUint8ExtensionEnabled);
             }
 
         // Load optional extensions

@@ -12,7 +12,7 @@ public unsafe partial class VulkanRenderer
         public Device Device => Renderer.device;
         public PhysicalDevice PhysicalDevice => Renderer._physicalDevice;
 
-        private readonly List<VkObject<T>?> _objectCache = [];
+        private static readonly List<VkObject<T>?> _objectCache = [];
         public IReadOnlyList<VkObject<T>?> ObjectCache => _objectCache;
 
         public override string GetDescribingName()
@@ -22,35 +22,45 @@ public unsafe partial class VulkanRenderer
 
         public uint CacheObject(VkObject<T> obj)
         {
-            //Find first null slot
-            for (int i = 0; i < _objectCache.Count; i++)
+            lock (_objectCache)
             {
-                if (_objectCache[i] is null)
+                //Find first null slot
+                for (int i = 0; i < _objectCache.Count; i++)
                 {
-                    _objectCache[i] = obj;
-                    return (uint)i + 1u;
+                    if (_objectCache[i] is null)
+                    {
+                        _objectCache[i] = obj;
+                        return (uint)i + 1u;
+                    }
                 }
+
+                //No null slots, add to end
+                _objectCache.Add(obj);
+                return (uint)_objectCache.Count;
             }
-            //No null slots, add to end
-            _objectCache.Add(obj);
-            return (uint)_objectCache.Count;
         }
         public VkObject<T>? GetCachedObject(uint id)
         {
-            if (id == 0 || id > _objectCache.Count)
-                return null;
+            lock (_objectCache)
+            {
+                if (id == 0 || id > _objectCache.Count)
+                    return null;
 
-            return _objectCache[(int)id - 1];
+                return _objectCache[(int)id - 1];
+            }
         }
         public void RemoveCachedObject(uint id)
         {
-            if (id == 0 || id > _objectCache.Count)
-                return;
+            lock (_objectCache)
+            {
+                if (id == 0 || id > _objectCache.Count)
+                    return;
 
-            if (_objectCache.Count == id)
-                _objectCache.RemoveAt((int)id - 1);
-            else
-                _objectCache[(int)id - 1] = null;
+                if (_objectCache.Count == id)
+                    _objectCache.RemoveAt((int)id - 1);
+                else
+                    _objectCache[(int)id - 1] = null;
+            }
         }
 
         //We want to set the property instead of the field here just in case subclasses override it.
@@ -94,18 +104,23 @@ public unsafe partial class VulkanRenderer
         {
             base.PostGenerated();
 
-            if (_cache.ContainsKey(BindingId))
+            lock (_cache)
             {
-                //Shouldn't happen
-                Debug.VulkanWarning($"Vulkan object with binding id {BindingId} already exists in cache.");
-                _cache[BindingId] = this;
+                if (_cache.ContainsKey(BindingId))
+                {
+                    //Shouldn't happen
+                    Debug.VulkanWarning($"Vulkan object with binding id {BindingId} already exists in cache.");
+                    _cache[BindingId] = this;
+                }
+                else
+                    _cache.Add(BindingId, this);
             }
-            else
-                _cache.Add(BindingId, this);
         }
         protected internal override void PostDeleted()
         {
-            _cache.Remove(BindingId);
+            lock (_cache)
+                _cache.Remove(BindingId);
+
             base.PostDeleted();
         }
         

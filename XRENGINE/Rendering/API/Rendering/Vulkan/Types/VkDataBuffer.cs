@@ -675,6 +675,8 @@ namespace XREngine.Rendering.Vulkan
             MemoryPropertyFlags properties,
             bool enableDeviceAddress = false)
         {
+            bufferSize = Math.Max(bufferSize, 1UL);
+
             if (enableDeviceAddress)
                 usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 

@@ -182,6 +182,8 @@ namespace XREngine
             _editorPreferences = new EditorPreferences();
             UpdateEffectiveEditorPreferences();
 
+            Debug.InitializeExceptionTracing();
+
             // Wire up timer events for deferred processing
             Time.Timer.PostUpdateFrame += Timer_PostUpdateFrame;
 

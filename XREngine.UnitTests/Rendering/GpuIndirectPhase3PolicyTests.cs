@@ -43,7 +43,7 @@ public sealed class GpuIndirectPhase3PolicyTests
 
         source.ShouldContain("private bool ShouldUsePassthroughCulling()");
         source.ShouldContain("VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics");
-        source.ShouldContain("private bool ShouldAllowCpuFallback(bool debugLoggingEnabled)");
+        source.ShouldContain("private bool ShouldAllowCpuFallback()");
         source.ShouldContain("return VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics;");
         source.ShouldContain("LogCpuFallbackSuppressed(\"GPU frustum cull\")");
         source.ShouldContain("LogCpuFallbackSuppressed(\"GPU BVH cull\")");
