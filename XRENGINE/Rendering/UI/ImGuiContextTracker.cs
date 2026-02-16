@@ -9,6 +9,8 @@ internal static class ImGuiContextTracker
     private static readonly HashSet<IntPtr> ActiveContexts = [];
     private static readonly object ContextLock = new();
 
+    public static object SyncRoot => ContextLock;
+
     public static void Register(IntPtr context)
     {
         if (context == IntPtr.Zero)

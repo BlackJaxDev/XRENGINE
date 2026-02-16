@@ -112,6 +112,7 @@ namespace XREngine.Rendering
 
         #region ImGui
         private float _lastImGuiTimestamp = float.MinValue;
+        private readonly object _imguiRenderLock = new();
 
         protected interface IImGuiRendererBackend
         {
@@ -227,25 +228,49 @@ namespace XREngine.Rendering
 
             _lastImGuiTimestamp = timestamp;
 
-            var previousContext = ImGui.GetCurrentContext();
-            backend.MakeCurrent();
+            lock (ImGuiContextTracker.SyncRoot)
+            {
+                lock (_imguiRenderLock)
+                {
+                    var previousContext = ImGui.GetCurrentContext();
+                    backend.MakeCurrent();
+                    bool frameStarted = false;
 
-            try
-            {
-                ConfigureImGuiDisplay(canvas, viewport, camera);
-                backend.Update(Engine.Time.Timer.Render.Delta);
-                draw();
-                backend.Render();
-            }
-            finally
-            {
-                if (previousContext == IntPtr.Zero)
-                {
-                    ImGui.SetCurrentContext(IntPtr.Zero);
-                }
-                else if (ImGuiContextTracker.IsAlive(previousContext))
-                {
-                    ImGui.SetCurrentContext(previousContext);
+                    try
+                    {
+                        ConfigureImGuiDisplay(canvas, viewport, camera);
+                        backend.Update(Engine.Time.Timer.Render.Delta);
+                        frameStarted = true;
+                        draw();
+                        backend.Render();
+                        frameStarted = false;
+                    }
+                    catch
+                    {
+                        if (frameStarted)
+                        {
+                            try
+                            {
+                                ImGui.EndFrame();
+                            }
+                            catch
+                            {
+                            }
+                        }
+
+                        throw;
+                    }
+                    finally
+                    {
+                        if (previousContext == IntPtr.Zero)
+                        {
+                            ImGui.SetCurrentContext(IntPtr.Zero);
+                        }
+                        else if (ImGuiContextTracker.IsAlive(previousContext))
+                        {
+                            ImGui.SetCurrentContext(previousContext);
+                        }
+                    }
                 }
             }
 

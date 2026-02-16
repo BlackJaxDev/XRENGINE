@@ -214,7 +214,6 @@ namespace XREngine.Rendering.Vulkan
                     vkFrameBuffer.Generate();
             }
 
-            UpdateResourcePlannerFromPipeline();
             MarkCommandBuffersDirty();
         }
         public override void Clear(bool color, bool depth, bool stencil)

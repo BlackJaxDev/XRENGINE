@@ -230,11 +230,17 @@ namespace XREngine
                 public static bool IsStereoPass => RenderingPipelineState?.StereoPass ?? false;
 
                 /// <summary>
-                /// If true, the OVR_multiview2 extension is available for efficient stereo rendering.
-                /// This extension allows rendering both eye views in a single draw call using instancing.
-                /// Significantly improves VR performance when available.
+                /// If true, OpenGL multiview shader support is available (GL_OVR_multiview2 or GL_EXT_multiview).
                 /// </summary>
                 public static bool HasOvrMultiViewExtension { get; internal set; } = false;
+                /// <summary>
+                /// If true, Vulkan multiview support is available and enabled (VK_KHR_multiview / Vulkan 1.1+ multiview feature).
+                /// </summary>
+                public static bool HasVulkanMultiView { get; internal set; } = false;
+                /// <summary>
+                /// If true, any backend multiview path is available for stereo single-pass rendering.
+                /// </summary>
+                public static bool HasAnyMultiViewExtension => HasOvrMultiViewExtension || HasVulkanMultiView;
                 /// <summary>
                 /// If true, the shaders required for instanced debug rendering are available.
                 /// </summary>

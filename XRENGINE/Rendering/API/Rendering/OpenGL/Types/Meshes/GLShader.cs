@@ -10,6 +10,7 @@ namespace XREngine.Rendering.OpenGL
         public class GLShader(OpenGLRenderer renderer, XRShader data) : GLObject<XRShader>(renderer, data)
         {
             public const string EXT_GL_OVR_MULTIVIEW2 = "GL_OVR_multiview2";
+            public const string EXT_GL_EXT_MULTIVIEW = "GL_EXT_multiview";
             public const string EXT_GL_NV_STEREO_VIEW_RENDERING = "GL_NV_stereo_view_rendering";
             
             private bool _isCompiled = false;

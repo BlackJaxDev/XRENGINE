@@ -1,4 +1,6 @@
 using XREngine.Rendering.RenderGraph;
+using System;
+using System.Linq;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -47,6 +49,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
+            int passIndex = ResolvePassIndex(nameof(VPRC_RenderScreenSpaceUI));
+            using var passScope = passIndex != int.MinValue
+                ? Engine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+                : default;
+
             var ui = ActivePipelineInstance.RenderState.ScreenSpaceUserInterface;
             if (ui is null || !ui.IsActive)
                 return;
@@ -58,6 +65,16 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             ui.RenderScreenSpace(ActivePipelineInstance.RenderState.RenderingViewport, fbo);
+        }
+
+        private int ResolvePassIndex(string passName)
+        {
+            var metadata = ParentPipeline?.PassMetadata;
+            if (metadata is null)
+                return int.MinValue;
+
+            var match = metadata.FirstOrDefault(m => string.Equals(m.Name, passName, StringComparison.OrdinalIgnoreCase));
+            return match?.PassIndex ?? int.MinValue;
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

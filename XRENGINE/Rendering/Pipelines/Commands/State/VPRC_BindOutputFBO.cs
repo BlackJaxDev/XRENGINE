@@ -27,6 +27,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
+            using var passScope = Engine.Rendering.State.CurrentRenderGraphPassIndex == int.MinValue
+                ? Engine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.PreRender)
+                : default;
+
             var fbo = ActivePipelineInstance.RenderState.OutputFBO;
 
             /*

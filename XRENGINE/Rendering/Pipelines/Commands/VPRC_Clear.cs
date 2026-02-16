@@ -1,3 +1,5 @@
+using XREngine.Data.Rendering;
+
 namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_Clear : ViewportRenderCommand
@@ -15,6 +17,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
+            using var passScope = Engine.Rendering.State.CurrentRenderGraphPassIndex == int.MinValue
+                ? Engine.Rendering.State.PushRenderGraphPassIndex((int)EDefaultRenderPass.PreRender)
+                : default;
+
             Engine.Rendering.State.Clear(Color, Depth, Stencil);
         }
     }
