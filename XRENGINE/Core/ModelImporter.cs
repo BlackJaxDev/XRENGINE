@@ -467,10 +467,9 @@ namespace XREngine
             importer._importLayer = layer;
             Debug.Out($"[ModelImporter] Created importer, calling Import()...");
 
-            // Process meshes synchronously within this job thread.
-            // The job system already runs this on a worker thread, so we don't need nested async.
-            // This ensures _materials and _meshes are populated before we return.
-            var node = importer.Import(options, true, true, scaleConversion, zUp, true, false, cancellationToken, onProgress, rootTransformMatrix);
+            // Let mesh processing mode follow the engine setting unless an explicit override is passed at a higher level.
+            // This avoids long synchronous import bursts that starve the job system during startup/world load.
+            var node = importer.Import(options, true, true, scaleConversion, zUp, true, null, cancellationToken, onProgress, rootTransformMatrix);
             Debug.Out($"[ModelImporter] Import() returned, node: {node?.Name ?? "NULL"}");
             Debug.Out($"[ModelImporter] Meshes loaded: {importer._meshes.Count}, Materials loaded: {importer._materials.Count}");
 

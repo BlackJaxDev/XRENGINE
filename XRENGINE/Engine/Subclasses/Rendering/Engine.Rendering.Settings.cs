@@ -299,7 +299,7 @@ namespace XREngine
                 private bool _useGlobalBlendshapeWeightsBufferForComputeSkinning = false;
                 private int _shaderConfigVersion = 0;
                 private bool _useGpuBvh = false;
-                private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Auto;
+                private EVulkanGpuDrivenProfile _vulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Diagnostics;
                 private EVulkanQueueOverlapMode _vulkanQueueOverlapMode = EVulkanQueueOverlapMode.Auto;
                 private bool _enableVulkanDescriptorIndexing = true;
                 private bool _enableVulkanBindlessMaterialTable = true;

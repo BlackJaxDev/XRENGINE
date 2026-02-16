@@ -179,9 +179,7 @@ namespace XREngine.Scene.Prefabs
             importer.MakeMaterialAction = GetOrCreateMaterialRemapped;
             importer.MakeTextureAction = GetOrCreateTextureRemapped;
 
-            // For asset import we prefer deterministic completion, so default to synchronous mesh processing.
-            // If a user explicitly requests async processing, allow it via options.
-            bool? processMeshesAsynchronously = opts.ProcessMeshesAsynchronously ? true : false;
+            bool? processMeshesAsynchronously = opts.ProcessMeshesAsynchronously;
 
             SceneNode? rootNode = importer.Import(
                 opts.PostProcessSteps,

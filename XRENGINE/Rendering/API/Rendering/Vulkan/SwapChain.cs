@@ -77,6 +77,7 @@ public unsafe partial class VulkanRenderer
     private void DestroyAllSwapChainObjects()
     {
         DestroyDebugTriangleResources();
+        DestroySwapchainImGuiResources();
         DestroyDepth();
         DestroyCommandBuffers();
         DestroyFrameBuffers();

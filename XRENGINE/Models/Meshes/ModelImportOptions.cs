@@ -124,10 +124,10 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool MultiThread { get; set; } = true;
 
     /// <summary>
-    /// Whether to process meshes asynchronously via the engine setting.
-    /// For asset import/reimport, you typically want this false to keep import deterministic.
+    /// Whether to process meshes asynchronously.
+    /// Null means "inherit <see cref="Engine.Rendering.Settings.ProcessMeshImportsAsynchronously"/>".
     /// </summary>
-    public bool ProcessMeshesAsynchronously { get; set; } = false;
+    public bool? ProcessMeshesAsynchronously { get; set; } = null;
 
     /// <summary>
     /// Maps original texture file paths to new paths.

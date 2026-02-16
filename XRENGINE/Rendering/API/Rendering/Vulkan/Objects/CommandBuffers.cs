@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Silk.NET.Vulkan;
+using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan
@@ -19,6 +20,33 @@ namespace XREngine.Rendering.Vulkan
         private bool _enableSecondaryCommandBuffers = false;
         private bool _enableParallelSecondaryCommandBufferRecording = false;
         private int _parallelSecondaryIndirectRunThreshold = 4;
+        private string? _vulkanDiagnosticBaseWindowTitle;
+        private string? _vulkanDiagnosticLastTitle;
+        private int _vulkanLastFrameDroppedDrawOps;
+        private int _vulkanLastFrameDroppedOps;
+
+        private void UpdateVulkanOnScreenDiagnostic(string pipelineLabel, ColorF4 clearColor, int droppedDrawOps, int droppedOps)
+        {
+            string currentTitle = Window?.Title ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(_vulkanDiagnosticBaseWindowTitle))
+                _vulkanDiagnosticBaseWindowTitle = currentTitle;
+
+            string baseTitle = _vulkanDiagnosticBaseWindowTitle ?? string.Empty;
+            string diagnosticTitle =
+                $"{baseTitle} | VK[{pipelineLabel}] clr=({clearColor.R:F2},{clearColor.G:F2},{clearColor.B:F2},{clearColor.A:F2}) dropDraw={droppedDrawOps} dropOps={droppedOps}";
+
+            if (string.Equals(_vulkanDiagnosticLastTitle, diagnosticTitle, StringComparison.Ordinal) &&
+                _vulkanLastFrameDroppedDrawOps == droppedDrawOps &&
+                _vulkanLastFrameDroppedOps == droppedOps)
+            {
+                return;
+            }
+
+            _vulkanDiagnosticLastTitle = diagnosticTitle;
+            _vulkanLastFrameDroppedDrawOps = droppedDrawOps;
+            _vulkanLastFrameDroppedOps = droppedOps;
+            Window.Title = diagnosticTitle;
+        }
 
         private sealed class ComputeTransientResources
         {
@@ -373,10 +401,41 @@ namespace XREngine.Rendering.Vulkan
             InitializeComputeDescriptorCaches(_commandBuffers.Length);
         }
 
+        private bool TryEnsureCommandBuffersForSwapchain()
+        {
+            if (swapChainFramebuffers is null || swapChainFramebuffers.Length == 0)
+                return false;
+
+            bool needsAllocation =
+                _commandBuffers is null ||
+                _commandBufferDirtyFlags is null ||
+                _commandBuffers.Length != swapChainFramebuffers.Length ||
+                _commandBufferDirtyFlags.Length != swapChainFramebuffers.Length;
+
+            if (!needsAllocation)
+                return true;
+
+            if (_commandBuffers is not null)
+                DestroyCommandBuffers();
+
+            CreateCommandBuffers();
+
+            return _commandBuffers is not null &&
+                _commandBufferDirtyFlags is not null &&
+                _commandBuffers.Length == swapChainFramebuffers.Length &&
+                _commandBufferDirtyFlags.Length == swapChainFramebuffers.Length;
+        }
+
         private void EnsureCommandBufferRecorded(uint imageIndex)
         {
+            if (!TryEnsureCommandBuffersForSwapchain())
+                throw new InvalidOperationException("Command buffers are unavailable because swapchain framebuffers are not initialised.");
+
             if (_commandBuffers is null)
                 throw new InvalidOperationException("Command buffers have not been allocated yet.");
+
+            if (imageIndex >= _commandBuffers.Length)
+                throw new InvalidOperationException($"Command buffer index {imageIndex} is out of range for {_commandBuffers.Length} allocated command buffers.");
 
             if (_commandBufferDirtyFlags is null || imageIndex >= _commandBufferDirtyFlags.Length)
                 throw new InvalidOperationException("Command buffer dirty flags are not initialised correctly.");
@@ -391,6 +450,8 @@ namespace XREngine.Rendering.Vulkan
         private void RecordCommandBuffer(uint imageIndex)
         {
             var commandBuffer = _commandBuffers![imageIndex];
+            int droppedDrawOps = 0;
+            int droppedFrameOps = 0;
 
             ReleaseDeferredSecondaryCommandBuffers(imageIndex);
             Api!.ResetCommandBuffer(commandBuffer, 0);
@@ -897,16 +958,16 @@ namespace XREngine.Rendering.Vulkan
                     }
                     catch (Exception opEx)
                     {
-                    // If an individual frame op fails to record (e.g. partially-initialised FBO,
-                    // shader compilation error during deferred pipeline setup, etc.), skip it and
-                    // continue recording the remaining ops.  The final swapchain render pass +
-                    // debug triangle / ImGui overlay will still present a valid frame.
-                    EndActiveRenderPass();
-                    if (renderPassLabelActive)
-                    {
-                        CmdEndLabel(commandBuffer);
-                        renderPassLabelActive = false;
-                    }
+                        droppedFrameOps++;
+                        if (op is MeshDrawOp or IndirectDrawOp)
+                            droppedDrawOps++;
+
+                        EndActiveRenderPass();
+                        if (renderPassLabelActive)
+                        {
+                            CmdEndLabel(commandBuffer);
+                            renderPassLabelActive = false;
+                        }
 
                         Debug.VulkanEvery(
                             $"Vulkan.FrameOpError.{GetHashCode()}",
@@ -914,6 +975,10 @@ namespace XREngine.Rendering.Vulkan
                             "[Vulkan] Frame op recording failed for {0}: {1}",
                             op.GetType().Name,
                             opEx.Message);
+
+                        throw new InvalidOperationException(
+                            $"[Vulkan] Frame op recording failed for {op.GetType().Name} (pass={op.PassIndex}).",
+                            opEx);
                     }
                 }
 
@@ -967,6 +1032,14 @@ namespace XREngine.Rendering.Vulkan
                     RenderImGui(commandBuffer, imageIndex);
                     CmdEndLabel(commandBuffer);
                 }
+
+                string pipelineLabel = hasActiveContext
+                    ? (!string.IsNullOrWhiteSpace(activeContext.PipelineInstance?.Pipeline?.GetType().Name)
+                        ? $"{activeContext.PipelineInstance!.Pipeline!.GetType().Name}#{activeContext.PipelineIdentity}"
+                        : $"Pipeline#{activeContext.PipelineIdentity}")
+                    : "None";
+                ColorF4 clearColor = GetClearColorValue();
+                UpdateVulkanOnScreenDiagnostic(pipelineLabel, clearColor, droppedDrawOps, droppedFrameOps);
 
                 EndActiveRenderPass();
 

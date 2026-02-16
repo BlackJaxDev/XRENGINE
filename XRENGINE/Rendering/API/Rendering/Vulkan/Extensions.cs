@@ -81,6 +81,7 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private readonly string[] optionalDeviceExtensions =
         [
+            "VK_KHR_multiview",
             "VK_KHR_draw_indirect_count",
             "VK_KHR_shader_draw_parameters",
             "VK_EXT_index_type_uint8",

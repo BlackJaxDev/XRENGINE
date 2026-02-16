@@ -158,7 +158,7 @@ namespace XREngine.Rendering
                 // Use mesh deform versions
                 if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA)
                     ver = GetMeshDeformNVStereoVersion();
-                else if (stereoPass && Engine.Rendering.State.HasOvrMultiViewExtension)
+                else if (stereoPass && Engine.Rendering.State.HasAnyMultiViewExtension)
                     ver = GetMeshDeformOVRMultiViewVersion();
                 else
                     ver = GetMeshDeformDefaultVersion();
@@ -168,7 +168,7 @@ namespace XREngine.Rendering
                 // Use standard versions
                 if (stereoPass && preferNV && Engine.Rendering.State.IsNVIDIA)
                     ver = GetNVStereoVersion();
-                else if (stereoPass && Engine.Rendering.State.HasOvrMultiViewExtension)
+                else if (stereoPass && Engine.Rendering.State.HasAnyMultiViewExtension)
                     ver = GetOVRMultiViewVersion();
                 else
                     ver = GetDefaultVersion();
@@ -187,10 +187,13 @@ namespace XREngine.Rendering
 
         private static bool HasNVStereoViewRendering(XRShader x)
             => x.HasExtension(GLShader.EXT_GL_NV_STEREO_VIEW_RENDERING, XRShader.EExtensionBehavior.Require);
-        private static bool HasOvrMultiView2(XRShader x)
-            => x.HasExtension(GLShader.EXT_GL_OVR_MULTIVIEW2, XRShader.EExtensionBehavior.Require);
+        private static bool HasMultiViewExtension(XRShader x)
+            =>
+                x.HasExtension(GLShader.EXT_GL_OVR_MULTIVIEW2, XRShader.EExtensionBehavior.Require) ||
+                x.HasExtension(GLShader.EXT_GL_EXT_MULTIVIEW, XRShader.EExtensionBehavior.Require);
         private static bool NoSpecialExtensions(XRShader x) => 
             !x.HasExtension(GLShader.EXT_GL_OVR_MULTIVIEW2, XRShader.EExtensionBehavior.Require) && 
+            !x.HasExtension(GLShader.EXT_GL_EXT_MULTIVIEW, XRShader.EExtensionBehavior.Require) &&
             !x.HasExtension(GLShader.EXT_GL_NV_STEREO_VIEW_RENDERING, XRShader.EExtensionBehavior.Require);
 
         public XRMeshRenderer() : this(null, null) { }
@@ -214,12 +217,12 @@ namespace XREngine.Rendering
         private void InitializeVersions()
         {
             GeneratedVertexShaderVersions.Add(0, new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, true));
-            GeneratedVertexShaderVersions.Add(1, new Version<OVRMultiViewVertexShaderGenerator>(this, HasOvrMultiView2, false));
+            GeneratedVertexShaderVersions.Add(1, new Version<OVRMultiViewVertexShaderGenerator>(this, HasMultiViewExtension, false));
             GeneratedVertexShaderVersions.Add(2, new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering, false));
             
             // Mesh deform versions (used when DeformMeshRenderer is set)
             GeneratedVertexShaderVersions.Add(3, new MeshDeformVersion(this, NoSpecialExtensions, true));
-            GeneratedVertexShaderVersions.Add(4, new MeshDeformVersion(this, HasOvrMultiView2, false) { UseOVRMultiView = true });
+            GeneratedVertexShaderVersions.Add(4, new MeshDeformVersion(this, HasMultiViewExtension, false) { UseOVRMultiView = true });
             GeneratedVertexShaderVersions.Add(5, new MeshDeformVersion(this, HasNVStereoViewRendering, false) { UseNVStereo = true });
         }
 

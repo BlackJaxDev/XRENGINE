@@ -289,7 +289,10 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             if (UseOVRMultiView)
             {
-                Line("#extension GL_OVR_multiview2 : require");
+                if (Engine.Rendering.State.IsVulkan)
+                    Line("#extension GL_EXT_multiview : require");
+                else
+                    Line("#extension GL_OVR_multiview2 : require");
                 //multiview tess/geo extension is not supported on nvidia gpus (I assume because you should just use nv stereo)
                 //Line("#extension GL_EXT_multiview_tessellation_geometry_shader : enable");
             }

@@ -74,7 +74,8 @@ namespace XREngine.Rendering.OpenGL
             EXTSemaphoreFd = ESApi.TryGetExtension<ExtSemaphoreFd>(out var ext6) ? ext6 : null;
 
             OVRMultiView = api.TryGetExtension(out OvrMultiview ext7) ? ext7 : null;
-            Engine.Rendering.State.HasOvrMultiViewExtension |= OVRMultiView is not null;
+            Engine.Rendering.State.HasOvrMultiViewExtension = OVRMultiView is not null;
+            Engine.Rendering.State.HasVulkanMultiView = false;
             NVMeshShader = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVMeshShader ext8) ? ext8 : null;
             NVGpuShader5 = api.TryGetExtension(out Silk.NET.OpenGL.Extensions.NV.NVGpuShader5 ext9) ? ext9 : null;
             NVViewportArray = ESApi.TryGetExtension(out NVViewportArray ext10) ? ext10 : null;
@@ -173,12 +174,23 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 Engine.Rendering.State.OpenGLExtensions = extensions;
+                bool hasExtMultiview = false;
+                for (int i = 0; i < extensions.Length; i++)
+                {
+                    if (string.Equals(extensions[i], "GL_EXT_multiview", StringComparison.Ordinal))
+                    {
+                        hasExtMultiview = true;
+                        break;
+                    }
+                }
+                Engine.Rendering.State.HasOvrMultiViewExtension |= hasExtMultiview;
                 // Ray tracing / DLSS / XeSS are Vulkan-focused; do not probe GL_NV_ray_tracing on OpenGL startup.
                 Engine.Rendering.State.HasNvRayTracing = false;
                 Engine.Rendering.State.HasVulkanRayTracing = false;
                 Engine.Rendering.State.HasVulkanMemoryDecompression = false;
                 Engine.Rendering.State.HasVulkanCopyMemoryIndirect = false;
                 Engine.Rendering.State.HasVulkanRtxIo = false;
+                Engine.Rendering.State.HasVulkanMultiView = false;
             }
 
             GLRenderProgram.ReadBinaryShaderCache(version);

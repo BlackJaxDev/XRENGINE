@@ -244,7 +244,10 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             if (UseOVRMultiView)
             {
-                Line("#extension GL_OVR_multiview2 : require");
+                if (Engine.Rendering.State.IsVulkan)
+                    Line("#extension GL_EXT_multiview : require");
+                else
+                    Line("#extension GL_OVR_multiview2 : require");
             }
             else if (UseNVStereo)
             {

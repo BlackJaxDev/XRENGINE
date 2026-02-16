@@ -239,6 +239,33 @@ public unsafe partial class VulkanRenderer
         featureSupported = vulkan11Features.ShaderDrawParameters;
     }
 
+    private unsafe void QueryMultiviewCapabilities(
+        bool extensionEnabled,
+        out bool featureSupported,
+        out bool promotedToCore)
+    {
+        featureSupported = false;
+        promotedToCore = false;
+
+        Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
+        promotedToCore = properties.ApiVersion >= Vk.Version11;
+
+        PhysicalDeviceVulkan11Features vulkan11Features = new()
+        {
+            SType = StructureType.PhysicalDeviceVulkan11Features,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &vulkan11Features,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = vulkan11Features.Multiview && (promotedToCore || extensionEnabled);
+    }
+
     private unsafe void QueryIndexTypeUint8Capabilities(out bool featureSupported)
     {
         featureSupported = false;
@@ -393,6 +420,13 @@ public unsafe partial class VulkanRenderer
         QueryShaderDrawParametersCapabilities(out bool shaderDrawParametersFeatureSupported);
         bool enableShaderDrawParametersFeature = shaderDrawParametersFeatureSupported;
 
+        bool multiviewExtensionEnabled = extensionsArray.Contains("VK_KHR_multiview");
+        QueryMultiviewCapabilities(
+            multiviewExtensionEnabled,
+            out bool multiviewFeatureSupported,
+            out bool multiviewPromotedToCore);
+        bool enableMultiviewFeature = multiviewFeatureSupported;
+
         bool indexTypeUint8ExtensionEnabled =
             extensionsArray.Contains("VK_EXT_index_type_uint8") ||
             extensionsArray.Contains("VK_KHR_index_type_uint8");
@@ -448,6 +482,7 @@ public unsafe partial class VulkanRenderer
             SType = StructureType.PhysicalDeviceVulkan11Features,
             PNext = null,
             ShaderDrawParameters = enableShaderDrawParametersFeature,
+            Multiview = enableMultiviewFeature,
         };
 
         PhysicalDeviceIndexTypeUint8FeaturesEXT indexTypeUint8FeatureEnable = new()
@@ -541,6 +576,8 @@ public unsafe partial class VulkanRenderer
         _supportsBufferDeviceAddress = enableBufferDeviceAddress;
         _supportsDynamicRendering = dynamicRenderingFeatureSupported;
         _supportsIndexTypeUint8 = enableIndexTypeUint8Feature;
+        Engine.Rendering.State.HasVulkanMultiView = enableMultiviewFeature;
+        Engine.Rendering.State.HasOvrMultiViewExtension = enableMultiviewFeature;
 
         if (descriptorIndexingExtensionEnabled && !enableDescriptorIndexing)
         {
@@ -563,6 +600,15 @@ public unsafe partial class VulkanRenderer
                     "[Vulkan] Draw parameters support unavailable (shaderDrawParametersFeature={0}, extensionEnabled={1}). Shaders using gl_BaseVertex/gl_BaseInstance may fail.",
                     shaderDrawParametersFeatureSupported,
                     shaderDrawParametersExtensionEnabled);
+            }
+
+            if (!enableMultiviewFeature)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Multiview support unavailable (featureSupported={0}, extensionEnabled={1}, promotedToCore={2}). Stereo single-pass multiview path will be disabled.",
+                    multiviewFeatureSupported,
+                    multiviewExtensionEnabled,
+                    multiviewPromotedToCore);
             }
 
             if (nvMemoryDecompressionExtensionEnabled && !enableNvMemoryDecompression)

@@ -1082,6 +1082,30 @@ internal static class VulkanShaderCompiler
     private static readonly Regex IncludeRegex = new(
         @"^\s*#\s*include\s+[""<](?<path>[^"">]+)["">]\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline);
+    private static readonly Regex OvrMultiviewExtensionRegex = new(
+        @"^\s*#\s*extension\s+GL_OVR_multiview2\s*:\s*(?<behavior>\w+)\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    private static readonly Regex NvStereoExtensionRegex = new(
+        @"^\s*#\s*extension\s+GL_NV_(?:stereo_view_rendering|viewport_array2)\s*:\s*\w+\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    private static readonly Regex VersionDirectiveRegex = new(
+        @"^\s*#\s*version\b[^\r\n]*(?:\r?\n)?",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    private static readonly Regex ReservedBuiltinDeclarationRegex = new(
+        @"^\s*(?:layout\s*\([^)]*\)\s*)?(?:in|out|uniform|attribute|varying)\s+(?:highp|mediump|lowp\s+)?(?:[A-Za-z_]\w*\s+)*gl_[A-Za-z_]\w*(?:\s*\[[^\]]*\])?\s*;\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    private static readonly Regex NvSecondaryPositionAssignRegex = new(
+        @"^\s*gl_SecondaryPositionNV\s*=\s*.*;\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    private static readonly Regex NvViewportMaskAssignRegex = new(
+        @"^\s*gl_(?:SecondaryViewportMaskNV|ViewportMask)\s*\[[^\]]+\]\s*=\s*.*;\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    private static readonly Regex NvSecondaryViewOffsetLayerDeclarationRegex = new(
+        @"^\s*layout\s*\([^)]*secondary_view_offset[^)]*\)\s*out\s+[^;]*gl_Layer\s*;\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    private static readonly Regex NvLayerAssignmentRegex = new(
+        @"^\s*gl_Layer\s*=\s*.*;\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
     public static unsafe byte[] Compile(
         XRShader shader,
@@ -1093,6 +1117,7 @@ internal static class VulkanShaderCompiler
         string source = shader.Source?.Text ?? string.Empty;
         source = ExpandIncludes(source, shader.Source?.FilePath);
         source = ShaderSnippets.ResolveSnippets(source);
+        source = NormalizeLegacyStereoForVulkan(source, shader.Name ?? "UnnamedShader");
         if (string.IsNullOrWhiteSpace(source))
             throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' does not contain GLSL source code.");
 
@@ -1257,6 +1282,68 @@ internal static class VulkanShaderCompiler
         }
 
         return output.ToString();
+    }
+
+    private static string RewriteLegacyMultiviewExtensionsForVulkan(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source) ||
+            !source.Contains("GL_OVR_multiview2", StringComparison.OrdinalIgnoreCase))
+            return source;
+
+        return OvrMultiviewExtensionRegex.Replace(
+            source,
+            static match => $"#extension GL_EXT_multiview : {match.Groups["behavior"].Value}");
+    }
+
+    private static string NormalizeLegacyStereoForVulkan(string source, string shaderName)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            return source;
+
+        bool hadNvStereo = NvStereoExtensionRegex.IsMatch(source);
+
+        source = RewriteLegacyMultiviewExtensionsForVulkan(source);
+
+        if (hadNvStereo)
+        {
+            source = NvStereoExtensionRegex.Replace(source, string.Empty);
+            source = EnsureExtMultiviewDirective(source);
+            source = NvSecondaryPositionAssignRegex.Replace(source, string.Empty);
+            source = NvViewportMaskAssignRegex.Replace(source, string.Empty);
+            source = NvSecondaryViewOffsetLayerDeclarationRegex.Replace(source, string.Empty);
+            source = NvLayerAssignmentRegex.Replace(source, string.Empty);
+        }
+
+        source = ReservedBuiltinDeclarationRegex.Replace(source, string.Empty);
+        ValidateUnsupportedVulkanStereoSemantics(source, shaderName);
+        return source;
+    }
+
+    private static string EnsureExtMultiviewDirective(string source)
+    {
+        if (source.Contains("#extension GL_EXT_multiview", StringComparison.OrdinalIgnoreCase))
+            return source;
+
+        Match versionMatch = VersionDirectiveRegex.Match(source);
+        if (!versionMatch.Success)
+            return "#extension GL_EXT_multiview : require\n" + source;
+
+        string directive = "#extension GL_EXT_multiview : require\n";
+        return source.Insert(versionMatch.Index + versionMatch.Length, directive);
+    }
+
+    private static void ValidateUnsupportedVulkanStereoSemantics(string source, string shaderName)
+    {
+        if (source.Contains("GL_NV_stereo_view_rendering", StringComparison.OrdinalIgnoreCase) ||
+            source.Contains("GL_NV_viewport_array2", StringComparison.OrdinalIgnoreCase) ||
+            source.Contains("gl_SecondaryPositionNV", StringComparison.OrdinalIgnoreCase) ||
+            source.Contains("gl_SecondaryViewportMaskNV", StringComparison.OrdinalIgnoreCase) ||
+            source.Contains("gl_ViewportMask", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Shader '{shaderName}' contains NV stereo semantics that cannot be represented in Vulkan GLSL. " +
+                "Use multiview-compatible logic (GL_EXT_multiview / gl_ViewIndex) and avoid NV secondary-position/viewport-mask built-ins.");
+        }
     }
 
     private static string? ResolveIncludePath(string? currentDirectory, string includePath)
