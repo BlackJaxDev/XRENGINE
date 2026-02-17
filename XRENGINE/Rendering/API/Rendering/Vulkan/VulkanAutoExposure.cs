@@ -143,12 +143,18 @@ public unsafe partial class VulkanRenderer
 
     private bool EnsureExposureStorageUsage(XRTexture2D exposureTex)
     {
+        // Ensure the abstract texture carries the storage flag so the Vulkan
+        // backend respects it even when a physical group overrides the usage.
+        if (!exposureTex.RequiresStorageUsage)
+            exposureTex.RequiresStorageUsage = true;
+
         if (GetOrCreateAPIRenderObject(exposureTex) is not VkTexture2D vkExposure)
             return false;
 
         if ((vkExposure.Usage & Silk.NET.Vulkan.ImageUsageFlags.StorageBit) != 0)
             return true;
 
+        // The VkImage was created without STORAGE_BIT. Add it and recreate.
         vkExposure.Usage |= Silk.NET.Vulkan.ImageUsageFlags.StorageBit;
 
         if (vkExposure.IsGenerated)
@@ -158,7 +164,7 @@ public unsafe partial class VulkanRenderer
             _autoExposureTextureInitialized = false;
         }
 
-        return true;
+        return (vkExposure.Usage & Silk.NET.Vulkan.ImageUsageFlags.StorageBit) != 0;
     }
 
     private void EnsureAutoExposureComputeResources()

@@ -293,8 +293,6 @@ public sealed class UIBatchCollector : IDisposable
             if (batchData.Entries.Count == 0 || batchData.TotalGlyphs == 0)
                 continue;
 
-            Debug.Out($"[UIBatch] RenderTextBatch: pass={renderPass}, atlas={atlas?.Name ?? "null"}, entries={batchData.Entries.Count}, glyphs={batchData.TotalGlyphs}");
-
             var gpu = EnsureTextGPUResources(atlas);
             FinalizeAndUploadTextData(batchData, gpu, atlas);
 
@@ -303,7 +301,6 @@ public sealed class UIBatchCollector : IDisposable
             var version = gpu.Mesh!.GetDefaultVersion();
             version.Generate();
 
-            Debug.Out($"[UIBatch] Text mesh generated={version.APIWrappers.All(w => w.IsGenerated)}, rendering {batchData.TotalGlyphs} glyph instances");
             gpu.Mesh!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
         }
     }

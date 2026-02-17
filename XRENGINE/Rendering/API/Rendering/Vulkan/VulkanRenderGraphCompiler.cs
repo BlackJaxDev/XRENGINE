@@ -12,6 +12,14 @@ public unsafe partial class VulkanRenderer
 
     internal sealed class VulkanRenderGraphCompiler
     {
+        internal readonly record struct SecondaryRecordingBucket(
+            int StartIndex,
+            int Count,
+            int PassIndex,
+            int SchedulingIdentity,
+            Type OpType,
+            FrameOpContext Context);
+
         public VulkanCompiledRenderGraph Compile(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
         {
             if (passMetadata is null || passMetadata.Count == 0)
@@ -67,6 +75,89 @@ public unsafe partial class VulkanRenderer
                 .Select(x => x.Operation)
                 .ToArray();
         }
+
+        public IReadOnlyList<SecondaryRecordingBucket> BuildSecondaryRecordingBuckets(FrameOp[] ops)
+        {
+            if (ops.Length == 0)
+                return Array.Empty<SecondaryRecordingBucket>();
+
+            List<SecondaryRecordingBucket> buckets = [];
+            int runStart = -1;
+            int runPassIndex = int.MinValue;
+            int runSchedulingIdentity = int.MinValue;
+            Type? runType = null;
+            FrameOpContext runContext = default;
+
+            for (int i = 0; i < ops.Length; i++)
+            {
+                FrameOp op = ops[i];
+                if (!IsSecondaryBucketEligible(op))
+                {
+                    FinalizeRun(i);
+                    continue;
+                }
+
+                int passIndex = op.PassIndex;
+                int schedulingIdentity = op.Context.SchedulingIdentity;
+                Type opType = op.GetType();
+
+                if (runStart < 0)
+                {
+                    runStart = i;
+                    runPassIndex = passIndex;
+                    runSchedulingIdentity = schedulingIdentity;
+                    runType = opType;
+                    runContext = op.Context;
+                    continue;
+                }
+
+                bool sameBucket =
+                    runType == opType &&
+                    runPassIndex == passIndex &&
+                    runSchedulingIdentity == schedulingIdentity &&
+                    Equals(runContext, op.Context);
+
+                if (!sameBucket)
+                {
+                    FinalizeRun(i);
+                    runStart = i;
+                    runPassIndex = passIndex;
+                    runSchedulingIdentity = schedulingIdentity;
+                    runType = opType;
+                    runContext = op.Context;
+                }
+            }
+
+            FinalizeRun(ops.Length);
+            return buckets;
+
+            void FinalizeRun(int runEndExclusive)
+            {
+                if (runStart < 0 || runType is null)
+                    return;
+
+                int runCount = runEndExclusive - runStart;
+                if (runCount > 0)
+                {
+                    buckets.Add(new SecondaryRecordingBucket(
+                        runStart,
+                        runCount,
+                        runPassIndex,
+                        runSchedulingIdentity,
+                        runType,
+                        runContext));
+                }
+
+                runStart = -1;
+                runPassIndex = int.MinValue;
+                runSchedulingIdentity = int.MinValue;
+                runType = null;
+                runContext = default;
+            }
+        }
+
+        private static bool IsSecondaryBucketEligible(FrameOp op)
+            => op is BlitOp or IndirectDrawOp or ComputeDispatchOp;
 
         private static bool IsBatchCompatible(VulkanCompiledPassBatch existingBatch, RenderPassMetadata pass, string signature)
             => existingBatch.Stage == RenderGraphPassStage.Graphics &&

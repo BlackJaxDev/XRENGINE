@@ -259,11 +259,10 @@ public unsafe partial class OpenXRAPI
     private int _openXrDebugFrameIndex;
     private const int OpenXrDebugLogEveryNFrames = 60;
 
-    // Debug toggles (keep as consts so they're unmissable and zero-overhead when off)
-    private const bool OpenXrDebugGl = true;
-    private const bool OpenXrDebugClearOnly = false;
-    private const bool OpenXrDebugLifecycle = true;
-    private const bool OpenXrDebugRenderRightThenLeft = true;
+    private static bool OpenXrDebugGl => Engine.Rendering.Settings.OpenXrDebugGl;
+    private static bool OpenXrDebugClearOnly => Engine.Rendering.Settings.OpenXrDebugClearOnly;
+    private static bool OpenXrDebugLifecycle => Engine.Rendering.Settings.OpenXrDebugLifecycle;
+    private static bool OpenXrDebugRenderRightThenLeft => Engine.Rendering.Settings.OpenXrDebugRenderRightThenLeft;
 
     private static bool ShouldLogLifecycle(int frameNumber)
         => frameNumber == 1 || (frameNumber % OpenXrDebugLogEveryNFrames) == 0;
@@ -297,41 +296,31 @@ public unsafe partial class OpenXRAPI
 
     #endregion
 
-    #region Vulkan parallel rendering toggles (currently mostly disabled)
-
-    private enum OpenXrViewPartitionKind
-    {
-        FullLeft,
-        FullRight,
-        FoveatedLeft,
-        FoveatedRight,
-        MirrorCompose,
-    }
-
-    private readonly struct OpenXrViewPartitionWork
-    {
-        public OpenXrViewPartitionWork(OpenXrViewPartitionKind kind, uint viewIndex)
-        {
-            Kind = kind;
-            ViewIndex = viewIndex;
-        }
-
-        public OpenXrViewPartitionKind Kind { get; }
-        public uint ViewIndex { get; }
-    }
-
-    private OpenXrViewPartitionWork[] _activeVulkanViewPartitions = new OpenXrViewPartitionWork[5];
-    private int _activeVulkanViewPartitionCount;
+    #region Vulkan parallel rendering toggle
 
     /// <summary>
     /// Flag indicating if parallel rendering is enabled
     /// </summary>
     private bool _parallelRenderingEnabled = false;
 
-    /// <summary>
-    /// Secondary queue for right eye rendering when parallel rendering is enabled
-    /// </summary>
-    private object? _secondaryQueue = null;
+    private readonly object _openXrParallelCollectDispatchLock = new();
+    private Thread? _openXrLeftCollectWorker;
+    private Thread? _openXrRightCollectWorker;
+    private AutoResetEvent? _openXrLeftCollectStart;
+    private AutoResetEvent? _openXrRightCollectStart;
+    private ManualResetEventSlim? _openXrLeftCollectDone;
+    private ManualResetEventSlim? _openXrRightCollectDone;
+    private volatile bool _openXrParallelCollectWorkersStop;
+
+    private XRWorldInstance? _openXrParallelCollectWorld;
+    private XRCamera? _openXrParallelCollectLeftCamera;
+    private XRCamera? _openXrParallelCollectRightCamera;
+    private int _openXrParallelCollectLeftAdded;
+    private int _openXrParallelCollectRightAdded;
+    private long _openXrParallelCollectLeftBuildTicks;
+    private long _openXrParallelCollectRightBuildTicks;
+    private Exception? _openXrParallelCollectLeftError;
+    private Exception? _openXrParallelCollectRightError;
 
     #endregion
 

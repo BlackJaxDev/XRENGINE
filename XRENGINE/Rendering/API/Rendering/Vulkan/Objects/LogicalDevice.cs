@@ -10,15 +10,19 @@ public unsafe partial class VulkanRenderer
     private bool _supportsAnisotropy;
     private Device device;
     private Queue graphicsQueue;
+    private Queue secondaryGraphicsQueue;
     private Queue presentQueue;
     private Queue computeQueue;
     private Queue transferQueue;
+    private bool _supportsMultipleGraphicsQueues;
 
     public Device Device => device;
     public Queue GraphicsQueue => graphicsQueue;
+    public Queue SecondaryGraphicsQueue => secondaryGraphicsQueue;
     public Queue PresentQueue => presentQueue;
     public Queue ComputeQueue => computeQueue;
     public Queue TransferQueue => transferQueue;
+    public bool HasSecondaryGraphicsQueue => _supportsMultipleGraphicsQueues && secondaryGraphicsQueue.Handle != 0;
 
     private void DestroyLogicalDevice()
     {
@@ -305,6 +309,17 @@ public unsafe partial class VulkanRenderer
         // Get queue family indices required for rendering and presentation
         var indices = FamilyQueueIndices;
 
+        // Query queue family capabilities so we can request multiple graphics queues when available.
+        uint queueFamilyCount = 0;
+        Api!.GetPhysicalDeviceQueueFamilyProperties(_physicalDevice, ref queueFamilyCount, null);
+        var queueFamilies = new QueueFamilyProperties[queueFamilyCount];
+        fixed (QueueFamilyProperties* queueFamiliesPtr = queueFamilies)
+            Api!.GetPhysicalDeviceQueueFamilyProperties(_physicalDevice, ref queueFamilyCount, queueFamiliesPtr);
+
+        uint graphicsFamilyQueueCount = queueFamilies[indices.GraphicsFamilyIndex!.Value].QueueCount;
+        uint requestedGraphicsQueueCount = Math.Min(2u, graphicsFamilyQueueCount);
+        _supportsMultipleGraphicsQueues = requestedGraphicsQueueCount > 1;
+
         // Create an array of queue family indices needed by this device
         var uniqueQueueFamilies = new[]
         {
@@ -320,17 +335,24 @@ public unsafe partial class VulkanRenderer
         using var mem = GlobalMemory.Allocate(uniqueQueueFamilies.Length * sizeof(DeviceQueueCreateInfo));
         var queueCreateInfos = (DeviceQueueCreateInfo*)Unsafe.AsPointer(ref mem.GetPinnableReference());
 
-        // Configure queue priority (1.0 = highest priority)
-        float queuePriority = 1.0f;
+        // Configure queue priorities (1.0 = highest priority)
+        float* queuePriorities = stackalloc float[2] { 1.0f, 1.0f };
         // Set up creation info for each queue family
         for (int i = 0; i < uniqueQueueFamilies.Length; i++)
+        {
+            uint queueFamilyIndex = uniqueQueueFamilies[i];
+            uint queueCount = queueFamilyIndex == indices.GraphicsFamilyIndex!.Value
+                ? requestedGraphicsQueueCount
+                : 1u;
+
             queueCreateInfos[i] = new()
             {
                 SType = StructureType.DeviceQueueCreateInfo,
-                QueueFamilyIndex = uniqueQueueFamilies[i],
-                QueueCount = 1, // Create one queue per family
-                PQueuePriorities = &queuePriority
+                QueueFamilyIndex = queueFamilyIndex,
+                QueueCount = queueCount,
+                PQueuePriorities = queuePriorities
             };
+        }
 
         // Specify device features to enable (none specifically enabled here)
         PhysicalDeviceFeatures supportedFeatures = new();
@@ -646,6 +668,11 @@ public unsafe partial class VulkanRenderer
 
         // Retrieve handles to the queues we need
         Api!.GetDeviceQueue(device, indices.GraphicsFamilyIndex!.Value, 0, out graphicsQueue);
+        if (_supportsMultipleGraphicsQueues)
+            Api!.GetDeviceQueue(device, indices.GraphicsFamilyIndex!.Value, 1, out secondaryGraphicsQueue);
+        else
+            secondaryGraphicsQueue = default;
+
         Api!.GetDeviceQueue(device, indices.PresentFamilyIndex!.Value, 0, out presentQueue);
         Api!.GetDeviceQueue(device, indices.ComputeFamilyIndex ?? indices.GraphicsFamilyIndex!.Value, 0, out computeQueue);
         Api!.GetDeviceQueue(device, indices.TransferFamilyIndex ?? indices.ComputeFamilyIndex ?? indices.GraphicsFamilyIndex!.Value, 0, out transferQueue);
@@ -725,7 +752,7 @@ public unsafe partial class VulkanRenderer
         if (_supportsDynamicRendering)
         {
             Debug.Vulkan(
-                "[Vulkan] Dynamic rendering capability available; current renderer remains render-pass based pending compatibility migration.");
+                "[Vulkan] Dynamic rendering capability available; swapchain main path uses dynamic rendering with render-pass fallback for non-swapchain targets.");
         }
         else
         {

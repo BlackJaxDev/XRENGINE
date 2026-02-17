@@ -29,6 +29,14 @@ public sealed partial class RenderStatsPacket
     public int VulkanPipelineCacheLookupHits { get; set; }
     public int VulkanPipelineCacheLookupMisses { get; set; }
     public double VulkanPipelineCacheLookupHitRate { get; set; }
+    public double VulkanFrameWaitFenceMs { get; set; }
+    public double VulkanFrameAcquireImageMs { get; set; }
+    public double VulkanFrameRecordCommandBufferMs { get; set; }
+    public double VulkanFrameSubmitMs { get; set; }
+    public double VulkanFrameTrimMs { get; set; }
+    public double VulkanFramePresentMs { get; set; }
+    public double VulkanFrameTotalMs { get; set; }
+    public double VulkanFrameGpuCommandBufferMs { get; set; }
 
     // VRAM
     public long AllocatedVRAMBytes { get; set; }

@@ -19,7 +19,6 @@ using XREngine.Native;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
-using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;
@@ -174,12 +173,6 @@ internal class Program
         var viewport = window.Viewports.FirstOrDefault();
         if (viewport is null)
             return;
-
-        if (renderer is VulkanRenderer)
-        {
-            StopStartupTimer(window, "Editor startup first frame (Vulkan fallback)");
-            return;
-        }
 
         if (Interlocked.CompareExchange(ref s_captureInFlight, 1, 0) != 0)
             return;

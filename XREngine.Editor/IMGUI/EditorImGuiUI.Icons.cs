@@ -8,6 +8,7 @@ using Svg.Skia;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Editor;
 
@@ -151,13 +152,26 @@ public static partial class EditorImGuiUI
         var texture = GetIcon(iconName);
         if (texture is null) return false;
 
-        var renderer = TryGetOpenGLRenderer();
-        if (renderer is null) return false;
+        if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
+        {
+            var apiTexture = glRenderer.GenericToAPI<GLTexture2D>(texture);
+            if (apiTexture is null || apiTexture.BindingId == 0 || apiTexture.BindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
+                return false;
 
-        var apiTexture = renderer.GenericToAPI<GLTexture2D>(texture);
-        if (apiTexture is null || apiTexture.BindingId == 0 || apiTexture.BindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId) return false;
+            handle = (nint)apiTexture.BindingId;
+            return true;
+        }
 
-        handle = (nint)apiTexture.BindingId;
-        return true;
+        if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
+        {
+            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            if (textureId == IntPtr.Zero)
+                return false;
+
+            handle = (nint)textureId;
+            return true;
+        }
+
+        return false;
     }
 }

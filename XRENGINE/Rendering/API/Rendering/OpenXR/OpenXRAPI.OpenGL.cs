@@ -402,26 +402,6 @@ public unsafe partial class OpenXRAPI
             if (_gl is null)
                 return;
 
-            // Preserve GL state so the OpenXR blit path cannot clobber the engine's expected bindings.
-            // In particular, RenderEye() binds the swapchain framebuffer before invoking this callback.
-            int prevReadFbo = 0;
-            int prevDrawFbo = 0;
-            int prevReadBuffer = 0;
-            bool prevScissorEnabled = false;
-            bool capturedGlState = false;
-            try
-            {
-                prevReadFbo = _gl.GetInteger(GetPName.ReadFramebufferBinding);
-                prevDrawFbo = _gl.GetInteger(GetPName.DrawFramebufferBinding);
-                prevReadBuffer = _gl.GetInteger(GetPName.ReadBuffer);
-                prevScissorEnabled = _gl.IsEnabled(EnableCap.ScissorTest);
-                capturedGlState = true;
-            }
-            catch
-            {
-                // Best-effort only; some drivers/contexts can throw if queried at the wrong time.
-            }
-
             int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
             bool logLifecycle = OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo);
 
@@ -589,26 +569,6 @@ public unsafe partial class OpenXRAPI
             }
             finally
             {
-                if (capturedGlState)
-                {
-                    try
-                    {
-                        if (prevScissorEnabled)
-                            _gl.Enable(EnableCap.ScissorTest);
-                        else
-                            _gl.Disable(EnableCap.ScissorTest);
-
-                        _gl.BindFramebuffer(FramebufferTarget.ReadFramebuffer, (uint)prevReadFbo);
-                        _gl.BindFramebuffer(FramebufferTarget.DrawFramebuffer, (uint)prevDrawFbo);
-
-                        _gl.ReadBuffer((GLEnum)prevReadBuffer);
-                    }
-                    catch
-                    {
-                        // Never allow state restoration failures to crash the render thread.
-                    }
-                }
-
                 renderer.Active = previousRendererActive;
                 AbstractRenderer.Current = previous;
             }
@@ -725,10 +685,8 @@ public unsafe partial class OpenXRAPI
         _openXrLeftViewport.Camera = _openXrLeftEyeCamera;
         _openXrRightViewport.Camera = _openXrRightEyeCamera;
 
-        // Diagnostic default: disable frustum culling while OpenXR is still being validated.
-        // If this makes the world appear, the remaining issue is almost certainly frustum/projection/pose conversion.
-        _openXrLeftViewport.CullWithFrustum = false;
-        _openXrRightViewport.CullWithFrustum = false;
+        _openXrLeftViewport.CullWithFrustum = Engine.Rendering.Settings.OpenXrCullWithFrustum;
+        _openXrRightViewport.CullWithFrustum = Engine.Rendering.Settings.OpenXrCullWithFrustum;
 
         // Keep them independent of editor viewport layout.
         _openXrLeftViewport.SetFullScreen();

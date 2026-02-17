@@ -100,7 +100,6 @@ public unsafe partial class VulkanRenderer
 		FrameOp validatedOp = EnsureValidFrameOpPassIndex(op);
 		using (_frameOpsLock.EnterScope())
 			_frameOps.Add(validatedOp);
-		MarkCommandBuffersDirty();
 	}
 
 	private FrameOp EnsureValidFrameOpPassIndex(FrameOp op)
@@ -123,14 +122,166 @@ public unsafe partial class VulkanRenderer
 
 	internal FrameOp[] DrainFrameOps()
 	{
+		return DrainFrameOps(out _);
+	}
+
+	internal FrameOp[] DrainFrameOps(out ulong signature)
+	{
 		using (_frameOpsLock.EnterScope())
 		{
 			if (_frameOps.Count == 0)
+			{
+				signature = 0;
 				return Array.Empty<FrameOp>();
+			}
+
 			var ops = _frameOps.ToArray();
 			_frameOps.Clear();
+			signature = ComputeFrameOpsSignature(ops);
 			return ops;
 		}
+	}
+
+	private static ulong ComputeFrameOpsSignature(FrameOp[] ops)
+	{
+		HashCode hash = new();
+		hash.Add(ops.Length);
+
+		for (int i = 0; i < ops.Length; i++)
+		{
+			FrameOp op = ops[i];
+			hash.Add(op.GetType().Name, StringComparer.Ordinal);
+			hash.Add(op.PassIndex);
+			hash.Add(op.Target?.GetHashCode() ?? 0);
+			hash.Add(op.Context.PipelineIdentity);
+			hash.Add(op.Context.ViewportIdentity);
+
+			switch (op)
+			{
+				case ClearOp clear:
+					hash.Add(clear.ClearColor);
+					hash.Add(clear.ClearDepth);
+					hash.Add(clear.ClearStencil);
+					hash.Add(clear.Color.R);
+					hash.Add(clear.Color.G);
+					hash.Add(clear.Color.B);
+					hash.Add(clear.Color.A);
+					hash.Add(clear.Depth);
+					hash.Add(clear.Stencil);
+					hash.Add(clear.Rect.Offset.X);
+					hash.Add(clear.Rect.Offset.Y);
+					hash.Add(clear.Rect.Extent.Width);
+					hash.Add(clear.Rect.Extent.Height);
+					break;
+
+				case MeshDrawOp meshDraw:
+					hash.Add(meshDraw.Draw.Renderer?.GetHashCode() ?? 0);
+					hash.Add(meshDraw.Draw.Viewport.X);
+					hash.Add(meshDraw.Draw.Viewport.Y);
+					hash.Add(meshDraw.Draw.Viewport.Width);
+					hash.Add(meshDraw.Draw.Viewport.Height);
+					hash.Add(meshDraw.Draw.Scissor.Offset.X);
+					hash.Add(meshDraw.Draw.Scissor.Offset.Y);
+					hash.Add(meshDraw.Draw.Scissor.Extent.Width);
+					hash.Add(meshDraw.Draw.Scissor.Extent.Height);
+					hash.Add(meshDraw.Draw.DepthTestEnabled);
+					hash.Add(meshDraw.Draw.DepthWriteEnabled);
+					hash.Add((int)meshDraw.Draw.DepthCompareOp);
+					hash.Add(meshDraw.Draw.StencilTestEnabled);
+					hash.Add(meshDraw.Draw.StencilWriteMask);
+					hash.Add((int)meshDraw.Draw.ColorWriteMask);
+					hash.Add((int)meshDraw.Draw.CullMode);
+					hash.Add((int)meshDraw.Draw.FrontFace);
+					hash.Add(meshDraw.Draw.BlendEnabled);
+					hash.Add((int)meshDraw.Draw.ColorBlendOp);
+					hash.Add((int)meshDraw.Draw.AlphaBlendOp);
+					hash.Add((int)meshDraw.Draw.SrcColorBlendFactor);
+					hash.Add((int)meshDraw.Draw.DstColorBlendFactor);
+					hash.Add((int)meshDraw.Draw.SrcAlphaBlendFactor);
+					hash.Add((int)meshDraw.Draw.DstAlphaBlendFactor);
+					hash.Add(meshDraw.Draw.ModelMatrix.GetHashCode());
+					hash.Add(meshDraw.Draw.PreviousModelMatrix.GetHashCode());
+					hash.Add(meshDraw.Draw.MaterialOverride?.GetHashCode() ?? 0);
+					hash.Add(meshDraw.Draw.Instances);
+					hash.Add((int)meshDraw.Draw.BillboardMode);
+					break;
+
+				case BlitOp blit:
+					hash.Add(blit.InFbo?.GetHashCode() ?? 0);
+					hash.Add(blit.OutFbo?.GetHashCode() ?? 0);
+					hash.Add(blit.InX);
+					hash.Add(blit.InY);
+					hash.Add(blit.InW);
+					hash.Add(blit.InH);
+					hash.Add(blit.OutX);
+					hash.Add(blit.OutY);
+					hash.Add(blit.OutW);
+					hash.Add(blit.OutH);
+					hash.Add((int)blit.ReadBufferMode);
+					hash.Add(blit.ColorBit);
+					hash.Add(blit.DepthBit);
+					hash.Add(blit.StencilBit);
+					hash.Add(blit.LinearFilter);
+					break;
+
+				case IndirectDrawOp indirect:
+					hash.Add(indirect.IndirectBuffer.GetHashCode());
+					hash.Add(indirect.ParameterBuffer?.GetHashCode() ?? 0);
+					hash.Add(indirect.DrawCount);
+					hash.Add(indirect.Stride);
+					hash.Add(indirect.ByteOffset);
+					hash.Add(indirect.UseCount);
+					break;
+
+				case MemoryBarrierOp barrier:
+					hash.Add((int)barrier.Mask);
+					break;
+
+				case ComputeDispatchOp compute:
+					hash.Add(compute.Program.GetHashCode());
+					hash.Add(compute.GroupsX);
+					hash.Add(compute.GroupsY);
+					hash.Add(compute.GroupsZ);
+
+					hash.Add(compute.Snapshot.Uniforms.Count);
+					foreach (var pair in compute.Snapshot.Uniforms.OrderBy(static p => p.Key, StringComparer.Ordinal))
+					{
+						hash.Add(pair.Key, StringComparer.Ordinal);
+						hash.Add((int)pair.Value.Type);
+						hash.Add(pair.Value.IsArray);
+						hash.Add(pair.Value.Value?.GetHashCode() ?? 0);
+					}
+
+					hash.Add(compute.Snapshot.Samplers.Count);
+					foreach (var pair in compute.Snapshot.Samplers.OrderBy(static p => p.Key))
+					{
+						hash.Add(pair.Key);
+						hash.Add(pair.Value?.GetHashCode() ?? 0);
+					}
+
+					hash.Add(compute.Snapshot.Images.Count);
+					foreach (var pair in compute.Snapshot.Images.OrderBy(static p => p.Key))
+					{
+						hash.Add(pair.Key);
+						hash.Add(pair.Value.Texture.GetHashCode());
+						hash.Add(pair.Value.Level);
+						hash.Add(pair.Value.Layered);
+						hash.Add(pair.Value.Layer);
+						hash.Add((int)pair.Value.Access);
+						hash.Add((int)pair.Value.Format);
+					}
+
+					hash.Add(compute.Snapshot.Buffers.Count);
+					foreach (var pair in compute.Snapshot.Buffers.OrderBy(static p => p.Key))
+					{
+						hash.Add(pair.Key);
+						hash.Add(pair.Value?.GetHashCode() ?? 0);
+					}
+					break;
+			}
+		}
+
+		return unchecked((ulong)hash.ToHashCode());
 	}
 
 	internal readonly record struct PendingMeshDraw(
@@ -182,7 +333,10 @@ public unsafe partial class VulkanRenderer
 		private readonly Dictionary<PipelineKey, Pipeline> _pipelines = new();
 		private readonly record struct PipelineKey(
 					PrimitiveTopology Topology,
+					bool UseDynamicRendering,
 					ulong RenderPassHandle,
+					Format ColorAttachmentFormat,
+					Format DepthAttachmentFormat,
 					ulong ProgramPipelineHash,
 					ulong VertexLayoutHash,
 					bool DepthTestEnabled,
@@ -220,6 +374,9 @@ public unsafe partial class VulkanRenderer
 		private readonly Dictionary<string, AutoUniformBuffer[]> _autoUniformBuffers = new(StringComparer.Ordinal);
 		private readonly HashSet<string> _autoUniformWarnings = new(StringComparer.Ordinal);
 		private const string VertexUniformSuffix = "_VTX";
+
+		private static bool IsStencilCapableFormat(Format format)
+			=> format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
 
 		private readonly struct EngineUniformBuffer
 		{
@@ -633,7 +790,15 @@ public unsafe partial class VulkanRenderer
 			_vertexAttributes = [.. attributes];
 		}
 
-		private bool EnsurePipeline(XRMaterial material, PrimitiveTopology topology, in PendingMeshDraw draw, RenderPass renderPass, out Pipeline pipeline)
+		private bool EnsurePipeline(
+			XRMaterial material,
+			PrimitiveTopology topology,
+			in PendingMeshDraw draw,
+			RenderPass renderPass,
+			bool useDynamicRendering,
+			Format colorAttachmentFormat,
+			Format depthAttachmentFormat,
+			out Pipeline pipeline)
 		{
 			pipeline = default;
 
@@ -652,7 +817,10 @@ public unsafe partial class VulkanRenderer
 
 			PipelineKey key = new(
 				topology,
-				renderPass.Handle,
+				useDynamicRendering,
+				useDynamicRendering ? 0UL : renderPass.Handle,
+				useDynamicRendering ? colorAttachmentFormat : Format.Undefined,
+				useDynamicRendering ? depthAttachmentFormat : Format.Undefined,
 				programPipelineHash,
 				vertexLayoutHash,
 				draw.DepthTestEnabled,
@@ -753,7 +921,9 @@ public unsafe partial class VulkanRenderer
 					DstAlphaBlendFactor = draw.DstAlphaBlendFactor,
 				};
 
-				uint colorAttachmentCount = Renderer.GetRenderPassColorAttachmentCount(renderPass);
+				uint colorAttachmentCount = useDynamicRendering
+					? 1u
+					: Renderer.GetRenderPassColorAttachmentCount(renderPass);
 				PipelineColorBlendAttachmentState[] blendAttachments = colorAttachmentCount == 0
 					? Array.Empty<PipelineColorBlendAttachmentState>()
 					: new PipelineColorBlendAttachmentState[colorAttachmentCount];
@@ -799,9 +969,26 @@ public unsafe partial class VulkanRenderer
 							PDepthStencilState = &depthStencil,
 							PColorBlendState = &colorBlending,
 							PDynamicState = &dynamicState,
-								RenderPass = renderPass,
+							RenderPass = useDynamicRendering ? default : renderPass,
 							Subpass = 0,
 						};
+
+						if (useDynamicRendering)
+						{
+							Format colorFormat = colorAttachmentFormat;
+							PipelineRenderingCreateInfo renderingInfo = new()
+							{
+								SType = StructureType.PipelineRenderingCreateInfo,
+								ColorAttachmentCount = 1,
+								PColorAttachmentFormats = &colorFormat,
+								DepthAttachmentFormat = depthAttachmentFormat,
+								StencilAttachmentFormat = IsStencilCapableFormat(depthAttachmentFormat)
+									? depthAttachmentFormat
+									: Format.Undefined,
+							};
+
+							pipelineInfo.PNext = &renderingInfo;
+						}
 
 							pipeline = _program!.CreateGraphicsPipeline(ref pipelineInfo, Renderer.ActivePipelineCache);
 							_pipelines[key] = pipeline;
@@ -828,7 +1015,13 @@ public unsafe partial class VulkanRenderer
 			_pipelines.Clear();
 		}
 
-		internal void RecordDraw(CommandBuffer commandBuffer, in PendingMeshDraw draw, RenderPass renderPass)
+		internal void RecordDraw(
+			CommandBuffer commandBuffer,
+			in PendingMeshDraw draw,
+			RenderPass renderPass,
+			bool useDynamicRendering,
+			Format colorAttachmentFormat,
+			Format depthAttachmentFormat)
 		{
 			EnsureBuffers();
 
@@ -857,7 +1050,7 @@ public unsafe partial class VulkanRenderer
 				if (indexCount == 0)
 					return false;
 
-				if (!EnsurePipeline(material, topology, drawCopy, renderPass, out var pipeline))
+				if (!EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, out var pipeline))
 					return false;
 
 				Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
@@ -890,7 +1083,7 @@ public unsafe partial class VulkanRenderer
 			if (!drew && Mesh is not null)
 			{
 				uint vertexCount = (uint)Math.Max(Mesh.VertexCount, 0);
-				if (vertexCount > 0 && EnsurePipeline(material, PrimitiveTopology.TriangleList, drawCopy, renderPass, out var pipeline))
+				if (vertexCount > 0 && EnsurePipeline(material, PrimitiveTopology.TriangleList, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, out var pipeline))
 				{
 					Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 

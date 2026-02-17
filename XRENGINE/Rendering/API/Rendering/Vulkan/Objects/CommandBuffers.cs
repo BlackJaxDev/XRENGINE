@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
@@ -10,15 +11,18 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private CommandBuffer[]? _commandBuffers;
-        private List<ComputeTransientResources>[]? _computeTransientResources;
+        private ulong[]? _commandBufferFrameOpSignatures;
+        private ulong[]? _commandBufferPlannerRevisions;
+        private ComputeTransientResources[]? _computeTransientResources;
         private List<DeferredSecondaryCommandBuffer>[]? _deferredSecondaryCommandBuffers;
         private readonly object _oneTimeCommandPoolsLock = new();
-        private readonly Dictionary<nint, CommandPool> _oneTimeCommandPools = new();
+        private readonly Dictionary<nint, OneTimeCommandOwner> _oneTimeCommandPools = new();
         private readonly object _oneTimeSubmitLock = new();
+        private int _oneTimeGraphicsSubmitCounter;
         private readonly object _commandBindStateLock = new();
         private readonly Dictionary<ulong, CommandBufferBindState> _commandBindStates = new();
-        private bool _enableSecondaryCommandBuffers = false;
-        private bool _enableParallelSecondaryCommandBufferRecording = false;
+        private bool _enableSecondaryCommandBuffers = true;
+        private bool _enableParallelSecondaryCommandBufferRecording = true;
         private int _parallelSecondaryIndirectRunThreshold = 4;
         private string? _vulkanDiagnosticBaseWindowTitle;
         private string? _vulkanDiagnosticLastTitle;
@@ -50,7 +54,8 @@ namespace XREngine.Rendering.Vulkan
 
         private sealed class ComputeTransientResources
         {
-            public DescriptorPool DescriptorPool;
+            public DescriptorPool ActiveDescriptorPool;
+            public List<DescriptorPool> DescriptorPools { get; } = [];
             public List<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> UniformBuffers { get; } = [];
         }
 
@@ -64,6 +69,18 @@ namespace XREngine.Rendering.Vulkan
 
             public CommandPool Pool { get; }
             public CommandBuffer CommandBuffer { get; }
+        }
+
+        private readonly struct OneTimeCommandOwner
+        {
+            public OneTimeCommandOwner(CommandPool pool, bool useTransferQueue)
+            {
+                Pool = pool;
+                UseTransferQueue = useTransferQueue;
+            }
+
+            public CommandPool Pool { get; }
+            public bool UseTransferQueue { get; }
         }
 
         private struct CommandBufferBindState
@@ -83,6 +100,13 @@ namespace XREngine.Rendering.Vulkan
             ulong key = (ulong)commandBuffer.Handle;
             lock (_commandBindStateLock)
                 _commandBindStates[key] = default;
+        }
+
+        internal void RemoveCommandBufferBindState(CommandBuffer commandBuffer)
+        {
+            ulong key = (ulong)commandBuffer.Handle;
+            lock (_commandBindStateLock)
+                _commandBindStates.Remove(key);
         }
 
         internal void BindPipelineTracked(CommandBuffer commandBuffer, PipelineBindPoint bindPoint, Pipeline pipeline)
@@ -268,6 +292,8 @@ namespace XREngine.Rendering.Vulkan
 
             _commandBuffers = null;
             _commandBufferDirtyFlags = null;
+            _commandBufferFrameOpSignatures = null;
+            _commandBufferPlannerRevisions = null;
         }
 
         private void DestroyDeferredSecondaryCommandBuffers()
@@ -297,6 +323,7 @@ namespace XREngine.Rendering.Vulkan
                     continue;
 
                 Api!.FreeCommandBuffers(device, entry.Pool, 1, ref secondary);
+                RemoveCommandBufferBindState(secondary);
             }
 
             deferred.Clear();
@@ -333,45 +360,122 @@ namespace XREngine.Rendering.Vulkan
             if (_computeTransientResources is null || imageIndex >= _computeTransientResources.Length)
                 return;
 
-            List<ComputeTransientResources>? resources = _computeTransientResources[imageIndex];
-            if (resources is null || resources.Count == 0)
+            ComputeTransientResources? resources = _computeTransientResources[imageIndex];
+            if (resources is null)
                 return;
 
-            foreach (ComputeTransientResources resource in resources)
+            foreach (DescriptorPool descriptorPool in resources.DescriptorPools)
             {
-                if (resource.DescriptorPool.Handle != 0)
-                    Api!.DestroyDescriptorPool(device, resource.DescriptorPool, null);
+                if (descriptorPool.Handle != 0)
+                    Api!.DestroyDescriptorPool(device, descriptorPool, null);
+            }
 
-                foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in resource.UniformBuffers)
+            resources.DescriptorPools.Clear();
+            resources.ActiveDescriptorPool = default;
+
+            foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in resources.UniformBuffers)
+            {
+                if (buffer.Handle != 0)
+                    Api!.DestroyBuffer(device, buffer, null);
+                if (memory.Handle != 0)
+                    Api!.FreeMemory(device, memory, null);
+            }
+
+            resources.UniformBuffers.Clear();
+        }
+
+        internal bool TryAllocateTransientComputeDescriptorSets(
+            uint imageIndex,
+            DescriptorSetLayout[] setLayouts,
+            DescriptorPoolSize[] poolSizes,
+            bool requireUpdateAfterBind,
+            out DescriptorSet[] descriptorSets)
+        {
+            descriptorSets = Array.Empty<DescriptorSet>();
+            if (setLayouts.Length == 0)
+                return false;
+
+            if (_computeTransientResources is null || imageIndex >= _computeTransientResources.Length)
+                return false;
+
+            ComputeTransientResources resources = _computeTransientResources[imageIndex] ??= new ComputeTransientResources();
+
+            bool TryAllocateFromPool(DescriptorPool pool, out DescriptorSet[] sets)
+            {
+                sets = new DescriptorSet[setLayouts.Length];
+                fixed (DescriptorSetLayout* layoutPtr = setLayouts)
+                fixed (DescriptorSet* setPtr = sets)
                 {
-                    if (buffer.Handle != 0)
-                        Api!.DestroyBuffer(device, buffer, null);
-                    if (memory.Handle != 0)
-                        Api!.FreeMemory(device, memory, null);
+                    DescriptorSetAllocateInfo allocInfo = new()
+                    {
+                        SType = StructureType.DescriptorSetAllocateInfo,
+                        DescriptorPool = pool,
+                        DescriptorSetCount = (uint)setLayouts.Length,
+                        PSetLayouts = layoutPtr,
+                    };
+
+                    Result allocResult = Api!.AllocateDescriptorSets(device, ref allocInfo, setPtr);
+                    if (allocResult == Result.Success)
+                        return true;
+
+                    sets = Array.Empty<DescriptorSet>();
+                    return false;
                 }
             }
 
-            resources.Clear();
+            if (resources.ActiveDescriptorPool.Handle != 0 && TryAllocateFromPool(resources.ActiveDescriptorPool, out descriptorSets))
+                return true;
+
+            uint descriptorScale = 8u;
+            DescriptorPoolSize[] scaledPoolSizes = new DescriptorPoolSize[poolSizes.Length];
+            for (int i = 0; i < poolSizes.Length; i++)
+            {
+                DescriptorPoolSize source = poolSizes[i];
+                uint scaledCount = Math.Max(source.DescriptorCount * descriptorScale, source.DescriptorCount);
+                scaledPoolSizes[i] = new DescriptorPoolSize
+                {
+                    Type = source.Type,
+                    DescriptorCount = scaledCount
+                };
+            }
+
+            DescriptorPoolCreateFlags poolFlags = requireUpdateAfterBind
+                ? DescriptorPoolCreateFlags.UpdateAfterBindBit
+                : 0;
+
+            fixed (DescriptorPoolSize* poolSizesPtr = scaledPoolSizes)
+            {
+                DescriptorPoolCreateInfo poolInfo = new()
+                {
+                    SType = StructureType.DescriptorPoolCreateInfo,
+                    Flags = poolFlags,
+                    MaxSets = Math.Max((uint)setLayouts.Length * descriptorScale, 32u),
+                    PoolSizeCount = (uint)scaledPoolSizes.Length,
+                    PPoolSizes = poolSizesPtr,
+                };
+
+                if (Api!.CreateDescriptorPool(device, ref poolInfo, null, out DescriptorPool descriptorPool) != Result.Success)
+                    return false;
+
+                resources.DescriptorPools.Add(descriptorPool);
+                resources.ActiveDescriptorPool = descriptorPool;
+            }
+
+            return TryAllocateFromPool(resources.ActiveDescriptorPool, out descriptorSets);
         }
 
-        private void RegisterComputeTransientResources(
+        private void RegisterComputeTransientUniformBuffers(
             uint imageIndex,
-            DescriptorPool descriptorPool,
             IReadOnlyList<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> uniformBuffers)
         {
             if (_computeTransientResources is null || imageIndex >= _computeTransientResources.Length)
                 return;
 
-            _computeTransientResources[imageIndex] ??= [];
-            var resource = new ComputeTransientResources
-            {
-                DescriptorPool = descriptorPool
-            };
+            if (uniformBuffers is not { Count: > 0 })
+                return;
 
-            if (uniformBuffers is { Count: > 0 })
-                resource.UniformBuffers.AddRange(uniformBuffers);
-
-            _computeTransientResources[imageIndex]!.Add(resource);
+            ComputeTransientResources resources = _computeTransientResources[imageIndex] ??= new ComputeTransientResources();
+            resources.UniformBuffers.AddRange(uniformBuffers);
         }
 
         private void CreateCommandBuffers()
@@ -396,7 +500,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             AllocateCommandBufferDirtyFlags();
-            _computeTransientResources = new List<ComputeTransientResources>[_commandBuffers.Length];
+            _computeTransientResources = new ComputeTransientResources[_commandBuffers.Length];
             _deferredSecondaryCommandBuffers = new List<DeferredSecondaryCommandBuffer>[_commandBuffers.Length];
             InitializeComputeDescriptorCaches(_commandBuffers.Length);
         }
@@ -440,14 +544,39 @@ namespace XREngine.Rendering.Vulkan
             if (_commandBufferDirtyFlags is null || imageIndex >= _commandBufferDirtyFlags.Length)
                 throw new InvalidOperationException("Command buffer dirty flags are not initialised correctly.");
 
-            if (!_commandBufferDirtyFlags[imageIndex])
+            if (_commandBufferFrameOpSignatures is null || imageIndex >= _commandBufferFrameOpSignatures.Length)
+                throw new InvalidOperationException("Command buffer frame-op signatures are not initialised correctly.");
+
+            if (_commandBufferPlannerRevisions is null || imageIndex >= _commandBufferPlannerRevisions.Length)
+                throw new InvalidOperationException("Command buffer planner revisions are not initialised correctly.");
+
+            bool dirty = _commandBufferDirtyFlags[imageIndex];
+            var ops = DrainFrameOps(out ulong frameOpsSignature);
+            bool hasFrameOps = ops.Length > 0;
+
+            FrameOpContext plannerContext = hasFrameOps
+                ? ops[0].Context
+                : CaptureFrameOpContext();
+
+            UpdateResourcePlannerFromContext(plannerContext);
+            ulong plannerRevision = ResourcePlannerRevision;
+
+            if (!dirty && hasFrameOps && _commandBufferFrameOpSignatures[imageIndex] != frameOpsSignature)
+                dirty = true;
+
+            if (!dirty && _commandBufferPlannerRevisions[imageIndex] != plannerRevision)
+                dirty = true;
+
+            if (!dirty)
                 return;
 
-            RecordCommandBuffer(imageIndex);
+            RecordCommandBuffer(imageIndex, ops);
             _commandBufferDirtyFlags[imageIndex] = false;
+            _commandBufferFrameOpSignatures[imageIndex] = frameOpsSignature;
+            _commandBufferPlannerRevisions[imageIndex] = plannerRevision;
         }
 
-        private void RecordCommandBuffer(uint imageIndex)
+        private void RecordCommandBuffer(uint imageIndex, FrameOp[] ops)
         {
             var commandBuffer = _commandBuffers![imageIndex];
             int droppedDrawOps = 0;
@@ -465,6 +594,8 @@ namespace XREngine.Rendering.Vulkan
             if (Api!.BeginCommandBuffer(commandBuffer, ref beginInfo) != Result.Success)
                 throw new Exception("Failed to begin recording command buffer.");
 
+            BeginFrameTimingQueries(commandBuffer, currentFrame);
+
             ResetCommandBufferBindState(commandBuffer);
 
             CmdBeginLabel(commandBuffer, $"FrameCmd[{imageIndex}]");
@@ -473,11 +604,9 @@ namespace XREngine.Rendering.Vulkan
             // maintain pass-scoped ordering.  Any remaining global mask is emitted
             // before the first pass barrier group via EmitPassBarriers.
 
-            var ops = DrainFrameOps();
             FrameOpContext initialContext = ops.Length > 0
                 ? ops[0].Context
                 : CaptureFrameOpContext();
-            UpdateResourcePlannerFromContext(initialContext);
 
             bool singleContext = true;
             for (int i = 1; i < ops.Length; i++)
@@ -491,6 +620,16 @@ namespace XREngine.Rendering.Vulkan
 
             if (singleContext)
                 ops = _renderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+
+            IReadOnlyList<VulkanRenderGraphCompiler.SecondaryRecordingBucket> secondaryBuckets =
+                _renderGraphCompiler.BuildSecondaryRecordingBuckets(ops);
+            Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket>? secondaryBucketByStart = null;
+            if (secondaryBuckets.Count > 0)
+            {
+                secondaryBucketByStart = new Dictionary<int, VulkanRenderGraphCompiler.SecondaryRecordingBucket>(secondaryBuckets.Count);
+                foreach (VulkanRenderGraphCompiler.SecondaryRecordingBucket bucket in secondaryBuckets)
+                    secondaryBucketByStart[bucket.StartIndex] = bucket;
+            }
 
             // Ensure swapchain resources are transitioned appropriately before any rendering.
             CmdBeginLabel(commandBuffer, "SwapchainBarriers");
@@ -540,6 +679,7 @@ namespace XREngine.Rendering.Vulkan
                 swapchainWriteCount);
 
             bool renderPassActive = false;
+            bool activeDynamicRendering = false;
             XRFrameBuffer? activeTarget = null;
             RenderPass activeRenderPass = default;
             Framebuffer activeFramebuffer = default;
@@ -548,6 +688,8 @@ namespace XREngine.Rendering.Vulkan
             int activeSchedulingIdentity = int.MinValue;
             FrameOpContext activeContext = default;
             bool hasActiveContext = false;
+            FrameOpContext plannerContext = default;
+            bool hasPlannerContext = false;
             bool renderPassLabelActive = false;
             bool passIndexLabelActive = false;
             IDisposable? activePipelineOverrideScope = null;
@@ -562,13 +704,59 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (!renderPassActive)
                     return;
-                Api!.CmdEndRenderPass(commandBuffer);
+
+                bool transitionSwapchainToPresent = activeDynamicRendering && activeTarget is null;
+                if (activeDynamicRendering)
+                {
+                    Api!.CmdEndRendering(commandBuffer);
+
+                    if (transitionSwapchainToPresent && swapChainImages is not null && imageIndex < swapChainImages.Length)
+                    {
+                        ImageMemoryBarrier presentBarrier = new()
+                        {
+                            SType = StructureType.ImageMemoryBarrier,
+                            SrcAccessMask = AccessFlags.ColorAttachmentWriteBit,
+                            DstAccessMask = 0,
+                            OldLayout = ImageLayout.ColorAttachmentOptimal,
+                            NewLayout = ImageLayout.PresentSrcKhr,
+                            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                            Image = swapChainImages[imageIndex],
+                            SubresourceRange = new ImageSubresourceRange
+                            {
+                                AspectMask = ImageAspectFlags.ColorBit,
+                                BaseMipLevel = 0,
+                                LevelCount = 1,
+                                BaseArrayLayer = 0,
+                                LayerCount = 1
+                            }
+                        };
+
+                        Api!.CmdPipelineBarrier(
+                            commandBuffer,
+                            PipelineStageFlags.ColorAttachmentOutputBit,
+                            PipelineStageFlags.BottomOfPipeBit,
+                            0,
+                            0,
+                            null,
+                            0,
+                            null,
+                            1,
+                            &presentBarrier);
+                    }
+                }
+                else
+                {
+                    Api!.CmdEndRenderPass(commandBuffer);
+                }
+
                 if (renderPassLabelActive)
                 {
                     CmdEndLabel(commandBuffer);
                     renderPassLabelActive = false;
                 }
                 renderPassActive = false;
+                activeDynamicRendering = false;
                 activeTarget = null;
                 activeRenderPass = default;
                 activeFramebuffer = default;
@@ -580,8 +768,120 @@ namespace XREngine.Rendering.Vulkan
                 // Assumes no active render pass.
                 if (target is null)
                 {
-                    CmdBeginLabel(commandBuffer, "RenderPass:Swapchain");
+                    bool useDynamicRendering = SupportsDynamicRendering &&
+                        swapChainImageViews is not null &&
+                        swapChainImages is not null &&
+                        imageIndex < swapChainImageViews.Length &&
+                        imageIndex < swapChainImages.Length;
+
+                    CmdBeginLabel(commandBuffer, useDynamicRendering ? "Rendering:Swapchain" : "RenderPass:Swapchain");
                     renderPassLabelActive = true;
+
+                    if (useDynamicRendering)
+                    {
+                        ImageMemoryBarrier colorBarrier = new()
+                        {
+                            SType = StructureType.ImageMemoryBarrier,
+                            SrcAccessMask = 0,
+                            DstAccessMask = AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit,
+                            OldLayout = ImageLayout.PresentSrcKhr,
+                            NewLayout = ImageLayout.ColorAttachmentOptimal,
+                            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                            Image = swapChainImages![imageIndex],
+                            SubresourceRange = new ImageSubresourceRange
+                            {
+                                AspectMask = ImageAspectFlags.ColorBit,
+                                BaseMipLevel = 0,
+                                LevelCount = 1,
+                                BaseArrayLayer = 0,
+                                LayerCount = 1
+                            }
+                        };
+
+                        ImageMemoryBarrier depthBarrier = new()
+                        {
+                            SType = StructureType.ImageMemoryBarrier,
+                            SrcAccessMask = 0,
+                            DstAccessMask = AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit,
+                            OldLayout = ImageLayout.Undefined,
+                            NewLayout = ImageLayout.DepthStencilAttachmentOptimal,
+                            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                            Image = _swapchainDepthImage,
+                            SubresourceRange = new ImageSubresourceRange
+                            {
+                                AspectMask = _swapchainDepthAspect,
+                                BaseMipLevel = 0,
+                                LevelCount = 1,
+                                BaseArrayLayer = 0,
+                                LayerCount = 1
+                            }
+                        };
+
+                        ImageMemoryBarrier* preRenderingBarriers = stackalloc ImageMemoryBarrier[2];
+                        preRenderingBarriers[0] = colorBarrier;
+                        preRenderingBarriers[1] = depthBarrier;
+
+                        Api!.CmdPipelineBarrier(
+                            commandBuffer,
+                            PipelineStageFlags.TopOfPipeBit,
+                            PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit,
+                            0,
+                            0,
+                            null,
+                            0,
+                            null,
+                            2,
+                            preRenderingBarriers);
+
+                        ClearValue* dynamicClearValues = stackalloc ClearValue[2];
+                        _state.WriteClearValues(dynamicClearValues, 2);
+
+                        RenderingAttachmentInfo colorAttachment = new()
+                        {
+                            SType = StructureType.RenderingAttachmentInfo,
+                            ImageView = swapChainImageViews[imageIndex],
+                            ImageLayout = ImageLayout.ColorAttachmentOptimal,
+                            LoadOp = AttachmentLoadOp.Clear,
+                            StoreOp = AttachmentStoreOp.Store,
+                            ClearValue = dynamicClearValues[0],
+                        };
+
+                        RenderingAttachmentInfo depthAttachment = new()
+                        {
+                            SType = StructureType.RenderingAttachmentInfo,
+                            ImageView = _swapchainDepthView,
+                            ImageLayout = ImageLayout.DepthStencilAttachmentOptimal,
+                            LoadOp = AttachmentLoadOp.Clear,
+                            StoreOp = AttachmentStoreOp.DontCare,
+                            ClearValue = dynamicClearValues[1],
+                        };
+
+                        RenderingInfo renderingInfo = new()
+                        {
+                            SType = StructureType.RenderingInfo,
+                            RenderArea = new Rect2D
+                            {
+                                Offset = new Offset2D(0, 0),
+                                Extent = swapChainExtent
+                            },
+                            LayerCount = 1,
+                            ColorAttachmentCount = 1,
+                            PColorAttachments = &colorAttachment,
+                            PDepthAttachment = &depthAttachment,
+                        };
+
+                        Api!.CmdBeginRendering(commandBuffer, &renderingInfo);
+
+                        renderPassActive = true;
+                        activeDynamicRendering = true;
+                        activeTarget = null;
+                        activeRenderPass = default;
+                        activeFramebuffer = default;
+                        activeRenderArea = renderingInfo.RenderArea;
+                        return;
+                    }
 
                     RenderPassBeginInfo renderPassInfo = new()
                     {
@@ -604,6 +904,7 @@ namespace XREngine.Rendering.Vulkan
                     Api!.CmdBeginRenderPass(commandBuffer, &renderPassInfo, SubpassContents.Inline);
 
                     renderPassActive = true;
+                    activeDynamicRendering = false;
                     activeTarget = null;
                     activeRenderPass = _renderPass;
                     activeFramebuffer = swapChainFramebuffers![imageIndex];
@@ -644,6 +945,7 @@ namespace XREngine.Rendering.Vulkan
                 Api!.CmdBeginRenderPass(commandBuffer, &fboPassInfo, SubpassContents.Inline);
 
                 renderPassActive = true;
+                activeDynamicRendering = false;
                 activeTarget = target;
                 activeRenderPass = passRenderPass;
                 activeFramebuffer = vkFrameBuffer.FrameBuffer;
@@ -663,6 +965,45 @@ namespace XREngine.Rendering.Vulkan
 
                 var imageBarriers = _barrierPlanner.GetBarriersForPass(passIndex);
                 var bufferBarriers = _barrierPlanner.GetBufferBarriersForPass(passIndex);
+
+                // If the barrier planner doesn't recognise this pass at all, it has no planned
+                // layout transitions. Emit a conservative full-pipeline memory barrier so that
+                // all prior writes are visible to subsequent reads. We intentionally do NOT
+                // substitute image barriers from another pass because those barriers carry
+                // OldLayout values that may not match the images' actual layouts, causing
+                // undefined behaviour (observed as CmdBlitImage segfaults on NVIDIA drivers).
+                // Ops that need specific image layout transitions (e.g. blits) handle them
+                // internally via TransitionForBlit.
+                if (!_barrierPlanner.HasKnownPass(passIndex))
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.UnknownPassBarrier.{passIndex}",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Pass {0} is unknown to the barrier planner. Emitting conservative memory barrier.",
+                        passIndex);
+
+                    MemoryBarrier safetyBarrier = new()
+                    {
+                        SType = StructureType.MemoryBarrier,
+                        SrcAccessMask = AccessFlags.MemoryWriteBit,
+                        DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                    };
+
+                    Api!.CmdPipelineBarrier(
+                        commandBuffer,
+                        PipelineStageFlags.AllCommandsBit,
+                        PipelineStageFlags.AllCommandsBit,
+                        DependencyFlags.None,
+                        1,
+                        &safetyBarrier,
+                        0,
+                        null,
+                        0,
+                        null);
+
+                    return;
+                }
+
                 int queueOwnershipTransfers = 0;
                 int stageFlushes = 0;
 
@@ -738,12 +1079,36 @@ namespace XREngine.Rendering.Vulkan
                             activeContext = op.Context;
                             hasActiveContext = true;
                             ApplyPipelineOverride(activeContext);
-                            UpdateResourcePlannerFromContext(activeContext);
+
+                            if (!hasPlannerContext || RequiresResourcePlannerRebuild(plannerContext, activeContext))
+                            {
+                                UpdateResourcePlannerFromContext(activeContext);
+                                plannerContext = activeContext;
+                                hasPlannerContext = true;
+                            }
+
                             activePassIndex = int.MinValue;
                             activeSchedulingIdentity = int.MinValue;
                         }
 
                         int opPassIndex = EnsureValidPassIndex(op.PassIndex, op.GetType().Name, op.Context.PassMetadata);
+
+                        // Diagnostic: log the first few ops with invalid pass index per frame
+                        if (op.PassIndex == int.MinValue)
+                        {
+                            Debug.VulkanWarningEvery(
+                                $"Vulkan.OpInvalidPass.{op.GetType().Name}",
+                                TimeSpan.FromSeconds(2),
+                                "[Vulkan] Op[{0}] {1} had PassIndex=MinValue (resolved to {2}). " +
+                                "CtxPipeline={3} CtxMetadataCount={4} CtxViewport={5}",
+                                opIndex,
+                                op.GetType().Name,
+                                opPassIndex,
+                                op.Context.PipelineIdentity,
+                                op.Context.PassMetadata?.Count ?? -1,
+                                op.Context.ViewportIdentity);
+                        }
+
                         int opSchedulingIdentity = op.Context.SchedulingIdentity;
                         if (opPassIndex != activePassIndex || opSchedulingIdentity != activeSchedulingIdentity)
                         {
@@ -770,49 +1135,11 @@ namespace XREngine.Rendering.Vulkan
                         {
                     case BlitOp blit:
                         EndActiveRenderPass();
-                        if (_enableSecondaryCommandBuffers)
+                        if (secondaryBucketByStart is not null &&
+                            secondaryBucketByStart.TryGetValue(opIndex, out VulkanRenderGraphCompiler.SecondaryRecordingBucket blitBucket) &&
+                            TryRecordSecondaryBucket(primaryCommandBuffer: commandBuffer, imageIndex, ops, opIndex, blitBucket, "BlitBatch"))
                         {
-                            int runEnd = opIndex;
-                            if (_enableParallelSecondaryCommandBufferRecording)
-                            {
-                                while (runEnd + 1 < ops.Length &&
-                                       ops[runEnd + 1] is BlitOp &&
-                                       Equals(ops[runEnd + 1].Context, activeContext) &&
-                                       EnsureValidPassIndex(ops[runEnd + 1].PassIndex, ops[runEnd + 1].GetType().Name, ops[runEnd + 1].Context.PassMetadata) == opPassIndex &&
-                                       ops[runEnd + 1].Context.SchedulingIdentity == opSchedulingIdentity)
-                                {
-                                    runEnd++;
-                                }
-                            }
-
-                            int runCount = runEnd - opIndex + 1;
-                            if (runCount > 1)
-                            {
-                                ExecuteSecondaryCommandBufferBatchParallel(
-                                    commandBuffer,
-                                    "BlitBatch",
-                                    runCount,
-                                    imageIndex,
-                                    (relativeIndex, secondary) =>
-                                    {
-                                        BlitOp blitOp = (BlitOp)ops[opIndex + relativeIndex];
-                                        using var __ = Engine.Rendering.State.PushRenderingPipelineOverride(blitOp.Context.PipelineInstance);
-                                        RecordBlitOp(secondary, imageIndex, blitOp);
-                                    });
-                                opIndex = runEnd;
-                            }
-                            else
-                            {
-                                ExecuteSecondaryCommandBuffer(
-                                    commandBuffer,
-                                    "Blit",
-                                    imageIndex,
-                                    secondary =>
-                                    {
-                                        using var __ = Engine.Rendering.State.PushRenderingPipelineOverride(blit.Context.PipelineInstance);
-                                        RecordBlitOp(secondary, imageIndex, blit);
-                                    });
-                            }
+                            opIndex = opIndex + blitBucket.Count - 1;
                         }
                         else
                         {
@@ -844,83 +1171,29 @@ namespace XREngine.Rendering.Vulkan
                         Rect2D scissor = drawOp.Draw.Scissor;
                         Api!.CmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-                        drawOp.Draw.Renderer.RecordDraw(commandBuffer, drawOp.Draw, activeRenderPass);
+                        drawOp.Draw.Renderer.RecordDraw(
+                            commandBuffer,
+                            drawOp.Draw,
+                            activeRenderPass,
+                            activeDynamicRendering && drawOp.Target is null,
+                            swapChainImageFormat,
+                            _swapchainDepthFormat);
                         break;
 
                     case IndirectDrawOp indirectOp:
                         EndActiveRenderPass();
-                        if (_enableSecondaryCommandBuffers)
+                        if (secondaryBucketByStart is not null &&
+                            secondaryBucketByStart.TryGetValue(opIndex, out VulkanRenderGraphCompiler.SecondaryRecordingBucket indirectBucket) &&
+                            TryRecordSecondaryBucket(primaryCommandBuffer: commandBuffer, imageIndex, ops, opIndex, indirectBucket, "IndirectDrawBatch"))
                         {
-                            int runEnd = opIndex;
-                            if (_enableParallelSecondaryCommandBufferRecording)
-                            {
-                                while (runEnd + 1 < ops.Length &&
-                                       ops[runEnd + 1] is IndirectDrawOp &&
-                                       Equals(ops[runEnd + 1].Context, activeContext) &&
-                                       EnsureValidPassIndex(ops[runEnd + 1].PassIndex, ops[runEnd + 1].GetType().Name, ops[runEnd + 1].Context.PassMetadata) == opPassIndex &&
-                                       ops[runEnd + 1].Context.SchedulingIdentity == opSchedulingIdentity)
-                                {
-                                    runEnd++;
-                                }
-                            }
+                            bool usedParallel = _enableParallelSecondaryCommandBufferRecording &&
+                                indirectBucket.Count >= Math.Max(_parallelSecondaryIndirectRunThreshold, 2);
 
-                            int runCount = runEnd - opIndex + 1;
-                            bool useParallelSecondary =
-                                _enableParallelSecondaryCommandBufferRecording &&
-                                runCount >= Math.Max(_parallelSecondaryIndirectRunThreshold, 2);
-
-                            if (runCount > 1 && useParallelSecondary)
-                            {
-                                ExecuteSecondaryCommandBufferBatchParallel(
-                                    commandBuffer,
-                                    "IndirectDrawBatch",
-                                    runCount,
-                                    imageIndex,
-                                    (relativeIndex, secondary) =>
-                                    {
-                                        IndirectDrawOp runOp = (IndirectDrawOp)ops[opIndex + relativeIndex];
-                                        using var __ = Engine.Rendering.State.PushRenderingPipelineOverride(runOp.Context.PipelineInstance);
-                                        RecordIndirectDrawOp(secondary, runOp);
-                                    });
-                                Engine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
-                                    usedSecondary: true,
-                                    usedParallel: true,
-                                    opCount: runCount);
-                                opIndex = runEnd;
-                            }
-                            else if (runCount > 1)
-                            {
-                                for (int relativeIndex = 0; relativeIndex < runCount; relativeIndex++)
-                                {
-                                    IndirectDrawOp runOp = (IndirectDrawOp)ops[opIndex + relativeIndex];
-                                    ExecuteSecondaryCommandBuffer(
-                                        commandBuffer,
-                                        "IndirectDraw",
-                                        imageIndex,
-                                        secondary =>
-                                        {
-                                            using var __ = Engine.Rendering.State.PushRenderingPipelineOverride(runOp.Context.PipelineInstance);
-                                            RecordIndirectDrawOp(secondary, runOp);
-                                        });
-                                }
-
-                                Engine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
-                                    usedSecondary: true,
-                                    usedParallel: false,
-                                    opCount: runCount);
-                                opIndex = runEnd;
-                            }
-                            else
-                            {
-                                CmdBeginLabel(commandBuffer, "IndirectDraw");
-                                RecordIndirectDrawOp(commandBuffer, indirectOp);
-                                CmdEndLabel(commandBuffer);
-
-                                Engine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
-                                    usedSecondary: false,
-                                    usedParallel: false,
-                                    opCount: 1);
-                            }
+                            Engine.Rendering.Stats.RecordVulkanIndirectRecordingMode(
+                                usedSecondary: true,
+                                usedParallel,
+                                opCount: indirectBucket.Count);
+                            opIndex = opIndex + indirectBucket.Count - 1;
                         }
                         else
                         {
@@ -937,16 +1210,12 @@ namespace XREngine.Rendering.Vulkan
 
                     case ComputeDispatchOp computeOp:
                         EndActiveRenderPass();
-                        if (_enableSecondaryCommandBuffers)
-                            ExecuteSecondaryCommandBuffer(
-                                commandBuffer,
-                                "ComputeDispatch",
-                                imageIndex,
-                                secondary =>
-                                {
-                                    using var __ = Engine.Rendering.State.PushRenderingPipelineOverride(computeOp.Context.PipelineInstance);
-                                    RecordComputeDispatchOp(secondary, imageIndex, computeOp);
-                                });
+                        if (secondaryBucketByStart is not null &&
+                            secondaryBucketByStart.TryGetValue(opIndex, out VulkanRenderGraphCompiler.SecondaryRecordingBucket computeBucket) &&
+                            TryRecordSecondaryBucket(primaryCommandBuffer: commandBuffer, imageIndex, ops, opIndex, computeBucket, "ComputeDispatch"))
+                        {
+                            opIndex = opIndex + computeBucket.Count - 1;
+                        }
                         else
                         {
                             CmdBeginLabel(commandBuffer, "ComputeDispatch");
@@ -1021,9 +1290,14 @@ namespace XREngine.Rendering.Vulkan
 
                 if (swapchainWriteCount == 0)
                 {
-                    CmdBeginLabel(commandBuffer, "DebugTriangle");
-                    RenderDebugTriangle(commandBuffer);
-                    CmdEndLabel(commandBuffer);
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.NoSwapchainWrites.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] No swapchain write commands were recorded this frame (clears={0}, draws={1}, blits={2}, computes={3}). Presenting without debug triangle fallback.",
+                        clearCount,
+                        drawCount,
+                        blitCount,
+                        computeCount);
                 }
 
                 if (SupportsImGui)
@@ -1043,6 +1317,8 @@ namespace XREngine.Rendering.Vulkan
 
                 EndActiveRenderPass();
 
+                EndFrameTimingQueries(commandBuffer, currentFrame);
+
                 CmdEndLabel(commandBuffer);
 
                 if (Api!.EndCommandBuffer(commandBuffer) != Result.Success)
@@ -1052,6 +1328,66 @@ namespace XREngine.Rendering.Vulkan
             {
                 activePipelineOverrideScope?.Dispose();
                 activePipelineOverrideScope = null;
+            }
+        }
+
+        private bool TryRecordSecondaryBucket(
+            CommandBuffer primaryCommandBuffer,
+            uint imageIndex,
+            FrameOp[] ops,
+            int startIndex,
+            VulkanRenderGraphCompiler.SecondaryRecordingBucket bucket,
+            string label)
+        {
+            if (!_enableSecondaryCommandBuffers || bucket.Count <= 0)
+                return false;
+
+            bool useParallelSecondary =
+                _enableParallelSecondaryCommandBufferRecording &&
+                bucket.Count >= Math.Max(_parallelSecondaryIndirectRunThreshold, 2);
+
+            if (bucket.Count > 1 && useParallelSecondary)
+            {
+                ExecuteSecondaryCommandBufferBatchParallel(
+                    primaryCommandBuffer,
+                    $"{label}Batch",
+                    bucket.Count,
+                    imageIndex,
+                    (relativeIndex, secondary) =>
+                    {
+                        FrameOp runOp = ops[startIndex + relativeIndex];
+                        RecordFrameOpInSecondary(secondary, imageIndex, runOp);
+                    });
+                return true;
+            }
+
+            for (int relativeIndex = 0; relativeIndex < bucket.Count; relativeIndex++)
+            {
+                FrameOp runOp = ops[startIndex + relativeIndex];
+                ExecuteSecondaryCommandBuffer(
+                    primaryCommandBuffer,
+                    label,
+                    imageIndex,
+                    secondary => RecordFrameOpInSecondary(secondary, imageIndex, runOp));
+            }
+
+            return true;
+        }
+
+        private void RecordFrameOpInSecondary(CommandBuffer secondaryCommandBuffer, uint imageIndex, FrameOp runOp)
+        {
+            using IDisposable? _ = Engine.Rendering.State.PushRenderingPipelineOverride(runOp.Context.PipelineInstance);
+            switch (runOp)
+            {
+                case BlitOp blitOp:
+                    RecordBlitOp(secondaryCommandBuffer, imageIndex, blitOp);
+                    break;
+                case IndirectDrawOp indirectDrawOp:
+                    RecordIndirectDrawOp(secondaryCommandBuffer, indirectDrawOp);
+                    break;
+                case ComputeDispatchOp computeDispatchOp:
+                    RecordComputeDispatchOp(secondaryCommandBuffer, imageIndex, computeDispatchOp);
+                    break;
             }
         }
 
@@ -1173,6 +1509,32 @@ namespace XREngine.Rendering.Vulkan
         {
             void ExecuteSingleBlit(in BlitImageInfo source, in BlitImageInfo destination, Filter filter)
             {
+                // Validate image handles before issuing Vulkan commands.
+                // A stale/destroyed handle causes a native access violation (0xC0000005) in the driver.
+                if (source.Image.Handle == 0 || destination.Image.Handle == 0)
+                {
+                    Debug.VulkanWarningEvery(
+                        "Vulkan.Blit.NullHandle",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Blit skipped: null image handle. Src=0x{0:X} Dst=0x{1:X} SrcFmt={2} DstFmt={3}",
+                        source.Image.Handle,
+                        destination.Image.Handle,
+                        source.Format,
+                        destination.Format);
+                    return;
+                }
+
+                // Validate blit region dimensions — zero-sized regions can crash some drivers.
+                if (op.InW == 0 || op.InH == 0 || op.OutW == 0 || op.OutH == 0)
+                {
+                    Debug.VulkanWarningEvery(
+                        "Vulkan.Blit.ZeroRegion",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Blit skipped: zero-sized region. In={0}x{1} Out={2}x{3}",
+                        op.InW, op.InH, op.OutW, op.OutH);
+                    return;
+                }
+
                 ImageBlit region = BuildImageBlit(source, destination, op.InX, op.InY, op.InW, op.InH, op.OutX, op.OutY, op.OutW, op.OutH);
 
                 TransitionForBlit(
@@ -1194,6 +1556,16 @@ namespace XREngine.Rendering.Vulkan
                     AccessFlags.TransferWriteBit,
                     destination.StageMask,
                     PipelineStageFlags.TransferBit);
+
+                Debug.VulkanEvery(
+                    "Vulkan.Blit.Record",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] CmdBlitImage: src=0x{0:X}({1}) dst=0x{2:X}({3}) region={4},{5}+{6}x{7}→{8},{9}+{10}x{11} filter={12}",
+                    source.Image.Handle, source.Format,
+                    destination.Image.Handle, destination.Format,
+                    op.InX, op.InY, op.InW, op.InH,
+                    op.OutX, op.OutY, op.OutW, op.OutH,
+                    filter);
 
                 Api!.CmdBlitImage(
                     commandBuffer,
@@ -1404,9 +1776,19 @@ namespace XREngine.Rendering.Vulkan
 
             BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline);
 
-            if (op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, out DescriptorPool descriptorPool, out var tempBuffers))
-                RegisterComputeTransientResources(imageIndex, descriptorPool, tempBuffers);
+            if (!op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, out _, out var tempBuffers))
+            {
+                // Descriptor binding failed (e.g. a required storage image lacks STORAGE_BIT).
+                // Dispatching without valid descriptors causes GPU faults → device lost.
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.ComputeDispatch.NoDescriptors.{op.Program.GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Skipping compute dispatch for '{0}' — descriptor binding failed.",
+                    op.Program.Data.Name ?? "UnnamedProgram");
+                return;
+            }
 
+            RegisterComputeTransientUniformBuffers(imageIndex, tempBuffers);
             Api!.CmdDispatch(commandBuffer, op.GroupsX, op.GroupsY, op.GroupsZ);
         }
 
@@ -1762,7 +2144,10 @@ namespace XREngine.Rendering.Vulkan
                     if (executedInPrimary)
                         DeferSecondaryCommandBufferFree(imageIndex, pool, secondary);
                     else
+                    {
                         Api!.FreeCommandBuffers(device, pool, 1, ref secondary);
+                        RemoveCommandBufferBindState(secondary);
+                    }
                 }
 
                 CmdEndLabel(primaryCommandBuffer);
@@ -1867,6 +2252,7 @@ namespace XREngine.Rendering.Vulkan
                                 try
                                 {
                                     Api!.FreeCommandBuffers(device, pool, 1, ref secondary);
+                                    RemoveCommandBufferBindState(secondary);
                                 }
                                 catch
                                 {
@@ -1896,7 +2282,10 @@ namespace XREngine.Rendering.Vulkan
                     if (executedInPrimary)
                         DeferSecondaryCommandBufferFree(imageIndex, ownerPools[i], secondaryBuffers[i]);
                     else
+                    {
                         Api!.FreeCommandBuffers(device, ownerPools[i], 1, ref secondaryBuffers[i]);
+                        RemoveCommandBufferBindState(secondaryBuffers[i]);
+                    }
                 }
 
                 CmdEndLabel(primaryCommandBuffer);
@@ -1906,28 +2295,35 @@ namespace XREngine.Rendering.Vulkan
         public class CommandScope : IDisposable
         {
             private readonly VulkanRenderer _api;
+            private readonly bool _useTransferQueue;
 
-            public CommandScope(VulkanRenderer api, CommandBuffer cmd)
+            public CommandScope(VulkanRenderer api, CommandBuffer cmd, bool useTransferQueue)
             {
                 _api = api;
                 CommandBuffer = cmd;
+                _useTransferQueue = useTransferQueue;
             }
 
             public CommandBuffer CommandBuffer { get; }
 
             public void Dispose()
             {
-                _api.CommandsStop(CommandBuffer);
+                _api.CommandsStop(CommandBuffer, _useTransferQueue);
                 GC.SuppressFinalize(this);
             }
         }
 
         private CommandScope NewCommandScope()
-            => new(this, CommandsStart());
+            => new(this, CommandsStart(useTransferQueue: false), useTransferQueue: false);
 
-        private CommandBuffer CommandsStart()
+        private CommandScope NewTransferCommandScope()
+            => new(this, CommandsStart(useTransferQueue: true), useTransferQueue: true);
+
+        private CommandBuffer CommandsStart(bool useTransferQueue)
         {
-            CommandPool pool = GetThreadCommandPool();
+            CommandPool pool = useTransferQueue
+                ? GetThreadTransferCommandPool()
+                : GetThreadCommandPool();
 
             CommandBufferAllocateInfo allocateInfo = new()
             {
@@ -1949,12 +2345,12 @@ namespace XREngine.Rendering.Vulkan
             ResetCommandBufferBindState(commandBuffer);
 
             lock (_oneTimeCommandPoolsLock)
-                _oneTimeCommandPools[commandBuffer.Handle] = pool;
+                _oneTimeCommandPools[commandBuffer.Handle] = new OneTimeCommandOwner(pool, useTransferQueue);
 
             return commandBuffer;
         }
 
-        private void CommandsStop(CommandBuffer commandBuffer)
+        private void CommandsStop(CommandBuffer commandBuffer, bool useTransferQueue)
         {
             Api!.EndCommandBuffer(commandBuffer);
 
@@ -1967,18 +2363,37 @@ namespace XREngine.Rendering.Vulkan
 
             lock (_oneTimeSubmitLock)
             {
-                Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, default);
-                Api!.QueueWaitIdle(graphicsQueue);
+                Queue submitQueue = SelectOneTimeSubmitQueue(useTransferQueue);
+                Api!.QueueSubmit(submitQueue, 1, ref submitInfo, default);
+                Api!.QueueWaitIdle(submitQueue);
             }
 
-            CommandPool pool = GetThreadCommandPool();
+            CommandPool pool = useTransferQueue ? GetThreadTransferCommandPool() : GetThreadCommandPool();
             lock (_oneTimeCommandPoolsLock)
             {
-                if (_oneTimeCommandPools.Remove(commandBuffer.Handle, out CommandPool ownerPool) && ownerPool.Handle != 0)
-                    pool = ownerPool;
+                if (_oneTimeCommandPools.Remove(commandBuffer.Handle, out OneTimeCommandOwner owner) && owner.Pool.Handle != 0)
+                {
+                    pool = owner.Pool;
+                    useTransferQueue = owner.UseTransferQueue;
+                }
             }
 
             Api!.FreeCommandBuffers(device, pool, 1, ref commandBuffer);
+            RemoveCommandBufferBindState(commandBuffer);
+        }
+
+        private Queue SelectOneTimeSubmitQueue(bool useTransferQueue)
+        {
+            if (useTransferQueue)
+                return transferQueue;
+
+            // Keep default graphics submission behavior unless OpenXR is actively running.
+            if (!HasSecondaryGraphicsQueue || !Engine.VRState.IsOpenXRActive)
+                return graphicsQueue;
+
+            // Alternate between primary and secondary graphics queues.
+            int submitIndex = Interlocked.Increment(ref _oneTimeGraphicsSubmitCounter);
+            return (submitIndex & 1) == 0 ? secondaryGraphicsQueue : graphicsQueue;
         }
 
         private void AllocateCommandBufferDirtyFlags()
@@ -1986,12 +2401,20 @@ namespace XREngine.Rendering.Vulkan
             if (_commandBuffers is null)
             {
                 _commandBufferDirtyFlags = null;
+                _commandBufferFrameOpSignatures = null;
+                _commandBufferPlannerRevisions = null;
                 return;
             }
 
             _commandBufferDirtyFlags = new bool[_commandBuffers.Length];
+            _commandBufferFrameOpSignatures = new ulong[_commandBuffers.Length];
+            _commandBufferPlannerRevisions = new ulong[_commandBuffers.Length];
             for (int i = 0; i < _commandBufferDirtyFlags.Length; i++)
+            {
                 _commandBufferDirtyFlags[i] = true;
+                _commandBufferFrameOpSignatures[i] = ulong.MaxValue;
+                _commandBufferPlannerRevisions[i] = ulong.MaxValue;
+            }
         }
     }
 }

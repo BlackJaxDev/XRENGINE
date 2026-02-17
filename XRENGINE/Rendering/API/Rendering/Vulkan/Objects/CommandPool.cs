@@ -7,8 +7,10 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private CommandPool commandPool;
+        private CommandPool transferCommandPool;
         private readonly object _commandPoolsLock = new();
         private readonly Dictionary<int, CommandPool> _threadCommandPools = new();
+        private readonly Dictionary<int, CommandPool> _threadTransferCommandPools = new();
 
         private void DestroyCommandPool()
         {
@@ -23,8 +25,18 @@ namespace XREngine.Rendering.Vulkan
                     Api!.DestroyCommandPool(device, pool, null);
                 }
 
+                foreach (CommandPool pool in _threadTransferCommandPools.Values)
+                {
+                    if (pool.Handle == 0 || !destroyed.Add(pool.Handle))
+                        continue;
+
+                    Api!.DestroyCommandPool(device, pool, null);
+                }
+
                 _threadCommandPools.Clear();
+                _threadTransferCommandPools.Clear();
                 commandPool = default;
+                transferCommandPool = default;
             }
         }
 
@@ -33,13 +45,19 @@ namespace XREngine.Rendering.Vulkan
             var queueFamilyIndices = FamilyQueueIndices;
             uint graphicsFamily = queueFamilyIndices.GraphicsFamilyIndex
                 ?? throw new InvalidOperationException("Graphics queue family is not available.");
+            uint transferFamily = queueFamilyIndices.TransferFamilyIndex ?? graphicsFamily;
 
             CommandPool primaryPool = CreateCommandPoolForFamily(graphicsFamily);
+            CommandPool primaryTransferPool = transferFamily == graphicsFamily
+                ? primaryPool
+                : CreateCommandPoolForFamily(transferFamily);
 
             lock (_commandPoolsLock)
             {
                 commandPool = primaryPool;
+                transferCommandPool = primaryTransferPool;
                 _threadCommandPools[Environment.CurrentManagedThreadId] = primaryPool;
+                _threadTransferCommandPools[Environment.CurrentManagedThreadId] = primaryTransferPool;
             }
         }
 
@@ -68,6 +86,38 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 _threadCommandPools[threadId] = created;
+                return created;
+            }
+        }
+
+        private CommandPool GetThreadTransferCommandPool()
+        {
+            int threadId = Environment.CurrentManagedThreadId;
+            lock (_commandPoolsLock)
+            {
+                if (_threadTransferCommandPools.TryGetValue(threadId, out CommandPool pool) && pool.Handle != 0)
+                    return pool;
+            }
+
+            var queueFamilyIndices = FamilyQueueIndices;
+            uint graphicsFamily = queueFamilyIndices.GraphicsFamilyIndex
+                ?? throw new InvalidOperationException("Graphics queue family is not available.");
+            uint transferFamily = queueFamilyIndices.TransferFamilyIndex ?? graphicsFamily;
+
+            CommandPool created = transferFamily == graphicsFamily
+                ? GetThreadCommandPool()
+                : CreateCommandPoolForFamily(transferFamily);
+
+            lock (_commandPoolsLock)
+            {
+                if (_threadTransferCommandPools.TryGetValue(threadId, out CommandPool existing) && existing.Handle != 0)
+                {
+                    if (transferFamily != graphicsFamily && created.Handle != existing.Handle)
+                        Api!.DestroyCommandPool(device, created, null);
+                    return existing;
+                }
+
+                _threadTransferCommandPools[threadId] = created;
                 return created;
             }
         }

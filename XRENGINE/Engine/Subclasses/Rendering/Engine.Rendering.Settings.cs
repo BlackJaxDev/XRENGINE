@@ -358,6 +358,11 @@ namespace XREngine
                 private bool _renderWindowsWhileInVR = true;
                 private bool _vrMirrorComposeFromEyeTextures = true;
                 private bool _enableVrFoveatedViewSet = false;
+                private bool _openXrCullWithFrustum = true;
+                private bool _openXrDebugGl = false;
+                private bool _openXrDebugClearOnly = false;
+                private bool _openXrDebugLifecycle = false;
+                private bool _openXrDebugRenderRightThenLeft = false;
                 private Vector2 _vrFoveationCenterUv = new(0.5f, 0.5f);
                 private float _vrFoveationInnerRadius = 0.35f;
                 private float _vrFoveationOuterRadius = 0.85f;
@@ -1088,6 +1093,62 @@ namespace XREngine
                 {
                     get => _enableVrFoveatedViewSet;
                     set => SetField(ref _enableVrFoveatedViewSet, value);
+                }
+
+                /// <summary>
+                /// If true, OpenXR eye viewports use frustum culling during CollectVisible.
+                /// Disable only for debugging projection/pose issues.
+                /// </summary>
+                [Category("VR")]
+                [Description("If true, OpenXR eye viewports use frustum culling during CollectVisible. Disable only for debugging projection/pose issues.")]
+                public bool OpenXrCullWithFrustum
+                {
+                    get => _openXrCullWithFrustum;
+                    set => SetField(ref _openXrCullWithFrustum, value);
+                }
+
+                /// <summary>
+                /// Enables extra OpenXR OpenGL diagnostics.
+                /// </summary>
+                [Category("Debug")]
+                [Description("If true, emits additional OpenXR OpenGL diagnostic logging.")]
+                public bool OpenXrDebugGl
+                {
+                    get => _openXrDebugGl;
+                    set => SetField(ref _openXrDebugGl, value);
+                }
+
+                /// <summary>
+                /// If true, OpenXR eye rendering clears swapchain images instead of rendering scene content.
+                /// </summary>
+                [Category("Debug")]
+                [Description("If true, OpenXR eye rendering clears swapchain images instead of rendering scene content.")]
+                public bool OpenXrDebugClearOnly
+                {
+                    get => _openXrDebugClearOnly;
+                    set => SetField(ref _openXrDebugClearOnly, value);
+                }
+
+                /// <summary>
+                /// Enables OpenXR frame lifecycle logging.
+                /// </summary>
+                [Category("Debug")]
+                [Description("If true, emits OpenXR frame lifecycle diagnostics.")]
+                public bool OpenXrDebugLifecycle
+                {
+                    get => _openXrDebugLifecycle;
+                    set => SetField(ref _openXrDebugLifecycle, value);
+                }
+
+                /// <summary>
+                /// If true, OpenXR renders right eye before left eye for debugging ordering issues.
+                /// </summary>
+                [Category("Debug")]
+                [Description("If true, OpenXR renders right eye before left eye for debugging eye-order issues.")]
+                public bool OpenXrDebugRenderRightThenLeft
+                {
+                    get => _openXrDebugRenderRightThenLeft;
+                    set => SetField(ref _openXrDebugRenderRightThenLeft, value);
                 }
 
                 /// <summary>
