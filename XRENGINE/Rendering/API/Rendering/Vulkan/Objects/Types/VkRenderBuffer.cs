@@ -24,6 +24,69 @@ public unsafe partial class VulkanRenderer
 
         internal Image Image => _image;
 
+        /// <summary>
+        /// The physical image group backing this render buffer, or null if the buffer
+        /// owns its image directly (no aliasing / resource allocator integration).
+        /// </summary>
+        internal VulkanPhysicalImageGroup? PhysicalGroup => _physicalGroup;
+
+        /// <summary>
+        /// If this render buffer uses a physical-group-backed image, checks whether the
+        /// group has reallocated and refreshes the cached image/memory/view handles.
+        /// </summary>
+        internal void RefreshIfStale()
+        {
+            if (_physicalGroup is null)
+                return;
+
+            if (!_physicalGroup.IsAllocated)
+            {
+                // The physical group was destroyed — the resource planner may have rebuilt
+                // between frames and replaced it with a brand-new group object.
+                // Try to re-resolve from the allocator.
+                if (!string.IsNullOrWhiteSpace(Data.Name) &&
+                    Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(Data.Name, out VulkanPhysicalImageGroup? replacement) &&
+                    replacement is not null)
+                {
+                    _physicalGroup = replacement;
+                    // Fall through to EnsureAllocated + handle check below.
+                }
+                else
+                {
+                    // No replacement group available. Clear the stale handle so callers
+                    // don't use a destroyed VkImage.
+                    if (_image.Handle != 0)
+                    {
+                        if (_view.Handle != 0)
+                        {
+                            Api!.DestroyImageView(Device, _view, null);
+                            _view = default;
+                        }
+                        _image = default;
+                        _memory = default;
+                    }
+                    return;
+                }
+            }
+
+            _physicalGroup.EnsureAllocated(Renderer);
+            if (_physicalGroup.Image.Handle == _image.Handle)
+                return;
+
+            // Physical group was reallocated — refresh our cached handles.
+            if (_view.Handle != 0)
+            {
+                Api!.DestroyImageView(Device, _view, null);
+                _view = default;
+            }
+
+            _image = _physicalGroup.Image;
+            _memory = _physicalGroup.Memory;
+            _formatOverride = _physicalGroup.Format;
+
+            CreateImageView();
+        }
+
         public override VkObjectType Type => VkObjectType.Renderbuffer;
         public override bool IsGenerated => true;
 
@@ -72,7 +135,7 @@ public unsafe partial class VulkanRenderer
 
         private void AcquireImage()
         {
-            if (!string.IsNullOrWhiteSpace(Data.Name) && Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(Data.Name, out VulkanPhysicalImageGroup group))
+            if (!string.IsNullOrWhiteSpace(Data.Name) && Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(Data.Name, out VulkanPhysicalImageGroup? group))
             {
                 group.EnsureAllocated(Renderer);
                 _physicalGroup = group;

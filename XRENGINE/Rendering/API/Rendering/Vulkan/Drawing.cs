@@ -1286,7 +1286,7 @@ namespace XREngine.Rendering.Vulkan
             _consecutiveNotReadyCount = 0;
 
             // 3. Bridge the binary acquire semaphore into the timeline and serialize image reuse by timeline value.
-            _acquireTimelineValue++;
+            _acquireTimelineValue = Math.Max(_acquireTimelineValue + 1, _graphicsTimelineValue + 1);
 
             ulong* acquireSignalValues = stackalloc ulong[1] { _acquireTimelineValue };
             ulong* acquireWaitValues = stackalloc ulong[1] { 0UL };
@@ -1360,7 +1360,7 @@ namespace XREngine.Rendering.Vulkan
             recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
             // 5. Submit the command buffer with timeline sync.
-            _graphicsTimelineValue++;
+            _graphicsTimelineValue = Math.Max(_graphicsTimelineValue + 1, _acquireTimelineValue + 1);
             ulong graphicsSignalValue = _graphicsTimelineValue;
 
             ulong* waitTimelineValues = stackalloc ulong[1] { _acquireTimelineValue };
@@ -1411,6 +1411,7 @@ namespace XREngine.Rendering.Vulkan
                 throw new Exception($"Failed to submit draw command buffer ({submitResult}).");
             }
             submitQueueTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+            MarkFrameTimingSubmitted(currentFrame);
 
             _frameSlotTimelineValues[currentFrame] = graphicsSignalValue;
             if (_swapchainImageTimelineValues is not null && imageIndex < _swapchainImageTimelineValues.Length)
@@ -1444,6 +1445,11 @@ namespace XREngine.Rendering.Vulkan
             result = khrSwapChain.QueuePresent(presentQueue, ref presentInfo);
             presentQueueTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
             _lastPresentedImageIndex = imageIndex;
+
+            // Track that this swapchain image has been presented at least once,
+            // so future frames use PresentSrcKhr (not Undefined) as old layout.
+            if (_swapchainImageEverPresented is not null && imageIndex < _swapchainImageEverPresented.Length)
+                _swapchainImageEverPresented[imageIndex] = true;
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.Present",
@@ -1993,7 +1999,9 @@ namespace XREngine.Rendering.Vulkan
                 uint mipLevel,
                 ImageLayout preferredLayout,
                 PipelineStageFlags stageMask,
-                AccessFlags accessMask)
+                AccessFlags accessMask,
+                IVkImageDescriptorSource? descriptorSource = null,
+                VkRenderBuffer? renderBufferSource = null)
             {
                 Image = image;
                 Format = format;
@@ -2004,6 +2012,8 @@ namespace XREngine.Rendering.Vulkan
                 PreferredLayout = preferredLayout;
                 StageMask = stageMask;
                 AccessMask = accessMask;
+                DescriptorSource = descriptorSource;
+                RenderBufferSource = renderBufferSource;
             }
 
             public Image Image { get; }
@@ -2015,7 +2025,23 @@ namespace XREngine.Rendering.Vulkan
             public ImageLayout PreferredLayout { get; }
             public PipelineStageFlags StageMask { get; }
             public AccessFlags AccessMask { get; }
+            public IVkImageDescriptorSource? DescriptorSource { get; }
+            public VkRenderBuffer? RenderBufferSource { get; }
             public bool IsValid => Image.Handle != 0;
+
+            public BlitImageInfo WithResolvedState(Image image, ImageLayout preferredLayout)
+                => new(
+                    image,
+                    Format,
+                    AspectMask,
+                    BaseArrayLayer,
+                    LayerCount,
+                    MipLevel,
+                    preferredLayout,
+                    StageMask,
+                    AccessMask,
+                    DescriptorSource,
+                    RenderBufferSource);
         }
 
         private bool TryResolveBlitImage(
@@ -2101,9 +2127,18 @@ namespace XREngine.Rendering.Vulkan
                 case XRTexture texture:
                     return TryResolveTextureBlitImage(texture, mipLevel, layerIndex, aspectMask, layout, stage, access, out info);
                 case XRRenderBuffer renderBuffer when GetOrCreateAPIRenderObject(renderBuffer, true) is VkRenderBuffer vkRenderBuffer:
+                    // Refresh the cached image handle in case the physical group was reallocated.
+                    vkRenderBuffer.RefreshIfStale();
                     // Allow depth/stencil or color depending on the requested aspect and buffer format.
                     if (IsDepthOrStencilAspect(aspectMask) && (vkRenderBuffer.Aspect & aspectMask) != aspectMask)
                         return false;
+
+                    // Use the physical group's tracked layout when available so the
+                    // blit transition barrier uses the correct OldLayout.
+                    ImageLayout effectiveLayout = layout;
+                    if (vkRenderBuffer.PhysicalGroup is { } group)
+                        effectiveLayout = group.LastKnownLayout;
+
                     info = new BlitImageInfo(
                         vkRenderBuffer.Image,
                         vkRenderBuffer.Format,
@@ -2111,9 +2146,10 @@ namespace XREngine.Rendering.Vulkan
                         0,
                         1,
                         0,
-                        layout,
+                        effectiveLayout,
                         stage,
-                        access);
+                        access,
+                        renderBufferSource: vkRenderBuffer);
                     return info.IsValid;
                 default:
                     return false;
@@ -2131,7 +2167,17 @@ namespace XREngine.Rendering.Vulkan
             out BlitImageInfo info)
         {
             info = default;
-            if (GetOrCreateAPIRenderObject(texture, true) is not IVkImageDescriptorSource source)
+            AbstractRenderAPIObject apiObject = GetOrCreateAPIRenderObject(texture, true);
+            if (apiObject is VkTextureView textureView)
+            {
+                // Texture views can outlive backing physical image reallocations.
+                // Rebuild the view so DescriptorImage points at a currently valid VkImage.
+                textureView.Destroy();
+                textureView.Generate();
+                apiObject = textureView;
+            }
+
+            if (apiObject is not IVkImageDescriptorSource source)
                 return false;
 
             if (source.DescriptorImage.Handle == 0)
@@ -2161,9 +2207,48 @@ namespace XREngine.Rendering.Vulkan
                 (uint)Math.Max(mipLevel, 0),
                 layout,
                 stage,
-                access);
+                access,
+                source);
 
             return info.IsValid;
+        }
+
+        private static bool TryResolveLiveBlitImage(in BlitImageInfo info, out BlitImageInfo resolved)
+        {
+            resolved = info;
+
+            if (info.DescriptorSource is { } source)
+            {
+                if (source is VkObjectBase vkObject && !vkObject.IsActive)
+                    vkObject.Generate();
+
+                Image liveImage = source.DescriptorImage;
+                if (liveImage.Handle == 0)
+                    return false;
+
+                resolved = info.WithResolvedState(liveImage, info.PreferredLayout);
+                return true;
+            }
+
+            if (info.RenderBufferSource is { } renderBuffer)
+            {
+                if (!renderBuffer.IsActive)
+                    renderBuffer.Generate();
+
+                renderBuffer.RefreshIfStale();
+                Image liveImage = renderBuffer.Image;
+                if (liveImage.Handle == 0)
+                    return false;
+
+                ImageLayout liveLayout = info.PreferredLayout;
+                if (renderBuffer.PhysicalGroup is { } group)
+                    liveLayout = group.LastKnownLayout;
+
+                resolved = info.WithResolvedState(liveImage, liveLayout);
+                return true;
+            }
+
+            return info.Image.Handle != 0;
         }
 
         private static bool IsColorAttachment(EFrameBufferAttachment attachment)
@@ -2317,7 +2402,27 @@ namespace XREngine.Rendering.Vulkan
             PipelineStageFlags srcStage,
             PipelineStageFlags dstStage)
         {
-            ImageAspectFlags barrierAspectMask = NormalizeBarrierAspectMask(info.Format, info.AspectMask);
+            if (!TryResolveLiveBlitImage(info, out BlitImageInfo resolvedInfo))
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.TransitionForBlit.UnresolvedImage",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Skipping blit transition — could not resolve a live image handle.");
+                return;
+            }
+
+            // Guard against stale or destroyed image handles that passed the zero-check
+            // but are no longer valid Vulkan objects (e.g. after physical group reallocation).
+            if (resolvedInfo.Image.Handle == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.TransitionForBlit.NullImage",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Skipping blit transition — image handle is null.");
+                return;
+            }
+
+            ImageAspectFlags barrierAspectMask = NormalizeBarrierAspectMask(resolvedInfo.Format, resolvedInfo.AspectMask);
 
             ImageMemoryBarrier barrier = new()
             {
@@ -2328,14 +2433,14 @@ namespace XREngine.Rendering.Vulkan
                 NewLayout = newLayout,
                 SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                Image = info.Image,
+                Image = resolvedInfo.Image,
                 SubresourceRange = new ImageSubresourceRange
                 {
                     AspectMask = barrierAspectMask,
-                    BaseMipLevel = info.MipLevel,
+                    BaseMipLevel = resolvedInfo.MipLevel,
                     LevelCount = 1,
-                    BaseArrayLayer = info.BaseArrayLayer,
-                    LayerCount = info.LayerCount
+                    BaseArrayLayer = resolvedInfo.BaseArrayLayer,
+                    LayerCount = resolvedInfo.LayerCount
                 }
             };
 

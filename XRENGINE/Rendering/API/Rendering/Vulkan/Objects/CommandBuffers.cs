@@ -747,6 +747,14 @@ namespace XREngine.Rendering.Vulkan
                 }
                 else
                 {
+                    // Update physical group layout tracking for FBO attachment images.
+                    // The render pass transitions each attachment from initialLayout to
+                    // finalLayout, so after CmdEndRenderPass the images are in their
+                    // finalLayout. We update the tracked layout so that subsequent blit
+                    // barriers use the correct OldLayout.
+                    if (activeTarget is not null)
+                        UpdatePhysicalGroupLayoutsForFbo(activeTarget);
+
                     Api!.CmdEndRenderPass(commandBuffer);
                 }
 
@@ -779,12 +787,18 @@ namespace XREngine.Rendering.Vulkan
 
                     if (useDynamicRendering)
                     {
+                        // On the first frame for a given swapchain image, it starts in UNDEFINED
+                        // (never been presented). Use Undefined as old layout to avoid validation errors.
+                        bool imageEverPresented = _swapchainImageEverPresented is not null &&
+                            imageIndex < _swapchainImageEverPresented.Length &&
+                            _swapchainImageEverPresented[imageIndex];
+
                         ImageMemoryBarrier colorBarrier = new()
                         {
                             SType = StructureType.ImageMemoryBarrier,
                             SrcAccessMask = 0,
                             DstAccessMask = AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit,
-                            OldLayout = ImageLayout.PresentSrcKhr,
+                            OldLayout = imageEverPresented ? ImageLayout.PresentSrcKhr : ImageLayout.Undefined,
                             NewLayout = ImageLayout.ColorAttachmentOptimal,
                             SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                             DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
@@ -1509,18 +1523,28 @@ namespace XREngine.Rendering.Vulkan
         {
             void ExecuteSingleBlit(in BlitImageInfo source, in BlitImageInfo destination, Filter filter)
             {
+                if (!TryResolveLiveBlitImage(source, out BlitImageInfo resolvedSource) ||
+                    !TryResolveLiveBlitImage(destination, out BlitImageInfo resolvedDestination))
+                {
+                    Debug.VulkanWarningEvery(
+                        "Vulkan.Blit.UnresolvedLiveHandle",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Blit skipped: source/destination image could not be resolved to a live handle.");
+                    return;
+                }
+
                 // Validate image handles before issuing Vulkan commands.
                 // A stale/destroyed handle causes a native access violation (0xC0000005) in the driver.
-                if (source.Image.Handle == 0 || destination.Image.Handle == 0)
+                if (resolvedSource.Image.Handle == 0 || resolvedDestination.Image.Handle == 0)
                 {
                     Debug.VulkanWarningEvery(
                         "Vulkan.Blit.NullHandle",
                         TimeSpan.FromSeconds(1),
                         "[Vulkan] Blit skipped: null image handle. Src=0x{0:X} Dst=0x{1:X} SrcFmt={2} DstFmt={3}",
-                        source.Image.Handle,
-                        destination.Image.Handle,
-                        source.Format,
-                        destination.Format);
+                        resolvedSource.Image.Handle,
+                        resolvedDestination.Image.Handle,
+                        resolvedSource.Format,
+                        resolvedDestination.Format);
                     return;
                 }
 
@@ -1535,43 +1559,43 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                ImageBlit region = BuildImageBlit(source, destination, op.InX, op.InY, op.InW, op.InH, op.OutX, op.OutY, op.OutW, op.OutH);
+                ImageBlit region = BuildImageBlit(resolvedSource, resolvedDestination, op.InX, op.InY, op.InW, op.InH, op.OutX, op.OutY, op.OutW, op.OutH);
 
                 TransitionForBlit(
                     commandBuffer,
-                    source,
-                    source.PreferredLayout,
+                    resolvedSource,
+                    resolvedSource.PreferredLayout,
                     ImageLayout.TransferSrcOptimal,
-                    source.AccessMask,
+                    resolvedSource.AccessMask,
                     AccessFlags.TransferReadBit,
-                    source.StageMask,
+                    resolvedSource.StageMask,
                     PipelineStageFlags.TransferBit);
 
                 TransitionForBlit(
                     commandBuffer,
-                    destination,
-                    destination.PreferredLayout,
+                    resolvedDestination,
+                    resolvedDestination.PreferredLayout,
                     ImageLayout.TransferDstOptimal,
-                    destination.AccessMask,
+                    resolvedDestination.AccessMask,
                     AccessFlags.TransferWriteBit,
-                    destination.StageMask,
+                    resolvedDestination.StageMask,
                     PipelineStageFlags.TransferBit);
 
                 Debug.VulkanEvery(
                     "Vulkan.Blit.Record",
                     TimeSpan.FromSeconds(2),
                     "[Vulkan] CmdBlitImage: src=0x{0:X}({1}) dst=0x{2:X}({3}) region={4},{5}+{6}x{7}→{8},{9}+{10}x{11} filter={12}",
-                    source.Image.Handle, source.Format,
-                    destination.Image.Handle, destination.Format,
+                    resolvedSource.Image.Handle, resolvedSource.Format,
+                    resolvedDestination.Image.Handle, resolvedDestination.Format,
                     op.InX, op.InY, op.InW, op.InH,
                     op.OutX, op.OutY, op.OutW, op.OutH,
                     filter);
 
                 Api!.CmdBlitImage(
                     commandBuffer,
-                    source.Image,
+                    resolvedSource.Image,
                     ImageLayout.TransferSrcOptimal,
-                    destination.Image,
+                    resolvedDestination.Image,
                     ImageLayout.TransferDstOptimal,
                     1,
                     &region,
@@ -1579,23 +1603,23 @@ namespace XREngine.Rendering.Vulkan
 
                 TransitionForBlit(
                     commandBuffer,
-                    source,
+                    resolvedSource,
                     ImageLayout.TransferSrcOptimal,
-                    source.PreferredLayout,
+                    resolvedSource.PreferredLayout,
                     AccessFlags.TransferReadBit,
-                    source.AccessMask,
+                    resolvedSource.AccessMask,
                     PipelineStageFlags.TransferBit,
-                    source.StageMask);
+                    resolvedSource.StageMask);
 
                 TransitionForBlit(
                     commandBuffer,
-                    destination,
+                    resolvedDestination,
                     ImageLayout.TransferDstOptimal,
-                    destination.PreferredLayout,
+                    resolvedDestination.PreferredLayout,
                     AccessFlags.TransferWriteBit,
-                    destination.AccessMask,
+                    resolvedDestination.AccessMask,
                     PipelineStageFlags.TransferBit,
-                    destination.StageMask);
+                    resolvedDestination.StageMask);
             }
 
             bool copiedAny = false;
@@ -1946,6 +1970,39 @@ namespace XREngine.Rendering.Vulkan
             dstAccess = dstAccessLocal;
         }
 
+        /// <summary>
+        /// After ending a render pass for an FBO target, update the tracked layout
+        /// on each physical image group backing the FBO's attachments. The render
+        /// pass will have transitioned each attachment to its <c>finalLayout</c>
+        /// (color → ColorAttachmentOptimal, depth → DepthStencilAttachmentOptimal).
+        /// </summary>
+        private void UpdatePhysicalGroupLayoutsForFbo(XRFrameBuffer fbo)
+        {
+            var targets = fbo.Targets;
+            if (targets is null)
+                return;
+
+            foreach (var (target, attachment, _, _) in targets)
+            {
+                if (target is not XRRenderBuffer rb)
+                    continue;
+
+                if (GetOrCreateAPIRenderObject(rb, true) is not VkRenderBuffer vkRb)
+                    continue;
+
+                if (vkRb.PhysicalGroup is not { } group)
+                    continue;
+
+                // The render pass finalLayout matches the BuildAttachmentSignature logic:
+                // color → ColorAttachmentOptimal, depth/stencil → DepthStencilAttachmentOptimal.
+                bool isColor = attachment >= EFrameBufferAttachment.ColorAttachment0 &&
+                               attachment <= EFrameBufferAttachment.ColorAttachment31;
+                group.LastKnownLayout = isColor
+                    ? ImageLayout.ColorAttachmentOptimal
+                    : ImageLayout.DepthStencilAttachmentOptimal;
+            }
+        }
+
         private void EmitPlannedImageBarriers(CommandBuffer commandBuffer, IReadOnlyList<VulkanBarrierPlanner.PlannedImageBarrier>? plannedBarriers)
         {
             if (plannedBarriers is null || plannedBarriers.Count == 0)
@@ -1954,6 +2011,16 @@ namespace XREngine.Rendering.Vulkan
             foreach (var planned in plannedBarriers)
             {
                 planned.Group.EnsureAllocated(this);
+
+                // The barrier planner pre-computes OldLayout from the logical resource
+                // dependency graph, but the actual GPU-side layout may differ (e.g. newly
+                // allocated images start in UNDEFINED). Use the group's tracked layout
+                // when it disagrees with the planned value so the validation layer does
+                // not flag a mismatch.
+                ImageLayout effectiveOldLayout = planned.Previous.Layout;
+                ImageLayout groupLayout = planned.Group.LastKnownLayout;
+                if (effectiveOldLayout != ImageLayout.Undefined && groupLayout != effectiveOldLayout)
+                    effectiveOldLayout = groupLayout;
 
                 ImageSubresourceRange range = new()
                 {
@@ -1969,7 +2036,7 @@ namespace XREngine.Rendering.Vulkan
                     SType = StructureType.ImageMemoryBarrier,
                     SrcAccessMask = FilterAccessFlagsForStages(planned.Previous.AccessMask, planned.Previous.StageMask),
                     DstAccessMask = FilterAccessFlagsForStages(planned.Next.AccessMask, planned.Next.StageMask),
-                    OldLayout = planned.Previous.Layout,
+                    OldLayout = effectiveOldLayout,
                     NewLayout = planned.Next.Layout,
                     SrcQueueFamilyIndex = planned.SrcQueueFamilyIndex,
                     DstQueueFamilyIndex = planned.DstQueueFamilyIndex,
@@ -1991,6 +2058,10 @@ namespace XREngine.Rendering.Vulkan
                     null,
                     1,
                     &barrier);
+
+                // Update the group's tracked layout so subsequent barriers and blit
+                // operations use the correct OldLayout.
+                planned.Group.LastKnownLayout = planned.Next.Layout;
             }
         }
 

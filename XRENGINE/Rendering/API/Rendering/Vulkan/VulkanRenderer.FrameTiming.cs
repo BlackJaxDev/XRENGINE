@@ -7,6 +7,7 @@ public unsafe partial class VulkanRenderer
 {
     private const uint FrameTimingQueryCount = 2;
     private QueryPool[]? _frameTimingQueryPools;
+    private bool[]? _frameTimingQueryReady;
     private bool _frameTimingGpuEnabled;
     private double _frameTimingTimestampPeriodNanoseconds = 1.0;
 
@@ -21,6 +22,7 @@ public unsafe partial class VulkanRenderer
         _frameTimingTimestampPeriodNanoseconds = Math.Max(properties.Limits.TimestampPeriod, 0.0001f);
 
         _frameTimingQueryPools = new QueryPool[MAX_FRAMES_IN_FLIGHT];
+        _frameTimingQueryReady = new bool[MAX_FRAMES_IN_FLIGHT];
 
         QueryPoolCreateInfo createInfo = new()
         {
@@ -56,6 +58,7 @@ public unsafe partial class VulkanRenderer
         }
 
         _frameTimingQueryPools = null;
+        _frameTimingQueryReady = null;
         _frameTimingGpuEnabled = false;
     }
 
@@ -93,10 +96,14 @@ public unsafe partial class VulkanRenderer
     private void SampleFrameTimingQueries(int frameSlot)
     {
         if (!_frameTimingGpuEnabled || _frameTimingQueryPools is null ||
+            _frameTimingQueryReady is null ||
             frameSlot < 0 || frameSlot >= _frameTimingQueryPools.Length)
         {
             return;
         }
+
+        if (!_frameTimingQueryReady[frameSlot])
+            return;
 
         QueryPool queryPool = _frameTimingQueryPools[frameSlot];
         if (queryPool.Handle == 0)
@@ -123,5 +130,13 @@ public unsafe partial class VulkanRenderer
 
         double gpuMilliseconds = (end - start) * _frameTimingTimestampPeriodNanoseconds / 1_000_000.0;
         Engine.Rendering.Stats.RecordVulkanFrameGpuCommandBufferTime(TimeSpan.FromMilliseconds(gpuMilliseconds));
+    }
+
+    private void MarkFrameTimingSubmitted(int frameSlot)
+    {
+        if (_frameTimingQueryReady is null || frameSlot < 0 || frameSlot >= _frameTimingQueryReady.Length)
+            return;
+
+        _frameTimingQueryReady[frameSlot] = true;
     }
 }

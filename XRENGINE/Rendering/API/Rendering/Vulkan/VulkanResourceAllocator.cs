@@ -700,6 +700,7 @@ internal sealed class VulkanPhysicalImageGroup
     private Image _image;
     private DeviceMemory _memory;
     private bool _allocated;
+    private ImageLayout _lastKnownLayout = ImageLayout.Undefined;
 
     internal VulkanPhysicalImageGroup(
         VulkanImageAliasGroup logicalGroup,
@@ -726,6 +727,18 @@ internal sealed class VulkanPhysicalImageGroup
     public Image Image => _image;
     public DeviceMemory Memory => _memory;
 
+    /// <summary>
+    /// The last layout this image was transitioned to via a pipeline barrier or
+    /// render pass. Used to provide the correct <c>oldLayout</c> in blit and
+    /// transfer barriers so that the validation layer does not flag a mismatch
+    /// with the actual GPU-side layout.
+    /// </summary>
+    public ImageLayout LastKnownLayout
+    {
+        get => _lastKnownLayout;
+        internal set => _lastKnownLayout = value;
+    }
+
     internal void AddLogical(VulkanImageAllocation allocation)
         => _logicalResources.Add(allocation);
 
@@ -736,6 +749,7 @@ internal sealed class VulkanPhysicalImageGroup
 
         renderer.AllocatePhysicalImage(this, ref _image, ref _memory);
         _allocated = true;
+        _lastKnownLayout = ImageLayout.Undefined;
     }
 
     public void Destroy(VulkanRenderer renderer)
@@ -745,6 +759,7 @@ internal sealed class VulkanPhysicalImageGroup
 
         renderer.DestroyPhysicalImage(ref _image, ref _memory);
         _allocated = false;
+        _lastKnownLayout = ImageLayout.Undefined;
     }
 }
 

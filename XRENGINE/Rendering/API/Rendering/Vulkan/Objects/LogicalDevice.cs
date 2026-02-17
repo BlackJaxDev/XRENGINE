@@ -15,6 +15,7 @@ public unsafe partial class VulkanRenderer
     private Queue computeQueue;
     private Queue transferQueue;
     private bool _supportsMultipleGraphicsQueues;
+    private bool _supportsTimelineSemaphores;
 
     public Device Device => device;
     public Queue GraphicsQueue => graphicsQueue;
@@ -290,6 +291,26 @@ public unsafe partial class VulkanRenderer
         featureSupported = indexTypeUint8Features.IndexTypeUint8;
     }
 
+    private unsafe void QueryTimelineSemaphoreCapabilities(out bool featureSupported)
+    {
+        featureSupported = false;
+
+        PhysicalDeviceTimelineSemaphoreFeatures timelineFeatures = new()
+        {
+            SType = StructureType.PhysicalDeviceTimelineSemaphoreFeatures,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &timelineFeatures,
+        };
+
+        Api!.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+        featureSupported = timelineFeatures.TimelineSemaphore;
+    }
+
     /// <summary>
     /// Creates a logical device interface to the physical device with specific 
     /// queue families and extensions.
@@ -455,6 +476,9 @@ public unsafe partial class VulkanRenderer
         QueryIndexTypeUint8Capabilities(out bool indexTypeUint8FeatureSupported);
         bool enableIndexTypeUint8Feature = indexTypeUint8FeatureSupported;
 
+        QueryTimelineSemaphoreCapabilities(out bool timelineSemaphoreFeatureSupported);
+        bool enableTimelineSemaphoreFeature = timelineSemaphoreFeatureSupported;
+
         _nvMemoryDecompressionMethods = enableNvMemoryDecompression ? nvMemoryDecompressionMethods : 0;
         _nvMaxMemoryDecompressionIndirectCount = enableNvMemoryDecompression ? nvMaxDecompressionIndirectCount : 0;
         _nvCopyMemoryIndirectSupportedQueues = enableNvCopyMemoryIndirect ? nvCopyMemoryIndirectSupportedQueues : 0;
@@ -514,6 +538,13 @@ public unsafe partial class VulkanRenderer
             IndexTypeUint8 = enableIndexTypeUint8Feature,
         };
 
+        PhysicalDeviceTimelineSemaphoreFeatures timelineSemaphoreFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceTimelineSemaphoreFeatures,
+            PNext = null,
+            TimelineSemaphore = enableTimelineSemaphoreFeature,
+        };
+
         void* enabledFeaturesPNext = null;
         if (enableDescriptorIndexing)
         {
@@ -557,6 +588,12 @@ public unsafe partial class VulkanRenderer
             enabledFeaturesPNext = &indexTypeUint8FeatureEnable;
         }
 
+        if (enableTimelineSemaphoreFeature)
+        {
+            timelineSemaphoreFeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &timelineSemaphoreFeatureEnable;
+        }
+
         PhysicalDeviceFeatures2 featureChain = new()
         {
             SType = StructureType.PhysicalDeviceFeatures2,
@@ -598,6 +635,7 @@ public unsafe partial class VulkanRenderer
         _supportsBufferDeviceAddress = enableBufferDeviceAddress;
         _supportsDynamicRendering = dynamicRenderingFeatureSupported;
         _supportsIndexTypeUint8 = enableIndexTypeUint8Feature;
+        _supportsTimelineSemaphores = enableTimelineSemaphoreFeature;
         Engine.Rendering.State.HasVulkanMultiView = enableMultiviewFeature;
         Engine.Rendering.State.HasOvrMultiViewExtension = enableMultiviewFeature;
 
@@ -661,6 +699,13 @@ public unsafe partial class VulkanRenderer
                     "[Vulkan] UINT8 index type unsupported or disabled (featureSupported={0}, extensionEnabled={1}). Byte-sized index buffers will be skipped.",
                     indexTypeUint8FeatureSupported,
                     indexTypeUint8ExtensionEnabled);
+            }
+
+            if (!enableTimelineSemaphoreFeature)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Timeline semaphores unsupported or disabled (featureSupported={0}). Renderer timeline synchronization path requires this feature.",
+                    timelineSemaphoreFeatureSupported);
             }
 
         // Load optional extensions

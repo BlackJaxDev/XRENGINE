@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Vulkan
         {
             private Image _image;
             private ImageView _view;
+            private ImageView _depthOnlyView;
             private Sampler _sampler;
             private Format _format = Format.R8G8B8A8Unorm;
             private ImageAspectFlags _aspect = ImageAspectFlags.ColorBit;
@@ -30,13 +31,101 @@ namespace XREngine.Rendering.Vulkan
             internal BufferView TexelBufferView => _texelBufferView;
             internal Format TexelBufferFormat => _texelBufferFormat;
 
-            Image IVkImageDescriptorSource.DescriptorImage => _image;
-            ImageView IVkImageDescriptorSource.DescriptorView => _view;
-            Sampler IVkImageDescriptorSource.DescriptorSampler => _sampler;
-            Format IVkImageDescriptorSource.DescriptorFormat => _format;
-            ImageAspectFlags IVkImageDescriptorSource.DescriptorAspect => _aspect;
-            ImageUsageFlags IVkImageDescriptorSource.DescriptorUsage => _usage;
-            SampleCountFlags IVkImageDescriptorSource.DescriptorSamples => _samples;
+            Image IVkImageDescriptorSource.DescriptorImage
+            {
+                get
+                {
+                    RefreshFromViewedTextureIfStale();
+                    return _image;
+                }
+            }
+            ImageView IVkImageDescriptorSource.DescriptorView
+            {
+                get
+                {
+                    RefreshFromViewedTextureIfStale();
+                    return _view;
+                }
+            }
+            Sampler IVkImageDescriptorSource.DescriptorSampler
+            {
+                get
+                {
+                    RefreshFromViewedTextureIfStale();
+                    return _sampler;
+                }
+            }
+            Format IVkImageDescriptorSource.DescriptorFormat
+            {
+                get
+                {
+                    RefreshFromViewedTextureIfStale();
+                    return _format;
+                }
+            }
+            ImageAspectFlags IVkImageDescriptorSource.DescriptorAspect
+            {
+                get
+                {
+                    RefreshFromViewedTextureIfStale();
+                    return _aspect;
+                }
+            }
+            ImageUsageFlags IVkImageDescriptorSource.DescriptorUsage
+            {
+                get
+                {
+                    RefreshFromViewedTextureIfStale();
+                    return _usage;
+                }
+            }
+            SampleCountFlags IVkImageDescriptorSource.DescriptorSamples
+            {
+                get
+                {
+                    RefreshFromViewedTextureIfStale();
+                    return _samples;
+                }
+            }
+            ImageView IVkImageDescriptorSource.GetDepthOnlyDescriptorView()
+            {
+                RefreshFromViewedTextureIfStale();
+
+                if (!IsCombinedDepthStencilFormat(_format) ||
+                    (_aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))
+                {
+                    return default;
+                }
+
+                if (_depthOnlyView.Handle != 0)
+                    return _depthOnlyView;
+
+                if (_image.Handle == 0)
+                    return default;
+
+                ImageSubresourceRange subresourceRange = new()
+                {
+                    AspectMask = ImageAspectFlags.DepthBit,
+                    BaseMipLevel = Data.MinLevel,
+                    LevelCount = Math.Max(Data.NumLevels, 1u),
+                    BaseArrayLayer = Data.MinLayer,
+                    LayerCount = Math.Max(Data.NumLayers, 1u),
+                };
+
+                ImageViewCreateInfo depthViewInfo = new()
+                {
+                    SType = StructureType.ImageViewCreateInfo,
+                    Image = _image,
+                    ViewType = ResolveViewType(Data.TextureTarget),
+                    Format = _format,
+                    SubresourceRange = subresourceRange,
+                };
+
+                if (Api!.CreateImageView(Device, ref depthViewInfo, null, out _depthOnlyView) != Result.Success)
+                    return default;
+
+                return _depthOnlyView;
+            }
             BufferView IVkTexelBufferDescriptorSource.DescriptorBufferView => _texelBufferView;
             Format IVkTexelBufferDescriptorSource.DescriptorBufferFormat => _texelBufferFormat;
 
@@ -52,6 +141,12 @@ namespace XREngine.Rendering.Vulkan
                 {
                     Api!.DestroyImageView(Device, _view, null);
                     _view = default;
+                }
+
+                if (_depthOnlyView.Handle != 0)
+                {
+                    Api!.DestroyImageView(Device, _depthOnlyView, null);
+                    _depthOnlyView = default;
                 }
 
                 _image = default;
@@ -77,7 +172,10 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ImageView IVkFrameBufferAttachmentSource.GetAttachmentView(int mipLevel, int layerIndex)
-                => _view;
+            {
+                RefreshFromViewedTextureIfStale();
+                return _view;
+            }
 
             private void OnViewedTextureChanged()
             {
@@ -128,6 +226,7 @@ namespace XREngine.Rendering.Vulkan
                     _samples = SampleCountFlags.Count1Bit;
                     _texelBufferView = texelSource.DescriptorBufferView;
                     _texelBufferFormat = texelSource.DescriptorBufferFormat;
+                    _depthOnlyView = default;
 
                     if (_texelBufferView.Handle == 0)
                         throw new InvalidOperationException("Failed to resolve Vulkan texel buffer view handle.");
@@ -145,6 +244,7 @@ namespace XREngine.Rendering.Vulkan
                 _samples = source.DescriptorSamples;
                 _texelBufferView = default;
                 _texelBufferFormat = Format.Undefined;
+                _depthOnlyView = default;
 
                 if (_image.Handle == 0)
                     throw new InvalidOperationException($"Viewed texture '{viewedTexture.GetDescribingName()}' has no Vulkan image handle.");
@@ -171,6 +271,73 @@ namespace XREngine.Rendering.Vulkan
                 if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
                     throw new InvalidOperationException("Failed to create Vulkan texture view.");
             }
+
+            private void RefreshFromViewedTextureIfStale()
+            {
+                if (_texelBufferView.Handle != 0)
+                    return;
+
+                XRTexture viewedTexture = Data.GetViewedTexture();
+                if (viewedTexture is null)
+                    return;
+
+                AbstractRenderAPIObject apiObject = Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true);
+                if (apiObject is not IVkImageDescriptorSource source)
+                    return;
+
+                Image liveImage = source.DescriptorImage;
+                if (liveImage.Handle == 0)
+                    return;
+
+                if (liveImage.Handle == _image.Handle && _view.Handle != 0)
+                    return;
+
+                if (_view.Handle != 0)
+                {
+                    Api!.DestroyImageView(Device, _view, null);
+                    _view = default;
+                }
+
+                if (_depthOnlyView.Handle != 0)
+                {
+                    Api!.DestroyImageView(Device, _depthOnlyView, null);
+                    _depthOnlyView = default;
+                }
+
+                _image = liveImage;
+                _sampler = source.DescriptorSampler;
+                _format = source.DescriptorFormat;
+                _usage = source.DescriptorUsage;
+                _aspect = NormalizeAspectMaskForFormat(_format, source.DescriptorAspect);
+                _samples = source.DescriptorSamples;
+
+                ImageViewType viewType = ResolveViewType(Data.TextureTarget);
+                ImageSubresourceRange subresourceRange = new()
+                {
+                    AspectMask = NormalizeAspectMaskForFormat(_format, _aspect),
+                    BaseMipLevel = Data.MinLevel,
+                    LevelCount = Math.Max(Data.NumLevels, 1u),
+                    BaseArrayLayer = Data.MinLayer,
+                    LayerCount = Math.Max(Data.NumLayers, 1u),
+                };
+
+                ImageViewCreateInfo viewInfo = new()
+                {
+                    SType = StructureType.ImageViewCreateInfo,
+                    Image = _image,
+                    ViewType = viewType,
+                    Format = _format,
+                    SubresourceRange = subresourceRange,
+                };
+
+                if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
+                    _view = default;
+            }
+
+            private static bool IsCombinedDepthStencilFormat(Format format)
+                => format is Format.D24UnormS8Uint
+                    or Format.D32SfloatS8Uint
+                    or Format.D16UnormS8Uint;
 
             private static ImageAspectFlags NormalizeAspectMaskForFormat(Format format, ImageAspectFlags requested)
             {
