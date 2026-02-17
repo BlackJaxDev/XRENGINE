@@ -47,6 +47,7 @@ public unsafe partial class VulkanRenderer
     private KhrSwapchain? khrSwapChain;
     private SwapchainKHR swapChain;
     private Image[]? swapChainImages;
+    private bool[]? _swapchainImageEverPresented;
     private uint _lastPresentedImageIndex;
     //private VkBuffer<UniformBufferObject>[]? uniformBuffers;
     private Format swapChainImageFormat;
@@ -278,6 +279,7 @@ public unsafe partial class VulkanRenderer
         
         khrSwapChain.GetSwapchainImages(device, swapChain, ref imageCount, null);
         swapChainImages = new Image[imageCount];
+        _swapchainImageEverPresented = new bool[imageCount];
         fixed (Image* swapChainImagesPtr = swapChainImages)
         {
             khrSwapChain.GetSwapchainImages(device, swapChain, ref imageCount, swapChainImagesPtr);

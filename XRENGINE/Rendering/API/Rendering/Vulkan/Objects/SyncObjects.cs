@@ -116,6 +116,9 @@ public unsafe partial class VulkanRenderer
 
     private void CreateSyncObjects()
     {
+        if (!_supportsTimelineSemaphores)
+            throw new InvalidOperationException("Vulkan timeline semaphores are required but were not enabled on the logical device.");
+
         acquireBridgeSemaphores = new Semaphore[MAX_FRAMES_IN_FLIGHT];
         presentBridgeSemaphores = new Semaphore[MAX_FRAMES_IN_FLIGHT];
         _frameSlotTimelineValues = new ulong[MAX_FRAMES_IN_FLIGHT];
