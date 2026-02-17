@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using Silk.NET.Maths;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
@@ -56,9 +57,15 @@ public unsafe partial class VulkanRenderer
     private ImageView _swapchainDepthView;
     private Format _swapchainDepthFormat;
     private ImageAspectFlags _swapchainDepthAspect;
+    private int _recreateSwapChainInProgress;
 
     private void RecreateSwapChain()
     {
+        if (Interlocked.CompareExchange(ref _recreateSwapChainInProgress, 1, 0) != 0)
+            return;
+
+        try
+        {
         Vector2D<int> framebufferSize = Window!.FramebufferSize;
         Vector2D<int> windowSize = Window.Size;
         while (framebufferSize.X == 0 || framebufferSize.Y == 0 || windowSize.X == 0 || windowSize.Y == 0)
@@ -71,12 +78,15 @@ public unsafe partial class VulkanRenderer
         DeviceWaitIdle();
         DestroyAllSwapChainObjects();
         CreateAllSwapChainObjects();
-
-        imagesInFlight = new Fence[swapChainImages!.Length];
+        EnsureSwapchainTimelineState();
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _recreateSwapChainInProgress, 0);
+        }
     }
     private void DestroyAllSwapChainObjects()
     {
-        DestroyDebugTriangleResources();
         DestroySwapchainImGuiResources();
         DestroyDepth();
         DestroyCommandBuffers();

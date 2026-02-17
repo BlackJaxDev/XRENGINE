@@ -3,7 +3,6 @@ using Silk.NET.OpenXR;
 using System;
 using System.Diagnostics;
 using System.Threading;
-using System.Threading.Tasks;
 using XREngine;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
@@ -87,6 +86,10 @@ public unsafe partial class OpenXRAPI
             for (uint i = 0; i < _viewCount; i++)
                 allEyesRendered &= RenderEye(i, renderCallback, projectionViews);
         }
+
+        if (_gl is not null)
+            _gl.Flush();
+
         if (!allEyesRendered)
         {
             var frameEndInfoNoLayers = new FrameEndInfo
@@ -193,9 +196,6 @@ public unsafe partial class OpenXRAPI
                 renderCallback(_swapchainImagesGL[viewIndex][imageIndex].Image, viewIndex);
 
                 _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-
-                // Ensure GPU commands touching the swapchain image are submitted before releasing it.
-                _gl.Flush();
             }
 
             // Setup projection view (only if we successfully acquired+waited the swapchain image).
@@ -234,18 +234,6 @@ public unsafe partial class OpenXRAPI
                     Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Release => {releaseResult}");
             }
         }
-    }
-
-    /// <summary>
-    /// Renders both eyes in parallel using multiple graphics queues
-    /// </summary>
-    private void RenderEyesInParallel(DelRenderToFBO renderCallback, CompositionLayerProjectionView* projectionViews)
-    {
-        // Disabled: OpenXR swapchain acquire/wait/release and GL rendering generally must be serialized.
-        // True parallel eye rendering should be implemented inside the graphics backend (e.g., Vulkan multi-queue)
-        // while keeping xr* calls on one thread.
-        for (uint i = 0; i < _viewCount; i++)
-            RenderEye(i, renderCallback, projectionViews);
     }
 
     /// <summary>
@@ -618,37 +606,17 @@ public unsafe partial class OpenXRAPI
             long leftBuildTicks = 0;
             long rightBuildTicks = 0;
 
-            if (Window?.Renderer is VulkanRenderer)
-                BuildVulkanViewPartitions();
-
             // Parallel buffer generation is only enabled on the Vulkan path.
             if (_parallelRenderingEnabled && Window?.Renderer is VulkanRenderer)
             {
-                Task leftTask = Task.Run(() =>
-                {
-                    long started = Stopwatch.GetTimestamp();
-                    _openXrLeftViewport!.CollectVisible(
-                        collectMirrors: true,
-                        worldOverride: _openXrFrameWorld,
-                        cameraOverride: _openXrLeftEyeCamera,
-                        allowScreenSpaceUICollectVisible: false);
-                    leftAdded = _openXrLeftViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
-                    leftBuildTicks = Stopwatch.GetTimestamp() - started;
-                });
-
-                Task rightTask = Task.Run(() =>
-                {
-                    long started = Stopwatch.GetTimestamp();
-                    _openXrRightViewport!.CollectVisible(
-                        collectMirrors: true,
-                        worldOverride: _openXrFrameWorld,
-                        cameraOverride: _openXrRightEyeCamera,
-                        allowScreenSpaceUICollectVisible: false);
-                    rightAdded = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
-                    rightBuildTicks = Stopwatch.GetTimestamp() - started;
-                });
-
-                Task.WaitAll(leftTask, rightTask);
+                RunOpenXrParallelCollectVisible(
+                    _openXrFrameWorld,
+                    _openXrLeftEyeCamera,
+                    _openXrRightEyeCamera,
+                    out leftAdded,
+                    out rightAdded,
+                    out leftBuildTicks,
+                    out rightBuildTicks);
             }
             else
             {
@@ -670,9 +638,6 @@ public unsafe partial class OpenXRAPI
                 rightAdded = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
                 rightBuildTicks = Stopwatch.GetTimestamp() - rightStarted;
             }
-
-            if (Window?.Renderer is VulkanRenderer)
-                RecordVulkanViewPartitionsParallel();
 
             Engine.Rendering.Stats.RecordVrPerViewVisibleCounts(
                 (uint)Math.Max(0, leftAdded),
@@ -703,6 +668,200 @@ public unsafe partial class OpenXRAPI
         {
             Volatile.Write(ref _pendingXrFrameCollected, success ? 1 : 0);
         }
+    }
+
+    private void EnsureOpenXrParallelCollectWorkers()
+    {
+        lock (_openXrParallelCollectDispatchLock)
+        {
+            if (_openXrLeftCollectWorker is not null && _openXrRightCollectWorker is not null)
+                return;
+
+            _openXrParallelCollectWorkersStop = false;
+
+            _openXrLeftCollectStart ??= new AutoResetEvent(false);
+            _openXrRightCollectStart ??= new AutoResetEvent(false);
+            _openXrLeftCollectDone ??= new ManualResetEventSlim(false);
+            _openXrRightCollectDone ??= new ManualResetEventSlim(false);
+
+            _openXrLeftCollectWorker = new Thread(() => OpenXrParallelCollectWorkerLoop(leftEye: true))
+            {
+                IsBackground = true,
+                Name = "OpenXR-CollectVisible-Left"
+            };
+            _openXrRightCollectWorker = new Thread(() => OpenXrParallelCollectWorkerLoop(leftEye: false))
+            {
+                IsBackground = true,
+                Name = "OpenXR-CollectVisible-Right"
+            };
+
+            _openXrLeftCollectWorker.Start();
+            _openXrRightCollectWorker.Start();
+        }
+    }
+
+    private void RunOpenXrParallelCollectVisible(
+        XRWorldInstance world,
+        XRCamera leftCamera,
+        XRCamera rightCamera,
+        out int leftAdded,
+        out int rightAdded,
+        out long leftBuildTicks,
+        out long rightBuildTicks)
+    {
+        EnsureOpenXrParallelCollectWorkers();
+
+        lock (_openXrParallelCollectDispatchLock)
+        {
+            _openXrParallelCollectWorld = world;
+            _openXrParallelCollectLeftCamera = leftCamera;
+            _openXrParallelCollectRightCamera = rightCamera;
+            _openXrParallelCollectLeftAdded = 0;
+            _openXrParallelCollectRightAdded = 0;
+            _openXrParallelCollectLeftBuildTicks = 0;
+            _openXrParallelCollectRightBuildTicks = 0;
+            _openXrParallelCollectLeftError = null;
+            _openXrParallelCollectRightError = null;
+
+            _openXrLeftCollectDone!.Reset();
+            _openXrRightCollectDone!.Reset();
+        }
+
+        _openXrLeftCollectStart!.Set();
+        _openXrRightCollectStart!.Set();
+
+        _openXrLeftCollectDone!.Wait();
+        _openXrRightCollectDone!.Wait();
+
+        lock (_openXrParallelCollectDispatchLock)
+        {
+            if (_openXrParallelCollectLeftError is not null || _openXrParallelCollectRightError is not null)
+            {
+                if (_openXrParallelCollectLeftError is not null && _openXrParallelCollectRightError is not null)
+                    throw new AggregateException(_openXrParallelCollectLeftError, _openXrParallelCollectRightError);
+                if (_openXrParallelCollectLeftError is not null)
+                    throw _openXrParallelCollectLeftError;
+                throw _openXrParallelCollectRightError!;
+            }
+
+            leftAdded = _openXrParallelCollectLeftAdded;
+            rightAdded = _openXrParallelCollectRightAdded;
+            leftBuildTicks = _openXrParallelCollectLeftBuildTicks;
+            rightBuildTicks = _openXrParallelCollectRightBuildTicks;
+        }
+    }
+
+    private void OpenXrParallelCollectWorkerLoop(bool leftEye)
+    {
+        AutoResetEvent? startEvent = leftEye ? _openXrLeftCollectStart : _openXrRightCollectStart;
+        ManualResetEventSlim? doneEvent = leftEye ? _openXrLeftCollectDone : _openXrRightCollectDone;
+
+        if (startEvent is null || doneEvent is null)
+            return;
+
+        while (true)
+        {
+            startEvent.WaitOne();
+
+            if (_openXrParallelCollectWorkersStop)
+                return;
+
+            try
+            {
+                XRViewport? viewport;
+                XRWorldInstance? world;
+                XRCamera? camera;
+                lock (_openXrParallelCollectDispatchLock)
+                {
+                    viewport = leftEye ? _openXrLeftViewport : _openXrRightViewport;
+                    world = _openXrParallelCollectWorld;
+                    camera = leftEye ? _openXrParallelCollectLeftCamera : _openXrParallelCollectRightCamera;
+                }
+
+                if (viewport is null || world is null || camera is null)
+                    throw new InvalidOperationException("OpenXR parallel collect worker missing viewport/world/camera.");
+
+                long started = Stopwatch.GetTimestamp();
+                viewport.CollectVisible(
+                    collectMirrors: true,
+                    worldOverride: world,
+                    cameraOverride: camera,
+                    allowScreenSpaceUICollectVisible: false);
+
+                int added = viewport.RenderPipelineInstance.MeshRenderCommands.GetCommandsAddedCount();
+                long buildTicks = Stopwatch.GetTimestamp() - started;
+
+                lock (_openXrParallelCollectDispatchLock)
+                {
+                    if (leftEye)
+                    {
+                        _openXrParallelCollectLeftAdded = added;
+                        _openXrParallelCollectLeftBuildTicks = buildTicks;
+                        _openXrParallelCollectLeftError = null;
+                    }
+                    else
+                    {
+                        _openXrParallelCollectRightAdded = added;
+                        _openXrParallelCollectRightBuildTicks = buildTicks;
+                        _openXrParallelCollectRightError = null;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                lock (_openXrParallelCollectDispatchLock)
+                {
+                    if (leftEye)
+                        _openXrParallelCollectLeftError = ex;
+                    else
+                        _openXrParallelCollectRightError = ex;
+                }
+            }
+            finally
+            {
+                doneEvent.Set();
+            }
+        }
+    }
+
+    private void StopOpenXrParallelCollectWorkers()
+    {
+        Thread? leftWorker;
+        Thread? rightWorker;
+        AutoResetEvent? leftStart;
+        AutoResetEvent? rightStart;
+        ManualResetEventSlim? leftDone;
+        ManualResetEventSlim? rightDone;
+
+        lock (_openXrParallelCollectDispatchLock)
+        {
+            _openXrParallelCollectWorkersStop = true;
+
+            leftWorker = _openXrLeftCollectWorker;
+            rightWorker = _openXrRightCollectWorker;
+            leftStart = _openXrLeftCollectStart;
+            rightStart = _openXrRightCollectStart;
+            leftDone = _openXrLeftCollectDone;
+            rightDone = _openXrRightCollectDone;
+
+            _openXrLeftCollectWorker = null;
+            _openXrRightCollectWorker = null;
+            _openXrLeftCollectStart = null;
+            _openXrRightCollectStart = null;
+            _openXrLeftCollectDone = null;
+            _openXrRightCollectDone = null;
+        }
+
+        leftStart?.Set();
+        rightStart?.Set();
+
+        leftWorker?.Join(250);
+        rightWorker?.Join(250);
+
+        leftDone?.Dispose();
+        rightDone?.Dispose();
+        leftStart?.Dispose();
+        rightStart?.Dispose();
     }
 
     /// <summary>
@@ -796,16 +955,28 @@ public unsafe partial class OpenXRAPI
 
         // Predicted views for the upcoming frame (used by CollectVisible + update-thread consumers).
         if (!LocateViews(OpenXrPoseTiming.Predicted))
+        {
+            EndBegunFrameWithoutLayers(frameNo, "LocateViews failed");
             return;
+        }
 
-        // Predicted controller/tracker poses for the upcoming frame.
-        UpdateActionPoseCaches(OpenXrPoseTiming.Predicted);
+        try
+        {
+            // Predicted controller/tracker poses for the upcoming frame.
+            UpdateActionPoseCaches(OpenXrPoseTiming.Predicted);
 
-        // The CollectVisible thread will consume this frame's predicted views.
-        // Update the VR rig immediately after LocateViews so any VRState-provided cameras/transforms
-        // reflect the same predicted pose when building visibility buffers.
-        PoseTimingForRecalc = OpenXrPoseTiming.Predicted;
-        Engine.VRState.InvokeRecalcMatrixOnDraw();
+            // The CollectVisible thread will consume this frame's predicted views.
+            // Update the VR rig immediately after LocateViews so any VRState-provided cameras/transforms
+            // reflect the same predicted pose when building visibility buffers.
+            PoseTimingForRecalc = OpenXrPoseTiming.Predicted;
+            Engine.VRState.InvokeRecalcMatrixOnDraw();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"OpenXR[{frameNo}] Prepare: predicted pose update failed: {ex.Message}");
+            EndBegunFrameWithoutLayers(frameNo, "Predicted pose update failed");
+            return;
+        }
 
         _openXrPrepareTimestamp = Stopwatch.GetTimestamp();
 
@@ -820,5 +991,31 @@ public unsafe partial class OpenXRAPI
         }
 
         Volatile.Write(ref _pendingXrFrame, 1);
+    }
+
+    private void EndBegunFrameWithoutLayers(int frameNo, string reason)
+    {
+        try
+        {
+            var frameEndInfoNoLayers = new FrameEndInfo
+            {
+                Type = StructureType.FrameEndInfo,
+                DisplayTime = _frameState.PredictedDisplayTime,
+                EnvironmentBlendMode = EnvironmentBlendMode.Opaque,
+                LayerCount = 0,
+                Layers = null
+            };
+
+            var endResult = CheckResult(Api.EndFrame(_session, in frameEndInfoNoLayers), "xrEndFrame");
+            if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+                Debug.Out($"OpenXR[{frameNo}] Prepare: aborted frame ({reason}), EndFrame(no layers) => {endResult}");
+        }
+        finally
+        {
+            Volatile.Write(ref _framePrepared, 0);
+            Volatile.Write(ref _frameSkipRender, 0);
+            Volatile.Write(ref _pendingXrFrame, 0);
+            Volatile.Write(ref _pendingXrFrameCollected, 0);
+        }
     }
 }

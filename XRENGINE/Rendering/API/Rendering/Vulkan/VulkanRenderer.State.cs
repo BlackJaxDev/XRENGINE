@@ -20,11 +20,14 @@ public unsafe partial class VulkanRenderer
     private readonly VulkanResourceAllocator _resourceAllocator = new();
     private readonly VulkanBarrierPlanner _barrierPlanner = new();
     private VulkanCompiledRenderGraph _compiledRenderGraph = VulkanCompiledRenderGraph.Empty;
+    private ulong _resourcePlannerSignature = ulong.MaxValue;
+    private ulong _resourcePlannerRevision;
     private readonly Dictionary<string, XRDataBuffer> _trackedBuffersByName = new(StringComparer.OrdinalIgnoreCase);
     internal VulkanResourcePlanner ResourcePlanner => _resourcePlanner;
     internal VulkanResourcePlan ResourcePlan => _resourcePlanner.CurrentPlan;
     internal VulkanResourceAllocator ResourceAllocator => _resourceAllocator;
     internal VulkanCompiledRenderGraph CompiledRenderGraph => _compiledRenderGraph;
+    internal ulong ResourcePlannerRevision => _resourcePlannerRevision;
     private bool[]? _commandBufferDirtyFlags;
     private XRFrameBuffer? _boundDrawFrameBuffer;
     private XRFrameBuffer? _boundReadFrameBuffer;
@@ -479,22 +482,198 @@ public unsafe partial class VulkanRenderer
             pipeline?.Pipeline?.PassMetadata);
     }
 
+    internal static bool RequiresResourcePlannerRebuild(in FrameOpContext previous, in FrameOpContext next)
+    {
+        if (!ReferenceEquals(previous.PipelineInstance, next.PipelineInstance))
+            return true;
+
+        if (!ReferenceEquals(previous.ResourceRegistry, next.ResourceRegistry))
+            return true;
+
+        if (!ReferenceEquals(previous.PassMetadata, next.PassMetadata))
+            return true;
+
+        return false;
+    }
+
     private void UpdateResourcePlannerFromContext(in FrameOpContext context)
     {
+        VulkanCompiledRenderGraph compiledGraph = _renderGraphCompiler.Compile(context.PassMetadata);
+        VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership = BuildQueueOwnershipConfig(context.PassMetadata);
+        ulong plannerSignature = ComputeResourcePlannerSignature(context, queueOwnership, compiledGraph, context.PassMetadata);
+        if (plannerSignature == _resourcePlannerSignature)
+            return;
+
+        // Destroy old physical Vulkan resources BEFORE UpdatePlan clears the allocator
+        // dictionaries. UpdatePlan wipes _physicalGroups / _physicalBufferGroups, which
+        // would orphan live VkImage / DeviceMemory handles and leak GPU memory.
+        _resourceAllocator.DestroyPhysicalImages(this);
+        _resourceAllocator.DestroyPhysicalBuffers(this);
+
         _resourcePlanner.Sync(context.ResourceRegistry);
         _resourceAllocator.UpdatePlan(_resourcePlanner.CurrentPlan);
         _resourceAllocator.RebuildPhysicalPlan(this, context.PassMetadata, _resourcePlanner);
         _resourceAllocator.AllocatePhysicalImages(this);
         _resourceAllocator.AllocatePhysicalBuffers(this);
 
-        _compiledRenderGraph = _renderGraphCompiler.Compile(context.PassMetadata);
-        VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership = BuildQueueOwnershipConfig(context.PassMetadata);
+        _compiledRenderGraph = compiledGraph;
+
         _barrierPlanner.Rebuild(
             context.PassMetadata,
             _resourcePlanner,
             _resourceAllocator,
             _compiledRenderGraph.Synchronization,
             queueOwnership);
+
+        _resourcePlannerSignature = plannerSignature;
+        _resourcePlannerRevision++;
+    }
+
+    private static ulong ComputeResourcePlannerSignature(
+        in FrameOpContext context,
+        in VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership,
+        VulkanCompiledRenderGraph compiledGraph,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+    {
+        HashCode hash = new();
+        hash.Add(ComputeResourceRegistrySignature(context.ResourceRegistry));
+
+        XRViewport? viewport = Engine.Rendering.State.RenderingViewport;
+        hash.Add(viewport?.Width ?? 0);
+        hash.Add(viewport?.Height ?? 0);
+        hash.Add(viewport?.InternalWidth ?? 0);
+        hash.Add(viewport?.InternalHeight ?? 0);
+
+        hash.Add(ComputePassMetadataSignature(passMetadata));
+
+        hash.Add(compiledGraph.Batches.Count);
+        foreach (VulkanCompiledPassBatch batch in compiledGraph.Batches)
+        {
+            hash.Add(batch.BatchIndex);
+            hash.Add((int)batch.Stage);
+            hash.Add(batch.AttachmentSignature, StringComparer.Ordinal);
+            hash.Add(batch.PassIndices.Count);
+            for (int i = 0; i < batch.PassIndices.Count; i++)
+                hash.Add(batch.PassIndices[i]);
+        }
+
+        hash.Add(compiledGraph.Synchronization.Edges.Count);
+        foreach (RenderGraphSynchronizationEdge edge in compiledGraph.Synchronization.Edges)
+        {
+            hash.Add(edge.ProducerPassIndex);
+            hash.Add(edge.ConsumerPassIndex);
+            hash.Add(edge.ResourceName, StringComparer.OrdinalIgnoreCase);
+            hash.Add((int)edge.ResourceType);
+            hash.Add((int)edge.ProducerState.StageMask);
+            hash.Add((int)edge.ProducerState.AccessMask);
+            hash.Add((int)(edge.ProducerState.Layout ?? RenderGraphImageLayout.Undefined));
+            hash.Add((int)edge.ConsumerState.StageMask);
+            hash.Add((int)edge.ConsumerState.AccessMask);
+            hash.Add((int)(edge.ConsumerState.Layout ?? RenderGraphImageLayout.Undefined));
+            hash.Add(edge.DependencyOnly);
+        }
+
+        hash.Add(queueOwnership.GraphicsQueueFamilyIndex);
+        hash.Add(queueOwnership.ComputeQueueFamilyIndex ?? queueOwnership.GraphicsQueueFamilyIndex);
+        hash.Add(queueOwnership.TransferQueueFamilyIndex ?? queueOwnership.GraphicsQueueFamilyIndex);
+
+        return unchecked((ulong)hash.ToHashCode());
+    }
+
+    private static int ComputeResourceRegistrySignature(RenderResourceRegistry? registry)
+    {
+        if (registry is null)
+            return 0;
+
+        HashCode hash = new();
+
+        foreach (KeyValuePair<string, RenderTextureResource> pair in registry.TextureRecords.OrderBy(static p => p.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            TextureResourceDescriptor descriptor = pair.Value.Descriptor;
+            hash.Add(pair.Key, StringComparer.OrdinalIgnoreCase);
+            hash.Add((int)descriptor.Lifetime);
+            hash.Add((int)descriptor.SizePolicy.SizeClass);
+            hash.Add(descriptor.SizePolicy.ScaleX);
+            hash.Add(descriptor.SizePolicy.ScaleY);
+            hash.Add(descriptor.SizePolicy.Width);
+            hash.Add(descriptor.SizePolicy.Height);
+            hash.Add(descriptor.FormatLabel, StringComparer.OrdinalIgnoreCase);
+            hash.Add(descriptor.ArrayLayers);
+            hash.Add(descriptor.StereoCompatible);
+            hash.Add(descriptor.SupportsAliasing);
+        }
+
+        foreach (KeyValuePair<string, RenderFrameBufferResource> pair in registry.FrameBufferRecords.OrderBy(static p => p.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            FrameBufferResourceDescriptor descriptor = pair.Value.Descriptor;
+            hash.Add(pair.Key, StringComparer.OrdinalIgnoreCase);
+            hash.Add((int)descriptor.Lifetime);
+            hash.Add((int)descriptor.SizePolicy.SizeClass);
+            hash.Add(descriptor.SizePolicy.ScaleX);
+            hash.Add(descriptor.SizePolicy.ScaleY);
+            hash.Add(descriptor.SizePolicy.Width);
+            hash.Add(descriptor.SizePolicy.Height);
+            hash.Add(descriptor.Attachments.Count);
+
+            foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)
+            {
+                hash.Add(attachment.ResourceName, StringComparer.OrdinalIgnoreCase);
+                hash.Add((int)attachment.Attachment);
+                hash.Add(attachment.MipLevel);
+                hash.Add(attachment.LayerIndex);
+            }
+        }
+
+        foreach (KeyValuePair<string, RenderBufferResource> pair in registry.BufferRecords.OrderBy(static p => p.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            BufferResourceDescriptor descriptor = pair.Value.Descriptor;
+            hash.Add(pair.Key, StringComparer.OrdinalIgnoreCase);
+            hash.Add((int)descriptor.Lifetime);
+            hash.Add(descriptor.SizeInBytes);
+            hash.Add((int)descriptor.Target);
+            hash.Add((int)descriptor.Usage);
+            hash.Add(descriptor.SupportsAliasing);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private static int ComputePassMetadataSignature(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+    {
+        if (passMetadata is null || passMetadata.Count == 0)
+            return 0;
+
+        HashCode hash = new();
+        hash.Add(passMetadata.Count);
+
+        foreach (RenderPassMetadata pass in passMetadata.OrderBy(static p => p.PassIndex))
+        {
+            hash.Add(pass.PassIndex);
+            hash.Add((int)pass.Stage);
+            hash.Add(pass.Name, StringComparer.Ordinal);
+
+            foreach (RenderPassResourceUsage usage in pass.ResourceUsages
+                .OrderBy(static u => u.ResourceName, StringComparer.Ordinal)
+                .ThenBy(static u => u.ResourceType)
+                .ThenBy(static u => u.Access)
+                .ThenBy(static u => u.LoadOp)
+                .ThenBy(static u => u.StoreOp))
+            {
+                hash.Add(usage.ResourceName, StringComparer.Ordinal);
+                hash.Add((int)usage.ResourceType);
+                hash.Add((int)usage.Access);
+                hash.Add((int)usage.LoadOp);
+                hash.Add((int)usage.StoreOp);
+            }
+
+            foreach (int dependency in pass.ExplicitDependencies.OrderBy(static d => d))
+                hash.Add(dependency);
+
+            foreach (string schema in pass.DescriptorSchemas.OrderBy(static s => s, StringComparer.Ordinal))
+                hash.Add(schema, StringComparer.Ordinal);
+        }
+
+        return hash.ToHashCode();
     }
 
     private VulkanBarrierPlanner.QueueOwnershipConfig BuildQueueOwnershipConfig(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
@@ -864,13 +1043,19 @@ public unsafe partial class VulkanRenderer
             ? "invalid sentinel value"
             : $"pass {passIndex} is missing from metadata";
 
+        int? firstKnownBarrierPass = _barrierPlanner.GetFirstKnownPassIndex();
+
         Debug.VulkanWarningEvery(
             $"Vulkan.InvalidPass.{opName}.{passIndex}",
             TimeSpan.FromSeconds(1),
-            "[Vulkan] '{0}' emitted with invalid render-graph pass index ({1}). Falling back to pass {2}.",
+            "[Vulkan] '{0}' emitted with invalid render-graph pass index ({1}). Falling back to pass {2}. " +
+            "MetadataCount={3} BarrierPlannerFirstPass={4} CurrentPipeline={5}",
             opName,
             reason,
-            fallback);
+            fallback,
+            passMetadata?.Count ?? -1,
+            firstKnownBarrierPass?.ToString() ?? "none",
+            Engine.Rendering.State.CurrentRenderingPipeline?.GetType().Name ?? "null");
 
         return fallback;
     }

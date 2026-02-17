@@ -31,6 +31,7 @@ namespace XREngine.Rendering.Vulkan
             //CreateUniformBuffers();
 
             CreateSyncObjects();
+            CreateFrameTimingResources();
         }
 
         public override void CleanUp()
@@ -45,6 +46,7 @@ namespace XREngine.Rendering.Vulkan
             _resourceAllocator.DestroyPhysicalImages(this);
             _resourceAllocator.DestroyPhysicalBuffers(this);
             _stagingManager.Destroy(this);
+            DestroyFrameTimingResources();
 
             DestroySyncObjects();
             DestroyCommandPool();
@@ -249,11 +251,21 @@ namespace XREngine.Rendering.Vulkan
         }
 
         public void DeviceWaitIdle()
-            => Api!.DeviceWaitIdle(device);
+        {
+            Result result = Api!.DeviceWaitIdle(device);
+            if (result == Result.ErrorDeviceLost)
+            {
+                _deviceLost = true;
+                Debug.VulkanWarning("[Vulkan] DeviceWaitIdle returned ErrorDeviceLost. Device state is irrecoverable.");
+                // Don't throw — allow callers (e.g. RecreateSwapChain) to proceed with
+                // teardown/recreation even after the device is lost, rather than getting
+                // stuck in an infinite exception loop.
+            }
+        }
 
         public bool SupportsMultipleGraphicsQueues()
         {
-            return false;
+            return HasSecondaryGraphicsQueue;
         }
 
         private static CompareOp ToVulkanCompareOp(EComparison comparison)

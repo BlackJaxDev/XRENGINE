@@ -18,6 +18,16 @@ internal unsafe sealed class VulkanStagingManager
     private const int MaxPoolEntries = 32;
 
     /// <summary>
+    /// Maximum idle staging bytes to keep resident before aggressive eviction starts.
+    /// </summary>
+    private const ulong IdleBytesWatermark = 256UL * 1024UL * 1024UL;
+
+    /// <summary>
+    /// Run full trim at least once every N calls even if memory watermark is not exceeded.
+    /// </summary>
+    private const int TrimIntervalFrames = 8;
+
+    /// <summary>
     /// Number of consecutive <see cref="Trim"/> calls an idle buffer must survive before
     /// it becomes eligible for eviction.
     /// </summary>
@@ -34,6 +44,8 @@ internal unsafe sealed class VulkanStagingManager
         /// <summary>Number of <see cref="Trim"/> calls this entry has been idle.</summary>
         public int IdleFrames;
     }
+
+    private int _trimFrameCounter;
 
     public bool CanPool(BufferUsageFlags usage, MemoryPropertyFlags properties)
         => usage == BufferUsageFlags.TransferSrcBit &&
@@ -117,6 +129,28 @@ internal unsafe sealed class VulkanStagingManager
     {
         lock (_sync)
         {
+            _trimFrameCounter++;
+
+            ulong idleBytes = 0;
+            int idleEntries = 0;
+            for (int i = 0; i < _entries.Count; i++)
+            {
+                StagingBufferEntry entry = _entries[i];
+                if (entry.InUse)
+                    continue;
+
+                idleEntries++;
+                idleBytes += entry.Size;
+            }
+
+            bool overEntryBudget = _entries.Count > MaxPoolEntries;
+            bool overIdleBytesBudget = idleBytes > IdleBytesWatermark;
+            bool intervalReached = _trimFrameCounter >= TrimIntervalFrames;
+            if (!overEntryBudget && !overIdleBytesBudget && !intervalReached)
+                return;
+
+            _trimFrameCounter = 0;
+
             // Increment idle counters and collect eviction candidates.
             for (int i = _entries.Count - 1; i >= 0; i--)
             {
@@ -128,10 +162,17 @@ internal unsafe sealed class VulkanStagingManager
                 }
 
                 entry.IdleFrames++;
-                if (entry.IdleFrames >= IdleFramesBeforeEviction || _entries.Count > MaxPoolEntries)
+
+                bool entryOldEnough = entry.IdleFrames >= IdleFramesBeforeEviction;
+                bool stillOverEntryBudget = _entries.Count > MaxPoolEntries;
+                bool stillOverIdleBudget = idleBytes > IdleBytesWatermark;
+                if (entryOldEnough || stillOverEntryBudget || stillOverIdleBudget)
                 {
                     renderer.DestroyBufferRaw(entry.Buffer, entry.Memory);
                     _entries.RemoveAt(i);
+                    if (idleEntries > 0)
+                        idleEntries--;
+                    idleBytes = idleBytes > entry.Size ? idleBytes - entry.Size : 0;
                 }
             }
         }

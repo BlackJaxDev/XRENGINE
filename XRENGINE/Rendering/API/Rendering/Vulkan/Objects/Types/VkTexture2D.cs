@@ -46,7 +46,16 @@ public unsafe partial class VulkanRenderer
         internal ImageView View => _view;
         internal Sampler Sampler => _sampler;
         internal bool UsesAllocatorImage => _physicalGroup is not null;
-        Image IVkImageDescriptorSource.DescriptorImage => _image;
+
+        Image IVkImageDescriptorSource.DescriptorImage
+        {
+            get
+            {
+                RefreshPhysicalGroupImageIfStale();
+                return _image;
+            }
+        }
+
         ImageView IVkImageDescriptorSource.DescriptorView => _view;
         Sampler IVkImageDescriptorSource.DescriptorSampler => _sampler;
         Format IVkImageDescriptorSource.DescriptorFormat => ResolvedFormat;
@@ -169,6 +178,10 @@ public unsafe partial class VulkanRenderer
                 _extentOverride = group.ResolvedExtent;
                 _formatOverride = group.Format;
                 Usage = group.Usage;
+                // Preserve storage usage if the abstract texture requires it —
+                // the resource planner may not know about out-of-graph compute dispatches.
+                if (Data.RequiresStorageUsage)
+                    Usage |= ImageUsageFlags.StorageBit;
                 _arrayLayersOverride = Math.Max(group.Template.Layers, 1u);
                 _mipLevelsOverride = 1;
                 _ownsImageMemory = false;
@@ -185,6 +198,44 @@ public unsafe partial class VulkanRenderer
             _mipLevelsOverride = null;
             _ownsImageMemory = true;
             AspectFlags = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
+            _currentImageLayout = ImageLayout.Undefined;
+        }
+
+        /// <summary>
+        /// When backed by a resource-planner physical group, checks whether the group's
+        /// VkImage handle has changed (e.g. because the planner rebuilt between frames)
+        /// and updates the cached <see cref="_image"/> / <see cref="_memory"/> fields.
+        /// Also recreates the primary ImageView for the new image.
+        /// This prevents stale-handle segfaults in CmdBlitImage and other Vulkan commands.
+        /// </summary>
+        private void RefreshPhysicalGroupImageIfStale()
+        {
+            if (_physicalGroup is null || !_physicalGroup.IsAllocated)
+                return;
+
+            Image current = _physicalGroup.Image;
+            if (current.Handle == _image.Handle)
+                return;
+
+            Debug.VulkanWarningEvery(
+                $"Vulkan.StaleImageHandle.{ResolveLogicalResourceName() ?? "?"}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] Physical group image handle changed for '{0}': 0x{1:X} → 0x{2:X}. Refreshing cached handle + view.",
+                ResolveLogicalResourceName() ?? Data.Name ?? "<unnamed>",
+                _image.Handle,
+                current.Handle);
+
+            _image = current;
+            _memory = _physicalGroup.Memory;
+            _extentOverride = _physicalGroup.ResolvedExtent;
+            _formatOverride = _physicalGroup.Format;
+            Usage = _physicalGroup.Usage;
+            if (Data.RequiresStorageUsage)
+                Usage |= ImageUsageFlags.StorageBit;
+
+            // Recreate the primary view against the new image.
+            DestroyView(ref _view);
+            CreateImageView(default);
             _currentImageLayout = ImageLayout.Undefined;
         }
 
@@ -496,8 +547,124 @@ public unsafe partial class VulkanRenderer
                 return;
             }
 
-            using var scope = Renderer.NewCommandScope();
-            Api!.CmdCopyBufferToImage(scope.CommandBuffer, buffer, _image, ImageLayout.TransferDstOptimal, 1, ref region);
+            QueueFamilyIndices queueFamilies = Renderer.FamilyQueueIndices;
+            uint graphicsFamily = queueFamilies.GraphicsFamilyIndex ?? 0u;
+            uint transferFamily = queueFamilies.TransferFamilyIndex ?? graphicsFamily;
+            bool dedicatedTransferFamily = transferFamily != graphicsFamily;
+
+            if (dedicatedTransferFamily)
+                Api!.QueueWaitIdle(Renderer.GraphicsQueue);
+
+            using (var transferScope = Renderer.NewTransferCommandScope())
+            {
+                if (dedicatedTransferFamily)
+                {
+                    ImageMemoryBarrier acquireBarrier = new()
+                    {
+                        SType = StructureType.ImageMemoryBarrier,
+                        SrcAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                        DstAccessMask = AccessFlags.TransferWriteBit,
+                        OldLayout = ImageLayout.TransferDstOptimal,
+                        NewLayout = ImageLayout.TransferDstOptimal,
+                        SrcQueueFamilyIndex = graphicsFamily,
+                        DstQueueFamilyIndex = transferFamily,
+                        Image = _image,
+                        SubresourceRange = new ImageSubresourceRange
+                        {
+                            AspectMask = AspectFlags,
+                            BaseMipLevel = mipLevel,
+                            LevelCount = 1,
+                            BaseArrayLayer = baseArrayLayer,
+                            LayerCount = layerCount,
+                        }
+                    };
+
+                    Api!.CmdPipelineBarrier(
+                        transferScope.CommandBuffer,
+                        PipelineStageFlags.AllCommandsBit,
+                        PipelineStageFlags.TransferBit,
+                        DependencyFlags.None,
+                        0,
+                        null,
+                        0,
+                        null,
+                        1,
+                        &acquireBarrier);
+                }
+
+                Api!.CmdCopyBufferToImage(transferScope.CommandBuffer, buffer, _image, ImageLayout.TransferDstOptimal, 1, ref region);
+
+                if (dedicatedTransferFamily)
+                {
+                    ImageMemoryBarrier releaseBarrier = new()
+                    {
+                        SType = StructureType.ImageMemoryBarrier,
+                        SrcAccessMask = AccessFlags.TransferWriteBit,
+                        DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                        OldLayout = ImageLayout.TransferDstOptimal,
+                        NewLayout = ImageLayout.TransferDstOptimal,
+                        SrcQueueFamilyIndex = transferFamily,
+                        DstQueueFamilyIndex = graphicsFamily,
+                        Image = _image,
+                        SubresourceRange = new ImageSubresourceRange
+                        {
+                            AspectMask = AspectFlags,
+                            BaseMipLevel = mipLevel,
+                            LevelCount = 1,
+                            BaseArrayLayer = baseArrayLayer,
+                            LayerCount = layerCount,
+                        }
+                    };
+
+                    Api!.CmdPipelineBarrier(
+                        transferScope.CommandBuffer,
+                        PipelineStageFlags.TransferBit,
+                        PipelineStageFlags.AllCommandsBit,
+                        DependencyFlags.None,
+                        0,
+                        null,
+                        0,
+                        null,
+                        1,
+                        &releaseBarrier);
+                }
+            }
+
+            if (dedicatedTransferFamily)
+            {
+                using var graphicsScope = Renderer.NewCommandScope();
+                ImageMemoryBarrier acquireOnGraphics = new()
+                {
+                    SType = StructureType.ImageMemoryBarrier,
+                    SrcAccessMask = AccessFlags.TransferWriteBit,
+                    DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                    OldLayout = ImageLayout.TransferDstOptimal,
+                    NewLayout = ImageLayout.TransferDstOptimal,
+                    SrcQueueFamilyIndex = transferFamily,
+                    DstQueueFamilyIndex = graphicsFamily,
+                    Image = _image,
+                    SubresourceRange = new ImageSubresourceRange
+                    {
+                        AspectMask = AspectFlags,
+                        BaseMipLevel = mipLevel,
+                        LevelCount = 1,
+                        BaseArrayLayer = baseArrayLayer,
+                        LayerCount = layerCount,
+                    }
+                };
+
+                Api!.CmdPipelineBarrier(
+                    graphicsScope.CommandBuffer,
+                    PipelineStageFlags.TransferBit,
+                    PipelineStageFlags.AllCommandsBit,
+                    DependencyFlags.None,
+                    0,
+                    null,
+                    0,
+                    null,
+                    1,
+                    &acquireOnGraphics);
+            }
         }
 
         public DescriptorImageInfo CreateImageInfo() => new()

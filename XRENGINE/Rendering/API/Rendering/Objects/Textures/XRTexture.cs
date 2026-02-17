@@ -334,6 +334,18 @@ namespace XREngine.Rendering
             set => SetField(ref _internalCompression, value);
         }
 
+        /// <summary>
+        /// When true, the Vulkan backend will include <c>VK_IMAGE_USAGE_STORAGE_BIT</c>
+        /// on the VkImage so it can be bound as a storage image in compute shaders.
+        /// Set this before the texture is generated.
+        /// </summary>
+        private bool _requiresStorageUsage;
+        public bool RequiresStorageUsage
+        {
+            get => _requiresStorageUsage;
+            set => SetField(ref _requiresStorageUsage, value);
+        }
+
         public virtual bool IsResizeable { get; } = false;
         public virtual bool HasAlphaChannel { get; } = false;
         public abstract Vector3 WidthHeightDepth { get; }

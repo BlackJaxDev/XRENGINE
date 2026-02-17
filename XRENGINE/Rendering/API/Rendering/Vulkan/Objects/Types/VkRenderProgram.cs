@@ -764,8 +764,16 @@ public unsafe partial class VulkanRenderer
             }
             else
             {
-                if (!TryAllocateTransientComputeDescriptorSets(poolSizes, out descriptorPool, out descriptorSets))
+                if (!Renderer.TryAllocateTransientComputeDescriptorSets(
+                    imageIndex,
+                    _descriptorSetLayouts,
+                    poolSizes,
+                    _descriptorSetsRequireUpdateAfterBind,
+                    out descriptorSets))
+                {
+                    WarnComputeOnce("Failed to allocate transient Vulkan compute descriptor sets.");
                     return false;
+                }
             }
 
             if (shouldUpdateDescriptorData)

@@ -765,6 +765,7 @@ public partial class DefaultRenderPipeline
         texture.SamplerName = AutoExposureTextureName;
         texture.Name = AutoExposureTextureName;
         texture.AutoGenerateMipmaps = false;
+        texture.RequiresStorageUsage = true;
         return texture;
     }
 

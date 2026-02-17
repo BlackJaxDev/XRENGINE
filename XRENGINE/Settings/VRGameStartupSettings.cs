@@ -23,6 +23,7 @@ namespace XREngine
         VrManifest? VRManifest { get; set; }
         IActionManifest? ActionManifest { get; }
         EVRRuntime VRRuntime { get; set; }
+        bool EnableOpenXrVulkanParallelRendering { get; set; }
         string GameName { get; set; }
         (Environment.SpecialFolder folder, string relativePath)[] GameSearchPaths { get; set; }
     }
@@ -36,6 +37,7 @@ namespace XREngine
         private (Environment.SpecialFolder folder, string relativePath)[] _gameSearchPaths = [];
         private string _gameName = "XREngine Game";
         private EVRRuntime _vrRuntime = EVRRuntime.Auto;
+        private bool _enableOpenXrVulkanParallelRendering = true;
 
         /// <summary>
         /// The name of the process to search for when running in client mode.
@@ -69,6 +71,15 @@ namespace XREngine
         {
             get => _vrRuntime;
             set => SetField(ref _vrRuntime, value);
+        }
+
+        /// <summary>
+        /// If true, OpenXR Vulkan path may run per-eye visibility buffer generation in parallel when the renderer supports multiple graphics queues.
+        /// </summary>
+        public bool EnableOpenXrVulkanParallelRendering
+        {
+            get => _enableOpenXrVulkanParallelRendering;
+            set => SetField(ref _enableOpenXrVulkanParallelRendering, value);
         }
     }
 }
