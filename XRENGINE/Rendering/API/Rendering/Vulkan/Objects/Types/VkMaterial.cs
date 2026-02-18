@@ -495,6 +495,7 @@ namespace XREngine.Rendering.Vulkan
                         case DescriptorType.CombinedImageSampler:
                         case DescriptorType.SampledImage:
                         case DescriptorType.StorageImage:
+                        case DescriptorType.InputAttachment:
                         case DescriptorType.UniformTexelBuffer:
                         case DescriptorType.StorageTexelBuffer:
                             if (descriptorCount > 32)
@@ -680,6 +681,7 @@ namespace XREngine.Rendering.Vulkan
                         case DescriptorType.CombinedImageSampler:
                         case DescriptorType.SampledImage:
                         case DescriptorType.StorageImage:
+                        case DescriptorType.InputAttachment:
                         {
                             int imageStart = imageInfos.Count;
                             for (int i = 0; i < descriptorCount; i++)
@@ -932,11 +934,10 @@ namespace XREngine.Rendering.Vulkan
 
                 // Use binding index + array offset to pick the texture slot.
                 int index = (int)binding.Binding + arrayIndex;
-                if (index >= 0 && index < Data.Textures.Count)
-                    texture = Data.Textures[index];
+                if (index < 0 || index >= Data.Textures.Count)
+                    return false;
 
-                // Fallback: grab any available texture so the descriptor isn't left unbound.
-                texture ??= Data.Textures.FirstOrDefault(t => t is not null);
+                texture = Data.Textures[index];
                 return texture is not null;
             }
 
@@ -964,7 +965,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                bool requiresSampledUsage = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or DescriptorType.Sampler;
+                bool requiresSampledUsage = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or DescriptorType.Sampler or DescriptorType.InputAttachment;
                 if (requiresSampledUsage && (source.DescriptorUsage & ImageUsageFlags.SampledBit) == 0)
                 {
                     WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' is missing VK_IMAGE_USAGE_SAMPLED_BIT for descriptor type '{descriptorType}'.");

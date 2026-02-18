@@ -437,6 +437,19 @@ internal sealed class VulkanResourceAllocator
                 usage |= ImageUsageFlags.TransferDstBit;
         }
 
+        // Include storage usage when any allocation's texture descriptor requires it,
+        // regardless of whether the render-pass usage profile declared StorageTexture.
+        // This ensures the physical VkImage is created with VK_IMAGE_USAGE_STORAGE_BIT
+        // so that compute shaders can bind the image view as a storage image.
+        foreach (VulkanImageAllocation allocation in group.Allocations)
+        {
+            if (allocation.Descriptor.RequiresStorageUsage)
+            {
+                usage |= ImageUsageFlags.StorageBit;
+                break;
+            }
+        }
+
         if ((usage & ImageUsageFlags.DepthStencilAttachmentBit) != 0)
             usage |= ImageUsageFlags.SampledBit;
 
@@ -472,7 +485,7 @@ internal sealed class VulkanResourceAllocator
             if (!inferredFromDescriptor)
             {
                 // Final fallback: use format analysis when no descriptor data is available.
-                usage |= IsDepthFormat(resolvedFormat)
+                usage |= IsDepthStencilFormat(resolvedFormat)
                     ? ImageUsageFlags.DepthStencilAttachmentBit
                     : ImageUsageFlags.ColorAttachmentBit;
             }
@@ -554,7 +567,7 @@ internal sealed class VulkanResourceAllocator
             _ => 0
         };
 
-    private static bool IsDepthFormat(Format format)
+    internal static bool IsDepthStencilFormat(Format format)
         => format is Format.D16Unorm
             or Format.D32Sfloat
             or Format.D24UnormS8Uint

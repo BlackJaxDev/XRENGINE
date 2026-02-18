@@ -993,8 +993,14 @@ namespace XREngine.Rendering.Vulkan
                     Debug.VulkanWarningEvery(
                         $"Vulkan.UnknownPassBarrier.{passIndex}",
                         TimeSpan.FromSeconds(2),
-                        "[Vulkan] Pass {0} is unknown to the barrier planner. Emitting conservative memory barrier.",
+                        "[Vulkan] Pass {0} is unknown to the barrier planner. Emitting conservative memory + image barriers.",
                         passIndex);
+
+                    // Emit image layout transitions for any physical-group images that
+                    // are still in UNDEFINED.  Without this, the first draw that
+                    // references these images triggers a validation error because the
+                    // barrier planner never planned a transition for them.
+                    EmitInitialImageBarriersForUnknownPass(commandBuffer);
 
                     MemoryBarrier safetyBarrier = new()
                     {
@@ -1105,7 +1111,19 @@ namespace XREngine.Rendering.Vulkan
                             activeSchedulingIdentity = int.MinValue;
                         }
 
-                        int opPassIndex = EnsureValidPassIndex(op.PassIndex, op.GetType().Name, op.Context.PassMetadata);
+                        int opPassIndex = op.PassIndex == int.MinValue && activePassIndex != int.MinValue
+                            ? activePassIndex
+                            : EnsureValidPassIndex(op.PassIndex, op.GetType().Name, op.Context.PassMetadata);
+
+                        if (opPassIndex == int.MinValue)
+                        {
+                            Debug.VulkanWarningEvery(
+                                $"Vulkan.OpDroppedNoPass.{op.GetType().Name}",
+                                TimeSpan.FromSeconds(1),
+                                "[Vulkan] Dropping op '{0}' because no valid render-graph pass index could be resolved.",
+                                op.GetType().Name);
+                            continue;
+                        }
 
                         // Diagnostic: log the first few ops with invalid pass index per frame
                         if (op.PassIndex == int.MinValue)
@@ -2003,6 +2021,61 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        /// <summary>
+        /// When the barrier planner has no known passes, emit image memory barriers to
+        /// transition any physical-group images still in <see cref="ImageLayout.Undefined"/>
+        /// to a usable layout inside the current command buffer.  This is the in-CB
+        /// counterpart of <see cref="TransitionNewPhysicalImagesToInitialLayout"/> (which
+        /// runs one-shot commands outside the frame).  Both paths are necessary:
+        /// the one-shot path handles newly-allocated images before recording starts,
+        /// and this path covers images that became UNDEFINED due to mid-frame recreation
+        /// or races with resource planner rebuilds.
+        /// </summary>
+        private void EmitInitialImageBarriersForUnknownPass(CommandBuffer commandBuffer)
+        {
+            foreach (VulkanPhysicalImageGroup group in _resourceAllocator.EnumeratePhysicalGroups())
+            {
+                if (!group.IsAllocated || group.LastKnownLayout != ImageLayout.Undefined)
+                    continue;
+
+                bool isDepth = VulkanResourceAllocator.IsDepthStencilFormat(group.Format);
+                ImageLayout targetLayout = ResolveInitialPhysicalGroupLayout(group.Usage, isDepth);
+                ImageAspectFlags aspect = isDepth
+                    ? ImageAspectFlags.DepthBit | (HasStencilComponent(group.Format) ? ImageAspectFlags.StencilBit : 0)
+                    : ImageAspectFlags.ColorBit;
+
+                ImageMemoryBarrier barrier = new()
+                {
+                    SType = StructureType.ImageMemoryBarrier,
+                    OldLayout = ImageLayout.Undefined,
+                    NewLayout = targetLayout,
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    Image = group.Image,
+                    SubresourceRange = new ImageSubresourceRange
+                    {
+                        AspectMask = aspect,
+                        BaseMipLevel = 0,
+                        LevelCount = Vk.RemainingMipLevels,
+                        BaseArrayLayer = 0,
+                        LayerCount = Math.Max(group.Template.Layers, 1u),
+                    },
+                    SrcAccessMask = 0,
+                    DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                };
+
+                Api!.CmdPipelineBarrier(
+                    commandBuffer,
+                    PipelineStageFlags.TopOfPipeBit,
+                    PipelineStageFlags.AllCommandsBit,
+                    DependencyFlags.None,
+                    0, null, 0, null,
+                    1, &barrier);
+
+                group.LastKnownLayout = targetLayout;
+            }
+        }
+
         private void EmitPlannedImageBarriers(CommandBuffer commandBuffer, IReadOnlyList<VulkanBarrierPlanner.PlannedImageBarrier>? plannedBarriers)
         {
             if (plannedBarriers is null || plannedBarriers.Count == 0)
@@ -2013,13 +2086,12 @@ namespace XREngine.Rendering.Vulkan
                 planned.Group.EnsureAllocated(this);
 
                 // The barrier planner pre-computes OldLayout from the logical resource
-                // dependency graph, but the actual GPU-side layout may differ (e.g. newly
-                // allocated images start in UNDEFINED). Use the group's tracked layout
-                // when it disagrees with the planned value so the validation layer does
-                // not flag a mismatch.
+                // dependency graph. Only substitute the group's tracked layout when the
+                // planner has no concrete prior layout (UNDEFINED); otherwise keep the
+                // planned value so we don't accidentally suppress required transitions.
                 ImageLayout effectiveOldLayout = planned.Previous.Layout;
                 ImageLayout groupLayout = planned.Group.LastKnownLayout;
-                if (effectiveOldLayout != ImageLayout.Undefined && groupLayout != effectiveOldLayout)
+                if (effectiveOldLayout == ImageLayout.Undefined && groupLayout != ImageLayout.Undefined)
                     effectiveOldLayout = groupLayout;
 
                 ImageSubresourceRange range = new()
@@ -2425,6 +2497,23 @@ namespace XREngine.Rendering.Vulkan
         {
             Api!.EndCommandBuffer(commandBuffer);
 
+            // Use a per-submission fence instead of QueueWaitIdle so we wait only
+            // on this specific submission and avoid stalling unrelated GPU work on
+            // the same queue.  Also allows correct error handling — if the fence
+            // wait fails (e.g. device lost) we skip freeing the still-pending CB.
+            FenceCreateInfo fenceCreateInfo = new()
+            {
+                SType = StructureType.FenceCreateInfo,
+                Flags = 0,
+            };
+            Fence submitFence;
+            Result fenceResult = Api!.CreateFence(device, ref fenceCreateInfo, null, &submitFence);
+            if (fenceResult != Result.Success)
+            {
+                Debug.VulkanWarning($"[Vulkan] Failed to create one-shot submit fence (result={fenceResult}). Falling back to QueueWaitIdle.");
+                submitFence = default;
+            }
+
             SubmitInfo submitInfo = new()
             {
                 SType = StructureType.SubmitInfo,
@@ -2432,11 +2521,45 @@ namespace XREngine.Rendering.Vulkan
                 PCommandBuffers = &commandBuffer,
             };
 
+            bool waitSucceeded;
             lock (_oneTimeSubmitLock)
             {
                 Queue submitQueue = SelectOneTimeSubmitQueue(useTransferQueue);
-                Api!.QueueSubmit(submitQueue, 1, ref submitInfo, default);
-                Api!.QueueWaitIdle(submitQueue);
+                Result submitResult = Api!.QueueSubmit(submitQueue, 1, ref submitInfo, submitFence);
+                if (submitResult != Result.Success)
+                {
+                    Debug.VulkanWarning($"[Vulkan] One-shot QueueSubmit failed (result={submitResult}). Skipping command buffer free.");
+                    if (submitFence.Handle != 0)
+                        Api!.DestroyFence(device, submitFence, null);
+                    RemoveCommandBufferBindState(commandBuffer);
+                    return;
+                }
+
+                if (submitFence.Handle != 0)
+                {
+                    Result waitResult = Api!.WaitForFences(device, 1, &submitFence, true, ulong.MaxValue);
+                    waitSucceeded = waitResult == Result.Success;
+                    if (!waitSucceeded)
+                        Debug.VulkanWarning($"[Vulkan] WaitForFences for one-shot submit failed (result={waitResult}). Command buffer will not be freed to avoid use-after-free.");
+                }
+                else
+                {
+                    // Fence creation failed — fall back to QueueWaitIdle.
+                    Result waitResult = Api!.QueueWaitIdle(submitQueue);
+                    waitSucceeded = waitResult == Result.Success;
+                    if (!waitSucceeded)
+                        Debug.VulkanWarning($"[Vulkan] QueueWaitIdle fallback failed (result={waitResult}). Command buffer will not be freed.");
+                }
+            }
+
+            if (submitFence.Handle != 0)
+                Api!.DestroyFence(device, submitFence, null);
+
+            if (!waitSucceeded)
+            {
+                // Do not free the command buffer — it may still be in flight.
+                RemoveCommandBufferBindState(commandBuffer);
+                return;
             }
 
             CommandPool pool = useTransferQueue ? GetThreadTransferCommandPool() : GetThreadCommandPool();

@@ -274,6 +274,7 @@ public unsafe partial class VulkanRenderer
 					case DescriptorType.CombinedImageSampler:
 					case DescriptorType.SampledImage:
 					case DescriptorType.StorageImage:
+					case DescriptorType.InputAttachment:
 						if (!TryResolveImages(binding, material, descriptorCount, imageInfos, out int imageStart))
 							return false;
 
@@ -394,8 +395,6 @@ public unsafe partial class VulkanRenderer
 				int idx = (int)binding.Binding + arrayIndex;
 				if (idx >= 0 && idx < material.Textures.Count)
 					texture = material.Textures[idx];
-
-				texture ??= material.Textures.FirstOrDefault(t => t is not null);
 			}
 
 			if (texture is null)
@@ -410,7 +409,7 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
-			bool requiresSampledUsage = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or DescriptorType.Sampler;
+			bool requiresSampledUsage = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or DescriptorType.Sampler or DescriptorType.InputAttachment;
 			if (requiresSampledUsage && (source.DescriptorUsage & ImageUsageFlags.SampledBit) == 0)
 			{
 				WarnOnce($"Texture for descriptor binding '{binding.Name}' is missing VK_IMAGE_USAGE_SAMPLED_BIT.");
@@ -472,8 +471,6 @@ public unsafe partial class VulkanRenderer
 				int idx = (int)binding.Binding + arrayIndex;
 				if (idx >= 0 && idx < material.Textures.Count)
 					texture = material.Textures[idx];
-
-				texture ??= material.Textures.FirstOrDefault(t => t is not null);
 			}
 
 			if (texture is null)

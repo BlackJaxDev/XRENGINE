@@ -197,6 +197,17 @@ public unsafe partial class VulkanRenderer
             if (Api!.BindImageMemory(Device, _image, _memory, 0) != Result.Success)
                 throw new Exception("Failed to bind memory for render buffer image.");
 
+            Debug.VulkanEvery(
+                $"Vulkan.DedicatedRenderBuffer.{Data.Name ?? "unnamed"}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] Dedicated render-buffer image created: name='{0}' handle=0x{1:X} format={2} extent={3}x{4} usage={5}",
+                Data.Name ?? "<unnamed>",
+                _image.Handle,
+                format,
+                Math.Max(Data.Width, 1u),
+                Math.Max(Data.Height, 1u),
+                info.Usage);
+
             // Track VRAM allocation
             _allocatedVRAMBytes = (long)requirements.Size;
             Engine.Rendering.Stats.AddRenderBufferAllocation(_allocatedVRAMBytes);

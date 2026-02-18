@@ -53,7 +53,24 @@ public unsafe partial class VulkanRenderer
         if (sourceTex is XRTexture2D source2D)
         {
             if (generateMipmapsNow)
-                source2D.GenerateMipmapsGPU();
+            {
+                bool canGenerateMipmapsOutOfBand = true;
+                if (GetOrCreateAPIRenderObject(source2D, generateNow: true) is VkTexture2D vkSource2D && vkSource2D.UsesAllocatorImage)
+                    canGenerateMipmapsOutOfBand = false;
+
+                if (canGenerateMipmapsOutOfBand)
+                {
+                    source2D.GenerateMipmapsGPU();
+                }
+                else
+                {
+                    Debug.VulkanWarningEvery(
+                        "Vulkan.AutoExposure.SkipPlannerMipmaps2D",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Skipping out-of-band mipmap generation for planner-backed source texture '{0}' to avoid layout races with render-graph barriers.",
+                        source2D.Name ?? "<unnamed>");
+                }
+            }
 
             smallestMip = XRTexture.GetSmallestMipmapLevel(source2D.Width, source2D.Height, source2D.SmallestAllowedMipmapLevel);
             program = _autoExposureComputeProgram2D;
@@ -61,7 +78,24 @@ public unsafe partial class VulkanRenderer
         else if (sourceTex is XRTexture2DArray source2DArray)
         {
             if (generateMipmapsNow)
-                source2DArray.GenerateMipmapsGPU();
+            {
+                bool canGenerateMipmapsOutOfBand = true;
+                if (GetOrCreateAPIRenderObject(source2DArray, generateNow: true) is VkTexture2DArray vkSource2DArray && vkSource2DArray.UsesAllocatorImage)
+                    canGenerateMipmapsOutOfBand = false;
+
+                if (canGenerateMipmapsOutOfBand)
+                {
+                    source2DArray.GenerateMipmapsGPU();
+                }
+                else
+                {
+                    Debug.VulkanWarningEvery(
+                        "Vulkan.AutoExposure.SkipPlannerMipmaps2DArray",
+                        TimeSpan.FromSeconds(2),
+                        "[Vulkan] Skipping out-of-band mipmap generation for planner-backed array source texture '{0}' to avoid layout races with render-graph barriers.",
+                        source2DArray.Name ?? "<unnamed>");
+                }
+            }
 
             smallestMip = XRTexture.GetSmallestMipmapLevel(source2DArray.Width, source2DArray.Height, source2DArray.SmallestAllowedMipmapLevel);
             layerCount = (int)Math.Max(source2DArray.Depth, 1u);
@@ -89,10 +123,9 @@ public unsafe partial class VulkanRenderer
         // Ensure exposure image is in GENERAL for storage write.
         if (GetOrCreateAPIRenderObject(exposureTex, generateNow: true) is VkTexture2D vkExposure)
         {
-            if (_autoExposureTextureInitialized)
-                vkExposure.TransitionImageLayout(Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal, Silk.NET.Vulkan.ImageLayout.General);
-            else
-                vkExposure.TransitionImageLayout(Silk.NET.Vulkan.ImageLayout.Undefined, Silk.NET.Vulkan.ImageLayout.General);
+            Silk.NET.Vulkan.ImageLayout oldLayout = vkExposure.CurrentImageLayout;
+            if (oldLayout != Silk.NET.Vulkan.ImageLayout.General)
+                vkExposure.TransitionImageLayout(oldLayout, Silk.NET.Vulkan.ImageLayout.General);
         }
 
         program.Uniform("SmallestMip", smallestMip);
@@ -130,7 +163,11 @@ public unsafe partial class VulkanRenderer
         MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.TextureFetch);
 
         if (GetOrCreateAPIRenderObject(exposureTex, generateNow: true) is VkTexture2D vkExposurePost)
-            vkExposurePost.TransitionImageLayout(Silk.NET.Vulkan.ImageLayout.General, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal);
+        {
+            Silk.NET.Vulkan.ImageLayout oldLayout = vkExposurePost.CurrentImageLayout;
+            if (oldLayout != Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal)
+                vkExposurePost.TransitionImageLayout(oldLayout, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal);
+        }
 
         _autoExposureTextureInitialized = true;
     }

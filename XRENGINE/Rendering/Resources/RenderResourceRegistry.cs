@@ -54,7 +54,8 @@ public sealed record TextureResourceDescriptor(
     string? FormatLabel = null,
     bool StereoCompatible = false,
     uint ArrayLayers = 1,
-    bool SupportsAliasing = false)
+    bool SupportsAliasing = false,
+    bool RequiresStorageUsage = false)
     : RenderResourceDescriptor(Name, Lifetime, SizePolicy)
 {
     public static TextureResourceDescriptor FromTexture(XRTexture texture, RenderResourceLifetime lifetime = RenderResourceLifetime.Persistent)
@@ -75,7 +76,8 @@ public sealed record TextureResourceDescriptor(
             format,
             stereo,
             depth,
-            SupportsAliasing: lifetime == RenderResourceLifetime.Transient);
+            SupportsAliasing: lifetime == RenderResourceLifetime.Transient,
+            RequiresStorageUsage: texture.RequiresStorageUsage);
     }
 
     private static string ResolveFormat(XRTexture texture)
