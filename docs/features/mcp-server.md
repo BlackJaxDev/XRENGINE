@@ -29,6 +29,14 @@ The MCP server settings are located in the **Global Editor Preferences** panel u
 |---------------------|-----------------------------------------------------|----------|
 | `McpServerEnabled`  | Enable/disable the MCP server at runtime            | `false`  |
 | `McpServerPort`     | Port number for the MCP server                      | `5467`   |
+| `McpServerRequireAuth` | Require bearer auth (`Authorization: Bearer ...`) | `false`  |
+| `McpServerAuthToken` | Bearer token expected when auth is enabled         | `""`     |
+| `McpServerCorsAllowlist` | Allowed browser origins (`*` or comma-separated). Empty = allow all | `""` |
+| `McpServerMaxRequestBytes` | Maximum HTTP request payload size            | `1048576` |
+| `McpServerRequestTimeoutMs` | Request timeout in milliseconds             | `30000`  |
+| `McpServerReadOnly` | Block mutating tools and allow read-only operations only | `false` |
+| `McpServerAllowedTools` | Optional allow-list of tool names (comma/semicolon/newline separated) | `""` |
+| `McpServerDeniedTools` | Optional deny-list of tool names (comma/semicolon/newline separated) | `""` |
 
 Changes take effect immediately - the server will start or stop based on the `McpServerEnabled` setting, and will restart on a new port if `McpServerPort` is changed while running.
 
@@ -108,6 +116,20 @@ Once connected, you can ask Copilot to interact with the engine:
 
 The server accepts JSON-RPC 2.0 requests via HTTP POST.
 
+### Security and Limits
+
+- If `McpServerRequireAuth` is enabled, requests must include:
+
+```http
+Authorization: Bearer <McpServerAuthToken>
+```
+
+- Browser-origin requests are checked against `McpServerCorsAllowlist`.
+- Payloads larger than `McpServerMaxRequestBytes` are rejected.
+- Requests that exceed `McpServerRequestTimeoutMs` are canceled.
+- If `McpServerReadOnly` is enabled, mutating tools are blocked.
+- `McpServerAllowedTools` and `McpServerDeniedTools` can be used to enforce per-tool policy.
+
 ### Request Format
 
 ```json
@@ -117,10 +139,17 @@ The server accepts JSON-RPC 2.0 requests via HTTP POST.
   "method": "tools/call",
   "params": {
     "name": "tool_name",
-    "arguments": { ... }
+    "arguments": { ... },
+    "idempotency_key": "optional-client-generated-key"
   }
 }
 ```
+
+Requirements:
+
+- `jsonrpc` should be `"2.0"`
+- `method` must be a non-empty string
+- for `tools/call`, `params` must be an object and `arguments` (if provided) must be an object
 
 ### Built-in Methods
 
@@ -129,6 +158,10 @@ The server accepts JSON-RPC 2.0 requests via HTTP POST.
 | `initialize`   | Initialize the MCP connection            |
 | `tools/list`   | List all available tools                 |
 | `tools/call`   | Execute a specific tool                  |
+| `resources/list` | List server resources                  |
+| `resources/read` | Read a specific server resource        |
+| `prompts/list` | List server prompts                      |
+| `prompts/get`  | Get a specific server prompt             |
 | `ping`         | Health check                             |
 
 ---
@@ -154,6 +187,14 @@ For detailed documentation of each command including parameters and return value
 | `add_component_to_node`      | Add a new component to a node                  |
 | `set_component_property`     | Set a property value on a component            |
 | `capture_viewport_screenshot`| Capture a screenshot from the viewport         |
+| `undo` / `redo`              | Apply editor undo or redo                      |
+| `clear_selection`            | Clear current node selection                   |
+| `delete_selected_nodes`      | Delete all selected nodes                      |
+| `select_node_by_name`        | Select nodes by display name                   |
+| `enter_play_mode` / `exit_play_mode` | Toggle play-mode transitions         |
+| `create_primitive_shape`     | Create primitive nodes (cube/box/sphere/cone) |
+| `save_world` / `load_world`  | Save or load world assets                      |
+| `list_tools`                 | List MCP tools from inside a tool call         |
 
 ---
 

@@ -25,6 +25,14 @@ namespace XREngine
         private OverrideableSetting<int> _scenePanelResizeDebounceMsOverride = new();
         private OverrideableSetting<bool> _mcpServerEnabledOverride = new();
         private OverrideableSetting<int> _mcpServerPortOverride = new();
+        private OverrideableSetting<bool> _mcpServerRequireAuthOverride = new();
+        private OverrideableSetting<string> _mcpServerAuthTokenOverride = new();
+        private OverrideableSetting<string> _mcpServerCorsAllowlistOverride = new();
+        private OverrideableSetting<int> _mcpServerMaxRequestBytesOverride = new();
+        private OverrideableSetting<int> _mcpServerRequestTimeoutMsOverride = new();
+        private OverrideableSetting<bool> _mcpServerReadOnlyOverride = new();
+        private OverrideableSetting<string> _mcpServerAllowedToolsOverride = new();
+        private OverrideableSetting<string> _mcpServerDeniedToolsOverride = new();
 
         [Category("Theme Overrides")]
         [Description("Overrides for editor theme and colors.")]
@@ -72,6 +80,70 @@ namespace XREngine
         {
             get => _mcpServerPortOverride;
             set => SetField(ref _mcpServerPortOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for requiring bearer auth on MCP requests.")]
+        public OverrideableSetting<bool> McpServerRequireAuthOverride
+        {
+            get => _mcpServerRequireAuthOverride;
+            set => SetField(ref _mcpServerRequireAuthOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for MCP bearer auth token.")]
+        public OverrideableSetting<string> McpServerAuthTokenOverride
+        {
+            get => _mcpServerAuthTokenOverride;
+            set => SetField(ref _mcpServerAuthTokenOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for MCP CORS allowlist.")]
+        public OverrideableSetting<string> McpServerCorsAllowlistOverride
+        {
+            get => _mcpServerCorsAllowlistOverride;
+            set => SetField(ref _mcpServerCorsAllowlistOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for MCP max request payload bytes.")]
+        public OverrideableSetting<int> McpServerMaxRequestBytesOverride
+        {
+            get => _mcpServerMaxRequestBytesOverride;
+            set => SetField(ref _mcpServerMaxRequestBytesOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for MCP request timeout in milliseconds.")]
+        public OverrideableSetting<int> McpServerRequestTimeoutMsOverride
+        {
+            get => _mcpServerRequestTimeoutMsOverride;
+            set => SetField(ref _mcpServerRequestTimeoutMsOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for MCP read-only mode.")]
+        public OverrideableSetting<bool> McpServerReadOnlyOverride
+        {
+            get => _mcpServerReadOnlyOverride;
+            set => SetField(ref _mcpServerReadOnlyOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for MCP allowed-tools allow-list.")]
+        public OverrideableSetting<string> McpServerAllowedToolsOverride
+        {
+            get => _mcpServerAllowedToolsOverride;
+            set => SetField(ref _mcpServerAllowedToolsOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for MCP denied-tools deny-list.")]
+        public OverrideableSetting<string> McpServerDeniedToolsOverride
+        {
+            get => _mcpServerDeniedToolsOverride;
+            set => SetField(ref _mcpServerDeniedToolsOverride, value ?? new());
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)

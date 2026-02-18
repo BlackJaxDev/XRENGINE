@@ -31,6 +31,14 @@ namespace XREngine
         private EditorDebugOptions _debug = new();
         private bool _mcpServerEnabled = false;
         private int _mcpServerPort = 5467;
+        private bool _mcpServerRequireAuth = false;
+        private string _mcpServerAuthToken = string.Empty;
+        private string _mcpServerCorsAllowlist = string.Empty;
+        private int _mcpServerMaxRequestBytes = 1024 * 1024;
+        private int _mcpServerRequestTimeoutMs = 30000;
+        private bool _mcpServerReadOnly = false;
+        private string _mcpServerAllowedTools = string.Empty;
+        private string _mcpServerDeniedTools = string.Empty;
 
         [Category("Theme")]
         [DisplayName("Theme")]
@@ -99,6 +107,103 @@ namespace XREngine
             set => SetField(ref _mcpServerPort, Math.Max(1, Math.Min(65535, value)));
         }
 
+        /// <summary>
+        /// Whether MCP requests require bearer-token authentication.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Require Auth")]
+        [Description("Require an Authorization: Bearer <token> header for MCP requests.")]
+        public bool McpServerRequireAuth
+        {
+            get => _mcpServerRequireAuth;
+            set => SetField(ref _mcpServerRequireAuth, value);
+        }
+
+        /// <summary>
+        /// Bearer token required when MCP authentication is enabled.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Auth Token")]
+        [Description("Bearer token for MCP authentication. Ignored unless MCP Require Auth is enabled.")]
+        public string McpServerAuthToken
+        {
+            get => _mcpServerAuthToken;
+            set => SetField(ref _mcpServerAuthToken, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// CORS allowlist for Origin values as comma/semicolon/newline-separated entries.
+        /// Leave empty to allow all origins.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP CORS Allowlist")]
+        [Description("Comma/semicolon/newline-separated Origin allowlist. Leave empty to allow all origins.")]
+        public string McpServerCorsAllowlist
+        {
+            get => _mcpServerCorsAllowlist;
+            set => SetField(ref _mcpServerCorsAllowlist, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Maximum HTTP request payload size accepted by the MCP server.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Max Request Bytes")]
+        [Description("Maximum MCP request payload size in bytes.")]
+        public int McpServerMaxRequestBytes
+        {
+            get => _mcpServerMaxRequestBytes;
+            set => SetField(ref _mcpServerMaxRequestBytes, Math.Max(1024, value));
+        }
+
+        /// <summary>
+        /// Maximum request processing time before MCP calls are canceled.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Request Timeout (ms)")]
+        [Description("Maximum MCP request processing duration in milliseconds.")]
+        public int McpServerRequestTimeoutMs
+        {
+            get => _mcpServerRequestTimeoutMs;
+            set => SetField(ref _mcpServerRequestTimeoutMs, Math.Max(100, value));
+        }
+
+        /// <summary>
+        /// Whether the MCP server is restricted to read-only tools.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Read-Only Mode")]
+        [Description("When enabled, mutating tools are blocked and only read/list/query tools are allowed.")]
+        public bool McpServerReadOnly
+        {
+            get => _mcpServerReadOnly;
+            set => SetField(ref _mcpServerReadOnly, value);
+        }
+
+        /// <summary>
+        /// Optional allow-list of MCP tool names.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Allowed Tools")]
+        [Description("Optional comma/semicolon/newline-separated list of allowed tool names. Leave empty to allow all.")]
+        public string McpServerAllowedTools
+        {
+            get => _mcpServerAllowedTools;
+            set => SetField(ref _mcpServerAllowedTools, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Optional deny-list of MCP tool names.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Denied Tools")]
+        [Description("Optional comma/semicolon/newline-separated list of denied tool names.")]
+        public string McpServerDeniedTools
+        {
+            get => _mcpServerDeniedTools;
+            set => SetField(ref _mcpServerDeniedTools, value ?? string.Empty);
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -148,6 +253,14 @@ namespace XREngine
             ScenePanelResizeDebounceMs = source.ScenePanelResizeDebounceMs;
             McpServerEnabled = source.McpServerEnabled;
             McpServerPort = source.McpServerPort;
+            McpServerRequireAuth = source.McpServerRequireAuth;
+            McpServerAuthToken = source.McpServerAuthToken;
+            McpServerCorsAllowlist = source.McpServerCorsAllowlist;
+            McpServerMaxRequestBytes = source.McpServerMaxRequestBytes;
+            McpServerRequestTimeoutMs = source.McpServerRequestTimeoutMs;
+            McpServerReadOnly = source.McpServerReadOnly;
+            McpServerAllowedTools = source.McpServerAllowedTools;
+            McpServerDeniedTools = source.McpServerDeniedTools;
         }
 
         public void ApplyOverrides(EditorPreferencesOverrides overrides)
@@ -169,6 +282,30 @@ namespace XREngine
 
             if (overrides.McpServerPortOverride is { HasOverride: true } mcpPortOverride)
                 McpServerPort = Math.Max(1, Math.Min(65535, mcpPortOverride.Value));
+
+            if (overrides.McpServerRequireAuthOverride is { HasOverride: true } mcpRequireAuthOverride)
+                McpServerRequireAuth = mcpRequireAuthOverride.Value;
+
+            if (overrides.McpServerAuthTokenOverride is { HasOverride: true } mcpAuthTokenOverride)
+                McpServerAuthToken = mcpAuthTokenOverride.Value ?? string.Empty;
+
+            if (overrides.McpServerCorsAllowlistOverride is { HasOverride: true } mcpCorsAllowlistOverride)
+                McpServerCorsAllowlist = mcpCorsAllowlistOverride.Value ?? string.Empty;
+
+            if (overrides.McpServerMaxRequestBytesOverride is { HasOverride: true } mcpMaxRequestBytesOverride)
+                McpServerMaxRequestBytes = Math.Max(1024, mcpMaxRequestBytesOverride.Value);
+
+            if (overrides.McpServerRequestTimeoutMsOverride is { HasOverride: true } mcpRequestTimeoutOverride)
+                McpServerRequestTimeoutMs = Math.Max(100, mcpRequestTimeoutOverride.Value);
+
+            if (overrides.McpServerReadOnlyOverride is { HasOverride: true } mcpReadOnlyOverride)
+                McpServerReadOnly = mcpReadOnlyOverride.Value;
+
+            if (overrides.McpServerAllowedToolsOverride is { HasOverride: true } mcpAllowedToolsOverride)
+                McpServerAllowedTools = mcpAllowedToolsOverride.Value ?? string.Empty;
+
+            if (overrides.McpServerDeniedToolsOverride is { HasOverride: true } mcpDeniedToolsOverride)
+                McpServerDeniedTools = mcpDeniedToolsOverride.Value ?? string.Empty;
         }
     }
 
