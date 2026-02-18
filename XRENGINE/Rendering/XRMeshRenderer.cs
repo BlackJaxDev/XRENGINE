@@ -133,7 +133,42 @@ namespace XREngine.Rendering
                 if (m is null)
                     return null;
 
-                return ((T)Activator.CreateInstance(typeof(T), m)!).Generate();
+                var gen = (T)Activator.CreateInstance(typeof(T), m)!;
+
+                // Strip the FragTransformId output (location 21) when no paired fragment
+                // shader declares it, avoiding SPIR-V interface mismatch validation warnings.
+                if (gen is DefaultVertexShaderGenerator dvsg && !FragmentConsumesTransformId())
+                {
+                    dvsg.EmitTransformId = false;
+                    dvsg.OutputVars.Remove(DefaultVertexShaderGenerator.FragTransformIdName);
+                    dvsg.UniformNames.Remove("TransformId");
+                }
+
+                return gen.Generate();
+            }
+
+            private bool FragmentConsumesTransformId()
+            {
+                var material = Parent?.Material;
+                if (material?.Shaders is null)
+                    return false;
+
+                foreach (var shader in material.Shaders)
+                {
+                    if (shader is null || shader.Type != EShaderType.Fragment)
+                        continue;
+
+                    string? source = shader.Source?.Text;
+                    if (string.IsNullOrEmpty(source))
+                        continue;
+
+                    if (source.Contains(DefaultVertexShaderGenerator.FragTransformIdName, StringComparison.Ordinal) ||
+                        source.Contains("location = 21", StringComparison.Ordinal) ||
+                        source.Contains("location=21", StringComparison.Ordinal))
+                        return true;
+                }
+
+                return false;
             }
         }
 

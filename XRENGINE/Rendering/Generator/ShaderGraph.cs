@@ -17,32 +17,18 @@ public enum ShaderGraphNodeKind
     MethodInvocation
 }
 
-public sealed class ShaderGraphInput
+public sealed class ShaderGraphInput(string name, EShaderVarType? type, string? source)
 {
-    public ShaderGraphInput(string name, EShaderVarType? type, string? source)
-    {
-        Name = name;
-        Type = type;
-        SourceVariable = source;
-    }
-
-    public string Name { get; set; }
-    public EShaderVarType? Type { get; set; }
-    public string? SourceVariable { get; set; }
+    public string Name { get; set; } = name;
+    public EShaderVarType? Type { get; set; } = type;
+    public string? SourceVariable { get; set; } = source;
 }
 
-public sealed class ShaderGraphNode
+public sealed class ShaderGraphNode(int id, string name, ShaderGraphNodeKind kind)
 {
-    public ShaderGraphNode(int id, string name, ShaderGraphNodeKind kind)
-    {
-        Id = id;
-        Name = name;
-        Kind = kind;
-    }
-
-    public int Id { get; }
-    public string Name { get; set; }
-    public ShaderGraphNodeKind Kind { get; set; }
+    public int Id { get; } = id;
+    public string Name { get; set; } = name;
+    public ShaderGraphNodeKind Kind { get; set; } = kind;
     public string? OutputName { get; set; }
     public EShaderVarType? OutputType { get; set; }
     public string? MethodName { get; set; }
@@ -75,12 +61,12 @@ public sealed class ShaderGraph
 
     public ShaderGraph()
     {
-        Attributes = Array.Empty<GLSLManager.Variable>();
-        Uniforms = Array.Empty<GLSLManager.Variable>();
-        Outputs = Array.Empty<GLSLManager.Variable>();
-        Consts = Array.Empty<GLSLManager.Variable>();
-        Methods = Array.Empty<GLSLManager.Method>();
-        Invocations = Array.Empty<GLSLManager.ParsedInvocation>();
+        Attributes = [];
+        Uniforms = [];
+        Outputs = [];
+        Consts = [];
+        Methods = [];
+        Invocations = [];
     }
 
     public string Source { get; } = string.Empty;

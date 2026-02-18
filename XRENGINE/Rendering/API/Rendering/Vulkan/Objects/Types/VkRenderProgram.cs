@@ -764,8 +764,16 @@ public unsafe partial class VulkanRenderer
             }
             else
             {
-                if (!TryAllocateTransientComputeDescriptorSets(poolSizes, out descriptorPool, out descriptorSets))
+                if (!Renderer.TryAllocateTransientComputeDescriptorSets(
+                    imageIndex,
+                    _descriptorSetLayouts,
+                    poolSizes,
+                    _descriptorSetsRequireUpdateAfterBind,
+                    out descriptorSets))
+                {
+                    WarnComputeOnce("Failed to allocate transient Vulkan compute descriptor sets.");
                     return false;
+                }
             }
 
             if (shouldUpdateDescriptorData)
@@ -1118,14 +1126,43 @@ public unsafe partial class VulkanRenderer
                 return false;
             }
 
+            ImageView descriptorView = source.DescriptorView;
+            ImageAspectFlags descriptorAspect = source.DescriptorAspect;
+            if (IsCombinedDepthStencilFormat(source.DescriptorFormat) &&
+                (descriptorAspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) == (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))
+            {
+                // Descriptor bindings for depth-stencil images must target a single aspect view.
+                // Request a depth-only view instead of skipping the bind entirely.
+                ImageView depthOnlyView = source.GetDepthOnlyDescriptorView();
+                if (depthOnlyView.Handle != 0)
+                {
+                    descriptorView = depthOnlyView;
+                    descriptorAspect = ImageAspectFlags.DepthBit;
+                }
+                else
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.Descriptor.DepthStencilCombinedAspect.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Skipping descriptor bind for texture '{0}' because no depth-only view is available.",
+                        texture.Name ?? texture.GetDescribingName());
+                    return false;
+                }
+            }
+
             imageInfo = new DescriptorImageInfo
             {
                 ImageLayout = layout,
-                ImageView = source.DescriptorView,
+                ImageView = descriptorView,
                 Sampler = includeSampler ? source.DescriptorSampler : default
             };
             return imageInfo.ImageView.Handle != 0;
         }
+
+        private static bool IsCombinedDepthStencilFormat(Format format)
+            => format is Format.D24UnormS8Uint
+                or Format.D32SfloatS8Uint
+                or Format.D16UnormS8Uint;
 
         private bool TryResolveTexelBufferDescriptor(XRTexture texture, out BufferView texelView)
         {

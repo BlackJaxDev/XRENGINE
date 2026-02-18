@@ -416,6 +416,7 @@ internal sealed class VulkanResourceAllocator
     {
         ImageUsageFlags usage = ImageUsageFlags.TransferSrcBit | ImageUsageFlags.TransferDstBit;
         bool matchedProfile = false;
+        bool inferredFromDescriptor = false;
 
         foreach (VulkanImageAllocation allocation in group.Allocations)
         {
@@ -437,42 +438,55 @@ internal sealed class VulkanResourceAllocator
                 usage |= ImageUsageFlags.TransferDstBit;
         }
 
+        // Always infer attachment usage from FBO descriptors as an additive source.
+        // A resource can be both profiled as sampled/storage and used as an FBO attachment;
+        // in that case we still must advertise attachment usage bits on VkImage creation.
+        foreach (VulkanImageAllocation allocation in group.Allocations)
+        {
+            foreach (FrameBufferResourceDescriptor fboDescriptor in planner.FrameBufferDescriptors.Values)
+            {
+                foreach (FrameBufferAttachmentDescriptor att in fboDescriptor.Attachments)
+                {
+                    if (!string.Equals(att.ResourceName, allocation.Name, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    inferredFromDescriptor = true;
+                    if (att.Attachment is EFrameBufferAttachment.DepthAttachment
+                        or EFrameBufferAttachment.DepthStencilAttachment
+                        or EFrameBufferAttachment.StencilAttachment)
+                    {
+                        usage |= ImageUsageFlags.DepthStencilAttachmentBit;
+                    }
+                    else
+                    {
+                        usage |= ImageUsageFlags.ColorAttachmentBit;
+                    }
+                }
+            }
+        }
+
+        // Include storage usage when any allocation's texture descriptor requires it,
+        // regardless of whether the render-pass usage profile declared StorageTexture.
+        // This ensures the physical VkImage is created with VK_IMAGE_USAGE_STORAGE_BIT
+        // so that compute shaders can bind the image view as a storage image.
+        foreach (VulkanImageAllocation allocation in group.Allocations)
+        {
+            if (allocation.Descriptor.RequiresStorageUsage)
+            {
+                usage |= ImageUsageFlags.StorageBit;
+                break;
+            }
+        }
+
         if ((usage & ImageUsageFlags.DepthStencilAttachmentBit) != 0)
             usage |= ImageUsageFlags.SampledBit;
 
         if (!matchedProfile)
         {
-            // Infer attachment type from FBO attachment descriptors in the resource planner
-            // instead of relying solely on the resolved pixel format.
-            bool inferredFromDescriptor = false;
-            foreach (VulkanImageAllocation allocation in group.Allocations)
-            {
-                foreach (FrameBufferResourceDescriptor fboDescriptor in planner.FrameBufferDescriptors.Values)
-                {
-                    foreach (FrameBufferAttachmentDescriptor att in fboDescriptor.Attachments)
-                    {
-                        if (!string.Equals(att.ResourceName, allocation.Name, StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        inferredFromDescriptor = true;
-                        if (att.Attachment is EFrameBufferAttachment.DepthAttachment
-                            or EFrameBufferAttachment.DepthStencilAttachment
-                            or EFrameBufferAttachment.StencilAttachment)
-                        {
-                            usage |= ImageUsageFlags.DepthStencilAttachmentBit;
-                        }
-                        else
-                        {
-                            usage |= ImageUsageFlags.ColorAttachmentBit;
-                        }
-                    }
-                }
-            }
-
             if (!inferredFromDescriptor)
             {
                 // Final fallback: use format analysis when no descriptor data is available.
-                usage |= IsDepthFormat(resolvedFormat)
+                usage |= IsDepthStencilFormat(resolvedFormat)
                     ? ImageUsageFlags.DepthStencilAttachmentBit
                     : ImageUsageFlags.ColorAttachmentBit;
             }
@@ -554,7 +568,7 @@ internal sealed class VulkanResourceAllocator
             _ => 0
         };
 
-    private static bool IsDepthFormat(Format format)
+    internal static bool IsDepthStencilFormat(Format format)
         => format is Format.D16Unorm
             or Format.D32Sfloat
             or Format.D24UnormS8Uint
@@ -700,7 +714,7 @@ internal sealed class VulkanPhysicalImageGroup
     private Image _image;
     private DeviceMemory _memory;
     private bool _allocated;
-    private bool _needsInitialTransition;
+    private ImageLayout _lastKnownLayout = ImageLayout.Undefined;
 
     internal VulkanPhysicalImageGroup(
         VulkanImageAliasGroup logicalGroup,
@@ -727,16 +741,16 @@ internal sealed class VulkanPhysicalImageGroup
     public Image Image => _image;
     public DeviceMemory Memory => _memory;
 
-    /// <summary>
-    /// True when the physical image was just allocated and is still in
-    /// <see cref="ImageLayout.Undefined"/>.  The command-buffer recorder
-    /// must emit an explicit layout transition before any render pass
-    /// that references this image.
+    /// The last layout this image was transitioned to via a pipeline barrier or
+    /// render pass. Used to provide the correct <c>oldLayout</c> in blit and
+    /// transfer barriers so that the validation layer does not flag a mismatch
+    /// with the actual GPU-side layout.
     /// </summary>
-    public bool NeedsInitialTransition => _needsInitialTransition;
-
-    /// <summary>Mark the initial transition as emitted.</summary>
-    public void ClearInitialTransitionFlag() => _needsInitialTransition = false;
+    public ImageLayout LastKnownLayout
+    {
+        get => _lastKnownLayout;
+        internal set => _lastKnownLayout = value;
+    }
 
     internal void AddLogical(VulkanImageAllocation allocation)
         => _logicalResources.Add(allocation);
@@ -748,7 +762,7 @@ internal sealed class VulkanPhysicalImageGroup
 
         renderer.AllocatePhysicalImage(this, ref _image, ref _memory);
         _allocated = true;
-        _needsInitialTransition = true;
+        _lastKnownLayout = ImageLayout.Undefined;
     }
 
     public void Destroy(VulkanRenderer renderer)
@@ -758,7 +772,7 @@ internal sealed class VulkanPhysicalImageGroup
 
         renderer.DestroyPhysicalImage(ref _image, ref _memory);
         _allocated = false;
-        _needsInitialTransition = false;
+        _lastKnownLayout = ImageLayout.Undefined;
     }
 }
 

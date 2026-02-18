@@ -249,6 +249,7 @@ public unsafe partial class OpenXRAPI
     protected void CleanUp()
     {
         DisableRuntimeMonitoring();
+        StopOpenXrParallelCollectWorkers();
 
         if (Window is not null && _deferredOpenGlInit is not null)
             Window.RenderViewportsCallback -= _deferredOpenGlInit;

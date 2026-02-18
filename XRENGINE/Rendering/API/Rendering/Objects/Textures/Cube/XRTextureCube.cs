@@ -70,6 +70,8 @@ namespace XREngine.Rendering
             ? Mipmaps[0].Sides[0].Width
             : 0u;
 
+        public override bool IsResizeable => Resizable;
+
         public override uint MaxDimension => Extent;
 
         private ETexWrapMode _uWrapMode = ETexWrapMode.ClampToEdge;

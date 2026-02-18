@@ -168,7 +168,9 @@ namespace XREngine.Rendering.Shaders.Generator
 
             // A per-draw identifier used by deferred passes that need object/transform stability.
             // Stored as float bits to avoid requiring 'flat' interpolation qualifiers for integer varyings.
-            OutputVars.Add(FragTransformIdName, (21, EShaderVarType._float));
+            // Only emitted when the paired fragment shader actually consumes the varying.
+            if (EmitTransformId)
+                OutputVars.Add(FragTransformIdName, (21, EShaderVarType._float));
         }
 
         private void AddUniforms()
@@ -176,7 +178,8 @@ namespace XREngine.Rendering.Shaders.Generator
             UniformNames.Add(EEngineUniform.ModelMatrix.ToString(), (EShaderVarType._mat4, false));
 
             // Used when gl_BaseInstance is 0 (non-indirect draw path).
-            UniformNames.Add("TransformId", (EShaderVarType._uint, false));
+            if (EmitTransformId)
+                UniformNames.Add("TransformId", (EShaderVarType._uint, false));
 
             if (UseOVRMultiView || UseNVStereo)
             {
@@ -221,6 +224,13 @@ namespace XREngine.Rendering.Shaders.Generator
         public const string FinalNormalName = "finalNormal";
         public const string FinalTangentName = "finalTangent";
         public const string FinalBinormalName = "finalBinormal";
+
+        /// <summary>
+        /// When <c>true</c>, the generated vertex shader emits <c>FragTransformId</c> at location 21
+        /// and the corresponding <c>TransformId</c> uniform. Set to <c>false</c> when the paired
+        /// fragment shader does not consume this varying, avoiding Vulkan SPIR-V interface warnings.
+        /// </summary>
+        public bool EmitTransformId { get; set; } = true;
 
         public virtual bool UseOVRMultiView => false;
         public virtual bool UseNVStereo => false;
@@ -272,9 +282,12 @@ namespace XREngine.Rendering.Shaders.Generator
                     Line($"{string.Format(FragUVName, i)} = {ECommonBufferType.TexCoord}{i};");
 
             // Default CPU draw path has gl_BaseInstance == 0; GPU-indirect path uses it as the draw/command index.
-            Line("uint _xreTransformId = uint(gl_BaseInstance);");
-            Line("if (_xreTransformId == 0u) _xreTransformId = TransformId;");
-            Line($"{FragTransformIdName} = uintBitsToFloat(_xreTransformId);");
+            if (EmitTransformId)
+            {
+                Line("uint _xreTransformId = uint(gl_BaseInstance);");
+                Line("if (_xreTransformId == 0u) _xreTransformId = TransformId;");
+                Line($"{FragTransformIdName} = uintBitsToFloat(_xreTransformId);");
+            }
         }
 
         protected override void WriteOutputs()
