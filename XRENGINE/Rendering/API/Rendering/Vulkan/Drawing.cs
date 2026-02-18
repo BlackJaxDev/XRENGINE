@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using ImageMagick;
 using Extensions;
 using Silk.NET.Vulkan;
@@ -11,6 +12,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -1090,6 +1092,7 @@ namespace XREngine.Rendering.Vulkan
         }
 
         private const int MAX_FRAMES_IN_FLIGHT = 2;
+        private static readonly TimeSpan SwapchainRecreateDebounce = TimeSpan.FromMilliseconds(100);
 
         /// <summary>
         /// Per-frame-slot retirement queue for buffer handles that cannot be destroyed
@@ -1130,19 +1133,80 @@ namespace XREngine.Rendering.Vulkan
 
         private int currentFrame = 0;
         private ulong _vkDebugFrameCounter = 0;
+        private long _swapchainRecreateRequestedAt;
+        private long _lastFrameCompletedTimestamp;
+        private int _consecutiveNotReadyCount;
+        private const int MaxConsecutiveNotReadyBeforeRecreate = 3;
+
+        private void ScheduleSwapchainRecreate(string reason)
+        {
+            _frameBufferInvalidated = true;
+            _swapchainRecreateRequestedAt = Stopwatch.GetTimestamp();
+
+            Debug.VulkanEvery(
+                $"Vulkan.Frame.{GetHashCode()}.RecreateScheduled",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Scheduled debounced swapchain recreate. Reason={0}",
+                reason);
+        }
+
+        private void RecreateSwapchainImmediately(string reason)
+        {
+            _frameBufferInvalidated = false;
+            _swapchainRecreateRequestedAt = 0;
+
+            Debug.VulkanEvery(
+                $"Vulkan.Frame.{GetHashCode()}.RecreateImmediate",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Recreating swapchain immediately. Reason={0}",
+                reason);
+
+            RecreateSwapChain();
+        }
+
+        private bool ShouldRunDebouncedSwapchainRecreate()
+        {
+            if (!_frameBufferInvalidated)
+                return false;
+
+            if (_swapchainRecreateRequestedAt == 0)
+                return true;
+
+            return Stopwatch.GetElapsedTime(_swapchainRecreateRequestedAt) >= SwapchainRecreateDebounce;
+        }
 
         protected override void WindowRenderCallback(double delta)
         {
+            if (_deviceLost)
+                throw new InvalidOperationException(
+                    "Vulkan device is lost. Cannot render until the device is recreated.");
+
             _vkDebugFrameCounter++;
 
-            // The deferred rendering model means frame ops change every frame (they are drained
-            // and consumed during recording). We MUST re-record the command buffer each frame to
-            // pick up the latest ops. Without this, a frame where no EnqueueFrameOp was called
-            // (e.g., pipeline threw before any op) would leave the dirty flag false and resubmit
-            // a stale command buffer that references old ops. This also ensures DrainFrameOps()
-            // always runs, preventing stale ops from accumulating in the queue.
-            MarkCommandBuffersDirty();
+            long frameStartTimestamp = Stopwatch.GetTimestamp();
 
+            // Log large gaps between render frames — helps identify CPU-side stalls that
+            // could lead to stale GPU state or TDR timeouts.
+            if (_lastFrameCompletedTimestamp != 0)
+            {
+                TimeSpan gap = Stopwatch.GetElapsedTime(_lastFrameCompletedTimestamp, frameStartTimestamp);
+                if (gap > TimeSpan.FromSeconds(5))
+                {
+                    Debug.VulkanWarning(
+                        $"[Vulkan] Frame {_vkDebugFrameCounter}: {gap.TotalSeconds:F1}s gap since last frame completed. " +
+                        $"Slot={currentFrame} SlotTimelineValue={_frameSlotTimelineValues?[currentFrame]}");
+                }
+            }
+
+            TimeSpan waitFenceTime = TimeSpan.Zero;
+            TimeSpan acquireImageTime = TimeSpan.Zero;
+            TimeSpan recordCommandBufferTime = TimeSpan.Zero;
+            TimeSpan submitQueueTime = TimeSpan.Zero;
+            TimeSpan trimStagingTime = TimeSpan.Zero;
+            TimeSpan presentQueueTime = TimeSpan.Zero;
+
+            try
+            {
             // Some platforms/drivers do not reliably emit out-of-date/suboptimal or resize callbacks
             // on every size transition. Proactively compare the live framebuffer size to the current
             // swapchain extent and trigger a rebuild when they diverge.
@@ -1154,7 +1218,7 @@ namespace XREngine.Rendering.Vulkan
             if (liveSurfaceWidth > 0 && liveSurfaceHeight > 0 &&
                 (liveSurfaceWidth != swapChainExtent.Width || liveSurfaceHeight != swapChainExtent.Height))
             {
-                _frameBufferInvalidated = true;
+                ScheduleSwapchainRecreate("Surface/swapchain size mismatch");
 
                 Debug.VulkanEvery(
                     $"Vulkan.Frame.{GetHashCode()}.SizeMismatch",
@@ -1172,14 +1236,15 @@ namespace XREngine.Rendering.Vulkan
 
             // If the window resized (or other framebuffer-dependent state changed), rebuild swapchain resources
             // before we acquire/record/submit. Waiting until after present can cause visible stretching/borders.
-            if (_frameBufferInvalidated)
-            {
-                _frameBufferInvalidated = false;
-                RecreateSwapChain();
-            }
+            if (ShouldRunDebouncedSwapchainRecreate())
+                RecreateSwapchainImmediately("Debounce elapsed before frame acquire");
 
-            // 1. Wait for the previous frame to finish
-            Api!.WaitForFences(device, 1, ref inFlightFences![currentFrame], true, ulong.MaxValue);
+            // 1. Wait for the previous submission associated with this in-flight slot.
+            long stageStartTimestamp = Stopwatch.GetTimestamp();
+            ulong slotWaitValue = _frameSlotTimelineValues![currentFrame];
+            WaitForTimelineValue(_graphicsTimelineSemaphore, slotWaitValue);
+            waitFenceTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+            SampleFrameTimingQueries(currentFrame);
 
             // Now that the GPU has finished all work for this frame slot, destroy
             // buffers that were retired during its previous recording.
@@ -1198,7 +1263,10 @@ namespace XREngine.Rendering.Vulkan
 
             // 2. Acquire the next image from the swap chain
             uint imageIndex = 0;
-            var result = khrSwapChain!.AcquireNextImage(device, swapChain, ulong.MaxValue, imageAvailableSemaphores![currentFrame], default, ref imageIndex);
+            stageStartTimestamp = Stopwatch.GetTimestamp();
+            Semaphore acquireSemaphore = acquireBridgeSemaphores![currentFrame];
+            var result = khrSwapChain!.AcquireNextImage(device, swapChain, ulong.MaxValue, acquireSemaphore, default, ref imageIndex);
+            acquireImageTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.Acquire",
@@ -1211,38 +1279,157 @@ namespace XREngine.Rendering.Vulkan
 
             if (result == Result.ErrorOutOfDateKhr)
             {
-                RecreateSwapChain();
+                RecreateSwapchainImmediately("AcquireNextImage returned ErrorOutOfDateKhr");
+                return;
+            }
+            else if (result == Result.ErrorSurfaceLostKhr)
+            {
+                RecreateSwapchainImmediately("AcquireNextImage returned ErrorSurfaceLostKhr");
                 return;
             }
             else if (result == Result.SuboptimalKhr)
             {
-                RecreateSwapChain();
+                ScheduleSwapchainRecreate("AcquireNextImage returned SuboptimalKhr");
+                return;
+            }
+            else if (result == Result.NotReady)
+            {
+                _consecutiveNotReadyCount++;
+                if (_consecutiveNotReadyCount >= MaxConsecutiveNotReadyBeforeRecreate)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.Frame.{GetHashCode()}.AcquireNotReady.Recreate",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] AcquireNextImage returned NotReady {0} consecutive times. Recreating swapchain to recover.",
+                        _consecutiveNotReadyCount);
+                    _consecutiveNotReadyCount = 0;
+                    RecreateSwapchainImmediately("Persistent NotReady after failed frame");
+                }
+                else
+                {
+                    Debug.VulkanWarningEvery(
+                        $"Vulkan.Frame.{GetHashCode()}.AcquireNotReady",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] AcquireNextImage returned NotReady ({0}/{1}). Skipping this frame.",
+                        _consecutiveNotReadyCount,
+                        MaxConsecutiveNotReadyBeforeRecreate);
+                }
                 return;
             }
             else if (result != Result.Success && result != Result.SuboptimalKhr)
-                throw new Exception("Failed to acquire swap chain image.");
+            {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.AcquireFailure.{(int)result}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] AcquireNextImage failed with {0}.",
+                    result);
 
-            // 3. Check if a previous frame is using this image (i.e. there is its fence to wait on)
-            if (imagesInFlight![imageIndex].Handle != default)
-                Api!.WaitForFences(device, 1, ref imagesInFlight[imageIndex], true, ulong.MaxValue);
-            
-            // Mark the image as now being in use by this frame
-            imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+                throw new Exception($"Failed to acquire swap chain image ({result}).");
+            }
+
+            // Successful acquire — reset the NotReady counter.
+            _consecutiveNotReadyCount = 0;
+
+            // 3. Bridge the binary acquire semaphore into the timeline and serialize image reuse by timeline value.
+            _acquireTimelineValue = Math.Max(_acquireTimelineValue + 1, _graphicsTimelineValue + 1);
+
+            ulong* acquireSignalValues = stackalloc ulong[1] { _acquireTimelineValue };
+            ulong* acquireWaitValues = stackalloc ulong[1] { 0UL };
+            Semaphore* acquireWaitSemaphores = stackalloc Semaphore[1] { acquireSemaphore };
+            Semaphore* acquireSignalSemaphores = stackalloc Semaphore[1] { _graphicsTimelineSemaphore };
+            PipelineStageFlags* acquireWaitStages = stackalloc PipelineStageFlags[1] { PipelineStageFlags.TopOfPipeBit };
+
+            TimelineSemaphoreSubmitInfo acquireBridgeTimelineInfo = new()
+            {
+                SType = StructureType.TimelineSemaphoreSubmitInfo,
+                WaitSemaphoreValueCount = 1,
+                PWaitSemaphoreValues = acquireWaitValues,
+                SignalSemaphoreValueCount = 1,
+                PSignalSemaphoreValues = acquireSignalValues,
+            };
+
+            SubmitInfo acquireBridgeSubmit = new()
+            {
+                SType = StructureType.SubmitInfo,
+                PNext = &acquireBridgeTimelineInfo,
+                WaitSemaphoreCount = 1,
+                PWaitSemaphores = acquireWaitSemaphores,
+                PWaitDstStageMask = acquireWaitStages,
+                CommandBufferCount = 0,
+                PCommandBuffers = null,
+                SignalSemaphoreCount = 1,
+                PSignalSemaphores = acquireSignalSemaphores,
+            };
+
+            Result bridgeResult = Api!.QueueSubmit(graphicsQueue, 1, ref acquireBridgeSubmit, default);
+            if (bridgeResult != Result.Success)
+            {
+                if (bridgeResult == Result.ErrorDeviceLost)
+                    _deviceLost = true;
+
+                throw new Exception($"Failed to bridge swapchain acquire semaphore to timeline ({bridgeResult}).");
+            }
+
+            if (_swapchainImageTimelineValues is not null && imageIndex < _swapchainImageTimelineValues.Length)
+                WaitForTimelineValue(_graphicsTimelineSemaphore, _swapchainImageTimelineValues[imageIndex]);
 
             // 4. Record the command buffer
             // Note: This currently records a default pass (Clear + ImGui). 
             // Full integration with the engine's render queue happens via frame operations enqueued during the frame.
-            EnsureCommandBufferRecorded(imageIndex);
+            stageStartTimestamp = Stopwatch.GetTimestamp();
+            try
+            {
+                EnsureCommandBufferRecorded(imageIndex);
+            }
+            catch (Exception recordEx)
+            {
+                recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
-            // 5. Submit the command buffer
+                // Recording failed (e.g. OOM during resource allocation). The acquire bridge
+                // already consumed the binary semaphore and advanced the timeline, but we have
+                // no valid command buffer to submit. Advance currentFrame so the next attempt
+                // uses the other in-flight slot, and schedule a swapchain recreate which calls
+                // DeviceWaitIdle + destroys/recreates all swapchain objects — this returns the
+                // acquired image to the presentation engine and resets semaphore state.
+                currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.Frame.{GetHashCode()}.RecordFailed",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Command buffer recording failed. Scheduling swapchain recreate to recover. {0}",
+                    recordEx.Message);
+
+                RecreateSwapchainImmediately("Command buffer recording failed — recovering timeline/present state");
+                throw; // Re-throw so XRWindow's circuit breaker can track failure count
+            }
+            recordCommandBufferTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+
+            // 5. Submit the command buffer with timeline sync.
+            _graphicsTimelineValue = Math.Max(_graphicsTimelineValue + 1, _acquireTimelineValue + 1);
+            ulong graphicsSignalValue = _graphicsTimelineValue;
+
+            ulong* waitTimelineValues = stackalloc ulong[1] { _acquireTimelineValue };
+            ulong* signalTimelineValues = stackalloc ulong[2] { graphicsSignalValue, 0UL };
+            Semaphore* waitSemaphores = stackalloc Semaphore[1] { _graphicsTimelineSemaphore };
+            var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
+            var buffer = _commandBuffers![imageIndex];
+            Semaphore presentSemaphore = presentBridgeSemaphores![currentFrame];
+            Semaphore* signalSemaphores = stackalloc Semaphore[2] { _graphicsTimelineSemaphore, presentSemaphore };
+
+            TimelineSemaphoreSubmitInfo timelineSubmitInfo = new()
+            {
+                SType = StructureType.TimelineSemaphoreSubmitInfo,
+                WaitSemaphoreValueCount = 1,
+                PWaitSemaphoreValues = waitTimelineValues,
+                SignalSemaphoreValueCount = 2,
+                PSignalSemaphoreValues = signalTimelineValues,
+            };
+
             SubmitInfo submitInfo = new()
             {
                 SType = StructureType.SubmitInfo,
+                PNext = &timelineSubmitInfo,
             };
-
-            var waitSemaphores = stackalloc[] { imageAvailableSemaphores[currentFrame] };
-            var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
-            var buffer = _commandBuffers![imageIndex];
 
             submitInfo = submitInfo with
             {
@@ -1253,31 +1440,35 @@ namespace XREngine.Rendering.Vulkan
                 PCommandBuffers = &buffer
             };
 
-            var signalSemaphores = stackalloc[] { renderFinishedSemaphores![currentFrame] };
             submitInfo = submitInfo with
             {
-                SignalSemaphoreCount = 1,
+                SignalSemaphoreCount = 2,
                 PSignalSemaphores = signalSemaphores,
             };
 
-            Api!.ResetFences(device, 1, ref inFlightFences[currentFrame]);
-
-            Result frameSubmitResult;
+            stageStartTimestamp = Stopwatch.GetTimestamp();
+            Result submitResult;
             lock (_oneTimeSubmitLock)
-                frameSubmitResult = Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, inFlightFences[currentFrame]);
+                submitResult = Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, default);
 
-            if (frameSubmitResult != Result.Success)
+            if (submitResult != Result.Success)
             {
-                // Submit failed (usually because a referenced resource was destroyed during recording).
-                // Log the error, skip present, and advance the frame so fences stay in sync.
-                Debug.LogWarning(
-                    $"[Vulkan] Frame submit failed (Result={frameSubmitResult}) on frame {_vkDebugFrameCounter}, image {imageIndex}. Skipping present.");
-                currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
-                return;
+                if (submitResult == Result.ErrorDeviceLost)
+                    _deviceLost = true;
+
+                throw new Exception($"Failed to submit draw command buffer ({submitResult}).");
             }
+            submitQueueTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
+            MarkFrameTimingSubmitted(currentFrame);
+
+            _frameSlotTimelineValues[currentFrame] = graphicsSignalValue;
+            if (_swapchainImageTimelineValues is not null && imageIndex < _swapchainImageTimelineValues.Length)
+                _swapchainImageTimelineValues[imageIndex] = graphicsSignalValue;
 
             // Trim idle staging buffers so the pool does not grow unbounded.
+            stageStartTimestamp = Stopwatch.GetTimestamp();
             _stagingManager.Trim(this);
+            trimStagingTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.Submit",
@@ -1292,15 +1483,22 @@ namespace XREngine.Rendering.Vulkan
             {
                 SType = StructureType.PresentInfoKhr,
                 WaitSemaphoreCount = 1,
-                PWaitSemaphores = signalSemaphores,
+                PWaitSemaphores = &presentSemaphore,
                 SwapchainCount = 1,
                 PSwapchains = swapChains,
                 PImageIndices = &imageIndex
             };
 
+            stageStartTimestamp = Stopwatch.GetTimestamp();
             lock (_oneTimeSubmitLock)
                 result = khrSwapChain.QueuePresent(presentQueue, ref presentInfo);
+            presentQueueTime += Stopwatch.GetElapsedTime(stageStartTimestamp);
             _lastPresentedImageIndex = imageIndex;
+
+            // Track that this swapchain image has been presented at least once,
+            // so future frames use PresentSrcKhr (not Undefined) as old layout.
+            if (_swapchainImageEverPresented is not null && imageIndex < _swapchainImageEverPresented.Length)
+                _swapchainImageEverPresented[imageIndex] = true;
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.Present",
@@ -1310,19 +1508,35 @@ namespace XREngine.Rendering.Vulkan
                 imageIndex,
                 result);
 
-            _frameBufferInvalidated |=
-                result == Result.ErrorOutOfDateKhr ||
-                result == Result.SuboptimalKhr;
-
-            if (_frameBufferInvalidated)
+            if (result == Result.ErrorOutOfDateKhr)
             {
-                _frameBufferInvalidated = false;
-                RecreateSwapChain();
+                RecreateSwapchainImmediately("QueuePresent returned ErrorOutOfDateKhr");
+            }
+            else if (result == Result.SuboptimalKhr)
+            {
+                ScheduleSwapchainRecreate("QueuePresent returned SuboptimalKhr");
             }
             else if (result != Result.Success)
                 throw new Exception("Failed to present swap chain image.");
 
+            if (ShouldRunDebouncedSwapchainRecreate())
+                RecreateSwapchainImmediately("Debounce elapsed after present");
+
             currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+            _lastFrameCompletedTimestamp = Stopwatch.GetTimestamp();
+            }
+            finally
+            {
+                TimeSpan totalFrameTime = Stopwatch.GetElapsedTime(frameStartTimestamp);
+                Engine.Rendering.Stats.RecordVulkanFrameLifecycleTiming(
+                    waitFenceTime,
+                    acquireImageTime,
+                    recordCommandBufferTime,
+                    submitQueueTime,
+                    trimStagingTime,
+                    presentQueueTime,
+                    totalFrameTime);
+            }
         }
 
         // =========== Indirect + Pipeline Abstraction stubs for Vulkan ===========
@@ -1834,7 +2048,9 @@ namespace XREngine.Rendering.Vulkan
                 uint mipLevel,
                 ImageLayout preferredLayout,
                 PipelineStageFlags stageMask,
-                AccessFlags accessMask)
+                AccessFlags accessMask,
+                IVkImageDescriptorSource? descriptorSource = null,
+                VkRenderBuffer? renderBufferSource = null)
             {
                 Image = image;
                 Format = format;
@@ -1845,6 +2061,8 @@ namespace XREngine.Rendering.Vulkan
                 PreferredLayout = preferredLayout;
                 StageMask = stageMask;
                 AccessMask = accessMask;
+                DescriptorSource = descriptorSource;
+                RenderBufferSource = renderBufferSource;
             }
 
             public Image Image { get; }
@@ -1856,7 +2074,23 @@ namespace XREngine.Rendering.Vulkan
             public ImageLayout PreferredLayout { get; }
             public PipelineStageFlags StageMask { get; }
             public AccessFlags AccessMask { get; }
+            public IVkImageDescriptorSource? DescriptorSource { get; }
+            public VkRenderBuffer? RenderBufferSource { get; }
             public bool IsValid => Image.Handle != 0;
+
+            public BlitImageInfo WithResolvedState(Image image, ImageLayout preferredLayout)
+                => new(
+                    image,
+                    Format,
+                    AspectMask,
+                    BaseArrayLayer,
+                    LayerCount,
+                    MipLevel,
+                    preferredLayout,
+                    StageMask,
+                    AccessMask,
+                    DescriptorSource,
+                    RenderBufferSource);
         }
 
         private bool TryResolveBlitImage(
@@ -1942,9 +2176,18 @@ namespace XREngine.Rendering.Vulkan
                 case XRTexture texture:
                     return TryResolveTextureBlitImage(texture, mipLevel, layerIndex, aspectMask, layout, stage, access, out info);
                 case XRRenderBuffer renderBuffer when GetOrCreateAPIRenderObject(renderBuffer, true) is VkRenderBuffer vkRenderBuffer:
+                    // Refresh the cached image handle in case the physical group was reallocated.
+                    vkRenderBuffer.RefreshIfStale();
                     // Allow depth/stencil or color depending on the requested aspect and buffer format.
                     if (IsDepthOrStencilAspect(aspectMask) && (vkRenderBuffer.Aspect & aspectMask) != aspectMask)
                         return false;
+
+                    // Use the physical group's tracked layout when available so the
+                    // blit transition barrier uses the correct OldLayout.
+                    ImageLayout effectiveLayout = layout;
+                    if (vkRenderBuffer.PhysicalGroup is { } group)
+                        effectiveLayout = group.LastKnownLayout;
+
                     info = new BlitImageInfo(
                         vkRenderBuffer.Image,
                         vkRenderBuffer.Format,
@@ -1952,9 +2195,10 @@ namespace XREngine.Rendering.Vulkan
                         0,
                         1,
                         0,
-                        layout,
+                        effectiveLayout,
                         stage,
-                        access);
+                        access,
+                        renderBufferSource: vkRenderBuffer);
                     return info.IsValid;
                 default:
                     return false;
@@ -1972,7 +2216,17 @@ namespace XREngine.Rendering.Vulkan
             out BlitImageInfo info)
         {
             info = default;
-            if (GetOrCreateAPIRenderObject(texture, true) is not IVkImageDescriptorSource source)
+            AbstractRenderAPIObject apiObject = GetOrCreateAPIRenderObject(texture, true);
+            if (apiObject is VkTextureView textureView)
+            {
+                // Texture views can outlive backing physical image reallocations.
+                // Rebuild the view so DescriptorImage points at a currently valid VkImage.
+                textureView.Destroy();
+                textureView.Generate();
+                apiObject = textureView;
+            }
+
+            if (apiObject is not IVkImageDescriptorSource source)
                 return false;
 
             if (source.DescriptorImage.Handle == 0)
@@ -1993,6 +2247,30 @@ namespace XREngine.Rendering.Vulkan
             if (texture is XRTexture3D)
                 baseArrayLayer = 0;
 
+            ImageLayout effectiveLayout = layout;
+            string? resourceName = texture.Name;
+            if (string.IsNullOrWhiteSpace(resourceName))
+                resourceName = texture.GetDescribingName();
+
+            if (!string.IsNullOrWhiteSpace(resourceName) &&
+                ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup? group) &&
+                group is not null &&
+                group.IsAllocated)
+            {
+                effectiveLayout = group.LastKnownLayout;
+            }
+            else if (!source.UsesAllocatorImage)
+            {
+                // For dedicated (non-planner) images, use the texture's own tracked
+                // layout so blit transitions emit a correct OldLayout.  Falling back
+                // to the caller's hardcoded layout (e.g. COLOR_ATTACHMENT_OPTIMAL)
+                // would be wrong when the image is still in its post-initialisation
+                // layout (typically SHADER_READ_ONLY_OPTIMAL after mipmap generation).
+                ImageLayout tracked = source.TrackedImageLayout;
+                if (tracked != ImageLayout.Undefined)
+                    effectiveLayout = tracked;
+            }
+
             info = new BlitImageInfo(
                 source.DescriptorImage,
                 format,
@@ -2000,11 +2278,50 @@ namespace XREngine.Rendering.Vulkan
                 baseArrayLayer,
                 1,
                 (uint)Math.Max(mipLevel, 0),
-                layout,
+                effectiveLayout,
                 stage,
-                access);
+                access,
+                source);
 
             return info.IsValid;
+        }
+
+        private static bool TryResolveLiveBlitImage(in BlitImageInfo info, out BlitImageInfo resolved)
+        {
+            resolved = info;
+
+            if (info.DescriptorSource is { } source)
+            {
+                if (source is VkObjectBase vkObject && !vkObject.IsActive)
+                    vkObject.Generate();
+
+                Image liveImage = source.DescriptorImage;
+                if (liveImage.Handle == 0)
+                    return false;
+
+                resolved = info.WithResolvedState(liveImage, info.PreferredLayout);
+                return true;
+            }
+
+            if (info.RenderBufferSource is { } renderBuffer)
+            {
+                if (!renderBuffer.IsActive)
+                    renderBuffer.Generate();
+
+                renderBuffer.RefreshIfStale();
+                Image liveImage = renderBuffer.Image;
+                if (liveImage.Handle == 0)
+                    return false;
+
+                ImageLayout liveLayout = info.PreferredLayout;
+                if (renderBuffer.PhysicalGroup is { } group)
+                    liveLayout = group.LastKnownLayout;
+
+                resolved = info.WithResolvedState(liveImage, liveLayout);
+                return true;
+            }
+
+            return info.Image.Handle != 0;
         }
 
         private static bool IsColorAttachment(EFrameBufferAttachment attachment)
@@ -2158,7 +2475,27 @@ namespace XREngine.Rendering.Vulkan
             PipelineStageFlags srcStage,
             PipelineStageFlags dstStage)
         {
-            ImageAspectFlags barrierAspectMask = NormalizeBarrierAspectMask(info.Format, info.AspectMask);
+            if (!TryResolveLiveBlitImage(info, out BlitImageInfo resolvedInfo))
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.TransitionForBlit.UnresolvedImage",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Skipping blit transition — could not resolve a live image handle.");
+                return;
+            }
+
+            // Guard against stale or destroyed image handles that passed the zero-check
+            // but are no longer valid Vulkan objects (e.g. after physical group reallocation).
+            if (resolvedInfo.Image.Handle == 0)
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.TransitionForBlit.NullImage",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Skipping blit transition — image handle is null.");
+                return;
+            }
+
+            ImageAspectFlags barrierAspectMask = NormalizeBarrierAspectMask(resolvedInfo.Format, resolvedInfo.AspectMask);
 
             ImageMemoryBarrier barrier = new()
             {
@@ -2169,14 +2506,14 @@ namespace XREngine.Rendering.Vulkan
                 NewLayout = newLayout,
                 SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                Image = info.Image,
+                Image = resolvedInfo.Image,
                 SubresourceRange = new ImageSubresourceRange
                 {
                     AspectMask = barrierAspectMask,
-                    BaseMipLevel = info.MipLevel,
+                    BaseMipLevel = resolvedInfo.MipLevel,
                     LevelCount = 1,
-                    BaseArrayLayer = info.BaseArrayLayer,
-                    LayerCount = info.LayerCount
+                    BaseArrayLayer = resolvedInfo.BaseArrayLayer,
+                    LayerCount = resolvedInfo.LayerCount
                 }
             };
 

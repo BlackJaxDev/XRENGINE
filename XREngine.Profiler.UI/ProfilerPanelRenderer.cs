@@ -77,6 +77,10 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     private readonly float[] _vulkanPipelineSkipRateHistory = new float[RenderStatsHistorySamples];
     private readonly float[] _vulkanDescriptorSkipRateHistory = new float[RenderStatsHistorySamples];
     private readonly float[] _vulkanPipelineCacheHitRateHistory = new float[RenderStatsHistorySamples];
+    private readonly float[] _vulkanFrameTotalMsHistory = new float[RenderStatsHistorySamples];
+    private readonly float[] _vulkanFrameWaitFenceMsHistory = new float[RenderStatsHistorySamples];
+    private readonly float[] _vulkanFrameRecordCommandBufferMsHistory = new float[RenderStatsHistorySamples];
+    private readonly float[] _vulkanFrameGpuCommandBufferMsHistory = new float[RenderStatsHistorySamples];
     private readonly float[] _renderStatsHistoryScratch = new float[RenderStatsHistorySamples];
     private int _renderStatsHistoryHead;
     private int _renderStatsHistoryCount;
@@ -432,6 +436,25 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             DrawRenderStatsHistoryPlot("Pipeline Skip %", _vulkanPipelineSkipRateHistory, "%", 0f, 100f);
             DrawRenderStatsHistoryPlot("Descriptor Skip %", _vulkanDescriptorSkipRateHistory, "%", 0f, 100f);
             DrawRenderStatsHistoryPlot("Pipeline Cache Hit %", _vulkanPipelineCacheHitRateHistory, "%", 0f, 100f);
+        }
+
+        ImGui.Separator();
+        ImGui.Text("Vulkan Frame Lifecycle Timing:");
+        ImGui.Text($"  CPU Total: {stats.VulkanFrameTotalMs:F3} ms");
+        ImGui.Text($"  CPU Wait Fence: {stats.VulkanFrameWaitFenceMs:F3} ms");
+        ImGui.Text($"  CPU Acquire: {stats.VulkanFrameAcquireImageMs:F3} ms");
+        ImGui.Text($"  CPU Record CmdBuf: {stats.VulkanFrameRecordCommandBufferMs:F3} ms");
+        ImGui.Text($"  CPU Submit: {stats.VulkanFrameSubmitMs:F3} ms");
+        ImGui.Text($"  CPU Trim: {stats.VulkanFrameTrimMs:F3} ms");
+        ImGui.Text($"  CPU Present: {stats.VulkanFramePresentMs:F3} ms");
+        ImGui.Text($"  GPU CmdBuf: {stats.VulkanFrameGpuCommandBufferMs:F3} ms");
+
+        if (_renderStatsHistoryCount > 1 && ImGui.CollapsingHeader("Vulkan Frame Timing History", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            DrawRenderStatsHistoryPlot("CPU Frame Total", _vulkanFrameTotalMsHistory, "ms", 0f, 0f);
+            DrawRenderStatsHistoryPlot("CPU Wait Fence", _vulkanFrameWaitFenceMsHistory, "ms", 0f, 0f);
+            DrawRenderStatsHistoryPlot("CPU Record CmdBuf", _vulkanFrameRecordCommandBufferMsHistory, "ms", 0f, 0f);
+            DrawRenderStatsHistoryPlot("GPU CmdBuf", _vulkanFrameGpuCommandBufferMsHistory, "ms", 0f, 0f);
         }
 
         ImGui.Separator();
@@ -1257,6 +1280,10 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         _vulkanPipelineSkipRateHistory[index] = (float)(pipelineSkipRate * 100.0);
         _vulkanDescriptorSkipRateHistory[index] = (float)(descriptorSkipRate * 100.0);
         _vulkanPipelineCacheHitRateHistory[index] = (float)(stats.VulkanPipelineCacheLookupHitRate * 100.0);
+        _vulkanFrameTotalMsHistory[index] = (float)stats.VulkanFrameTotalMs;
+        _vulkanFrameWaitFenceMsHistory[index] = (float)stats.VulkanFrameWaitFenceMs;
+        _vulkanFrameRecordCommandBufferMsHistory[index] = (float)stats.VulkanFrameRecordCommandBufferMs;
+        _vulkanFrameGpuCommandBufferMsHistory[index] = (float)stats.VulkanFrameGpuCommandBufferMs;
 
         _renderStatsHistoryHead = (_renderStatsHistoryHead + 1) % RenderStatsHistorySamples;
         if (_renderStatsHistoryCount < RenderStatsHistorySamples)

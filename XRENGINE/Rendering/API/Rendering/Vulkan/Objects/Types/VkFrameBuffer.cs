@@ -262,17 +262,25 @@ public unsafe partial class VulkanRenderer
                 foreach (int index in matchingIndices)
                 {
                     FrameBufferAttachmentSignature existing = planned[index];
+
+                    // First-use safety: when an attachment starts in UNDEFINED layout,
+                    // Vulkan cannot preserve prior contents. Treat LOAD as DONT_CARE in that case.
+                    AttachmentLoadOp effectiveLoadOp =
+                        loadOp == AttachmentLoadOp.Load && existing.InitialLayout == ImageLayout.Undefined
+                            ? AttachmentLoadOp.DontCare
+                            : loadOp;
+
                     FrameBufferAttachmentSignature updated = usage.ResourceType switch
                     {
                         RenderPassResourceType.StencilAttachment => WithOps(
                             existing,
                             existing.LoadOp,
                             existing.StoreOp,
-                            loadOp,
+                            effectiveLoadOp,
                             storeOp),
                         _ => WithOps(
                             existing,
-                            loadOp,
+                            effectiveLoadOp,
                             storeOp,
                             existing.StencilLoadOp,
                             existing.StencilStoreOp),
@@ -489,7 +497,7 @@ public unsafe partial class VulkanRenderer
 
                 ValidateAttachmentDimensions(target);
 
-                AttachmentSource source = ResolveAttachmentSource(target, mip, layer);
+                AttachmentSource source = ResolveAttachmentSource(target, attachment, mip, layer);
                 AttachmentRole role = ResolveAttachmentRole(attachment, source.AspectMask);
 
                 if (role == AttachmentRole.Color)
@@ -539,10 +547,10 @@ public unsafe partial class VulkanRenderer
                 _ => attachment.GetType().Name
             } ?? attachment.GetType().Name;
 
-        private AttachmentSource ResolveAttachmentSource(IFrameBufferAttachement target, int mipLevel, int layerIndex)
+        private AttachmentSource ResolveAttachmentSource(IFrameBufferAttachement target, EFrameBufferAttachment attachment, int mipLevel, int layerIndex)
             => target switch
             {
-                XRTexture texture => ResolveTextureAttachment(texture, mipLevel, layerIndex),
+                XRTexture texture => ResolveTextureAttachment(texture, attachment, mipLevel, layerIndex),
                 XRRenderBuffer renderBuffer => ResolveRenderBufferAttachment(renderBuffer),
                 _ => throw new NotSupportedException($"Framebuffer attachment type '{target.GetType().Name}' is not supported yet.")
             };
@@ -556,10 +564,15 @@ public unsafe partial class VulkanRenderer
             return new AttachmentSource(vkRenderBuffer.View, vkRenderBuffer.Format, vkRenderBuffer.Samples, vkRenderBuffer.Aspect);
         }
 
-        private AttachmentSource ResolveTextureAttachment(XRTexture texture, int mipLevel, int layerIndex)
+        private AttachmentSource ResolveTextureAttachment(XRTexture texture, EFrameBufferAttachment attachment, int mipLevel, int layerIndex)
         {
             if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkFrameBufferAttachmentSource source)
                 throw new InvalidOperationException($"Texture '{texture.Name ?? texture.GetDescribingName()}' is not backed by a Vulkan texture.");
+
+            bool depthStencilAttachment = attachment is EFrameBufferAttachment.DepthAttachment
+                or EFrameBufferAttachment.DepthStencilAttachment
+                or EFrameBufferAttachment.StencilAttachment;
+            source.EnsureAttachmentLayout(depthStencilAttachment);
 
             ImageView view = source.GetAttachmentView(mipLevel, layerIndex);
             return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, source.DescriptorAspect);

@@ -612,15 +612,7 @@ namespace XREngine.Rendering.Vulkan
             if (TryCopyBufferViaIndirectNv(stagingBuffer.Value, vkBuffer.Value, length, 0, offset))
                 return;
 
-            using var scope = NewCommandScope();
-            BufferCopy copyRegion = new()
-            {
-                SrcOffset = 0,
-                DstOffset = offset,
-                Size = length
-            };
-
-            Api!.CmdCopyBuffer(scope.CommandBuffer, stagingBuffer.Value, vkBuffer.Value, 1, &copyRegion);
+            ExecuteTransferBufferUpload(stagingBuffer.Value, vkBuffer.Value, length, 0, offset);
         }
 
         private void UpdateBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory, ulong offset, ulong length, void* addr)
@@ -655,15 +647,117 @@ namespace XREngine.Rendering.Vulkan
             if (TryCopyBufferViaIndirectNv(stagingBuffer.Value, deviceBuffer.Value, bufferSize, 0, 0))
                 return;
 
-            using var scope = NewCommandScope();
-            BufferCopy copyRegion = new()
-            {
-                SrcOffset = 0,
-                DstOffset = 0,
-                Size = bufferSize
-            };
+            ExecuteTransferBufferUpload(stagingBuffer.Value, deviceBuffer.Value, bufferSize, 0, 0);
+        }
 
-            Api!.CmdCopyBuffer(scope.CommandBuffer, stagingBuffer.Value, deviceBuffer.Value, 1, &copyRegion);
+        private void ExecuteTransferBufferUpload(
+            Buffer stagingBuffer,
+            Buffer deviceBuffer,
+            ulong copySize,
+            ulong sourceOffset,
+            ulong destinationOffset)
+        {
+            QueueFamilyIndices queueFamilies = FamilyQueueIndices;
+            uint graphicsFamily = queueFamilies.GraphicsFamilyIndex ?? 0u;
+            uint transferFamily = queueFamilies.TransferFamilyIndex ?? graphicsFamily;
+            bool dedicatedTransferFamily = transferFamily != graphicsFamily;
+
+            if (dedicatedTransferFamily)
+                Api!.QueueWaitIdle(graphicsQueue);
+
+            using (var transferScope = NewTransferCommandScope())
+            {
+                if (dedicatedTransferFamily)
+                {
+                    BufferMemoryBarrier acquireBarrier = new()
+                    {
+                        SType = StructureType.BufferMemoryBarrier,
+                        SrcAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                        DstAccessMask = AccessFlags.TransferWriteBit,
+                        SrcQueueFamilyIndex = graphicsFamily,
+                        DstQueueFamilyIndex = transferFamily,
+                        Buffer = deviceBuffer,
+                        Offset = destinationOffset,
+                        Size = copySize
+                    };
+
+                    Api!.CmdPipelineBarrier(
+                        transferScope.CommandBuffer,
+                        PipelineStageFlags.AllCommandsBit,
+                        PipelineStageFlags.TransferBit,
+                        DependencyFlags.None,
+                        0,
+                        null,
+                        1,
+                        &acquireBarrier,
+                        0,
+                        null);
+                }
+
+                BufferCopy copyRegion = new()
+                {
+                    SrcOffset = sourceOffset,
+                    DstOffset = destinationOffset,
+                    Size = copySize
+                };
+
+                Api!.CmdCopyBuffer(transferScope.CommandBuffer, stagingBuffer, deviceBuffer, 1, &copyRegion);
+
+                if (dedicatedTransferFamily)
+                {
+                    BufferMemoryBarrier releaseBarrier = new()
+                    {
+                        SType = StructureType.BufferMemoryBarrier,
+                        SrcAccessMask = AccessFlags.TransferWriteBit,
+                        DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                        SrcQueueFamilyIndex = transferFamily,
+                        DstQueueFamilyIndex = graphicsFamily,
+                        Buffer = deviceBuffer,
+                        Offset = destinationOffset,
+                        Size = copySize
+                    };
+
+                    Api!.CmdPipelineBarrier(
+                        transferScope.CommandBuffer,
+                        PipelineStageFlags.TransferBit,
+                        PipelineStageFlags.AllCommandsBit,
+                        DependencyFlags.None,
+                        0,
+                        null,
+                        1,
+                        &releaseBarrier,
+                        0,
+                        null);
+                }
+            }
+
+            if (dedicatedTransferFamily)
+            {
+                using var graphicsScope = NewCommandScope();
+                BufferMemoryBarrier acquireOnGraphics = new()
+                {
+                    SType = StructureType.BufferMemoryBarrier,
+                    SrcAccessMask = AccessFlags.TransferWriteBit,
+                    DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                    SrcQueueFamilyIndex = transferFamily,
+                    DstQueueFamilyIndex = graphicsFamily,
+                    Buffer = deviceBuffer,
+                    Offset = destinationOffset,
+                    Size = copySize
+                };
+
+                Api!.CmdPipelineBarrier(
+                    graphicsScope.CommandBuffer,
+                    PipelineStageFlags.TransferBit,
+                    PipelineStageFlags.AllCommandsBit,
+                    DependencyFlags.None,
+                    0,
+                    null,
+                    1,
+                    &acquireOnGraphics,
+                    0,
+                    null);
+            }
         }
 
         public void DestroyBuffer(Buffer? vkBuffer, DeviceMemory? vkMemory)

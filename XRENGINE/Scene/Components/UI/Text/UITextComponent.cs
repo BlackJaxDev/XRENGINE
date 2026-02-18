@@ -716,7 +716,6 @@ namespace XREngine.Rendering.UI
             var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
             var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
 
-            Debug.Out($"[UIBatch] Text registered: \"{Text?.Substring(0, Math.Min(Text?.Length ?? 0, 20))}\" glyphs={glyphsCopy.Length} pass={RenderPass} color={textColor}");
             collector.AddTextQuad(RenderPass, atlas, in worldMatrix, in textColor, in bounds, glyphsCopy);
             return true;
         }

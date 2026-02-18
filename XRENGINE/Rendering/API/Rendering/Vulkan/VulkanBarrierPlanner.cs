@@ -23,6 +23,7 @@ internal sealed class VulkanBarrierPlanner
     private readonly Dictionary<string, PlannedBufferState> _lastBufferStates = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, uint> _lastImageQueueOwners = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, uint> _lastBufferQueueOwners = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<int> _knownPassIndices = [];
 
     public IReadOnlyList<PlannedImageBarrier> ImageBarriers => _imageBarriers;
     public IReadOnlyList<PlannedBufferBarrier> BufferBarriers => _bufferBarriers;
@@ -32,6 +33,34 @@ internal sealed class VulkanBarrierPlanner
 
     public IReadOnlyList<PlannedBufferBarrier> GetBufferBarriersForPass(int passIndex)
         => _perPassBufferBarriers.TryGetValue(passIndex, out var list) ? list : _emptyBufferBarriers;
+
+    /// <summary>
+    /// Returns true if <paramref name="passIndex"/> was present in the pass metadata
+    /// used during the last <see cref="Rebuild"/>. Passes not known to the planner
+    /// have no planned barriers, so callers should emit a conservative full-pipeline
+    /// barrier to prevent GPU crashes from missing layout transitions.
+    /// </summary>
+    public bool HasKnownPass(int passIndex)
+        => passIndex == SwapchainPassIndex || _knownPassIndices.Contains(passIndex);
+
+    /// <summary>
+    /// Returns the smallest known pass index from the last <see cref="Rebuild"/>,
+    /// or <c>null</c> if no passes are known. Used to substitute a real pass's
+    /// image/buffer barriers when an op falls back to an unknown pass index.
+    /// </summary>
+    public int? GetFirstKnownPassIndex()
+    {
+        if (_knownPassIndices.Count == 0)
+            return null;
+
+        int min = int.MaxValue;
+        foreach (int idx in _knownPassIndices)
+        {
+            if (idx < min)
+                min = idx;
+        }
+        return min;
+    }
 
     internal readonly record struct QueueOwnershipConfig(
         uint GraphicsQueueFamilyIndex,
@@ -66,9 +95,13 @@ internal sealed class VulkanBarrierPlanner
         _perPassBufferBarriers.Clear();
         _lastBufferStates.Clear();
         _lastBufferQueueOwners.Clear();
+        _knownPassIndices.Clear();
 
         if (passMetadata is null || passMetadata.Count == 0)
             return;
+
+        foreach (RenderPassMetadata pass in passMetadata)
+            _knownPassIndices.Add(pass.PassIndex);
 
         RenderGraphSynchronizationInfo syncInfo = synchronization ?? RenderGraphSynchronizationPlanner.Build(passMetadata);
         QueueOwnershipConfig ownership = queueOwnership ?? new QueueOwnershipConfig(0u);

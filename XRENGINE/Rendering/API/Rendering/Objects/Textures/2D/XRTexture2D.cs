@@ -361,7 +361,32 @@ namespace XREngine.Rendering
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[UploadMipmaps] Exception during upload for '{texture.Name}': {ex.Message}");
+                    Debug.LogWarning($"[UploadMipmaps] Exception during upload for '{texture.Name}': {ex}");
+
+                    try
+                    {
+                        if (cancellationToken.IsCancellationRequested)
+                            return;
+
+                        texture.ShouldLoadDataFromInternalPBO = false;
+
+                        var mipmaps = texture.Mipmaps;
+                        if (mipmaps is not null)
+                        {
+                            for (int i = 0; i < mipmaps.Length; ++i)
+                                mipmaps[i].StreamingPBO = null;
+                        }
+
+                        texture.Generate();
+                        texture.PushData();
+                        Debug.Out($"[UploadMipmaps] Fallback upload (no PBO) completed for '{texture.Name}'");
+
+                        onCompleted?.Invoke();
+                    }
+                    catch (Exception fallbackEx)
+                    {
+                        Debug.LogWarning($"[UploadMipmaps] Fallback upload failed for '{texture.Name}': {fallbackEx}");
+                    }
                 }
             }
 
