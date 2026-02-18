@@ -17,7 +17,7 @@ public unsafe partial class VulkanRenderer
         private bool _layoutsDirty = true;
 
         public override VkObjectType Type => VkObjectType.ProgramPipeline;
-        public override bool IsGenerated => true;
+        public override bool IsGenerated => IsActive;
         public PipelineLayout PipelineLayout => _pipelineLayout;
 
         protected override uint CreateObjectInternal() => CacheObject(this);

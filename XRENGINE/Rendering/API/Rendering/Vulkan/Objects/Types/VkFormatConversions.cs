@@ -199,6 +199,57 @@ public unsafe partial class VulkanRenderer
             };
 
         /// <summary>
+        /// Returns the number of bytes per texel for the given Vulkan <see cref="Format"/>.
+        /// Used to validate that staging buffers are large enough for the target image.
+        /// Returns 0 for unrecognised or compressed formats.
+        /// </summary>
+        public static uint GetBytesPerTexel(Format format)
+            => format switch
+            {
+                // 1 byte
+                Format.R8Unorm or Format.R8SNorm or Format.R8Uint or Format.R8Sint
+                    or Format.S8Uint => 1,
+
+                // 2 bytes
+                Format.R8G8Unorm or Format.R8G8SNorm or Format.R8G8Uint or Format.R8G8Sint
+                    or Format.R16Unorm or Format.R16SNorm or Format.R16Sfloat or Format.R16Uint or Format.R16Sint
+                    or Format.R5G6B5UnormPack16 or Format.R5G5B5A1UnormPack16 or Format.R4G4B4A4UnormPack16
+                    or Format.D16Unorm => 2,
+
+                // 3 bytes
+                Format.R8G8B8Unorm or Format.R8G8B8SNorm or Format.R8G8B8Uint or Format.R8G8B8Sint
+                    or Format.R8G8B8Srgb or Format.B8G8R8Unorm or Format.B8G8R8Srgb
+                    or Format.R16G16B16Unorm or Format.R16G16B16SNorm => 6, // 3×16-bit = 6 bytes
+
+                // 4 bytes
+                Format.R8G8B8A8Unorm or Format.R8G8B8A8SNorm or Format.R8G8B8A8Uint or Format.R8G8B8A8Sint
+                    or Format.R8G8B8A8Srgb or Format.B8G8R8A8Unorm or Format.B8G8R8A8Srgb
+                    or Format.A2B10G10R10UnormPack32 or Format.A2R10G10B10UnormPack32
+                    or Format.R16G16Unorm or Format.R16G16SNorm or Format.R16G16Sfloat or Format.R16G16Uint or Format.R16G16Sint
+                    or Format.R32Sfloat or Format.R32Uint or Format.R32Sint
+                    or Format.B10G11R11UfloatPack32 or Format.E5B9G9R9UfloatPack32
+                    or Format.X8D24UnormPack32 or Format.D32Sfloat or Format.D24UnormS8Uint => 4,
+
+                // 5 bytes
+                Format.D16UnormS8Uint => 3, // 16-bit depth + 8-bit stencil
+
+                // 8 bytes
+                Format.R16G16B16A16Unorm or Format.R16G16B16A16SNorm or Format.R16G16B16A16Sfloat
+                    or Format.R16G16B16A16Uint or Format.R16G16B16A16Sint
+                    or Format.R32G32Sfloat or Format.R32G32Uint or Format.R32G32Sint
+                    or Format.D32SfloatS8Uint => 8,
+
+                // 12 bytes
+                Format.R32G32B32Sfloat or Format.R32G32B32Uint or Format.R32G32B32Sint => 12,
+
+                // 16 bytes
+                Format.R32G32B32A32Sfloat or Format.R32G32B32A32Uint or Format.R32G32B32A32Sint
+                    or Format.R64G64Sfloat or Format.R64G64Uint or Format.R64G64Sint => 16,
+
+                _ => 0,
+            };
+
+        /// <summary>
         /// Returns <c>true</c> if the given <see cref="Format"/> is a depth or depth-stencil format.
         /// </summary>
         public static bool IsDepthStencilFormat(Format format)

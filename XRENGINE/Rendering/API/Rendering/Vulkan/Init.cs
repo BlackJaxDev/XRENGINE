@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using System;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -39,6 +40,13 @@ namespace XREngine.Rendering.Vulkan
             if (device.Handle != 0)
                 DeviceWaitIdle();
 
+            WaitForPendingReadbackTasks(TimeSpan.FromSeconds(6));
+            DestroyDanglingMeshRendererWrappers();
+            DestroyRemainingTrackedMeshUniformBuffers();
+
+            // Drain all deferred-deletion queues now that the GPU is idle.
+            ForceFlushAllRetiredResources();
+
             DestroyAutoExposureComputeResources();
             DisposeImGuiResources();
             DestroyAllSwapChainObjects();
@@ -51,10 +59,28 @@ namespace XREngine.Rendering.Vulkan
             DestroySyncObjects();
             DestroyCommandPool();
 
+            // Teardown paths above may retire additional resources. Flush once more
+            // before destroying the logical device to avoid vkDestroyDevice child-object errors.
+            ForceFlushAllRetiredResources();
+
             DestroyLogicalDevice();
             DestroyValidationLayers();
             DestroySurface();
             DestroyInstance();
+        }
+
+        private void DestroyDanglingMeshRendererWrappers()
+        {
+            foreach (var pair in VkObject<XRMeshRenderer.BaseVersion>.Cache)
+            {
+                try
+                {
+                    pair.Value?.Destroy();
+                }
+                catch
+                {
+                }
+            }
         }
 
         // It should be noted that in a real world application, you're not supposed to actually call vkAllocateMemory for every individual buffer.
@@ -220,6 +246,11 @@ namespace XREngine.Rendering.Vulkan
         }
         public override void Clear(bool color, bool depth, bool stencil)
         {
+            // Don't enqueue clear ops when there's no active rendering pipeline;
+            // they would be emitted with an invalid pass index and dropped at recording time.
+            if (Engine.Rendering.State.CurrentRenderingPipeline is null)
+                return;
+
             _state.SetClearState(color, depth, stencil);
 
             int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;

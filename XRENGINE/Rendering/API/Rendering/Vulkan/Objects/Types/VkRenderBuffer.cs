@@ -88,7 +88,7 @@ public unsafe partial class VulkanRenderer
         }
 
         public override VkObjectType Type => VkObjectType.Renderbuffer;
-        public override bool IsGenerated => true;
+        public override bool IsGenerated => IsActive;
 
         internal ImageView View => _view;
         internal Format Format => _formatOverride ?? ResolveFormat(Data.Type);

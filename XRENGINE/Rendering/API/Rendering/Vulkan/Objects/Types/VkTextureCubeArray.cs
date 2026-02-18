@@ -81,7 +81,7 @@ public unsafe partial class VulkanRenderer
                         try
                         {
                             Extent3D extent = new(Math.Max(side.Width, 1u), Math.Max(side.Height, 1u), 1);
-                            CopyBufferToImage(stagingBuffer, level, baseLayer, 1, extent);
+                            CopyBufferToImage(stagingBuffer, level, baseLayer, 1, extent, (ulong)(side.Data?.Length ?? 0));
                         }
                         finally
                         {

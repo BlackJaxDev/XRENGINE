@@ -815,9 +815,12 @@ namespace XREngine.Rendering
         public XRTexture2D(Task<Image<Rgba32>?> loadTask)
         {
             Mipmaps = [new Mipmap2D(loadTask)];
+            // Image<Rgba32> is always 8-bit RGBA.
+            _sizedInternalFormat = ESizedInternalFormat.Rgba8;
         }
         public XRTexture2D(uint width, uint height, ColorF4 color)
         {
+            _sizedInternalFormat = ESizedInternalFormat.Rgba8;
             Mipmaps = [new Mipmap2D(width, height, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, true)
             {
                 Data = new DataSource(ColorToBytes(width, height, color))
@@ -883,6 +886,10 @@ namespace XREngine.Rendering
                 }
             }
             Mipmaps = mips;
+            // Derive the sized format from the first mipmap so non-resizable textures
+            // don't fall back to the default Rgba32f.
+            if (Mipmaps.Length > 0)
+                _sizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
         }
         public XRTexture2D(uint width, uint height, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData = false)
         {
@@ -912,14 +919,26 @@ namespace XREngine.Rendering
                 mips[i] = new Mipmap2D(image);
             }
             Mipmaps = mips;
+            // Derive the sized format from the first mipmap so non-resizable textures
+            // don't fall back to the default Rgba32f.
+            if (Mipmaps.Length > 0)
+                _sizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
         }
         public XRTexture2D(MagickImage? image)
         {
             Mipmaps = [new Mipmap2D(image)];
+            // Derive the sized format from the mipmap's internal format so that
+            // non-resizable textures don't fall back to the default Rgba32f.
+            if (Mipmaps.Length > 0)
+                _sizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
         }
         public XRTexture2D(Image<Rgba32> image)
         {
             Mipmaps = [new Mipmap2D(image)];
+            // Image<Rgba32> is always 8-bit RGBA — ensure the sized format matches
+            // so that non-resizable textures resolve to R8G8B8A8Unorm instead of the
+            // default Rgba32f fallback.
+            _sizedInternalFormat = ESizedInternalFormat.Rgba8;
         }
 
         private Mipmap2D[] _mipmaps = [];
@@ -1116,11 +1135,8 @@ namespace XREngine.Rendering
                 }
                 else
                 {
-                    if (_pbo != null)
-                    {
-                        _pbo.Destroy();
-                        _pbo = null;
-                    }
+                    _pbo?.Destroy();
+                    _pbo = null;
                 }
             }
         }

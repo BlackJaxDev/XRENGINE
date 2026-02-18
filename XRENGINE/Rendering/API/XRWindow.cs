@@ -654,7 +654,9 @@ namespace XREngine.Rendering
 
             Engine.Time.Timer.SwapBuffers -= SwapBuffers;
             Engine.Time.Timer.RenderFrame -= RenderFrame;
-            //Engine.Rendering.DestroyObjectsForRenderer(Renderer);
+            Renderer.WaitForGpu();
+            Renderer.DestroyCachedAPIRenderObjects();
+            Engine.Rendering.DestroyObjectsForRenderer(Renderer);
             Renderer.CleanUp();
             _rendererInitialized = false;
             Window.DoEvents();
@@ -1057,6 +1059,9 @@ namespace XREngine.Rendering
                     // Defensive: if renderer was initialized without tick linking, still attempt cleanup.
                     try
                     {
+                        Renderer.WaitForGpu();
+                        Renderer.DestroyCachedAPIRenderObjects();
+                        Engine.Rendering.DestroyObjectsForRenderer(Renderer);
                         Renderer.CleanUp();
                     }
                     catch

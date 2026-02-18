@@ -22,17 +22,38 @@ public unsafe partial class VulkanRenderer
 
         internal uint AttachmentCount => (uint)(_attachmentSignature?.Length ?? 0);
 
-        internal RenderPass ResolveRenderPassForPass(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+        internal RenderPass ResolveRenderPassForPass(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata, ImageLayout[]? initialLayoutOverrides = null)
         {
             if (_attachmentSignature is null || _attachmentSignature.Length == 0)
                 return _renderPass;
 
+            // When initial-layout overrides are provided (from per-frame FBO tracking),
+            // always build a planned signature so that the render pass uses the correct
+            // initialLayout/loadOp combination.
+            bool hasLayoutOverrides = initialLayoutOverrides is not null && initialLayoutOverrides.Length == _attachmentSignature.Length;
+
             if (passMetadata is null || passMetadata.Count == 0)
-                return _renderPass;
+            {
+                if (!hasLayoutOverrides)
+                    return _renderPass;
+
+                // No metadata but we have layout overrides — apply them to the base signature.
+                FrameBufferAttachmentSignature[] overridden = ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
+                if (SignatureEquals(_attachmentSignature, overridden))
+                    return _renderPass;
+                return Renderer.GetOrCreateFrameBufferRenderPass(overridden);
+            }
 
             string? frameBufferName = Data.Name;
             if (string.IsNullOrWhiteSpace(frameBufferName))
-                return _renderPass;
+            {
+                if (!hasLayoutOverrides)
+                    return _renderPass;
+                FrameBufferAttachmentSignature[] overridden = ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
+                if (SignatureEquals(_attachmentSignature, overridden))
+                    return _renderPass;
+                return Renderer.GetOrCreateFrameBufferRenderPass(overridden);
+            }
 
             RenderPassMetadata? pass = null;
             foreach (RenderPassMetadata metadata in passMetadata)
@@ -45,7 +66,14 @@ public unsafe partial class VulkanRenderer
             }
 
             if (pass is null)
-                return _renderPass;
+            {
+                if (!hasLayoutOverrides)
+                    return _renderPass;
+                FrameBufferAttachmentSignature[] overridden = ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
+                if (SignatureEquals(_attachmentSignature, overridden))
+                    return _renderPass;
+                return Renderer.GetOrCreateFrameBufferRenderPass(overridden);
+            }
 
             bool referencesFrameBuffer = false;
             string prefix = $"fbo::{frameBufferName}::";
@@ -62,13 +90,69 @@ public unsafe partial class VulkanRenderer
             }
 
             if (!referencesFrameBuffer)
-                return _renderPass;
+            {
+                if (!hasLayoutOverrides)
+                    return _renderPass;
+                FrameBufferAttachmentSignature[] overridden = ApplyInitialLayoutOverrides(_attachmentSignature, initialLayoutOverrides!);
+                if (SignatureEquals(_attachmentSignature, overridden))
+                    return _renderPass;
+                return Renderer.GetOrCreateFrameBufferRenderPass(overridden);
+            }
 
             FrameBufferAttachmentSignature[] planned = BuildPlannedAttachmentSignature(pass, frameBufferName);
+
+            // Apply per-frame initial-layout overrides on top of metadata-driven planning.
+            if (hasLayoutOverrides)
+                planned = ApplyInitialLayoutOverrides(planned, initialLayoutOverrides!);
+
             if (SignatureEquals(_attachmentSignature, planned))
                 return _renderPass;
 
             return Renderer.GetOrCreateFrameBufferRenderPass(planned);
+        }
+
+        /// <summary>
+        /// Returns the <see cref="FrameBufferAttachmentSignature.FinalLayout"/> for each attachment
+        /// in the order they appear in the framebuffer's attachment array.
+        /// </summary>
+        internal ImageLayout[] GetFinalLayouts()
+        {
+            if (_attachmentSignature is null || _attachmentSignature.Length == 0)
+                return [];
+
+            ImageLayout[] layouts = new ImageLayout[_attachmentSignature.Length];
+            for (int i = 0; i < _attachmentSignature.Length; i++)
+                layouts[i] = _attachmentSignature[i].FinalLayout;
+            return layouts;
+        }
+
+        private static FrameBufferAttachmentSignature[] ApplyInitialLayoutOverrides(
+            FrameBufferAttachmentSignature[] signatures,
+            ImageLayout[] overrides)
+        {
+            FrameBufferAttachmentSignature[] result = (FrameBufferAttachmentSignature[])signatures.Clone();
+            int count = Math.Min(result.Length, overrides.Length);
+            for (int i = 0; i < count; i++)
+            {
+                ImageLayout overrideLayout = overrides[i];
+                if (overrideLayout == ImageLayout.Undefined)
+                    continue; // No override for this attachment — keep existing initialLayout.
+
+                FrameBufferAttachmentSignature existing = result[i];
+                result[i] = new FrameBufferAttachmentSignature(
+                    existing.Format,
+                    existing.Samples,
+                    existing.AspectMask,
+                    existing.Role,
+                    existing.ColorIndex,
+                    existing.LoadOp,
+                    existing.StoreOp,
+                    existing.StencilLoadOp,
+                    existing.StencilStoreOp,
+                    overrideLayout,
+                    existing.FinalLayout);
+            }
+            return result;
         }
 
         internal void WriteClearValues(ClearValue* destination, uint clearValueCount)
@@ -263,12 +347,15 @@ public unsafe partial class VulkanRenderer
                 {
                     FrameBufferAttachmentSignature existing = planned[index];
 
-                    // First-use safety: when an attachment starts in UNDEFINED layout,
-                    // Vulkan cannot preserve prior contents. Treat LOAD as DONT_CARE in that case.
-                    AttachmentLoadOp effectiveLoadOp =
-                        loadOp == AttachmentLoadOp.Load && existing.InitialLayout == ImageLayout.Undefined
-                            ? AttachmentLoadOp.DontCare
-                            : loadOp;
+                    // First-use safety: when an attachment starts in UNDEFINED layout
+                    // (i.e. no prior render pass has written to it this frame), Vulkan
+                    // cannot preserve prior contents.  Only demote LOAD → DONT_CARE when
+                    // the attachment is truly in its first-use Undefined state; subsequent
+                    // passes that received an initial-layout override will have a concrete
+                    // layout and should keep their LOAD op to preserve content.
+                    AttachmentLoadOp effectiveLoadOp = loadOp;
+                    if (loadOp == AttachmentLoadOp.Load && existing.InitialLayout == ImageLayout.Undefined)
+                        effectiveLoadOp = AttachmentLoadOp.DontCare;
 
                     FrameBufferAttachmentSignature updated = usage.ResourceType switch
                     {

@@ -61,10 +61,38 @@ namespace XREngine
 
             public static void DestroyObjectsForRenderer(AbstractRenderer renderer)
             {
-                foreach (var pair in GenericRenderObject.RenderObjectCache)
-                    foreach (var obj in pair.Value)
-                        if (renderer.TryGetAPIRenderObject(obj, out var apiRO) && apiRO is not null)
-                            obj.RemoveWrapper(apiRO);
+                lock (GenericRenderObject.RenderObjectCache)
+                {
+                    foreach (var pair in GenericRenderObject.RenderObjectCache)
+                    {
+                        foreach (var obj in pair.Value)
+                        {
+                            List<AbstractRenderAPIObject> wrappers =
+                            [
+                                .. obj.APIWrappers.Where(wrapper => ReferenceEquals(wrapper.Window, renderer.XRWindow))
+                            ];
+
+                            foreach (AbstractRenderAPIObject apiRO in wrappers)
+                            {
+                                try
+                                {
+                                    apiRO.Destroy();
+                                }
+                                catch
+                                {
+                                }
+
+                                try
+                                {
+                                    obj.RemoveWrapper(apiRO);
+                                }
+                                catch
+                                {
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             public static AbstractPhysicsScene NewPhysicsScene()

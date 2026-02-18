@@ -468,11 +468,22 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex,
             IReadOnlyList<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> uniformBuffers)
         {
-            if (_computeTransientResources is null || imageIndex >= _computeTransientResources.Length)
-                return;
-
             if (uniformBuffers is not { Count: > 0 })
                 return;
+
+            if (_computeTransientResources is null || imageIndex >= _computeTransientResources.Length)
+            {
+                foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in uniformBuffers)
+                {
+                    if (buffer.Handle != 0)
+                        Api!.DestroyBuffer(device, buffer, null);
+
+                    if (memory.Handle != 0)
+                        Api!.FreeMemory(device, memory, null);
+                }
+
+                return;
+            }
 
             ComputeTransientResources resources = _computeTransientResources[imageIndex] ??= new ComputeTransientResources();
             resources.UniformBuffers.AddRange(uniformBuffers);
@@ -698,6 +709,13 @@ namespace XREngine.Rendering.Vulkan
             bool passIndexLabelActive = false;
             IDisposable? activePipelineOverrideScope = null;
 
+            // Track per-FBO attachment layouts across render-pass restarts within
+            // the current command buffer.  On first use the layouts are null
+            // (→ initialLayout = Undefined);  after EndActiveRenderPass we store
+            // the finalLayout of each attachment so the next BeginRenderPassForTarget
+            // can set initialLayout correctly and preserve content across passes.
+            Dictionary<XRFrameBuffer, ImageLayout[]> fboLayoutTracking = [];
+
             void ApplyPipelineOverride(in FrameOpContext context)
             {
                 activePipelineOverrideScope?.Dispose();
@@ -757,7 +775,16 @@ namespace XREngine.Rendering.Vulkan
                     // finalLayout. We update the tracked layout so that subsequent blit
                     // barriers use the correct OldLayout.
                     if (activeTarget is not null)
+                    {
                         UpdatePhysicalGroupLayoutsForFbo(activeTarget);
+
+                        // Record the finalLayout of each attachment so the NEXT render
+                        // pass on this FBO can set initialLayout correctly and preserve
+                        // content across pass boundaries.
+                        var vkFbo = GenericToAPI<VkFrameBuffer>(activeTarget);
+                        if (vkFbo is not null)
+                            fboLayoutTracking[activeTarget] = vkFbo.GetFinalLayouts();
+                    }
 
                     Api!.CmdEndRenderPass(commandBuffer);
                 }
@@ -941,7 +968,12 @@ namespace XREngine.Rendering.Vulkan
                 CmdBeginLabel(commandBuffer, $"RenderPass:{fboName}");
                 renderPassLabelActive = true;
 
-                RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(passIndex, context.PassMetadata);
+                // Look up tracked layouts from a previous render pass on this FBO
+                // within the current frame.  If present, the render pass will use
+                // those as initialLayout (preserving content from earlier passes)
+                // instead of Undefined (which discards content).
+                fboLayoutTracking.TryGetValue(target, out ImageLayout[]? trackedLayouts);
+                RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(passIndex, context.PassMetadata, trackedLayouts);
                 RenderPassBeginInfo fboPassInfo = new()
                 {
                     SType = StructureType.RenderPassBeginInfo,
@@ -1108,7 +1140,13 @@ namespace XREngine.Rendering.Vulkan
                             hasActiveContext = true;
                             ApplyPipelineOverride(activeContext);
 
-                            if (!hasPlannerContext || RequiresResourcePlannerRebuild(plannerContext, activeContext))
+                            // Only rebuild the resource planner when the new context has a
+                            // valid pipeline.  Null-pipeline contexts (e.g. ops emitted
+                            // outside the render pipeline scope) cannot provide valid resource
+                            // metadata and rebuilding would destroy physical images that may
+                            // still be in use by a previous frame's in-flight command buffer.
+                            if (activeContext.PipelineInstance is not null &&
+                                (!hasPlannerContext || RequiresResourcePlannerRebuild(plannerContext, activeContext)))
                             {
                                 UpdateResourcePlannerFromContext(activeContext);
                                 plannerContext = activeContext;
@@ -1587,6 +1625,27 @@ namespace XREngine.Rendering.Vulkan
 
                 ImageBlit region = BuildImageBlit(resolvedSource, resolvedDestination, op.InX, op.InY, op.InW, op.InH, op.OutX, op.OutY, op.OutW, op.OutH);
 
+                // Derive post-blit target layouts.  PreferredLayout may be Undefined
+                // for newly-created dedicated images whose tracked layout hasn't been
+                // set yet.  In that case, fall back to the attachment-optimal layout
+                // based on the image's aspect mask.
+                static ImageLayout DerivePostBlitLayout(in BlitImageInfo info)
+                {
+                    if (info.PreferredLayout != ImageLayout.Undefined)
+                        return info.PreferredLayout;
+                    return IsDepthOrStencilAspect(info.AspectMask)
+                        ? ImageLayout.DepthStencilAttachmentOptimal
+                        : ImageLayout.ColorAttachmentOptimal;
+                }
+
+                ImageLayout srcPostLayout = DerivePostBlitLayout(resolvedSource);
+                ImageLayout dstPostLayout = DerivePostBlitLayout(resolvedDestination);
+
+                // Pre-blit: transition from ACTUAL current layout (PreferredLayout)
+                // to Transfer-optimal.  For newly-created images this is Undefined,
+                // which is a valid OldLayout (content is discarded, which is fine for
+                // the destination; for the source, reading from Undefined gives
+                // undefined content but won't crash or cause validation errors).
                 TransitionForBlit(
                     commandBuffer,
                     resolvedSource,
@@ -1627,11 +1686,12 @@ namespace XREngine.Rendering.Vulkan
                     &region,
                     filter);
 
+                // Post-blit: transition back to the attachment-optimal layout.
                 TransitionForBlit(
                     commandBuffer,
                     resolvedSource,
                     ImageLayout.TransferSrcOptimal,
-                    resolvedSource.PreferredLayout,
+                    srcPostLayout,
                     AccessFlags.TransferReadBit,
                     resolvedSource.AccessMask,
                     PipelineStageFlags.TransferBit,
@@ -1641,7 +1701,7 @@ namespace XREngine.Rendering.Vulkan
                     commandBuffer,
                     resolvedDestination,
                     ImageLayout.TransferDstOptimal,
-                    resolvedDestination.PreferredLayout,
+                    dstPostLayout,
                     AccessFlags.TransferWriteBit,
                     resolvedDestination.AccessMask,
                     PipelineStageFlags.TransferBit,
@@ -1828,6 +1888,14 @@ namespace XREngine.Rendering.Vulkan
 
             if (!op.Program.TryBuildAndBindComputeDescriptorSets(commandBuffer, imageIndex, op.Snapshot, out _, out var tempBuffers))
             {
+                foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in tempBuffers)
+                {
+                    if (buffer.Handle != 0)
+                        Api!.DestroyBuffer(device, buffer, null);
+                    if (memory.Handle != 0)
+                        Api!.FreeMemory(device, memory, null);
+                }
+
                 // Descriptor binding failed (e.g. a required storage image lacks STORAGE_BIT).
                 // Dispatching without valid descriptors causes GPU faults → device lost.
                 Debug.VulkanWarningEvery(

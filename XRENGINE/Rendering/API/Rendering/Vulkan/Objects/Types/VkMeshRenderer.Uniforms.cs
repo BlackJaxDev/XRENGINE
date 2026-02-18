@@ -25,6 +25,57 @@ namespace XREngine.Rendering.Vulkan;
 
 public unsafe partial class VulkanRenderer
 {
+		private readonly object _liveMeshUniformBuffersLock = new();
+		private readonly Dictionary<ulong, DeviceMemory> _liveMeshUniformBuffers = new();
+
+		internal void TrackMeshUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
+		{
+			if (buffer.Handle == 0)
+				return;
+
+			lock (_liveMeshUniformBuffersLock)
+				_liveMeshUniformBuffers[(ulong)buffer.Handle] = memory;
+		}
+
+		internal void DestroyTrackedMeshUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
+		{
+			if (buffer.Handle == 0 && memory.Handle == 0)
+				return;
+
+			lock (_liveMeshUniformBuffersLock)
+			{
+				if (buffer.Handle != 0)
+					_liveMeshUniformBuffers.Remove((ulong)buffer.Handle);
+			}
+
+			if (buffer.Handle != 0)
+				Api!.DestroyBuffer(device, buffer, null);
+
+			if (memory.Handle != 0)
+				Api!.FreeMemory(device, memory, null);
+		}
+
+		private void DestroyRemainingTrackedMeshUniformBuffers()
+		{
+			KeyValuePair<ulong, DeviceMemory>[] remaining;
+			lock (_liveMeshUniformBuffersLock)
+			{
+				if (_liveMeshUniformBuffers.Count == 0)
+					return;
+
+				remaining = [.. _liveMeshUniformBuffers];
+				_liveMeshUniformBuffers.Clear();
+			}
+
+			foreach (KeyValuePair<ulong, DeviceMemory> entry in remaining)
+			{
+				Silk.NET.Vulkan.Buffer buffer = new() { Handle = entry.Key };
+				Api!.DestroyBuffer(device, buffer, null);
+				if (entry.Value.Handle != 0)
+					Api!.FreeMemory(device, entry.Value, null);
+			}
+		}
+
 	public partial class VkMeshRenderer
 	{
 			#region Uniform Buffer Allocation
@@ -129,6 +180,7 @@ public unsafe partial class VulkanRenderer
 				}
 
 				Api.BindBufferMemory(Device, buffer, memory, 0);
+				Renderer.TrackMeshUniformBuffer(buffer, memory);
 				return true;
 			}
 

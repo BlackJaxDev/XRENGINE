@@ -19,6 +19,45 @@ namespace XREngine.Rendering.Vulkan
     public unsafe partial class VulkanRenderer
     {
         private float _materialUniformSecondsLive;
+        private readonly object _pendingReadbacksLock = new();
+        private readonly List<System.Threading.Tasks.Task> _pendingReadbackTasks = [];
+
+        private void RegisterReadbackTask(System.Threading.Tasks.Task task)
+        {
+            lock (_pendingReadbacksLock)
+                _pendingReadbackTasks.Add(task);
+
+            _ = task.ContinueWith(
+                completed =>
+                {
+                    lock (_pendingReadbacksLock)
+                        _pendingReadbackTasks.Remove(completed);
+                },
+                System.Threading.CancellationToken.None,
+                System.Threading.Tasks.TaskContinuationOptions.ExecuteSynchronously,
+                System.Threading.Tasks.TaskScheduler.Default);
+        }
+
+        private void WaitForPendingReadbackTasks(TimeSpan timeout)
+        {
+            System.Threading.Tasks.Task[] pending;
+            lock (_pendingReadbacksLock)
+            {
+                if (_pendingReadbackTasks.Count == 0)
+                    return;
+
+                pending = [.. _pendingReadbackTasks];
+            }
+
+            try
+            {
+                System.Threading.Tasks.Task.WaitAll(pending, timeout);
+            }
+            catch
+            {
+                // Best-effort shutdown path: lingering readbacks should not abort renderer teardown.
+            }
+        }
 
         public override void CalcDotLuminanceAsync(XRTexture2D texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true)
         {
@@ -482,7 +521,7 @@ namespace XREngine.Rendering.Vulkan
             var capturedCommandBuffer = commandBuffer; // Copy for lambda capture
 
             // Wait for the fence asynchronously on a background thread
-            System.Threading.Tasks.Task.Run(() =>
+            var readbackTask = System.Threading.Tasks.Task.Run(() =>
             {
                 try
                 {
@@ -519,6 +558,8 @@ namespace XREngine.Rendering.Vulkan
                     DestroyBufferStatic(api, dev, stagingBuffer, stagingMemory);
                 }
             });
+
+            RegisterReadbackTask(readbackTask);
         }
 
         /// <summary>
@@ -1131,6 +1172,101 @@ namespace XREngine.Rendering.Vulkan
             list.Clear();
         }
 
+        /// <summary>
+        /// Holds a complete set of Vulkan handles that were owned by a
+        /// <see cref="VkImageBackedTexture{T}"/> or <see cref="VulkanPhysicalImageGroup"/>
+        /// and need deferred destruction.  Kept alive until the frame slot's
+        /// timeline fence signals that no in-flight command buffer references them.
+        /// </summary>
+        internal readonly record struct RetiredImageResources(
+            Image Image,
+            DeviceMemory Memory,
+            ImageView PrimaryView,
+            ImageView[] AttachmentViews,
+            Sampler Sampler,
+            long AllocatedVRAMBytes);
+
+        /// <summary>
+        /// Per-frame-slot retirement queue for image resources that cannot be
+        /// destroyed immediately because an in-flight command buffer may still
+        /// reference them.  Drained alongside <see cref="_retiredBuffers"/>.
+        /// </summary>
+        private readonly List<RetiredImageResources>[] _retiredImages =
+            [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
+
+        /// <summary>
+        /// Queues image resources for deferred destruction.  The resources will be
+        /// destroyed the next time this frame slot is reused (after the timeline
+        /// wait guarantees the GPU is done with them).
+        /// </summary>
+        internal void RetireImageResources(in RetiredImageResources resources)
+            => _retiredImages[currentFrame].Add(resources);
+
+        /// <summary>
+        /// Destroys all image resources that were retired during the last use of
+        /// the current frame slot.  Called immediately after <c>WaitForFences</c>.
+        /// </summary>
+        private void DrainRetiredImages()
+        {
+            var list = _retiredImages[currentFrame];
+            if (list.Count == 0)
+                return;
+
+            foreach (var r in list)
+            {
+                if (r.Sampler.Handle != 0)
+                    Api!.DestroySampler(device, r.Sampler, null);
+                if (r.PrimaryView.Handle != 0)
+                    Api!.DestroyImageView(device, r.PrimaryView, null);
+                if (r.AttachmentViews is not null)
+                {
+                    foreach (ImageView v in r.AttachmentViews)
+                        if (v.Handle != 0)
+                            Api!.DestroyImageView(device, v, null);
+                }
+                if (r.Image.Handle != 0)
+                    Api!.DestroyImage(device, r.Image, null);
+                if (r.Memory.Handle != 0)
+                    Api!.FreeMemory(device, r.Memory, null);
+            }
+            list.Clear();
+        }
+
+        /// <summary>
+        /// Blocks until all in-flight frame slots have completed their GPU work.
+        /// Used before destroying resources that may be referenced by command
+        /// buffers from other (non-current) frame slots.
+        /// </summary>
+        internal void WaitForAllInFlightWork()
+        {
+            if (_frameSlotTimelineValues is null || _graphicsTimelineSemaphore.Handle == 0)
+                return;
+
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+            {
+                ulong value = _frameSlotTimelineValues[i];
+                if (value > 0)
+                    WaitForTimelineValue(_graphicsTimelineSemaphore, value);
+            }
+        }
+
+        /// <summary>
+        /// Immediately destroys all retired resources across ALL frame slots.
+        /// Call only after <c>DeviceWaitIdle</c> (e.g. during shutdown) to ensure
+        /// no in-flight command buffers reference the resources.
+        /// </summary>
+        internal void ForceFlushAllRetiredResources()
+        {
+            int saved = currentFrame;
+            for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+            {
+                currentFrame = i;
+                DrainRetiredBuffers();
+                DrainRetiredImages();
+            }
+            currentFrame = saved;
+        }
+
         private int currentFrame = 0;
         private ulong _vkDebugFrameCounter = 0;
         private long _swapchainRecreateRequestedAt;
@@ -1247,8 +1383,9 @@ namespace XREngine.Rendering.Vulkan
             SampleFrameTimingQueries(currentFrame);
 
             // Now that the GPU has finished all work for this frame slot, destroy
-            // buffers that were retired during its previous recording.
+            // buffers and images that were retired during its previous recording.
             DrainRetiredBuffers();
+            DrainRetiredImages();
 
             // Helpful when tracking down DPI / resize issues.
             Debug.VulkanEvery(
@@ -2261,14 +2398,12 @@ namespace XREngine.Rendering.Vulkan
             }
             else if (!source.UsesAllocatorImage)
             {
-                // For dedicated (non-planner) images, use the texture's own tracked
-                // layout so blit transitions emit a correct OldLayout.  Falling back
-                // to the caller's hardcoded layout (e.g. COLOR_ATTACHMENT_OPTIMAL)
-                // would be wrong when the image is still in its post-initialisation
-                // layout (typically SHADER_READ_ONLY_OPTIMAL after mipmap generation).
-                ImageLayout tracked = source.TrackedImageLayout;
-                if (tracked != ImageLayout.Undefined)
-                    effectiveLayout = tracked;
+                // For dedicated (non-planner) images, ALWAYS use the texture's own
+                // tracked layout so blit transitions emit a correct OldLayout.
+                // Newly-created images report Undefined, which is correct — the blit
+                // pre-transition barrier must use Undefined as OldLayout, not the
+                // hardcoded attachment-optimal layout.
+                effectiveLayout = source.TrackedImageLayout;
             }
 
             info = new BlitImageInfo(
@@ -2624,10 +2759,15 @@ namespace XREngine.Rendering.Vulkan
             {
                 using var scope = NewCommandScope();
 
+                ImageLayout preTransferLayout = source.PreferredLayout;
+                ImageLayout postTransferLayout = preTransferLayout != ImageLayout.Undefined
+                    ? preTransferLayout
+                    : ImageLayout.ColorAttachmentOptimal;
+
                 TransitionForBlit(
                     scope.CommandBuffer,
                     source,
-                    source.PreferredLayout,
+                    preTransferLayout,
                     ImageLayout.TransferSrcOptimal,
                     source.AccessMask,
                     AccessFlags.TransferReadBit,
@@ -2662,7 +2802,7 @@ namespace XREngine.Rendering.Vulkan
                     scope.CommandBuffer,
                     source,
                     ImageLayout.TransferSrcOptimal,
-                    source.PreferredLayout,
+                    postTransferLayout,
                     AccessFlags.TransferReadBit,
                     source.AccessMask,
                     PipelineStageFlags.TransferBit,
@@ -2812,10 +2952,17 @@ namespace XREngine.Rendering.Vulkan
             {
                 using var scope = NewCommandScope();
 
+                ImageLayout preTransferLayout = source.PreferredLayout;
+                ImageLayout postTransferLayout = preTransferLayout != ImageLayout.Undefined
+                    ? preTransferLayout
+                    : (IsDepthOrStencilAspect(source.AspectMask)
+                        ? ImageLayout.DepthStencilAttachmentOptimal
+                        : ImageLayout.ColorAttachmentOptimal);
+
                 TransitionForBlit(
                     scope.CommandBuffer,
                     source,
-                    source.PreferredLayout,
+                    preTransferLayout,
                     ImageLayout.TransferSrcOptimal,
                     source.AccessMask,
                     AccessFlags.TransferReadBit,
@@ -2852,7 +2999,7 @@ namespace XREngine.Rendering.Vulkan
                     scope.CommandBuffer,
                     source,
                     ImageLayout.TransferSrcOptimal,
-                    source.PreferredLayout,
+                    postTransferLayout,
                     AccessFlags.TransferReadBit,
                     source.AccessMask,
                     PipelineStageFlags.TransferBit,

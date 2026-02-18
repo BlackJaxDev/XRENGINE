@@ -5,7 +5,7 @@ namespace XREngine.Rendering.Vulkan
         public class VkTransformFeedback(VulkanRenderer api, XRTransformFeedback data) : VkObject<XRTransformFeedback>(api, data)
         {
             public override VkObjectType Type => VkObjectType.TransformFeedback;
-            public override bool IsGenerated => true;
+            public override bool IsGenerated => IsActive;
             protected override uint CreateObjectInternal() => CacheObject(this);
             protected override void DeleteObjectInternal() { }
             protected override void LinkData() { }

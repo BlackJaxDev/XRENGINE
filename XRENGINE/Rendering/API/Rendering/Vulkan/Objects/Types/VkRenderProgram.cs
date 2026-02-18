@@ -41,7 +41,7 @@ public unsafe partial class VulkanRenderer
         private bool _descriptorSetsRequireUpdateAfterBind;
 
         public override VkObjectType Type => VkObjectType.Program;
-        public override bool IsGenerated => true;
+        public override bool IsGenerated => IsActive;
         public bool IsLinked { get; private set; }
         public PipelineLayout PipelineLayout => _pipelineLayout;
         public IReadOnlyList<DescriptorSetLayout> DescriptorSetLayouts => _descriptorSetLayouts;
@@ -401,6 +401,9 @@ public unsafe partial class VulkanRenderer
             if (IsLinked)
                 return true;
 
+            if (!IsActive)
+                Generate();
+
             if (!Data.LinkReady)
                 return false;
 
@@ -523,6 +526,10 @@ public unsafe partial class VulkanRenderer
         {
             foreach (EProgramStageMask flag in EnumerateStages(mask))
             {
+                // Skip geometry shader stage if the device feature is not enabled.
+                if (flag == EProgramStageMask.GeometryShaderBit && !Renderer.SupportsGeometryShader)
+                    continue;
+
                 if (_stageLookup.TryGetValue(flag, out VkShader? shader))
                     yield return shader.ShaderStageCreateInfo;
             }

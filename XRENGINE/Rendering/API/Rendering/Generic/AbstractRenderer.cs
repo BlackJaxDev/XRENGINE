@@ -324,6 +324,38 @@ namespace XREngine.Rendering
                 return _renderObjectCache.TryGetValue(renderObject, out apiObject);
         }
 
+        public void DestroyCachedAPIRenderObjects()
+        {
+            KeyValuePair<GenericRenderObject, AbstractRenderAPIObject>[] cachedObjects;
+            using (_roCacheLock.EnterScope())
+            {
+                if (_renderObjectCache.Count == 0)
+                    return;
+
+                cachedObjects = [.. _renderObjectCache];
+                _renderObjectCache.Clear();
+            }
+
+            foreach (var pair in cachedObjects)
+            {
+                try
+                {
+                    pair.Key.RemoveWrapper(pair.Value);
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    pair.Value.Destroy();
+                }
+                catch
+                {
+                }
+            }
+        }
+
         /// <summary>
         /// Converts a generic render object reference into a reference to the wrapper object for this specific renderer.
         /// A generic render object can have multiple wrappers wrapping it at a time, but only one per renderer.

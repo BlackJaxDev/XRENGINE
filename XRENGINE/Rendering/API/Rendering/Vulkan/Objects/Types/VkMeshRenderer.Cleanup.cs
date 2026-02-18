@@ -31,10 +31,7 @@ public unsafe partial class VulkanRenderer
 					{
 						foreach (EngineUniformBuffer buf in toDestroy)
 						{
-							if (buf.Buffer.Handle != 0)
-								Api!.DestroyBuffer(Device, buf.Buffer, null);
-							if (buf.Memory.Handle != 0)
-								Api!.FreeMemory(Device, buf.Memory, null);
+							Renderer.DestroyTrackedMeshUniformBuffer(buf.Buffer, buf.Memory);
 						}
 					}
 
@@ -46,10 +43,7 @@ public unsafe partial class VulkanRenderer
 				{
 					foreach (EngineUniformBuffer buf in buffers)
 					{
-						if (buf.Buffer.Handle != 0)
-							Api!.DestroyBuffer(Device, buf.Buffer, null);
-						if (buf.Memory.Handle != 0)
-							Api!.FreeMemory(Device, buf.Memory, null);
+						Renderer.DestroyTrackedMeshUniformBuffer(buf.Buffer, buf.Memory);
 					}
 				}
 
@@ -68,10 +62,7 @@ public unsafe partial class VulkanRenderer
 					{
 						foreach (AutoUniformBuffer buf in toDestroy)
 						{
-							if (buf.Buffer.Handle != 0)
-								Api!.DestroyBuffer(Device, buf.Buffer, null);
-							if (buf.Memory.Handle != 0)
-								Api!.FreeMemory(Device, buf.Memory, null);
+							Renderer.DestroyTrackedMeshUniformBuffer(buf.Buffer, buf.Memory);
 						}
 					}
 
@@ -83,10 +74,7 @@ public unsafe partial class VulkanRenderer
 			{
 				foreach (AutoUniformBuffer buf in buffers)
 				{
-					if (buf.Buffer.Handle != 0)
-						Api!.DestroyBuffer(Device, buf.Buffer, null);
-					if (buf.Memory.Handle != 0)
-						Api!.FreeMemory(Device, buf.Memory, null);
+					Renderer.DestroyTrackedMeshUniformBuffer(buf.Buffer, buf.Memory);
 				}
 			}
 

@@ -53,7 +53,7 @@ public unsafe partial class VulkanRenderer
                         Math.Max(mip.Width, 1u),
                         Math.Max(mip.Height, 1u),
                         Math.Max(mip.Depth, 1u));
-                    CopyBufferToImage(stagingBuffer, level, 0, 1, extent);
+                    CopyBufferToImage(stagingBuffer, level, 0, 1, extent, (ulong)(mip.Data?.Length ?? 0));
                 }
                 finally
                 {

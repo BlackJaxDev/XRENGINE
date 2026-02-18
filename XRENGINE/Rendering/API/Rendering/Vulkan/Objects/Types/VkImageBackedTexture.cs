@@ -307,25 +307,43 @@ public unsafe partial class VulkanRenderer
         /// </remarks>
         protected override void DeleteObjectInternal()
         {
-            DestroySampler();
-            DestroyAllViews();
-
-            if (_ownsImageMemory)
+            // Collect all Vulkan handles for deferred destruction.  In-flight
+            // command buffers from other frame slots may still reference these
+            // resources.  By retiring them to the current frame slot's queue, they
+            // will be destroyed after the timeline fence for this slot signals.
+            ImageView[] retiredAttachmentViews;
+            if (_attachmentViews.Count > 0)
             {
-                // Report the VRAM deallocation to the stats tracker.
-                if (_allocatedVRAMBytes > 0)
-                {
-                    Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
-                    _allocatedVRAMBytes = 0;
-                }
+                retiredAttachmentViews = new ImageView[_attachmentViews.Count];
+                int idx = 0;
+                foreach ((_, ImageView av) in _attachmentViews)
+                    retiredAttachmentViews[idx++] = av;
+            }
+            else
+            {
+                retiredAttachmentViews = [];
+            }
 
-                if (_image.Handle != 0)
-                    Api!.DestroyImage(Device, _image, null);
-                if (_memory.Handle != 0)
-                    Api!.FreeMemory(Device, _memory, null);
+            Renderer.RetireImageResources(new RetiredImageResources(
+                _ownsImageMemory ? _image : default,
+                _ownsImageMemory ? _memory : default,
+                _view,
+                retiredAttachmentViews,
+                _sampler,
+                _ownsImageMemory ? _allocatedVRAMBytes : 0));
+
+            // Report the VRAM deallocation to the stats tracker immediately
+            // (the logical allocation is gone even if the GPU handle lingers).
+            if (_ownsImageMemory && _allocatedVRAMBytes > 0)
+            {
+                Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+                _allocatedVRAMBytes = 0;
             }
 
             // Reset all cached handles and overrides.
+            _view = default;
+            _attachmentViews.Clear();
+            _sampler = default;
             _image = default;
             _memory = default;
             _physicalGroup = null;
@@ -701,12 +719,13 @@ public unsafe partial class VulkanRenderer
 
         public void EnsureAttachmentLayout(bool depthStencil)
         {
-            ImageLayout desired = depthStencil
-                ? ImageLayout.DepthStencilAttachmentOptimal
-                : ImageLayout.ColorAttachmentOptimal;
-
-            if (_currentImageLayout != desired)
-                TransitionImageLayout(_currentImageLayout, desired);
+            // Intentionally a no-op.  The render pass handles the initial layout
+            // transition from Undefined → attachment-optimal via its initialLayout
+            // field.  Performing a separate one-shot transition here would put the
+            // image in attachment-optimal BEFORE the render pass begins, creating a
+            // mismatch between the actual GPU layout and the declared initialLayout
+            // (Undefined).  On NVIDIA GPUs this can corrupt Delta Color Compression
+            // (DCC) metadata, leading to delayed TDR / VK_ERROR_DEVICE_LOST.
         }
 
         /// <summary>
@@ -1063,8 +1082,31 @@ public unsafe partial class VulkanRenderer
         /// <param name="baseArrayLayer">First array layer to write.</param>
         /// <param name="layerCount">Number of array layers to write.</param>
         /// <param name="extent">Pixel extent of the target mip level.</param>
-        protected void CopyBufferToImage(Buffer buffer, uint mipLevel, uint baseArrayLayer, uint layerCount, Extent3D extent)
+        /// <param name="stagingBufferSize">Size in bytes of the staging buffer. When non-zero,
+        /// the method validates that the buffer is large enough for the target image format
+        /// and logs an error (skipping the copy) if there is a mismatch.</param>
+        protected void CopyBufferToImage(Buffer buffer, uint mipLevel, uint baseArrayLayer, uint layerCount, Extent3D extent, ulong stagingBufferSize = 0)
         {
+            // Validate staging buffer size against what the GPU will actually read.
+            if (stagingBufferSize > 0)
+            {
+                uint bpt = VkFormatConversions.GetBytesPerTexel(ResolvedFormat);
+                if (bpt > 0)
+                {
+                    ulong requiredBytes = (ulong)extent.Width * extent.Height * extent.Depth * layerCount * bpt;
+                    if (stagingBufferSize < requiredBytes)
+                    {
+                        Debug.LogError(
+                            $"[Vulkan] Staging buffer size mismatch for '{Data.Name ?? GetDescribingName()}': " +
+                            $"buffer={stagingBufferSize} bytes but image format {ResolvedFormat} requires " +
+                            $"{requiredBytes} bytes ({extent.Width}x{extent.Height}x{extent.Depth} * {layerCount} layers * {bpt} bpp). " +
+                            $"Skipping CopyBufferToImage to avoid GPU out-of-bounds read. " +
+                            $"Check that the texture's SizedInternalFormat matches its pixel data.");
+                        return;
+                    }
+                }
+            }
+
             if (_currentImageLayout != ImageLayout.TransferDstOptimal)
                 TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
 
