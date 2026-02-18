@@ -516,6 +516,13 @@ public unsafe partial class VulkanRenderer
         _resourceAllocator.AllocatePhysicalImages(this);
         _resourceAllocator.AllocatePhysicalBuffers(this);
 
+        // Transition every newly-allocated physical image from VK_IMAGE_LAYOUT_UNDEFINED
+        // to a usable initial layout so that the first render pass that references them
+        // does not hit a validation error (images stuck in UNDEFINED).  Depth/stencil
+        // images go to DEPTH_STENCIL_ATTACHMENT_OPTIMAL; colour images go to GENERAL
+        // which is compatible with attachment, sampled, and storage usage.
+        TransitionNewPhysicalImagesToInitialLayout();
+
         _compiledRenderGraph = compiledGraph;
 
         _barrierPlanner.Rebuild(
@@ -878,6 +885,103 @@ public unsafe partial class VulkanRenderer
         return _autoQueueOverlapMode;
     }
 
+    /// <summary>
+    /// Transitions every physical-group image whose <see cref="VulkanPhysicalImageGroup.LastKnownLayout"/>
+    /// is <see cref="ImageLayout.Undefined"/> to a usable initial layout.
+    /// </summary>
+    private void TransitionNewPhysicalImagesToInitialLayout()
+    {
+        List<(Image image, ImageLayout target, ImageAspectFlags aspect)>? overflow = null;
+
+        foreach (VulkanPhysicalImageGroup group in _resourceAllocator.EnumeratePhysicalGroups())
+        {
+            if (!group.IsAllocated || group.LastKnownLayout != ImageLayout.Undefined)
+                continue;
+
+            bool isDepth = VulkanResourceAllocator.IsDepthStencilFormat(group.Format);
+            ImageLayout targetLayout = ResolveInitialPhysicalGroupLayout(group.Usage, isDepth);
+            ImageAspectFlags aspect = isDepth
+                ? ImageAspectFlags.DepthBit | (HasStencilComponent(group.Format) ? ImageAspectFlags.StencilBit : 0)
+                : ImageAspectFlags.ColorBit;
+
+            overflow ??= new();
+            overflow.Add((group.Image, targetLayout, aspect));
+            group.LastKnownLayout = targetLayout;
+        }
+
+        if (overflow is null || overflow.Count == 0)
+            return;
+
+        using var scope = NewCommandScope();
+
+        foreach ((Image image, ImageLayout target, ImageAspectFlags aspect) in overflow)
+        {
+            ImageMemoryBarrier barrier = new()
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                OldLayout = ImageLayout.Undefined,
+                NewLayout = target,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = image,
+                SubresourceRange = new ImageSubresourceRange
+                {
+                    AspectMask = aspect,
+                    BaseMipLevel = 0,
+                    LevelCount = Vk.RemainingMipLevels,
+                    BaseArrayLayer = 0,
+                    LayerCount = Vk.RemainingArrayLayers,
+                },
+                SrcAccessMask = 0,
+                DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+            };
+
+            Api!.CmdPipelineBarrier(
+                scope.CommandBuffer,
+                PipelineStageFlags.TopOfPipeBit,
+                PipelineStageFlags.AllCommandsBit,
+                DependencyFlags.None,
+                0, null, 0, null,
+                1, &barrier);
+        }
+    }
+
+    private static ImageLayout ResolveInitialPhysicalGroupLayout(ImageUsageFlags usage, bool isDepth)
+    {
+        if (isDepth)
+            return ImageLayout.DepthStencilAttachmentOptimal;
+
+        bool colorAttachment = (usage & ImageUsageFlags.ColorAttachmentBit) != 0;
+        bool sampled = (usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.InputAttachmentBit)) != 0;
+        bool storage = (usage & ImageUsageFlags.StorageBit) != 0;
+
+        // Images that are used as storage (e.g. compute write targets) must be
+        // accessible in GENERAL layout.  VK_IMAGE_LAYOUT_GENERAL is compatible
+        // with color-attachment, sampled, and storage operations, so choosing it
+        // here avoids the first-frame mismatch where a descriptor is written with
+        // GENERAL (for StorageImage) but the image is still in
+        // COLOR_ATTACHMENT_OPTIMAL.
+        if (storage)
+            return ImageLayout.General;
+
+        if (colorAttachment)
+            return ImageLayout.ColorAttachmentOptimal;
+
+        if (sampled)
+            return ImageLayout.ShaderReadOnlyOptimal;
+
+        if ((usage & ImageUsageFlags.TransferDstBit) != 0)
+            return ImageLayout.TransferDstOptimal;
+
+        if ((usage & ImageUsageFlags.TransferSrcBit) != 0)
+            return ImageLayout.TransferSrcOptimal;
+
+        return ImageLayout.General;
+    }
+
+    private static bool HasStencilComponent(Format format)
+        => format is Format.D24UnormS8Uint or Format.D32SfloatS8Uint or Format.D16UnormS8Uint;
+
     internal void AllocatePhysicalImage(VulkanPhysicalImageGroup group, ref Image image, ref DeviceMemory memory)
     {
         if (image.Handle != 0)
@@ -905,6 +1009,18 @@ public unsafe partial class VulkanRenderer
             if (result != Result.Success)
                 throw new Exception($"Failed to create Vulkan image for resource group '{group.Key}'. Result={result}.");
         }
+
+        Debug.VulkanEvery(
+            $"Vulkan.PhysicalImage.Alloc.{group.Key}",
+            TimeSpan.FromSeconds(2),
+            "[Vulkan] Physical image allocated: resource='{0}' handle=0x{1:X} format={2} usage={3} extent={4}x{5} layers={6}",
+            group.Key,
+            image.Handle,
+            group.Format,
+            group.Usage,
+            group.ResolvedExtent.Width,
+            group.ResolvedExtent.Height,
+            Math.Max(group.Template.Layers, 1u));
 
         Api!.GetImageMemoryRequirements(device, image, out MemoryRequirements memRequirements);
 
@@ -1063,7 +1179,7 @@ public unsafe partial class VulkanRenderer
     private static int ResolveFallbackPassIndex(string opName, IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
         if (passMetadata is null || passMetadata.Count == 0)
-            return 0;
+            return int.MinValue;
 
         RenderGraphPassStage? preferredStage = ResolvePreferredFallbackStage(opName, passMetadata);
         if (preferredStage.HasValue)

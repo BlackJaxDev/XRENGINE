@@ -85,6 +85,18 @@ public unsafe partial class VulkanRenderer
         /// <summary>The texture sampler.</summary>
         internal Sampler Sampler => _sampler;
 
+        /// <summary>The most recently tracked image layout for this texture.</summary>
+        internal ImageLayout CurrentImageLayout
+        {
+            get
+            {
+                RefreshPhysicalGroupImageIfStale();
+                if (_physicalGroup is not null)
+                    _currentImageLayout = _physicalGroup.LastKnownLayout;
+                return _currentImageLayout;
+            }
+        }
+
         /// <summary><c>true</c> when the image is borrowed from a resource-planner physical group.</summary>
         internal bool UsesAllocatorImage => _physicalGroup is not null;
 
@@ -172,6 +184,21 @@ public unsafe partial class VulkanRenderer
 
             return cached;
         }
+
+        /// <inheritdoc />
+        ImageLayout IVkImageDescriptorSource.TrackedImageLayout
+        {
+            get
+            {
+                RefreshPhysicalGroupImageIfStale();
+                if (_physicalGroup is not null)
+                    return _physicalGroup.LastKnownLayout;
+                return _currentImageLayout;
+            }
+        }
+
+        /// <inheritdoc />
+        bool IVkImageDescriptorSource.UsesAllocatorImage => _physicalGroup is not null;
 
         #endregion
 
@@ -368,7 +395,7 @@ public unsafe partial class VulkanRenderer
                 _mipLevelsOverride = 1;
                 _ownsImageMemory = false;
                 AspectFlags = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
-                _currentImageLayout = ImageLayout.Undefined;
+                _currentImageLayout = group.LastKnownLayout;
                 return;
             }
 
@@ -444,7 +471,10 @@ public unsafe partial class VulkanRenderer
 
             Image current = _physicalGroup.Image;
             if (current.Handle == _image.Handle)
+            {
+                _currentImageLayout = _physicalGroup.LastKnownLayout;
                 return;
+            }
 
             Debug.VulkanWarningEvery(
                 $"Vulkan.StaleImageHandle.{ResolveLogicalResourceName() ?? "?"}",
@@ -471,7 +501,12 @@ public unsafe partial class VulkanRenderer
             }
             _attachmentViews.Clear();
             CreateImageView(default);
-            _currentImageLayout = ImageLayout.Undefined;
+            _currentImageLayout = _physicalGroup.LastKnownLayout;
+
+            // The physical group may have been transitioned to an initial layout during
+            // allocation (see TransitionNewPhysicalImagesToInitialLayout). Adopt that
+            // layout so that subsequent barrier calculations use the correct old layout.
+            // If it is still UNDEFINED the barrier planner will transition on first use.
         }
 
         private void CreateDedicatedImage()
@@ -521,6 +556,18 @@ public unsafe partial class VulkanRenderer
 
             if (Api!.BindImageMemory(Device, _image, _memory, 0) != Result.Success)
                 throw new Exception("Failed to bind memory for texture image.");
+
+            Debug.VulkanEvery(
+                $"Vulkan.DedicatedTexture.{ResolveLogicalResourceName() ?? Data.Name ?? "unnamed"}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] Dedicated texture image created: name='{0}' handle=0x{1:X} format={2} extent={3}x{4}x{5} usage={6}",
+                ResolveLogicalResourceName() ?? Data.Name ?? "<unnamed>",
+                _image.Handle,
+                ResolvedFormat,
+                ResolvedExtent.Width,
+                ResolvedExtent.Height,
+                ResolvedExtent.Depth,
+                Usage);
 
             // Record the allocation for VRAM usage statistics.
             _allocatedVRAMBytes = (long)memRequirements.Size;
@@ -917,6 +964,8 @@ public unsafe partial class VulkanRenderer
             using var scope = Renderer.NewCommandScope();
             Api!.CmdPipelineBarrier(scope.CommandBuffer, src, dst, 0, 0, null, 0, null, 1, ref barrier);
             _currentImageLayout = newLayout;
+            if (_physicalGroup is not null)
+                _physicalGroup.LastKnownLayout = newLayout;
         }
 
         /// <summary>
@@ -1534,6 +1583,8 @@ public unsafe partial class VulkanRenderer
             Api.CmdPipelineBarrier(cmd, PipelineStageFlags.TransferBit, PipelineStageFlags.FragmentShaderBit, 0, 0, null, 0, null, 1, ref barrier);
 
             _currentImageLayout = ImageLayout.ShaderReadOnlyOptimal;
+            if (_physicalGroup is not null)
+                _physicalGroup.LastKnownLayout = ImageLayout.ShaderReadOnlyOptimal;
         }
 
         /// <summary>

@@ -2198,6 +2198,30 @@ namespace XREngine.Rendering.Vulkan
             if (texture is XRTexture3D)
                 baseArrayLayer = 0;
 
+            ImageLayout effectiveLayout = layout;
+            string? resourceName = texture.Name;
+            if (string.IsNullOrWhiteSpace(resourceName))
+                resourceName = texture.GetDescribingName();
+
+            if (!string.IsNullOrWhiteSpace(resourceName) &&
+                ResourceAllocator.TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup? group) &&
+                group is not null &&
+                group.IsAllocated)
+            {
+                effectiveLayout = group.LastKnownLayout;
+            }
+            else if (!source.UsesAllocatorImage)
+            {
+                // For dedicated (non-planner) images, use the texture's own tracked
+                // layout so blit transitions emit a correct OldLayout.  Falling back
+                // to the caller's hardcoded layout (e.g. COLOR_ATTACHMENT_OPTIMAL)
+                // would be wrong when the image is still in its post-initialisation
+                // layout (typically SHADER_READ_ONLY_OPTIMAL after mipmap generation).
+                ImageLayout tracked = source.TrackedImageLayout;
+                if (tracked != ImageLayout.Undefined)
+                    effectiveLayout = tracked;
+            }
+
             info = new BlitImageInfo(
                 source.DescriptorImage,
                 format,
@@ -2205,7 +2229,7 @@ namespace XREngine.Rendering.Vulkan
                 baseArrayLayer,
                 1,
                 (uint)Math.Max(mipLevel, 0),
-                layout,
+                effectiveLayout,
                 stage,
                 access,
                 source);

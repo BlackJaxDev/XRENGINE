@@ -122,7 +122,11 @@ internal readonly record struct VulkanAllocationRequest(TextureResourceDescripto
     public RenderResourceLifetime Lifetime => Descriptor.Lifetime;
     public RenderResourceSizePolicy SizePolicy => Descriptor.SizePolicy;
     public bool IsStereoCompatible => Descriptor.StereoCompatible;
-    public bool SupportsAliasing => Descriptor.SupportsAliasing;
+    // Temporarily disable physical image aliasing in Vulkan.
+    // Aliased transient images can carry incompatible layout expectations across
+    // logical resources (e.g. COLOR_ATTACHMENT_OPTIMAL vs SHADER_READ_ONLY_OPTIMAL),
+    // which leads to vkQueueSubmit validation failures and device loss.
+    public bool SupportsAliasing => false;
     public VulkanAliasKey AliasKey => new(
         Descriptor.SizePolicy,
         Descriptor.FormatLabel,

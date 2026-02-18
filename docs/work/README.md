@@ -17,6 +17,7 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 - [Vulkan Command Buffer Refactor](design/vulkan-command-buffer-refactor.md)
 - [GPU Physics Chain Compatibility](design/gpu-physics-chain-compatibility.md)
 - [GPU Physics Chain Engine Verification](design/gpu-physics-chain-engine-verification.md)
+- [Slang Shader Cross-Compile Plan](design/slang-shader-cross-compile-plan.md)
 
 ## Notes
 - Treat these documents as working areas for active refactors and planning.
