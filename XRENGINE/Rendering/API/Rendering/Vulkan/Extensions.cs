@@ -31,6 +31,7 @@ namespace XREngine.Rendering.Vulkan
         private bool _supportsDynamicRendering;
         private bool _supportsIndexTypeUint8;
         private bool _supportsFragmentStoresAndAtomics;
+        private bool _supportsGeometryShader;
         private readonly Dictionary<ulong, uint> _renderPassColorAttachmentCounts = new();
         private MemoryDecompressionMethodFlagsNV _nvMemoryDecompressionMethods;
         private ulong _nvMaxMemoryDecompressionIndirectCount;
@@ -42,6 +43,7 @@ namespace XREngine.Rendering.Vulkan
         public bool SupportsDynamicRendering => _supportsDynamicRendering;
         public bool SupportsIndexTypeUint8 => _supportsIndexTypeUint8;
         public bool SupportsFragmentStoresAndAtomics => _supportsFragmentStoresAndAtomics;
+        public bool SupportsGeometryShader => _supportsGeometryShader;
         public MemoryDecompressionMethodFlagsNV NvMemoryDecompressionMethods => _nvMemoryDecompressionMethods;
         public ulong NvMaxMemoryDecompressionIndirectCount => _nvMaxMemoryDecompressionIndirectCount;
         public ulong NvCopyMemoryIndirectSupportedQueues => _nvCopyMemoryIndirectSupportedQueues;

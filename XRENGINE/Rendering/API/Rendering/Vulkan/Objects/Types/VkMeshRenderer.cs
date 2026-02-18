@@ -375,7 +375,7 @@ public unsafe partial class VulkanRenderer
         public XRMeshRenderer MeshRenderer => Data.Parent;
         public XRMesh? Mesh => MeshRenderer.Mesh;
         public override VkObjectType Type => VkObjectType.MeshRenderer;
-        public override bool IsGenerated => true;
+        public override bool IsGenerated => IsActive;
 
         protected override uint CreateObjectInternal() => CacheObject(this);
 
@@ -445,6 +445,14 @@ public unsafe partial class VulkanRenderer
 
         private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, uint instances, EMeshBillboardMode billboardMode)
         {
+            if (!IsActive)
+                Generate();
+
+            // Don't enqueue mesh draw ops when there's no active rendering pipeline;
+            // they would be emitted with an invalid pass index and dropped at recording time.
+            if (Engine.Rendering.State.CurrentRenderingPipeline is null)
+                return;
+
             int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
             XRFrameBuffer? target = Renderer.GetCurrentDrawFrameBuffer();
 

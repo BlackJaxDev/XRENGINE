@@ -418,6 +418,12 @@ public unsafe partial class VulkanRenderer
             _supportsFragmentStoresAndAtomics = true;
         }
 
+        if (supportedFeatures.GeometryShader)
+        {
+            deviceFeatures.GeometryShader = Vk.True;
+            _supportsGeometryShader = true;
+        }
+
         // Build the list of extensions to enable (required + supported optional)
         var extensionsToEnable = new List<string>(deviceExtensions);
         foreach (var optionalExt in optionalDeviceExtensions)

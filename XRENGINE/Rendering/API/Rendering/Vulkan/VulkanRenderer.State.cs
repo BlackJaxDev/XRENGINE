@@ -507,6 +507,11 @@ public unsafe partial class VulkanRenderer
         // Destroy old physical Vulkan resources BEFORE UpdatePlan clears the allocator
         // dictionaries. UpdatePlan wipes _physicalGroups / _physicalBufferGroups, which
         // would orphan live VkImage / DeviceMemory handles and leak GPU memory.
+        //
+        // Wait for ALL in-flight frame slots first.  Physical images from the old plan
+        // may still be referenced by command buffers from other frame slots that haven't
+        // completed yet.  Without this wait, the GPU would access freed memory.
+        WaitForAllInFlightWork();
         _resourceAllocator.DestroyPhysicalImages(this);
         _resourceAllocator.DestroyPhysicalBuffers(this);
 
@@ -1101,17 +1106,19 @@ public unsafe partial class VulkanRenderer
 
     internal void DestroyPhysicalImage(ref Image image, ref DeviceMemory memory)
     {
-        if (image.Handle != 0)
-        {
-            Api!.DestroyImage(device, image, null);
-            image = default;
-        }
+        // Defer destruction — the image may still be referenced by in-flight
+        // command buffers from other frame slots.  The retirement queue ensures
+        // the handles are destroyed only after the current slot's timeline fence
+        // signals (which is after all earlier submissions have completed).
+        RetireImageResources(new RetiredImageResources(
+            image, memory,
+            PrimaryView: default,
+            AttachmentViews: [],
+            Sampler: default,
+            AllocatedVRAMBytes: 0));
 
-        if (memory.Handle != 0)
-        {
-            Api!.FreeMemory(device, memory, null);
-            memory = default;
-        }
+        image = default;
+        memory = default;
     }
 
     internal void AllocatePhysicalBuffer(VulkanPhysicalBufferGroup group, ref Buffer buffer, ref DeviceMemory memory)
