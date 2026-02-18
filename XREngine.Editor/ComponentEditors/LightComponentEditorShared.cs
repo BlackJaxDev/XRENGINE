@@ -8,6 +8,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Lightmapping;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Editor.ComponentEditors;
 
@@ -329,10 +330,23 @@ internal static class LightComponentEditorShared
             return false;
         }
 
+        if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
+        {
+            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            if (textureId == IntPtr.Zero)
+            {
+                failureReason = "Texture not uploaded to GPU.";
+                return false;
+            }
+
+            handle = (nint)textureId;
+            return true;
+        }
+
         var renderer = TryGetOpenGLRenderer();
         if (renderer is null)
         {
-            failureReason = "Preview requires OpenGL renderer.";
+            failureReason = "Preview requires OpenGL or Vulkan renderer.";
             return false;
         }
 
@@ -379,6 +393,18 @@ internal static class LightComponentEditorShared
 
         foreach (var window in Engine.Windows)
             if (window.Renderer is OpenGLRenderer renderer)
+                return renderer;
+
+        return null;
+    }
+
+    private static VulkanRenderer? TryGetVulkanRenderer()
+    {
+        if (AbstractRenderer.Current is VulkanRenderer current)
+            return current;
+
+        foreach (var window in Engine.Windows)
+            if (window.Renderer is VulkanRenderer renderer)
                 return renderer;
 
         return null;

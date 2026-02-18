@@ -2525,6 +2525,121 @@ void main()
             Engine.EnqueueMainThreadTask(FenceCheck);
         }
 
+        public override unsafe bool TryReadTextureMipRgbaFloat(
+            XRTexture texture,
+            int mipLevel,
+            int layerIndex,
+            out float[]? rgbaFloats,
+            out int width,
+            out int height,
+            out string failure)
+        {
+            rgbaFloats = null;
+            width = 0;
+            height = 0;
+            failure = string.Empty;
+
+            if (!Engine.IsRenderThread)
+            {
+                failure = "Readback unavailable off render thread";
+                return false;
+            }
+
+            if (texture is XRTexture2D tex2D && tex2D.MultiSample)
+            {
+                failure = "Multisample textures do not support mip readback";
+                return false;
+            }
+
+            if (texture is XRTexture2DArray tex2DArray && tex2DArray.MultiSample)
+            {
+                failure = "Multisample textures do not support mip readback";
+                return false;
+            }
+
+            AbstractRenderAPIObject? apiRenderObject = GetOrCreateAPIRenderObject(texture);
+            if (apiRenderObject is not GLObjectBase apiObject)
+            {
+                failure = "Texture not uploaded";
+                return false;
+            }
+
+            uint binding = apiObject.BindingId;
+            if (binding == GLObjectBase.InvalidBindingId || binding == 0)
+            {
+                failure = "Texture not ready";
+                return false;
+            }
+
+            int baseWidth;
+            int baseHeight;
+            switch (texture)
+            {
+                case XRTexture2D t2d:
+                    baseWidth = (int)t2d.Width;
+                    baseHeight = (int)t2d.Height;
+                    break;
+                case XRTexture2DArray t2da:
+                    baseWidth = (int)t2da.Width;
+                    baseHeight = (int)t2da.Height;
+                    break;
+                default:
+                    failure = "Unsupported texture type";
+                    return false;
+            }
+
+            width = Math.Max(1, baseWidth >> Math.Max(0, mipLevel));
+            height = Math.Max(1, baseHeight >> Math.Max(0, mipLevel));
+
+            GL gl = RawGL;
+            if (texture is XRTexture2DArray array)
+            {
+                int layers = Math.Max(1, (int)array.Depth);
+                int clampedLayer = Math.Clamp(layerIndex, 0, layers - 1);
+                int floatCountAll = width * height * 4 * layers;
+                float[] allLayers = new float[floatCountAll];
+
+                fixed (float* ptr = allLayers)
+                {
+                    gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)(sizeof(float) * floatCountAll), ptr);
+                }
+
+                int floatCountLayer = width * height * 4;
+                rgbaFloats = new float[floatCountLayer];
+                Array.Copy(allLayers, clampedLayer * floatCountLayer, rgbaFloats, 0, floatCountLayer);
+                return true;
+            }
+
+            int floatCount = width * height * 4;
+            rgbaFloats = new float[floatCount];
+            fixed (float* ptr = rgbaFloats)
+            {
+                gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)(sizeof(float) * floatCount), ptr);
+            }
+
+            return true;
+        }
+
+        public override bool TryReadTexturePixelRgbaFloat(
+            XRTexture texture,
+            int mipLevel,
+            int layerIndex,
+            out Vector4 rgba,
+            out string failure)
+        {
+            rgba = Vector4.Zero;
+            if (!TryReadTextureMipRgbaFloat(texture, mipLevel, layerIndex, out float[]? rgbaFloats, out _, out _, out failure)
+                || rgbaFloats is null
+                || rgbaFloats.Length < 4)
+            {
+                failure = string.IsNullOrWhiteSpace(failure) ? "Texture readback failed" : failure;
+                return false;
+            }
+
+            rgba = new Vector4(rgbaFloats[0], rgbaFloats[1], rgbaFloats[2], rgbaFloats[3]);
+            return true;
+        }
+
         private unsafe uint ReadFBOToPBO(BoundingRectangle region, EPixelFormat format, EPixelType type, nuint size, out IntPtr sync)
         {
             uint pbo = Api.GenBuffer();

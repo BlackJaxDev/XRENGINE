@@ -17,6 +17,7 @@ using XREngine.Diagnostics;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Editor;
 
@@ -891,28 +892,41 @@ internal static class ImGuiAssetUtilities
             return false;
         }
 
-        OpenGLRenderer? renderer = TryGetOpenGLRenderer();
-        if (renderer is null)
+        if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
         {
-            failureReason = "Preview requires OpenGL renderer";
+            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            if (textureId == IntPtr.Zero)
+            {
+                failureReason = "Texture not uploaded";
+                return false;
+            }
+
+            handle = (nint)textureId;
+        }
+        else if (TryGetOpenGLRenderer() is OpenGLRenderer renderer)
+        {
+            var apiTexture = renderer.GenericToAPI<GLTexture2D>(texture);
+            if (apiTexture is null)
+            {
+                failureReason = "Texture not uploaded";
+                return false;
+            }
+
+            uint binding = apiTexture.BindingId;
+            if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
+            {
+                failureReason = "Texture not ready";
+                return false;
+            }
+
+            handle = (nint)binding;
+        }
+        else
+        {
+            failureReason = "Preview requires OpenGL or Vulkan renderer";
             return false;
         }
 
-        var apiTexture = renderer.GenericToAPI<GLTexture2D>(texture);
-        if (apiTexture is null)
-        {
-            failureReason = "Texture not uploaded";
-            return false;
-        }
-
-        uint binding = apiTexture.BindingId;
-        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-        {
-            failureReason = "Texture not ready";
-            return false;
-        }
-
-        handle = (nint)binding;
         displaySize = GetPreviewSizeForEdge(pixelSize, maxEdge);
         return true;
     }
@@ -940,6 +954,18 @@ internal static class ImGuiAssetUtilities
 
         foreach (var window in Engine.Windows)
             if (window.Renderer is OpenGLRenderer renderer)
+                return renderer;
+
+        return null;
+    }
+
+    private static VulkanRenderer? TryGetVulkanRenderer()
+    {
+        if (AbstractRenderer.Current is VulkanRenderer current)
+            return current;
+
+        foreach (var window in Engine.Windows)
+            if (window.Renderer is VulkanRenderer renderer)
                 return renderer;
 
         return null;

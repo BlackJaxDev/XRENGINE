@@ -709,6 +709,12 @@ namespace XREngine.Rendering.Vulkan
             bool passIndexLabelActive = false;
             IDisposable? activePipelineOverrideScope = null;
 
+            // Track whether the swapchain has already had its first render pass
+            // this frame. Subsequent re-entries (e.g. after a compute dispatch
+            // forced EndActiveRenderPass) use LoadOp.Load to preserve contents
+            // instead of clearing the composited scene.
+            bool swapchainClearedThisFrame = false;
+
             // Track per-FBO attachment layouts across render-pass restarts within
             // the current command buffer.  On first use the layouts are null
             // (→ initialLayout = Undefined);  after EndActiveRenderPass we store
@@ -820,16 +826,33 @@ namespace XREngine.Rendering.Vulkan
                     {
                         // On the first frame for a given swapchain image, it starts in UNDEFINED
                         // (never been presented). Use Undefined as old layout to avoid validation errors.
+                        // If we already rendered to the swapchain this frame (re-entry after compute
+                        // dispatch etc.), the image was transitioned to PresentSrcKhr by EndActiveRenderPass.
                         bool imageEverPresented = _swapchainImageEverPresented is not null &&
                             imageIndex < _swapchainImageEverPresented.Length &&
                             _swapchainImageEverPresented[imageIndex];
+
+                        // Re-entry: the image is in PresentSrcKhr from the previous EndActiveRenderPass barrier.
+                        // First entry: use PresentSrcKhr if the image has been presented before, else Undefined.
+                        ImageLayout colorOldLayout = swapchainClearedThisFrame
+                            ? ImageLayout.PresentSrcKhr
+                            : (imageEverPresented ? ImageLayout.PresentSrcKhr : ImageLayout.Undefined);
+
+                        // Preserve swapchain contents on re-entry so composited scene is not wiped.
+                        AttachmentLoadOp colorLoadOp = swapchainClearedThisFrame
+                            ? AttachmentLoadOp.Load
+                            : AttachmentLoadOp.Clear;
+
+                        // Depth can always re-clear on re-entry; only the color contents
+                        // (the composited scene) need to survive across render pass restarts.
+                        AttachmentLoadOp depthLoadOp = AttachmentLoadOp.Clear;
 
                         ImageMemoryBarrier colorBarrier = new()
                         {
                             SType = StructureType.ImageMemoryBarrier,
                             SrcAccessMask = 0,
                             DstAccessMask = AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit,
-                            OldLayout = imageEverPresented ? ImageLayout.PresentSrcKhr : ImageLayout.Undefined,
+                            OldLayout = colorOldLayout,
                             NewLayout = ImageLayout.ColorAttachmentOptimal,
                             SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                             DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
@@ -888,7 +911,7 @@ namespace XREngine.Rendering.Vulkan
                             SType = StructureType.RenderingAttachmentInfo,
                             ImageView = swapChainImageViews[imageIndex],
                             ImageLayout = ImageLayout.ColorAttachmentOptimal,
-                            LoadOp = AttachmentLoadOp.Clear,
+                            LoadOp = colorLoadOp,
                             StoreOp = AttachmentStoreOp.Store,
                             ClearValue = dynamicClearValues[0],
                         };
@@ -898,7 +921,7 @@ namespace XREngine.Rendering.Vulkan
                             SType = StructureType.RenderingAttachmentInfo,
                             ImageView = _swapchainDepthView,
                             ImageLayout = ImageLayout.DepthStencilAttachmentOptimal,
-                            LoadOp = AttachmentLoadOp.Clear,
+                            LoadOp = depthLoadOp,
                             StoreOp = AttachmentStoreOp.DontCare,
                             ClearValue = dynamicClearValues[1],
                         };
@@ -925,13 +948,18 @@ namespace XREngine.Rendering.Vulkan
                         activeRenderPass = default;
                         activeFramebuffer = default;
                         activeRenderArea = renderingInfo.RenderArea;
+                        swapchainClearedThisFrame = true;
                         return;
                     }
+
+                    // Fallback: traditional render pass path.
+                    // Use _renderPassLoad (LoadOp.Load) on re-entry to preserve contents.
+                    RenderPass selectedRenderPass = swapchainClearedThisFrame ? _renderPassLoad : _renderPass;
 
                     RenderPassBeginInfo renderPassInfo = new()
                     {
                         SType = StructureType.RenderPassBeginInfo,
-                        RenderPass = _renderPass,
+                        RenderPass = selectedRenderPass,
                         Framebuffer = swapChainFramebuffers![imageIndex],
                         RenderArea = new Rect2D
                         {
@@ -951,9 +979,10 @@ namespace XREngine.Rendering.Vulkan
                     renderPassActive = true;
                     activeDynamicRendering = false;
                     activeTarget = null;
-                    activeRenderPass = _renderPass;
+                    activeRenderPass = selectedRenderPass;
                     activeFramebuffer = swapChainFramebuffers![imageIndex];
                     activeRenderArea = renderPassInfo.RenderArea;
+                    swapchainClearedThisFrame = true;
                     return;
                 }
 

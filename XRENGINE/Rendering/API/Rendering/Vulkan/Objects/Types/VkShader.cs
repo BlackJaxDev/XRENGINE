@@ -136,13 +136,9 @@ public unsafe partial class VulkanRenderer
             if (_attachedSource == source)
                 return;
 
-            if (_attachedSource is not null)
-                _attachedSource.TextChanged -= OnSourceTextChanged;
-
+            _attachedSource?.TextChanged -= OnSourceTextChanged;
             _attachedSource = source;
-
-            if (_attachedSource is not null)
-                _attachedSource.TextChanged += OnSourceTextChanged;
+            _attachedSource?.TextChanged += OnSourceTextChanged;
         }
 
         private void OnSourceTextChanged()

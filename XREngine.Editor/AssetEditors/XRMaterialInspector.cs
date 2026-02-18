@@ -10,6 +10,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Editor.AssetEditors;
 
@@ -500,34 +501,47 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
             return false;
         }
 
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
         {
-            failureReason = "Preview requires OpenGL renderer";
-            return false;
+            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            if (textureId == IntPtr.Zero)
+            {
+                failureReason = "Texture not uploaded";
+                return false;
+            }
+
+            handle = (nint)textureId;
+            return true;
         }
 
-        if (texture is not XRTexture2D tex2D)
+        if (AbstractRenderer.Current is OpenGLRenderer renderer)
         {
-            failureReason = $"{texture.GetType().Name} preview not supported";
-            return false;
+            if (texture is not XRTexture2D tex2D)
+            {
+                failureReason = $"{texture.GetType().Name} preview not supported";
+                return false;
+            }
+
+            var apiTexture = renderer.GenericToAPI<GLTexture2D>(tex2D);
+            if (apiTexture is null)
+            {
+                failureReason = "Texture not uploaded";
+                return false;
+            }
+
+            uint binding = apiTexture.BindingId;
+            if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
+            {
+                failureReason = "Texture not ready";
+                return false;
+            }
+
+            handle = (nint)binding;
+            return true;
         }
 
-        var apiTexture = renderer.GenericToAPI<GLTexture2D>(tex2D);
-        if (apiTexture is null)
-        {
-            failureReason = "Texture not uploaded";
-            return false;
-        }
-
-        uint binding = apiTexture.BindingId;
-        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-        {
-            failureReason = "Texture not ready";
-            return false;
-        }
-
-        handle = (nint)binding;
-        return true;
+        failureReason = "Preview requires OpenGL or Vulkan renderer";
+        return false;
     }
 
     private static Vector2 GetTexturePixelSize(XRTexture texture)

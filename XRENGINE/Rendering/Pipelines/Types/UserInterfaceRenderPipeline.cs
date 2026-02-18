@@ -60,7 +60,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
     {
         ViewportRenderCommandContainer c = new(pipeline);
 
-        c.Add<VPRC_SetClears>().Set(ColorF4.Red, 1.0f, 0);
+        c.Add<VPRC_SetClears>().Set(null, 1.0f, 0);
         c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.PreRender;
 
         using (c.AddUsing<VPRC_PushOutputFBORenderArea>())
@@ -94,7 +94,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
 
         //Create FBOs only after all their texture dependencies have been cached.
 
-        c.Add<VPRC_SetClears>().Set(ColorF4.Red, 1.0f, 0);
+        c.Add<VPRC_SetClears>().Set(null, 1.0f, 0);
         c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.PreRender;
         
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
