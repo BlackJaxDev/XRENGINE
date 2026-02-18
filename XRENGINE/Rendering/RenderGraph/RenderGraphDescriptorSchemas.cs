@@ -14,8 +14,8 @@ public enum RenderGraphDescriptorSchemaKind
 public sealed record RenderGraphDescriptorBinding(
     string Name,
     uint Binding,
-    RenderPassResourceType ResourceType,
-    RenderGraphAccess Access = RenderGraphAccess.Read);
+    ERenderPassResourceType ResourceType,
+    ERenderGraphAccess Access = ERenderGraphAccess.Read);
 
 public sealed class RenderGraphDescriptorSchema
 {
@@ -42,16 +42,16 @@ public static class RenderGraphDescriptorSchemaCatalog
         "EngineGlobals",
         RenderGraphDescriptorSchemaKind.EngineGlobal,
         [
-            new RenderGraphDescriptorBinding("EngineUniforms", 0, RenderPassResourceType.UniformBuffer, RenderGraphAccess.Read)
+            new RenderGraphDescriptorBinding("EngineUniforms", 0, ERenderPassResourceType.UniformBuffer, ERenderGraphAccess.Read)
         ]);
 
     public static readonly RenderGraphDescriptorSchema MaterialResources = new(
         "MaterialResources",
         RenderGraphDescriptorSchemaKind.Material,
         [
-            new RenderGraphDescriptorBinding("MaterialUniforms", 0, RenderPassResourceType.UniformBuffer, RenderGraphAccess.Read),
-            new RenderGraphDescriptorBinding("MaterialTextures", 1, RenderPassResourceType.SampledTexture, RenderGraphAccess.Read),
-            new RenderGraphDescriptorBinding("MaterialStorage", 2, RenderPassResourceType.StorageBuffer, RenderGraphAccess.ReadWrite)
+            new RenderGraphDescriptorBinding("MaterialUniforms", 0, ERenderPassResourceType.UniformBuffer, ERenderGraphAccess.Read),
+            new RenderGraphDescriptorBinding("MaterialTextures", 1, ERenderPassResourceType.SampledTexture, ERenderGraphAccess.Read),
+            new RenderGraphDescriptorBinding("MaterialStorage", 2, ERenderPassResourceType.StorageBuffer, ERenderGraphAccess.ReadWrite)
         ]);
 
     private static readonly Dictionary<string, RenderGraphDescriptorSchema> _schemas = new(StringComparer.Ordinal)

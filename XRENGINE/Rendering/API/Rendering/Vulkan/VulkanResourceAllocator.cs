@@ -307,24 +307,24 @@ internal sealed class VulkanResourceAllocator
         yield return resourceBinding;
     }
 
-    private static bool IsImageResourceType(RenderPassResourceType type)
-        => type is RenderPassResourceType.ColorAttachment
-            or RenderPassResourceType.DepthAttachment
-            or RenderPassResourceType.StencilAttachment
-            or RenderPassResourceType.ResolveAttachment
-            or RenderPassResourceType.SampledTexture
-            or RenderPassResourceType.StorageTexture
-            or RenderPassResourceType.TransferSource
-            or RenderPassResourceType.TransferDestination;
+    private static bool IsImageResourceType(ERenderPassResourceType type)
+        => type is ERenderPassResourceType.ColorAttachment
+            or ERenderPassResourceType.DepthAttachment
+            or ERenderPassResourceType.StencilAttachment
+            or ERenderPassResourceType.ResolveAttachment
+            or ERenderPassResourceType.SampledTexture
+            or ERenderPassResourceType.StorageTexture
+            or ERenderPassResourceType.TransferSource
+            or ERenderPassResourceType.TransferDestination;
 
-    private static bool IsBufferResourceType(RenderPassResourceType type)
-        => type is RenderPassResourceType.UniformBuffer
-            or RenderPassResourceType.StorageBuffer
-            or RenderPassResourceType.VertexBuffer
-            or RenderPassResourceType.IndexBuffer
-            or RenderPassResourceType.IndirectBuffer
-            or RenderPassResourceType.TransferSource
-            or RenderPassResourceType.TransferDestination;
+    private static bool IsBufferResourceType(ERenderPassResourceType type)
+        => type is ERenderPassResourceType.UniformBuffer
+            or ERenderPassResourceType.StorageBuffer
+            or ERenderPassResourceType.VertexBuffer
+            or ERenderPassResourceType.IndexBuffer
+            or ERenderPassResourceType.IndirectBuffer
+            or ERenderPassResourceType.TransferSource
+            or ERenderPassResourceType.TransferDestination;
 
     private static bool MatchesSlot(EFrameBufferAttachment attachment, string slot)
     {
@@ -424,17 +424,17 @@ internal sealed class VulkanResourceAllocator
                 continue;
 
             matchedProfile = true;
-            if (profile.Has(RenderPassResourceType.SampledTexture))
+            if (profile.Has(ERenderPassResourceType.SampledTexture))
                 usage |= ImageUsageFlags.SampledBit;
-            if (profile.Has(RenderPassResourceType.StorageTexture))
+            if (profile.Has(ERenderPassResourceType.StorageTexture))
                 usage |= ImageUsageFlags.StorageBit;
-            if (profile.Has(RenderPassResourceType.ColorAttachment) || profile.Has(RenderPassResourceType.ResolveAttachment))
+            if (profile.Has(ERenderPassResourceType.ColorAttachment) || profile.Has(ERenderPassResourceType.ResolveAttachment))
                 usage |= ImageUsageFlags.ColorAttachmentBit;
-            if (profile.Has(RenderPassResourceType.DepthAttachment) || profile.Has(RenderPassResourceType.StencilAttachment))
+            if (profile.Has(ERenderPassResourceType.DepthAttachment) || profile.Has(ERenderPassResourceType.StencilAttachment))
                 usage |= ImageUsageFlags.DepthStencilAttachmentBit;
-            if (profile.Has(RenderPassResourceType.TransferSource))
+            if (profile.Has(ERenderPassResourceType.TransferSource))
                 usage |= ImageUsageFlags.TransferSrcBit;
-            if (profile.Has(RenderPassResourceType.TransferDestination))
+            if (profile.Has(ERenderPassResourceType.TransferDestination))
                 usage |= ImageUsageFlags.TransferDstBit;
         }
 
@@ -513,19 +513,19 @@ internal sealed class VulkanResourceAllocator
                 continue;
 
             matchedProfile = true;
-            if (profile.Has(RenderPassResourceType.UniformBuffer))
+            if (profile.Has(ERenderPassResourceType.UniformBuffer))
                 usage |= BufferUsageFlags.UniformBufferBit;
-            if (profile.Has(RenderPassResourceType.StorageBuffer))
+            if (profile.Has(ERenderPassResourceType.StorageBuffer))
                 usage |= BufferUsageFlags.StorageBufferBit;
-            if (profile.Has(RenderPassResourceType.VertexBuffer))
+            if (profile.Has(ERenderPassResourceType.VertexBuffer))
                 usage |= BufferUsageFlags.VertexBufferBit;
-            if (profile.Has(RenderPassResourceType.IndexBuffer))
+            if (profile.Has(ERenderPassResourceType.IndexBuffer))
                 usage |= BufferUsageFlags.IndexBufferBit;
-            if (profile.Has(RenderPassResourceType.IndirectBuffer))
+            if (profile.Has(ERenderPassResourceType.IndirectBuffer))
                 usage |= BufferUsageFlags.IndirectBufferBit;
-            if (profile.Has(RenderPassResourceType.TransferSource))
+            if (profile.Has(ERenderPassResourceType.TransferSource))
                 usage |= BufferUsageFlags.TransferSrcBit;
-            if (profile.Has(RenderPassResourceType.TransferDestination))
+            if (profile.Has(ERenderPassResourceType.TransferDestination))
                 usage |= BufferUsageFlags.TransferDstBit;
         }
 
@@ -578,12 +578,12 @@ internal sealed class VulkanResourceAllocator
 
     private sealed class VulkanUsageProfile
     {
-        private readonly HashSet<RenderPassResourceType> _types = [];
+        private readonly HashSet<ERenderPassResourceType> _types = [];
 
-        public void Add(RenderPassResourceType type)
+        public void Add(ERenderPassResourceType type)
             => _types.Add(type);
 
-        public bool Has(RenderPassResourceType type)
+        public bool Has(ERenderPassResourceType type)
             => _types.Contains(type);
     }
 }

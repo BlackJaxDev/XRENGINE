@@ -160,8 +160,8 @@ public unsafe partial class VulkanRenderer
             => op is BlitOp or IndirectDrawOp or ComputeDispatchOp;
 
         private static bool IsBatchCompatible(VulkanCompiledPassBatch existingBatch, RenderPassMetadata pass, string signature)
-            => existingBatch.Stage == RenderGraphPassStage.Graphics &&
-               pass.Stage == RenderGraphPassStage.Graphics &&
+            => existingBatch.Stage == ERenderGraphPassStage.Graphics &&
+               pass.Stage == ERenderGraphPassStage.Graphics &&
                string.Equals(existingBatch.AttachmentSignature, signature, StringComparison.Ordinal);
 
         private static string BuildAttachmentSignature(RenderPassMetadata pass)
@@ -211,7 +211,7 @@ public unsafe partial class VulkanRenderer
     {
         private readonly List<int> _passIndices = [];
 
-        internal VulkanCompiledPassBatch(int batchIndex, RenderGraphPassStage stage, string attachmentSignature)
+        internal VulkanCompiledPassBatch(int batchIndex, ERenderGraphPassStage stage, string attachmentSignature)
         {
             BatchIndex = batchIndex;
             Stage = stage;
@@ -219,7 +219,7 @@ public unsafe partial class VulkanRenderer
         }
 
         public int BatchIndex { get; }
-        public RenderGraphPassStage Stage { get; }
+        public ERenderGraphPassStage Stage { get; }
         public string AttachmentSignature { get; }
         public ReadOnlyCollection<int> PassIndices => _passIndices.AsReadOnly();
 

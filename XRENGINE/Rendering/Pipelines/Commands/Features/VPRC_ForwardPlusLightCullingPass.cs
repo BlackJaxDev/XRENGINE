@@ -244,7 +244,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             base.DescribeRenderPass(context);
 
-            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_ForwardPlusLightCullingPass), RenderGraphPassStage.Compute);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_ForwardPlusLightCullingPass), ERenderGraphPassStage.Compute);
             builder.SampleTexture(MakeTextureResource(DepthViewTexture));
             builder.ReadWriteBuffer("ForwardPlusLocalLights");
             builder.ReadWriteBuffer("ForwardPlusVisibleIndices");

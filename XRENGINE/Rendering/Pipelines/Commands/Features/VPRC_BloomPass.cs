@@ -321,7 +321,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             base.DescribeRenderPass(context);
 
-            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_BloomPass), RenderGraphPassStage.Graphics);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_BloomPass), ERenderGraphPassStage.Graphics);
             builder.SampleTexture(MakeFboColorResource(InputFBOName));
             builder.ReadWriteTexture(MakeTextureResource(BloomOutputTextureName));
         }

@@ -64,12 +64,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
             var builder = context.GetOrCreateSyntheticPass($"QuadBlit_{SourceQuadFBOName}_to_{destination}");
-            builder.WithStage(RenderGraphPassStage.Graphics);
+            builder.WithStage(ERenderGraphPassStage.Graphics);
             builder.SampleTexture(MakeFboColorResource(SourceQuadFBOName));
 
-            RenderPassLoadOp colorLoad = RenderPassLoadOp.Load;
-            RenderPassStoreOp colorStore = RenderPassStoreOp.Store;
-            RenderGraphAccess access = RenderGraphAccess.ReadWrite;
+            ERenderPassLoadOp colorLoad = ERenderPassLoadOp.Load;
+            ERenderPassStoreOp colorStore = ERenderPassStoreOp.Store;
+            ERenderGraphAccess access = ERenderGraphAccess.ReadWrite;
 
             if (context.CurrentRenderTarget is { } bound &&
                 string.Equals(bound.Name, destination, StringComparison.OrdinalIgnoreCase))

@@ -75,7 +75,7 @@ namespace XREngine.Rendering.Commands
                     }
 
                     if (!_passMetadata.ContainsKey(pass.Key))
-                        _passMetadata[pass.Key] = new RenderPassMetadata(pass.Key, $"Pass{pass.Key}", RenderGraphPassStage.Graphics);
+                        _passMetadata[pass.Key] = new RenderPassMetadata(pass.Key, $"Pass{pass.Key}", ERenderGraphPassStage.Graphics);
                 }
             }
         }
@@ -141,10 +141,7 @@ namespace XREngine.Rendering.Commands
         public void RenderCPU(int renderPass, bool skipGpuCommands = false, XRCamera? camera = null)
         {
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
-            {
-                //Debug.Out($"No CPU render pass {renderPass} found.");
                 return;
-            }
 
             bool useCpuOcclusion =
                 !Engine.Rendering.State.IsShadowPass &&
@@ -195,6 +192,7 @@ namespace XREngine.Rendering.Commands
                 }
 
                 cpuCmdIndex++;
+
                 cmd?.Render();
             }
         }
@@ -544,7 +542,7 @@ namespace XREngine.Rendering.Commands
 
                 foreach (var usage in passMetadata.ResourceUsages)
                 {
-                    if (usage.ResourceType is RenderPassResourceType.ColorAttachment or RenderPassResourceType.DepthAttachment)
+                    if (usage.ResourceType is ERenderPassResourceType.ColorAttachment or ERenderPassResourceType.DepthAttachment)
                     {
                         string resourceName = usage.ResourceName;
                         if (!resourceName.StartsWith("fbo::", StringComparison.OrdinalIgnoreCase) &&

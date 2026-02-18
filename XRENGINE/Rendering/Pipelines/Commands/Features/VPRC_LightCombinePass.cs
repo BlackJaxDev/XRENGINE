@@ -191,7 +191,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             base.DescribeRenderPass(context);
 
-            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_LightCombinePass), RenderGraphPassStage.Graphics);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_LightCombinePass), ERenderGraphPassStage.Graphics);
             builder.SampleTexture(MakeTextureResource(AlbedoOpacityTexture));
             builder.SampleTexture(MakeTextureResource(NormalTexture));
             builder.SampleTexture(MakeTextureResource(RMSETexture));

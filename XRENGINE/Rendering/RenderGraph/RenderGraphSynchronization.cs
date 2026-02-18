@@ -65,7 +65,7 @@ public sealed record RenderGraphSynchronizationEdge(
     int ProducerPassIndex,
     int ConsumerPassIndex,
     string ResourceName,
-    RenderPassResourceType ResourceType,
+    ERenderPassResourceType ResourceType,
     RenderGraphSyncState ProducerState,
     RenderGraphSyncState ConsumerState,
     bool DependencyOnly);
@@ -111,7 +111,7 @@ public static class RenderGraphSynchronizationPlanner
 
         IReadOnlyList<RenderPassMetadata> orderedPasses = TopologicallySort(passMetadata);
         var edges = new List<RenderGraphSynchronizationEdge>();
-        var lastUsageByResource = new Dictionary<string, (int PassIndex, RenderPassResourceType Type, RenderGraphSyncState State)>(StringComparer.OrdinalIgnoreCase);
+        var lastUsageByResource = new Dictionary<string, (int PassIndex, ERenderPassResourceType Type, RenderGraphSyncState State)>(StringComparer.OrdinalIgnoreCase);
 
         foreach (RenderPassMetadata pass in orderedPasses)
         {
@@ -159,7 +159,7 @@ public static class RenderGraphSynchronizationPlanner
                     dependency,
                     pass.PassIndex,
                     string.Empty,
-                    RenderPassResourceType.TransferDestination,
+                    ERenderPassResourceType.TransferDestination,
                     producerState,
                     consumerState,
                     DependencyOnly: true));
@@ -221,94 +221,94 @@ public static class RenderGraphSynchronizationPlanner
     private static RenderGraphSyncState ResolveDependencyState(IReadOnlyCollection<RenderPassMetadata> passMetadata, int passIndex)
     {
         RenderPassMetadata? pass = passMetadata.FirstOrDefault(p => p.PassIndex == passIndex);
-        RenderGraphPassStage stage = pass?.Stage ?? RenderGraphPassStage.Graphics;
-        return new RenderGraphSyncState(ResolveStage(RenderPassResourceType.TransferDestination, stage), RenderGraphAccessMask.MemoryRead | RenderGraphAccessMask.MemoryWrite, null);
+        ERenderGraphPassStage stage = pass?.Stage ?? ERenderGraphPassStage.Graphics;
+        return new RenderGraphSyncState(ResolveStage(ERenderPassResourceType.TransferDestination, stage), RenderGraphAccessMask.MemoryRead | RenderGraphAccessMask.MemoryWrite, null);
     }
 
-    private static RenderGraphSyncState ResolveState(RenderPassResourceUsage usage, RenderGraphPassStage passStage)
+    private static RenderGraphSyncState ResolveState(RenderPassResourceUsage usage, ERenderGraphPassStage passStage)
         => new(
             ResolveStage(usage.ResourceType, passStage),
             ResolveAccess(usage.ResourceType, usage.Access),
             ResolveLayout(usage.ResourceType));
 
-    private static RenderGraphStageMask ResolveStage(RenderPassResourceType type, RenderGraphPassStage passStage)
+    private static RenderGraphStageMask ResolveStage(ERenderPassResourceType type, ERenderGraphPassStage passStage)
     {
         return type switch
         {
-            RenderPassResourceType.ColorAttachment or RenderPassResourceType.ResolveAttachment => RenderGraphStageMask.ColorAttachmentOutput,
-            RenderPassResourceType.DepthAttachment or RenderPassResourceType.StencilAttachment => RenderGraphStageMask.EarlyFragmentTests | RenderGraphStageMask.LateFragmentTests,
-            RenderPassResourceType.TransferSource or RenderPassResourceType.TransferDestination => RenderGraphStageMask.Transfer,
-            RenderPassResourceType.VertexBuffer or RenderPassResourceType.IndexBuffer => RenderGraphStageMask.VertexInput,
-            RenderPassResourceType.IndirectBuffer => RenderGraphStageMask.DrawIndirect,
-            RenderPassResourceType.UniformBuffer or RenderPassResourceType.SampledTexture => passStage switch
+            ERenderPassResourceType.ColorAttachment or ERenderPassResourceType.ResolveAttachment => RenderGraphStageMask.ColorAttachmentOutput,
+            ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment => RenderGraphStageMask.EarlyFragmentTests | RenderGraphStageMask.LateFragmentTests,
+            ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination => RenderGraphStageMask.Transfer,
+            ERenderPassResourceType.VertexBuffer or ERenderPassResourceType.IndexBuffer => RenderGraphStageMask.VertexInput,
+            ERenderPassResourceType.IndirectBuffer => RenderGraphStageMask.DrawIndirect,
+            ERenderPassResourceType.UniformBuffer or ERenderPassResourceType.SampledTexture => passStage switch
             {
-                RenderGraphPassStage.Compute => RenderGraphStageMask.ComputeShader,
-                RenderGraphPassStage.Transfer => RenderGraphStageMask.Transfer,
+                ERenderGraphPassStage.Compute => RenderGraphStageMask.ComputeShader,
+                ERenderGraphPassStage.Transfer => RenderGraphStageMask.Transfer,
                 _ => RenderGraphStageMask.VertexShader | RenderGraphStageMask.FragmentShader
             },
-            RenderPassResourceType.StorageBuffer or RenderPassResourceType.StorageTexture => passStage switch
+            ERenderPassResourceType.StorageBuffer or ERenderPassResourceType.StorageTexture => passStage switch
             {
-                RenderGraphPassStage.Compute => RenderGraphStageMask.ComputeShader,
-                RenderGraphPassStage.Transfer => RenderGraphStageMask.Transfer,
+                ERenderGraphPassStage.Compute => RenderGraphStageMask.ComputeShader,
+                ERenderGraphPassStage.Transfer => RenderGraphStageMask.Transfer,
                 _ => RenderGraphStageMask.VertexShader | RenderGraphStageMask.FragmentShader
             },
             _ => passStage switch
             {
-                RenderGraphPassStage.Compute => RenderGraphStageMask.ComputeShader,
-                RenderGraphPassStage.Transfer => RenderGraphStageMask.Transfer,
+                ERenderGraphPassStage.Compute => RenderGraphStageMask.ComputeShader,
+                ERenderGraphPassStage.Transfer => RenderGraphStageMask.Transfer,
                 _ => RenderGraphStageMask.AllGraphics
             }
         };
     }
 
-    private static RenderGraphAccessMask ResolveAccess(RenderPassResourceType type, RenderGraphAccess accessIntent)
+    private static RenderGraphAccessMask ResolveAccess(ERenderPassResourceType type, ERenderGraphAccess accessIntent)
     {
-        bool reads = accessIntent is RenderGraphAccess.Read or RenderGraphAccess.ReadWrite;
-        bool writes = accessIntent is RenderGraphAccess.Write or RenderGraphAccess.ReadWrite;
+        bool reads = accessIntent is ERenderGraphAccess.Read or ERenderGraphAccess.ReadWrite;
+        bool writes = accessIntent is ERenderGraphAccess.Write or ERenderGraphAccess.ReadWrite;
 
         RenderGraphAccessMask mask = RenderGraphAccessMask.None;
         switch (type)
         {
-            case RenderPassResourceType.ColorAttachment:
-            case RenderPassResourceType.ResolveAttachment:
+            case ERenderPassResourceType.ColorAttachment:
+            case ERenderPassResourceType.ResolveAttachment:
                 if (reads)
                     mask |= RenderGraphAccessMask.ColorAttachmentRead;
                 if (writes)
                     mask |= RenderGraphAccessMask.ColorAttachmentWrite;
                 break;
-            case RenderPassResourceType.DepthAttachment:
-            case RenderPassResourceType.StencilAttachment:
+            case ERenderPassResourceType.DepthAttachment:
+            case ERenderPassResourceType.StencilAttachment:
                 if (reads)
                     mask |= RenderGraphAccessMask.DepthStencilRead;
                 if (writes)
                     mask |= RenderGraphAccessMask.DepthStencilWrite;
                 break;
-            case RenderPassResourceType.UniformBuffer:
-            case RenderPassResourceType.SampledTexture:
+            case ERenderPassResourceType.UniformBuffer:
+            case ERenderPassResourceType.SampledTexture:
                 mask |= RenderGraphAccessMask.ShaderRead;
-                if (type == RenderPassResourceType.UniformBuffer)
+                if (type == ERenderPassResourceType.UniformBuffer)
                     mask |= RenderGraphAccessMask.UniformRead;
                 break;
-            case RenderPassResourceType.StorageBuffer:
-            case RenderPassResourceType.StorageTexture:
+            case ERenderPassResourceType.StorageBuffer:
+            case ERenderPassResourceType.StorageTexture:
                 if (reads)
                     mask |= RenderGraphAccessMask.ShaderRead;
                 if (writes)
                     mask |= RenderGraphAccessMask.ShaderWrite;
                 break;
-            case RenderPassResourceType.VertexBuffer:
+            case ERenderPassResourceType.VertexBuffer:
                 mask |= RenderGraphAccessMask.VertexAttributeRead;
                 break;
-            case RenderPassResourceType.IndexBuffer:
+            case ERenderPassResourceType.IndexBuffer:
                 mask |= RenderGraphAccessMask.IndexRead;
                 break;
-            case RenderPassResourceType.IndirectBuffer:
+            case ERenderPassResourceType.IndirectBuffer:
                 mask |= RenderGraphAccessMask.IndirectCommandRead;
                 break;
-            case RenderPassResourceType.TransferSource:
+            case ERenderPassResourceType.TransferSource:
                 mask |= RenderGraphAccessMask.TransferRead;
                 break;
-            case RenderPassResourceType.TransferDestination:
+            case ERenderPassResourceType.TransferDestination:
                 mask |= RenderGraphAccessMask.TransferWrite;
                 break;
             default:
@@ -322,16 +322,16 @@ public static class RenderGraphSynchronizationPlanner
         return mask == RenderGraphAccessMask.None ? RenderGraphAccessMask.MemoryRead : mask;
     }
 
-    private static RenderGraphImageLayout? ResolveLayout(RenderPassResourceType type)
+    private static RenderGraphImageLayout? ResolveLayout(ERenderPassResourceType type)
     {
         return type switch
         {
-            RenderPassResourceType.ColorAttachment or RenderPassResourceType.ResolveAttachment => RenderGraphImageLayout.ColorAttachment,
-            RenderPassResourceType.DepthAttachment or RenderPassResourceType.StencilAttachment => RenderGraphImageLayout.DepthStencilAttachment,
-            RenderPassResourceType.SampledTexture => RenderGraphImageLayout.ShaderReadOnly,
-            RenderPassResourceType.StorageTexture => RenderGraphImageLayout.General,
-            RenderPassResourceType.TransferSource => RenderGraphImageLayout.TransferSource,
-            RenderPassResourceType.TransferDestination => RenderGraphImageLayout.TransferDestination,
+            ERenderPassResourceType.ColorAttachment or ERenderPassResourceType.ResolveAttachment => RenderGraphImageLayout.ColorAttachment,
+            ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment => RenderGraphImageLayout.DepthStencilAttachment,
+            ERenderPassResourceType.SampledTexture => RenderGraphImageLayout.ShaderReadOnly,
+            ERenderPassResourceType.StorageTexture => RenderGraphImageLayout.General,
+            ERenderPassResourceType.TransferSource => RenderGraphImageLayout.TransferSource,
+            ERenderPassResourceType.TransferDestination => RenderGraphImageLayout.TransferDestination,
             _ => null
         };
     }

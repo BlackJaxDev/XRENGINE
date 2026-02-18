@@ -263,7 +263,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         static void Chain(RenderPassMetadataCollection collection, EDefaultRenderPass pass, params EDefaultRenderPass[] dependencies)
         {
-            var builder = collection.ForPass((int)pass, pass.ToString(), RenderGraphPassStage.Graphics);
+            var builder = collection.ForPass((int)pass, pass.ToString(), ERenderGraphPassStage.Graphics);
             foreach (var dep in dependencies)
                 builder.DependsOn((int)dep);
         }

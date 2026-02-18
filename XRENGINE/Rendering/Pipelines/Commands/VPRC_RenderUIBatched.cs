@@ -43,7 +43,7 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
             return;
 
         string passName = $"RenderUIBatched_{RenderPass}";
-        var builder = context.Metadata.ForPass(RenderPass, passName, RenderGraphPassStage.Graphics);
+        var builder = context.Metadata.ForPass(RenderPass, passName, ERenderGraphPassStage.Graphics);
 
         if (context.CurrentRenderTarget is { } target)
         {

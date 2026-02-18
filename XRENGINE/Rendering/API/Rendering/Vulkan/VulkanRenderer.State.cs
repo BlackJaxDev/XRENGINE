@@ -57,7 +57,7 @@ public unsafe partial class VulkanRenderer
         => _state.GetScissor();
 
     internal XRFrameBuffer? GetCurrentDrawFrameBuffer()
-        => _boundDrawFrameBuffer;
+        => XRFrameBuffer.BoundForWriting ?? _boundDrawFrameBuffer;
 
     internal XRFrameBuffer? GetCurrentReadFrameBuffer()
         => _boundReadFrameBuffer;
@@ -792,9 +792,9 @@ public unsafe partial class VulkanRenderer
     private QueueOverlapMetrics CaptureQueueOverlapMetrics(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
         bool hasMetadata = passMetadata is { Count: > 0 };
-        int computePassCount = hasMetadata ? passMetadata!.Count(static p => p.Stage == RenderGraphPassStage.Compute) : 0;
+        int computePassCount = hasMetadata ? passMetadata!.Count(static p => p.Stage == ERenderGraphPassStage.Compute) : 0;
         int transferUsageCount = hasMetadata
-            ? passMetadata!.Sum(static p => p.ResourceUsages.Count(static u => u.ResourceType is RenderPassResourceType.TransferSource or RenderPassResourceType.TransferDestination))
+            ? passMetadata!.Sum(static p => p.ResourceUsages.Count(static u => u.ResourceType is ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination))
             : 0;
         int overlapCandidatePassCount = hasMetadata
             ? passMetadata!.Count(IsQueueOverlapCandidatePass)
@@ -832,7 +832,7 @@ public unsafe partial class VulkanRenderer
 
     private static bool IsQueueOverlapCandidatePass(RenderPassMetadata pass)
     {
-        if (pass.Stage != RenderGraphPassStage.Compute)
+        if (pass.Stage != ERenderGraphPassStage.Compute)
             return false;
 
         string name = pass.Name ?? string.Empty;
@@ -1265,7 +1265,7 @@ public unsafe partial class VulkanRenderer
         if (passMetadata is null || passMetadata.Count == 0)
             return int.MinValue;
 
-        RenderGraphPassStage? preferredStage = ResolvePreferredFallbackStage(opName, passMetadata);
+        ERenderGraphPassStage? preferredStage = ResolvePreferredFallbackStage(opName, passMetadata);
         if (preferredStage.HasValue)
         {
             RenderPassMetadata? preferredPass = passMetadata
@@ -1280,18 +1280,18 @@ public unsafe partial class VulkanRenderer
         return passMetadata.OrderBy(m => m.PassIndex).First().PassIndex;
     }
 
-    private static RenderGraphPassStage? ResolvePreferredFallbackStage(string opName, IReadOnlyCollection<RenderPassMetadata> passMetadata)
+    private static ERenderGraphPassStage? ResolvePreferredFallbackStage(string opName, IReadOnlyCollection<RenderPassMetadata> passMetadata)
     {
         if (opName.Contains("Compute", StringComparison.OrdinalIgnoreCase))
-            return RenderGraphPassStage.Compute;
+            return ERenderGraphPassStage.Compute;
 
         if (opName.Contains("Blit", StringComparison.OrdinalIgnoreCase))
         {
-            bool hasTransferPass = passMetadata.Any(m => m.Stage == RenderGraphPassStage.Transfer);
-            return hasTransferPass ? RenderGraphPassStage.Transfer : RenderGraphPassStage.Graphics;
+            bool hasTransferPass = passMetadata.Any(m => m.Stage == ERenderGraphPassStage.Transfer);
+            return hasTransferPass ? ERenderGraphPassStage.Transfer : ERenderGraphPassStage.Graphics;
         }
 
-        return RenderGraphPassStage.Graphics;
+        return ERenderGraphPassStage.Graphics;
     }
 
     private void EnsureFrameBufferRegistered(XRFrameBuffer frameBuffer)

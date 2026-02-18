@@ -108,7 +108,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (string.IsNullOrWhiteSpace(VolumeTextureName))
                 return;
 
-            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_VoxelConeTracingPass), RenderGraphPassStage.Graphics);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_VoxelConeTracingPass), ERenderGraphPassStage.Graphics);
             builder.ReadWriteTexture(MakeTextureResource(VolumeTextureName));
         }
     }

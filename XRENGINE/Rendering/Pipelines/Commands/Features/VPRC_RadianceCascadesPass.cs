@@ -372,7 +372,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             base.DescribeRenderPass(context);
 
-            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_RadianceCascadesPass), RenderGraphPassStage.Graphics);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_RadianceCascadesPass), ERenderGraphPassStage.Graphics);
             builder.SampleTexture(MakeTextureResource(DepthTextureName));
             builder.SampleTexture(MakeTextureResource(NormalTextureName));
             builder.ReadWriteTexture(MakeTextureResource(OutputTextureName));
