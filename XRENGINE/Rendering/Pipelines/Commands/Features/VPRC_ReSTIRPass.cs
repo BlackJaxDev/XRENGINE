@@ -244,7 +244,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             base.DescribeRenderPass(context);
 
-            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_ReSTIRPass), RenderGraphPassStage.Graphics);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_ReSTIRPass), ERenderGraphPassStage.Graphics);
             builder.SampleTexture(MakeTextureResource(DepthTextureName));
             builder.SampleTexture(MakeTextureResource(NormalTextureName));
             builder.ReadWriteTexture(MakeTextureResource(RestirOutputTextureName));

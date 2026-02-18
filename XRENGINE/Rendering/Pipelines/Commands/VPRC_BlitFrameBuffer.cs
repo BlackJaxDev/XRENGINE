@@ -80,7 +80,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             var builder = context.GetOrCreateSyntheticPass($"Blit_{SourceFBOName}_to_{DestinationFBOName}")
-                .WithStage(RenderGraphPassStage.Transfer);
+                .WithStage(ERenderGraphPassStage.Transfer);
 
             builder.SampleTexture(MakeFboColorResource(SourceFBOName));
             builder.UseColorAttachment(MakeFboColorResource(DestinationFBOName));

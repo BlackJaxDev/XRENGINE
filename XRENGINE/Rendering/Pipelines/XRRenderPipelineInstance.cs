@@ -311,19 +311,22 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
                 if (AbstractRenderer.Current is OpenGLRenderer)
                 {
-                    OpenGLRenderGraphExecutor.Shared.ExecuteSequential(
-                        Pipeline.CommandChain,
-                        Pipeline.PassMetadata);
+                    var passMetadata = Pipeline.PassMetadata;
+                    if (passMetadata is { Count: > 0 })
+                    {
+                        // Force a topological walk so dependency cycles/missing edges are caught
+                        // on the same metadata path Vulkan uses for compilation.
+                        _ = RenderGraphSynchronizationPlanner.TopologicallySort(passMetadata);
+                    }
                 }
-                else
-                {
-                    Pipeline.CommandChain.Execute();
-                }
+
+                Pipeline.CommandChain.Execute();
 
                 ValidateRenderGraphExecutionAgainstMetadata();
             }
         }
     }
+    
     //public void CollectVisible(VisualScene scene, XRCamera? camera, XRViewport viewport, XRFrameBuffer? targetFBO, bool shadowPass, UICanvasComponent? userInterface = null)
     //{
     //    if (Pipeline is null)

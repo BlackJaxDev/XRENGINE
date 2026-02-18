@@ -473,7 +473,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             base.DescribeRenderPass(context);
 
-            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_SurfelGIPass), RenderGraphPassStage.Graphics);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_SurfelGIPass), ERenderGraphPassStage.Graphics);
             builder.SampleTexture(MakeTextureResource(DepthTextureName));
             builder.SampleTexture(MakeTextureResource(NormalTextureName));
             builder.SampleTexture(MakeTextureResource(AlbedoTextureName));

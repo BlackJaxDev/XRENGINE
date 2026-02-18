@@ -85,7 +85,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ?? context.CurrentRenderTarget?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
-            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_RenderScreenSpaceUI), RenderGraphPassStage.Graphics);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_RenderScreenSpaceUI), ERenderGraphPassStage.Graphics);
             builder.UseColorAttachment(MakeFboColorResource(target));
             builder.UseDepthAttachment(MakeFboDepthResource(target));
         }

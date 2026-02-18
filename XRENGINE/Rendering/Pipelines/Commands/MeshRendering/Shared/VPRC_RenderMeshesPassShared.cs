@@ -85,7 +85,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
             _ => $"RenderMeshesTraditional_{RenderPass}",
         };
 
-        var builder = context.Metadata.ForPass(RenderPass, passName, RenderGraphPassStage.Graphics);
+        var builder = context.Metadata.ForPass(RenderPass, passName, ERenderGraphPassStage.Graphics);
         builder
             .UseEngineDescriptors()
             .UseMaterialDescriptors();

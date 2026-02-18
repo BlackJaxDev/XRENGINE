@@ -6,18 +6,13 @@ namespace XREngine.Rendering.RenderGraph;
 /// Carries state while walking the viewport command list to produce render-graph metadata.
 /// Tracks currently bound render targets so later commands can attribute their reads/writes.
 /// </summary>
-public sealed class RenderGraphDescribeContext
+public sealed class RenderGraphDescribeContext(RenderPassMetadataCollection metadata)
 {
     private readonly Stack<RenderTargetBinding> _targetStack = new();
     private readonly Dictionary<string, int> _syntheticPassIndices = new();
     private int _nextSyntheticPassIndex = 100000;
 
-    public RenderGraphDescribeContext(RenderPassMetadataCollection metadata)
-    {
-        Metadata = metadata;
-    }
-
-    public RenderPassMetadataCollection Metadata { get; }
+    public RenderPassMetadataCollection Metadata { get; } = metadata;
 
     public RenderTargetBinding? CurrentRenderTarget
         => _targetStack.Count > 0 ? _targetStack.Peek() : null;
@@ -35,7 +30,7 @@ public sealed class RenderGraphDescribeContext
             _targetStack.Pop();
     }
 
-    public RenderPassBuilder GetOrCreateSyntheticPass(string key, RenderGraphPassStage stage = RenderGraphPassStage.Graphics)
+    public RenderPassBuilder GetOrCreateSyntheticPass(string key, ERenderGraphPassStage stage = ERenderGraphPassStage.Graphics)
     {
         if (string.IsNullOrWhiteSpace(key))
             key = $"SyntheticPass{_nextSyntheticPassIndex}";
@@ -50,54 +45,45 @@ public sealed class RenderGraphDescribeContext
     }
 }
 
-public sealed class RenderTargetBinding
+public sealed class RenderTargetBinding(string name, bool writes, bool clearColor, bool clearDepth, bool clearStencil)
 {
-    private bool _pendingColorClear;
-    private bool _pendingDepthClear;
-    private bool _pendingStencilClear;
+    private bool _pendingColorClear = clearColor;
+    private bool _pendingDepthClear = clearDepth;
+    private bool _pendingStencilClear = clearStencil;
 
-    public RenderTargetBinding(string name, bool writes, bool clearColor, bool clearDepth, bool clearStencil)
+    public string Name { get; } = name;
+    public bool Writes { get; } = writes;
+
+    public ERenderGraphAccess ColorAccess => Writes ? ERenderGraphAccess.ReadWrite : ERenderGraphAccess.Read;
+    public ERenderGraphAccess DepthAccess => Writes ? ERenderGraphAccess.ReadWrite : ERenderGraphAccess.Read;
+
+    public ERenderPassLoadOp ConsumeColorLoadOp()
     {
-        Name = name;
-        Writes = writes;
-        _pendingColorClear = clearColor;
-        _pendingDepthClear = clearDepth;
-        _pendingStencilClear = clearStencil;
-    }
-
-    public string Name { get; }
-    public bool Writes { get; }
-
-    public RenderGraphAccess ColorAccess => Writes ? RenderGraphAccess.ReadWrite : RenderGraphAccess.Read;
-    public RenderGraphAccess DepthAccess => Writes ? RenderGraphAccess.ReadWrite : RenderGraphAccess.Read;
-
-    public RenderPassLoadOp ConsumeColorLoadOp()
-    {
-        var op = _pendingColorClear ? RenderPassLoadOp.Clear : RenderPassLoadOp.Load;
+        var op = _pendingColorClear ? ERenderPassLoadOp.Clear : ERenderPassLoadOp.Load;
         _pendingColorClear = false;
         return op;
     }
 
-    public RenderPassLoadOp ConsumeDepthLoadOp()
+    public ERenderPassLoadOp ConsumeDepthLoadOp()
     {
-        var op = _pendingDepthClear ? RenderPassLoadOp.Clear : RenderPassLoadOp.Load;
+        var op = _pendingDepthClear ? ERenderPassLoadOp.Clear : ERenderPassLoadOp.Load;
         _pendingDepthClear = false;
         return op;
     }
 
-    public RenderPassLoadOp ConsumeStencilLoadOp()
+    public ERenderPassLoadOp ConsumeStencilLoadOp()
     {
-        var op = _pendingStencilClear ? RenderPassLoadOp.Clear : RenderPassLoadOp.Load;
+        var op = _pendingStencilClear ? ERenderPassLoadOp.Clear : ERenderPassLoadOp.Load;
         _pendingStencilClear = false;
         return op;
     }
 
-    public RenderPassStoreOp GetColorStoreOp()
-        => Writes ? RenderPassStoreOp.Store : RenderPassStoreOp.DontCare;
+    public ERenderPassStoreOp GetColorStoreOp()
+        => Writes ? ERenderPassStoreOp.Store : ERenderPassStoreOp.DontCare;
 
-    public RenderPassStoreOp GetDepthStoreOp()
-        => Writes ? RenderPassStoreOp.Store : RenderPassStoreOp.DontCare;
+    public ERenderPassStoreOp GetDepthStoreOp()
+        => Writes ? ERenderPassStoreOp.Store : ERenderPassStoreOp.DontCare;
 
-    public RenderPassStoreOp GetStencilStoreOp()
-        => Writes ? RenderPassStoreOp.Store : RenderPassStoreOp.DontCare;
+    public ERenderPassStoreOp GetStencilStoreOp()
+        => Writes ? ERenderPassStoreOp.Store : ERenderPassStoreOp.DontCare;
 }

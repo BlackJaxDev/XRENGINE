@@ -67,12 +67,12 @@ internal sealed class VulkanBarrierPlanner
         uint? ComputeQueueFamilyIndex = null,
         uint? TransferQueueFamilyIndex = null)
     {
-        public uint ResolveOwner(RenderGraphPassStage passStage, RenderPassResourceType resourceType)
+        public uint ResolveOwner(ERenderGraphPassStage passStage, ERenderPassResourceType resourceType)
         {
-            if (resourceType is RenderPassResourceType.TransferSource or RenderPassResourceType.TransferDestination)
+            if (resourceType is ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination)
                 return TransferQueueFamilyIndex ?? GraphicsQueueFamilyIndex;
 
-            if (passStage == RenderGraphPassStage.Compute)
+            if (passStage == ERenderGraphPassStage.Compute)
                 return ComputeQueueFamilyIndex ?? GraphicsQueueFamilyIndex;
 
             return GraphicsQueueFamilyIndex;
@@ -263,24 +263,24 @@ internal sealed class VulkanBarrierPlanner
         list.Add(barrier);
     }
 
-    private static bool ShouldTrackImage(RenderPassResourceType type)
-        => type is RenderPassResourceType.ColorAttachment
-            or RenderPassResourceType.DepthAttachment
-            or RenderPassResourceType.StencilAttachment
-            or RenderPassResourceType.ResolveAttachment
-            or RenderPassResourceType.SampledTexture
-            or RenderPassResourceType.StorageTexture
-            or RenderPassResourceType.TransferSource
-            or RenderPassResourceType.TransferDestination;
+    private static bool ShouldTrackImage(ERenderPassResourceType type)
+        => type is ERenderPassResourceType.ColorAttachment
+            or ERenderPassResourceType.DepthAttachment
+            or ERenderPassResourceType.StencilAttachment
+            or ERenderPassResourceType.ResolveAttachment
+            or ERenderPassResourceType.SampledTexture
+            or ERenderPassResourceType.StorageTexture
+            or ERenderPassResourceType.TransferSource
+            or ERenderPassResourceType.TransferDestination;
 
-    private static bool ShouldTrackBuffer(RenderPassResourceType type)
-        => type is RenderPassResourceType.UniformBuffer
-            or RenderPassResourceType.StorageBuffer
-            or RenderPassResourceType.VertexBuffer
-            or RenderPassResourceType.IndexBuffer
-            or RenderPassResourceType.IndirectBuffer
-            or RenderPassResourceType.TransferSource
-            or RenderPassResourceType.TransferDestination;
+    private static bool ShouldTrackBuffer(ERenderPassResourceType type)
+        => type is ERenderPassResourceType.UniformBuffer
+            or ERenderPassResourceType.StorageBuffer
+            or ERenderPassResourceType.VertexBuffer
+            or ERenderPassResourceType.IndexBuffer
+            or ERenderPassResourceType.IndirectBuffer
+            or ERenderPassResourceType.TransferSource
+            or ERenderPassResourceType.TransferDestination;
 
     private static IEnumerable<string> ExpandImageLogicalResources(string resourceBinding, VulkanResourcePlanner planner)
     {
@@ -411,7 +411,7 @@ internal sealed class VulkanBarrierPlanner
         public static PlannedImageState Initial(ImageAspectFlags aspect)
             => new(ImageLayout.Undefined, PipelineStageFlags.TopOfPipeBit, AccessFlags.None, aspect);
 
-        public static PlannedImageState FromUsage(RenderPassResourceUsage usage, VulkanPhysicalImageGroup group, RenderGraphPassStage passStage)
+        public static PlannedImageState FromUsage(RenderPassResourceUsage usage, VulkanPhysicalImageGroup group, ERenderGraphPassStage passStage)
         {
             ImageAspectFlags aspect = ResolveAspect(group, usage.ResourceType);
             ImageLayout layout = ResolveLayout(usage.ResourceType);
@@ -422,9 +422,9 @@ internal sealed class VulkanBarrierPlanner
 
         public static PlannedImageState FromSyncState(
             RenderGraphSyncState state,
-            RenderPassResourceType resourceType,
+            ERenderPassResourceType resourceType,
             VulkanPhysicalImageGroup group,
-            RenderGraphPassStage fallbackStage)
+            ERenderGraphPassStage fallbackStage)
         {
             ImageAspectFlags aspect = ResolveAspect(group, resourceType);
             ImageLayout layout = ResolveLayoutFromSync(state.Layout, resourceType);
@@ -451,7 +451,7 @@ internal sealed class VulkanBarrierPlanner
         public static PlannedBufferState Initial()
             => new(PipelineStageFlags.TopOfPipeBit, AccessFlags.None);
 
-        public static PlannedBufferState FromUsage(RenderPassResourceUsage usage, RenderGraphPassStage passStage)
+        public static PlannedBufferState FromUsage(RenderPassResourceUsage usage, ERenderGraphPassStage passStage)
         {
             PipelineStageFlags stage = ResolveStage(usage.ResourceType, passStage);
             AccessFlags access = ResolveAccess(usage.ResourceType, usage.Access);
@@ -460,8 +460,8 @@ internal sealed class VulkanBarrierPlanner
 
         public static PlannedBufferState FromSyncState(
             RenderGraphSyncState state,
-            RenderPassResourceType resourceType,
-            RenderGraphPassStage fallbackStage)
+            ERenderPassResourceType resourceType,
+            ERenderGraphPassStage fallbackStage)
         {
             PipelineStageFlags stage = ResolveStageFromSync(state.StageMask, resourceType, fallbackStage);
             AccessFlags access = ResolveAccessFromSync(state.AccessMask, resourceType);
@@ -478,108 +478,108 @@ internal sealed class VulkanBarrierPlanner
             => HashCode.Combine((int)StageMask, (int)AccessMask);
     }
 
-    private static ImageLayout ResolveLayout(RenderPassResourceType type)
+    private static ImageLayout ResolveLayout(ERenderPassResourceType type)
         => type switch
         {
-            RenderPassResourceType.ColorAttachment or RenderPassResourceType.ResolveAttachment => ImageLayout.ColorAttachmentOptimal,
-            RenderPassResourceType.DepthAttachment or RenderPassResourceType.StencilAttachment => ImageLayout.DepthStencilAttachmentOptimal,
-            RenderPassResourceType.SampledTexture => ImageLayout.ShaderReadOnlyOptimal,
-            RenderPassResourceType.StorageTexture => ImageLayout.General,
-            RenderPassResourceType.TransferSource => ImageLayout.TransferSrcOptimal,
-            RenderPassResourceType.TransferDestination => ImageLayout.TransferDstOptimal,
+            ERenderPassResourceType.ColorAttachment or ERenderPassResourceType.ResolveAttachment => ImageLayout.ColorAttachmentOptimal,
+            ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment => ImageLayout.DepthStencilAttachmentOptimal,
+            ERenderPassResourceType.SampledTexture => ImageLayout.ShaderReadOnlyOptimal,
+            ERenderPassResourceType.StorageTexture => ImageLayout.General,
+            ERenderPassResourceType.TransferSource => ImageLayout.TransferSrcOptimal,
+            ERenderPassResourceType.TransferDestination => ImageLayout.TransferDstOptimal,
             _ => ImageLayout.General
         };
 
-    private static PipelineStageFlags ResolveStage(RenderPassResourceType type, RenderGraphPassStage passStage)
+    private static PipelineStageFlags ResolveStage(ERenderPassResourceType type, ERenderGraphPassStage passStage)
     {
         return type switch
         {
-            RenderPassResourceType.ColorAttachment or RenderPassResourceType.ResolveAttachment => PipelineStageFlags.ColorAttachmentOutputBit,
-            RenderPassResourceType.DepthAttachment or RenderPassResourceType.StencilAttachment => PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
-            RenderPassResourceType.TransferSource or RenderPassResourceType.TransferDestination => PipelineStageFlags.TransferBit,
-            RenderPassResourceType.VertexBuffer or RenderPassResourceType.IndexBuffer => PipelineStageFlags.VertexInputBit,
-            RenderPassResourceType.IndirectBuffer => PipelineStageFlags.DrawIndirectBit,
-            RenderPassResourceType.UniformBuffer => SampleStage(passStage),
-            RenderPassResourceType.StorageBuffer => StorageStage(passStage),
-            RenderPassResourceType.SampledTexture => SampleStage(passStage),
-            RenderPassResourceType.StorageTexture => StorageStage(passStage),
+            ERenderPassResourceType.ColorAttachment or ERenderPassResourceType.ResolveAttachment => PipelineStageFlags.ColorAttachmentOutputBit,
+            ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment => PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
+            ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination => PipelineStageFlags.TransferBit,
+            ERenderPassResourceType.VertexBuffer or ERenderPassResourceType.IndexBuffer => PipelineStageFlags.VertexInputBit,
+            ERenderPassResourceType.IndirectBuffer => PipelineStageFlags.DrawIndirectBit,
+            ERenderPassResourceType.UniformBuffer => SampleStage(passStage),
+            ERenderPassResourceType.StorageBuffer => StorageStage(passStage),
+            ERenderPassResourceType.SampledTexture => SampleStage(passStage),
+            ERenderPassResourceType.StorageTexture => StorageStage(passStage),
             _ => DefaultStage(passStage)
         };
 
-        static PipelineStageFlags SampleStage(RenderGraphPassStage stage)
+        static PipelineStageFlags SampleStage(ERenderGraphPassStage stage)
             => stage switch
             {
-                RenderGraphPassStage.Compute => PipelineStageFlags.ComputeShaderBit,
-                RenderGraphPassStage.Transfer => PipelineStageFlags.AllCommandsBit,
+                ERenderGraphPassStage.Compute => PipelineStageFlags.ComputeShaderBit,
+                ERenderGraphPassStage.Transfer => PipelineStageFlags.AllCommandsBit,
                 _ => PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit
             };
 
-        static PipelineStageFlags StorageStage(RenderGraphPassStage stage)
+        static PipelineStageFlags StorageStage(ERenderGraphPassStage stage)
             => stage switch
             {
-                RenderGraphPassStage.Compute => PipelineStageFlags.ComputeShaderBit,
-                RenderGraphPassStage.Transfer => PipelineStageFlags.AllCommandsBit,
+                ERenderGraphPassStage.Compute => PipelineStageFlags.ComputeShaderBit,
+                ERenderGraphPassStage.Transfer => PipelineStageFlags.AllCommandsBit,
                 _ => PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.VertexShaderBit
             };
 
-        static PipelineStageFlags DefaultStage(RenderGraphPassStage stage)
+        static PipelineStageFlags DefaultStage(ERenderGraphPassStage stage)
             => stage switch
             {
-                RenderGraphPassStage.Compute => PipelineStageFlags.ComputeShaderBit,
-                RenderGraphPassStage.Transfer => PipelineStageFlags.TransferBit,
+                ERenderGraphPassStage.Compute => PipelineStageFlags.ComputeShaderBit,
+                ERenderGraphPassStage.Transfer => PipelineStageFlags.TransferBit,
                 _ => PipelineStageFlags.AllGraphicsBit
             };
     }
 
-    private static AccessFlags ResolveAccess(RenderPassResourceType type, RenderGraphAccess accessIntent)
+    private static AccessFlags ResolveAccess(ERenderPassResourceType type, ERenderGraphAccess accessIntent)
     {
-        bool reads = accessIntent is RenderGraphAccess.Read or RenderGraphAccess.ReadWrite;
-        bool writes = accessIntent is RenderGraphAccess.Write or RenderGraphAccess.ReadWrite;
+        bool reads = accessIntent is ERenderGraphAccess.Read or ERenderGraphAccess.ReadWrite;
+        bool writes = accessIntent is ERenderGraphAccess.Write or ERenderGraphAccess.ReadWrite;
 
         AccessFlags flags = AccessFlags.None;
 
         switch (type)
         {
-            case RenderPassResourceType.ColorAttachment:
-            case RenderPassResourceType.ResolveAttachment:
+            case ERenderPassResourceType.ColorAttachment:
+            case ERenderPassResourceType.ResolveAttachment:
                 if (reads)
                     flags |= AccessFlags.ColorAttachmentReadBit;
                 if (writes)
                     flags |= AccessFlags.ColorAttachmentWriteBit;
                 break;
-            case RenderPassResourceType.DepthAttachment:
-            case RenderPassResourceType.StencilAttachment:
+            case ERenderPassResourceType.DepthAttachment:
+            case ERenderPassResourceType.StencilAttachment:
                 if (reads)
                     flags |= AccessFlags.DepthStencilAttachmentReadBit;
                 if (writes)
                     flags |= AccessFlags.DepthStencilAttachmentWriteBit;
                 break;
-            case RenderPassResourceType.SampledTexture:
-            case RenderPassResourceType.UniformBuffer:
+            case ERenderPassResourceType.SampledTexture:
+            case ERenderPassResourceType.UniformBuffer:
                 flags |= AccessFlags.ShaderReadBit;
-                if (type == RenderPassResourceType.UniformBuffer)
+                if (type == ERenderPassResourceType.UniformBuffer)
                     flags |= AccessFlags.UniformReadBit;
                 break;
-            case RenderPassResourceType.StorageTexture:
-            case RenderPassResourceType.StorageBuffer:
+            case ERenderPassResourceType.StorageTexture:
+            case ERenderPassResourceType.StorageBuffer:
                 if (reads)
                     flags |= AccessFlags.ShaderReadBit;
                 if (writes)
                     flags |= AccessFlags.ShaderWriteBit;
                 break;
-            case RenderPassResourceType.VertexBuffer:
+            case ERenderPassResourceType.VertexBuffer:
                 flags |= AccessFlags.VertexAttributeReadBit;
                 break;
-            case RenderPassResourceType.IndexBuffer:
+            case ERenderPassResourceType.IndexBuffer:
                 flags |= AccessFlags.IndexReadBit;
                 break;
-            case RenderPassResourceType.IndirectBuffer:
+            case ERenderPassResourceType.IndirectBuffer:
                 flags |= AccessFlags.IndirectCommandReadBit;
                 break;
-            case RenderPassResourceType.TransferSource:
+            case ERenderPassResourceType.TransferSource:
                 flags |= AccessFlags.TransferReadBit;
                 break;
-            case RenderPassResourceType.TransferDestination:
+            case ERenderPassResourceType.TransferDestination:
                 flags |= AccessFlags.TransferWriteBit;
                 break;
             default:
@@ -595,8 +595,8 @@ internal sealed class VulkanBarrierPlanner
 
     private static PipelineStageFlags ResolveStageFromSync(
         RenderGraphStageMask stageMask,
-        RenderPassResourceType resourceType,
-        RenderGraphPassStage fallbackStage)
+        ERenderPassResourceType resourceType,
+        ERenderGraphPassStage fallbackStage)
     {
         if (stageMask == RenderGraphStageMask.None)
             return ResolveStage(resourceType, fallbackStage);
@@ -634,10 +634,10 @@ internal sealed class VulkanBarrierPlanner
             : flags;
     }
 
-    private static AccessFlags ResolveAccessFromSync(RenderGraphAccessMask accessMask, RenderPassResourceType resourceType)
+    private static AccessFlags ResolveAccessFromSync(RenderGraphAccessMask accessMask, ERenderPassResourceType resourceType)
     {
         if (accessMask == RenderGraphAccessMask.None)
-            return ResolveAccess(resourceType, RenderGraphAccess.ReadWrite);
+            return ResolveAccess(resourceType, ERenderGraphAccess.ReadWrite);
 
         AccessFlags flags = AccessFlags.None;
         if (accessMask.HasFlag(RenderGraphAccessMask.MemoryRead))
@@ -670,11 +670,11 @@ internal sealed class VulkanBarrierPlanner
             flags |= AccessFlags.TransferWriteBit;
 
         return flags == AccessFlags.None
-            ? ResolveAccess(resourceType, RenderGraphAccess.ReadWrite)
+            ? ResolveAccess(resourceType, ERenderGraphAccess.ReadWrite)
             : flags;
     }
 
-    private static ImageLayout ResolveLayoutFromSync(RenderGraphImageLayout? layout, RenderPassResourceType resourceType)
+    private static ImageLayout ResolveLayoutFromSync(RenderGraphImageLayout? layout, ERenderPassResourceType resourceType)
     {
         if (!layout.HasValue)
             return ResolveLayout(resourceType);
@@ -693,11 +693,11 @@ internal sealed class VulkanBarrierPlanner
         };
     }
 
-    private static ImageAspectFlags ResolveAspect(VulkanPhysicalImageGroup group, RenderPassResourceType type)
+    private static ImageAspectFlags ResolveAspect(VulkanPhysicalImageGroup group, ERenderPassResourceType type)
     {
-        if (IsDepthFormat(group.Format) || type is RenderPassResourceType.DepthAttachment or RenderPassResourceType.StencilAttachment)
+        if (IsDepthFormat(group.Format) || type is ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment)
         {
-            bool hasStencil = FormatHasStencil(group.Format) || type == RenderPassResourceType.StencilAttachment;
+            bool hasStencil = FormatHasStencil(group.Format) || type == ERenderPassResourceType.StencilAttachment;
             return hasStencil ? ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit : ImageAspectFlags.DepthBit;
         }
 

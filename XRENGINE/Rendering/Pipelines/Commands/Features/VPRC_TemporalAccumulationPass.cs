@@ -388,15 +388,15 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (Phase != EPhase.Accumulate)
             return;
 
-        var builder = context.GetOrCreateSyntheticPass($"{nameof(VPRC_TemporalAccumulationPass)}_{Phase}", RenderGraphPassStage.Graphics);
+        var builder = context.GetOrCreateSyntheticPass($"{nameof(VPRC_TemporalAccumulationPass)}_{Phase}", ERenderGraphPassStage.Graphics);
 
         builder.SampleTexture(MakeFboColorResource(ForwardFBOName));
 
         builder.UseColorAttachment(
             MakeFboColorResource(TemporalInputFBOName),
-            RenderGraphAccess.Write,
-            RenderPassLoadOp.DontCare,
-            RenderPassStoreOp.Store);
+            ERenderGraphAccess.Write,
+            ERenderPassLoadOp.DontCare,
+            ERenderPassStoreOp.Store);
         builder.SampleTexture(MakeFboColorResource(TemporalInputFBOName));
 
         builder.UseColorAttachment(MakeFboColorResource(TemporalAccumulationFBOName));
@@ -405,20 +405,20 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         builder.SampleTexture(MakeFboColorResource(HistoryColorFBOName));
         builder.UseColorAttachment(
             MakeFboColorResource(HistoryColorFBOName),
-            RenderGraphAccess.Write,
-            RenderPassLoadOp.DontCare,
-            RenderPassStoreOp.Store);
+            ERenderGraphAccess.Write,
+            ERenderPassLoadOp.DontCare,
+            ERenderPassStoreOp.Store);
         builder.UseDepthAttachment(
             MakeFboDepthResource(HistoryColorFBOName),
-            RenderGraphAccess.Write,
-            RenderPassLoadOp.DontCare,
-            RenderPassStoreOp.Store);
+            ERenderGraphAccess.Write,
+            ERenderPassLoadOp.DontCare,
+            ERenderPassStoreOp.Store);
 
         builder.SampleTexture(MakeFboColorResource(HistoryExposureFBOName));
         builder.UseColorAttachment(
             MakeFboColorResource(HistoryExposureFBOName),
-            RenderGraphAccess.Write,
-            RenderPassLoadOp.DontCare,
-            RenderPassStoreOp.Store);
+            ERenderGraphAccess.Write,
+            ERenderPassLoadOp.DontCare,
+            ERenderPassStoreOp.Store);
     }
 }

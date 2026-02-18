@@ -581,7 +581,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             base.DescribeRenderPass(context);
 
-            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_SpatialHashAOPass), RenderGraphPassStage.Compute);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_SpatialHashAOPass), ERenderGraphPassStage.Compute);
             builder.SampleTexture(MakeTextureResource(NormalTextureName));
             builder.SampleTexture(MakeTextureResource(DepthViewTextureName));
             builder.ReadWriteTexture(MakeTextureResource(IntensityTextureName));
