@@ -87,6 +87,7 @@ namespace XREngine.Rendering.Vulkan
             "VK_EXT_index_type_uint8",
             "VK_EXT_descriptor_indexing",
             "VK_KHR_dynamic_rendering",
+            "VK_KHR_maintenance4",
             "VK_NV_memory_decompression",
             "VK_NV_copy_memory_indirect"
         ];

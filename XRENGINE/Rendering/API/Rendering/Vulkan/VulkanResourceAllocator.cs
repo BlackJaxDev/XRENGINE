@@ -700,6 +700,7 @@ internal sealed class VulkanPhysicalImageGroup
     private Image _image;
     private DeviceMemory _memory;
     private bool _allocated;
+    private bool _needsInitialTransition;
 
     internal VulkanPhysicalImageGroup(
         VulkanImageAliasGroup logicalGroup,
@@ -726,6 +727,17 @@ internal sealed class VulkanPhysicalImageGroup
     public Image Image => _image;
     public DeviceMemory Memory => _memory;
 
+    /// <summary>
+    /// True when the physical image was just allocated and is still in
+    /// <see cref="ImageLayout.Undefined"/>.  The command-buffer recorder
+    /// must emit an explicit layout transition before any render pass
+    /// that references this image.
+    /// </summary>
+    public bool NeedsInitialTransition => _needsInitialTransition;
+
+    /// <summary>Mark the initial transition as emitted.</summary>
+    public void ClearInitialTransitionFlag() => _needsInitialTransition = false;
+
     internal void AddLogical(VulkanImageAllocation allocation)
         => _logicalResources.Add(allocation);
 
@@ -736,6 +748,7 @@ internal sealed class VulkanPhysicalImageGroup
 
         renderer.AllocatePhysicalImage(this, ref _image, ref _memory);
         _allocated = true;
+        _needsInitialTransition = true;
     }
 
     public void Destroy(VulkanRenderer renderer)
@@ -745,6 +758,7 @@ internal sealed class VulkanPhysicalImageGroup
 
         renderer.DestroyPhysicalImage(ref _image, ref _memory);
         _allocated = false;
+        _needsInitialTransition = false;
     }
 }
 

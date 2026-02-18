@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Vulkan
         {
             private Image _image;
             private ImageView _view;
+            private ImageView _descriptorView; // depth-only view for sampled depth/stencil descriptors
             private Sampler _sampler;
             private Format _format = Format.R8G8B8A8Unorm;
             private ImageAspectFlags _aspect = ImageAspectFlags.ColorBit;
@@ -31,7 +32,7 @@ namespace XREngine.Rendering.Vulkan
             internal Format TexelBufferFormat => _texelBufferFormat;
 
             Image IVkImageDescriptorSource.DescriptorImage => _image;
-            ImageView IVkImageDescriptorSource.DescriptorView => _view;
+            ImageView IVkImageDescriptorSource.DescriptorView => _descriptorView.Handle != 0 ? _descriptorView : _view;
             Sampler IVkImageDescriptorSource.DescriptorSampler => _sampler;
             Format IVkImageDescriptorSource.DescriptorFormat => _format;
             ImageAspectFlags IVkImageDescriptorSource.DescriptorAspect => _aspect;
@@ -48,6 +49,12 @@ namespace XREngine.Rendering.Vulkan
 
             protected override void DeleteObjectInternal()
             {
+                if (_descriptorView.Handle != 0)
+                {
+                    Api!.DestroyImageView(Device, _descriptorView, null);
+                    _descriptorView = default;
+                }
+
                 if (_view.Handle != 0)
                 {
                     Api!.DestroyImageView(Device, _view, null);
@@ -170,6 +177,22 @@ namespace XREngine.Rendering.Vulkan
 
                 if (Api!.CreateImageView(Device, ref viewInfo, null, out _view) != Result.Success)
                     throw new InvalidOperationException("Failed to create Vulkan texture view.");
+
+                // For depth/stencil formats with both aspects, create a depth-only view for
+                // sampled descriptors (Vulkan requires exactly one aspect in that case).
+                bool hasStencil = _format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
+                if (hasStencil && (_usage & ImageUsageFlags.SampledBit) != 0)
+                {
+                    ImageViewCreateInfo depthOnlyViewInfo = viewInfo with
+                    {
+                        SubresourceRange = viewInfo.SubresourceRange with
+                        {
+                            AspectMask = ImageAspectFlags.DepthBit,
+                        },
+                    };
+                    if (Api!.CreateImageView(Device, ref depthOnlyViewInfo, null, out _descriptorView) != Result.Success)
+                        throw new InvalidOperationException("Failed to create depth-only descriptor view for texture view.");
+                }
             }
 
             private static ImageAspectFlags NormalizeAspectMaskForFormat(Format format, ImageAspectFlags requested)

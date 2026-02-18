@@ -191,6 +191,32 @@ public unsafe partial class VulkanRenderer
         featureSupported = bufferDeviceAddressFeatures.BufferDeviceAddress;
     }
 
+    private unsafe void QueryMaintenance4Capabilities(
+        bool extensionEnabled,
+        out bool featureSupported)
+    {
+        featureSupported = false;
+
+        Api!.GetPhysicalDeviceProperties(_physicalDevice, out PhysicalDeviceProperties properties);
+        bool promotedToCore = properties.ApiVersion >= Vk.Version13;
+
+        PhysicalDeviceMaintenance4Features maintenance4Features = new()
+        {
+            SType = StructureType.PhysicalDeviceMaintenance4Features,
+            PNext = null,
+        };
+
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &maintenance4Features,
+        };
+
+        Api.GetPhysicalDeviceFeatures2(_physicalDevice, &features2);
+
+        featureSupported = maintenance4Features.Maintenance4 && (promotedToCore || extensionEnabled);
+    }
+
     private unsafe void QueryDynamicRenderingCapabilities(
         bool extensionEnabled,
         out bool featureSupported,
@@ -433,6 +459,12 @@ public unsafe partial class VulkanRenderer
         QueryIndexTypeUint8Capabilities(out bool indexTypeUint8FeatureSupported);
         bool enableIndexTypeUint8Feature = indexTypeUint8FeatureSupported;
 
+        bool maintenance4ExtensionEnabled = extensionsArray.Contains("VK_KHR_maintenance4");
+        QueryMaintenance4Capabilities(
+            maintenance4ExtensionEnabled,
+            out bool maintenance4FeatureSupported);
+        bool enableMaintenance4Feature = maintenance4FeatureSupported;
+
         _nvMemoryDecompressionMethods = enableNvMemoryDecompression ? nvMemoryDecompressionMethods : 0;
         _nvMaxMemoryDecompressionIndirectCount = enableNvMemoryDecompression ? nvMaxDecompressionIndirectCount : 0;
         _nvCopyMemoryIndirectSupportedQueues = enableNvCopyMemoryIndirect ? nvCopyMemoryIndirectSupportedQueues : 0;
@@ -492,6 +524,13 @@ public unsafe partial class VulkanRenderer
             IndexTypeUint8 = enableIndexTypeUint8Feature,
         };
 
+        PhysicalDeviceMaintenance4Features maintenance4FeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceMaintenance4Features,
+            PNext = null,
+            Maintenance4 = enableMaintenance4Feature,
+        };
+
         void* enabledFeaturesPNext = null;
         if (enableDescriptorIndexing)
         {
@@ -533,6 +572,12 @@ public unsafe partial class VulkanRenderer
         {
             indexTypeUint8FeatureEnable.PNext = enabledFeaturesPNext;
             enabledFeaturesPNext = &indexTypeUint8FeatureEnable;
+        }
+
+        if (enableMaintenance4Feature)
+        {
+            maintenance4FeatureEnable.PNext = enabledFeaturesPNext;
+            enabledFeaturesPNext = &maintenance4FeatureEnable;
         }
 
         PhysicalDeviceFeatures2 featureChain = new()

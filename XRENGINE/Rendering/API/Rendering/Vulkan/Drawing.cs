@@ -459,7 +459,11 @@ namespace XREngine.Rendering.Vulkan
                 PCommandBuffers = &commandBuffer,
             };
 
-            if (Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, fence) != Result.Success)
+            Result depthSubmitResult;
+            lock (_oneTimeSubmitLock)
+                depthSubmitResult = Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, fence);
+
+            if (depthSubmitResult != Result.Success)
             {
                 Api!.DestroyFence(device, fence, null);
                 Api!.FreeCommandBuffers(device, commandPool, 1, ref commandBuffer);
@@ -1087,6 +1091,43 @@ namespace XREngine.Rendering.Vulkan
 
         private const int MAX_FRAMES_IN_FLIGHT = 2;
 
+        /// <summary>
+        /// Per-frame-slot retirement queue for buffer handles that cannot be destroyed
+        /// immediately because a command buffer recorded during the same frame may still
+        /// reference them.  Drained after <c>WaitForFences</c> signals that the slot's
+        /// GPU work has completed.
+        /// </summary>
+        private readonly List<(Silk.NET.Vulkan.Buffer Buffer, DeviceMemory Memory)>[] _retiredBuffers =
+            [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
+
+        /// <summary>
+        /// Queues a buffer+memory pair for deferred destruction.  The pair will be
+        /// destroyed the next time this frame slot is reused (after the fence wait
+        /// guarantees the GPU is done with it).
+        /// </summary>
+        internal void RetireBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
+            => _retiredBuffers[currentFrame].Add((buffer, memory));
+
+        /// <summary>
+        /// Destroys all buffers that were retired during the last use of the current
+        /// frame slot.  Called immediately after <c>WaitForFences</c>.
+        /// </summary>
+        private void DrainRetiredBuffers()
+        {
+            var list = _retiredBuffers[currentFrame];
+            if (list.Count == 0)
+                return;
+
+            foreach (var (buf, mem) in list)
+            {
+                if (buf.Handle != 0)
+                    Api!.DestroyBuffer(device, buf, null);
+                if (mem.Handle != 0)
+                    Api!.FreeMemory(device, mem, null);
+            }
+            list.Clear();
+        }
+
         private int currentFrame = 0;
         private ulong _vkDebugFrameCounter = 0;
 
@@ -1139,6 +1180,10 @@ namespace XREngine.Rendering.Vulkan
 
             // 1. Wait for the previous frame to finish
             Api!.WaitForFences(device, 1, ref inFlightFences![currentFrame], true, ulong.MaxValue);
+
+            // Now that the GPU has finished all work for this frame slot, destroy
+            // buffers that were retired during its previous recording.
+            DrainRetiredBuffers();
 
             // Helpful when tracking down DPI / resize issues.
             Debug.VulkanEvery(
@@ -1217,8 +1262,19 @@ namespace XREngine.Rendering.Vulkan
 
             Api!.ResetFences(device, 1, ref inFlightFences[currentFrame]);
 
-            if (Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, inFlightFences[currentFrame]) != Result.Success)
-                throw new Exception("Failed to submit draw command buffer.");
+            Result frameSubmitResult;
+            lock (_oneTimeSubmitLock)
+                frameSubmitResult = Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, inFlightFences[currentFrame]);
+
+            if (frameSubmitResult != Result.Success)
+            {
+                // Submit failed (usually because a referenced resource was destroyed during recording).
+                // Log the error, skip present, and advance the frame so fences stay in sync.
+                Debug.LogWarning(
+                    $"[Vulkan] Frame submit failed (Result={frameSubmitResult}) on frame {_vkDebugFrameCounter}, image {imageIndex}. Skipping present.");
+                currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+                return;
+            }
 
             // Trim idle staging buffers so the pool does not grow unbounded.
             _stagingManager.Trim(this);
@@ -1242,7 +1298,8 @@ namespace XREngine.Rendering.Vulkan
                 PImageIndices = &imageIndex
             };
 
-            result = khrSwapChain.QueuePresent(presentQueue, ref presentInfo);
+            lock (_oneTimeSubmitLock)
+                result = khrSwapChain.QueuePresent(presentQueue, ref presentInfo);
             _lastPresentedImageIndex = imageIndex;
 
             Debug.VulkanEvery(

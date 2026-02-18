@@ -113,8 +113,33 @@ namespace XREngine.Rendering.Vulkan
 
                 if (needsRecreate)
                 {
-                    // Destroy previous buffer if exists (this will also track VRAM deallocation)
-                    Destroy();
+                    // Retire old buffer handles for deferred cleanup — the command buffer
+                    // currently being recorded may still reference them, so we must not
+                    // destroy them synchronously.  Do NOT call Destroy() here because
+                    // that also resets _bindingId, which would make IsActive return false
+                    // and trigger redundant Generate() cycles on every draw call.
+                    if (_vkBuffer.HasValue || _vkMemory.HasValue)
+                    {
+                        if (_vkBuffer.HasValue && _vkMemory.HasValue)
+                            Renderer.RetireBuffer(_vkBuffer.Value, _vkMemory.Value);
+                        else
+                        {
+                            // Partial state — still retire to avoid use-after-free.
+                            if (_vkBuffer.HasValue)
+                                Renderer.RetireBuffer(_vkBuffer.Value, default);
+                            if (_vkMemory.HasValue)
+                                Api!.FreeMemory(Renderer.device, _vkMemory.Value, null);
+                        }
+                        _vkBuffer = null;
+                        _vkMemory = null;
+                        _persistentMappedPtr = null;
+                    }
+                    if (_allocatedVRAMBytes > 0)
+                    {
+                        Engine.Rendering.Stats.RemoveBufferAllocation(_allocatedVRAMBytes);
+                        _allocatedVRAMBytes = 0;
+                    }
+
                     _bufferSize = Data.Length;
                     _lastUsageFlags = usage;
                     _lastMemProps = memProps;
@@ -530,9 +555,10 @@ namespace XREngine.Rendering.Vulkan
 
             protected override uint CreateObjectInternal()
             {
-                // No explicit Vulkan object creation needed here, handled in PushData
-                // Return 0 to indicate no Vulkan object ID
-                return 0;
+                // Actual Vulkan buffer creation is deferred to PostGenerated/PushData,
+                // but we must return a valid non-zero ID so that IsActive becomes true
+                // and subsequent Generate() calls short-circuit correctly.
+                return CacheObject(this);
             }
 
             protected override void DeleteObjectInternal()
@@ -544,18 +570,25 @@ namespace XREngine.Rendering.Vulkan
                     _allocatedVRAMBytes = 0;
                 }
 
-                // Clean up Vulkan resources
-                if (_vkBuffer.HasValue)
+                // Retire buffer handles for deferred destruction — a command buffer
+                // recorded this frame (or still in-flight on the GPU) may still
+                // reference this buffer.
+                if (_vkBuffer.HasValue && _vkMemory.HasValue)
                 {
-                    Api!.DestroyBuffer(Renderer.device, _vkBuffer.Value, null);
-                    _vkBuffer = null;
+                    Renderer.RetireBuffer(_vkBuffer.Value, _vkMemory.Value);
                 }
-                if (_vkMemory.HasValue)
+                else
                 {
-                    Api!.FreeMemory(Renderer.device, _vkMemory.Value, null);
-                    _vkMemory = null;
+                    // Partial state — destroy immediately (shouldn't happen normally).
+                    if (_vkBuffer.HasValue)
+                        Api!.DestroyBuffer(Renderer.device, _vkBuffer.Value, null);
+                    if (_vkMemory.HasValue)
+                        Api!.FreeMemory(Renderer.device, _vkMemory.Value, null);
                 }
-                _persistentMappedPtr = null; // Reset persistent mapping pointer
+
+                _vkBuffer = null;
+                _vkMemory = null;
+                _persistentMappedPtr = null;
             }
         }
 

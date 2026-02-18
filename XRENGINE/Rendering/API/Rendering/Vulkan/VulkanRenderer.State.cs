@@ -20,6 +20,7 @@ public unsafe partial class VulkanRenderer
     private readonly VulkanResourceAllocator _resourceAllocator = new();
     private readonly VulkanBarrierPlanner _barrierPlanner = new();
     private VulkanCompiledRenderGraph _compiledRenderGraph = VulkanCompiledRenderGraph.Empty;
+    private int? _lastResourcePlanningSignature;
     private readonly Dictionary<string, XRDataBuffer> _trackedBuffersByName = new(StringComparer.OrdinalIgnoreCase);
     internal VulkanResourcePlanner ResourcePlanner => _resourcePlanner;
     internal VulkanResourcePlan ResourcePlan => _resourcePlanner.CurrentPlan;
@@ -483,11 +484,17 @@ public unsafe partial class VulkanRenderer
     {
         _resourcePlanner.Sync(context.ResourceRegistry);
         _resourceAllocator.UpdatePlan(_resourcePlanner.CurrentPlan);
-        _resourceAllocator.RebuildPhysicalPlan(this, context.PassMetadata, _resourcePlanner);
-        _resourceAllocator.AllocatePhysicalImages(this);
-        _resourceAllocator.AllocatePhysicalBuffers(this);
 
-        _compiledRenderGraph = _renderGraphCompiler.Compile(context.PassMetadata);
+        int planningSignature = ComputeResourcePlanningSignature(context.PassMetadata);
+        if (_lastResourcePlanningSignature != planningSignature)
+        {
+            _resourceAllocator.RebuildPhysicalPlan(this, context.PassMetadata, _resourcePlanner);
+            _resourceAllocator.AllocatePhysicalImages(this);
+            _resourceAllocator.AllocatePhysicalBuffers(this);
+            _compiledRenderGraph = _renderGraphCompiler.Compile(context.PassMetadata);
+            _lastResourcePlanningSignature = planningSignature;
+        }
+
         VulkanBarrierPlanner.QueueOwnershipConfig queueOwnership = BuildQueueOwnershipConfig(context.PassMetadata);
         _barrierPlanner.Rebuild(
             context.PassMetadata,
@@ -495,6 +502,49 @@ public unsafe partial class VulkanRenderer
             _resourceAllocator,
             _compiledRenderGraph.Synchronization,
             queueOwnership);
+    }
+
+    private int ComputeResourcePlanningSignature(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
+    {
+        HashCode hash = new();
+        hash.Add(swapChainExtent.Width);
+        hash.Add(swapChainExtent.Height);
+
+        foreach (VulkanAllocationRequest request in _resourcePlanner.CurrentPlan.AllTextures())
+        {
+            hash.Add(request.Name, StringComparer.OrdinalIgnoreCase);
+            hash.Add((int)request.Lifetime);
+            hash.Add(request.AliasKey);
+        }
+
+        foreach (VulkanBufferAllocationRequest request in _resourcePlanner.CurrentPlan.AllBuffers())
+        {
+            hash.Add(request.Name, StringComparer.OrdinalIgnoreCase);
+            hash.Add((int)request.Lifetime);
+            hash.Add(request.AliasKey);
+        }
+
+        if (passMetadata is not null)
+        {
+            hash.Add(passMetadata.Count);
+            foreach (RenderPassMetadata pass in passMetadata.OrderBy(static p => p.PassIndex))
+            {
+                hash.Add(pass.PassIndex);
+                hash.Add((int)pass.Stage);
+                hash.Add(pass.Name, StringComparer.Ordinal);
+
+                foreach (RenderPassResourceUsage usage in pass.ResourceUsages)
+                {
+                    hash.Add(usage.ResourceName, StringComparer.Ordinal);
+                    hash.Add((int)usage.ResourceType);
+                    hash.Add((int)usage.Access);
+                    hash.Add((int)usage.LoadOp);
+                    hash.Add((int)usage.StoreOp);
+                }
+            }
+        }
+
+        return hash.ToHashCode();
     }
 
     private VulkanBarrierPlanner.QueueOwnershipConfig BuildQueueOwnershipConfig(IReadOnlyCollection<RenderPassMetadata>? passMetadata)
@@ -727,23 +777,42 @@ public unsafe partial class VulkanRenderer
                 throw new Exception($"Failed to create Vulkan image for resource group '{group.Key}'. Result={result}.");
         }
 
-        Api!.GetImageMemoryRequirements(device, image, out MemoryRequirements memRequirements);
-
-        MemoryAllocateInfo allocInfo = new()
+        try
         {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = memRequirements.Size,
-            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
-        };
+            Api!.GetImageMemoryRequirements(device, image, out MemoryRequirements memRequirements);
 
-        fixed (DeviceMemory* memPtr = &memory)
-        {
-            AllocateMemory(allocInfo, memPtr);
+            MemoryAllocateInfo allocInfo = new()
+            {
+                SType = StructureType.MemoryAllocateInfo,
+                AllocationSize = memRequirements.Size,
+                MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
+            };
+
+            fixed (DeviceMemory* memPtr = &memory)
+            {
+                AllocateMemory(allocInfo, memPtr);
+            }
+
+            Result bindResult = Api!.BindImageMemory(device, image, memory, 0);
+            if (bindResult != Result.Success)
+                throw new Exception($"Failed to bind device memory for Vulkan image group '{group.Key}'. Result={bindResult}.");
         }
+        catch
+        {
+            if (memory.Handle != 0)
+            {
+                Api!.FreeMemory(device, memory, null);
+                memory = default;
+            }
 
-        Result bindResult = Api!.BindImageMemory(device, image, memory, 0);
-        if (bindResult != Result.Success)
-            throw new Exception($"Failed to bind device memory for Vulkan image group '{group.Key}'. Result={bindResult}.");
+            if (image.Handle != 0)
+            {
+                Api!.DestroyImage(device, image, null);
+                image = default;
+            }
+
+            throw;
+        }
     }
 
     internal void DestroyPhysicalImage(ref Image image, ref DeviceMemory memory)
@@ -781,21 +850,40 @@ public unsafe partial class VulkanRenderer
                 throw new Exception($"Failed to create Vulkan buffer for resource group '{group.Key}'. Result={createResult}.");
         }
 
-        Api!.GetBufferMemoryRequirements(device, buffer, out MemoryRequirements memRequirements);
-
-        MemoryAllocateInfo allocInfo = new()
+        try
         {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = memRequirements.Size,
-            MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
-        };
+            Api!.GetBufferMemoryRequirements(device, buffer, out MemoryRequirements memRequirements);
 
-        fixed (DeviceMemory* memPtr = &memory)
-            AllocateMemory(allocInfo, memPtr);
+            MemoryAllocateInfo allocInfo = new()
+            {
+                SType = StructureType.MemoryAllocateInfo,
+                AllocationSize = memRequirements.Size,
+                MemoryTypeIndex = FindMemoryType(memRequirements.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit)
+            };
 
-        Result bindResult = Api!.BindBufferMemory(device, buffer, memory, 0);
-        if (bindResult != Result.Success)
-            throw new Exception($"Failed to bind device memory for Vulkan buffer group '{group.Key}'. Result={bindResult}.");
+            fixed (DeviceMemory* memPtr = &memory)
+                AllocateMemory(allocInfo, memPtr);
+
+            Result bindResult = Api!.BindBufferMemory(device, buffer, memory, 0);
+            if (bindResult != Result.Success)
+                throw new Exception($"Failed to bind device memory for Vulkan buffer group '{group.Key}'. Result={bindResult}.");
+        }
+        catch
+        {
+            if (memory.Handle != 0)
+            {
+                Api!.FreeMemory(device, memory, null);
+                memory = default;
+            }
+
+            if (buffer.Handle != 0)
+            {
+                Api!.DestroyBuffer(device, buffer, null);
+                buffer = default;
+            }
+
+            throw;
+        }
     }
 
     internal void DestroyPhysicalBuffer(ref Buffer buffer, ref DeviceMemory memory)

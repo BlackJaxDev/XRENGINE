@@ -787,7 +787,7 @@ public unsafe partial class VulkanRenderer
         if (_imguiVertexBuffer.Handle == 0 || _imguiVertexBufferSize < requiredVertexBytes)
         {
             if (_imguiVertexBuffer.Handle != 0)
-                DestroyBuffer(_imguiVertexBuffer, _imguiVertexBufferMemory);
+                RetireBuffer(_imguiVertexBuffer, _imguiVertexBufferMemory);
 
             (_imguiVertexBuffer, _imguiVertexBufferMemory) = CreateBufferRaw(
                 requiredVertexBytes,
@@ -799,7 +799,7 @@ public unsafe partial class VulkanRenderer
         if (_imguiIndexBuffer.Handle == 0 || _imguiIndexBufferSize < requiredIndexBytes)
         {
             if (_imguiIndexBuffer.Handle != 0)
-                DestroyBuffer(_imguiIndexBuffer, _imguiIndexBufferMemory);
+                RetireBuffer(_imguiIndexBuffer, _imguiIndexBufferMemory);
 
             (_imguiIndexBuffer, _imguiIndexBufferMemory) = CreateBufferRaw(
                 requiredIndexBytes,

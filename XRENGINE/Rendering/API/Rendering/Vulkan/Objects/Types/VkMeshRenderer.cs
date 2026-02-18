@@ -172,7 +172,7 @@ public unsafe partial class VulkanRenderer
 	/// </summary>
 	public class VkMeshRenderer(VulkanRenderer api, XRMeshRenderer.BaseVersion data) : VkObject<XRMeshRenderer.BaseVersion>(api, data)
 	{
-		private readonly Dictionary<string, VkDataBuffer> _bufferCache = new(StringComparer.Ordinal);
+		private readonly Dictionary<string, VkDataBuffer> _bufferCache = new(StringComparer.OrdinalIgnoreCase);
 		private VkDataBuffer? _triangleIndexBuffer;
 		private VkDataBuffer? _lineIndexBuffer;
 		private VkDataBuffer? _pointIndexBuffer;
@@ -219,6 +219,7 @@ public unsafe partial class VulkanRenderer
 		private readonly HashSet<string> _engineUniformWarnings = new(StringComparer.Ordinal);
 		private readonly Dictionary<string, AutoUniformBuffer[]> _autoUniformBuffers = new(StringComparer.Ordinal);
 		private readonly HashSet<string> _autoUniformWarnings = new(StringComparer.Ordinal);
+		private EngineUniformBuffer _fallbackStorageBuffer;
 		private const string VertexUniformSuffix = "_VTX";
 
 		private readonly struct EngineUniformBuffer
@@ -918,7 +919,7 @@ public unsafe partial class VulkanRenderer
 			if (_vertexBindings.Length == 0)
 				return true;
 
-			foreach (VertexInputBindingDescription binding in _vertexBindings.OrderBy(b => b.Binding))
+            foreach (VertexInputBindingDescription binding in _vertexBindings.OrderBy(b => b.Binding))
 			{
 				if (!_vertexBuffersByBinding.TryGetValue(binding.Binding, out VkDataBuffer? sourceBuffer))
 				{
@@ -926,7 +927,8 @@ public unsafe partial class VulkanRenderer
 					return false;
 				}
 
-				sourceBuffer.Generate();
+				if (!sourceBuffer.IsActive)
+					sourceBuffer.Generate();
 				if (sourceBuffer.BufferHandle is not { } handle || handle.Handle == 0)
 				{
 					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} buffer is not allocated.");
@@ -1239,6 +1241,7 @@ public unsafe partial class VulkanRenderer
 
 					case DescriptorType.CombinedImageSampler:
 					case DescriptorType.SampledImage:
+					case DescriptorType.Sampler:
 					case DescriptorType.StorageImage:
 						if (!TryResolveImages(binding, material, descriptorCount, imageInfos, out int imageStart))
 							return false;
@@ -1307,19 +1310,56 @@ public unsafe partial class VulkanRenderer
 			bufferInfo = default;
 
 			VkDataBuffer? buffer = null;
-			if (!string.IsNullOrWhiteSpace(binding.Name) && _bufferCache.TryGetValue(binding.Name, out buffer))
+			if (!string.IsNullOrWhiteSpace(binding.Name))
 			{
-				// found by name
+				if (_bufferCache.TryGetValue(binding.Name, out buffer))
+				{
+					// found by name
+				}
+				else
+				{
+					string normalizedName = NormalizeEngineUniformName(binding.Name);
+					if (!string.Equals(normalizedName, binding.Name, StringComparison.Ordinal) && _bufferCache.TryGetValue(normalizedName, out buffer))
+					{
+						// found by normalized name
+					}
+				}
 			}
 
-			buffer ??= _bufferCache.Values.FirstOrDefault(b => b.Data.Target is EBufferTarget.UniformBuffer or EBufferTarget.ShaderStorageBuffer);
+			if (buffer is null)
+				buffer = TryResolveBufferByBindingSlot(binding.Binding, binding.DescriptorType, requireCompatibleTarget: true);
 
 			if (buffer is null)
 			{
-				if (TryResolveAutoUniformBuffer(binding, frameIndex, out bufferInfo))
+				buffer = TryResolveBufferByBindingSlot(binding.Binding, binding.DescriptorType, requireCompatibleTarget: false);
+				if (buffer is not null)
+				{
+					WarnOnce($"Using buffer '{buffer.Data.AttributeName}' for descriptor set {binding.Set}, binding {binding.Binding} despite non-standard target '{buffer.Data.Target}'.");
+				}
+			}
+
+			buffer ??= binding.DescriptorType switch
+			{
+				DescriptorType.UniformBuffer => _bufferCache.Values.FirstOrDefault(b => b.Data.Target == EBufferTarget.UniformBuffer),
+				DescriptorType.StorageBuffer => _bufferCache.Values.FirstOrDefault(b => b.Data.Target == EBufferTarget.ShaderStorageBuffer),
+				_ => _bufferCache.Values.FirstOrDefault(b => b.Data.Target is EBufferTarget.UniformBuffer or EBufferTarget.ShaderStorageBuffer),
+			};
+
+			if (buffer is null)
+			{
+				if (binding.DescriptorType == DescriptorType.UniformBuffer)
+				{
+					if (TryResolveAutoUniformBuffer(binding, frameIndex, out bufferInfo))
+						return true;
+
+					return TryResolveEngineUniformBuffer(binding, frameIndex, out bufferInfo);
+				}
+
+				if (binding.DescriptorType == DescriptorType.StorageBuffer && TryResolveFallbackStorageBuffer(out bufferInfo))
 					return true;
 
-				return TryResolveEngineUniformBuffer(binding, frameIndex, out bufferInfo);
+				WarnOnce($"No storage buffer available for descriptor binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}).");
+				return false;
 			}
 
 			buffer.Generate();
@@ -1339,33 +1379,65 @@ public unsafe partial class VulkanRenderer
 			return true;
 		}
 
+		private bool TryResolveFallbackStorageBuffer(out DescriptorBufferInfo bufferInfo)
+		{
+			bufferInfo = default;
+
+			if (_fallbackStorageBuffer.Buffer.Handle == 0)
+			{
+				const uint fallbackSize = 16u;
+				if (!CreateHostVisibleBuffer(fallbackSize, BufferUsageFlags.StorageBufferBit, out Silk.NET.Vulkan.Buffer buffer, out DeviceMemory memory))
+					return false;
+
+				_fallbackStorageBuffer = new EngineUniformBuffer(buffer, memory, fallbackSize);
+			}
+
+			bufferInfo = new DescriptorBufferInfo
+			{
+				Buffer = _fallbackStorageBuffer.Buffer,
+				Offset = 0,
+				Range = _fallbackStorageBuffer.Size,
+			};
+
+			return true;
+		}
+
+		private VkDataBuffer? TryResolveBufferByBindingSlot(uint bindingSlot, DescriptorType descriptorType, bool requireCompatibleTarget)
+		{
+			foreach (VkDataBuffer candidate in _bufferCache.Values)
+			{
+				if (candidate.Data.BindingIndexOverride != bindingSlot)
+					continue;
+
+				if (requireCompatibleTarget && !IsCompatibleBufferTarget(candidate.Data.Target, descriptorType))
+					continue;
+
+				return candidate;
+			}
+
+			return null;
+		}
+
+		private static bool IsCompatibleBufferTarget(EBufferTarget target, DescriptorType descriptorType)
+			=> descriptorType switch
+			{
+				DescriptorType.UniformBuffer => target is EBufferTarget.UniformBuffer or EBufferTarget.ParameterBuffer,
+				DescriptorType.StorageBuffer => target is EBufferTarget.ShaderStorageBuffer or EBufferTarget.AtomicCounterBuffer or EBufferTarget.TransformFeedbackBuffer,
+				_ => target is EBufferTarget.UniformBuffer or EBufferTarget.ShaderStorageBuffer,
+			};
+
 		private bool TryResolveImage(DescriptorBindingInfo binding, XRMaterial material, DescriptorType descriptorType, out DescriptorImageInfo imageInfo, int arrayIndex = 0)
 		{
 			imageInfo = default;
-			XRTexture? texture = null;
-
-			if (material.Textures is { Count: > 0 })
+			int preferredIndex = (int)binding.Binding + arrayIndex;
+			if (!TryResolveCompatibleImageSource(material, descriptorType, preferredIndex, out IVkImageDescriptorSource? source))
 			{
-				int idx = (int)binding.Binding + arrayIndex;
-				if (idx >= 0 && idx < material.Textures.Count)
-					texture = material.Textures[idx];
-
-				texture ??= material.Textures.FirstOrDefault(t => t is not null);
-			}
-
-			if (texture is null)
-			{
-				WarnOnce($"No texture available for descriptor binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}).");
+				string requirement = descriptorType == DescriptorType.StorageImage ? "storage" : "sampled";
+				WarnOnce($"No compatible {requirement} texture available for descriptor binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}).");
 				return false;
 			}
 
-			if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
-			{
-				WarnOnce($"Texture for descriptor binding '{binding.Name}' is not a Vulkan texture.");
-				return false;
-			}
-
-			bool requiresSampledUsage = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or DescriptorType.Sampler;
+			bool requiresSampledUsage = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage;
 			if (requiresSampledUsage && (source.DescriptorUsage & ImageUsageFlags.SampledBit) == 0)
 			{
 				WarnOnce($"Texture for descriptor binding '{binding.Name}' is missing VK_IMAGE_USAGE_SAMPLED_BIT.");
@@ -1382,9 +1454,58 @@ public unsafe partial class VulkanRenderer
 			{
 				ImageLayout = descriptorType == DescriptorType.StorageImage ? ImageLayout.General : ImageLayout.ShaderReadOnlyOptimal,
 				ImageView = source.DescriptorView,
-				Sampler = descriptorType == DescriptorType.CombinedImageSampler ? source.DescriptorSampler : default,
+				Sampler = descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler ? source.DescriptorSampler : default,
 			};
+
+			if (descriptorType == DescriptorType.Sampler)
+				return imageInfo.Sampler.Handle != 0;
+
 			return imageInfo.ImageView.Handle != 0;
+		}
+
+		private bool TryResolveCompatibleImageSource(XRMaterial material, DescriptorType descriptorType, int preferredIndex, [NotNullWhen(true)] out IVkImageDescriptorSource? source)
+		{
+			source = null;
+			if (material.Textures is not { Count: > 0 })
+				return false;
+
+			if (preferredIndex >= 0 && preferredIndex < material.Textures.Count &&
+				TryResolveImageSource(material.Textures[preferredIndex], descriptorType, out source))
+			{
+				return true;
+			}
+
+			foreach (XRTexture? texture in material.Textures)
+			{
+				if (TryResolveImageSource(texture, descriptorType, out source))
+					return true;
+			}
+
+			return false;
+		}
+
+		private bool TryResolveImageSource(XRTexture? texture, DescriptorType descriptorType, [NotNullWhen(true)] out IVkImageDescriptorSource? source)
+		{
+			source = null;
+			if (texture is null)
+				return false;
+
+			if (Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource candidate)
+				return false;
+
+			if (descriptorType == DescriptorType.StorageImage)
+			{
+				if ((candidate.DescriptorUsage & ImageUsageFlags.StorageBit) == 0)
+					return false;
+			}
+			else if (descriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage)
+			{
+				if ((candidate.DescriptorUsage & ImageUsageFlags.SampledBit) == 0)
+					return false;
+			}
+
+			source = candidate;
+			return true;
 		}
 
 		private bool TryResolveTexelBuffer(DescriptorBindingInfo binding, XRMaterial material, out BufferView texelView, int arrayIndex = 0)
@@ -1422,7 +1543,13 @@ public unsafe partial class VulkanRenderer
 				bufferInfo = default;
 				string name = binding.Name ?? string.Empty;
 				if (string.IsNullOrWhiteSpace(name))
+				{
+					if (TryResolveAutoUniformBuffer(binding, frameIndex, out bufferInfo))
+						return true;
+
+					WarnOnce($"Descriptor binding at set {binding.Set}, binding {binding.Binding} has no reflected name and could not be resolved as an auto uniform block.");
 					return false;
+				}
 
 				uint size = GetEngineUniformSize(name);
 				if (size == 0)
@@ -1455,10 +1582,15 @@ public unsafe partial class VulkanRenderer
 			private bool TryResolveAutoUniformBuffer(DescriptorBindingInfo binding, int frameIndex, out DescriptorBufferInfo bufferInfo)
 			{
 				bufferInfo = default;
-				if (binding.Name is null || _program is null)
+				if (_program is null)
 					return false;
 
-				if (!_program.TryGetAutoUniformBlock(binding.Name, out AutoUniformBlockInfo block))
+				AutoUniformBlockInfo? block = null;
+				if (!string.IsNullOrWhiteSpace(binding.Name) && _program.TryGetAutoUniformBlock(binding.Name, out AutoUniformBlockInfo namedBlock))
+					block = namedBlock;
+
+				block ??= _program.AutoUniformBlocks.Values.FirstOrDefault(x => x.Set == binding.Set && x.Binding == binding.Binding);
+				if (block is null)
 					return false;
 
 				uint size = Math.Max(block.Size, 1u);
@@ -1688,7 +1820,7 @@ public unsafe partial class VulkanRenderer
 
 						uint elementOffset = member.Offset + (uint)i * member.ArrayStride;
 						AutoUniformMember elementMember = member with { Offset = elementOffset, IsArray = false, ArrayLength = 0, ArrayStride = 0 };
-						TryWriteAutoUniformValue(data, elementMember, element, value.Type);
+                    TryWriteAutoUniformValue(data, elementMember, element, value.Type);
 					}
 
 					return true;
@@ -1931,7 +2063,7 @@ public unsafe partial class VulkanRenderer
 				return false;
 			}
 
-			private bool TryWriteAutoUniformValue(Span<byte> data, AutoUniformMember member, object value, EShaderVarType valueType)
+			private static bool TryWriteAutoUniformValue(Span<byte> data, AutoUniformMember member, object value, EShaderVarType valueType)
 			{
 				if (member.EngineType is null)
 					return false;
@@ -1940,39 +2072,24 @@ public unsafe partial class VulkanRenderer
 					return false;
 
 				uint offset = member.Offset;
-				switch (member.EngineType.Value)
+				return (object)member.EngineType.Value switch
 				{
-					case EShaderVarType._float:
-						return TryWriteScalar(data, offset, value, Convert.ToSingle);
-					case EShaderVarType._int:
-						return TryWriteScalar(data, offset, value, Convert.ToInt32);
-					case EShaderVarType._uint:
-						return TryWriteScalar(data, offset, value, Convert.ToUInt32);
-					case EShaderVarType._bool:
-						return TryWriteScalar(data, offset, value, v => Convert.ToBoolean(v) ? 1 : 0);
-					case EShaderVarType._vec2:
-						return TryWriteVector2(data, offset, value);
-					case EShaderVarType._vec3:
-						return TryWriteVector3(data, offset, value);
-					case EShaderVarType._vec4:
-						return TryWriteVector4(data, offset, value);
-					case EShaderVarType._ivec2:
-						return TryWriteIVector2(data, offset, value);
-					case EShaderVarType._ivec3:
-						return TryWriteIVector3(data, offset, value);
-					case EShaderVarType._ivec4:
-						return TryWriteIVector4(data, offset, value);
-					case EShaderVarType._uvec2:
-						return TryWriteUVector2(data, offset, value);
-					case EShaderVarType._uvec3:
-						return TryWriteUVector3(data, offset, value);
-					case EShaderVarType._uvec4:
-						return TryWriteUVector4(data, offset, value);
-					case EShaderVarType._mat4:
-						return TryWriteMatrix4(data, offset, value);
-					default:
-						return false;
-				}
+					EShaderVarType._float => TryWriteScalar(data, offset, value, Convert.ToSingle),
+					EShaderVarType._int => TryWriteScalar(data, offset, value, Convert.ToInt32),
+					EShaderVarType._uint => TryWriteScalar(data, offset, value, Convert.ToUInt32),
+					EShaderVarType._bool => TryWriteScalar(data, offset, value, v => Convert.ToBoolean(v) ? 1 : 0),
+					EShaderVarType._vec2 => TryWriteVector2(data, offset, value),
+					EShaderVarType._vec3 => TryWriteVector3(data, offset, value),
+					EShaderVarType._vec4 => TryWriteVector4(data, offset, value),
+					EShaderVarType._ivec2 => TryWriteIVector2(data, offset, value),
+					EShaderVarType._ivec3 => TryWriteIVector3(data, offset, value),
+					EShaderVarType._ivec4 => TryWriteIVector4(data, offset, value),
+					EShaderVarType._uvec2 => TryWriteUVector2(data, offset, value),
+					EShaderVarType._uvec3 => TryWriteUVector3(data, offset, value),
+					EShaderVarType._uvec4 => TryWriteUVector4(data, offset, value),
+					EShaderVarType._mat4 => TryWriteMatrix4(data, offset, value),
+					_ => false,
+				};
 			}
 
 			private static bool AreCompatible(EShaderVarType expected, EShaderVarType actual)
@@ -1994,9 +2111,23 @@ public unsafe partial class VulkanRenderer
 
 			private static bool TryWriteScalar<T>(Span<byte> data, uint offset, object value, Func<object, T> converter) where T : unmanaged
 			{
+				object candidate = value;
+				if (candidate is Array array)
+				{
+					if (array.Length == 0)
+						return false;
+
+					candidate = array.GetValue(0)!;
+					if (candidate is null)
+						return false;
+				}
+
+				if (candidate is not IConvertible && candidate is not T)
+					return false;
+
 				try
 				{
-					T converted = converter(value);
+					T converted = converter(candidate);
 					Unsafe.WriteUnaligned(ref data[(int)offset], converted);
 					return true;
 				}
@@ -2323,6 +2454,14 @@ public unsafe partial class VulkanRenderer
 				};
 			}
 
+			private void RetireUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)
+			{
+				if (buffer.Handle != 0)
+					Renderer.RetireBuffer(buffer, memory);
+				else if (memory.Handle != 0)
+					Api!.FreeMemory(Device, memory, null);
+			}
+
 			private void DestroyEngineUniformBuffers(string? singleName = null)
 			{
 				if (singleName is not null)
@@ -2330,12 +2469,7 @@ public unsafe partial class VulkanRenderer
 					if (_engineUniformBuffers.TryGetValue(singleName, out EngineUniformBuffer[]? toDestroy))
 					{
 						foreach (EngineUniformBuffer buf in toDestroy)
-						{
-							if (buf.Buffer.Handle != 0)
-								Api!.DestroyBuffer(Device, buf.Buffer, null);
-							if (buf.Memory.Handle != 0)
-								Api!.FreeMemory(Device, buf.Memory, null);
-						}
+							RetireUniformBuffer(buf.Buffer, buf.Memory);
 					}
 
 					_engineUniformBuffers.Remove(singleName);
@@ -2345,12 +2479,7 @@ public unsafe partial class VulkanRenderer
 				foreach (EngineUniformBuffer[] buffers in _engineUniformBuffers.Values)
 				{
 					foreach (EngineUniformBuffer buf in buffers)
-					{
-						if (buf.Buffer.Handle != 0)
-							Api!.DestroyBuffer(Device, buf.Buffer, null);
-						if (buf.Memory.Handle != 0)
-							Api!.FreeMemory(Device, buf.Memory, null);
-					}
+						RetireUniformBuffer(buf.Buffer, buf.Memory);
 				}
 
 				_engineUniformBuffers.Clear();
@@ -2363,12 +2492,7 @@ public unsafe partial class VulkanRenderer
 					if (_autoUniformBuffers.TryGetValue(singleName, out AutoUniformBuffer[]? toDestroy))
 					{
 						foreach (AutoUniformBuffer buf in toDestroy)
-						{
-							if (buf.Buffer.Handle != 0)
-								Api!.DestroyBuffer(Device, buf.Buffer, null);
-							if (buf.Memory.Handle != 0)
-								Api!.FreeMemory(Device, buf.Memory, null);
-						}
+							RetireUniformBuffer(buf.Buffer, buf.Memory);
 					}
 
 				_autoUniformBuffers.Remove(singleName);
@@ -2378,12 +2502,7 @@ public unsafe partial class VulkanRenderer
 			foreach (AutoUniformBuffer[] buffers in _autoUniformBuffers.Values)
 			{
 				foreach (AutoUniformBuffer buf in buffers)
-				{
-					if (buf.Buffer.Handle != 0)
-						Api!.DestroyBuffer(Device, buf.Buffer, null);
-					if (buf.Memory.Handle != 0)
-						Api!.FreeMemory(Device, buf.Memory, null);
-				}
+					RetireUniformBuffer(buf.Buffer, buf.Memory);
 			}
 
 			_autoUniformBuffers.Clear();
@@ -2397,6 +2516,12 @@ public unsafe partial class VulkanRenderer
 
 			DestroyEngineUniformBuffers();
 			DestroyAutoUniformBuffers();
+
+			if (_fallbackStorageBuffer.Buffer.Handle != 0 || _fallbackStorageBuffer.Memory.Handle != 0)
+			{
+				RetireUniformBuffer(_fallbackStorageBuffer.Buffer, _fallbackStorageBuffer.Memory);
+				_fallbackStorageBuffer = default;
+			}
 
 			if (_descriptorPool.Handle != 0)
 			{
