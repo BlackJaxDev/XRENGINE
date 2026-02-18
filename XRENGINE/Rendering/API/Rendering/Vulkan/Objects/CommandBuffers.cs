@@ -500,6 +500,10 @@ namespace XREngine.Rendering.Vulkan
             EmitPlannedBufferBarriers(commandBuffer, swapchainBufferBarriers);
             CmdEndLabel(commandBuffer);
 
+            // Transition any freshly-allocated physical images from UNDEFINED to
+            // a safe initial layout so that render passes never see UNDEFINED.
+            EmitInitialImageLayoutTransitions(commandBuffer);
+
             int clearCount = 0;
             int drawCount = 0;
             int blitCount = 0;
@@ -1564,6 +1568,77 @@ namespace XREngine.Rendering.Vulkan
             dstAccess = dstAccessLocal;
         }
 
+        /// <summary>
+        /// Emits UNDEFINED → target layout transitions for every freshly-allocated
+        /// physical image that has not yet been transitioned.  This is a belt-and-
+        /// suspenders guard that prevents device-lost errors caused by render passes
+        /// encountering images in UNDEFINED layout.
+        /// </summary>
+        private void EmitInitialImageLayoutTransitions(CommandBuffer commandBuffer)
+        {
+            foreach (VulkanPhysicalImageGroup group in _resourceAllocator.EnumeratePhysicalGroups())
+            {
+                if (!group.IsAllocated || !group.NeedsInitialTransition)
+                    continue;
+
+                bool isDepth = group.Format is Format.D16Unorm
+                    or Format.D32Sfloat
+                    or Format.D24UnormS8Uint
+                    or Format.D32SfloatS8Uint
+                    or Format.X8D24UnormPack32
+                    or Format.D16UnormS8Uint;
+
+                bool hasStencil = group.Format is Format.D24UnormS8Uint
+                    or Format.D32SfloatS8Uint
+                    or Format.D16UnormS8Uint;
+
+                ImageAspectFlags aspect = isDepth
+                    ? (hasStencil ? ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit : ImageAspectFlags.DepthBit)
+                    : ImageAspectFlags.ColorBit;
+
+                ImageLayout targetLayout = isDepth
+                    ? ImageLayout.DepthStencilAttachmentOptimal
+                    : ImageLayout.ColorAttachmentOptimal;
+
+                ImageSubresourceRange range = new()
+                {
+                    AspectMask = aspect,
+                    BaseMipLevel = 0,
+                    LevelCount = Vk.RemainingMipLevels,
+                    BaseArrayLayer = 0,
+                    LayerCount = Math.Max(group.Template.Layers, 1u)
+                };
+
+                ImageMemoryBarrier barrier = new()
+                {
+                    SType = StructureType.ImageMemoryBarrier,
+                    SrcAccessMask = AccessFlags.None,
+                    DstAccessMask = isDepth
+                        ? AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit
+                        : AccessFlags.ColorAttachmentWriteBit,
+                    OldLayout = ImageLayout.Undefined,
+                    NewLayout = targetLayout,
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    Image = group.Image,
+                    SubresourceRange = range
+                };
+
+                Api!.CmdPipelineBarrier(
+                    commandBuffer,
+                    PipelineStageFlags.TopOfPipeBit,
+                    isDepth
+                        ? PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit
+                        : PipelineStageFlags.ColorAttachmentOutputBit,
+                    DependencyFlags.None,
+                    0, null,
+                    0, null,
+                    1, &barrier);
+
+                group.ClearInitialTransitionFlag();
+            }
+        }
+
         private void EmitPlannedImageBarriers(CommandBuffer commandBuffer, IReadOnlyList<VulkanBarrierPlanner.PlannedImageBarrier>? plannedBarriers)
         {
             if (plannedBarriers is null || plannedBarriers.Count == 0)
@@ -1965,20 +2040,81 @@ namespace XREngine.Rendering.Vulkan
                 PCommandBuffers = &commandBuffer,
             };
 
-            lock (_oneTimeSubmitLock)
+            bool safeToFree = false;
+            Result submitResult = Result.ErrorUnknown;
+            Result waitResult = Result.Success;
+
+            FenceCreateInfo fenceCreateInfo = new()
             {
-                Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, default);
-                Api!.QueueWaitIdle(graphicsQueue);
+                SType = StructureType.FenceCreateInfo,
+                Flags = 0
+            };
+
+            Result fenceResult = Api!.CreateFence(device, ref fenceCreateInfo, null, out Fence submitFence);
+            if (fenceResult != Result.Success)
+            {
+                // Cannot synchronise — log and bail without freeing (leaks the CB but avoids UB).
+                Debug.VulkanWarning($"[Vulkan] CommandsStop: failed to create fence ({fenceResult}). Leaking command buffer.");
+                return;
             }
 
-            CommandPool pool = GetThreadCommandPool();
-            lock (_oneTimeCommandPoolsLock)
+            try
             {
-                if (_oneTimeCommandPools.Remove(commandBuffer.Handle, out CommandPool ownerPool) && ownerPool.Handle != 0)
-                    pool = ownerPool;
-            }
+                lock (_oneTimeSubmitLock)
+                {
+                    submitResult = Api!.QueueSubmit(graphicsQueue, 1, ref submitInfo, submitFence);
+                }
 
-            Api!.FreeCommandBuffers(device, pool, 1, ref commandBuffer);
+                if (submitResult == Result.Success)
+                    waitResult = Api!.WaitForFences(device, 1, ref submitFence, true, 5_000_000_000UL);
+
+                safeToFree = submitResult != Result.Success || waitResult == Result.Success;
+
+                // Device-lost is unrecoverable at the submit/fence level — log it instead of
+                // throwing so callers can unwind gracefully without cascading exceptions that
+                // freeze the application.
+                if (submitResult == Result.ErrorDeviceLost || waitResult == Result.ErrorDeviceLost)
+                {
+                    Debug.VulkanWarning(
+                        $"[Vulkan] CommandsStop: device lost (submit={submitResult}, wait={waitResult}). " +
+                        "GPU state is unrecoverable; further rendering may fail.");
+                    safeToFree = true; // device-lost means nothing is pending
+                    return;
+                }
+
+                if (submitResult != Result.Success)
+                {
+                    Debug.VulkanWarning($"[Vulkan] CommandsStop: submit failed ({submitResult}).");
+                    return;
+                }
+
+                if (waitResult == Result.Timeout)
+                {
+                    Debug.VulkanWarning("[Vulkan] CommandsStop: timed out waiting for one-time command completion.");
+                    safeToFree = false;
+                    return;
+                }
+
+                if (waitResult != Result.Success)
+                {
+                    Debug.VulkanWarning($"[Vulkan] CommandsStop: fence wait failed ({waitResult}).");
+                    return;
+                }
+            }
+            finally
+            {
+                Api!.DestroyFence(device, submitFence, null);
+
+                CommandPool pool = GetThreadCommandPool();
+                lock (_oneTimeCommandPoolsLock)
+                {
+                    if (_oneTimeCommandPools.Remove(commandBuffer.Handle, out CommandPool ownerPool) && ownerPool.Handle != 0)
+                        pool = ownerPool;
+                }
+
+                if (safeToFree)
+                    Api!.FreeCommandBuffers(device, pool, 1, ref commandBuffer);
+            }
         }
 
         private void AllocateCommandBufferDirtyFlags()

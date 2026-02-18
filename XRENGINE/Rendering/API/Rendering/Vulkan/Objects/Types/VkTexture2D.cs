@@ -26,6 +26,7 @@ public unsafe partial class VulkanRenderer
         private Image _image;
         private DeviceMemory _memory;
         private ImageView _view;
+        private ImageView _descriptorView; // depth-only view for sampled depth/stencil descriptors
         private Sampler _sampler;
         private bool _ownsImageMemory;
         private VulkanPhysicalImageGroup? _physicalGroup;
@@ -47,7 +48,7 @@ public unsafe partial class VulkanRenderer
         internal Sampler Sampler => _sampler;
         internal bool UsesAllocatorImage => _physicalGroup is not null;
         Image IVkImageDescriptorSource.DescriptorImage => _image;
-        ImageView IVkImageDescriptorSource.DescriptorView => _view;
+        ImageView IVkImageDescriptorSource.DescriptorView => _descriptorView.Handle != 0 ? _descriptorView : _view;
         Sampler IVkImageDescriptorSource.DescriptorSampler => _sampler;
         Format IVkImageDescriptorSource.DescriptorFormat => ResolvedFormat;
         ImageAspectFlags IVkImageDescriptorSource.DescriptorAspect => AspectFlags;
@@ -238,6 +239,7 @@ public unsafe partial class VulkanRenderer
         private void CreateImageView(AttachmentViewKey key)
         {
             DestroyView(ref _view);
+            DestroyView(ref _descriptorView);
 
             ImageAspectFlags normalizedAspect = NormalizeAspectMaskForFormat(ResolvedFormat, AspectFlags);
             AspectFlags = normalizedAspect;
@@ -247,6 +249,22 @@ public unsafe partial class VulkanRenderer
                 : key;
 
             _view = CreateView(descriptor);
+
+            // For depth/stencil formats with both aspects, Vulkan requires that a
+            // sampled descriptor image view has exactly ONE aspect.  Create a
+            // depth-only view for use as the DescriptorView when sampling.
+            bool hasStencil = ResolvedFormat is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
+            if (hasStencil && (Usage & ImageUsageFlags.SampledBit) != 0)
+            {
+                AttachmentViewKey depthOnlyKey = new(
+                    descriptor.BaseMipLevel,
+                    descriptor.LevelCount,
+                    descriptor.BaseArrayLayer,
+                    descriptor.LayerCount,
+                    descriptor.ViewType,
+                    ImageAspectFlags.DepthBit);
+                _descriptorView = CreateView(depthOnlyKey);
+            }
         }
 
         private ImageView CreateView(AttachmentViewKey descriptor)
@@ -320,6 +338,7 @@ public unsafe partial class VulkanRenderer
         private void DestroyAllViews()
         {
             DestroyView(ref _view);
+            DestroyView(ref _descriptorView);
             foreach ((_, ImageView attachmentView) in _attachmentViews)
             {
                 if (attachmentView.Handle != 0)
