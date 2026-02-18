@@ -6,6 +6,7 @@ using XREngine;
 using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Editor;
 
@@ -499,37 +500,49 @@ public static partial class EditorImGuiUI
                 return false;
             }
 
-            var renderer = TryGetOpenGLRenderer();
-            if (renderer is null)
+            if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
             {
-                failureReason = "Preview requires OpenGL renderer";
-                return false;
-            }
-
-            switch (texture)
-            {
-                case XRTexture2D tex2D:
-                    var apiTexture = renderer.GenericToAPI<GLTexture2D>(tex2D);
-                    if (apiTexture is null)
-                    {
-                        failureReason = "Texture not uploaded";
-                        return false;
-                    }
-
-                    uint binding = apiTexture.BindingId;
-                    if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-                    {
-                        failureReason = "Texture not ready";
-                        return false;
-                    }
-
-                    handle = (nint)binding;
-                    return true;
-
-                default:
-                    failureReason = $"{texture.GetType().Name} preview not supported";
+                IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+                if (textureId == IntPtr.Zero)
+                {
+                    failureReason = "Texture not uploaded";
                     return false;
+                }
+
+                handle = (nint)textureId;
+                return true;
             }
+
+            if (AbstractRenderer.Current is OpenGLRenderer renderer)
+            {
+                switch (texture)
+                {
+                    case XRTexture2D tex2D:
+                        var apiTexture = renderer.GenericToAPI<GLTexture2D>(tex2D);
+                        if (apiTexture is null)
+                        {
+                            failureReason = "Texture not uploaded";
+                            return false;
+                        }
+
+                        uint binding = apiTexture.BindingId;
+                        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
+                        {
+                            failureReason = "Texture not ready";
+                            return false;
+                        }
+
+                        handle = (nint)binding;
+                        return true;
+
+                    default:
+                        failureReason = $"{texture.GetType().Name} preview not supported";
+                        return false;
+                }
+            }
+
+            failureReason = "Preview requires OpenGL or Vulkan renderer";
+            return false;
         }
 
         private static Vector2 GetTexturePixelSize(XRTexture texture)

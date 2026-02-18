@@ -5,16 +5,35 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private RenderPass _renderPass;
+    /// <summary>
+    /// A second swapchain render pass that uses <see cref="AttachmentLoadOp.Load"/>
+    /// for the color attachment. Used when re-entering the swapchain render pass
+    /// after a compute dispatch or blit forced it to end, so that previous
+    /// contents (e.g. the composited scene) are preserved instead of cleared.
+    /// </summary>
+    private RenderPass _renderPassLoad;
 
     private void DestroyRenderPasses()
     {
         UnregisterRenderPass(_renderPass);
         Api!.DestroyRenderPass(device, _renderPass, null);
+
+        UnregisterRenderPass(_renderPassLoad);
+        Api!.DestroyRenderPass(device, _renderPassLoad, null);
     }
 
     private void CreateRenderPass()
     {
-        var (colorLoadOp, colorStoreOp) = ResolveSwapchainColorAttachmentOps();
+        _renderPass = CreateSwapchainRenderPass(AttachmentLoadOp.Clear);
+        RegisterRenderPassColorAttachmentCount(_renderPass, 1u);
+
+        _renderPassLoad = CreateSwapchainRenderPass(AttachmentLoadOp.Load);
+        RegisterRenderPassColorAttachmentCount(_renderPassLoad, 1u);
+    }
+
+    private RenderPass CreateSwapchainRenderPass(AttachmentLoadOp colorLoadOp)
+    {
+        AttachmentStoreOp colorStoreOp = AttachmentStoreOp.Store;
 
         // Swapchain images are acquired in PresentSrcKhr layout. If we intend to preserve previous contents
         // (Load), we must declare that as the initial layout. If we clear/don't-care, we can start from Undefined.
@@ -80,10 +99,10 @@ public unsafe partial class VulkanRenderer
             PSubpasses = &subpass,
         };
 
-        if (Api!.CreateRenderPass(device, ref renderPassInfo, null, out _renderPass) != Result.Success)
+        if (Api!.CreateRenderPass(device, ref renderPassInfo, null, out RenderPass renderPass) != Result.Success)
             throw new Exception("Failed to create render pass.");
 
-        RegisterRenderPassColorAttachmentCount(_renderPass, 1u);
+        return renderPass;
     }
 
     private (AttachmentLoadOp load, AttachmentStoreOp store) ResolveSwapchainColorAttachmentOps()

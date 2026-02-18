@@ -440,6 +440,22 @@ namespace XREngine.Rendering
         public abstract void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ);
 
         public abstract void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback);
+
+        public abstract bool TryReadTextureMipRgbaFloat(
+            XRTexture texture,
+            int mipLevel,
+            int layerIndex,
+            out float[]? rgbaFloats,
+            out int width,
+            out int height,
+            out string failure);
+
+        public abstract bool TryReadTexturePixelRgbaFloat(
+            XRTexture texture,
+            int mipLevel,
+            int layerIndex,
+            out Vector4 rgba,
+            out string failure);
         #endregion
 
         #region Blitting

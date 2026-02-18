@@ -619,7 +619,20 @@ public partial class DefaultRenderPipeline : RenderPipeline
             }
         }
 
+        // Auto exposure uses a GPU compute shader dispatch. Schedule it before the
+        // final swapchain output so the compute dispatch does not interrupt (and
+        // force a LoadOp.Clear restart of) the swapchain render pass.
+        // The HDR scene buffer is already fully rendered at this point, so reading
+        // it here produces the same result as reading it after the output blit.
+        string exposureSource = HDRSceneTextureName;
+        c.Add<VPRC_ExposureUpdate>().SetOptions(exposureSource, true);
+
+        // Temporal commit is CPU-side state bookkeeping only (no GPU ops).
+        c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Commit;
+
         // Final output to screen uses the full viewport region (with panel offset if applicable).
+        // All subsequent commands target the swapchain, keeping them in one contiguous
+        // Vulkan render pass so a LoadOp.Clear restart cannot wipe the composited scene.
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
         {
             using (c.AddUsing<VPRC_BindOutputFBO>())
@@ -641,14 +654,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             }
         }
 
-        // Auto exposure should be computed from the scene HDR buffer *before* exposure/tonemapping.
-        // Sampling a post-processed LDR output (e.g. after tonemapping/FXAA) tends to self-normalize
-        // and makes exposure appear to have no effect.
-        string exposureSource = HDRSceneTextureName;
-        c.Add<VPRC_ExposureUpdate>().SetOptions(exposureSource, true);
-
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
-        c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Commit;
         c.Add<VPRC_RenderScreenSpaceUI>();
         return c;
     }

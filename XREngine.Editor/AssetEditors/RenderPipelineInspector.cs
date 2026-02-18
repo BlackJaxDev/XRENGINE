@@ -16,6 +16,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Editor.AssetEditors;
 
@@ -642,84 +643,14 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return false;
         }
 
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null)
         {
-            failure = "Readback requires OpenGL renderer";
+            failure = "Readback requires an active renderer";
             return false;
         }
 
-        if (texture is XRTexture2D tex2D && tex2D.MultiSample)
-        {
-            failure = "Multisample textures do not support mip readback";
-            return false;
-        }
-        if (texture is XRTexture2DArray tex2DArray && tex2DArray.MultiSample)
-        {
-            failure = "Multisample textures do not support mip readback";
-            return false;
-        }
-
-        var apiRenderObject = renderer.GetOrCreateAPIRenderObject(texture);
-        if (apiRenderObject is not OpenGLRenderer.GLObjectBase apiObject)
-        {
-            failure = "Texture not uploaded";
-            return false;
-        }
-
-        uint binding = apiObject.BindingId;
-        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-        {
-            failure = "Texture not ready";
-            return false;
-        }
-
-        if (!TryGetTextureBaseDimensions(texture, out int baseW, out int baseH, out _))
-        {
-            failure = "Unsupported texture type";
-            return false;
-        }
-
-        GetMipDimensions(baseW, baseH, mipLevel, out width, out height);
-
-        var gl = renderer.RawGL;
-
-        if (texture is XRTexture2DArray array)
-        {
-            int layers = Math.Max(1, (int)array.Depth);
-            int clampedLayer = Math.Clamp(layerIndex, 0, layers - 1);
-            int floatCountAll = width * height * 4 * layers;
-            rgbaFloats = ArrayPool<float>.Shared.Rent(floatCountAll);
-
-            unsafe
-            {
-                fixed (float* ptr = rgbaFloats)
-                {
-                    gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)(sizeof(float) * floatCountAll), ptr);
-                }
-            }
-
-            // Slice to requested layer by moving the window start.
-            // Caller expects a buffer for just one layer, so copy out.
-            int floatCountLayer = width * height * 4;
-            float[] layerBuf = ArrayPool<float>.Shared.Rent(floatCountLayer);
-            Array.Copy(rgbaFloats, clampedLayer * floatCountLayer, layerBuf, 0, floatCountLayer);
-            ArrayPool<float>.Shared.Return(rgbaFloats);
-            rgbaFloats = layerBuf;
-            return true;
-        }
-        else
-        {
-            int floatCount = width * height * 4;
-            rgbaFloats = ArrayPool<float>.Shared.Rent(floatCount);
-            unsafe
-            {
-                fixed (float* ptr = rgbaFloats)
-                {
-                    gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)(sizeof(float) * floatCount), ptr);
-                }
-            }
-            return true;
-        }
+        return renderer.TryReadTextureMipRgbaFloat(texture, mipLevel, layerIndex, out rgbaFloats, out width, out height, out failure);
     }
 
     private static Vector3 TonemapReinhard(Vector3 hdr)
@@ -741,7 +672,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         return new Vector3(Saturate(mapped.X), Saturate(mapped.Y), Saturate(mapped.Z));
     }
 
-    private static unsafe bool TryReadBackRgbaFloat(XRTexture texture, int mipLevel, int layerIndex, out Vector4 rgba, out string failure)
+    private static bool TryReadBackRgbaFloat(XRTexture texture, int mipLevel, int layerIndex, out Vector4 rgba, out string failure)
     {
         rgba = Vector4.Zero;
         failure = string.Empty;
@@ -752,60 +683,14 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return false;
         }
 
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null)
         {
-            failure = "Readback requires OpenGL renderer";
+            failure = "Readback requires an active renderer";
             return false;
         }
 
-        if (texture is XRTexture2D tex2D && tex2D.MultiSample)
-        {
-            failure = "Multisample textures do not support mip readback";
-            return false;
-        }
-        if (texture is XRTexture2DArray tex2DArray && tex2DArray.MultiSample)
-        {
-            failure = "Multisample textures do not support mip readback";
-            return false;
-        }
-
-        var apiRenderObject = renderer.GetOrCreateAPIRenderObject(texture);
-        if (apiRenderObject is not OpenGLRenderer.GLObjectBase apiObject)
-        {
-            failure = "Texture not uploaded";
-            return false;
-        }
-
-        uint binding = apiObject.BindingId;
-        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
-        {
-            failure = "Texture not ready";
-            return false;
-        }
-
-        var gl = renderer.RawGL;
-
-        // Read from the requested mip level. For array textures, GetTextureImage returns all layers;
-        // we read layer 0 by taking the first texel.
-        if (texture is XRTexture2DArray array)
-        {
-            int layers = Math.Max(1, (int)array.Depth);
-            int floats = 4 * layers;
-            float* tmp = stackalloc float[floats];
-            gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)(sizeof(float) * floats), tmp);
-
-            int clampedLayer = Math.Clamp(layerIndex, 0, layers - 1);
-            int o = clampedLayer * 4;
-            rgba = new Vector4(tmp[o + 0], tmp[o + 1], tmp[o + 2], tmp[o + 3]);
-            return true;
-        }
-        else
-        {
-            Vector4 tmp = Vector4.Zero;
-            gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)sizeof(Vector4), &tmp);
-            rgba = tmp;
-            return true;
-        }
+        return renderer.TryReadTexturePixelRgbaFloat(texture, mipLevel, layerIndex, out rgba, out failure);
     }
 
     private static void DrawFboInputs(XRFrameBuffer fbo, bool flipPreview)
@@ -1482,16 +1367,35 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return false;
         }
 
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
-        {
-            failure = "Preview requires OpenGL renderer";
-            return false;
-        }
-
         XRTexture? previewTexture = GetPreviewTexture(texture, previewState, out int mipLevel, out _, out string previewError);
         if (previewTexture is null)
         {
             failure = previewError;
+            return false;
+        }
+
+        Vector2 fullSize = GetPixelSizeForPreview(texture, mipLevel);
+        pixelSize = fullSize;
+        float largest = MathF.Max(1f, MathF.Max(pixelSize.X, pixelSize.Y));
+        float scale = largest > 0f ? MathF.Min(1f, maxEdge / largest) : 1f;
+        displaySize = new Vector2(pixelSize.X * scale, pixelSize.Y * scale);
+
+        if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
+        {
+            IntPtr textureId = vkRenderer.RegisterImGuiTexture(previewTexture);
+            if (textureId == IntPtr.Zero)
+            {
+                failure = "Texture not uploaded";
+                return false;
+            }
+
+            handle = (nint)textureId;
+            return true;
+        }
+
+        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        {
+            failure = "Preview requires OpenGL or Vulkan renderer";
             return false;
         }
 
@@ -1509,11 +1413,6 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return false;
         }
 
-        Vector2 fullSize = GetPixelSizeForPreview(texture, mipLevel);
-        pixelSize = fullSize;
-        float largest = MathF.Max(1f, MathF.Max(pixelSize.X, pixelSize.Y));
-        float scale = largest > 0f ? MathF.Min(1f, maxEdge / largest) : 1f;
-        displaySize = new Vector2(pixelSize.X * scale, pixelSize.Y * scale);
         bool previewUsesView = previewTexture is XRTextureViewBase;
         if (previewUsesView || previewState.Channel != TextureChannelView.RGBA)
             ApplyChannelSwizzle(renderer, binding, previewState.Channel);

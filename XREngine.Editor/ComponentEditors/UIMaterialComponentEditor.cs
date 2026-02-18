@@ -6,6 +6,7 @@ using XREngine.Components;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Editor.ComponentEditors;
@@ -160,10 +161,23 @@ public sealed class UIMaterialComponentEditor : IXRComponentEditor
             return false;
         }
 
+        if (TryGetVulkanRenderer() is VulkanRenderer vkRenderer)
+        {
+            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            if (textureId == IntPtr.Zero)
+            {
+                failureReason = "Texture not uploaded to GPU.";
+                return false;
+            }
+
+            handle = (nint)textureId;
+            return true;
+        }
+
         var renderer = TryGetOpenGLRenderer();
         if (renderer is null)
         {
-            failureReason = "Preview requires OpenGL renderer.";
+            failureReason = "Preview requires OpenGL or Vulkan renderer.";
             return false;
         }
 
@@ -211,6 +225,18 @@ public sealed class UIMaterialComponentEditor : IXRComponentEditor
 
         foreach (var window in Engine.Windows)
             if (window.Renderer is OpenGLRenderer renderer)
+                return renderer;
+
+        return null;
+    }
+
+    private static VulkanRenderer? TryGetVulkanRenderer()
+    {
+        if (AbstractRenderer.Current is VulkanRenderer current)
+            return current;
+
+        foreach (var window in Engine.Windows)
+            if (window.Renderer is VulkanRenderer renderer)
                 return renderer;
 
         return null;
