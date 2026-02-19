@@ -669,6 +669,19 @@ namespace XREngine.Rendering.Vulkan
 
             // Per-pipeline context identity tracking for swapchain writes
             Dictionary<int, int> swapchainWritesByPipeline = [];
+            Dictionary<int, string> swapchainWriterLabelByPipeline = [];
+            Dictionary<int, string> pipelineNameByIdentity = [];
+
+            void RememberPipelineName(in FrameOpContext context)
+            {
+                if (!pipelineNameByIdentity.ContainsKey(context.PipelineIdentity))
+                {
+                    string name = context.PipelineInstance?.Pipeline?.GetType().Name;
+                    if (string.IsNullOrWhiteSpace(name))
+                        name = "UnknownPipeline";
+                    pipelineNameByIdentity[context.PipelineIdentity] = name;
+                }
+            }
 
             void MarkSwapchainWriter(string writerLabel, int passIndex, int opIndex, int pipelineIdentity)
             {
@@ -677,6 +690,35 @@ namespace XREngine.Rendering.Vulkan
                 swapchainLastWriterOpIndex = opIndex;
                 swapchainWritesByPipeline.TryGetValue(pipelineIdentity, out int count);
                 swapchainWritesByPipeline[pipelineIdentity] = count + 1;
+                swapchainWriterLabelByPipeline[pipelineIdentity] = writerLabel;
+            }
+
+            void LogSwapchainWritersByPipeline(string phase)
+            {
+                if (swapchainWritesByPipeline.Count == 0)
+                    return;
+
+                string byPipeline = string.Join(", ",
+                    swapchainWritesByPipeline
+                        .OrderByDescending(kv => kv.Value)
+                        .Take(6)
+                        .Select(kv =>
+                        {
+                            string label = swapchainWriterLabelByPipeline.TryGetValue(kv.Key, out string? l)
+                                ? l
+                                : "Unknown";
+                            string pipelineName = pipelineNameByIdentity.TryGetValue(kv.Key, out string? n)
+                                ? n
+                                : "UnknownPipeline";
+                            return $"{label}#P{kv.Key}[{pipelineName}]:{kv.Value}";
+                        }));
+
+                Debug.VulkanEvery(
+                    $"Vulkan.FrameOpsByPipeline.{phase}.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Swapchain writers by pipeline ({0}): {1}",
+                    phase,
+                    byPipeline);
             }
 
             int opScanIndex = 0;
@@ -685,6 +727,7 @@ namespace XREngine.Rendering.Vulkan
                 switch (op)
                 {
                     case ClearOp clear:
+                        RememberPipelineName(clear.Context);
                         clearCount++;
                         if (clear.Target is null && (clear.ClearColor || clear.ClearDepth || clear.ClearStencil))
                         {
@@ -694,6 +737,7 @@ namespace XREngine.Rendering.Vulkan
                         }
                         break;
                     case MeshDrawOp meshDraw:
+                        RememberPipelineName(meshDraw.Context);
                         drawCount++;
                         if (meshDraw.Target is null)
                         {
@@ -703,6 +747,7 @@ namespace XREngine.Rendering.Vulkan
                         }
                         break;
                     case BlitOp blit:
+                        RememberPipelineName(blit.Context);
                         blitCount++;
                         if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit))
                         {
@@ -731,6 +776,8 @@ namespace XREngine.Rendering.Vulkan
                 swapchainDrawWrites,
                 swapchainBlitWrites);
 
+            LogSwapchainWritersByPipeline("PreOverlay");
+
             bool renderPassActive = false;
             bool activeDynamicRendering = false;
             XRFrameBuffer? activeTarget = null;
@@ -752,6 +799,11 @@ namespace XREngine.Rendering.Vulkan
             // forced EndActiveRenderPass) use LoadOp.Load to preserve contents
             // instead of clearing the composited scene.
             bool swapchainClearedThisFrame = false;
+
+            bool skipUiPipelineOps = string.Equals(
+                Environment.GetEnvironmentVariable("XRE_SKIP_UI_PIPELINE"),
+                "1",
+                StringComparison.Ordinal);
 
             // Track swapchain writes that happen outside a swapchain render pass
             // (e.g. CmdBlitImage to swapchain). If true, the first swapchain render
@@ -1251,6 +1303,22 @@ namespace XREngine.Rendering.Vulkan
                             continue;
                         }
 
+                        if (skipUiPipelineOps && op.Context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
+                        {
+                            droppedFrameOps++;
+                            if (op is MeshDrawOp or IndirectDrawOp)
+                                droppedDrawOps++;
+
+                            Debug.VulkanEvery(
+                                $"Vulkan.SkipUiPipeline.{GetHashCode()}",
+                                TimeSpan.FromSeconds(1),
+                                "[Vulkan] Skipping UI pipeline op {0} pass={1} pipe={2} due to XRE_SKIP_UI_PIPELINE=1.",
+                                op.GetType().Name,
+                                opPassIndex,
+                                op.Context.PipelineIdentity);
+                            continue;
+                        }
+
                         // Diagnostic: log the first few ops with invalid pass index per frame
                         if (op.PassIndex == int.MinValue)
                         {
@@ -1478,12 +1546,63 @@ namespace XREngine.Rendering.Vulkan
                         computeCount);
                 }
 
-                if (SupportsImGui)
+                bool forceMagentaSwapchain = string.Equals(
+                    Environment.GetEnvironmentVariable("XRE_FORCE_SWAPCHAIN_MAGENTA"),
+                    "1",
+                    StringComparison.Ordinal);
+                if (forceMagentaSwapchain)
+                {
+                    ClearAttachment magentaAttachment = new()
+                    {
+                        AspectMask = ImageAspectFlags.ColorBit,
+                        ColorAttachment = 0,
+                        ClearValue = new ClearValue
+                        {
+                            Color = new ClearColorValue(1f, 0f, 1f, 1f)
+                        }
+                    };
+
+                    ClearRect clearRect = new()
+                    {
+                        Rect = new Rect2D
+                        {
+                            Offset = new Offset2D(0, 0),
+                            Extent = swapChainExtent
+                        },
+                        BaseArrayLayer = 0,
+                        LayerCount = 1
+                    };
+
+                    Api!.CmdClearAttachments(commandBuffer, 1, &magentaAttachment, 1, &clearRect);
+                    swapchainWriteCount++;
+                    swapchainClearWrites++;
+                    MarkSwapchainWriter("ForceMagenta", activePassIndex, ops.Length, hasActiveContext ? activeContext.PipelineIdentity : 0);
+
+                    Debug.VulkanEvery(
+                        $"Vulkan.ForceSwapchainMagenta.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Forced magenta swapchain clear due to XRE_FORCE_SWAPCHAIN_MAGENTA=1.");
+                }
+
+                bool skipImGui = string.Equals(
+                    Environment.GetEnvironmentVariable("XRE_SKIP_IMGUI"),
+                    "1",
+                    StringComparison.Ordinal);
+
+                if (SupportsImGui && !skipImGui)
                 {
                     CmdBeginLabel(commandBuffer, "ImGui");
                     RenderImGui(commandBuffer, imageIndex);
                     CmdEndLabel(commandBuffer);
                     MarkSwapchainWriter("ImGui", activePassIndex, ops.Length, hasActiveContext ? activeContext.PipelineIdentity : 0);
+                    LogSwapchainWritersByPipeline("PostOverlay");
+                }
+                else if (SupportsImGui && skipImGui)
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.SkipImGui.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Skipping ImGui overlay due to XRE_SKIP_IMGUI=1.");
                 }
 
                 string pipelineLabel = hasActiveContext

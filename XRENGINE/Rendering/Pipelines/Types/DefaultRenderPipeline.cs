@@ -315,6 +315,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
     {
         ViewportRenderCommandContainer c = new(this);
         bool enableComputePasses = EnableComputeDependentPasses;
+        bool bypassVendorUpscale = string.Equals(
+            Environment.GetEnvironmentVariable("XRE_BYPASS_VENDOR_UPSCALE"),
+            "1",
+            StringComparison.Ordinal);
 
         c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Begin;
 
@@ -646,10 +650,20 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 else
                 {
                     string finalSource = EnableFxaa ? FxaaFBOName : PostProcessFBOName;
-                    var vendorBlit = c.Add<VPRC_VendorUpscale>();
-                    vendorBlit.FrameBufferName = finalSource;
-                    vendorBlit.DepthTextureName = DepthViewTextureName;
-                    vendorBlit.MotionTextureName = VelocityTextureName;
+                    string? overrideSource = Environment.GetEnvironmentVariable("XRE_OUTPUT_SOURCE_FBO");
+                    if (!string.IsNullOrWhiteSpace(overrideSource))
+                        finalSource = overrideSource;
+                    if (bypassVendorUpscale)
+                    {
+                        c.Add<VPRC_RenderQuadToFBO>().SetTargets(finalSource, null);
+                    }
+                    else
+                    {
+                        var vendorBlit = c.Add<VPRC_VendorUpscale>();
+                        vendorBlit.FrameBufferName = finalSource;
+                        vendorBlit.DepthTextureName = DepthViewTextureName;
+                        vendorBlit.MotionTextureName = VelocityTextureName;
+                    }
                 }
             }
         }

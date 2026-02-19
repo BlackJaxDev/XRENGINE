@@ -8,6 +8,7 @@ using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Picking;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Editor;
 
@@ -16,6 +17,8 @@ public static partial class EditorImGuiUI
     private static bool _scenePanelInteracting;
 
     private static BoundingRectangle? _scenePanelRenderRegion;
+    private static bool _scenePanelPathLogged;
+    private static bool _scenePanelVulkanTextureFailedLogged;
 
     private static void DrawScenePanel()
     {
@@ -69,15 +72,45 @@ public static partial class EditorImGuiUI
         if (texture is null)
             return;
 
-        // Get the OpenGL texture handle
-        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
-            return;
+        nint handle;
+        if (AbstractRenderer.Current is VulkanRenderer vkRenderer)
+        {
+            IntPtr textureId = vkRenderer.RegisterImGuiTexture(texture);
+            if (textureId == IntPtr.Zero)
+            {
+                if (!_scenePanelVulkanTextureFailedLogged)
+                {
+                    _scenePanelVulkanTextureFailedLogged = true;
+                    XREngine.Debug.Rendering("[ScenePanel] Vulkan RegisterImGuiTexture returned zero for ScenePanelTexture.");
+                }
 
-        var glTexture = renderer.GenericToAPI<GLTexture2D>(texture);
-        if (glTexture is null || glTexture.BindingId == 0 || glTexture.BindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
-            return;
+                return;
+            }
 
-        nint handle = (nint)glTexture.BindingId;
+            handle = (nint)textureId;
+            if (!_scenePanelPathLogged)
+            {
+                _scenePanelPathLogged = true;
+                XREngine.Debug.Rendering($"[ScenePanel] Displaying ScenePanelTexture via Vulkan ImGui handle={(long)textureId} size={texture.Width}x{texture.Height}.");
+            }
+        }
+        else if (AbstractRenderer.Current is OpenGLRenderer renderer)
+        {
+            var glTexture = renderer.GenericToAPI<GLTexture2D>(texture);
+            if (glTexture is null || glTexture.BindingId == 0 || glTexture.BindingId == OpenGLRenderer.GLObjectBase.InvalidBindingId)
+                return;
+
+            handle = (nint)glTexture.BindingId;
+            if (!_scenePanelPathLogged)
+            {
+                _scenePanelPathLogged = true;
+                XREngine.Debug.Rendering($"[ScenePanel] Displaying ScenePanelTexture via OpenGL handle={glTexture.BindingId} size={texture.Width}x{texture.Height}.");
+            }
+        }
+        else
+        {
+            return;
+        }
 
         // Get the content region size for the image
         Vector2 contentSize = ImGui.GetContentRegionAvail();

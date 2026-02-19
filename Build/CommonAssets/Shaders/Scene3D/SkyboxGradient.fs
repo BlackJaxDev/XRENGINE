@@ -1,6 +1,6 @@
 #version 450
 
-layout (location = 0) out vec4 OutColor;
+layout (location = 0) out vec3 OutColor;
 layout (location = 0) in vec3 FragClipPos;
 
 uniform float SkyboxIntensity = 1.0;
@@ -22,9 +22,8 @@ vec3 GetWorldDirection(vec3 clipPos)
 
 void main()
 {
-    OutColor = vec4(0.0, 1.0, 0.0, 1.0); // DEBUG: solid green, vec4 with alpha
-    //vec3 dir = GetWorldDirection(FragClipPos);
-    //float t = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
-    //vec3 col = mix(SkyboxBottomColor, SkyboxTopColor, t);
-    //OutColor = col * SkyboxIntensity;
+    vec3 dir = GetWorldDirection(FragClipPos);
+    float t = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 col = mix(SkyboxBottomColor, SkyboxTopColor, t);
+    OutColor = col * SkyboxIntensity;
 }

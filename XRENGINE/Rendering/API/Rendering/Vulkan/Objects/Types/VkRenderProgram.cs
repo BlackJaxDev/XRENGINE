@@ -600,11 +600,45 @@ public unsafe partial class VulkanRenderer
                 Environment.GetEnvironmentVariable("XRE_VK_TRACE_PIPECREATE"),
                 "1",
                 StringComparison.Ordinal);
-            if (tracePipeCreate && pipelineInfo.RenderPass.Handle == 0) // dynamic rendering
+            if (tracePipeCreate)
             {
                 var stageNames = string.Join(", ", stages.Select(s => s.Stage.ToString()));
-                Debug.RenderingWarning("[PipeCreate] prog={0} stages={1} stageFlags=[{2}]",
-                    Data.Name ?? "?prog", stages.Length, stageNames);
+                var stageModules = string.Join(", ", stages.Select(s => $"{s.Stage}=0x{s.Module.Handle:X}"));
+
+                uint colorAttachmentCount = 0;
+                string colorFormats = "<none>";
+                Format depthFormat = Format.Undefined;
+                Format stencilFormat = Format.Undefined;
+
+                if (pipelineInfo.PNext is not null)
+                {
+                    var renderingInfo = (PipelineRenderingCreateInfo*)pipelineInfo.PNext;
+                    if (renderingInfo->SType == StructureType.PipelineRenderingCreateInfo)
+                    {
+                        colorAttachmentCount = renderingInfo->ColorAttachmentCount;
+                        depthFormat = renderingInfo->DepthAttachmentFormat;
+                        stencilFormat = renderingInfo->StencilAttachmentFormat;
+
+                        if (colorAttachmentCount > 0 && renderingInfo->PColorAttachmentFormats is not null)
+                        {
+                            var formats = new string[colorAttachmentCount];
+                            for (int i = 0; i < colorAttachmentCount; i++)
+                                formats[i] = renderingInfo->PColorAttachmentFormats[i].ToString();
+                            colorFormats = string.Join(",", formats);
+                        }
+                    }
+                }
+
+                Debug.RenderingWarning("[PipeCreate] prog={0} renderPass=0x{1:X} stages={2} stageFlags=[{3}] stageModules=[{4}] colors={5} colorFormats=[{6}] depth={7} stencil={8}",
+                    Data.Name ?? "?prog",
+                    pipelineInfo.RenderPass.Handle,
+                    stages.Length,
+                    stageNames,
+                    stageModules,
+                    colorAttachmentCount,
+                    colorFormats,
+                    depthFormat,
+                    stencilFormat);
             }
             // ── END DIAGNOSTIC ──
 
