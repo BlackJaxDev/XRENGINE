@@ -90,6 +90,12 @@ internal class Program
         // via GetEngineSettings(). Load the JSON settings for both Default and UnitTesting modes so defaults don't
         // accidentally pick unsupported/undesired values and render a black screen.
         LoadUnitTestingSettings(false);
+
+        // Apply debug pipeline preference BEFORE world creation so that
+        // NewRenderPipeline() returns the correct pipeline type.
+        Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting();
+        EngineDebug.Out($"[DebugPipeline] EditorPreferences.Debug.UseDebugOpaquePipeline = {Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}");
+
         XRWorld targetWorld;
 
         if (worldMode == EWorldMode.UnitTesting)
@@ -455,6 +461,7 @@ internal class Program
     private static bool ResolveDebugOpaquePipelineSetting()
     {
         bool useDebug = UnitTestingWorld.Toggles.ForceDebugOpaquePipeline;
+        EngineDebug.Out($"[DebugPipeline] ForceDebugOpaquePipeline={useDebug}, HasStaticModels={UnitTestingWorld.Toggles.HasStaticModelsToImport}, Mode={UnitTestingWorld.Toggles.StaticModelMaterialMode}");
 
         // The debug opaque pipeline is forward-only and does not execute the default deferred/forward+ pass chain.
         // If the unit test is requesting static model material modes that rely on DefaultRenderPipeline passes,

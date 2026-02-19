@@ -535,10 +535,10 @@ public unsafe partial class VulkanRenderer
 			private bool TryResolveAutoUniformBuffer(DescriptorBindingInfo binding, int frameIndex, out DescriptorBufferInfo bufferInfo)
 			{
 				bufferInfo = default;
-				if (binding.Name is null || _program is null)
+				if (_program is null)
 					return false;
 
-				if (!_program.TryGetAutoUniformBlock(binding.Name, out AutoUniformBlockInfo block))
+				if (!_program.TryGetAutoUniformBlockFuzzy(binding.Name ?? string.Empty, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
 					return false;
 
 				uint size = Math.Max(block.Size, 1u);

@@ -368,8 +368,22 @@ public unsafe partial class VulkanRenderer
 							pipelineInfo.PNext = &renderingInfo;
 						}
 
+						try
+						{
 							pipeline = _program!.CreateGraphicsPipeline(ref pipelineInfo, Renderer.ActivePipelineCache);
-							_pipelines[key] = pipeline;
+						}
+						catch (InvalidOperationException ex)
+						{
+							Debug.VulkanWarningEvery(
+								$"Vulkan.Pipeline.CreateFailed.{_program!.Data.Name}",
+								TimeSpan.FromSeconds(5),
+								"[Vulkan] Pipeline creation failed for program '{0}': {1}",
+								_program.Data.Name ?? "UnnamedProgram",
+								ex.Message);
+							pipeline = default;
+							return false;
+						}
+						_pipelines[key] = pipeline;
 						_pipelineDirty = false;
 						_meshDirty = false;
 						success = pipeline.Handle != 0;

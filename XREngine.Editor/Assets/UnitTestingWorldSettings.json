@@ -11,7 +11,7 @@
   "RenderAPI": "Vulkan",
   "AllowShaderPipelines": false,
   "GPURenderDispatch": false,
-  "ForceDebugOpaquePipeline": false,
+  "ForceDebugOpaquePipeline": true,
   "BackgroundShader": false,
   "StaticModelMaterialMode": "ForwardPlusTextured",
   "RenderMeshBounds": false,
@@ -75,7 +75,7 @@
       }
     },
     {
-      "Enabled": true,
+      "Enabled": false,
       "Kind": "Static",
       "Path": "Models\\Sponza2\\Sponza.obj",
       "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",

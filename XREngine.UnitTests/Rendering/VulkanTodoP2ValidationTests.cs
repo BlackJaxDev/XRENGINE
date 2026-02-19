@@ -192,11 +192,11 @@ public sealed class VulkanTodoP2ValidationTests
     public void BarrierPlanner_TracksQueueOwnershipForBufferHazards()
     {
         var metadata = new RenderPassMetadataCollection();
-        metadata.ForPass(100, "ComputeWrite", RenderGraphPassStage.Compute)
-            .WriteBuffer("buf::SharedBuffer", RenderPassResourceType.StorageBuffer);
-        metadata.ForPass(101, "GraphicsRead", RenderGraphPassStage.Graphics)
+        metadata.ForPass(100, "ComputeWrite", ERenderGraphPassStage.Compute)
+            .WriteBuffer("buf::SharedBuffer", ERenderPassResourceType.StorageBuffer);
+        metadata.ForPass(101, "GraphicsRead", ERenderGraphPassStage.Graphics)
             .DependsOn(100)
-            .ReadBuffer("buf::SharedBuffer", RenderPassResourceType.StorageBuffer);
+            .ReadBuffer("buf::SharedBuffer", ERenderPassResourceType.StorageBuffer);
 
         var planner = new VulkanBarrierPlanner();
         var resourcePlanner = new VulkanResourcePlanner();

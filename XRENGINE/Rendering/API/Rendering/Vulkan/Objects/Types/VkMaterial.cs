@@ -511,7 +511,7 @@ namespace XREngine.Rendering.Vulkan
                             if (Enum.TryParse(normalized, out EEngineUniform _))
                                 return false;
 
-                            if (program.TryGetAutoUniformBlock(binding.Name, out _))
+                            if (program.TryGetAutoUniformBlockFuzzy(binding.Name, binding.Set, binding.Binding, out _))
                                 return false;
 
                             if (!_parameterLookup.TryGetValue(binding.Name, out ShaderVar? parameter))

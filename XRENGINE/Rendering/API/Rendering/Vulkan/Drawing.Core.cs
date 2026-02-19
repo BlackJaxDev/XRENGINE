@@ -93,30 +93,43 @@ namespace XREngine.Rendering.Vulkan
 
         private const int MAX_FRAMES_IN_FLIGHT = 2;
         private static readonly TimeSpan SwapchainRecreateDebounce = TimeSpan.FromMilliseconds(100);
+        private static readonly TimeSpan SwapchainResizeSettleDelay = TimeSpan.FromMilliseconds(250);
 
         private int currentFrame = 0;
         private ulong _vkDebugFrameCounter = 0;
         private long _swapchainRecreateRequestedAt;
+        private long _swapchainResizeLastChangedAt;
+        private uint _pendingSurfaceWidth;
+        private uint _pendingSurfaceHeight;
         private long _lastFrameCompletedTimestamp;
         private int _consecutiveNotReadyCount;
         private const int MaxConsecutiveNotReadyBeforeRecreate = 3;
 
         private void ScheduleSwapchainRecreate(string reason)
         {
+            long now = Stopwatch.GetTimestamp();
+            bool wasInvalidated = _frameBufferInvalidated;
             _frameBufferInvalidated = true;
-            _swapchainRecreateRequestedAt = Stopwatch.GetTimestamp();
+
+            if (!wasInvalidated || _swapchainRecreateRequestedAt == 0)
+                _swapchainRecreateRequestedAt = now;
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.RecreateScheduled",
                 TimeSpan.FromSeconds(1),
-                "[Vulkan] Scheduled debounced swapchain recreate. Reason={0}",
-                reason);
+                "[Vulkan] Scheduled debounced swapchain recreate. Reason={0} RequestedAtTicks={1} WasInvalidated={2}",
+                reason,
+                _swapchainRecreateRequestedAt,
+                wasInvalidated);
         }
 
         private void RecreateSwapchainImmediately(string reason)
         {
             _frameBufferInvalidated = false;
             _swapchainRecreateRequestedAt = 0;
+            _swapchainResizeLastChangedAt = 0;
+            _pendingSurfaceWidth = 0;
+            _pendingSurfaceHeight = 0;
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.RecreateImmediate",
@@ -178,7 +191,25 @@ namespace XREngine.Rendering.Vulkan
             uint liveSurfaceWidth = (uint)Math.Max(Math.Max(liveFramebufferSize.X, liveWindowSize.X), 0);
             uint liveSurfaceHeight = (uint)Math.Max(Math.Max(liveFramebufferSize.Y, liveWindowSize.Y), 0);
 
-            if (liveSurfaceWidth > 0 && liveSurfaceHeight > 0 &&
+            bool liveSurfaceValid = liveSurfaceWidth > 0 && liveSurfaceHeight > 0;
+
+            if (liveSurfaceValid)
+            {
+                if (_pendingSurfaceWidth != liveSurfaceWidth || _pendingSurfaceHeight != liveSurfaceHeight)
+                {
+                    _pendingSurfaceWidth = liveSurfaceWidth;
+                    _pendingSurfaceHeight = liveSurfaceHeight;
+                    _swapchainResizeLastChangedAt = Stopwatch.GetTimestamp();
+                }
+            }
+            else
+            {
+                _pendingSurfaceWidth = 0;
+                _pendingSurfaceHeight = 0;
+                _swapchainResizeLastChangedAt = 0;
+            }
+
+            if (liveSurfaceValid &&
                 (liveSurfaceWidth != swapChainExtent.Width || liveSurfaceHeight != swapChainExtent.Height))
             {
                 ScheduleSwapchainRecreate("Surface/swapchain size mismatch");
@@ -196,11 +227,41 @@ namespace XREngine.Rendering.Vulkan
                     swapChainExtent.Width,
                     swapChainExtent.Height);
             }
+            else if (_pendingSurfaceWidth == swapChainExtent.Width && _pendingSurfaceHeight == swapChainExtent.Height)
+            {
+                _pendingSurfaceWidth = 0;
+                _pendingSurfaceHeight = 0;
+                _swapchainResizeLastChangedAt = 0;
+            }
 
             // If the window resized (or other framebuffer-dependent state changed), rebuild swapchain resources
             // before we acquire/record/submit. Waiting until after present can cause visible stretching/borders.
             if (ShouldRunDebouncedSwapchainRecreate())
-                RecreateSwapchainImmediately("Debounce elapsed before frame acquire");
+            {
+                bool hasPendingSurfaceSize = _pendingSurfaceWidth > 0 && _pendingSurfaceHeight > 0;
+                bool pendingMatchesLive = !hasPendingSurfaceSize ||
+                    (_pendingSurfaceWidth == liveSurfaceWidth && _pendingSurfaceHeight == liveSurfaceHeight);
+                bool resizeSettled = !hasPendingSurfaceSize ||
+                    (_swapchainResizeLastChangedAt != 0 &&
+                     Stopwatch.GetElapsedTime(_swapchainResizeLastChangedAt) >= SwapchainResizeSettleDelay);
+
+                if (pendingMatchesLive && resizeSettled)
+                {
+                    RecreateSwapchainImmediately("Debounce elapsed before frame acquire (resize settled)");
+                }
+                else
+                {
+                    Debug.VulkanEvery(
+                        $"Vulkan.Frame.{GetHashCode()}.RecreateDeferredForResizeSettle",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Debounce elapsed but resize is still active. Deferring swapchain recreate. Pending={0}x{1} Live={2}x{3} Settled={4}",
+                        _pendingSurfaceWidth,
+                        _pendingSurfaceHeight,
+                        liveSurfaceWidth,
+                        liveSurfaceHeight,
+                        resizeSettled);
+                }
+            }
 
             // 1. Wait for the previous submission associated with this in-flight slot.
             long stageStartTimestamp = Stopwatch.GetTimestamp();
@@ -243,7 +304,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (result == Result.ErrorOutOfDateKhr)
             {
-                RecreateSwapchainImmediately("AcquireNextImage returned ErrorOutOfDateKhr");
+                ScheduleSwapchainRecreate("AcquireNextImage returned ErrorOutOfDateKhr");
                 return;
             }
             else if (result == Result.ErrorSurfaceLostKhr)
@@ -377,7 +438,7 @@ namespace XREngine.Rendering.Vulkan
             Semaphore* waitSemaphores = stackalloc Semaphore[1] { _graphicsTimelineSemaphore };
             var waitStages = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
             var buffer = _commandBuffers![imageIndex];
-            Semaphore presentSemaphore = presentBridgeSemaphores![currentFrame];
+            Semaphore presentSemaphore = presentBridgeSemaphores![imageIndex];
             Semaphore* signalSemaphores = stackalloc Semaphore[2] { _graphicsTimelineSemaphore, presentSemaphore };
 
             TimelineSemaphoreSubmitInfo timelineSubmitInfo = new()
@@ -474,7 +535,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (result == Result.ErrorOutOfDateKhr)
             {
-                RecreateSwapchainImmediately("QueuePresent returned ErrorOutOfDateKhr");
+                ScheduleSwapchainRecreate("QueuePresent returned ErrorOutOfDateKhr");
             }
             else if (result == Result.SuboptimalKhr)
             {

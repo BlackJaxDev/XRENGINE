@@ -20,6 +20,17 @@ public unsafe partial class VulkanRenderer
         public Framebuffer FrameBuffer => _frameBuffer;
         public RenderPass RenderPass => _renderPass;
 
+        /// <summary>
+        /// The actual VkFramebuffer width, which may differ from <see cref="Data"/>.<see cref="XRFrameBuffer.Width"/>
+        /// when render targets use a mip level &gt; 0 (e.g. bloom downsample chain).
+        /// </summary>
+        public uint FramebufferWidth { get; private set; }
+
+        /// <summary>
+        /// The actual VkFramebuffer height (see <see cref="FramebufferWidth"/>).
+        /// </summary>
+        public uint FramebufferHeight { get; private set; }
+
         internal uint AttachmentCount => (uint)(_attachmentSignature?.Length ?? 0);
 
         internal RenderPass ResolveRenderPassForPass(int passIndex, IReadOnlyCollection<RenderPassMetadata>? passMetadata, ImageLayout[]? initialLayoutOverrides = null)
@@ -296,6 +307,24 @@ public unsafe partial class VulkanRenderer
             _renderPass = renderPass;
             _attachmentSignature = signatures;
 
+            // Compute framebuffer dimensions accounting for mip-level targets.
+            // When an FBO targets a specific mip level (e.g. bloom downsample), the
+            // VkFramebuffer width/height must match the mip-level extent, not the base.
+            uint fbWidth = Math.Max(Data.Width, 1u);
+            uint fbHeight = Math.Max(Data.Height, 1u);
+            var targets = Data.Targets;
+            if (targets is not null && targets.Length > 0)
+            {
+                int maxMip = 0;
+                foreach (var (_, _, mip, _) in targets)
+                    maxMip = Math.Max(maxMip, mip);
+                if (maxMip > 0)
+                {
+                    fbWidth = Math.Max(fbWidth >> maxMip, 1u);
+                    fbHeight = Math.Max(fbHeight >> maxMip, 1u);
+                }
+            }
+
             fixed (ImageView* viewsPtr = views)
             {
                 FramebufferCreateInfo framebufferInfo = new()
@@ -304,10 +333,13 @@ public unsafe partial class VulkanRenderer
                     RenderPass = renderPass,
                     AttachmentCount = (uint)views.Length,
                     PAttachments = viewsPtr,
-                    Width = Math.Max(Data.Width, 1u),
-                    Height = Math.Max(Data.Height, 1u),
+                    Width = fbWidth,
+                    Height = fbHeight,
                     Layers = 1,
                 };
+
+                FramebufferWidth = fbWidth;
+                FramebufferHeight = fbHeight;
 
                 fixed (Framebuffer* frameBufferPtr = &_frameBuffer)
                 {
@@ -359,7 +391,7 @@ public unsafe partial class VulkanRenderer
 
                     FrameBufferAttachmentSignature updated = usage.ResourceType switch
                     {
-                        RenderPassResourceType.StencilAttachment => WithOps(
+                        ERenderPassResourceType.StencilAttachment => WithOps(
                             existing,
                             existing.LoadOp,
                             existing.StoreOp,
@@ -390,7 +422,7 @@ public unsafe partial class VulkanRenderer
         {
             if (slot.StartsWith("color", StringComparison.OrdinalIgnoreCase))
             {
-                if (usage.ResourceType is not RenderPassResourceType.ColorAttachment and not RenderPassResourceType.ResolveAttachment)
+                if (usage.ResourceType is not ERenderPassResourceType.ColorAttachment and not ERenderPassResourceType.ResolveAttachment)
                 {
                     throw new InvalidOperationException(
                         $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for slot '{slot}', but color slots require color/resolve usage.");
@@ -433,7 +465,7 @@ public unsafe partial class VulkanRenderer
 
             if (slot.Equals("depth", StringComparison.OrdinalIgnoreCase))
             {
-                if (usage.ResourceType is not RenderPassResourceType.DepthAttachment and not RenderPassResourceType.StencilAttachment)
+                if (usage.ResourceType is not ERenderPassResourceType.DepthAttachment and not ERenderPassResourceType.StencilAttachment)
                 {
                     throw new InvalidOperationException(
                         $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for depth slot '{slot}'.");
@@ -445,7 +477,7 @@ public unsafe partial class VulkanRenderer
                     if (signature.Role is not (AttachmentRole.Depth or AttachmentRole.DepthStencil))
                         continue;
 
-                    if (usage.ResourceType == RenderPassResourceType.StencilAttachment &&
+                    if (usage.ResourceType == ERenderPassResourceType.StencilAttachment &&
                         (signature.AspectMask & ImageAspectFlags.StencilBit) == 0)
                     {
                         throw new InvalidOperationException(
@@ -461,7 +493,7 @@ public unsafe partial class VulkanRenderer
 
             if (slot.Equals("stencil", StringComparison.OrdinalIgnoreCase))
             {
-                if (usage.ResourceType is not RenderPassResourceType.StencilAttachment and not RenderPassResourceType.DepthAttachment)
+                if (usage.ResourceType is not ERenderPassResourceType.StencilAttachment and not ERenderPassResourceType.DepthAttachment)
                 {
                     throw new InvalidOperationException(
                         $"Render pass '{pass.Name}' declares '{usage.ResourceType}' for stencil slot '{slot}'.");
@@ -539,16 +571,16 @@ public unsafe partial class VulkanRenderer
                 signature.InitialLayout,
                 signature.FinalLayout);
 
-        private static AttachmentLoadOp ToVkLoadOp(RenderPassLoadOp op)
+        private static AttachmentLoadOp ToVkLoadOp(ERenderPassLoadOp op)
             => op switch
             {
-                RenderPassLoadOp.Clear => AttachmentLoadOp.Clear,
-                RenderPassLoadOp.DontCare => AttachmentLoadOp.DontCare,
+                ERenderPassLoadOp.Clear => AttachmentLoadOp.Clear,
+                ERenderPassLoadOp.DontCare => AttachmentLoadOp.DontCare,
                 _ => AttachmentLoadOp.Load
             };
 
-        private static AttachmentStoreOp ToVkStoreOp(RenderPassStoreOp op)
-            => op == RenderPassStoreOp.DontCare
+        private static AttachmentStoreOp ToVkStoreOp(ERenderPassStoreOp op)
+            => op == ERenderPassStoreOp.DontCare
                 ? AttachmentStoreOp.DontCare
                 : AttachmentStoreOp.Store;
 
@@ -712,7 +744,14 @@ public unsafe partial class VulkanRenderer
             bool hasStencil = (source.AspectMask & ImageAspectFlags.StencilBit) != 0;
             AttachmentLoadOp stencilLoad = AttachmentLoadOp.DontCare;
             AttachmentStoreOp stencilStore = hasStencil ? AttachmentStoreOp.Store : AttachmentStoreOp.DontCare;
-            ImageLayout layout = role == AttachmentRole.Color ? ImageLayout.ColorAttachmentOptimal : ImageLayout.DepthStencilAttachmentOptimal;
+
+            // Color attachments use ShaderReadOnlyOptimal as the final layout so
+            // the render pass automatically transitions them for sampling by
+            // subsequent passes (e.g. fullscreen quad blits in the post-process
+            // chain).  Depth/stencil attachments stay in their optimal layout.
+            ImageLayout finalLayout = role == AttachmentRole.Color
+                ? ImageLayout.ShaderReadOnlyOptimal
+                : ImageLayout.DepthStencilAttachmentOptimal;
 
             return new FrameBufferAttachmentSignature(
                 source.Format,
@@ -725,7 +764,7 @@ public unsafe partial class VulkanRenderer
                 stencilLoad,
                 stencilStore,
                 ImageLayout.Undefined,
-                layout);
+                finalLayout);
         }
 
         private readonly record struct AttachmentSource(ImageView View, Format Format, SampleCountFlags Samples, ImageAspectFlags AspectMask);
