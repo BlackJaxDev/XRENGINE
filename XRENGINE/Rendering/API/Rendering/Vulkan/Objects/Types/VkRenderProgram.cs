@@ -591,7 +591,22 @@ public unsafe partial class VulkanRenderer
             if (pipelineCache.Handle == 0)
                 pipelineCache = Renderer.ActivePipelineCache;
 
+            uint colorAttachmentCount = 0;
+            if (pipelineInfo.PNext is not null)
+            {
+                var renderingInfo = (PipelineRenderingCreateInfo*)pipelineInfo.PNext;
+                if (renderingInfo->SType == StructureType.PipelineRenderingCreateInfo)
+                    colorAttachmentCount = renderingInfo->ColorAttachmentCount;
+            }
+            else if (pipelineInfo.RenderPass.Handle != 0)
+            {
+                colorAttachmentCount = Renderer.GetRenderPassColorAttachmentCount(pipelineInfo.RenderPass);
+            }
+
             PipelineShaderStageCreateInfo[] stages = GetShaderStages(GraphicsStageMask).ToArray();
+            if (colorAttachmentCount == 0)
+                stages = stages.Where(static s => s.Stage != ShaderStageFlags.FragmentBit).ToArray();
+
             if (stages.Length == 0)
                 throw new InvalidOperationException("Graphics pipeline creation requires at least one graphics shader stage.");
 
@@ -605,7 +620,6 @@ public unsafe partial class VulkanRenderer
                 var stageNames = string.Join(", ", stages.Select(s => s.Stage.ToString()));
                 var stageModules = string.Join(", ", stages.Select(s => $"{s.Stage}=0x{s.Module.Handle:X}"));
 
-                uint colorAttachmentCount = 0;
                 string colorFormats = "<none>";
                 Format depthFormat = Format.Undefined;
                 Format stencilFormat = Format.Undefined;

@@ -5,7 +5,7 @@ using System.Linq;
 
 namespace XREngine.Editor;
 
-public static partial class UnitTestingWorld
+public static partial class EditorUnitTests
 {
     public static Settings Toggles { get; set; } = new();
 

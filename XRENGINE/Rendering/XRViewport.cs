@@ -745,13 +745,14 @@ namespace XREngine.Rendering
                 Debug.RenderingEvery(
                     $"XRViewport.CollectVisible.Submit.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
                     TimeSpan.FromSeconds(1),
-                    "[RenderDiag] CollectVisible submit. PlayMode={0} VP[{1}] CmdsUpdating={2} Delta={3} VisualScene={4} TrackedRenderables={5} GpuVisibleDraws={6} GpuVisibleInstances={7}",
+                    "[RenderDiag] CollectVisible submit. PlayMode={0} VP[{1}] CmdsUpdating={2} Delta={3} VisualScene={4} TrackedRenderables={5} CpuDrawCalls={6} GpuVisibleDraws={7} GpuVisibleInstances={8}",
                     Engine.PlayMode.State,
                     Index,
                     afterUpdatingCount,
                     delta,
                     visualSceneType,
                     trackedRenderables,
+                    afterUpdatingCount,
                     gpuVisible.Draws,
                     gpuVisible.Instances);
             }

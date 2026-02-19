@@ -42,6 +42,8 @@ namespace XREngine.Rendering.Vulkan
                 DeviceWaitIdle();
 
             WaitForPendingReadbackTasks(TimeSpan.FromSeconds(6));
+            DestroyComputeTransientResources();
+            DestroyDanglingMaterialWrappers();
             DestroyDanglingMeshRendererWrappers();
             DestroyDanglingDataBufferWrappers();
             DestroyRemainingTrackedMeshUniformBuffers();
@@ -65,6 +67,13 @@ namespace XREngine.Rendering.Vulkan
             DestroySyncObjects();
             DestroyCommandPool();
 
+            // Run a final wrapper sweep after teardown paths that may have created or
+            // retained late-bound GPU buffers during destruction.
+            DestroyDanglingMaterialWrappers();
+            DestroyDanglingMeshRendererWrappers();
+            DestroyDanglingDataBufferWrappers();
+            DestroyRemainingTrackedMeshUniformBuffers();
+
             // Teardown paths above may retire additional resources. Flush once more
             // before destroying the logical device to avoid vkDestroyDevice child-object errors.
             ForceFlushAllRetiredResources();
@@ -73,6 +82,21 @@ namespace XREngine.Rendering.Vulkan
             DestroyValidationLayers();
             DestroySurface();
             DestroyInstance();
+        }
+
+        private void DestroyDanglingMaterialWrappers()
+        {
+            var wrappers = VkObject<XRMaterial>.Cache.Values.ToArray();
+            foreach (var wrapper in wrappers)
+            {
+                try
+                {
+                    wrapper?.Destroy();
+                }
+                catch
+                {
+                }
+            }
         }
 
         private void DestroyDanglingMeshRendererWrappers()

@@ -159,6 +159,18 @@ namespace XREngine
         /// </summary>
         public static XREvent<bool>? FocusChanged { get; set; }
 
+        /// <summary>
+        /// Raised during <see cref="Initialize(GameStartupSettings, GameState, bool)"/>
+        /// after sandbox settings are loaded and immediately before startup windows are created.
+        /// </summary>
+        public static event Action<GameStartupSettings, GameState>? BeforeCreateWindows;
+
+        /// <summary>
+        /// Raised during <see cref="Initialize(GameStartupSettings, GameState, bool)"/>
+        /// immediately after startup windows are created.
+        /// </summary>
+        public static event Action<GameStartupSettings, GameState>? AfterCreateWindows;
+
         #endregion
 
         #region Static Constructor

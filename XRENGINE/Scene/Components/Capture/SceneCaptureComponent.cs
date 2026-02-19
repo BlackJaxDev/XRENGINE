@@ -154,7 +154,7 @@ namespace XREngine.Components.Lights
                 {
                     WorldInstanceOverride = World,
                     Camera = cam,
-                    RenderPipeline = new DefaultRenderPipeline(),
+                    RenderPipeline = Engine.Rendering.NewRenderPipeline(),
                     SetRenderPipelineFromCamera = false,
                     AutomaticallyCollectVisible = false,
                     AutomaticallySwapBuffers = false,

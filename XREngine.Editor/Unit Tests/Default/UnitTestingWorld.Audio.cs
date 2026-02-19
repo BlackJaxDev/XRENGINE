@@ -5,7 +5,7 @@ using XREngine.Scene;
 
 namespace XREngine.Editor;
 
-public static partial class UnitTestingWorld
+public static partial class EditorUnitTests
 {
     //Tests for audio sources and listeners.
 

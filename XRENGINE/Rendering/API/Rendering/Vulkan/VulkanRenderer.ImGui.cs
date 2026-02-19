@@ -1057,12 +1057,18 @@ public unsafe partial class VulkanRenderer
                 ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit | ColorComponentFlags.BBit | ColorComponentFlags.ABit
             };
 
+            const uint kDynRenderColorSlots = 1;
+            PipelineColorBlendAttachmentState* blendSlots = stackalloc PipelineColorBlendAttachmentState[(int)kDynRenderColorSlots];
+            blendSlots[0] = colorAttachment;
+
+            uint imguiBlendCount = SupportsDynamicRendering ? kDynRenderColorSlots : 1;
+
             PipelineColorBlendStateCreateInfo colorBlendState = new()
             {
                 SType = StructureType.PipelineColorBlendStateCreateInfo,
                 LogicOpEnable = Vk.False,
-                AttachmentCount = 1,
-                PAttachments = &colorAttachment
+                AttachmentCount = imguiBlendCount,
+                PAttachments = SupportsDynamicRendering ? blendSlots : &colorAttachment
             };
 
             DynamicState* dynamicStates = stackalloc DynamicState[2];
@@ -1096,12 +1102,14 @@ public unsafe partial class VulkanRenderer
 
             if (SupportsDynamicRendering)
             {
-                Format colorFormat = swapChainImageFormat;
+                Format* colorFormats = stackalloc Format[(int)kDynRenderColorSlots];
+                colorFormats[0] = swapChainImageFormat;
+
                 PipelineRenderingCreateInfo renderingInfo = new()
                 {
                     SType = StructureType.PipelineRenderingCreateInfo,
-                    ColorAttachmentCount = 1,
-                    PColorAttachmentFormats = &colorFormat,
+                    ColorAttachmentCount = kDynRenderColorSlots,
+                    PColorAttachmentFormats = colorFormats,
                     DepthAttachmentFormat = _swapchainDepthFormat,
                     StencilAttachmentFormat = _swapchainDepthFormat is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint
                         ? _swapchainDepthFormat

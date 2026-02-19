@@ -12,7 +12,7 @@ using Quaternion = System.Numerics.Quaternion;
 
 namespace XREngine.Editor;
 
-public static partial class UnitTestingWorld
+public static partial class EditorUnitTests
 {
     private static bool _emulatedVrStereoPreviewHooked;
 

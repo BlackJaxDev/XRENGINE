@@ -208,7 +208,7 @@ namespace XREngine.Rendering.Commands
                     cmd?.Render();
             }
         }
-        public void RenderGPU( int renderPass)
+        public void RenderGPU(int renderPass)
         {
             if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))
                 return;

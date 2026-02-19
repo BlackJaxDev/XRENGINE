@@ -22,7 +22,7 @@ internal static class EditorOpenXrPawnSwitcher
 
     private static void OnOpenXRSessionRunningChanged(bool running)
     {
-        if (!UnitTestingWorld.Toggles.AllowEditingInVR)
+        if (!EditorUnitTests.Toggles.AllowEditingInVR)
             return;
 
         Engine.EnqueueUpdateThreadTask(() => SwitchPawnControl(running));

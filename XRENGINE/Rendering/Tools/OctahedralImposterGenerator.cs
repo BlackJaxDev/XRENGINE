@@ -287,7 +287,7 @@ public sealed class OctahedralImposterGenerator
         XRViewport viewport = new(null, resolution, resolution)
         {
             Camera = camera,
-            RenderPipeline = new DefaultRenderPipeline(),
+            RenderPipeline = Engine.Rendering.NewRenderPipeline(),
             SetRenderPipelineFromCamera = false,
             AllowUIRender = false,
             AutomaticallyCollectVisible = false,

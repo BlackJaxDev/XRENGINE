@@ -15,7 +15,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor;
 
-public static partial class UnitTestingWorld
+public static partial class EditorUnitTests
 {
     public static XRWorld CreateMeshEditingWorld(bool setUI, bool isServer)
     {

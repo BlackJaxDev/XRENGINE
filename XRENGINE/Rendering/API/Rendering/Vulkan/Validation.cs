@@ -102,6 +102,22 @@ public unsafe partial class VulkanRenderer
     {
         string msg = Marshal.PtrToStringAnsi((nint)pCallbackData->PMessage) ?? "<null>";
 
+        // Silently suppress harmless fragment-output-unused warnings that
+        // occur when a multi-output shader (e.g. deferred G-buffer with 4
+        // outputs) is bound against a render pass / dynamic rendering info
+        // with fewer color attachments.  This happens intentionally when the
+        // FBO target path (CreateFBOTargetCommands) draws OpaqueDeferred
+        // objects to a single-attachment FBO such as SceneCaptureEnvColor.
+        // The extra writes are safely discarded by the driver per the Vulkan
+        // spec (§15.6); the validation layer warning is purely informational.
+        if (messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.WarningBitExt) &&
+            msg.Contains("this write is unused") &&
+            msg.Contains("pColorAttachments"))
+        {
+            // Swallow completely — do not log.
+            return Vk.False;
+        }
+
         if (messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt))
             Debug.VulkanError($"[Vulkan] {msg}");
         else if (messageSeverity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.WarningBitExt))

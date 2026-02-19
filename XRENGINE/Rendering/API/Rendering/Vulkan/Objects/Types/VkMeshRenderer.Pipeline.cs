@@ -187,6 +187,16 @@ public unsafe partial class VulkanRenderer
 			if (!EnsureProgram(material))
 				return false;
 
+			if (useDynamicRendering && colorAttachmentFormat == Format.Undefined && draw.ColorWriteMask != 0)
+			{
+				Debug.VulkanWarningEvery(
+					$"Vulkan.MeshRenderer.SkipDraw.NoColorAttachment.{_program?.Data?.Name ?? "UnknownProgram"}",
+					TimeSpan.FromSeconds(2),
+					"[Vulkan] Skipping pipeline creation for program '{0}': dynamic rendering has undefined color attachment format while color writes are enabled.",
+					_program?.Data?.Name ?? "UnknownProgram");
+				return false;
+			}
+
 			BuildVertexInputState();
 
 			ulong programPipelineHash = _program!.ComputeGraphicsPipelineFingerprint();
@@ -353,12 +363,15 @@ public unsafe partial class VulkanRenderer
 
 						if (useDynamicRendering)
 						{
-							Format colorFormat = colorAttachmentFormat;
+							Format* colorFormats = stackalloc Format[(int)colorAttachmentCount];
+							if (colorAttachmentCount > 0)
+								colorFormats[0] = colorAttachmentFormat;
+
 							PipelineRenderingCreateInfo renderingInfo = new()
 							{
 								SType = StructureType.PipelineRenderingCreateInfo,
 								ColorAttachmentCount = colorAttachmentCount,
-								PColorAttachmentFormats = colorAttachmentCount > 0 ? &colorFormat : null,
+								PColorAttachmentFormats = colorAttachmentCount > 0 ? colorFormats : null,
 								DepthAttachmentFormat = depthAttachmentFormat,
 								StencilAttachmentFormat = IsStencilCapableFormat(depthAttachmentFormat)
 									? depthAttachmentFormat
