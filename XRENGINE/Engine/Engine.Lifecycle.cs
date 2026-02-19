@@ -78,8 +78,11 @@ namespace XREngine
                 ValidateGpuRenderingStartupConfiguration();
                 ConfigureJobManager(GameSettings);
 
+                BeforeCreateWindows?.Invoke(startupSettings, state);
+
                 // Creating windows first is critical—they initialize the render context and graphics API
                 CreateWindows(startupSettings.StartupWindows);
+                AfterCreateWindows?.Invoke(startupSettings, state);
                 Rendering.LogVulkanFeatureProfileFingerprint(force: true);
                 Rendering.SecondaryContext.InitializeIfSupported(Windows.FirstOrDefault());
                 XRWindow.AnyWindowFocusChanged += WindowFocusChanged;

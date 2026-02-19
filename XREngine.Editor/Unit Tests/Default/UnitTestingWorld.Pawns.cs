@@ -18,7 +18,7 @@ using static XREngine.Scene.Transforms.RigidBodyTransform;
 
 namespace XREngine.Editor;
 
-public static partial class UnitTestingWorld
+public static partial class EditorUnitTests
 {
     public static class Pawns
     {

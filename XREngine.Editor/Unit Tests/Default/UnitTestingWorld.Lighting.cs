@@ -9,7 +9,7 @@ using XREngine.Components.Lights;
 
 namespace XREngine.Editor;
 
-public static partial class UnitTestingWorld
+public static partial class EditorUnitTests
 {
     //All tests pertaining to shading the scene.
 

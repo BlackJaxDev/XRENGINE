@@ -1006,7 +1006,7 @@ namespace XREngine.Rendering.Vulkan
                         RenderingAttachmentInfo colorAttachment = new()
                         {
                             SType = StructureType.RenderingAttachmentInfo,
-                            ImageView = swapChainImageViews[imageIndex],
+                            ImageView = swapChainImageViews![imageIndex],
                             ImageLayout = ImageLayout.ColorAttachmentOptimal,
                             LoadOp = colorLoadOp,
                             StoreOp = AttachmentStoreOp.Store,
@@ -1085,9 +1085,7 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                var vkFrameBuffer = GenericToAPI<VkFrameBuffer>(target);
-                if (vkFrameBuffer is null)
-                    throw new InvalidOperationException("Failed to resolve Vulkan framebuffer for target.");
+                var vkFrameBuffer = GenericToAPI<VkFrameBuffer>(target) ?? throw new InvalidOperationException("Failed to resolve Vulkan framebuffer for target.");
                 vkFrameBuffer.Generate();
 
                 string fboName = string.IsNullOrWhiteSpace(target.Name)

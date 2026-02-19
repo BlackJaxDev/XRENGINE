@@ -101,15 +101,15 @@ namespace XREngine.Networking
             string fileName = UnitTestingWorldSettingsFileName;
             string filePath = Path.Combine(dir, "Assets", fileName);
             if (!File.Exists(filePath))
-                File.WriteAllText(filePath, JsonConvert.SerializeObject(UnitTestingWorld.Toggles, Formatting.Indented));
+                File.WriteAllText(filePath, JsonConvert.SerializeObject(EditorUnitTests.Toggles, Formatting.Indented));
             else
             {
                 string? content = File.ReadAllText(filePath);
                 if (content is not null)
                 {
-                    UnitTestingWorld.Toggles = JsonConvert.DeserializeObject<UnitTestingWorld.Settings>(content) ?? new UnitTestingWorld.Settings();
+                    EditorUnitTests.Toggles = JsonConvert.DeserializeObject<EditorUnitTests.Settings>(content) ?? new EditorUnitTests.Settings();
                     if (writeBackAfterRead)
-                        File.WriteAllText(filePath, JsonConvert.SerializeObject(UnitTestingWorld.Toggles, Formatting.Indented));
+                        File.WriteAllText(filePath, JsonConvert.SerializeObject(EditorUnitTests.Toggles, Formatting.Indented));
                 }
             }
         }
@@ -196,17 +196,17 @@ namespace XREngine.Networking
         /// <returns></returns>
         public static XRWorld CreateWorld()
         {
-            UnitTestingWorld.ApplyRenderSettingsFromToggles();
+            EditorUnitTests.ApplyRenderSettingsFromToggles();
 
             var scene = new XRScene("Main Scene");
             var rootNode = new SceneNode("Root Node");
             scene.RootNodes.Add(rootNode);
 
-            SceneNode? characterPawnModelParentNode = UnitTestingWorld.Pawns.CreatePlayerPawn(false, true, rootNode);
+            SceneNode? characterPawnModelParentNode = EditorUnitTests.Pawns.CreatePlayerPawn(false, true, rootNode);
 
-            UnitTestingWorld.Lighting.AddDirLight(rootNode);
-            UnitTestingWorld.Lighting.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
-            UnitTestingWorld.Models.AddSkybox(rootNode, null);
+            EditorUnitTests.Lighting.AddDirLight(rootNode);
+            EditorUnitTests.Lighting.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
+            EditorUnitTests.Models.AddSkybox(rootNode, null);
             CreateConsoleUI(rootNode);
             
             var world = new XRWorld("Default World", scene);
@@ -483,12 +483,12 @@ namespace XREngine.Networking
                 UdpServerSendPort = 5000,
                 UdpMulticastPort = 5000,
                 NetworkingType = ENetworkingType.Server,
-                GPURenderDispatch = UnitTestingWorld.Toggles.GPURenderDispatch,
+                GPURenderDispatch = EditorUnitTests.Toggles.GPURenderDispatch,
                 DefaultUserSettings = new UserSettings()
                 {
                     VSync = EVSyncMode.Off,
-                    RenderLibrary = UnitTestingWorld.Toggles.RenderAPI,
-                    PhysicsLibrary = UnitTestingWorld.Toggles.PhysicsAPI,
+                    RenderLibrary = EditorUnitTests.Toggles.RenderAPI,
+                    PhysicsLibrary = EditorUnitTests.Toggles.PhysicsAPI,
                 },
                 TargetUpdatesPerSecond = updateHz,
                 TargetFramesPerSecond = renderHz,

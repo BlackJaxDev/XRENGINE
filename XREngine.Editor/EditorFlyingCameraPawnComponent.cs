@@ -1806,7 +1806,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         // In ImGui-editor mode, F11 should only toggle profiler visibility.
         // Keep the editor renderer attached so we don't lose the editor UI.
-        if (UnitTestingWorld.Toggles.DearImGuiUI)
+        if (EditorUnitTests.Toggles.DearImGuiUI)
         {
             var comp = EnsureEditorImGuiOverlayComponent(world);
             if (comp is not null)

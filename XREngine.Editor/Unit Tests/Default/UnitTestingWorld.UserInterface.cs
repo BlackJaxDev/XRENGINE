@@ -22,7 +22,7 @@ using XREngine.Scene.Components.Editing;
 
 namespace XREngine.Editor;
 
-public static partial class UnitTestingWorld
+public static partial class EditorUnitTests
 {
     public static partial class UserInterface
     {
@@ -134,7 +134,7 @@ public static partial class UnitTestingWorld
 
             screenSpaceCamera?.UserInterface = canvas;
 
-            if (UnitTestingWorld.Toggles.RiveUI)
+            if (EditorUnitTests.Toggles.RiveUI)
             {
                 bool disableRiveUi = false;
                 SceneNode riveNode = new(rootCanvasNode) { Name = "RIVE Node" };
@@ -169,7 +169,7 @@ public static partial class UnitTestingWorld
                 }
             }
 
-            bool addDearImGui = UnitTestingWorld.Toggles.DearImGuiUI;
+            bool addDearImGui = EditorUnitTests.Toggles.DearImGuiUI;
             if (addDearImGui)
             {
                 using var imGuiScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI.DearImGui");

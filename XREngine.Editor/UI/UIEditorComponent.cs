@@ -96,15 +96,15 @@ public partial class UIEditorComponent : UIComponent
         _hierarchy = hierarchy;
 
         var middleNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Scene");
-        if (UnitTestingWorld.Toggles.VideoStreaming)
+        if (EditorUnitTests.Toggles.VideoStreaming)
         {
             middleNode.AddComponent<UIVideoComponent>();
-            if (UnitTestingWorld.Toggles.VideoStreamingAudio)
+            if (EditorUnitTests.Toggles.VideoStreamingAudio)
             {
                 var audio = middleNode.AddComponent<AudioSourceComponent>();
             }
         }
-        if (UnitTestingWorld.Toggles.BackgroundShader)
+        if (EditorUnitTests.Toggles.BackgroundShader)
         {
             XRShader bgShader = ShaderHelper.LoadEngineShader("UI/Backgrounds/Surf2.fs", EShaderType.Fragment);
             var mat = new XRMaterial(bgShader)

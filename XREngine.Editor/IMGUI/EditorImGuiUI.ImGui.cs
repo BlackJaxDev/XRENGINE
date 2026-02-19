@@ -484,7 +484,7 @@ public static partial class EditorImGuiUI
             bool captureKeyboard = !inPlayMode && (io.WantCaptureKeyboard || io.WantTextInput);
             ImGuiUndoHelper.BeginFrame();
             
-            bool showSettings = UnitTestingWorld.Toggles.DearImGuiUI;
+            bool showSettings = EditorUnitTests.Toggles.DearImGuiUI;
             if (!showSettings)
             {
                 Engine.Input.SetUIInputCaptured(false);
@@ -544,7 +544,7 @@ public static partial class EditorImGuiUI
             
             ImGui.End();
 
-            UnitTestingWorld.UserInterface.DrawNewProjectDialog();
+            EditorUnitTests.UserInterface.DrawNewProjectDialog();
             DrawArchiveImportDialog();
 
             DrawProfilerPanel();
@@ -661,7 +661,7 @@ public static partial class EditorImGuiUI
             _closePromptSelections.Clear();
 
             foreach (var asset in dirtyAssets
-                .OrderBy(static a => UnitTestingWorld.UserInterface.GetAssetDisplayName(a), StringComparer.OrdinalIgnoreCase))
+                .OrderBy(static a => EditorUnitTests.UserInterface.GetAssetDisplayName(a), StringComparer.OrdinalIgnoreCase))
             {
                 _closePromptAssets.Add(asset);
                 _closePromptSelections[asset.ID] = true;
@@ -700,7 +700,7 @@ public static partial class EditorImGuiUI
             {
                 foreach (var asset in _closePromptAssets)
                 {
-                    string label = UnitTestingWorld.UserInterface.GetAssetDisplayName(asset);
+                    string label = EditorUnitTests.UserInterface.GetAssetDisplayName(asset);
                     bool selected = _closePromptSelections.TryGetValue(asset.ID, out var value) ? value : true;
                     if (ImGui.Checkbox(label, ref selected))
                         _closePromptSelections[asset.ID] = selected;
@@ -1010,15 +1010,15 @@ public static partial class EditorImGuiUI
             if (ImGui.BeginMenu("File"))
             {
                 if (ImGui.MenuItem("New Project..."))
-                    UnitTestingWorld.UserInterface.ShowNewProjectDialog();
+                    EditorUnitTests.UserInterface.ShowNewProjectDialog();
                 
                 if (ImGui.MenuItem("Open Project..."))
-                    UnitTestingWorld.UserInterface.OpenProjectDialog(null!);
+                    EditorUnitTests.UserInterface.OpenProjectDialog(null!);
 
                 ImGui.Separator();
 
                 if (ImGui.MenuItem("Save All", "Ctrl+Shift+S"))
-                    UnitTestingWorld.UserInterface.SaveAll(null);
+                    EditorUnitTests.UserInterface.SaveAll(null);
 
                 if (ImGui.BeginMenu("Save..."))
                 {
@@ -1057,7 +1057,7 @@ public static partial class EditorImGuiUI
                         {
                             var entry = undoHistory[i];
                             if (ImGui.MenuItem($"{i + 1}. {entry.Description}"))
-                                UnitTestingWorld.UserInterface.UndoMultiple(i);
+                                EditorUnitTests.UserInterface.UndoMultiple(i);
                         }
                     }
                     ImGui.EndMenu();
@@ -1074,7 +1074,7 @@ public static partial class EditorImGuiUI
                         {
                             var entry = redoHistory[i];
                             if (ImGui.MenuItem($"{i + 1}. {entry.Description}"))
-                                UnitTestingWorld.UserInterface.RedoMultiple(i);
+                                EditorUnitTests.UserInterface.RedoMultiple(i);
                         }
                     }
                     ImGui.EndMenu();
@@ -1264,12 +1264,12 @@ public static partial class EditorImGuiUI
                 uniqueRoots[root.ID] = root;
             }
 
-            foreach (var entry in uniqueRoots.Values.OrderBy(static a => UnitTestingWorld.UserInterface.GetAssetDisplayName(a), StringComparer.OrdinalIgnoreCase))
+            foreach (var entry in uniqueRoots.Values.OrderBy(static a => EditorUnitTests.UserInterface.GetAssetDisplayName(a), StringComparer.OrdinalIgnoreCase))
             {
-                string label = UnitTestingWorld.UserInterface.GetAssetDisplayName(entry);
+                string label = EditorUnitTests.UserInterface.GetAssetDisplayName(entry);
                 string menuLabel = $"{label}##DirtyAsset{entry.ID}";
                 if (ImGui.MenuItem(menuLabel))
-                    UnitTestingWorld.UserInterface.SaveSingleAsset(entry);
+                    EditorUnitTests.UserInterface.SaveSingleAsset(entry);
             }
         }
 

@@ -57,50 +57,86 @@ internal class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        //Begin tracking how long editor startup takes, and log the time when the first non-black frame is rendered.
         StartEditorStartupTimer();
+
+        // Ensure support for legacy code pages needed by some third-party libraries (e.g., SharpFont).
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-        // Install global trace listener to capture System.Diagnostics.Debug output from external libraries
-        // and route it through the engine's logging system (console panel + log files)
-        XREngine.TraceListener.GlobalMessageCallback = message =>
-        {
-            if (!string.IsNullOrEmpty(message))
-                EngineDebug.Log(ELogCategory.General, message.TrimEnd('\r', '\n'));
-        };
-        XREngine.TraceListener.InstallGlobalListener();
+        // Initialize logging as early as possible to capture output from all subsystems, including during project initialization.
+        InitLogging();
 
-        if (TryHandleCommandLine(args))
+        // Check for project initialization arguments and handle them if present. 
+        // Returns false for failed initialization (e.g., missing or invalid parameters), 
+        // in which case an error message will have been printed and the process should exit.
+        if (!TryInitNewProject(args))
             return;
 
-        //ConsoleHelper.EnsureConsoleAttached();
-        Undo.Initialize();
         EngineDebug.Out("XREngine Editor starting...");
+
+        // Start undo/redo system
+        Undo.Initialize();
+
+        // Start file drop handler to support drag-and-drop importing of assets and scenes into the editor
         EditorFileDropHandler.Initialize();
+
+        // Override render info constructors to inject editor-specific extra features.
         RenderInfo2D.ConstructorOverride = RenderInfo2DConstructor;
         RenderInfo3D.ConstructorOverride = RenderInfo3DConstructor;
+
+        // Disable automatic code recomp for now
         CodeManager.Instance.CompileOnChange = false;
+
+        // Set default JSON serialization settings for the editor, which are used for things like editor preferences and unit testing world config.
         JsonConvert.DefaultSettings = DefaultJsonSettings;
+
+        // Start play mode controller
         EditorPlayModeController.Initialize();
+
+        // Start vr pawn switcher to allow switching between desktop and VR pawns in the editor without restarting
         EditorOpenXrPawnSwitcher.Initialize();
 
-        // Determine world mode from command line or environment variable
-        EWorldMode worldMode = ResolveWorldMode(args);
+        // Load unit testing settings from JSON file into static toggles object that can be referenced throughout the editor and unit testing worlds.
+        EditorUnitTests.Toggles = LoadUnitTestingSettings(false);
 
-        // Note: engine startup settings (render API, update rates, etc.) are sourced from UnitTestingWorld.Toggles
-        // via GetEngineSettings(). Load the JSON settings for both Default and UnitTesting modes so defaults don't
-        // accidentally pick unsupported/undesired values and render a black screen.
-        LoadUnitTestingSettings(false);
+        // Retrieve the world, startup settings, and last game state to run the engine
+        InitializeEditor(
+            out VRGameStartupSettings<EVRActionCategory, EVRGameAction> startupSettings,
+            out GameState gameState);
 
-        // Apply debug pipeline preference BEFORE world creation so that
-        // NewRenderPipeline() returns the correct pipeline type.
-        Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting();
-        EngineDebug.Out($"[DebugPipeline] EditorPreferences.Debug.UseDebugOpaquePipeline = {Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}");
-
-        XRWorld targetWorld;
-
-        if (worldMode == EWorldMode.UnitTesting)
+        void BeforeWindowsCreated(GameStartupSettings settings, GameState __)
         {
-            targetWorld = UnitTestingWorld.CreateSelectedWorld(true, false);
+            // Unsubscribe self to ensure this only runs once, before the first window creation during engine startup
+            Engine.BeforeCreateWindows -= BeforeWindowsCreated;
+
+            // Unit test initialization that must run after editor preferences are loaded 
+            // but before windows are created (e.g., that may affect render pipeline selection).
+            UnitTest_Init();
+            
+            // Initialize MCP server after last project or sandbox editor preferences are loaded
+            McpServerHost.Initialize(args);
+
+            // Assign the target world AFTER all settings have been applied and BEFORE windows are created, 
+            // so that the render pipeline and other systems can be properly initialized.
+            settings.StartupWindows[0].TargetWorld = GetTargetWorld(ResolveWorldMode(args));
+        }
+        Engine.BeforeCreateWindows += BeforeWindowsCreated;
+        try
+        {
+            Engine.Run(startupSettings, gameState);
+        }
+        finally
+        {
+            McpServerHost.Shutdown();
+        }
+    }
+
+    private static XRWorld GetTargetWorld(EWorldMode mode)
+    {
+        XRWorld targetWorld;
+        if (mode == EWorldMode.UnitTesting)
+        {
+            targetWorld = EditorUnitTests.CreateSelectedWorld(true, false);
             EngineDebug.Out("Loading Unit Testing World...");
         }
         else
@@ -108,6 +144,37 @@ internal class Program
             targetWorld = CreateDefaultEmptyWorld();
             EngineDebug.Out("Loading Default Empty World...");
         }
+        return targetWorld;
+    }
+
+    private static void InitLogging()
+    {
+        // Install global trace listener to capture System.Diagnostics.Debug output from external libraries
+        // and route it through the engine's logging system (console panel + log files)
+        static void PrintTraceToGeneralLog(string? message)
+        {
+            if (!string.IsNullOrEmpty(message))
+                EngineDebug.Log(ELogCategory.General, message.TrimEnd('\r', '\n'));
+        }
+        XREngine.TraceListener.GlobalMessageCallback = PrintTraceToGeneralLog;
+        XREngine.TraceListener.InstallGlobalListener();
+        //ConsoleHelper.EnsureConsoleAttached();
+    }
+
+    private static void InitializeEditor(
+        out VRGameStartupSettings<EVRActionCategory, EVRGameAction> startupSettings,
+        out GameState gameState)
+    {
+        startupSettings = CreateEditorStartupSettings();
+        gameState = Engine.LoadOrGenerateGameState();
+    }
+
+    private static void UnitTest_Init()
+    {
+        UnitTest_VerifyPlayModeStart();
+
+        Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting();
+        EngineDebug.Out($"[DebugPipeline] Re-applied before window creation: {Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}");
 
         GPURenderPassCollection.ConfigureIndirectDebug(opts =>
         {
@@ -121,25 +188,20 @@ internal class Program
             opts.SkipIndirectTailClear = false;
             opts.DisableCountDrawPath = false;
         });
-        var startupSettings = GetEngineSettings(targetWorld);
-        var gameState = Engine.LoadOrGenerateGameState();
+    }
 
-        // Initialize MCP server after preferences are loaded
-        McpServerHost.Initialize(args);
-
-        if (UnitTestingWorld.Toggles.StartInPlayModeWithoutTransitions)
+    private static void UnitTest_VerifyPlayModeStart()
+    {
+        if (!EditorUnitTests.Toggles.StartInPlayModeWithoutTransitions)
+            return;
+        
+        Engine.PlayMode.ForcePlayWithoutTransitions = true;
+        static void StartPlayOnce()
         {
-            Engine.PlayMode.ForcePlayWithoutTransitions = true;
-            static void StartPlayOnce()
-            {
-                Time.Timer.PostUpdateFrame -= StartPlayOnce;
-                _ = Engine.PlayMode.EnterPlayModeAsync();
-            }
-            Time.Timer.PostUpdateFrame += StartPlayOnce;
+            Time.Timer.PostUpdateFrame -= StartPlayOnce;
+            _ = Engine.PlayMode.EnterPlayModeAsync();
         }
-
-        Engine.Run(startupSettings, gameState);
-        McpServerHost.Shutdown();
+        Time.Timer.PostUpdateFrame += StartPlayOnce;
     }
 
     private static void StartEditorStartupTimer()
@@ -160,7 +222,7 @@ internal class Program
             return;
 
         s_startupWindow = window;
-        window.PostRenderViewportsCallback += OnStartupPostRenderViewports;
+        //window.PostRenderViewportsCallback += OnStartupPostRenderViewports;
     }
 
     private static void OnStartupPostRenderViewports()
@@ -245,7 +307,7 @@ internal class Program
     /// </summary>
     private static XRWorld CreateDefaultEmptyWorld()
     {
-        UnitTestingWorld.ApplyRenderSettingsFromToggles();
+        EditorUnitTests.ApplyRenderSettingsFromToggles();
 
         var scene = new XRScene("Main Scene");
         var rootNode = new SceneNode("Root Node");
@@ -255,14 +317,14 @@ internal class Program
         // This component auto-starts listening when activated.
         rootNode.AddComponent<NetworkDiscoveryComponent>("Network Discovery");
 
-        UnitTestingWorld.Toggles.VRPawn = false;
-        UnitTestingWorld.Toggles.Locomotion = false;
+        EditorUnitTests.Toggles.VRPawn = false;
+        EditorUnitTests.Toggles.Locomotion = false;
 
-        SceneNode? characterPawnModelParentNode = UnitTestingWorld.Pawns.CreatePlayerPawn(true, false, rootNode);
+        SceneNode? characterPawnModelParentNode = EditorUnitTests.Pawns.CreatePlayerPawn(true, false, rootNode);
 
-        UnitTestingWorld.Lighting.AddDirLight(rootNode);
-        UnitTestingWorld.Lighting.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
-        UnitTestingWorld.Models.AddSkybox(rootNode, null);
+        EditorUnitTests.Lighting.AddDirLight(rootNode);
+        EditorUnitTests.Lighting.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
+        EditorUnitTests.Models.AddSkybox(rootNode, null);
 
         AddDefaultGridFloor(rootNode);
 
@@ -330,23 +392,29 @@ internal class Program
         Converters = [new StringEnumConverter()]
     };
 
-    private static void LoadUnitTestingSettings(bool writeBackAfterRead)
+    private static EditorUnitTests.Settings LoadUnitTestingSettings(bool writeBackAfterRead)
     {
+        EditorUnitTests.Settings settings;
+
         string dir = Environment.CurrentDirectory;
         string fileName = UnitTestingWorldSettingsFileName;
         string filePath = Path.Combine(dir, "Assets", fileName);
+
         if (!File.Exists(filePath))
-            File.WriteAllText(filePath, JsonConvert.SerializeObject(UnitTestingWorld.Toggles, Formatting.Indented));
+            File.WriteAllText(filePath, JsonConvert.SerializeObject(settings = new EditorUnitTests.Settings(), Formatting.Indented));
         else
         {
             string? content = File.ReadAllText(filePath);
             if (content is not null)
             {
-                UnitTestingWorld.Toggles = JsonConvert.DeserializeObject<UnitTestingWorld.Settings>(content) ?? new UnitTestingWorld.Settings();
+                settings = JsonConvert.DeserializeObject<EditorUnitTests.Settings>(content) ?? new EditorUnitTests.Settings();
                 if (writeBackAfterRead)
-                    File.WriteAllText(filePath, JsonConvert.SerializeObject(UnitTestingWorld.Toggles, Formatting.Indented));
+                    File.WriteAllText(filePath, JsonConvert.SerializeObject(settings, Formatting.Indented));
             }
+            else
+                settings = new EditorUnitTests.Settings();
         }
+        return settings;
     }
 
     static EditorRenderInfo2D RenderInfo2DConstructor(IRenderable owner, RenderCommand[] commands)
@@ -354,13 +422,13 @@ internal class Program
     static EditorRenderInfo3D RenderInfo3DConstructor(IRenderable owner, RenderCommand[] commands)
         => new(owner, commands);
 
-    private static VRGameStartupSettings<EVRActionCategory, EVRGameAction> GetEngineSettings(XRWorld targetWorld)
+    private static VRGameStartupSettings<EVRActionCategory, EVRGameAction> CreateEditorStartupSettings()
     {
         int w = 1920;
         int h = 1080;
-        float updateHz = UnitTestingWorld.Toggles.UpdateFPS;
-        float renderHz = UnitTestingWorld.Toggles.RenderFPS;
-        float fixedHz = UnitTestingWorld.Toggles.FixedFPS;
+        float updateHz = EditorUnitTests.Toggles.UpdateFPS;
+        float renderHz = EditorUnitTests.Toggles.RenderFPS;
+        float fixedHz = EditorUnitTests.Toggles.FixedFPS;
 
         int primaryX = NativeMethods.GetSystemMetrics(0);
         int primaryY = NativeMethods.GetSystemMetrics(1);
@@ -374,7 +442,6 @@ internal class Program
                 new()
                 {
                     WindowTitle = "XRE Editor",
-                    TargetWorld = targetWorld,
                     WindowState = EWindowState.Windowed,
                     UseNativeTitleBar = true,
                     X = primaryX / 2 - w / 2,
@@ -386,10 +453,10 @@ internal class Program
             DefaultUserSettings = new UserSettings()
             {
                 VSync = EVSyncMode.Off,
-                RenderLibrary = UnitTestingWorld.Toggles.RenderAPI,
-                PhysicsLibrary = UnitTestingWorld.Toggles.PhysicsAPI,
+                RenderLibrary = EditorUnitTests.Toggles.RenderAPI,
+                PhysicsLibrary = EditorUnitTests.Toggles.PhysicsAPI,
             },
-            GPURenderDispatch = UnitTestingWorld.Toggles.GPURenderDispatch,
+            GPURenderDispatch = EditorUnitTests.Toggles.GPURenderDispatch,
             TargetUpdatesPerSecond = updateHz,
             TargetFramesPerSecond = renderHz,
             FixedFramesPerSecond = fixedHz,
@@ -406,7 +473,6 @@ internal class Program
         }
 
         // Apply engine settings
-        Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting();
         Engine.Rendering.Settings.OutputVerbosity = EOutputVerbosity.Verbose;
 
         // Allow overriding networking mode via env var for quick local testing.
@@ -436,11 +502,11 @@ internal class Program
             EngineDebug.Out($"UDP multicast port overridden to {udpMulticastPort} via XRE_UDP_MULTICAST_PORT.");
         }
 
-        if (UnitTestingWorld.Toggles.VRPawn && (!UnitTestingWorld.Toggles.EmulatedVRPawn || UnitTestingWorld.Toggles.PreviewVRStereoViews))
+        if (EditorUnitTests.Toggles.VRPawn && (!EditorUnitTests.Toggles.EmulatedVRPawn || EditorUnitTests.Toggles.PreviewVRStereoViews))
         {
             settings.RunVRInPlace = true;
             EditorVR.ApplyOpenVRSettings(settings);
-            settings.VRRuntime = UnitTestingWorld.Toggles.UseOpenXR
+            settings.VRRuntime = EditorUnitTests.Toggles.UseOpenXR
                 ? EVRRuntime.OpenXR
                 : EVRRuntime.OpenVR;
         }
@@ -473,18 +539,18 @@ internal class Program
                 return true;
         }
 
-        bool useDebug = UnitTestingWorld.Toggles.ForceDebugOpaquePipeline;
-        EngineDebug.Out($"[DebugPipeline] ForceDebugOpaquePipeline={useDebug}, HasStaticModels={UnitTestingWorld.Toggles.HasStaticModelsToImport}, Mode={UnitTestingWorld.Toggles.StaticModelMaterialMode}");
+        bool useDebug = EditorUnitTests.Toggles.ForceDebugOpaquePipeline;
+        EngineDebug.Out($"[DebugPipeline] ForceDebugOpaquePipeline={useDebug}, HasStaticModels={EditorUnitTests.Toggles.HasStaticModelsToImport}, Mode={EditorUnitTests.Toggles.StaticModelMaterialMode}");
 
         // The debug opaque pipeline is forward-only and does not execute the default deferred/forward+ pass chain.
         // If the unit test is requesting static model material modes that rely on DefaultRenderPipeline passes,
         // force the default pipeline so results are visible and comparable.
-        if (UnitTestingWorld.Toggles.HasStaticModelsToImport)
+        if (EditorUnitTests.Toggles.HasStaticModelsToImport)
         {
-            var mode = UnitTestingWorld.Toggles.StaticModelMaterialMode;
-            if (mode == UnitTestingWorld.StaticModelMaterialMode.Deferred ||
-                mode == UnitTestingWorld.StaticModelMaterialMode.ForwardPlusTextured ||
-                mode == UnitTestingWorld.StaticModelMaterialMode.ForwardPlusUberShader)
+            var mode = EditorUnitTests.Toggles.StaticModelMaterialMode;
+            if (mode == EditorUnitTests.StaticModelMaterialMode.Deferred ||
+                mode == EditorUnitTests.StaticModelMaterialMode.ForwardPlusTextured ||
+                mode == EditorUnitTests.StaticModelMaterialMode.ForwardPlusUberShader)
             {
                 if (useDebug)
                     EngineDebug.Out($"[UnitTestingWorld] ForceDebugOpaquePipeline disabled because StaticModelMaterialMode={mode} requires DefaultRenderPipeline.");
@@ -495,27 +561,39 @@ internal class Program
         return useDebug;
     }
 
-    private static bool TryHandleCommandLine(string[] args)
+    /// <summary>
+    /// Checks command line arguments for project initialization flags and handles them if present.
+    /// Returns true if either no initialization was requested or if initialization succeeded, 
+    /// or false if initialization arguments were present but invalid (in which case an error message will be printed and the process should exit with failure code).
+    /// </summary>
+    private static bool TryInitNewProject(string[] args)
     {
         if (!TryParseProjectInitArgs(args, out var projectDirectory, out var projectName, out bool initFlagSeen, out string? error))
         {
+            //Failed to parse arguments, but --init-project was present, so print error and exit with failure code
             if (initFlagSeen)
             {
                 Console.Error.WriteLine(error ?? "Invalid project initialization arguments.");
                 Environment.ExitCode = 1;
-                return true;
+                return false;
             }
-            return false;
+            else // No initialization arguments were present, continue with normal startup
+                return true;
         }
 
-        if (string.IsNullOrWhiteSpace(projectDirectory))
-            return false;
-
-        bool success = EditorProjectInitializer.InitializeNewProject(projectDirectory, projectName!, Console.Out, Console.Error);
+        // Arguments parsed successfully, proceed with project initialization
+        // project name and directory is guaranteed to be non-null and valid if TryParse returns true
+        bool success = EditorProjectInitializer.InitializeNewProject(projectDirectory!, projectName!, Console.Out, Console.Error);
         Environment.ExitCode = success ? 0 : 1;
-        return true;
+        return success;
     }
 
+    /// <summary>
+    /// Parses command line arguments to determine if project initialization is requested, 
+    /// and extracts relevant parameters.
+    /// Returns true if initialization arguments were present and parsed correctly, 
+    /// or false if no initialization was requested or if there was an error (in which case the error message will be set).
+    /// </summary>
     private static bool TryParseProjectInitArgs(
         string[] args,
         out string? projectDirectory,
