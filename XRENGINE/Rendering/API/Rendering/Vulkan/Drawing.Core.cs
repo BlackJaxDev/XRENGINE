@@ -274,6 +274,7 @@ namespace XREngine.Rendering.Vulkan
             // buffers and images that were retired during its previous recording.
             DrainRetiredBuffers();
             DrainRetiredImages();
+            DrainRetiredFramebuffers();
 
             // Helpful when tracking down DPI / resize issues.
             Debug.VulkanEvery(

@@ -300,7 +300,7 @@ public unsafe partial class VulkanRenderer
 				};
 
 				uint colorAttachmentCount = useDynamicRendering
-					? 1u
+					? (colorAttachmentFormat != Format.Undefined ? 1u : 0u)
 					: Renderer.GetRenderPassColorAttachmentCount(renderPass);
 				PipelineColorBlendAttachmentState[] blendAttachments = colorAttachmentCount == 0
 					? Array.Empty<PipelineColorBlendAttachmentState>()
@@ -357,8 +357,8 @@ public unsafe partial class VulkanRenderer
 							PipelineRenderingCreateInfo renderingInfo = new()
 							{
 								SType = StructureType.PipelineRenderingCreateInfo,
-								ColorAttachmentCount = 1,
-								PColorAttachmentFormats = &colorFormat,
+								ColorAttachmentCount = colorAttachmentCount,
+								PColorAttachmentFormats = colorAttachmentCount > 0 ? &colorFormat : null,
 								DepthAttachmentFormat = depthAttachmentFormat,
 								StencilAttachmentFormat = IsStencilCapableFormat(depthAttachmentFormat)
 									? depthAttachmentFormat

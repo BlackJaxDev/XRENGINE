@@ -340,6 +340,8 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<string, AutoUniformBuffer[]> _autoUniformBuffers = new(StringComparer.Ordinal);
         private readonly HashSet<string> _autoUniformWarnings = new(StringComparer.Ordinal);
         private const string VertexUniformSuffix = "_VTX";
+        private const string FallbackDescriptorUniformName = "__FallbackDescriptorBuffer";
+        private const uint FallbackDescriptorUniformSize = 1024u;
 
         private static bool IsStencilCapableFormat(Format format)
             => format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;

@@ -61,8 +61,6 @@ public unsafe partial class VulkanRenderer
 			if (!_descriptorDirty && canReuseDescriptorAllocation)
 				return true;
 
-			_descriptorWarnings.Clear();
-
 			if (canReuseDescriptorAllocation)
 			{
 				for (int frame = 0; frame < frameCount; frame++)
@@ -272,6 +270,7 @@ public unsafe partial class VulkanRenderer
 						break;
 
 					case DescriptorType.CombinedImageSampler:
+						case DescriptorType.Sampler:
 					case DescriptorType.SampledImage:
 					case DescriptorType.StorageImage:
 					case DescriptorType.InputAttachment:
@@ -360,7 +359,13 @@ public unsafe partial class VulkanRenderer
 				if (TryResolveAutoUniformBuffer(binding, frameIndex, out bufferInfo))
 					return true;
 
-				return TryResolveEngineUniformBuffer(binding, frameIndex, out bufferInfo);
+				if (TryResolveEngineUniformBuffer(binding, frameIndex, out bufferInfo))
+					return true;
+
+				if (binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.StorageBuffer)
+					return TryResolveFallbackDescriptorBuffer(binding, frameIndex, out bufferInfo);
+
+				return false;
 			}
 
 			buffer.Generate();
@@ -375,6 +380,33 @@ public unsafe partial class VulkanRenderer
 				Buffer = bufferHandle,
 				Offset = 0,
 				Range = Math.Max(buffer.Data.Length, 1u),
+			};
+
+			return true;
+		}
+
+		private bool TryResolveFallbackDescriptorBuffer(DescriptorBindingInfo binding, int frameIndex, out DescriptorBufferInfo bufferInfo)
+		{
+			bufferInfo = default;
+			uint requiredSize = Math.Max(FallbackDescriptorUniformSize, Math.Max(binding.Count, 1u) * 16u);
+			if (!EnsureEngineUniformBuffer(FallbackDescriptorUniformName, requiredSize))
+				return false;
+
+			if (!_engineUniformBuffers.TryGetValue(FallbackDescriptorUniformName, out EngineUniformBuffer[]? buffers) || buffers.Length == 0)
+				return false;
+
+			int idx = Math.Clamp(frameIndex, 0, buffers.Length - 1);
+			EngineUniformBuffer target = buffers[idx];
+			if (target.Buffer.Handle == 0)
+				return false;
+
+			if (!string.IsNullOrWhiteSpace(binding.Name))
+				WarnOnce($"Using fallback descriptor buffer for unresolved {binding.DescriptorType} binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}).");
+			bufferInfo = new DescriptorBufferInfo
+			{
+				Buffer = target.Buffer,
+				Offset = 0,
+				Range = target.Size,
 			};
 
 			return true;
@@ -399,6 +431,12 @@ public unsafe partial class VulkanRenderer
 
 			if (texture is null)
 			{
+				// Use a 1×1 magenta placeholder to satisfy the descriptor binding
+				// instead of failing the entire descriptor set write.
+				imageInfo = Renderer.GetPlaceholderImageInfo(descriptorType);
+				if (imageInfo.ImageView.Handle != 0)
+					return true;
+
 				WarnOnce($"No texture available for descriptor binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}).");
 				return false;
 			}

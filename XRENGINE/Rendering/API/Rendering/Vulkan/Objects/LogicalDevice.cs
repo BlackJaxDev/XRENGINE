@@ -8,6 +8,8 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private bool _supportsAnisotropy;
+    private string[] _availableDeviceExtensions = Array.Empty<string>();
+    private string[] _enabledDeviceExtensions = Array.Empty<string>();
     private Device device;
     private Queue graphicsQueue;
     private Queue secondaryGraphicsQueue;
@@ -23,6 +25,8 @@ public unsafe partial class VulkanRenderer
     public Queue PresentQueue => presentQueue;
     public Queue ComputeQueue => computeQueue;
     public Queue TransferQueue => transferQueue;
+    public IReadOnlyList<string> AvailableDeviceExtensions => _availableDeviceExtensions;
+    public IReadOnlyList<string> EnabledDeviceExtensions => _enabledDeviceExtensions;
     public bool HasSecondaryGraphicsQueue => _supportsMultipleGraphicsQueues && secondaryGraphicsQueue.Handle != 0;
 
     private void DestroyLogicalDevice()
@@ -37,11 +41,19 @@ public unsafe partial class VulkanRenderer
     /// </summary>
     private bool IsDeviceExtensionSupported(string extensionName)
     {
+        if (_availableDeviceExtensions.Length == 0)
+            _availableDeviceExtensions = EnumerateAvailableDeviceExtensions();
+
+        return _availableDeviceExtensions.Contains(extensionName, StringComparer.Ordinal);
+    }
+
+    private string[] EnumerateAvailableDeviceExtensions()
+    {
         uint extensionCount = 0;
         Api!.EnumerateDeviceExtensionProperties(_physicalDevice, (byte*)null, ref extensionCount, null);
 
         if (extensionCount == 0)
-            return false;
+            return Array.Empty<string>();
 
         var availableExtensions = new ExtensionProperties[extensionCount];
         fixed (ExtensionProperties* availableExtensionsPtr = availableExtensions)
@@ -49,14 +61,11 @@ public unsafe partial class VulkanRenderer
             Api!.EnumerateDeviceExtensionProperties(_physicalDevice, (byte*)null, ref extensionCount, availableExtensionsPtr);
         }
 
-        foreach (var ext in availableExtensions)
-        {
-            string name = SilkMarshal.PtrToString((nint)ext.ExtensionName) ?? string.Empty;
-            if (name == extensionName)
-                return true;
-        }
-
-        return false;
+        return [.. availableExtensions
+            .Select(static ext => SilkMarshal.PtrToString((nint)ext.ExtensionName) ?? string.Empty)
+            .Where(static name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static name => name, StringComparer.Ordinal)];
     }
 
     private unsafe void QueryDescriptorIndexingCapabilities()
@@ -430,11 +439,14 @@ public unsafe partial class VulkanRenderer
             _supportsGeometryShader = true;
         }
 
+        _availableDeviceExtensions = EnumerateAvailableDeviceExtensions();
+        var availableExtensionSet = new HashSet<string>(_availableDeviceExtensions, StringComparer.Ordinal);
+
         // Build the list of extensions to enable (required + supported optional)
         var extensionsToEnable = new List<string>(deviceExtensions);
         foreach (var optionalExt in optionalDeviceExtensions)
         {
-            if (IsDeviceExtensionSupported(optionalExt))
+            if (availableExtensionSet.Contains(optionalExt))
             {
                 extensionsToEnable.Add(optionalExt);
                 Debug.Vulkan($"[Vulkan] Enabling optional extension: {optionalExt}");
@@ -446,6 +458,10 @@ public unsafe partial class VulkanRenderer
         }
 
         var extensionsArray = extensionsToEnable.ToArray();
+        _enabledDeviceExtensions = [.. extensionsArray
+            .Where(static name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static name => name, StringComparer.Ordinal)];
 
         bool descriptorIndexingExtensionEnabled = extensionsArray.Contains("VK_EXT_descriptor_indexing");
         bool descriptorIndexingRequestedByProfile = VulkanFeatureProfile.EnableDescriptorIndexing;

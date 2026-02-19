@@ -15,7 +15,7 @@ public unsafe partial class VulkanRenderer
         private FrameBufferAttachmentSignature[]? _attachmentSignature;
 
         public override VkObjectType Type { get; } = VkObjectType.Framebuffer;
-        public override bool IsGenerated { get; }
+        public override bool IsGenerated => IsActive;
 
         public Framebuffer FrameBuffer => _frameBuffer;
         public RenderPass RenderPass => _renderPass;
@@ -285,10 +285,20 @@ public unsafe partial class VulkanRenderer
 
         public override void Destroy()
         {
-            Api!.DestroyFramebuffer(Device, _frameBuffer, null);
+            if (!IsActive) return;
+            PreDeleted();
+            // Defer actual VkFramebuffer destruction — the handle may still be
+            // referenced by an in-flight command buffer.  The retirement queue
+            // delays VkDestroyFramebuffer until the frame slot's timeline fence
+            // signals that the GPU is done with it.
+            if (_frameBuffer.Handle != 0)
+                Renderer.RetireFramebuffer(_frameBuffer);
             _frameBuffer = default;
             _renderPass = default;
             _attachmentSignature = null;
+            FramebufferWidth = 0;
+            FramebufferHeight = 0;
+            PostDeleted();
         }
 
         protected override uint CreateObjectInternal()

@@ -49,6 +49,10 @@ public unsafe partial class VulkanRenderer
 
 			// Trace swapchain (dynamic rendering) draws only.
 			bool traceSwapchain = useDynamicRendering && renderPass.Handle == 0;
+			bool verboseSwapchainTrace = traceSwapchain && string.Equals(
+				Environment.GetEnvironmentVariable("XRE_VK_TRACE_SWAPDRAW"),
+				"1",
+				StringComparison.Ordinal);
 
 			// Skinning and blendshape weights must be pushed to GPU before any draw
 			// commands reference them (mirrors the OpenGL code path).
@@ -61,7 +65,7 @@ public unsafe partial class VulkanRenderer
 			{
 				if (indexBuffer?.BufferHandle is not { } indexHandle)
 				{
-					if (traceSwapchain)
+					if (verboseSwapchainTrace)
 						Debug.RenderingWarning("[SwapDraw] {0}: no indexBuffer for {1}", Mesh?.Name ?? "?", topology);
 					return false;
 				}
@@ -75,14 +79,14 @@ public unsafe partial class VulkanRenderer
 				uint indexCount = indexBuffer.Data.ElementCount;
 				if (indexCount == 0)
 				{
-					if (traceSwapchain)
+					if (verboseSwapchainTrace)
 						Debug.RenderingWarning("[SwapDraw] {0}: indexCount=0 for {1}", Mesh?.Name ?? "?", topology);
 					return false;
 				}
 
 				if (!EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, out var pipeline))
 				{
-					if (traceSwapchain)
+					if (verboseSwapchainTrace)
 						Debug.RenderingWarning("[SwapDraw] {0}: EnsurePipeline FAILED for {1} dynRender={2} colorFmt={3} depthFmt={4}",
 							Mesh?.Name ?? "?", topology, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat);
 					return false;
@@ -92,7 +96,7 @@ public unsafe partial class VulkanRenderer
 
 				if (!BindVertexBuffersForCurrentPipeline(commandBuffer))
 				{
-					if (traceSwapchain)
+					if (verboseSwapchainTrace)
 						Debug.RenderingWarning("[SwapDraw] {0}: BindVertexBuffers FAILED", Mesh?.Name ?? "?");
 					return false;
 				}
@@ -105,12 +109,12 @@ public unsafe partial class VulkanRenderer
 
 				if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy))
 				{
-					if (traceSwapchain)
+					if (verboseSwapchainTrace)
 						Debug.RenderingWarning("[SwapDraw] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
 					return false;
 				}
 
-				if (traceSwapchain)
+				if (verboseSwapchainTrace)
 					Debug.RenderingWarning("[SwapDraw] {0}: CmdDrawIndexed({1}) pipeline=0x{2:X} topology={3} cull={4} blend={5} depthTest={6} depthWrite={7} depthCmp={8} colorWrite={9} viewport=({10},{11},{12},{13}) scissor=({14},{15},{16},{17}) prog={18}",
 						Mesh?.Name ?? "?", indexCount, pipeline.Handle, topology,
 						drawCopy.CullMode, drawCopy.BlendEnabled, drawCopy.DepthTestEnabled, drawCopy.DepthWriteEnabled, drawCopy.DepthCompareOp, drawCopy.ColorWriteMask,
@@ -122,7 +126,7 @@ public unsafe partial class VulkanRenderer
 				Api!.CmdDrawIndexed(commandBuffer, indexCount, drawInstances, 0, 0, 0);
 
 				// ── DIAGNOSTIC: also try non-indexed draw to test if pipeline/VBO works ──
-				if (traceSwapchain)
+				if (verboseSwapchainTrace)
 				{
 					Api!.CmdDraw(commandBuffer, 3, 1, 0, 0);
 
@@ -161,9 +165,12 @@ public unsafe partial class VulkanRenderer
 			// Attempt indexed draws for each primitive type in priority order.
 			// The first successful draw sets 'drew = true' so we skip the non-indexed fallback.
 			bool drew = false;
-			drew |= DrawIndexed(_triangleIndexBuffer, _triangleIndexSize, PrimitiveTopology.TriangleList, count => Engine.Rendering.Stats.AddTrianglesRendered((int)(count / 3 * drawInstances)));
-			drew |= DrawIndexed(_lineIndexBuffer, _lineIndexSize, PrimitiveTopology.LineList, _ => { });
-			drew |= DrawIndexed(_pointIndexBuffer, _pointIndexSize, PrimitiveTopology.PointList, _ => { });
+			if (_triangleIndexBuffer?.BufferHandle is { } triHandle && triHandle.Handle != 0)
+				drew |= DrawIndexed(_triangleIndexBuffer, _triangleIndexSize, PrimitiveTopology.TriangleList, count => Engine.Rendering.Stats.AddTrianglesRendered((int)(count / 3 * drawInstances)));
+			if (_lineIndexBuffer?.BufferHandle is { } lineHandle && lineHandle.Handle != 0)
+				drew |= DrawIndexed(_lineIndexBuffer, _lineIndexSize, PrimitiveTopology.LineList, _ => { });
+			if (_pointIndexBuffer?.BufferHandle is { } pointHandle && pointHandle.Handle != 0)
+				drew |= DrawIndexed(_pointIndexBuffer, _pointIndexSize, PrimitiveTopology.PointList, _ => { });
 
 			if (!drew && Mesh is not null)
 			{
@@ -231,6 +238,10 @@ public unsafe partial class VulkanRenderer
 			if (_program is null)
 				return true;
 
+			string meshName = Mesh?.Name ?? "UnnamedMesh";
+			string programName = _program.Data?.Name ?? "UnnamedProgram";
+			string materialName = material.Name ?? "UnnamedMaterial";
+
 			bool requiresDescriptors = _program.DescriptorSetLayouts.Count > 0 && _program.DescriptorBindings.Count > 0;
 			if (!requiresDescriptors)
 				return true;
@@ -245,15 +256,13 @@ public unsafe partial class VulkanRenderer
 
 			if (!EnsureDescriptorSets(material))
 			{
-				Debug.RenderingWarning("[DescFail] {0}: EnsureDescriptorSets returned false for prog={1} mat={2}",
-					Mesh?.Name ?? "?", _program?.Data?.Name ?? "?prog", material?.Name ?? "?mat");
+				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=EnsureDescriptorSets returned false");
 				return false;
 			}
 
 			if (_descriptorSets is null || _descriptorSets.Length == 0)
 			{
-				Debug.RenderingWarning("[DescFail] {0}: _descriptorSets null/empty for prog={1}",
-					Mesh?.Name ?? "?", _program?.Data?.Name ?? "?prog");
+				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor set array is null or empty");
 				return false;
 			}
 
@@ -266,8 +275,7 @@ public unsafe partial class VulkanRenderer
 			DescriptorSet[] sets = _descriptorSets[imageIndex];
 			if (sets.Length == 0)
 			{
-				Debug.RenderingWarning("[DescFail] {0}: sets[{1}] is empty array for prog={2}",
-					Mesh?.Name ?? "?", imageIndex, _program?.Data?.Name ?? "?prog");
+				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor set array at imageIndex {imageIndex} is empty");
 				return false;
 			}
 

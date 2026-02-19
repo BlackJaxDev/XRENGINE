@@ -260,6 +260,15 @@ public sealed class UIBatchCollector : IDisposable
 
     #region Render Thread API
 
+    public void Render(int renderPass)
+    {
+        if (!Enabled)
+            return;
+
+        RenderMaterialQuadBatch(renderPass);
+        RenderTextBatch(renderPass);
+    }
+    
     /// <summary>
     /// Renders all batched material quads for the given render pass.
     /// Call from the render thread.
