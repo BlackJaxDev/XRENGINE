@@ -257,8 +257,7 @@ public unsafe partial class VulkanRenderer
 					if (member.Offset + member.Size > buffer.Size)
 						continue;
 
-					if (TryWriteAutoUniformMember(data, member, material, draw))
-						continue;
+					TryWriteAutoUniformMember(data, member, material, draw);
 				}
 			}
 			finally

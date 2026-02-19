@@ -29,7 +29,7 @@ namespace XREngine.Rendering.Vulkan
         private int _vulkanLastFrameDroppedDrawOps;
         private int _vulkanLastFrameDroppedOps;
 
-        private void UpdateVulkanOnScreenDiagnostic(string pipelineLabel, ColorF4 clearColor, int droppedDrawOps, int droppedOps)
+        private void UpdateVulkanOnScreenDiagnostic(string pipelineLabel, ColorF4 clearColor, int droppedDrawOps, int droppedOps, string swapchainWriter)
         {
             string currentTitle = Window?.Title ?? string.Empty;
             if (string.IsNullOrWhiteSpace(_vulkanDiagnosticBaseWindowTitle))
@@ -37,7 +37,7 @@ namespace XREngine.Rendering.Vulkan
 
             string baseTitle = _vulkanDiagnosticBaseWindowTitle ?? string.Empty;
             string diagnosticTitle =
-                $"{baseTitle} | VK[{pipelineLabel}] clr=({clearColor.R:F2},{clearColor.G:F2},{clearColor.B:F2},{clearColor.A:F2}) dropDraw={droppedDrawOps} dropOps={droppedOps}";
+                $"{baseTitle} | VK[{pipelineLabel}] clr=({clearColor.R:F2},{clearColor.G:F2},{clearColor.B:F2},{clearColor.A:F2}) sw={swapchainWriter} dropDraw={droppedDrawOps} dropOps={droppedOps}";
 
             if (string.Equals(_vulkanDiagnosticLastTitle, diagnosticTitle, StringComparison.Ordinal) &&
                 _vulkanLastFrameDroppedDrawOps == droppedDrawOps &&
@@ -49,7 +49,8 @@ namespace XREngine.Rendering.Vulkan
             _vulkanDiagnosticLastTitle = diagnosticTitle;
             _vulkanLastFrameDroppedDrawOps = droppedDrawOps;
             _vulkanLastFrameDroppedOps = droppedOps;
-            Window.Title = diagnosticTitle;
+            if (Window is not null)
+                Window.Title = diagnosticTitle;
         }
 
         private sealed class ComputeTransientResources
@@ -659,6 +660,26 @@ namespace XREngine.Rendering.Vulkan
             int blitCount = 0;
             int computeCount = 0;
             int swapchainWriteCount = 0;
+            int swapchainClearWrites = 0;
+            int swapchainDrawWrites = 0;
+            int swapchainBlitWrites = 0;
+            string swapchainLastWriter = "None";
+            int swapchainLastWriterPass = int.MinValue;
+            int swapchainLastWriterOpIndex = -1;
+
+            // Per-pipeline context identity tracking for swapchain writes
+            Dictionary<int, int> swapchainWritesByPipeline = [];
+
+            void MarkSwapchainWriter(string writerLabel, int passIndex, int opIndex, int pipelineIdentity)
+            {
+                swapchainLastWriter = writerLabel;
+                swapchainLastWriterPass = passIndex;
+                swapchainLastWriterOpIndex = opIndex;
+                swapchainWritesByPipeline.TryGetValue(pipelineIdentity, out int count);
+                swapchainWritesByPipeline[pipelineIdentity] = count + 1;
+            }
+
+            int opScanIndex = 0;
             foreach (var op in ops)
             {
                 switch (op)
@@ -666,32 +687,49 @@ namespace XREngine.Rendering.Vulkan
                     case ClearOp clear:
                         clearCount++;
                         if (clear.Target is null && (clear.ClearColor || clear.ClearDepth || clear.ClearStencil))
+                        {
                             swapchainWriteCount++;
+                            swapchainClearWrites++;
+                            MarkSwapchainWriter(nameof(ClearOp), clear.PassIndex, opScanIndex, clear.Context.PipelineIdentity);
+                        }
                         break;
                     case MeshDrawOp meshDraw:
                         drawCount++;
                         if (meshDraw.Target is null)
+                        {
                             swapchainWriteCount++;
+                            swapchainDrawWrites++;
+                            MarkSwapchainWriter(nameof(MeshDrawOp), meshDraw.PassIndex, opScanIndex, meshDraw.Context.PipelineIdentity);
+                        }
                         break;
                     case BlitOp blit:
                         blitCount++;
                         if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit))
+                        {
                             swapchainWriteCount++;
+                            swapchainBlitWrites++;
+                            MarkSwapchainWriter(nameof(BlitOp), blit.PassIndex, opScanIndex, blit.Context.PipelineIdentity);
+                        }
                         break;
                     case ComputeDispatchOp: computeCount++; break;
                 }
+
+                opScanIndex++;
             }
 
             Debug.VulkanEvery(
                 $"Vulkan.FrameOps.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
-                "[Vulkan] FrameOps: total={0} clears={1} draws={2} blits={3} computes={4} swapchainWrites={5}",
+                "[Vulkan] FrameOps: total={0} clears={1} draws={2} blits={3} computes={4} swapchainWrites={5} (C{6}/D{7}/B{8})",
                 ops.Length,
                 clearCount,
                 drawCount,
                 blitCount,
                 computeCount,
-                swapchainWriteCount);
+                swapchainWriteCount,
+                swapchainClearWrites,
+                swapchainDrawWrites,
+                swapchainBlitWrites);
 
             bool renderPassActive = false;
             bool activeDynamicRendering = false;
@@ -714,6 +752,11 @@ namespace XREngine.Rendering.Vulkan
             // forced EndActiveRenderPass) use LoadOp.Load to preserve contents
             // instead of clearing the composited scene.
             bool swapchainClearedThisFrame = false;
+
+            // Track swapchain writes that happen outside a swapchain render pass
+            // (e.g. CmdBlitImage to swapchain). If true, the first swapchain render
+            // pass this frame must Load existing color instead of clearing.
+            bool swapchainWrittenOutsideRenderPass = false;
 
             // Track per-FBO attachment layouts across render-pass restarts within
             // the current command buffer.  On first use the layouts are null
@@ -836,10 +879,12 @@ namespace XREngine.Rendering.Vulkan
                         // First entry: use PresentSrcKhr if the image has been presented before, else Undefined.
                         ImageLayout colorOldLayout = swapchainClearedThisFrame
                             ? ImageLayout.PresentSrcKhr
-                            : (imageEverPresented ? ImageLayout.PresentSrcKhr : ImageLayout.Undefined);
+                            : (swapchainWrittenOutsideRenderPass
+                                ? ImageLayout.ColorAttachmentOptimal
+                                : (imageEverPresented ? ImageLayout.PresentSrcKhr : ImageLayout.Undefined));
 
                         // Preserve swapchain contents on re-entry so composited scene is not wiped.
-                        AttachmentLoadOp colorLoadOp = swapchainClearedThisFrame
+                        AttachmentLoadOp colorLoadOp = (swapchainClearedThisFrame || swapchainWrittenOutsideRenderPass)
                             ? AttachmentLoadOp.Load
                             : AttachmentLoadOp.Clear;
 
@@ -954,7 +999,9 @@ namespace XREngine.Rendering.Vulkan
 
                     // Fallback: traditional render pass path.
                     // Use _renderPassLoad (LoadOp.Load) on re-entry to preserve contents.
-                    RenderPass selectedRenderPass = swapchainClearedThisFrame ? _renderPassLoad : _renderPass;
+                    RenderPass selectedRenderPass = (swapchainClearedThisFrame || swapchainWrittenOutsideRenderPass)
+                        ? _renderPassLoad
+                        : _renderPass;
 
                     RenderPassBeginInfo renderPassInfo = new()
                     {
@@ -1011,7 +1058,11 @@ namespace XREngine.Rendering.Vulkan
                     RenderArea = new Rect2D
                     {
                         Offset = new Offset2D(0, 0),
-                        Extent = new Extent2D(Math.Max(target.Width, 1u), Math.Max(target.Height, 1u))
+                        // Use the actual VkFramebuffer dimensions (may be smaller when
+                        // targeting a mip level > 0, e.g. bloom downsample FBOs).
+                        Extent = new Extent2D(
+                            vkFrameBuffer.FramebufferWidth > 0 ? vkFrameBuffer.FramebufferWidth : Math.Max(target.Width, 1u),
+                            vkFrameBuffer.FramebufferHeight > 0 ? vkFrameBuffer.FramebufferHeight : Math.Max(target.Height, 1u))
                     }
                 };
 
@@ -1246,6 +1297,8 @@ namespace XREngine.Rendering.Vulkan
                             secondaryBucketByStart.TryGetValue(opIndex, out VulkanRenderGraphCompiler.SecondaryRecordingBucket blitBucket) &&
                             TryRecordSecondaryBucket(primaryCommandBuffer: commandBuffer, imageIndex, ops, opIndex, blitBucket, "BlitBatch"))
                         {
+                            if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit))
+                                swapchainWrittenOutsideRenderPass = true;
                             opIndex = opIndex + blitBucket.Count - 1;
                         }
                         else
@@ -1253,6 +1306,8 @@ namespace XREngine.Rendering.Vulkan
                             CmdBeginLabel(commandBuffer, "Blit");
                             RecordBlitOp(commandBuffer, imageIndex, blit);
                             CmdEndLabel(commandBuffer);
+                            if (blit.OutFbo is null && (blit.ColorBit || blit.DepthBit || blit.StencilBit))
+                                swapchainWrittenOutsideRenderPass = true;
                         }
                         break;
 
@@ -1262,7 +1317,23 @@ namespace XREngine.Rendering.Vulkan
                             EndActiveRenderPass();
                             BeginRenderPassForTarget(clear.Target, opPassIndex, activeContext);
                         }
-                        RecordClearOp(commandBuffer, imageIndex, clear);
+
+                        // Skip explicit color clears on the swapchain after the first render pass.
+                        // CmdClearAttachments would erase scene content composited by an earlier pipeline.
+                        // Depth/stencil clears are still allowed since they don't affect composited color.
+                        if (clear.Target is null && swapchainClearedThisFrame && clear.ClearColor)
+                        {
+                            if (clear.ClearDepth || clear.ClearStencil)
+                            {
+                                // Emit depth/stencil clear only — strip the color clear.
+                                RecordClearOp(commandBuffer, imageIndex, clear with { ClearColor = false });
+                            }
+                            // else: pure color clear on swapchain after first pass → skip entirely
+                        }
+                        else
+                        {
+                            RecordClearOp(commandBuffer, imageIndex, clear);
+                        }
                         break;
 
                     case MeshDrawOp drawOp:
@@ -1412,6 +1483,7 @@ namespace XREngine.Rendering.Vulkan
                     CmdBeginLabel(commandBuffer, "ImGui");
                     RenderImGui(commandBuffer, imageIndex);
                     CmdEndLabel(commandBuffer);
+                    MarkSwapchainWriter("ImGui", activePassIndex, ops.Length, hasActiveContext ? activeContext.PipelineIdentity : 0);
                 }
 
                 string pipelineLabel = hasActiveContext
@@ -1420,7 +1492,9 @@ namespace XREngine.Rendering.Vulkan
                         : $"Pipeline#{activeContext.PipelineIdentity}")
                     : "None";
                 ColorF4 clearColor = GetClearColorValue();
-                UpdateVulkanOnScreenDiagnostic(pipelineLabel, clearColor, droppedDrawOps, droppedFrameOps);
+                string swapchainWriterSummary =
+                    $"{swapchainLastWriter}@p{swapchainLastWriterPass}:w{swapchainWriteCount}(C{swapchainClearWrites}D{swapchainDrawWrites}B{swapchainBlitWrites}) ops={ops.Length} fboD={drawCount - swapchainDrawWrites} fboB={blitCount - swapchainBlitWrites} comp={computeCount}";
+                UpdateVulkanOnScreenDiagnostic(pipelineLabel, clearColor, droppedDrawOps, droppedFrameOps, swapchainWriterSummary);
 
                 EndActiveRenderPass();
 
@@ -1507,6 +1581,10 @@ namespace XREngine.Rendering.Vulkan
                 op.Target is null
                     ? swapChainExtent
                     : new Extent2D(Math.Max(op.Target.Width, 1u), Math.Max(op.Target.Height, 1u)));
+
+            // Vulkan validation requires non-zero extent for vkCmdClearAttachments.
+            if (clearArea.Extent.Width == 0 || clearArea.Extent.Height == 0)
+                return;
 
             ClearRect clearRect = new()
             {

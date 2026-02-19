@@ -461,6 +461,45 @@ public unsafe partial class VulkanRenderer
         public bool TryGetAutoUniformBlock(string name, out AutoUniformBlockInfo block)
             => _autoUniformBlocks.TryGetValue(name, out block);
 
+        /// <summary>
+        /// Searches for an auto-uniform block by block name (in addition to
+        /// instance name) or by (set, binding) coordinates. This handles the
+        /// common case where SPIR-V reflection produces the struct type name
+        /// rather than the variable instance name.
+        /// </summary>
+        public bool TryGetAutoUniformBlockFuzzy(string name, uint set, uint binding, out AutoUniformBlockInfo block)
+        {
+            // 1. Try exact instance-name match first.
+            if (!string.IsNullOrWhiteSpace(name) && _autoUniformBlocks.TryGetValue(name, out block))
+                return true;
+
+            // 2. Try matching by block name (struct type name from SPIR-V).
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                foreach (AutoUniformBlockInfo candidate in _autoUniformBlocks.Values)
+                {
+                    if (string.Equals(candidate.BlockName, name, StringComparison.Ordinal))
+                    {
+                        block = candidate;
+                        return true;
+                    }
+                }
+            }
+
+            // 3. Fall back to (set, binding) coordinates.
+            foreach (AutoUniformBlockInfo candidate in _autoUniformBlocks.Values)
+            {
+                if (candidate.Set == set && candidate.Binding == binding)
+                {
+                    block = candidate;
+                    return true;
+                }
+            }
+
+            block = default!;
+            return false;
+        }
+
         private void CreatePipelineLayout(IReadOnlyList<DescriptorSetLayout> layouts)
         {
             if (_pipelineLayout.Handle != 0)
@@ -555,6 +594,15 @@ public unsafe partial class VulkanRenderer
             PipelineShaderStageCreateInfo[] stages = GetShaderStages(GraphicsStageMask).ToArray();
             if (stages.Length == 0)
                 throw new InvalidOperationException("Graphics pipeline creation requires at least one graphics shader stage.");
+
+            // ── DIAGNOSTIC: log stages when creating pipeline for dynamic rendering ──
+            if (pipelineInfo.RenderPass.Handle == 0) // dynamic rendering
+            {
+                var stageNames = string.Join(", ", stages.Select(s => s.Stage.ToString()));
+                Debug.RenderingWarning("[PipeCreate] prog={0} stages={1} stageFlags=[{2}]",
+                    Data.Name ?? "?prog", stages.Length, stageNames);
+            }
+            // ── END DIAGNOSTIC ──
 
             fixed (PipelineShaderStageCreateInfo* stagesPtr = stages)
             {

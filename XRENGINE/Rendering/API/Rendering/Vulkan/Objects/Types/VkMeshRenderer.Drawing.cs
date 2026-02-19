@@ -47,6 +47,9 @@ public unsafe partial class VulkanRenderer
 			var drawCopy = draw; // struct copy required for capture in local function closures
 			uint drawInstances = draw.Instances;
 
+			// Trace swapchain (dynamic rendering) draws only.
+			bool traceSwapchain = useDynamicRendering && renderPass.Handle == 0;
+
 			// Skinning and blendshape weights must be pushed to GPU before any draw
 			// commands reference them (mirrors the OpenGL code path).
 			MeshRenderer.PushBoneMatricesToGPU();
@@ -57,7 +60,11 @@ public unsafe partial class VulkanRenderer
 			bool DrawIndexed(VkDataBuffer? indexBuffer, IndexSize size, PrimitiveTopology topology, Action<uint> onStats)
 			{
 				if (indexBuffer?.BufferHandle is not { } indexHandle)
+				{
+					if (traceSwapchain)
+						Debug.RenderingWarning("[SwapDraw] {0}: no indexBuffer for {1}", Mesh?.Name ?? "?", topology);
 					return false;
+				}
 
 				if (size == IndexSize.Byte && !Renderer.SupportsIndexTypeUint8)
 				{
@@ -67,15 +74,28 @@ public unsafe partial class VulkanRenderer
 
 				uint indexCount = indexBuffer.Data.ElementCount;
 				if (indexCount == 0)
+				{
+					if (traceSwapchain)
+						Debug.RenderingWarning("[SwapDraw] {0}: indexCount=0 for {1}", Mesh?.Name ?? "?", topology);
 					return false;
+				}
 
 				if (!EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, out var pipeline))
+				{
+					if (traceSwapchain)
+						Debug.RenderingWarning("[SwapDraw] {0}: EnsurePipeline FAILED for {1} dynRender={2} colorFmt={3} depthFmt={4}",
+							Mesh?.Name ?? "?", topology, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat);
 					return false;
+				}
 
 				Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
 				if (!BindVertexBuffersForCurrentPipeline(commandBuffer))
+				{
+					if (traceSwapchain)
+						Debug.RenderingWarning("[SwapDraw] {0}: BindVertexBuffers FAILED", Mesh?.Name ?? "?");
 					return false;
+				}
 
 				if (!uniformsNotified && _program?.Data is { } programData)
 				{
@@ -84,12 +104,56 @@ public unsafe partial class VulkanRenderer
 				}
 
 				if (!BindDescriptorsIfAvailable(commandBuffer, material, drawCopy))
+				{
+					if (traceSwapchain)
+						Debug.RenderingWarning("[SwapDraw] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
 					return false;
+				}
+
+				if (traceSwapchain)
+					Debug.RenderingWarning("[SwapDraw] {0}: CmdDrawIndexed({1}) pipeline=0x{2:X} topology={3} cull={4} blend={5} depthTest={6} depthWrite={7} depthCmp={8} colorWrite={9} viewport=({10},{11},{12},{13}) scissor=({14},{15},{16},{17}) prog={18}",
+						Mesh?.Name ?? "?", indexCount, pipeline.Handle, topology,
+						drawCopy.CullMode, drawCopy.BlendEnabled, drawCopy.DepthTestEnabled, drawCopy.DepthWriteEnabled, drawCopy.DepthCompareOp, drawCopy.ColorWriteMask,
+						drawCopy.Viewport.X, drawCopy.Viewport.Y, drawCopy.Viewport.Width, drawCopy.Viewport.Height,
+						drawCopy.Scissor.Offset.X, drawCopy.Scissor.Offset.Y, drawCopy.Scissor.Extent.Width, drawCopy.Scissor.Extent.Height,
+						_program?.Data?.Name ?? "?prog");
 
 				Renderer.BindIndexBufferTracked(commandBuffer, indexHandle, 0, ToVkIndexType(size));
 				Api!.CmdDrawIndexed(commandBuffer, indexCount, drawInstances, 0, 0, 0);
 
-				Engine.Rendering.Stats.IncrementDrawCalls();
+				// ── DIAGNOSTIC: also try non-indexed draw to test if pipeline/VBO works ──
+				if (traceSwapchain)
+				{
+					Api!.CmdDraw(commandBuffer, 3, 1, 0, 0);
+
+					// Dump vertex layout details
+					foreach (var b in _vertexBindings)
+						Debug.RenderingWarning("[SwapDraw] Binding: idx={0} stride={1} rate={2}", b.Binding, b.Stride, b.InputRate);
+					foreach (var a in _vertexAttributes)
+						Debug.RenderingWarning("[SwapDraw] Attrib: loc={0} binding={1} format={2} offset={3}", a.Location, a.Binding, a.Format, a.Offset);
+
+					// Dump buffer info for each VBO
+					foreach (var kvp in _vertexBuffersByBinding)
+					{
+						var buf = kvp.Value;
+						var d = buf.Data;
+						Debug.RenderingWarning("[SwapDraw] VBO[{0}]: handle=0x{1:X} elemCount={2} elemSize={3} compType={4} compCount={5} lenBytes={6}",
+							kvp.Key, buf.BufferHandle?.Handle ?? 0, d.ElementCount, d.ElementSize,
+							d.ComponentType, d.ComponentCount, d.Length);
+
+						// Try reading first bytes via Address pointer
+						nint addr = d.Address;
+						if (addr != 0)
+						{
+							int readLen = Math.Min(48, (int)d.Length);
+							byte[] raw = new byte[readLen];
+							System.Runtime.InteropServices.Marshal.Copy(addr, raw, 0, readLen);
+							var hex = string.Join(" ", raw.Select(b => b.ToString("X2")));
+							Debug.RenderingWarning("[SwapDraw] VBO[{0}] first {1}B: {2}", kvp.Key, readLen, hex);
+						}
+					}
+				}
+				// ── END DIAGNOSTIC ──
 				onStats(indexCount);
 				return true;
 			}
@@ -180,10 +244,18 @@ public unsafe partial class VulkanRenderer
 				return true;
 
 			if (!EnsureDescriptorSets(material))
+			{
+				Debug.RenderingWarning("[DescFail] {0}: EnsureDescriptorSets returned false for prog={1} mat={2}",
+					Mesh?.Name ?? "?", _program?.Data?.Name ?? "?prog", material?.Name ?? "?mat");
 				return false;
+			}
 
 			if (_descriptorSets is null || _descriptorSets.Length == 0)
+			{
+				Debug.RenderingWarning("[DescFail] {0}: _descriptorSets null/empty for prog={1}",
+					Mesh?.Name ?? "?", _program?.Data?.Name ?? "?prog");
 				return false;
+			}
 
 			if (imageIndex >= _descriptorSets.Length)
 				imageIndex = 0;
@@ -193,7 +265,11 @@ public unsafe partial class VulkanRenderer
 
 			DescriptorSet[] sets = _descriptorSets[imageIndex];
 			if (sets.Length == 0)
+			{
+				Debug.RenderingWarning("[DescFail] {0}: sets[{1}] is empty array for prog={2}",
+					Mesh?.Name ?? "?", imageIndex, _program?.Data?.Name ?? "?prog");
 				return false;
+			}
 
 			Renderer.BindDescriptorSetsTracked(commandBuffer, PipelineBindPoint.Graphics, _program.PipelineLayout, 0, sets);
 			return true;

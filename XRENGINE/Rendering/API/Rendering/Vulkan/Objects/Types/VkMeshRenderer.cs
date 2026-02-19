@@ -456,27 +456,92 @@ public unsafe partial class VulkanRenderer
             int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
             XRFrameBuffer? target = Renderer.GetCurrentDrawFrameBuffer();
 
+            // Resolve the effective material and its render options so the
+            // pipeline key captures per-material state (CullMode, DepthTest, etc.)
+            // instead of inheriting stale values from the global state tracker.
+            XRMaterial? effectiveMaterial = materialOverride ?? MeshRenderer.Material;
+            RenderingParameters? matOpts = effectiveMaterial?.RenderOptions;
+
+            // ── CullMode ──
+            CullModeFlags cullMode;
+            if (matOpts is not null)
+                cullMode = ToVulkanCullMode(ResolveCullMode(matOpts.CullMode));
+            else
+                cullMode = Renderer.GetCullMode();
+
+            // ── FrontFace ──
+            FrontFace frontFace;
+            if (matOpts is not null)
+                frontFace = ToVulkanFrontFace(ResolveWinding(matOpts.Winding));
+            else
+                frontFace = Renderer.GetFrontFace();
+
+            // ── DepthTest ──
+            bool depthTestEnabled;
+            bool depthWriteEnabled;
+            CompareOp depthCompareOp;
+            if (matOpts?.DepthTest is { } dt && dt.Enabled != ERenderParamUsage.Unchanged)
+            {
+                depthTestEnabled = dt.Enabled == ERenderParamUsage.Enabled;
+                depthWriteEnabled = depthTestEnabled && dt.UpdateDepth;
+                depthCompareOp = depthTestEnabled
+                    ? ToVulkanCompareOp(Engine.Rendering.State.MapDepthComparison(dt.Function))
+                    : CompareOp.Always;
+            }
+            else
+            {
+                depthTestEnabled = Renderer.GetDepthTestEnabled();
+                depthWriteEnabled = Renderer.GetDepthWriteEnabled();
+                depthCompareOp = Renderer.GetDepthCompareOp();
+            }
+
+            // ── Blend ──
+            bool blendEnabled;
+            BlendOp colorBlendOp, alphaBlendOp;
+            BlendFactor srcColor, dstColor, srcAlpha, dstAlpha;
+            BlendMode? matBlend = matOpts is not null ? ResolveBlendMode(matOpts) : null;
+            if (matBlend is not null && matBlend.Enabled != ERenderParamUsage.Unchanged)
+            {
+                blendEnabled = matBlend.Enabled == ERenderParamUsage.Enabled;
+                colorBlendOp = ToVulkanBlendOp(matBlend.RgbEquation);
+                alphaBlendOp = ToVulkanBlendOp(matBlend.AlphaEquation);
+                srcColor = ToVulkanBlendFactor(matBlend.RgbSrcFactor);
+                dstColor = ToVulkanBlendFactor(matBlend.RgbDstFactor);
+                srcAlpha = ToVulkanBlendFactor(matBlend.AlphaSrcFactor);
+                dstAlpha = ToVulkanBlendFactor(matBlend.AlphaDstFactor);
+            }
+            else
+            {
+                blendEnabled = Renderer.GetBlendEnabled();
+                colorBlendOp = Renderer.GetColorBlendOp();
+                alphaBlendOp = Renderer.GetAlphaBlendOp();
+                srcColor = Renderer.GetSrcColorBlendFactor();
+                dstColor = Renderer.GetDstColorBlendFactor();
+                srcAlpha = Renderer.GetSrcAlphaBlendFactor();
+                dstAlpha = Renderer.GetDstAlphaBlendFactor();
+            }
+
             var draw = new PendingMeshDraw(
                 this,
                 Renderer.GetCurrentViewport(),
                 Renderer.GetCurrentScissor(),
-                Renderer.GetDepthTestEnabled(),
-                Renderer.GetDepthWriteEnabled(),
-                Renderer.GetDepthCompareOp(),
+                depthTestEnabled,
+                depthWriteEnabled,
+                depthCompareOp,
                 Renderer.GetStencilTestEnabled(),
                 Renderer.GetFrontStencilState(),
                 Renderer.GetBackStencilState(),
                 Renderer.GetStencilWriteMask(),
                 Renderer.GetColorWriteMask(),
-                Renderer.GetCullMode(),
-                Renderer.GetFrontFace(),
-                Renderer.GetBlendEnabled(),
-                Renderer.GetColorBlendOp(),
-                Renderer.GetAlphaBlendOp(),
-                Renderer.GetSrcColorBlendFactor(),
-                Renderer.GetDstColorBlendFactor(),
-                Renderer.GetSrcAlphaBlendFactor(),
-                Renderer.GetDstAlphaBlendFactor(),
+                cullMode,
+                frontFace,
+                blendEnabled,
+                colorBlendOp,
+                alphaBlendOp,
+                srcColor,
+                dstColor,
+                srcAlpha,
+                dstAlpha,
                 modelMatrix,
                 prevModelMatrix,
                 materialOverride,

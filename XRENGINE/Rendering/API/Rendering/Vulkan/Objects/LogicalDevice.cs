@@ -418,6 +418,12 @@ public unsafe partial class VulkanRenderer
             _supportsFragmentStoresAndAtomics = true;
         }
 
+        if (supportedFeatures.VertexPipelineStoresAndAtomics)
+        {
+            deviceFeatures.VertexPipelineStoresAndAtomics = Vk.True;
+            _supportsVertexPipelineStoresAndAtomics = true;
+        }
+
         if (supportedFeatures.GeometryShader)
         {
             deviceFeatures.GeometryShader = Vk.True;

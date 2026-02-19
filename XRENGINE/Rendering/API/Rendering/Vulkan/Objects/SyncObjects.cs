@@ -6,6 +6,10 @@ namespace XREngine.Rendering.Vulkan;
 public unsafe partial class VulkanRenderer
 {
     private Semaphore[]? acquireBridgeSemaphores;
+    /// <summary>
+    /// Present bridge semaphores indexed by swapchain image index (one per swapchain image).
+    /// This prevents signaling a semaphore that may still be in use by a previously presented image.
+    /// </summary>
     private Semaphore[]? presentBridgeSemaphores;
     private Semaphore _graphicsTimelineSemaphore;
     private Semaphore _presentTimelineSemaphore;
@@ -86,12 +90,13 @@ public unsafe partial class VulkanRenderer
         if (acquireBridgeSemaphores is not null)
         {
             for (int i = 0; i < acquireBridgeSemaphores.Length; i++)
-            {
-                if (presentBridgeSemaphores is not null && i < presentBridgeSemaphores.Length)
-                    Api!.DestroySemaphore(device, presentBridgeSemaphores[i], null);
-
                 Api!.DestroySemaphore(device, acquireBridgeSemaphores[i], null);
-            }
+        }
+
+        if (presentBridgeSemaphores is not null)
+        {
+            for (int i = 0; i < presentBridgeSemaphores.Length; i++)
+                Api!.DestroySemaphore(device, presentBridgeSemaphores[i], null);
         }
 
         if (_graphicsTimelineSemaphore.Handle != 0)
@@ -120,7 +125,8 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException("Vulkan timeline semaphores are required but were not enabled on the logical device.");
 
         acquireBridgeSemaphores = new Semaphore[MAX_FRAMES_IN_FLIGHT];
-        presentBridgeSemaphores = new Semaphore[MAX_FRAMES_IN_FLIGHT];
+        int presentSemaphoreCount = swapChainImages?.Length ?? MAX_FRAMES_IN_FLIGHT;
+        presentBridgeSemaphores = new Semaphore[presentSemaphoreCount];
         _frameSlotTimelineValues = new ulong[MAX_FRAMES_IN_FLIGHT];
         EnsureSwapchainTimelineState();
 
@@ -151,8 +157,15 @@ public unsafe partial class VulkanRenderer
 
         for (var i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
-            if (Api!.CreateSemaphore(device, ref semaphoreInfo, null, out acquireBridgeSemaphores[i]) != Result.Success ||
-                Api.CreateSemaphore(device, ref semaphoreInfo, null, out presentBridgeSemaphores[i]) != Result.Success)
+            if (Api!.CreateSemaphore(device, ref semaphoreInfo, null, out acquireBridgeSemaphores[i]) != Result.Success)
+            {
+                throw new Exception("failed to create acquire bridge synchronization semaphores.");
+            }
+        }
+
+        for (var i = 0; i < presentSemaphoreCount; i++)
+        {
+            if (Api!.CreateSemaphore(device, ref semaphoreInfo, null, out presentBridgeSemaphores[i]) != Result.Success)
             {
                 throw new Exception("failed to create frame bridge synchronization semaphores.");
             }

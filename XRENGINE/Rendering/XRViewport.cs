@@ -742,7 +742,6 @@ namespace XREngine.Rendering
                 if (world?.VisualScene is VisualScene3D vs3d)
                     gpuVisible = vs3d.LastGpuVisibility;
 
-/*
                 Debug.RenderingEvery(
                     $"XRViewport.CollectVisible.Submit.{GetHashCode()}[{Index}].{Engine.PlayMode.State}",
                     TimeSpan.FromSeconds(1),
@@ -755,7 +754,6 @@ namespace XREngine.Rendering
                     trackedRenderables,
                     gpuVisible.Draws,
                     gpuVisible.Instances);
-*/
             }
 
             if (allowScreenSpaceUICollectVisible)

@@ -20,7 +20,14 @@ public unsafe partial class VulkanRenderer
             uint width = textures.Length > 0 ? Math.Max(textures[0].Width, 1u) : 1u;
             uint height = textures.Length > 0 ? Math.Max(textures[0].Height, 1u) : 1u;
             uint layers = (uint)Math.Max(textures.Length, 1);
-            return new TextureLayout(new Extent3D(width, height, 1), layers, 1);
+            // If SmallestAllowedMipmapLevel was explicitly set (below its default of 1000),
+            // the texture needs a specific mip chain (e.g. bloom stereo). Use SmallestMipmapLevel + 1.
+            // Otherwise, default to 1 mip level (framebuffer targets don't need mip chains).
+            bool hasExplicitMipRange = Data.SmallestAllowedMipmapLevel < 1000;
+            uint mipLevels = hasExplicitMipRange
+                ? (uint)Math.Max(1, Data.SmallestMipmapLevel + 1)
+                : 1;
+            return new TextureLayout(new Extent3D(width, height, 1), layers, mipLevels);
         }
 
         protected override AttachmentViewKey BuildAttachmentViewKey(int mipLevel, int layerIndex)

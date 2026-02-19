@@ -735,10 +735,14 @@ public unsafe partial class VulkanRenderer
         /// </summary>
         protected virtual AttachmentViewKey BuildAttachmentViewKey(int mipLevel, int layerIndex)
         {
-            if (mipLevel <= 0 && layerIndex < 0)
+            uint baseMip = (uint)Math.Max(mipLevel, 0);
+
+            // Framebuffer attachments require single-mip-level views (levelCount=1).
+            // Only reuse the default full-mip view when it already has exactly 1 level
+            // and 1 layer — otherwise we must create a single-mip view.
+            if (baseMip == 0 && layerIndex < 0 && ResolvedMipLevels <= 1 && ResolvedArrayLayers <= 1)
                 return default;
 
-            uint baseMip = (uint)Math.Max(mipLevel, 0);
             return new AttachmentViewKey(baseMip, 1, 0, 1, ImageViewType.Type2D, AspectFlags);
         }
 

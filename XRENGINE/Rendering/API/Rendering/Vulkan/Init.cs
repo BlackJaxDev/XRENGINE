@@ -254,7 +254,7 @@ namespace XREngine.Rendering.Vulkan
             _state.SetClearState(color, depth, stencil);
 
             int passIndex = Engine.Rendering.State.CurrentRenderGraphPassIndex;
-            XRFrameBuffer? target = _boundDrawFrameBuffer;
+            XRFrameBuffer? target = GetCurrentDrawFrameBuffer();
             Rect2D rect = _state.GetCroppingEnabled()
                 ? _state.GetScissor()
                 : new Rect2D(new Offset2D(0, 0), _state.GetCurrentTargetExtent());

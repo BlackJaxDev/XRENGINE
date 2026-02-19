@@ -1590,6 +1590,12 @@ internal static class VulkanShaderReflection
                 uint binding = decoration.Binding ?? 0;
                 string name = _names.TryGetValue(variable.Id, out string? foundName) ? foundName : string.Empty;
 
+                // When the variable has no OpName, fall back to the struct type
+                // name (common for uniform/buffer blocks where glslang names the
+                // type but not the variable).
+                if (string.IsNullOrEmpty(name) && _names.TryGetValue(elementTypeId, out string? typeName) && !string.IsNullOrEmpty(typeName))
+                    name = typeName;
+
                 bindings.Add(new DescriptorBindingInfo(set, binding, descriptorType, _stage, descriptorCount == 0 ? 1u : descriptorCount, name));
             }
 

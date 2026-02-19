@@ -57,14 +57,17 @@ namespace XREngine.Rendering.Pipelines.Commands
                 // Debug aid: set `XRE_DEBUG_PRESENT_CLEAR=1` to clear the default framebuffer to a vivid color.
                 // If the window stays black, we're likely not binding/presenting the default framebuffer.
                 // If it turns magenta but the scene never appears, the final blit/composite isn't drawing.
-                if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DEBUG_PRESENT_CLEAR")))
+                bool debugPresentClear = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XRE_DEBUG_PRESENT_CLEAR"));
+                if (debugPresentClear)
                 {
                     Engine.Rendering.State.ClearColor(ColorF4.Magenta);
-                    Engine.Rendering.State.Clear(true, false, false);
+                    Engine.Rendering.State.Clear(true, true, true);
+                    // Skip the normal clear so the magenta survives to present.
                 }
-
-                if (ClearColor || ClearDepth || ClearStencil)
+                else if (ClearColor || ClearDepth || ClearStencil)
+                {
                     Engine.Rendering.State.Clear(ClearColor, ClearDepth, ClearStencil);
+                }
 
                 return;
             }

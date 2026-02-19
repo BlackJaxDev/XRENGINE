@@ -39,6 +39,7 @@ public unsafe partial class VulkanRenderer
             try
             {
                 byte[] spirv = VulkanShaderCompiler.Compile(Data, out _entryPoint, out _autoUniformBlock, out string? rewrittenSource);
+
                 StageFlags = ToVulkan(Data.Type);
                 _descriptorBindings.Clear();
                 _descriptorBindings.AddRange(VulkanShaderReflection.ExtractBindings(spirv, StageFlags, rewrittenSource ?? Data.Source?.Text));
@@ -63,6 +64,22 @@ public unsafe partial class VulkanRenderer
                     Module = _shaderModule,
                     PName = (byte*)SilkMarshal.StringToPtr(_entryPoint)
                 };
+
+                // ── DIAGNOSTIC: Dump rewritten GLSL and SPIR-V info for scene shaders ──
+                string shaderName = Data.Name ?? "UnnamedShader";
+                if (shaderName.Contains("Skybox", StringComparison.OrdinalIgnoreCase) ||
+                    shaderName.Contains("Gradient", StringComparison.OrdinalIgnoreCase))
+                {
+                    Debug.RenderingWarning("[ShaderDump] {0} type={1} entry={2} spirvBytes={3} module=0x{4:X}",
+                        shaderName, Data.Type, _entryPoint, spirv.Length, _shaderModule.Handle);
+                    Debug.RenderingWarning("[ShaderDump] {0} autoUniformBlock={1} descriptorBindings={2}",
+                        shaderName, _autoUniformBlock?.BlockName ?? "<none>", _descriptorBindings.Count);
+                    // Dump the full rewritten GLSL source (it should be small for skybox shaders)
+                    string src = rewrittenSource ?? Data.Source?.Text ?? "<no source>";
+                    foreach (string line in src.Split('\n'))
+                        Debug.RenderingWarning("[ShaderDump] {0}: {1}", shaderName, line.TrimEnd('\r'));
+                }
+                // ── END DIAGNOSTIC ──
             }
             catch (Exception ex)
             {
