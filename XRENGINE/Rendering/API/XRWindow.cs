@@ -725,6 +725,12 @@ namespace XREngine.Rendering
                 bool useScenePanelMode =
                     Engine.IsEditor &&
                     Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel;
+                bool forceFullViewport = string.Equals(
+                    Environment.GetEnvironmentVariable("XRE_FORCE_FULL_VIEWPORT"),
+                    "1",
+                    StringComparison.Ordinal);
+                if (forceFullViewport)
+                    useScenePanelMode = false;
                 bool mirrorByComposition =
                     Engine.VRState.IsInVR &&
                     Engine.Rendering.Settings.RenderWindowsWhileInVR &&
@@ -733,7 +739,8 @@ namespace XREngine.Rendering
                     !Engine.VRState.IsInVR ||
                     (Engine.Rendering.Settings.RenderWindowsWhileInVR && !mirrorByComposition);
 
-                LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports);
+                LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports, forceFullViewport);
+                ApplyForcedDebugOpaquePipelineOverride();
 
                 using (var preRenderSample = Engine.Profiler.Start("XRWindow.GlobalPreRender"))
                 {
@@ -838,9 +845,44 @@ namespace XREngine.Rendering
             }
         }
 
-        private void LogRenderDiagnostics(double delta, bool useScenePanelMode, bool canRenderWindowViewports)
+        private void ApplyForcedDebugOpaquePipelineOverride()
+        {
+            bool forceDebugOpaque = string.Equals(
+                Environment.GetEnvironmentVariable("XRE_FORCE_DEBUG_OPAQUE_PIPELINE"),
+                "1",
+                StringComparison.Ordinal);
+            if (!forceDebugOpaque)
+                return;
+
+            foreach (var viewport in Viewports)
+            {
+                if (viewport.RenderPipeline is DebugOpaqueRenderPipeline)
+                    continue;
+
+                viewport.RenderPipeline = new DebugOpaqueRenderPipeline();
+                Debug.RenderingEvery(
+                    $"XRWindow.ForceDebugOpaque.{GetHashCode()}.{viewport.Index}",
+                    TimeSpan.FromSeconds(2),
+                    "[RenderDiag] Forced DebugOpaqueRenderPipeline for VP[{0}] due to XRE_FORCE_DEBUG_OPAQUE_PIPELINE=1.",
+                    viewport.Index);
+            }
+        }
+
+        private void LogRenderDiagnostics(double delta, bool useScenePanelMode, bool canRenderWindowViewports, bool forceFullViewport)
         {
             string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
+
+            Debug.RenderingEvery(
+                keyBase + ".Mode",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] Mode: PanelMode={0} ForcedFull={1} Pref={2} CanRender={3} Viewports={4} TargetWorldNull={5} Delta={6:F4}",
+                useScenePanelMode,
+                forceFullViewport,
+                Engine.EditorPreferences.ViewportPresentationMode,
+                canRenderWindowViewports,
+                Viewports.Count,
+                TargetWorldInstance is null,
+                delta);
 
             if (!canRenderWindowViewports)
             {
@@ -908,7 +950,17 @@ namespace XREngine.Rendering
             {
                 if (useScenePanelMode)
                 {
-                    _scenePanelAdapter.TryRenderScenePanelMode(this);
+                    bool renderedInPanel = _scenePanelAdapter.TryRenderScenePanelMode(this);
+                    if (!renderedInPanel)
+                    {
+                        _scenePanelAdapter.EndScenePanelMode(this);
+
+                        // If panel presentation is enabled but the panel region is unavailable
+                        // (e.g., panel hidden/closed or not yet laid out), keep rendering the
+                        // scene directly to the window instead of skipping world rendering.
+                        Renderer.SetCroppingEnabled(false);
+                        RenderViewports();
+                    }
                 }
                 else
                 {

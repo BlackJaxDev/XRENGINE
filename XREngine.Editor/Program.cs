@@ -460,6 +460,19 @@ internal class Program
 
     private static bool ResolveDebugOpaquePipelineSetting()
     {
+        string? forceDebugEnv = Environment.GetEnvironmentVariable("XRE_FORCE_DEBUG_OPAQUE_PIPELINE");
+        if (!string.IsNullOrWhiteSpace(forceDebugEnv))
+        {
+            bool forceDebug =
+                string.Equals(forceDebugEnv, "1", StringComparison.Ordinal) ||
+                string.Equals(forceDebugEnv, "true", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(forceDebugEnv, "yes", StringComparison.OrdinalIgnoreCase);
+
+            EngineDebug.Out($"[DebugPipeline] XRE_FORCE_DEBUG_OPAQUE_PIPELINE={forceDebugEnv} => UseDebugOpaquePipeline={forceDebug}");
+            if (forceDebug)
+                return true;
+        }
+
         bool useDebug = UnitTestingWorld.Toggles.ForceDebugOpaquePipeline;
         EngineDebug.Out($"[DebugPipeline] ForceDebugOpaquePipeline={useDebug}, HasStaticModels={UnitTestingWorld.Toggles.HasStaticModelsToImport}, Mode={UnitTestingWorld.Toggles.StaticModelMaterialMode}");
 
