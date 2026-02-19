@@ -1085,6 +1085,12 @@ internal static class VulkanShaderCompiler
     private static readonly Regex OvrMultiviewExtensionRegex = new(
         @"^\s*#\s*extension\s+GL_OVR_multiview2\s*:\s*(?<behavior>\w+)\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    private static readonly Regex OvrMultiviewBaseExtensionRegex = new(
+        @"^\s*#\s*extension\s+GL_OVR_multiview\s*:\s*(?<behavior>\w+)\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    private static readonly Regex OvrViewIdBuiltinRegex = new(
+        @"\bgl_ViewID_OVR\b",
+        RegexOptions.Compiled);
     private static readonly Regex NvStereoExtensionRegex = new(
         @"^\s*#\s*extension\s+GL_NV_(?:stereo_view_rendering|viewport_array2)\s*:\s*\w+\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
@@ -1287,12 +1293,20 @@ internal static class VulkanShaderCompiler
     private static string RewriteLegacyMultiviewExtensionsForVulkan(string source)
     {
         if (string.IsNullOrWhiteSpace(source) ||
-            !source.Contains("GL_OVR_multiview2", StringComparison.OrdinalIgnoreCase))
+            (!source.Contains("GL_OVR_multiview2", StringComparison.OrdinalIgnoreCase) &&
+             !source.Contains("GL_OVR_multiview", StringComparison.OrdinalIgnoreCase)))
             return source;
 
-        return OvrMultiviewExtensionRegex.Replace(
+        source = OvrMultiviewExtensionRegex.Replace(
             source,
             static match => $"#extension GL_EXT_multiview : {match.Groups["behavior"].Value}");
+
+        source = OvrMultiviewBaseExtensionRegex.Replace(
+            source,
+            static match => $"#extension GL_EXT_multiview : {match.Groups["behavior"].Value}");
+
+        source = OvrViewIdBuiltinRegex.Replace(source, "gl_ViewIndex");
+        return source;
     }
 
     private static string NormalizeLegacyStereoForVulkan(string source, string shaderName)

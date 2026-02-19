@@ -27,6 +27,73 @@ namespace XREngine.Rendering.Vulkan
 
         private readonly object _retiredResourceLock = new();
 
+        // =========== Framebuffer Retirement ===========
+
+        /// <summary>
+        /// Per-frame-slot retirement queue for framebuffer handles that cannot be
+        /// destroyed immediately because an in-flight command buffer may still
+        /// reference them.  Drained alongside buffers and images.
+        /// </summary>
+        private readonly List<Framebuffer>[] _retiredFramebuffers =
+            [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
+
+        private readonly HashSet<ulong>[] _retiredFramebufferHandles =
+            [new(), new()]; // length == MAX_FRAMES_IN_FLIGHT
+
+        /// <summary>
+        /// Queues a VkFramebuffer for deferred destruction.  The handle will be
+        /// destroyed the next time this frame slot is reused (after the timeline
+        /// wait guarantees the GPU is done with it).
+        /// </summary>
+        internal void RetireFramebuffer(Framebuffer framebuffer)
+        {
+            if (framebuffer.Handle == 0)
+                return;
+
+            int frameSlot = currentFrame;
+
+            lock (_retiredResourceLock)
+            {
+                if (!_retiredFramebufferHandles[frameSlot].Add(framebuffer.Handle))
+                    return;
+
+                _retiredFramebuffers[frameSlot].Add(framebuffer);
+            }
+        }
+
+        /// <summary>
+        /// Destroys all framebuffers that were retired during the last use of
+        /// the current frame slot.  Called immediately after <c>WaitForFences</c>.
+        /// </summary>
+        private void DrainRetiredFramebuffers()
+        {
+            List<Framebuffer> list;
+            lock (_retiredResourceLock)
+            {
+                list = _retiredFramebuffers[currentFrame];
+                if (list.Count == 0)
+                    return;
+            }
+
+            // Copy under lock, then destroy outside.
+            Framebuffer[] retired;
+            lock (_retiredResourceLock)
+            {
+                retired = [.. list];
+                list.Clear();
+                _retiredFramebufferHandles[currentFrame].Clear();
+            }
+
+            if (Api is null || device.Handle == 0)
+                return;
+
+            foreach (Framebuffer fb in retired)
+            {
+                if (fb.Handle != 0)
+                    Api!.DestroyFramebuffer(device, fb, null);
+            }
+        }
+
         /// <summary>
         /// Queues a buffer+memory pair for deferred destruction.  The pair will be
         /// destroyed the next time this frame slot is reused (after the fence wait
@@ -182,6 +249,7 @@ namespace XREngine.Rendering.Vulkan
                 currentFrame = i;
                 DrainRetiredBuffers();
                 DrainRetiredImages();
+                DrainRetiredFramebuffers();
             }
             currentFrame = saved;
         }

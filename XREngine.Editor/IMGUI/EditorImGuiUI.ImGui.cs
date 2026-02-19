@@ -53,6 +53,7 @@ public static partial class EditorImGuiUI
         private static bool _showProfiler;
         private static bool _showOpenGLApiObjects;
         private static bool _showOpenGLErrors;
+        private static bool _showRenderApiExtensions;
         private static bool _showMissingAssets;
         private static bool _showGlobalEditorPreferences;
         private static bool _showEditorPreferencesOverrides;
@@ -551,6 +552,7 @@ public static partial class EditorImGuiUI
             DrawStatePanel();
             DrawOpenGLApiObjectsPanel();
             DrawOpenGLErrorsPanel();
+            DrawRenderApiExtensionsPanel();
             DrawMissingAssetsPanel();
             DrawGlobalEditorPreferencesPanel();
             DrawEditorPreferencesOverridesPanel();
@@ -1104,8 +1106,9 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Render Pipeline Graph", null, ref _showRenderPipelineGraph);
                 ImGui.MenuItem("Engine State", null, ref _showStatePanel);
                 ImGui.MenuItem("Profiler", "F11", ref _showProfiler);
-                ImGui.MenuItem("OpenGL API Objects", null, ref _showOpenGLApiObjects);
-                ImGui.MenuItem("OpenGL Errors", null, ref _showOpenGLErrors);
+                ImGui.MenuItem("Render API Objects", null, ref _showOpenGLApiObjects);
+                ImGui.MenuItem("Render API Errors", null, ref _showOpenGLErrors);
+                ImGui.MenuItem("Render API Extensions", null, ref _showRenderApiExtensions);
                 ImGui.MenuItem("Missing Assets", null, ref _showMissingAssets);
                 ImGui.MenuItem("Networking", null, ref _showNetworking);
                 ImGui.Separator();

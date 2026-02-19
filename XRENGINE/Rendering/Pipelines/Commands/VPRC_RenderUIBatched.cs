@@ -27,10 +27,7 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
 
         // Render batched UI elements (material quads + text quads)
         if (ActivePipelineInstance.Pipeline is UserInterfaceRenderPipeline uiPipeline)
-        {
-            uiPipeline.BatchCollector?.RenderMaterialQuadBatch(_renderPass);
-            uiPipeline.BatchCollector?.RenderTextBatch(_renderPass);
-        }
+            uiPipeline.BatchCollector?.Render(_renderPass);
 
         // Render any remaining non-batched commands (e.g., clipped elements, custom materials)
         ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, false);

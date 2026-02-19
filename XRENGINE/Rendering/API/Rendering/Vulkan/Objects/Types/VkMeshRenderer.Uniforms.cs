@@ -97,9 +97,12 @@ public unsafe partial class VulkanRenderer
 			}
 
 			EngineUniformBuffer[] buffers = new EngineUniformBuffer[frames];
+			BufferUsageFlags usage = string.Equals(name, FallbackDescriptorUniformName, StringComparison.Ordinal)
+				? BufferUsageFlags.UniformBufferBit | BufferUsageFlags.StorageBufferBit
+				: BufferUsageFlags.UniformBufferBit;
 			for (int i = 0; i < frames; i++)
 			{
-				if (!CreateHostVisibleBuffer(size, BufferUsageFlags.UniformBufferBit, out var buffer, out var memory))
+				if (!CreateHostVisibleBuffer(size, usage, out var buffer, out var memory))
 					return false;
 
 				buffers[i] = new EngineUniformBuffer(buffer, memory, size);
@@ -323,6 +326,9 @@ public unsafe partial class VulkanRenderer
 
 				return true;
 			}
+
+			if (value.IsArray || value.Value is Array)
+				return false;
 
 			return TryWriteAutoUniformValue(data, member, value.Value, value.Type);
 		}
@@ -647,6 +653,18 @@ public unsafe partial class VulkanRenderer
 
 		private static bool TryWriteScalar<T>(Span<byte> data, uint offset, object value, Func<object, T> converter) where T : unmanaged
 		{
+			if (value is null || value is Array)
+				return false;
+
+			if (value is T typed)
+			{
+				Unsafe.WriteUnaligned(ref data[(int)offset], typed);
+				return true;
+			}
+
+			if (value is not IConvertible)
+				return false;
+
 			try
 			{
 				T converted = converter(value);
@@ -795,6 +813,9 @@ public unsafe partial class VulkanRenderer
 		private bool TryWriteEngineUniform(string name, in PendingMeshDraw draw, EngineUniformBuffer buffer)
 		{
 			string normalized = NormalizeEngineUniformName(name);
+			if (normalized.Equals(FallbackDescriptorUniformName, StringComparison.Ordinal))
+				return ClearEngineUniformBuffer(buffer);
+
 			XRCamera? camera = Engine.Rendering.State.RenderingCamera;
 			XRCamera? rightEyeCamera = Engine.Rendering.State.RenderingStereoRightEyeCamera;
 			bool stereoPass = Engine.Rendering.State.IsStereoPass;
@@ -973,6 +994,23 @@ public unsafe partial class VulkanRenderer
 			Unsafe.CopyBlock(mapped, Unsafe.AsPointer(ref localValue), copySize);
 			Api.UnmapMemory(Device, buffer.Memory);
 			return true;
+		}
+
+		private bool ClearEngineUniformBuffer(EngineUniformBuffer buffer)
+		{
+			void* mapped;
+			if (Api!.MapMemory(Device, buffer.Memory, 0, buffer.Size, 0, &mapped) != Result.Success)
+				return false;
+
+			try
+			{
+				new Span<byte>(mapped, (int)buffer.Size).Clear();
+				return true;
+			}
+			finally
+			{
+				Api.UnmapMemory(Device, buffer.Memory);
+			}
 		}
 
 		/// <summary>Uploads a boxed program uniform value to a host-visible UBO, dispatching by type.</summary>

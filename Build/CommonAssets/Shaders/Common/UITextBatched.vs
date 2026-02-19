@@ -52,12 +52,10 @@ mat4 getTextModelMatrix(uint textIndex)
     vec4 row1 = TextInstances[base6 + 1u];
     vec4 row2 = TextInstances[base6 + 2u];
     vec4 row3 = TextInstances[base6 + 3u];
-    return mat4(
-        vec4(row0.x, row1.x, row2.x, row3.x),
-        vec4(row0.y, row1.y, row2.y, row3.y),
-        vec4(row0.z, row1.z, row2.z, row3.z),
-        vec4(row0.w, row1.w, row2.w, row3.w)
-    );
+    // C# Matrix4x4 is row-major with row-vector semantics.
+    // GLSL mat4 uses column-major storage with column-vector semantics.
+    // Build columns directly from the serialized rows to apply the required transpose.
+    return mat4(row0, row1, row2, row3);
 }
 
 void main()

@@ -70,14 +70,12 @@ public unsafe partial class VulkanRenderer
                 if (shaderName.Contains("Skybox", StringComparison.OrdinalIgnoreCase) ||
                     shaderName.Contains("Gradient", StringComparison.OrdinalIgnoreCase))
                 {
-                    Debug.RenderingWarning("[ShaderDump] {0} type={1} entry={2} spirvBytes={3} module=0x{4:X}",
-                        shaderName, Data.Type, _entryPoint, spirv.Length, _shaderModule.Handle);
-                    Debug.RenderingWarning("[ShaderDump] {0} autoUniformBlock={1} descriptorBindings={2}",
-                        shaderName, _autoUniformBlock?.BlockName ?? "<none>", _descriptorBindings.Count);
-                    // Dump the full rewritten GLSL source (it should be small for skybox shaders)
                     string src = rewrittenSource ?? Data.Source?.Text ?? "<no source>";
-                    foreach (string line in src.Split('\n'))
-                        Debug.RenderingWarning("[ShaderDump] {0}: {1}", shaderName, line.TrimEnd('\r'));
+                    string normalizedSource = src.Replace("\r\n", "\n").Replace("\r", "\n");
+                    string formattedSource = normalizedSource.Replace("\n", Environment.NewLine);
+                    Debug.RenderingWarning("[ShaderDump] name={0} type={1} entry={2} spirvBytes={3} module=0x{4:X} autoUniformBlock={5} descriptorBindings={6} source:{7}{8}",
+                        shaderName, Data.Type, _entryPoint, spirv.Length, _shaderModule.Handle,
+                        _autoUniformBlock?.BlockName ?? "<none>", _descriptorBindings.Count, Environment.NewLine, formattedSource);
                 }
                 // ── END DIAGNOSTIC ──
             }

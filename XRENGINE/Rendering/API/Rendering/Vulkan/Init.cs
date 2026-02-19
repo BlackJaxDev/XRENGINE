@@ -1,5 +1,6 @@
 using Silk.NET.Vulkan;
 using System;
+using System.Linq;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -42,14 +43,19 @@ namespace XREngine.Rendering.Vulkan
 
             WaitForPendingReadbackTasks(TimeSpan.FromSeconds(6));
             DestroyDanglingMeshRendererWrappers();
+            DestroyDanglingDataBufferWrappers();
             DestroyRemainingTrackedMeshUniformBuffers();
 
             // Drain all deferred-deletion queues now that the GPU is idle.
             ForceFlushAllRetiredResources();
 
             DestroyAutoExposureComputeResources();
+            DestroyPlaceholderTexture();
             DisposeImGuiResources();
             DestroyAllSwapChainObjects();
+            // FBO render passes are NOT destroyed during swapchain recreation
+            // (they are swapchain-independent). Clean them up here at full shutdown.
+            DestroyFrameBufferRenderPasses();
             DestroyDescriptorSetLayout();
             _resourceAllocator.DestroyPhysicalImages(this);
             _resourceAllocator.DestroyPhysicalBuffers(this);
@@ -71,11 +77,27 @@ namespace XREngine.Rendering.Vulkan
 
         private void DestroyDanglingMeshRendererWrappers()
         {
-            foreach (var pair in VkObject<XRMeshRenderer.BaseVersion>.Cache)
+            var wrappers = VkObject<XRMeshRenderer.BaseVersion>.Cache.Values.ToArray();
+            foreach (var wrapper in wrappers)
             {
                 try
                 {
-                    pair.Value?.Destroy();
+                    wrapper?.Destroy();
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private void DestroyDanglingDataBufferWrappers()
+        {
+            var wrappers = VkObject<XRDataBuffer>.Cache.Values.ToArray();
+            foreach (var wrapper in wrappers)
+            {
+                try
+                {
+                    wrapper?.Destroy();
                 }
                 catch
                 {

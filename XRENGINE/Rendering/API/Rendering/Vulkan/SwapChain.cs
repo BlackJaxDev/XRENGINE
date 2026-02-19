@@ -92,7 +92,13 @@ public unsafe partial class VulkanRenderer
         DestroyDepth();
         DestroyCommandBuffers();
         DestroyFrameBuffers();
-        DestroyFrameBufferRenderPasses();
+        // FBO render passes are independent of the swapchain (they describe FBO
+        // attachment formats, not swapchain images) and must NOT be destroyed
+        // during swapchain recreation.  VkFrameBuffer objects cache the render
+        // pass handle returned by GetOrCreateFrameBufferRenderPass(); destroying
+        // the cache here leaves them holding stale VkRenderPass handles, which
+        // causes ExecutionEngineException in CmdBeginRenderPass on the next frame.
+        // Cleanup is handled separately during full renderer shutdown.
         //_testModel?.Destroy();
         DestroyRenderPasses();
         DestroyImageViews();

@@ -27,8 +27,8 @@ uniform mat4 ProjMatrix_VTX;
 layout (location = 0) out vec3 FragPos;
 layout (location = 1) out vec3 FragNorm;
 layout (location = 4) out vec2 FragUV0;
-flat out vec4 InstanceColor;
-flat out vec4 InstanceBounds;
+layout (location = 5) flat out vec4 InstanceColor;
+layout (location = 6) flat out vec4 InstanceBounds;
 
 out gl_PerVertex
 {
@@ -40,18 +40,14 @@ out gl_PerVertex
 mat4 getModelMatrix(int instanceID)
 {
     int base4 = instanceID * 4;
-    // C# Matrix4x4 is row-major in memory, GLSL mat4 is column-major
-    // Read rows and transpose to get correct column-major mat4
+    // C# Matrix4x4 is row-major with row-vector semantics.
+    // GLSL mat4 uses column-major storage with column-vector semantics.
+    // Build columns directly from the serialized rows to apply the required transpose.
     vec4 row0 = QuadTransforms[base4 + 0];
     vec4 row1 = QuadTransforms[base4 + 1];
     vec4 row2 = QuadTransforms[base4 + 2];
     vec4 row3 = QuadTransforms[base4 + 3];
-    return mat4(
-        vec4(row0.x, row1.x, row2.x, row3.x),
-        vec4(row0.y, row1.y, row2.y, row3.y),
-        vec4(row0.z, row1.z, row2.z, row3.z),
-        vec4(row0.w, row1.w, row2.w, row3.w)
-    );
+    return mat4(row0, row1, row2, row3);
 }
 
 void main()

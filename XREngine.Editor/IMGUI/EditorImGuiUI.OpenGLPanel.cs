@@ -7,6 +7,7 @@ using System.Globalization;
 using XREngine;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
 
 namespace XREngine.Editor;
@@ -18,6 +19,7 @@ public static partial class EditorImGuiUI
         private static AbstractRenderAPIObject? _selectedOpenGlApiObject;
         private static string _openGlApiSearch = string.Empty;
         private static string? _openGlWindowFilter;
+        private static string? _openGlApiBackendFilter;
         private static string? _openGlApiTypeFilter;
         private static string? _openGlXrTypeFilter;
         private static OpenGlApiGroupMode _openGlGroupMode = OpenGlApiGroupMode.ApiType;
@@ -28,6 +30,7 @@ public static partial class EditorImGuiUI
         private readonly struct OpenGLApiObjectRow
         {
             public OpenGLApiObjectRow(
+                string apiBackend,
                 string windowTitle,
                 string apiType,
                 string apiName,
@@ -38,6 +41,7 @@ public static partial class EditorImGuiUI
                 AbstractRenderAPIObject apiObject,
                 string? pipelineName)
             {
+                ApiBackend = apiBackend;
                 WindowTitle = windowTitle;
                 ApiType = apiType;
                 ApiName = apiName;
@@ -49,6 +53,7 @@ public static partial class EditorImGuiUI
                 PipelineName = pipelineName;
             }
 
+            public string ApiBackend { get; }
             public string WindowTitle { get; }
             public string ApiType { get; }
             public string ApiName { get; }
@@ -63,15 +68,40 @@ public static partial class EditorImGuiUI
         private enum OpenGlApiGroupMode
         {
             None,
+            Api,
             ApiType,
             Window,
             RenderPipeline,
         }
 
+        private readonly struct RenderApiErrorRow
+        {
+            public RenderApiErrorRow(string apiBackend, int? id, int count, string severity, string type, string source, DateTime lastSeenUtc, string message)
+            {
+                ApiBackend = apiBackend;
+                Id = id;
+                Count = count;
+                Severity = severity;
+                Type = type;
+                Source = source;
+                LastSeenUtc = lastSeenUtc;
+                Message = message;
+            }
+
+            public string ApiBackend { get; }
+            public int? Id { get; }
+            public int Count { get; }
+            public string Severity { get; }
+            public string Type { get; }
+            public string Source { get; }
+            public DateTime LastSeenUtc { get; }
+            public string Message { get; }
+        }
+
         private static void DrawOpenGLApiObjectsPanel()
         {
             if (!_showOpenGLApiObjects) return;
-            if (!ImGui.Begin("OpenGL API Objects", ref _showOpenGLApiObjects))
+            if (!ImGui.Begin("Render API Objects", ref _showOpenGLApiObjects))
             {
                 ImGui.End();
                 return;
@@ -83,12 +113,25 @@ public static partial class EditorImGuiUI
         private static void DrawOpenGLErrorsPanel()
         {
             if (!_showOpenGLErrors) return;
-            if (!ImGui.Begin("OpenGL Errors", ref _showOpenGLErrors))
+            if (!ImGui.Begin("Render API Errors", ref _showOpenGLErrors))
             {
                 ImGui.End();
                 return;
             }
             DrawOpenGLDebugTabContent();
+            ImGui.End();
+        }
+
+        private static void DrawRenderApiExtensionsPanel()
+        {
+            if (!_showRenderApiExtensions) return;
+            if (!ImGui.Begin("Render API Extensions", ref _showRenderApiExtensions))
+            {
+                ImGui.End();
+                return;
+            }
+
+            DrawRenderApiExtensionsContent();
             ImGui.End();
         }
 
@@ -102,7 +145,17 @@ public static partial class EditorImGuiUI
 
             foreach (var window in Engine.Windows)
             {
-                if (window?.Renderer is not OpenGLRenderer glRenderer)
+                if (window?.Renderer is not AbstractRenderer renderer)
+                    continue;
+
+                string apiBackend = renderer switch
+                {
+                    OpenGLRenderer => "OpenGL",
+                    VulkanRenderer => "Vulkan",
+                    _ => string.Empty,
+                };
+
+                if (string.IsNullOrEmpty(apiBackend))
                     continue;
 
                 string windowTitle;
@@ -153,7 +206,7 @@ public static partial class EditorImGuiUI
                     }
                 }
 
-                foreach (var pair in glRenderer.RenderObjectCache)
+                foreach (var pair in renderer.RenderObjectCache)
                 {
                     var renderObject = pair.Key;
                     var apiObject = pair.Value;
@@ -201,6 +254,7 @@ public static partial class EditorImGuiUI
                     pipelineOwnership.TryGetValue(renderObject, out string? pipelineName);
 
                     rows.Add(new OpenGLApiObjectRow(
+                        apiBackend,
                         windowTitle,
                         apiObject.GetType().Name,
                         apiName,
@@ -215,7 +269,11 @@ public static partial class EditorImGuiUI
 
             rows.Sort(static (a, b) =>
             {
-                int cmp = string.Compare(a.WindowTitle, b.WindowTitle, StringComparison.OrdinalIgnoreCase);
+                int cmp = string.Compare(a.ApiBackend, b.ApiBackend, StringComparison.OrdinalIgnoreCase);
+                if (cmp != 0)
+                    return cmp;
+
+                cmp = string.Compare(a.WindowTitle, b.WindowTitle, StringComparison.OrdinalIgnoreCase);
                 if (cmp != 0)
                     return cmp;
 
@@ -229,6 +287,9 @@ public static partial class EditorImGuiUI
             string[] windowOptions = rows.Count > 0
                 ? rows.Select(static r => r.WindowTitle).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(static r => r, StringComparer.OrdinalIgnoreCase).ToArray()
                 : Array.Empty<string>();
+            string[] apiBackendOptions = rows.Count > 0
+                ? rows.Select(static r => r.ApiBackend).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(static r => r, StringComparer.OrdinalIgnoreCase).ToArray()
+                : Array.Empty<string>();
             string[] apiTypeOptions = rows.Count > 0
                 ? rows.Select(static r => r.ApiType).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(static r => r, StringComparer.OrdinalIgnoreCase).ToArray()
                 : Array.Empty<string>();
@@ -239,7 +300,7 @@ public static partial class EditorImGuiUI
             ImGui.TextUnformatted("Search:");
             ImGui.SameLine();
             ImGui.SetNextItemWidth(220.0f);
-            ImGui.InputTextWithHint("##OpenGlApiSearch", "Name, type, window, handle", ref _openGlApiSearch, 256);
+            ImGui.InputTextWithHint("##OpenGlApiSearch", "Name, API, type, window, handle", ref _openGlApiSearch, 256);
 
             ImGui.SameLine();
             ImGui.TextUnformatted("Group:");
@@ -252,11 +313,12 @@ public static partial class EditorImGuiUI
             {
                 _openGlApiSearch = string.Empty;
                 _openGlWindowFilter = null;
+                _openGlApiBackendFilter = null;
                 _openGlApiTypeFilter = null;
                 _openGlXrTypeFilter = null;
             }
 
-            if (windowOptions.Length > 0 || apiTypeOptions.Length > 0 || xrTypeOptions.Length > 0)
+            if (windowOptions.Length > 0 || apiBackendOptions.Length > 0 || apiTypeOptions.Length > 0 || xrTypeOptions.Length > 0)
             {
                 ImGui.Spacing();
                 bool anyFilterDrawn = false;
@@ -267,6 +329,15 @@ public static partial class EditorImGuiUI
                         ImGui.SameLine();
                     ImGui.SetNextItemWidth(180.0f);
                     DrawOpenGlFilterCombo("Window##OpenGlWindowFilter", windowOptions, ref _openGlWindowFilter);
+                    anyFilterDrawn = true;
+                }
+
+                if (apiBackendOptions.Length > 0)
+                {
+                    if (anyFilterDrawn)
+                        ImGui.SameLine();
+                    ImGui.SetNextItemWidth(140.0f);
+                    DrawOpenGlFilterCombo("API##OpenGlApiBackendFilter", apiBackendOptions, ref _openGlApiBackendFilter);
                     anyFilterDrawn = true;
                 }
 
@@ -309,6 +380,12 @@ public static partial class EditorImGuiUI
                 query = query.Where(row => string.Equals(row.ApiType, filter, StringComparison.OrdinalIgnoreCase));
             }
 
+            if (!string.IsNullOrEmpty(_openGlApiBackendFilter))
+            {
+                string filter = _openGlApiBackendFilter!;
+                query = query.Where(row => string.Equals(row.ApiBackend, filter, StringComparison.OrdinalIgnoreCase));
+            }
+
             if (!string.IsNullOrEmpty(_openGlXrTypeFilter))
             {
                 string filter = _openGlXrTypeFilter!;
@@ -334,16 +411,17 @@ public static partial class EditorImGuiUI
                 if (filteredRows.Count == 0)
                 {
                     string message = rows.Count == 0
-                        ? "No OpenGL API objects are currently generated."
-                        : "No OpenGL API objects match the current filters.";
+                        ? "No Render API objects are currently generated."
+                        : "No Render API objects match the current filters.";
                     ImGui.TextDisabled(message);
                 }
-                else if (ImGui.BeginTable("ProfilerOpenGLApiObjectsTable", 4, tableFlags, new Vector2(-1.0f, -1.0f)))
+                else if (ImGui.BeginTable("ProfilerRenderApiObjectsTable", 5, tableFlags, new Vector2(-1.0f, -1.0f)))
                 {
                     ImGui.TableSetupScrollFreeze(0, 1);
-                    ImGui.TableSetupColumn("Window", ImGuiTableColumnFlags.WidthStretch, 0.25f);
-                    ImGui.TableSetupColumn("API Object", ImGuiTableColumnFlags.WidthStretch, 0.3f);
-                    ImGui.TableSetupColumn("XR Object", ImGuiTableColumnFlags.WidthStretch, 0.35f);
+                    ImGui.TableSetupColumn("API", ImGuiTableColumnFlags.WidthFixed, 90.0f);
+                    ImGui.TableSetupColumn("Window", ImGuiTableColumnFlags.WidthStretch, 0.2f);
+                    ImGui.TableSetupColumn("API Object", ImGuiTableColumnFlags.WidthStretch, 0.27f);
+                    ImGui.TableSetupColumn("XR Object", ImGuiTableColumnFlags.WidthStretch, 0.33f);
                     ImGui.TableSetupColumn("Handle", ImGuiTableColumnFlags.WidthFixed, 120.0f);
                     ImGui.TableHeadersRow();
 
@@ -359,6 +437,7 @@ public static partial class EditorImGuiUI
                             ImGui.TableSetColumnIndex(1);
                             ImGui.TableSetColumnIndex(2);
                             ImGui.TableSetColumnIndex(3);
+                            ImGui.TableSetColumnIndex(4);
                         }
 
                         foreach (var row in group.Rows)
@@ -370,6 +449,9 @@ public static partial class EditorImGuiUI
                             ImGui.TableNextRow();
 
                             ImGui.TableSetColumnIndex(0);
+                            ImGui.TextUnformatted(row.ApiBackend);
+
+                            ImGui.TableSetColumnIndex(1);
                             ImGui.PushID(rowIndex);
                             string label = $"{row.WindowTitle}##OpenGLApiRow";
                             if (ImGui.Selectable(label, isSelected, ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowDoubleClick))
@@ -393,17 +475,17 @@ public static partial class EditorImGuiUI
                             if (ImGui.IsItemHovered())
                                 ImGui.SetTooltip(row.WindowTitle);
 
-                            ImGui.TableSetColumnIndex(1);
+                            ImGui.TableSetColumnIndex(2);
                             ImGui.TextUnformatted(row.ApiName);
                             if (ImGui.IsItemHovered())
                                 ImGui.SetTooltip(row.ApiType);
 
-                            ImGui.TableSetColumnIndex(2);
+                            ImGui.TableSetColumnIndex(3);
                             ImGui.TextUnformatted(row.XrName);
                             if (ImGui.IsItemHovered())
                                 ImGui.SetTooltip(row.XrType);
 
-                            ImGui.TableSetColumnIndex(3);
+                            ImGui.TableSetColumnIndex(4);
                             ulong handleValue = unchecked((ulong)row.Handle);
                             string handleLabel = handleValue == 0 ? "0x0" : $"0x{handleValue:X}";
                             ImGui.TextUnformatted(handleLabel);
@@ -430,28 +512,35 @@ public static partial class EditorImGuiUI
 
         private static void DrawOpenGLDebugTabContent()
         {
-            DrawOpenGLExtensionsSection();
-
-            ImGui.Separator();
-
-            var errors = OpenGLRenderer.GetTrackedOpenGLErrors();
+            List<RenderApiErrorRow> errors = CollectRenderApiErrors();
             if (errors.Count == 0)
             {
-                ImGui.TextDisabled("No OpenGL debug errors are currently tracked.");
+                ImGui.TextDisabled("No OpenGL or Vulkan errors are currently tracked.");
                 if (ImGui.Button("Clear Tracked Errors"))
+                {
                     OpenGLRenderer.ClearTrackedOpenGLErrors();
+                    Debug.ClearConsoleEntries(ELogCategory.OpenGL);
+                    Debug.ClearConsoleEntries(ELogCategory.Vulkan);
+                }
                 return;
             }
 
             int totalHits = 0;
-            foreach (var info in errors)
-                totalHits += info.Count;
+            int uniqueIds = 0;
+            foreach (var error in errors)
+            {
+                totalHits += Math.Max(error.Count, 1);
+                if (error.Id.HasValue)
+                    uniqueIds++;
+            }
 
-            ImGui.TextUnformatted($"IDs: {errors.Count} | Hits: {totalHits}");
+            ImGui.TextUnformatted($"Entries: {errors.Count} | IDs: {uniqueIds} | Hits: {totalHits}");
 
             if (ImGui.Button("Clear Tracked Errors"))
             {
                 OpenGLRenderer.ClearTrackedOpenGLErrors();
+                Debug.ClearConsoleEntries(ELogCategory.OpenGL);
+                Debug.ClearConsoleEntries(ELogCategory.Vulkan);
                 return;
             }
 
@@ -461,9 +550,10 @@ public static partial class EditorImGuiUI
             const ImGuiTableFlags tableFlags = ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY;
             float estimatedHeight = MathF.Min(44.0f + errors.Count * ImGui.GetTextLineHeightWithSpacing(), 320.0f);
 
-            if (ImGui.BeginTable("ProfilerOpenGLErrorTable", 7, tableFlags, new Vector2(-1.0f, estimatedHeight)))
+            if (ImGui.BeginTable("ProfilerRenderApiErrorTable", 8, tableFlags, new Vector2(-1.0f, estimatedHeight)))
             {
                 ImGui.TableSetupScrollFreeze(0, 1);
+                ImGui.TableSetupColumn("API", ImGuiTableColumnFlags.WidthFixed, 80.0f);
                 ImGui.TableSetupColumn("ID", ImGuiTableColumnFlags.WidthFixed, 70.0f);
                 ImGui.TableSetupColumn("Count", ImGuiTableColumnFlags.WidthFixed, 60.0f);
                 ImGui.TableSetupColumn("Severity", ImGuiTableColumnFlags.WidthFixed, 90.0f);
@@ -478,13 +568,18 @@ public static partial class EditorImGuiUI
                     ImGui.TableNextRow();
 
                     ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(error.Id.ToString(CultureInfo.InvariantCulture));
+                    ImGui.TextUnformatted(error.ApiBackend);
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(error.Id?.ToString(CultureInfo.InvariantCulture) ?? "-");
 
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(error.Count.ToString(CultureInfo.InvariantCulture));
 
                     ImGui.TableNextColumn();
-                    bool highlightSeverity = string.Equals(error.Severity, "High", StringComparison.OrdinalIgnoreCase);
+                    bool highlightSeverity =
+                        string.Equals(error.Severity, "High", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(error.Severity, "Error", StringComparison.OrdinalIgnoreCase);
                     if (highlightSeverity)
                         ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.45f, 0.45f, 1.0f));
                     ImGui.TextUnformatted(error.Severity);
@@ -509,39 +604,152 @@ public static partial class EditorImGuiUI
             }
         }
 
-        private static void DrawOpenGLExtensionsSection()
+        private static List<RenderApiErrorRow> CollectRenderApiErrors()
         {
-            string[] extensions = GetSortedOpenGLExtensions();
+            var rows = new List<RenderApiErrorRow>();
 
-            if (!ImGui.CollapsingHeader($"OpenGL Extensions ({extensions.Length})", ImGuiTreeNodeFlags.DefaultOpen))
+            foreach (var error in OpenGLRenderer.GetTrackedOpenGLErrors())
+            {
+                rows.Add(new RenderApiErrorRow(
+                    "OpenGL",
+                    error.Id,
+                    Math.Max(error.Count, 1),
+                    error.Severity,
+                    error.Type,
+                    error.Source,
+                    error.LastSeenUtc,
+                    error.Message));
+            }
+
+            foreach (var entry in Debug.GetConsoleEntries())
+            {
+                if (entry.Category is not (ELogCategory.OpenGL or ELogCategory.Vulkan))
+                    continue;
+
+                if (!TryParseLogSeverity(entry.Message, out string severity))
+                    continue;
+
+                rows.Add(new RenderApiErrorRow(
+                    entry.Category == ELogCategory.Vulkan ? "Vulkan" : "OpenGL",
+                    null,
+                    Math.Max(entry.RepeatCount, 1),
+                    severity,
+                    "Runtime Log",
+                    "Debug",
+                    entry.Timestamp.ToUniversalTime(),
+                    ExtractPrimaryLogLine(entry.Message)));
+            }
+
+            return rows;
+        }
+
+        private static bool TryParseLogSeverity(string message, out string severity)
+        {
+            if (message.Contains("[ERROR]", StringComparison.OrdinalIgnoreCase))
+            {
+                severity = "Error";
+                return true;
+            }
+
+            if (message.Contains("[WARN]", StringComparison.OrdinalIgnoreCase))
+            {
+                severity = "Warning";
+                return true;
+            }
+
+            severity = string.Empty;
+            return false;
+        }
+
+        private static string ExtractPrimaryLogLine(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return string.Empty;
+
+            int lineBreakIndex = message.IndexOfAny(['\r', '\n']);
+            return lineBreakIndex >= 0 ? message[..lineBreakIndex] : message;
+        }
+
+        private static void DrawRenderApiExtensionsContent()
+        {
+            string[] openGlExtensions = GetSortedOpenGLExtensions();
+            (string[] vulkanAvailable, string[] vulkanEnabled) = GetSortedVulkanExtensions();
+
+            DrawRenderApiExtensionsSection("OpenGL", openGlExtensions, openGlExtensions);
+            ImGui.Spacing();
+            DrawRenderApiExtensionsSection("Vulkan", vulkanAvailable, vulkanEnabled);
+        }
+
+        private static void DrawRenderApiExtensionsSection(string apiName, IReadOnlyList<string> available, IReadOnlyCollection<string> enabled)
+        {
+            if (!ImGui.CollapsingHeader($"{apiName} Extensions", ImGuiTreeNodeFlags.DefaultOpen))
                 return;
 
+            ImGui.TextUnformatted($"Available: {available.Count} | Activated: {enabled.Count}");
+
             Vector2 contentAvail = ImGui.GetContentRegionAvail();
-            float listHeight = MathF.Max(160.0f, MathF.Min(320.0f, contentAvail.Y * 0.5f));
+            float listHeight = MathF.Max(180.0f, MathF.Min(360.0f, contentAvail.Y * 0.45f));
 
-            if (ImGui.BeginChild("OpenGLExtensionsList", new Vector2(-1.0f, listHeight), ImGuiChildFlags.Border))
+            if (!ImGui.BeginTable($"RenderApiExtensions_{apiName}", 2, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY, new Vector2(-1.0f, listHeight)))
+                return;
+
+            ImGui.TableSetupScrollFreeze(0, 1);
+            ImGui.TableSetupColumn("Extension", ImGuiTableColumnFlags.WidthStretch, 0.82f);
+            ImGui.TableSetupColumn("Activated", ImGuiTableColumnFlags.WidthFixed, 90.0f);
+            ImGui.TableHeadersRow();
+
+            if (available.Count == 0)
             {
-                if (extensions.Length == 0)
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextDisabled("No extensions were reported.");
+                ImGui.TableNextColumn();
+                ImGui.TextDisabled("-");
+            }
+            else
+            {
+                foreach (string extension in available)
                 {
-                    ImGui.TextDisabled("No extensions are cached (not using OpenGL, or enumeration failed).");
+                    bool isEnabled = enabled.Contains(extension);
+
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(extension);
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(isEnabled ? "Yes" : "No");
                 }
-                else
+            }
+
+            ImGui.EndTable();
+        }
+
+        private static (string[] Available, string[] Enabled) GetSortedVulkanExtensions()
+        {
+            HashSet<string> available = new(StringComparer.Ordinal);
+            HashSet<string> enabled = new(StringComparer.Ordinal);
+
+            foreach (var window in Engine.Windows)
+            {
+                if (window?.Renderer is not VulkanRenderer vkRenderer)
+                    continue;
+
+                foreach (string extension in vkRenderer.AvailableDeviceExtensions)
                 {
-                    unsafe
-                    {
-                        var clipper = new ImGuiListClipper();
-                        ImGuiNative.ImGuiListClipper_Begin(&clipper, extensions.Length, ImGui.GetTextLineHeightWithSpacing());
-                        while (ImGuiNative.ImGuiListClipper_Step(&clipper) != 0)
-                        {
-                            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
-                                ImGui.TextUnformatted(extensions[i]);
-                        }
-                        ImGuiNative.ImGuiListClipper_End(&clipper);
-                    }
+                    if (!string.IsNullOrWhiteSpace(extension))
+                        available.Add(extension);
                 }
 
-                ImGui.EndChild();
+                foreach (string extension in vkRenderer.EnabledDeviceExtensions)
+                {
+                    if (!string.IsNullOrWhiteSpace(extension))
+                        enabled.Add(extension);
+                }
             }
+
+            string[] availableArray = [.. available.OrderBy(static name => name, StringComparer.Ordinal)];
+            string[] enabledArray = [.. enabled.OrderBy(static name => name, StringComparer.Ordinal)];
+
+            return (availableArray, enabledArray);
         }
 
         private static string[] GetSortedOpenGLExtensions()
@@ -584,6 +792,7 @@ public static partial class EditorImGuiUI
             {
                 string key = _openGlGroupMode switch
                 {
+                    OpenGlApiGroupMode.Api => row.ApiBackend,
                     OpenGlApiGroupMode.ApiType => row.ApiType,
                     OpenGlApiGroupMode.RenderPipeline => row.PipelineName ?? string.Empty,
                     _ => row.WindowTitle
@@ -661,6 +870,7 @@ public static partial class EditorImGuiUI
         private static string GetGroupModeLabel(OpenGlApiGroupMode mode)
             => mode switch
             {
+                OpenGlApiGroupMode.Api => "API",
                 OpenGlApiGroupMode.ApiType => "API Type",
                 OpenGlApiGroupMode.Window => "Window",
                 OpenGlApiGroupMode.RenderPipeline => "Render Pipeline",
@@ -687,6 +897,7 @@ public static partial class EditorImGuiUI
                 return true;
 
             if (row.WindowTitle.Contains(token, StringComparison.OrdinalIgnoreCase) ||
+                row.ApiBackend.Contains(token, StringComparison.OrdinalIgnoreCase) ||
                 row.ApiName.Contains(token, StringComparison.OrdinalIgnoreCase) ||
                 row.ApiType.Contains(token, StringComparison.OrdinalIgnoreCase) ||
                 row.XrName.Contains(token, StringComparison.OrdinalIgnoreCase) ||

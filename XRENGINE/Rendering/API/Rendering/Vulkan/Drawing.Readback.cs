@@ -144,10 +144,21 @@ namespace XREngine.Rendering.Vulkan
             {
                 using var scope = NewCommandScope();
 
-                var image = swapChainImages[_lastPresentedImageIndex % (uint)swapChainImages.Length];
+                uint readIndex = _lastPresentedImageIndex % (uint)swapChainImages.Length;
+                var image = swapChainImages[readIndex];
+
+                // After swapchain recreation, new images start in UNDEFINED layout.
+                // Only assume PresentSrcKhr if the image was actually presented.
+                bool wasPresented = _swapchainImageEverPresented is not null
+                    && readIndex < _swapchainImageEverPresented.Length
+                    && _swapchainImageEverPresented[readIndex];
+
+                ImageLayout srcLayout = wasPresented
+                    ? ImageLayout.PresentSrcKhr
+                    : ImageLayout.Undefined;
 
                 // Transition to transfer src, copy, then transition back to present.
-                TransitionSwapchainImage(scope.CommandBuffer, image, ImageLayout.PresentSrcKhr, ImageLayout.TransferSrcOptimal);
+                TransitionSwapchainImage(scope.CommandBuffer, image, srcLayout, ImageLayout.TransferSrcOptimal);
 
                 BufferImageCopy copy = new()
                 {
