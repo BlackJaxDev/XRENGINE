@@ -64,20 +64,6 @@ public unsafe partial class VulkanRenderer
                     Module = _shaderModule,
                     PName = (byte*)SilkMarshal.StringToPtr(_entryPoint)
                 };
-
-                // ── DIAGNOSTIC: Dump rewritten GLSL and SPIR-V info for scene shaders ──
-                string shaderName = Data.Name ?? "UnnamedShader";
-                if (shaderName.Contains("Skybox", StringComparison.OrdinalIgnoreCase) ||
-                    shaderName.Contains("Gradient", StringComparison.OrdinalIgnoreCase))
-                {
-                    string src = rewrittenSource ?? Data.Source?.Text ?? "<no source>";
-                    string normalizedSource = src.Replace("\r\n", "\n").Replace("\r", "\n");
-                    string formattedSource = normalizedSource.Replace("\n", Environment.NewLine);
-                    Debug.RenderingWarning("[ShaderDump] name={0} type={1} entry={2} spirvBytes={3} module=0x{4:X} autoUniformBlock={5} descriptorBindings={6} source:{7}{8}",
-                        shaderName, Data.Type, _entryPoint, spirv.Length, _shaderModule.Handle,
-                        _autoUniformBlock?.BlockName ?? "<none>", _descriptorBindings.Count, Environment.NewLine, formattedSource);
-                }
-                // ── END DIAGNOSTIC ──
             }
             catch (Exception ex)
             {

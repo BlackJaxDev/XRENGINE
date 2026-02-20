@@ -103,6 +103,9 @@ public unsafe partial class VulkanRenderer
 
 				if (!uniformsNotified && _program?.Data is { } programData)
 				{
+					if (drawCopy.Camera is not null)
+						Renderer.SetEngineUniforms(programData, drawCopy.Camera);
+					Renderer.SetMaterialUniforms(material, programData);
 					MeshRenderer.OnSettingUniforms(programData, programData);
 					material.OnSettingUniforms(programData);
 					uniformsNotified = true;
@@ -162,6 +165,9 @@ public unsafe partial class VulkanRenderer
 
 					if (!uniformsNotified && _program?.Data is { } programData)
 					{
+						if (drawCopy.Camera is not null)
+							Renderer.SetEngineUniforms(programData, drawCopy.Camera);
+						Renderer.SetMaterialUniforms(material, programData);
 						MeshRenderer.OnSettingUniforms(programData, programData);
 						material.OnSettingUniforms(programData);
 						uniformsNotified = true;

@@ -346,27 +346,57 @@ public unsafe partial class VulkanRenderer
 		{
 			bufferInfo = default;
 
+			// Step 1: Exact name match from the mesh renderer's buffer cache.
 			VkDataBuffer? buffer = null;
 			if (!string.IsNullOrWhiteSpace(binding.Name) && _bufferCache.TryGetValue(binding.Name, out buffer))
 			{
-				// found by name
+				// found by name — use it directly
 			}
-
-			buffer ??= _bufferCache.Values.FirstOrDefault(b => b.Data.Target is EBufferTarget.UniformBuffer or EBufferTarget.ShaderStorageBuffer);
-
-			if (buffer is null)
+			else
 			{
+				// Step 1.5: For SSBOs, prefer explicit binding-index mapping from XRDataBuffer.
+				// This is more robust than name matching because SPIR-V reflection names can
+				// vary by compiler/optimization path.
+				if (binding.DescriptorType == DescriptorType.StorageBuffer)
+				{
+					buffer = _bufferCache.Values.FirstOrDefault(b =>
+						b.Data.Target == EBufferTarget.ShaderStorageBuffer &&
+						b.Data.BindingIndexOverride == binding.Binding);
+				}
+
+				if (buffer is not null)
+					goto BufferResolved;
+
+				// Step 2: Name lookup missed. Try auto/engine uniform resolution
+				// before resorting to the generic cache scan. This prevents an
+				// unrelated SSBO (e.g. LinesBuffer) from being returned for a UBO
+				// binding that should resolve to an auto-uniform block.
 				if (TryResolveAutoUniformBuffer(binding, frameIndex, out bufferInfo))
 					return true;
 
 				if (TryResolveEngineUniformBuffer(binding, frameIndex, out bufferInfo))
 					return true;
 
+				// Step 3: Generic fallback — only match buffers whose target type
+				// is compatible with the descriptor's expected type.
+				EBufferTarget requiredTarget = binding.DescriptorType switch
+				{
+					DescriptorType.UniformBuffer => EBufferTarget.UniformBuffer,
+					DescriptorType.StorageBuffer => EBufferTarget.ShaderStorageBuffer,
+					_ => EBufferTarget.UniformBuffer,
+				};
+				buffer = _bufferCache.Values.FirstOrDefault(b => b.Data.Target == requiredTarget);
+			}
+
+			if (buffer is null)
+			{
 				if (binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.StorageBuffer)
 					return TryResolveFallbackDescriptorBuffer(binding, frameIndex, out bufferInfo);
 
 				return false;
 			}
+
+		BufferResolved:
 
 			buffer.Generate();
 			if (buffer.BufferHandle is not { } bufferHandle || bufferHandle.Handle == 0)

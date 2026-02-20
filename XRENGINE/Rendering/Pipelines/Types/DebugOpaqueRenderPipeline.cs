@@ -84,8 +84,12 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 
                 commands.Add<VPRC_DepthTest>().Enable = true;
                 commands.Add<VPRC_DepthWrite>().Allow = false;
+                // Skybox renders at maximum depth (1.0). Use Lequal so fragments at
+                // the cleared depth value still pass (1.0 <= 1.0 vs 1.0 < 1.0 = fail).
+                commands.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GpuRenderDispatch);
 
+                commands.Add<VPRC_DepthFunc>().Comp = EComparison.Less;
                 commands.Add<VPRC_DepthWrite>().Allow = true;
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
@@ -97,6 +101,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
         }
 
         commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
+        commands.Add<VPRC_RenderScreenSpaceUI>();
         return commands;
     }
 
@@ -116,8 +121,11 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 
                 commands.Add<VPRC_DepthTest>().Enable = true;
                 commands.Add<VPRC_DepthWrite>().Allow = false;
+                // Same Lequal fix for FBO target path.
+                commands.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GpuRenderDispatch);
 
+                commands.Add<VPRC_DepthFunc>().Comp = EComparison.Less;
                 commands.Add<VPRC_DepthWrite>().Allow = true;
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
@@ -129,6 +137,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
         }
 
         commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
+        commands.Add<VPRC_RenderScreenSpaceUI>();
         return commands;
     }
 

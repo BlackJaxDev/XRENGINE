@@ -620,18 +620,22 @@ namespace XREngine.Rendering.Vulkan
                 ? ops[0].Context
                 : CaptureFrameOpContext();
 
-            bool singleContext = true;
-            for (int i = 1; i < ops.Length; i++)
-            {
-                if (!Equals(ops[i].Context, initialContext))
-                {
-                    singleContext = false;
-                    break;
-                }
-            }
+            // Coalesce swapchain-targeting ops into a single context to avoid
+            // render-pass restarts across pipeline boundaries.  Context changes
+            // between pipelines that all render to the swapchain cause
+            // EndActiveRenderPass + BeginRenderPassForTarget cycles that can lose
+            // composited content (e.g. the skybox turns black).  FBO-targeting ops
+            // keep their original context for correct barrier/resource planning.
+            VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
 
-            if (singleContext)
-                ops = _renderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
+            // Always sort frame ops by (GroupOrder, PassOrder, OriginalIndex).
+            // GroupOrder preserves inter-pipeline enqueue order while grouping ops
+            // from the same pipeline together.  Previously sorting was limited to
+            // single-context frames, but multi-context frames (e.g.
+            // DebugOpaqueRenderPipeline + UserInterfaceRenderPipeline) also need
+            // correct pass ordering to avoid render-pass restarts that clear
+            // composited swapchain content (e.g. the skybox turning black).
+            ops = VulkanRenderGraphCompiler.SortFrameOps(ops, CompiledRenderGraph);
 
             IReadOnlyList<VulkanRenderGraphCompiler.SecondaryRecordingBucket> secondaryBuckets =
                 _renderGraphCompiler.BuildSecondaryRecordingBuckets(ops);
@@ -1259,7 +1263,20 @@ namespace XREngine.Rendering.Vulkan
                     {
                         if (!hasActiveContext || !Equals(activeContext, op.Context))
                         {
-                            EndActiveRenderPass();
+                            // When the context changes but both the active render pass and the
+                            // incoming op target the swapchain (target == null), keep the render
+                            // pass alive.  Ending and re-beginning the swapchain render pass
+                            // causes a storeOp → layout transition → loadOp cycle that can lose
+                            // composited content (e.g. the skybox turns black).
+                            bool canPreserveSwapchainPass = renderPassActive &&
+                                activeTarget is null &&
+                                VulkanRenderGraphCompiler.OpTargetsSwapchain(op);
+
+                            if (!canPreserveSwapchainPass)
+                            {
+                                EndActiveRenderPass();
+                            }
+
                             if (passIndexLabelActive)
                             {
                                 CmdEndLabel(commandBuffer);
