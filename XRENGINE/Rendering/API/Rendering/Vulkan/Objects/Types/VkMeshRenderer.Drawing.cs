@@ -126,39 +126,6 @@ public unsafe partial class VulkanRenderer
 				Renderer.BindIndexBufferTracked(commandBuffer, indexHandle, 0, ToVkIndexType(size));
 				Api!.CmdDrawIndexed(commandBuffer, indexCount, drawInstances, 0, 0, 0);
 
-				// ── DIAGNOSTIC: also try non-indexed draw to test if pipeline/VBO works ──
-				if (verboseSwapchainTrace)
-				{
-					Api!.CmdDraw(commandBuffer, 3, 1, 0, 0);
-
-					// Dump vertex layout details
-					foreach (var b in _vertexBindings)
-						Debug.RenderingWarning("[SwapDraw] Binding: idx={0} stride={1} rate={2}", b.Binding, b.Stride, b.InputRate);
-					foreach (var a in _vertexAttributes)
-						Debug.RenderingWarning("[SwapDraw] Attrib: loc={0} binding={1} format={2} offset={3}", a.Location, a.Binding, a.Format, a.Offset);
-
-					// Dump buffer info for each VBO
-					foreach (var kvp in _vertexBuffersByBinding)
-					{
-						var buf = kvp.Value;
-						var d = buf.Data;
-						Debug.RenderingWarning("[SwapDraw] VBO[{0}]: handle=0x{1:X} elemCount={2} elemSize={3} compType={4} compCount={5} lenBytes={6}",
-							kvp.Key, buf.BufferHandle?.Handle ?? 0, d.ElementCount, d.ElementSize,
-							d.ComponentType, d.ComponentCount, d.Length);
-
-						// Try reading first bytes via Address pointer
-						nint addr = d.Address;
-						if (addr != 0)
-						{
-							int readLen = Math.Min(48, (int)d.Length);
-							byte[] raw = new byte[readLen];
-							System.Runtime.InteropServices.Marshal.Copy(addr, raw, 0, readLen);
-							var hex = string.Join(" ", raw.Select(b => b.ToString("X2")));
-							Debug.RenderingWarning("[SwapDraw] VBO[{0}] first {1}B: {2}", kvp.Key, readLen, hex);
-						}
-					}
-				}
-				// ── END DIAGNOSTIC ──
 				onStats(indexCount);
 				return true;
 			}
@@ -176,7 +143,17 @@ public unsafe partial class VulkanRenderer
 			if (!drew && Mesh is not null)
 			{
 				uint vertexCount = (uint)Math.Max(Mesh.VertexCount, 0);
-				if (vertexCount > 0 && EnsurePipeline(material, PrimitiveTopology.TriangleList, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, out var pipeline))
+				PrimitiveTopology fallbackTopology = Mesh.Type switch
+				{
+					EPrimitiveType.Points => PrimitiveTopology.PointList,
+					EPrimitiveType.Lines => PrimitiveTopology.LineList,
+					EPrimitiveType.LineStrip => PrimitiveTopology.LineStrip,
+					EPrimitiveType.TriangleStrip => PrimitiveTopology.TriangleStrip,
+					EPrimitiveType.TriangleFan => PrimitiveTopology.TriangleFan,
+					EPrimitiveType.Patches => PrimitiveTopology.PatchList,
+					_ => PrimitiveTopology.TriangleList,
+				};
+				if (vertexCount > 0 && EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, colorAttachmentFormat, depthAttachmentFormat, out var pipeline))
 				{
 					Renderer.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 

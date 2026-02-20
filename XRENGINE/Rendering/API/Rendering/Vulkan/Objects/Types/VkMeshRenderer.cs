@@ -275,7 +275,11 @@ public unsafe partial class VulkanRenderer
         Matrix4x4 PreviousModelMatrix,
         XRMaterial? MaterialOverride,
         uint Instances,
-        EMeshBillboardMode BillboardMode);
+        EMeshBillboardMode BillboardMode,
+        XRCamera? Camera,
+        XRCamera? StereoRightEyeCamera,
+        bool IsStereoPass,
+        bool UseUnjitteredProjection);
 
     private static bool ViewportEquals(in Viewport a, in Viewport b)
         => a.X == b.X && a.Y == b.Y && a.Width == b.Width && a.Height == b.Height && a.MinDepth == b.MinDepth && a.MaxDepth == b.MaxDepth;
@@ -346,32 +350,18 @@ public unsafe partial class VulkanRenderer
         private static bool IsStencilCapableFormat(Format format)
             => format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
 
-        private readonly struct EngineUniformBuffer
+        private readonly struct EngineUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size)
         {
-            public EngineUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size)
-            {
-                Buffer = buffer;
-                Memory = memory;
-                Size = size;
-            }
-
-            public Silk.NET.Vulkan.Buffer Buffer { get; }
-            public DeviceMemory Memory { get; }
-            public uint Size { get; }
+            public Silk.NET.Vulkan.Buffer Buffer { get; } = buffer;
+            public DeviceMemory Memory { get; } = memory;
+            public uint Size { get; } = size;
         }
 
-        private readonly struct AutoUniformBuffer
+        private readonly struct AutoUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size)
         {
-            public AutoUniformBuffer(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory, uint size)
-            {
-                Buffer = buffer;
-                Memory = memory;
-                Size = size;
-            }
-
-            public Silk.NET.Vulkan.Buffer Buffer { get; }
-            public DeviceMemory Memory { get; }
-            public uint Size { get; }
+            public Silk.NET.Vulkan.Buffer Buffer { get; } = buffer;
+            public DeviceMemory Memory { get; } = memory;
+            public uint Size { get; } = size;
         }
 
         public XRMeshRenderer MeshRenderer => Data.Parent;
@@ -395,6 +385,13 @@ public unsafe partial class VulkanRenderer
             if (Mesh is not null)
                 Mesh.DataChanged += OnMeshChanged;
 
+            // Subscribe to buffer collection changes so SSBOs added after
+            // construction (e.g. InstancedDebugVisualizer.LinesBuffer) are picked up.
+            if (MeshRenderer.Buffers is not null)
+                MeshRenderer.Buffers.Changed += OnBuffersChanged;
+            if (Mesh?.Buffers is not null)
+                Mesh.Buffers.Changed += OnMeshBuffersChanged;
+
             CollectBuffers();
         }
 
@@ -406,6 +403,11 @@ public unsafe partial class VulkanRenderer
             if (Mesh is not null)
                 Mesh.DataChanged -= OnMeshChanged;
 
+            if (MeshRenderer.Buffers is not null)
+                MeshRenderer.Buffers.Changed -= OnBuffersChanged;
+            if (Mesh?.Buffers is not null)
+                Mesh.Buffers.Changed -= OnMeshBuffersChanged;
+
             DestroyPipelines();
             _bufferCache.Clear();
             _triangleIndexBuffer = null;
@@ -413,16 +415,27 @@ public unsafe partial class VulkanRenderer
             _pointIndexBuffer = null;
         }
 
+        private void OnBuffersChanged() => CollectBuffers();
+        private void OnMeshBuffersChanged() => CollectBuffers();
+
         private void OnMeshRendererPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
             switch (e.PropertyName)
             {
                 case nameof(XRMeshRenderer.Mesh):
                     if (Mesh is not null)
+                    {
                         Mesh.DataChanged -= OnMeshChanged;
+                        if (Mesh.Buffers is not null)
+                            Mesh.Buffers.Changed -= OnMeshBuffersChanged;
+                    }
 
                     if (MeshRenderer.Mesh is not null)
+                    {
                         MeshRenderer.Mesh.DataChanged += OnMeshChanged;
+                        if (MeshRenderer.Mesh.Buffers is not null)
+                            MeshRenderer.Mesh.Buffers.Changed += OnMeshBuffersChanged;
+                    }
 
                     _meshDirty = true;
                     _pipelineDirty = true;
@@ -548,7 +561,11 @@ public unsafe partial class VulkanRenderer
                 prevModelMatrix,
                 materialOverride,
                 instances,
-                billboardMode);
+                billboardMode,
+                Engine.Rendering.State.RenderingCamera,
+                Engine.Rendering.State.RenderingStereoRightEyeCamera,
+                Engine.Rendering.State.IsStereoPass,
+                Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false);
 
             Renderer.EnqueueFrameOp(new MeshDrawOp(
                 Renderer.EnsureValidPassIndex(passIndex, "MeshDraw"),

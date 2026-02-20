@@ -397,10 +397,12 @@ public unsafe partial class VulkanRenderer
 			value = null;
 			type = EShaderVarType._float;
 			string normalized = NormalizeEngineUniformName(name);
-			XRCamera? camera = Engine.Rendering.State.RenderingCamera;
-			XRCamera? rightEyeCamera = Engine.Rendering.State.RenderingStereoRightEyeCamera;
-			bool stereoPass = Engine.Rendering.State.IsStereoPass;
-			bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+			// Use camera state captured at enqueue time; by the time the command
+			// buffer is recorded the pipeline camera stack has already been popped.
+			XRCamera? camera = draw.Camera;
+			XRCamera? rightEyeCamera = draw.StereoRightEyeCamera;
+			bool stereoPass = draw.IsStereoPass;
+			bool useUnjittered = draw.UseUnjitteredProjection;
 
 			Matrix4x4 prevModelMatrix = draw.PreviousModelMatrix;
 			if (IsApproximatelyIdentity(prevModelMatrix) && !IsApproximatelyIdentity(draw.ModelMatrix))
@@ -816,10 +818,10 @@ public unsafe partial class VulkanRenderer
 			if (normalized.Equals(FallbackDescriptorUniformName, StringComparison.Ordinal))
 				return ClearEngineUniformBuffer(buffer);
 
-			XRCamera? camera = Engine.Rendering.State.RenderingCamera;
-			XRCamera? rightEyeCamera = Engine.Rendering.State.RenderingStereoRightEyeCamera;
-			bool stereoPass = Engine.Rendering.State.IsStereoPass;
-			bool useUnjittered = Engine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection ?? false;
+			XRCamera? camera = draw.Camera;
+			XRCamera? rightEyeCamera = draw.StereoRightEyeCamera;
+			bool stereoPass = draw.IsStereoPass;
+			bool useUnjittered = draw.UseUnjitteredProjection;
 
 			// Fallback: if previous model matrix was never captured, assume static
 			// to avoid injecting false motion into the velocity buffer (causes
