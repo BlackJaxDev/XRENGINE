@@ -160,6 +160,10 @@ namespace XREngine.Rendering.Vulkan
                 projectionMatrix = Matrix4x4.Identity;
             }
 
+            program.Uniform(EEngineUniform.ViewMatrix.ToStringFast(), viewMatrix);
+            program.Uniform(inverseViewName.ToStringFast(), inverseViewMatrix);
+            program.Uniform(projectionName.ToStringFast(), projectionMatrix);
+
             program.Uniform(EEngineUniform.ViewMatrix.ToVertexUniformName(), viewMatrix);
             program.Uniform(inverseViewName.ToVertexUniformName(), inverseViewMatrix);
             program.Uniform(projectionName.ToVertexUniformName(), projectionMatrix);

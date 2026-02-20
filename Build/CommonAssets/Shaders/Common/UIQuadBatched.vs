@@ -52,19 +52,17 @@ mat4 getModelMatrix(int instanceID)
 
 void main()
 {
-    mat4 modelMatrix = getModelMatrix(gl_InstanceID);
-    vec4 color = QuadColors[gl_InstanceID];
-    vec4 bounds = QuadBounds[gl_InstanceID];
+    int id = gl_InstanceIndex;
 
-    mat4 ViewMatrix = inverse(InverseViewMatrix_VTX);
-    mat4 mvpMatrix = ProjMatrix_VTX * ViewMatrix * modelMatrix;
+    mat4 modelMatrix = getModelMatrix(id);
+    mat4 viewMatrix = inverse(InverseViewMatrix_VTX);
+    mat4 mvpMatrix = ProjMatrix_VTX * viewMatrix * modelMatrix;
 
-    vec4 position = vec4(Position, 1.0);
-
-    FragPos = (mvpMatrix * position).xyz;
-    gl_Position = mvpMatrix * position;
-    FragNorm = Normal;
+    FragPos = (modelMatrix * vec4(Position, 1.0)).xyz;
+    FragNorm = mat3(transpose(inverse(modelMatrix))) * Normal;
     FragUV0 = TexCoord0;
-    InstanceColor = color;
-    InstanceBounds = bounds;
+    InstanceColor = QuadColors[id];
+    InstanceBounds = QuadBounds[id];
+
+    gl_Position = mvpMatrix * vec4(Position, 1.0);
 }

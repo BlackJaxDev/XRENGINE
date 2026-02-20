@@ -14,6 +14,25 @@ namespace XREngine.Rendering;
 
 public partial class XRMesh
 {
+    // Cached index buffers keyed by primitive type.
+    // Only caches buffers created for the default ElementArrayBuffer target.
+    // Prevents the render-resource registry from destroying a still-in-use
+    // VkBuffer when multiple VkMeshRenderers share the same mesh.
+    private readonly Dictionary<EPrimitiveType, (XRDataBuffer buffer, IndexSize elementSize)> _indexBufferCache = new();
+
+    /// <summary>
+    /// Clears the cached index buffers so the next call to
+    /// <see cref="GetIndexBuffer"/> will recreate them.
+    /// Pass <c>null</c> to clear all, or a specific type to clear just that.
+    /// </summary>
+    public void InvalidateIndexBufferCache(EPrimitiveType? type = null)
+    {
+        if (type.HasValue)
+            _indexBufferCache.Remove(type.Value);
+        else
+            _indexBufferCache.Clear();
+    }
+
     // Indices API
     public int[]? GetIndices()
         => GetIndices(Type);
@@ -28,6 +47,7 @@ public partial class XRMesh
 
     private Remapper? SetTriangleIndices(Vertex[] vertices, bool remap = true)
     {
+        InvalidateIndexBufferCache(EPrimitiveType.Triangles);
         _triangles = [];
         if (remap)
         {
@@ -44,6 +64,7 @@ public partial class XRMesh
 
     private Remapper? SetLineIndices(Vertex[] vertices, bool remap = true)
     {
+        InvalidateIndexBufferCache(EPrimitiveType.Lines);
         _lines = [];
         if (remap)
         {
@@ -60,6 +81,7 @@ public partial class XRMesh
 
     private Remapper? SetPointIndices(Vertex[] vertices, bool remap = true)
     {
+        InvalidateIndexBufferCache(EPrimitiveType.Points);
         _points = [];
         if (remap)
         {
@@ -192,7 +214,18 @@ public partial class XRMesh
     // Index buffer helpers
     public XRDataBuffer? GetIndexBuffer(EPrimitiveType type, out IndexSize elementSize, EBufferTarget target = EBufferTarget.ElementArrayBuffer)
     {
-        elementSize = IndexSize.Byte;
+        elementSize = IndexSize.TwoBytes;
+
+        // Return the cached instance when available (ElementArrayBuffer only).
+        // This ensures multiple VkMeshRenderers sharing this mesh receive the
+        // same XRDataBuffer, so the render-resource registry's Bind() sees
+        // Instance == buffer and skips the destroy-previous-buffer path.
+        if (target == EBufferTarget.ElementArrayBuffer &&
+            _indexBufferCache.TryGetValue(type, out var cached))
+        {
+            elementSize = cached.elementSize;
+            return cached.buffer;
+        }
 
         var indices = GetIndices(type);
         if (indices is null || indices.Length == 0)
@@ -203,12 +236,9 @@ public partial class XRMesh
             AttributeName = type.ToString()
         };
 
-        if (VertexCount < byte.MaxValue)
-        {
-            elementSize = IndexSize.Byte;
-            buf.SetDataRaw(indices.Select(x => (byte)x), indices.Length);
-        }
-        else if (VertexCount < short.MaxValue)
+        // Use UInt16 as minimum index size to avoid dependency on VK_EXT_index_type_uint8.
+        // Byte-sized indices are an optional Vulkan extension and the memory savings are negligible.
+        if (VertexCount < short.MaxValue)
         {
             elementSize = IndexSize.TwoBytes;
             buf.SetDataRaw(indices.Select(x => (ushort)x), indices.Length);
@@ -218,6 +248,9 @@ public partial class XRMesh
             elementSize = IndexSize.FourBytes;
             buf.SetDataRaw(indices);
         }
+
+        if (target == EBufferTarget.ElementArrayBuffer)
+            _indexBufferCache[type] = (buf, elementSize);
 
         return buf;
     }

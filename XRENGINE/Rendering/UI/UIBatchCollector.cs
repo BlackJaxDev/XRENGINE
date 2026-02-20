@@ -282,6 +282,12 @@ public sealed class UIBatchCollector : IDisposable
 
         EnsureMaterialQuadMesh();
         UploadMaterialQuadData(batch.Entries);
+
+        // Force-generate the mesh renderer to bypass any deferred generation.
+        // This ensures the first frame renders immediately (matches the text batch path).
+        var version = _matQuadMesh!.GetDefaultVersion();
+        version.Generate();
+
         _matQuadMesh!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
     }
 

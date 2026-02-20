@@ -1424,7 +1424,10 @@ public static partial class EditorImGuiUI
                 childBg.W = MathF.Min(childBg.W, 0.55f);
                 colors[(int)ImGuiCol.ChildBg] = childBg;
 
-                ImGui.MenuItem("Render Pipeline Graph", null, ref _showRenderPipelineGraph);
+                // NOTE: Stray ImGui.MenuItem was here — removed.
+                // Calling ImGui widgets outside a Begin/End pair creates an implicit
+                // "Debug" window which pollutes the draw list. The Render Pipeline Graph
+                // toggle is already available in the View menu.
                 var dockingBg = _imguiBaseDockingEmptyBg.Value;
                 dockingBg.W = MathF.Min(dockingBg.W, 0.35f);
                 colors[(int)ImGuiCol.DockingEmptyBg] = dockingBg;

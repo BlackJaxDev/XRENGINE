@@ -798,7 +798,10 @@ public unsafe partial class VulkanRenderer
                     case DescriptorType.UniformBuffer:
                     case DescriptorType.StorageBuffer:
                         if (!TryResolveComputeBuffer(binding, snapshot, tempUniformBuffers, out DescriptorBufferInfo bufferInfo))
+                        {
+                            WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will proceed with incomplete descriptors.");
                             continue;
+                        }
 
                         int bufferStart = bufferInfos.Count;
                         for (int i = 0; i < descriptorCount; i++)
@@ -812,7 +815,10 @@ public unsafe partial class VulkanRenderer
                     case DescriptorType.Sampler:
                     case DescriptorType.StorageImage:
                         if (!TryResolveComputeImage(binding, snapshot, out DescriptorImageInfo imageInfo))
+                        {
+                            WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} image binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will proceed with incomplete descriptors.");
                             continue;
+                        }
 
                         int imageStart = imageInfos.Count;
                         for (int i = 0; i < descriptorCount; i++)
@@ -824,7 +830,10 @@ public unsafe partial class VulkanRenderer
                     case DescriptorType.UniformTexelBuffer:
                     case DescriptorType.StorageTexelBuffer:
                         if (!TryResolveComputeTexelBuffer(binding, snapshot, out BufferView texelView))
+                        {
+                            WarnComputeOnce($"Skipping unresolved {binding.DescriptorType} texel binding '{binding.Name}' (set {binding.Set}, binding {binding.Binding}). Compute dispatch will proceed with incomplete descriptors.");
                             continue;
+                        }
 
                         int texelStart = texelBufferViews.Count;
                         for (int i = 0; i < descriptorCount; i++)
@@ -1181,6 +1190,8 @@ public unsafe partial class VulkanRenderer
                 texture = snapshot.Samplers.Count == 1 ? snapshot.Samplers.Values.First() : null;
                 if (texture is null)
                     return false;
+
+                WarnComputeOnce($"Image binding {binding.Binding} ('{binding.Name}') not found in snapshot; using only available sampler '{texture.Name ?? "<unnamed>"}' as fallback.");
             }
 
             bool includeSampler = binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler;
@@ -1197,6 +1208,8 @@ public unsafe partial class VulkanRenderer
                 texture = snapshot.Samplers.Count == 1 ? snapshot.Samplers.Values.First() : null;
                 if (texture is null)
                     return false;
+
+                WarnComputeOnce($"Texel binding {binding.Binding} ('{binding.Name}') not found in snapshot; using only available sampler '{texture.Name ?? "<unnamed>"}' as fallback.");
             }
 
             return TryResolveTexelBufferDescriptor(texture, out texelView);

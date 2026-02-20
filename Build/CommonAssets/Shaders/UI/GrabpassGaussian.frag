@@ -17,6 +17,17 @@ float gaussian(float x, float sigma)
 
 void main()
 {
+    // When the grab-pass mechanism is not available (e.g. Vulkan, where no
+    // BlitViewportToFBO path exists yet), the grab-pass texture is never
+    // populated and stays at its initial 1x1 size.  Detect this and output
+    // fully transparent so the destination (skybox, scene) is preserved.
+    ivec2 grabSize = textureSize(Texture0, 0);
+    if (grabSize.x <= 1 && grabSize.y <= 1)
+    {
+        OutColor = vec4(0.0);
+        return;
+    }
+
     float xOffset = 1.0 / ScreenWidth;
     float yOffset = 1.0 / ScreenHeight;
     vec2 vTexCoord = vec2(gl_FragCoord.x * xOffset, gl_FragCoord.y * yOffset);

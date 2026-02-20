@@ -55,6 +55,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 : default;
 
             var ui = ActivePipelineInstance.RenderState.ScreenSpaceUserInterface;
+
             if (ui is null || !ui.IsActive)
                 return;
 
