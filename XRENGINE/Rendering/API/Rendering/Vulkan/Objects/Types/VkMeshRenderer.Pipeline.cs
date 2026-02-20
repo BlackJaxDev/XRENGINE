@@ -112,7 +112,9 @@ public unsafe partial class VulkanRenderer
 			uint nextBinding = 0;
 			uint nextLocation = 0;
 
-			foreach (var buffer in _bufferCache.Values.OrderBy(b => b.Data.BindingIndexOverride ?? uint.MaxValue))
+			foreach (var buffer in _bufferCache.Values
+				.Where(b => b.Data.Target != EBufferTarget.ShaderStorageBuffer)
+				.OrderBy(b => b.Data.BindingIndexOverride ?? uint.MaxValue))
 			{
 				uint binding = buffer.Data.BindingIndexOverride ?? nextBinding++;
 				bool interleaved = buffer.Data.InterleavedAttributes is { Length: > 0 };

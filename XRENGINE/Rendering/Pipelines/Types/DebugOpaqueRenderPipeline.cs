@@ -61,6 +61,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
             { (int)EDefaultRenderPass.Background, null },
             { (int)EDefaultRenderPass.OpaqueDeferred, _nearToFarSorter },
             { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
+            { (int)EDefaultRenderPass.OnTopForward, null },
             { (int)EDefaultRenderPass.PostRender, null },
         };
 
@@ -88,6 +89,10 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
                 commands.Add<VPRC_DepthWrite>().Allow = true;
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
+
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, false);
+                commands.Add<VPRC_RenderDebugShapes>();
+                commands.Add<VPRC_RenderDebugPhysics>();
             }
         }
 
@@ -116,6 +121,10 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
                 commands.Add<VPRC_DepthWrite>().Allow = true;
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
+
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, false);
+                commands.Add<VPRC_RenderDebugShapes>();
+                commands.Add<VPRC_RenderDebugPhysics>();
             }
         }
 

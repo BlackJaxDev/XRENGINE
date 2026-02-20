@@ -98,6 +98,7 @@ namespace XREngine
             public static AbstractPhysicsScene NewPhysicsScene()
                 => UserSettings.PhysicsLibrary switch
                 {
+                    EPhysicsLibrary.Jitter => new JitterScene(),
                     EPhysicsLibrary.Jolt => new JoltScene(),
                     _ => new PhysxScene(),
                 };
@@ -113,7 +114,6 @@ namespace XREngine
             public static void ApplyRenderPipelinePreference()
             {
                 bool preferDebug = Engine.EditorPreferences?.Debug?.UseDebugOpaquePipeline ?? false;
-
                 foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                 {
                     RenderPipeline? pipeline = viewport.RenderPipeline;
@@ -139,7 +139,6 @@ namespace XREngine
             public static void ApplyGlobalIlluminationModePreference()
             {
                 var mode = Engine.UserSettings.GlobalIlluminationMode;
-
                 foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                 {
                     if (viewport.RenderPipeline is DefaultRenderPipeline defaultPipeline)
@@ -149,10 +148,10 @@ namespace XREngine
 
             public static void ApplyGpuRenderDispatchPreference()
             {
-                bool useGpu = ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
-
-                void Apply()
+                static void Apply()
                 {
+                    bool useGpu = ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
+                    
                     foreach (var worldInstance in Engine.WorldInstances)
                         worldInstance?.ApplyRenderDispatchPreference(useGpu);
 
@@ -169,7 +168,7 @@ namespace XREngine
                     }
                 }
 
-                Engine.InvokeOnMainThread(() => Apply(), "Engine.Rendering.ApplyGpuRenderDispatchPreference", true);
+                Engine.InvokeOnMainThread(Apply, "Engine.Rendering.ApplyGpuRenderDispatchPreference", true);
                 LogVulkanFeatureProfileFingerprint();
             }
 
@@ -182,10 +181,8 @@ namespace XREngine
                     return true;
 
                 foreach (XRWindow window in Engine.Windows)
-                {
                     if (window.Renderer is VulkanRenderer)
                         return true;
-                }
 
                 return false;
             }
@@ -207,15 +204,14 @@ namespace XREngine
 
             public static void ApplyGpuBvhPreference()
             {
-                bool useGpuBvh = VulkanFeatureProfile.ResolveGpuBvhPreference(Engine.EffectiveSettings.UseGpuBvh);
-
-                void Apply()
+                static void Apply()
                 {
+                    bool useGpuBvh = VulkanFeatureProfile.ResolveGpuBvhPreference(Engine.EffectiveSettings.UseGpuBvh);
                     foreach (var worldInstance in Engine.WorldInstances)
                         worldInstance?.ApplyGpuBvhPreference(useGpuBvh);
                 }
 
-                Engine.InvokeOnMainThread(() => Apply(), "Engine.Rendering.ApplyGpuBvhPreference", true);
+                Engine.InvokeOnMainThread(Apply, "Engine.Rendering.ApplyGpuBvhPreference", true);
                 LogVulkanFeatureProfileFingerprint();
             }
 
@@ -271,7 +267,7 @@ namespace XREngine
 
             public static void ApplyNvidiaDlssPreference()
             {
-                void Apply()
+                static void Apply()
                 {
                     foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                     {
@@ -281,13 +277,12 @@ namespace XREngine
                             NvidiaDlssManager.ApplyToViewport(viewport, Settings);
                     }
                 }
-
-                Engine.InvokeOnMainThread(() => Apply(), "Engine.Rendering.ApplyNvidiaDlssPreference", true);
+                Engine.InvokeOnMainThread(Apply, "Engine.Rendering.ApplyNvidiaDlssPreference", true);
             }
 
             public static void ApplyIntelXessPreference()
             {
-                void Apply()
+                static void Apply()
                 {
                     foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                     {
@@ -297,8 +292,7 @@ namespace XREngine
                             IntelXessManager.ApplyToViewport(viewport, Settings);
                     }
                 }
-
-                Engine.InvokeOnMainThread(() => Apply(), "Engine.Rendering.ApplyIntelXessPreference", true);
+                Engine.InvokeOnMainThread(Apply, "Engine.Rendering.ApplyIntelXessPreference", true);
             }
 
             internal static void ApplyGpuRenderDispatchToPipeline(RenderPipeline pipeline, bool useGpu)

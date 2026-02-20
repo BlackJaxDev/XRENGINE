@@ -112,7 +112,7 @@ namespace XREngine.Rendering.Physics.Physx
         {
             if (!Engine.Rendering.State.DebugInstanceRenderingAvailable)
                 return;
-            
+
             if (PointCount > 0)
                 _debugPointsRenderer?.Render(null, PointCount);
 
