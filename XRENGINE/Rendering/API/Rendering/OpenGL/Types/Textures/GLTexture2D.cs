@@ -9,6 +9,19 @@ namespace XREngine.Rendering.OpenGL
 {
     public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GLTexture<XRTexture2D>(renderer, data)
     {
+        /// <summary>
+        /// Clears the invalidation flag and the NeedsFullPush flag on all mipmaps
+        /// so that the next Bind() → VerifySettings() cycle does NOT call PushData().
+        /// Call this after performing a raw GL upload (e.g. PBO-based video streaming)
+        /// to prevent the engine from overwriting the texture with stale/null CPU data.
+        /// </summary>
+        public void ClearInvalidation()
+        {
+            IsInvalidated = false;
+            foreach (var mip in _mipmaps)
+                mip.NeedsFullPush = false;
+        }
+
         private MipmapInfo[] _mipmaps = [];
         public MipmapInfo[] Mipmaps
         {

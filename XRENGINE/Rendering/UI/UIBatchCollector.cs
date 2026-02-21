@@ -288,6 +288,12 @@ public sealed class UIBatchCollector : IDisposable
         var version = _matQuadMesh!.GetDefaultVersion();
         version.Generate();
 
+        Debug.VulkanEvery(
+            "UIBatchCollector.RenderMaterialQuadBatch",
+            TimeSpan.FromSeconds(5),
+            "[UIBatch] RenderMaterialQuadBatch: pass={0}, entries={1}, capacity={2}",
+            renderPass, batch.Entries.Count, _matQuadCapacity);
+
         _matQuadMesh!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
     }
 

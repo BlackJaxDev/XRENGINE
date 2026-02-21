@@ -23,6 +23,43 @@ public sealed class VulkanShaderCompilationRegressionTests
         "Common/LitTexturedSpecAlphaForward.fs"
     ];
 
+    private static readonly string[] VertexShaders =
+    [
+        "Common/UIQuadBatched.vs",
+        "Common/UITextBatched.vs",
+    ];
+
+    [TestCaseSource(nameof(VertexShaders))]
+    public void VertexShader_CompilesToSpirv_ForVulkan(string shaderRelativePath)
+    {
+        LoadedShaderSource loadedShader = LoadShaderSource(shaderRelativePath);
+        var shaderSource = new TextFile
+        {
+            FilePath = loadedShader.FullPath,
+            Text = loadedShader.Source
+        };
+
+        XRShader shader = new(EShaderType.Vertex, shaderSource);
+
+        byte[] spirv = VulkanShaderCompiler.Compile(
+            shader,
+            out string entryPoint,
+            out _,
+            out string? rewrittenSource);
+
+        entryPoint.ShouldBe("main");
+        spirv.ShouldNotBeNull();
+        spirv.Length.ShouldBeGreaterThan(0);
+
+        // Verify the rewritten source still contains SSBO declarations
+        rewrittenSource.ShouldNotBeNull();
+        rewrittenSource.ShouldContain("buffer");
+
+        // For UITextBatched, verify gl_InstanceID was rewritten to gl_InstanceIndex
+        if (shaderRelativePath.Contains("UITextBatched"))
+            rewrittenSource.ShouldContain("gl_InstanceIndex");
+    }
+
     [TestCaseSource(nameof(FragmentShaders))]
     public void FragmentShader_CompilesToSpirv_ForVulkan(string shaderRelativePath)
     {

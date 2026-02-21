@@ -14,7 +14,7 @@ Notes:
 | Name | Path | Owner | License (best-effort) | URL |
 |---|---|---|---|---|
 | CoACD | Build/Submodules/CoACD | SarahWeiii | [MIT](licenses/submodules/CoACD-MIT.txt) | https://github.com/SarahWeiii/CoACD |
-| Flyleaf | Build/Submodules/Flyleaf | BlackJaxDev | [LGPL-3.0](licenses/submodules/Flyleaf-LGPL-3.0.txt) | https://github.com/BlackJaxDev/Flyleaf.git |
+| Flyleaf | Build/Submodules/Flyleaf | SuRGeoNix | [LGPL-3.0](licenses/submodules/Flyleaf-LGPL-3.0.txt) | https://github.com/SuRGeoNix/Flyleaf |
 | OpenVR.NET | Build/Submodules/OpenVR.NET | BlackJaxDev | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | https://github.com/BlackJaxDev/OpenVR.NET.git |
 | OscCore-NET9 | Build/Submodules/OscCore-NET9 | BlackJaxDev | [MIT](licenses/submodules/OscCore-NET9-MIT.txt) | https://github.com/BlackJaxDev/OscCore-NET9.git |
 | rive-sharp | Build/Submodules/rive-sharp | rive-app | [(unknown)](licenses/unknown/submodules-rive-sharp.txt) | https://github.com/rive-app/rive-sharp.git |

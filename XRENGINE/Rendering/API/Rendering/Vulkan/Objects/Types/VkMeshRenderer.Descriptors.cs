@@ -256,7 +256,10 @@ public unsafe partial class VulkanRenderer
 					case DescriptorType.UniformBuffer:
 					case DescriptorType.StorageBuffer:
 						if (!TryResolveBuffers(binding, frameIndex, descriptorCount, bufferInfos, out int bufferStart))
+						{
+							WarnOnce($"[WriteDesc] FAILED to resolve buffer binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}' program '{_program?.Data?.Name ?? "?"}'");
 							return false;
+						}
 
 						bufferMap.Add((writes.Count, bufferStart));
 						writes.Add(new WriteDescriptorSet
@@ -275,7 +278,10 @@ public unsafe partial class VulkanRenderer
 					case DescriptorType.StorageImage:
 					case DescriptorType.InputAttachment:
 						if (!TryResolveImages(binding, material, descriptorCount, imageInfos, out int imageStart))
+						{
+							WarnOnce($"[WriteDesc] FAILED to resolve image binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}' program '{_program?.Data?.Name ?? "?"}'");
 							return false;
+						}
 
 						imageMap.Add((writes.Count, imageStart));
 						writes.Add(new WriteDescriptorSet
@@ -393,6 +399,7 @@ public unsafe partial class VulkanRenderer
 				if (binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.StorageBuffer)
 					return TryResolveFallbackDescriptorBuffer(binding, frameIndex, out bufferInfo);
 
+				WarnOnce($"[BufferResolve] Failed to resolve buffer for binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}). Cache keys: [{string.Join(", ", _bufferCache.Keys)}]");
 				return false;
 			}
 
@@ -401,7 +408,7 @@ public unsafe partial class VulkanRenderer
 			buffer.Generate();
 			if (buffer.BufferHandle is not { } bufferHandle || bufferHandle.Handle == 0)
 			{
-				WarnOnce($"Buffer for descriptor binding '{binding.Name}' is not allocated.");
+				WarnOnce($"[BufferResolve] Buffer '{binding.Name}' resolved (set={binding.Set}, binding={binding.Binding}) but VkBuffer is not allocated (Length={buffer.Data.Length}, Resizable={buffer.Data.Resizable}, Target={buffer.Data.Target}).");
 				return false;
 			}
 

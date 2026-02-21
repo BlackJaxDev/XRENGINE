@@ -368,6 +368,8 @@ Build/Editor/*
 Build/Engine/*
 Build/Tools/
 Build/Dependencies/CoACD/
+Build/Dependencies/FFmpeg/**
+!Build/Dependencies/FFmpeg/README.md
 Build/RestirGI/
 
 # Submodules
