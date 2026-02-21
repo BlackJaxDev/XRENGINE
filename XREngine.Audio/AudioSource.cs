@@ -73,7 +73,9 @@ namespace XREngine.Audio
             
             if (BuffersQueued > maxbuffers)
             {
-                Debug.WriteLine("Warning: QueueBuffers called with more buffers than maxbuffers.");
+                // Return the passed-in buffers to the pool so they aren't leaked.
+                foreach (var leaked in buffers)
+                    ParentListener.ReleaseBuffer(leaked);
                 return;
             }
 

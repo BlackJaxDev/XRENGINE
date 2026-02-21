@@ -80,6 +80,16 @@ public partial class UIEditorComponent : UIComponent
         toolbarComp.SubmenuItemHeight = MenuHeight;
         _toolbar = toolbarComp;
 
+        if (EditorUnitTests.Toggles.VideoStreaming)
+        {
+            SceneNode videoRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "VideoRoot");
+            videoRoot.AddComponent<UIVideoComponent>();
+            if (EditorUnitTests.Toggles.VideoStreamingAudio)
+                videoRoot.AddComponent<AudioSourceComponent>();
+
+            return;
+        }
+
         SceneNode dockNode = splitChild.NewChildWithTransform(out UIMultiSplitTransform dockTfm, "DockableRoot");
         dockTfm.Arrangement = UISplitArrangement.LeftMiddleRight;
         dockTfm.SplitterSize = 0.0f;
@@ -96,14 +106,6 @@ public partial class UIEditorComponent : UIComponent
         _hierarchy = hierarchy;
 
         var middleNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Scene");
-        if (EditorUnitTests.Toggles.VideoStreaming)
-        {
-            middleNode.AddComponent<UIVideoComponent>();
-            if (EditorUnitTests.Toggles.VideoStreamingAudio)
-            {
-                var audio = middleNode.AddComponent<AudioSourceComponent>();
-            }
-        }
         if (EditorUnitTests.Toggles.BackgroundShader)
         {
             XRShader bgShader = ShaderHelper.LoadEngineShader("UI/Backgrounds/Surf2.fs", EShaderType.Fragment);

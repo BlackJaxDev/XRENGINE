@@ -4,19 +4,19 @@ layout (location = 0) in vec3 Position;
 layout (location = 1) in vec3 Normal;
 layout (location = 2) in vec2 TexCoord0;
 
-// Per-instance data stored in SSBOs
+// Per-instance data stored in SSBOs (explicit set = 0 for Vulkan correctness)
 // Model matrices stored as 4 consecutive vec4 rows per instance
-layout(std430, binding = 0) buffer QuadTransformBuffer
+layout(std430, set = 0, binding = 0) buffer QuadTransformBuffer
 {
     vec4 QuadTransforms[]; // 4 vec4s per instance (row-major mat4)
 };
 
-layout(std430, binding = 1) buffer QuadColorBuffer
+layout(std430, set = 0, binding = 1) buffer QuadColorBuffer
 {
     vec4 QuadColors[];
 };
 
-layout(std430, binding = 2) buffer QuadBoundsBuffer
+layout(std430, set = 0, binding = 2) buffer QuadBoundsBuffer
 {
     vec4 QuadBounds[]; // (x, y, w, h) per instance
 };
@@ -29,13 +29,6 @@ layout (location = 1) out vec3 FragNorm;
 layout (location = 4) out vec2 FragUV0;
 layout (location = 5) flat out vec4 InstanceColor;
 layout (location = 6) flat out vec4 InstanceBounds;
-
-out gl_PerVertex
-{
-    vec4 gl_Position;
-    float gl_PointSize;
-    float gl_ClipDistance[];
-};
 
 mat4 getModelMatrix(int instanceID)
 {
@@ -52,7 +45,8 @@ mat4 getModelMatrix(int instanceID)
 
 void main()
 {
-    int id = gl_InstanceIndex;
+    // Use gl_InstanceID for OpenGL compatibility; Vulkan fixup auto-converts to gl_InstanceIndex
+    int id = gl_InstanceID;
 
     mat4 modelMatrix = getModelMatrix(id);
     mat4 viewMatrix = inverse(InverseViewMatrix_VTX);
