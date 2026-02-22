@@ -71,7 +71,7 @@ namespace XREngine.Audio
             if (buffersProcessed > 0)
                 UnqueueConsumedBuffers(buffersProcessed);
             
-            if (BuffersQueued > maxbuffers)
+            if (BuffersQueued >= maxbuffers)
             {
                 // Return the passed-in buffers to the pool so they aren't leaked.
                 foreach (var leaked in buffers)

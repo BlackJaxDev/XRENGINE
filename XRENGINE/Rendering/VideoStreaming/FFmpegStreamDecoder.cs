@@ -52,7 +52,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
     // Frame pacing: prevent decoding faster than real-time
     private long _firstPtsTicks = long.MinValue;
-    private long _wallClockStartTicks;
+    private float _engineClockStartSeconds;
     private const long MaxAheadTicks = TimeSpan.TicksPerSecond; // allow 1s decode-ahead
 
     /// <summary>
@@ -97,7 +97,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
     private void DecodeLoop()
     {
-        _wallClockStartTicks = Environment.TickCount64 * TimeSpan.TicksPerMillisecond;
+        _engineClockStartSeconds = Engine.ElapsedTime;
         try
         {
             while (_running && !_disposed)
@@ -123,13 +123,14 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         if (_firstPtsTicks == long.MinValue)
         {
             _firstPtsTicks = ptsTicks;
-            _wallClockStartTicks = Environment.TickCount64 * TimeSpan.TicksPerMillisecond;
+            _engineClockStartSeconds = Engine.ElapsedTime;
             return;
         }
 
         long streamElapsed = ptsTicks - _firstPtsTicks;
-        long wallElapsed = Environment.TickCount64 * TimeSpan.TicksPerMillisecond - _wallClockStartTicks;
-        long ahead = streamElapsed - wallElapsed;
+        float engineElapsedSeconds = Math.Max(0.0f, Engine.ElapsedTime - _engineClockStartSeconds);
+        long engineElapsedTicks = (long)(engineElapsedSeconds * TimeSpan.TicksPerSecond);
+        long ahead = streamElapsed - engineElapsedTicks;
 
         if (ahead > MaxAheadTicks)
         {

@@ -12,7 +12,7 @@ public interface IMediaStreamSession : IDisposable
     Task OpenAsync(string url, StreamOpenOptions? options, CancellationToken cancellationToken);
     void SetTargetFramebuffer(uint framebufferId);
     void Present();
-    bool TryDequeueVideoFrame(out DecodedVideoFrame frame);
+    bool TryDequeueVideoFrame(long audioClockTicks, out DecodedVideoFrame frame);
     bool TryDequeueAudioFrame(out DecodedAudioFrame frame);
     void Close();
 }

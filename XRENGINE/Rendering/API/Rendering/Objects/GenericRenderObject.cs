@@ -163,8 +163,8 @@ namespace XREngine.Rendering
         {
             lock (_apiWrappers)
             {
-                if (_apiWrappers.TryRemove(apiRO))
-                    Debug.Out($"Removed API wrapper for {GetDescribingName()} from window '{apiRO.Window.Window.Title}'.");
+                if (!_apiWrappers.TryRemove(apiRO))
+                    Debug.LogWarning($"Failed to remove API wrapper for {GetDescribingName()} from window '{apiRO.Window.Window.Title}'.");
             }
         }
     }
