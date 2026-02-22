@@ -18,12 +18,14 @@ namespace XREngine.Rendering.UI
         private const long TargetVideoBufferTicks = TimeSpan.TicksPerMillisecond * 500;
         private const long MaxVideoLagBehindAudioTicks = TimeSpan.TicksPerSecond * 2;
         private const int MaxStreamingOpenRetryAttempts = 5;
-        private static readonly TimeSpan RebufferThreshold = TimeSpan.FromMilliseconds(750);
+        private const long RebufferThresholdTicks = TimeSpan.TicksPerMillisecond * 750;
+        private const int TargetOpenAlQueuedBuffers = 6;
+        private const int MaxAudioFramesPerDrain = 12;
 
         //Optional AudioSourceComponent for audio streaming
         public AudioSourceComponent? AudioSource => GetSiblingComponent<AudioSourceComponent>();
 
-        private const string DefaultStreamUrl = "https://twitch.tv/sodapoppin";
+        private const string DefaultStreamUrl = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
         private string? _streamUrl = GetConfiguredDefaultStreamUrl();
         public string? StreamUrl
         {
@@ -49,12 +51,23 @@ namespace XREngine.Rendering.UI
         private int _streamingRetryCount;
         private long _lastPresentedVideoPts = long.MinValue;
         private long _lastPresentedAudioPts = long.MinValue;
-        private DateTime _streamOpenAttemptStartedUtc;
-        private DateTime _streamOpenedUtc;
-        private DateTime _lastVideoFrameUtc;
+        private long _streamOpenAttemptStartedTicks = long.MinValue;
+        private long _streamOpenedTicks = long.MinValue;
+        private long _lastVideoFrameTicks = long.MinValue;
         private bool _inRebuffer;
         private int _rebufferCount;
         private volatile bool _hasReceivedFirstFrame;
+        private long _audioClockTicks = long.MinValue;
+        private long _audioQueuedDurationTicks;
+        private long _audioClockLastEngineTicks = long.MinValue;
+
+        // --- A/V drift telemetry ---
+        private int _telemetryVideoFramesPresented;
+        private int _telemetryVideoFramesDropped;
+        private int _telemetryAudioFramesSubmitted;
+        private int _telemetryAudioUnderruns;
+        private long _telemetryLastLogTicks;
+        private const long TelemetryIntervalTicks = TimeSpan.TicksPerSecond * 10; // log every 10s
 
         private void HandleStreamUrlChanged()
         {
@@ -133,7 +146,7 @@ namespace XREngine.Rendering.UI
 
             if (!HlsReferenceRuntime.EnsureStarted())
             {
-                Debug.UIError("Streaming engine failed to start; falling back to legacy decoder.");
+                Debug.UIError("Streaming engine failed to start.");
                 return;
             }
 
@@ -144,7 +157,16 @@ namespace XREngine.Rendering.UI
             }
             catch (Exception ex)
             {
-                Debug.UIWarning($"Streaming source resolution failed: {ex.Message}");
+                string source = StreamUrl ?? string.Empty;
+                if (source.Contains("twitch.tv", StringComparison.OrdinalIgnoreCase) &&
+                    ex.Message.Contains("404", StringComparison.OrdinalIgnoreCase))
+                {
+                    Debug.UIWarning($"Streaming source resolution failed for '{source}': Twitch returned 404 for the live playlist. The channel is likely offline/invalid. Set XRE_STREAM_URL to a live Twitch channel or a direct .m3u8 URL.");
+                }
+                else
+                {
+                    Debug.UIWarning($"Streaming source resolution failed for '{source}': {ex.Message}");
+                }
                 return;
             }
 
@@ -155,7 +177,7 @@ namespace XREngine.Rendering.UI
             _streamingOpenOptions = resolved.OpenOptions ?? new StreamOpenOptions();
             _streamingOpenOptions.VideoQueueCapacity = Math.Max(_streamingOpenOptions.VideoQueueCapacity, 24);
             _streamingOpenOptions.AudioQueueCapacity = Math.Max(_streamingOpenOptions.AudioQueueCapacity, 24);
-            _streamOpenAttemptStartedUtc = DateTime.UtcNow;
+            _streamOpenAttemptStartedTicks = GetEngineTimeTicks();
             BeginStreamingOpenWithSession(resolved.Url, _streamingOpenOptions);
         }
 
@@ -201,7 +223,7 @@ namespace XREngine.Rendering.UI
                         if (!IsActiveInHierarchy || _streamingSession is null || string.IsNullOrWhiteSpace(_streamingCurrentUrl))
                             return;
 
-                        _streamOpenAttemptStartedUtc = DateTime.UtcNow;
+                        _streamOpenAttemptStartedTicks = GetEngineTimeTicks();
                         BeginStreamingOpenWithSession(_streamingCurrentUrl, _streamingOpenOptions);
                     }, TaskScheduler.Default);
                     return;
@@ -211,11 +233,13 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
-            _streamOpenedUtc = DateTime.UtcNow;
-            _lastVideoFrameUtc = _streamOpenedUtc;
+            _streamOpenedTicks = GetEngineTimeTicks();
+            _lastVideoFrameTicks = _streamOpenedTicks;
             _inRebuffer = false;
             _rebufferCount = 0;
-            long openLatencyMs = (long)(_streamOpenedUtc - _streamOpenAttemptStartedUtc).TotalMilliseconds;
+            long openLatencyMs = _streamOpenAttemptStartedTicks > 0
+                ? (_streamOpenedTicks - _streamOpenAttemptStartedTicks) / TimeSpan.TicksPerMillisecond
+                : 0;
             Debug.Out($"Streaming open telemetry: url='{_streamingCurrentUrl}', openLatencyMs={openLatencyMs}, retryCount={_streamingRetryCount}");
         }
 
@@ -238,22 +262,30 @@ namespace XREngine.Rendering.UI
             _streamingSessionOpenTask = null;
             _streamingCurrentUrl = null;
 
-            if (_streamOpenedUtc != default)
+            if (_streamOpenedTicks > 0)
             {
-                TimeSpan uptime = DateTime.UtcNow - _streamOpenedUtc;
-                Debug.Out($"Streaming telemetry: uptimeMs={(long)uptime.TotalMilliseconds}, rebufferCount={_rebufferCount}, retryCount={_streamingRetryCount}");
+                long uptimeMs = (GetEngineTimeTicks() - _streamOpenedTicks) / TimeSpan.TicksPerMillisecond;
+                Debug.Out($"Streaming telemetry: uptimeMs={uptimeMs}, rebufferCount={_rebufferCount}, retryCount={_streamingRetryCount}");
             }
 
             _streamingOpenOptions = null;
             _lastPresentedVideoPts = long.MinValue;
             _lastPresentedAudioPts = long.MinValue;
-            _streamOpenAttemptStartedUtc = default;
-            _streamOpenedUtc = default;
-            _lastVideoFrameUtc = default;
+            _streamOpenAttemptStartedTicks = long.MinValue;
+            _streamOpenedTicks = long.MinValue;
+            _lastVideoFrameTicks = long.MinValue;
             _inRebuffer = false;
             _rebufferCount = 0;
             _streamingRetryCount = 0;
             _hasReceivedFirstFrame = false;
+            _audioClockTicks = long.MinValue;
+            _audioQueuedDurationTicks = 0;
+            _audioClockLastEngineTicks = long.MinValue;
+            _telemetryVideoFramesPresented = 0;
+            _telemetryVideoFramesDropped = 0;
+            _telemetryAudioFramesSubmitted = 0;
+            _telemetryAudioUnderruns = 0;
+            _telemetryLastLogTicks = 0;
         }
 
         private void HandleStreamingVideoSizeChanged(int width, int height)
@@ -266,16 +298,45 @@ namespace XREngine.Rendering.UI
 
         private void DrainStreamingFramesOnMainThread(IMediaStreamSession session)
         {
+            var audioSource = AudioSource;
+            audioSource?.DequeueConsumedBuffers();
+            UpdateAudioClock(audioSource);
+
+            int queuedAudioBuffers = GetQueuedAudioBuffers(audioSource);
+            int submittedAudioFrames = 0;
+            while (queuedAudioBuffers < TargetOpenAlQueuedBuffers && submittedAudioFrames < MaxAudioFramesPerDrain &&
+                   session.TryDequeueAudioFrame(out DecodedAudioFrame audioFrame))
+            {
+                if (!SubmitDecodedAudioFrame(audioFrame, audioSource))
+                    continue;
+
+                submittedAudioFrames++;
+                queuedAudioBuffers = GetQueuedAudioBuffers(audioSource);
+            }
+
+            if (queuedAudioBuffers > 0 && audioSource is not null && audioSource.State != XREngine.Audio.AudioSource.ESourceState.Playing)
+            {
+                audioSource.Play();
+            }
+            else if (queuedAudioBuffers == 0 && _hasReceivedFirstFrame && audioSource is not null)
+            {
+                _telemetryAudioUnderruns++;
+            }
+
+            long audioClockTicks = GetAudioClockForVideoSync();
             bool hasVideoFrame = false;
             DecodedVideoFrame videoFrame = default;
 
             // Present at most one frame per render pass to avoid visible
             // skipping caused by draining multiple due frames and only showing
             // the most recent one.
-            while (session.TryDequeueVideoFrame(out DecodedVideoFrame candidate))
+            while (session.TryDequeueVideoFrame(audioClockTicks, out DecodedVideoFrame candidate))
             {
                 if (ShouldDropVideoFrame(candidate.PresentationTimestampTicks))
+                {
+                    _telemetryVideoFramesDropped++;
                     continue;
+                }
 
                 videoFrame = candidate;
                 hasVideoFrame = true;
@@ -285,35 +346,30 @@ namespace XREngine.Rendering.UI
             if (hasVideoFrame)
             {
                 ApplyDecodedVideoFrame(videoFrame);
-                _lastVideoFrameUtc = DateTime.UtcNow;
+                _lastVideoFrameTicks = GetEngineTimeTicks();
                 _inRebuffer = false;
                 _hasReceivedFirstFrame = true;
+                _telemetryVideoFramesPresented++;
             }
-            else if (session.IsOpen && _lastVideoFrameUtc != default)
+            else if (session.IsOpen && _lastVideoFrameTicks > 0)
             {
-                TimeSpan gap = DateTime.UtcNow - _lastVideoFrameUtc;
-                if (!_inRebuffer && gap >= RebufferThreshold)
+                long gapTicks = GetEngineTimeTicks() - _lastVideoFrameTicks;
+                if (!_inRebuffer && gapTicks >= RebufferThresholdTicks)
                 {
                     _inRebuffer = true;
                     _rebufferCount++;
-                    Debug.UIWarning($"Streaming rebuffer detected: count={_rebufferCount}, gapMs={(long)gap.TotalMilliseconds}");
+                    long gapMs = gapTicks / TimeSpan.TicksPerMillisecond;
+                    Debug.UIWarning($"Streaming rebuffer detected: count={_rebufferCount}, gapMs={gapMs}");
                 }
             }
 
-            // Limit to 1 audio frame per drain cycle to prevent OpenAL buffer
-            // overflow.  At ~60 fps drain rate and ~47 audio frames/s from the
-            // decoder the queue stays near-empty at steady state; burst frames
-            // remain in the session queue (cap 8) and drain over subsequent frames.
-            if (session.TryDequeueAudioFrame(out DecodedAudioFrame audioFrame))
-                SubmitDecodedAudioFrame(audioFrame);
+            EmitDriftTelemetry();
         }
 
         private bool ShouldDropVideoFrame(long videoPtsTicks)
         {
-            if (_lastPresentedAudioPts == long.MinValue)
-                return false;
-
-            return videoPtsTicks + MaxVideoLagBehindAudioTicks + TargetVideoBufferTicks < _lastPresentedAudioPts;
+            long audioClockTicks = GetAudioClockForVideoSync();
+            return audioClockTicks > 0 && videoPtsTicks + MaxVideoLagBehindAudioTicks + TargetVideoBufferTicks < audioClockTicks;
         }
 
         private void ApplyDecodedVideoFrame(DecodedVideoFrame frame)
@@ -337,11 +393,10 @@ namespace XREngine.Rendering.UI
                 Debug.UIWarning(uploadError);
         }
 
-        private void SubmitDecodedAudioFrame(DecodedAudioFrame frame)
+        private bool SubmitDecodedAudioFrame(DecodedAudioFrame frame, AudioSourceComponent? audioSource)
         {
-            var audioSource = AudioSource;
             if (audioSource is null || frame.InterleavedData.IsEmpty)
-                return;
+                return false;
 
             bool stereo = frame.ChannelCount >= 2;
             byte[] raw = frame.InterleavedData.ToArray();
@@ -350,27 +405,117 @@ namespace XREngine.Rendering.UI
             {
                 case AudioSampleFormat.S16:
                     if (raw.Length < sizeof(short))
-                        break;
+                        return false;
                     short[] shortData = new short[raw.Length / sizeof(short)];
                     Buffer.BlockCopy(raw, 0, shortData, 0, shortData.Length * sizeof(short));
                     audioSource.EnqueueStreamingBuffers(frame.SampleRate, stereo, shortData);
-                    _lastPresentedAudioPts = frame.PresentationTimestampTicks;
                     break;
 
                 case AudioSampleFormat.F32:
                     if (raw.Length < sizeof(float))
-                        break;
+                        return false;
                     float[] floatData = new float[raw.Length / sizeof(float)];
                     Buffer.BlockCopy(raw, 0, floatData, 0, floatData.Length * sizeof(float));
                     audioSource.EnqueueStreamingBuffers(frame.SampleRate, stereo, floatData);
-                    _lastPresentedAudioPts = frame.PresentationTimestampTicks;
                     break;
 
                 default:
                     audioSource.EnqueueStreamingBuffers(frame.SampleRate, stereo, raw);
-                    _lastPresentedAudioPts = frame.PresentationTimestampTicks;
                     break;
             }
+
+            _lastPresentedAudioPts = frame.PresentationTimestampTicks;
+            if (_audioClockTicks == long.MinValue && frame.PresentationTimestampTicks > 0)
+                _audioClockTicks = frame.PresentationTimestampTicks;
+
+            _audioClockLastEngineTicks = GetEngineTimeTicks();
+            _audioQueuedDurationTicks += EstimateAudioDurationTicks(frame, raw.Length);
+            _telemetryAudioFramesSubmitted++;
+            return true;
+        }
+
+        private void UpdateAudioClock(AudioSourceComponent? audioSource)
+        {
+            if (_audioClockTicks == long.MinValue || _audioClockLastEngineTicks == long.MinValue)
+                return;
+
+            bool audioPlaying = audioSource?.ActiveListeners.Values.Any(static source => source.IsPlaying) == true;
+            if (!audioPlaying)
+                return;
+
+            long nowTicks = GetEngineTimeTicks();
+            if (nowTicks <= _audioClockLastEngineTicks)
+                return;
+
+            long elapsedTicks = nowTicks - _audioClockLastEngineTicks;
+            _audioClockLastEngineTicks = nowTicks;
+            _audioClockTicks += elapsedTicks;
+            _audioQueuedDurationTicks = Math.Max(0, _audioQueuedDurationTicks - elapsedTicks);
+        }
+
+        private long GetAudioClockForVideoSync()
+        {
+            if (_audioClockTicks != long.MinValue)
+                return _audioClockTicks;
+
+            return _lastPresentedAudioPts > 0 ? _lastPresentedAudioPts : 0;
+        }
+
+        private static int GetQueuedAudioBuffers(AudioSourceComponent? audioSource)
+        {
+            if (audioSource is null || audioSource.ActiveListeners.IsEmpty)
+                return 0;
+
+            int minQueued = int.MaxValue;
+            foreach (var source in audioSource.ActiveListeners.Values)
+                minQueued = Math.Min(minQueued, source.BuffersQueued);
+
+            return minQueued == int.MaxValue ? 0 : minQueued;
+        }
+
+        private static long EstimateAudioDurationTicks(DecodedAudioFrame frame, int byteLength)
+        {
+            int bytesPerSample = frame.SampleFormat switch
+            {
+                AudioSampleFormat.S16 => sizeof(short),
+                AudioSampleFormat.S32 => sizeof(int),
+                AudioSampleFormat.F32 => sizeof(float),
+                AudioSampleFormat.F64 => sizeof(double),
+                _ => sizeof(short)
+            };
+
+            int channelCount = Math.Max(1, frame.ChannelCount);
+            int bytesPerFrame = bytesPerSample * channelCount;
+            if (bytesPerFrame <= 0 || frame.SampleRate <= 0)
+                return 0;
+
+            int sampleFrames = byteLength / bytesPerFrame;
+            return (long)(sampleFrames * (double)TimeSpan.TicksPerSecond / frame.SampleRate);
+        }
+
+        private static long GetEngineTimeTicks()
+            => (long)(Engine.ElapsedTime * TimeSpan.TicksPerSecond);
+
+        /// <summary>
+        /// Logs periodic A/V drift telemetry. Call at end of each drain cycle.
+        /// </summary>
+        private void EmitDriftTelemetry()
+        {
+            long now = GetEngineTimeTicks();
+            if (_telemetryLastLogTicks > 0 && now - _telemetryLastLogTicks < TelemetryIntervalTicks)
+                return;
+
+            _telemetryLastLogTicks = now;
+
+            if (!_hasReceivedFirstFrame)
+                return;
+
+            long driftTicks = 0;
+            if (_audioClockTicks > 0 && _lastPresentedVideoPts > 0)
+                driftTicks = _lastPresentedVideoPts - _audioClockTicks;
+
+            long driftMs = driftTicks / TimeSpan.TicksPerMillisecond;
+            Debug.Out($"[AV Telemetry] drift={driftMs}ms, vPresented={_telemetryVideoFramesPresented}, vDropped={_telemetryVideoFramesDropped}, aSubmitted={_telemetryAudioFramesSubmitted}, aUnderruns={_telemetryAudioUnderruns}, rebuffers={_rebufferCount}, audioQueuedMs={_audioQueuedDurationTicks / TimeSpan.TicksPerMillisecond}");
         }
 
         protected internal override void OnComponentDeactivated()

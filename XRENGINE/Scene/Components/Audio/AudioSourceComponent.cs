@@ -370,27 +370,12 @@ namespace XREngine.Components
             if (Type != ESourceType.Streaming)
                 return;
 
-            //if (!Engine.IsRenderThread)
-            //{
-            //    Engine.EnqueueMainThreadTask(DequeueConsumedBuffers);
-            //    return;
-            //}
-
-            //lock (ActiveListeners)
-            //{
-            //int min = 0;
-            //int min = ActiveListeners.Values.Min(x => x.BuffersProcessed);
-            //if (min == 0)
-            //    return;
-
-            //foreach (var source in ActiveListeners.Values)
-            //{
-            //    var buffers = source.UnqueueConsumedBuffers(0);
-            //    if (buffers != null)
-            //        foreach (var buffer in buffers)
-            //            source.ParentListener.ReleaseBuffer(buffer);
-            //}
-            //}
+            foreach (var source in ActiveListeners.Values)
+            {
+                int processed = source.BuffersProcessed;
+                if (processed > 0)
+                    source.UnqueueConsumedBuffers(processed);
+            }
         }
 
         protected internal override void OnComponentActivated()

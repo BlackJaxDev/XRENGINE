@@ -26,26 +26,29 @@ public unsafe partial class VulkanRenderer
             throw new InvalidOperationException("Swapchain image views must be created before framebuffers.");
 
         swapChainFramebuffers = new Framebuffer[swapChainImageViews.Length];
+        ImageView[] attachments = new ImageView[2];
 
         for (int i = 0; i < swapChainImageViews.Length; i++)
         {
-            ImageView* attachmentsPtr = stackalloc ImageView[2];
-            attachmentsPtr[0] = swapChainImageViews[i];
-            attachmentsPtr[1] = _swapchainDepthView;
+            attachments[0] = swapChainImageViews[i];
+            attachments[1] = _swapchainDepthView;
 
-            FramebufferCreateInfo framebufferInfo = new()
+            fixed (ImageView* attachmentsPtr = attachments)
             {
-                SType = StructureType.FramebufferCreateInfo,
-                RenderPass = _renderPass,
-                AttachmentCount = 2,
-                PAttachments = attachmentsPtr,
-                Width = swapChainExtent.Width,
-                Height = swapChainExtent.Height,
-                Layers = 1,
-            };
+                FramebufferCreateInfo framebufferInfo = new()
+                {
+                    SType = StructureType.FramebufferCreateInfo,
+                    RenderPass = _renderPass,
+                    AttachmentCount = 2,
+                    PAttachments = attachmentsPtr,
+                    Width = swapChainExtent.Width,
+                    Height = swapChainExtent.Height,
+                    Layers = 1,
+                };
 
-            if (Api!.CreateFramebuffer(device, ref framebufferInfo, null, out swapChainFramebuffers[i]) != Result.Success)
-                throw new Exception("Failed to create framebuffer.");
+                if (Api!.CreateFramebuffer(device, ref framebufferInfo, null, out swapChainFramebuffers[i]) != Result.Success)
+                    throw new Exception("Failed to create framebuffer.");
+            }
         }
 
         AllocateCommandBufferDirtyFlags();

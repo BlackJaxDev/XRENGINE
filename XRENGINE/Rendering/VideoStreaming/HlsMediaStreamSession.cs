@@ -19,6 +19,7 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     private long _videoPlaybackBasePts;
     private long _videoPlaybackBaseWallTicks;
     private static readonly long TargetVideoBufferTicks = TimeSpan.FromMilliseconds(500).Ticks;
+    private static readonly long MaxVideoLeadTicks = TimeSpan.FromMilliseconds(250).Ticks;
     private bool _isOpen;
 
     public HlsMediaStreamSession()
@@ -62,7 +63,7 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
         // and uploads them in DrainStreamingFramesOnMainThread.
     }
 
-    public bool TryDequeueVideoFrame(out DecodedVideoFrame frame)
+    public bool TryDequeueVideoFrame(long audioClockTicks, out DecodedVideoFrame frame)
     {
         lock (_sync)
         {
@@ -103,6 +104,17 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
                 _videoPlaybackStarted = true;
                 _videoPlaybackBasePts = oldestPts;
                 _videoPlaybackBaseWallTicks = GetNowTicks();
+            }
+
+            if (audioClockTicks > 0 && hasValidPts)
+            {
+                // Audio is master clock: don't present video too far ahead.
+                long maxAllowedPts = audioClockTicks + MaxVideoLeadTicks;
+                if (candidatePts > maxAllowedPts)
+                {
+                    frame = default;
+                    return false;
+                }
             }
 
             if (hasValidPts && _videoPlaybackBasePts > 0)
@@ -187,5 +199,5 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     }
 
     private static long GetNowTicks()
-        => Environment.TickCount64 * TimeSpan.TicksPerMillisecond;
+        => (long)(Engine.ElapsedTime * TimeSpan.TicksPerSecond);
 }
