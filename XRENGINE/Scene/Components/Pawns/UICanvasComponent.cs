@@ -2,7 +2,9 @@
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -15,9 +17,11 @@ namespace XREngine.Components
     /// Renders a 2D canvas on top of the screen, in world space, or in camera space.
     /// </summary>
     [RequiresTransform(typeof(UICanvasTransform))]
-    public class UICanvasComponent : XRComponent
+    public class UICanvasComponent : XRComponent, IRenderable
     {
         public UICanvasTransform CanvasTransform => TransformAs<UICanvasTransform>(true)!;
+
+        public RenderInfo[] RenderedObjects { get; }
 
         /// <summary>
         /// Batch collector for instanced UI rendering.
@@ -25,6 +29,52 @@ namespace XREngine.Components
         /// can be dispatched as 1-2 instanced calls per render pass instead of N individual calls.
         /// </summary>
         public UIBatchCollector BatchCollector { get; } = new();
+
+        private readonly RenderCommandMesh3D _worldSpaceQuadCommand;
+        private readonly RenderCommandMethod3D _worldSpacePreRenderCommand;
+        private readonly RenderInfo3D _worldSpaceQuadRenderInfo;
+        private readonly XRMaterial _offscreenMaterial;
+        private readonly XRMaterialFrameBuffer _offscreenFbo;
+
+        private bool _preferOffscreenRenderingForNonScreenSpaces = true;
+        /// <summary>
+        /// When true, Camera/World-space canvases render to an offscreen texture and display that texture on a world quad.
+        /// This preserves 2D clipping/scissoring behavior for nested UI.
+        /// </summary>
+        public bool PreferOffscreenRenderingForNonScreenSpaces
+        {
+            get => _preferOffscreenRenderingForNonScreenSpaces;
+            set => SetField(ref _preferOffscreenRenderingForNonScreenSpaces, value);
+        }
+
+        public UICanvasComponent()
+        {
+            var offscreenTexture = XRTexture2D.CreateFrameBufferTexture(
+                1u,
+                1u,
+                EPixelInternalFormat.Rgba8,
+                EPixelFormat.Rgba,
+                EPixelType.UnsignedByte,
+                EFrameBufferAttachment.ColorAttachment0);
+
+            _offscreenMaterial = XRMaterial.CreateUnlitAlphaTextureMaterialForward(offscreenTexture);
+            _offscreenMaterial.RenderOptions.CullMode = ECullMode.None;
+
+            var quadMesh = XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false));
+            var quadRenderer = new XRMeshRenderer(quadMesh, _offscreenMaterial);
+
+            _worldSpaceQuadCommand = new RenderCommandMesh3D((int)EDefaultRenderPass.TransparentForward, quadRenderer, Matrix4x4.Identity);
+            _worldSpacePreRenderCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.PreRender, RenderNonScreenCanvasToTexture);
+            _worldSpaceQuadRenderInfo = RenderInfo3D.New(this, _worldSpaceQuadCommand, _worldSpacePreRenderCommand);
+            _worldSpaceQuadRenderInfo.PreCollectCommandsCallback = ShouldRenderWorldSpaceQuad;
+            _worldSpaceQuadRenderInfo.CastsShadows = false;
+            _worldSpaceQuadRenderInfo.ReceivesShadows = false;
+            _worldSpaceQuadRenderInfo.VisibleInLightingProbes = false;
+
+            _offscreenFbo = new XRMaterialFrameBuffer(_offscreenMaterial);
+
+            RenderedObjects = new[] { _worldSpaceQuadRenderInfo };
+        }
 
         private bool _strictOneByOneRenderCalls = false;
         /// <summary>
@@ -78,7 +128,9 @@ namespace XREngine.Components
             {
                 case nameof(UICanvasTransform.ActualLocalBottomLeftTranslation):
                 case nameof(UICanvasTransform.ActualSize):
+                case nameof(UICanvasTransform.DrawSpace):
                     ResizeScreenSpace(CanvasTransform.GetActualBounds());
+                    UpdateWorldSpaceQuadData();
                     break;
             }
         }
@@ -99,6 +151,10 @@ namespace XREngine.Components
 
             if (Transform is UICanvasTransform tfm)
                 _renderPipeline.ViewportResized(tfm.ActualSize);
+
+            uint width = Math.Max(1u, (uint)MathF.Ceiling(bounds.Width));
+            uint height = Math.Max(1u, (uint)MathF.Ceiling(bounds.Height));
+            _offscreenFbo.Resize(width, height);
         }
 
         private XRCamera? _camera2D;
@@ -162,12 +218,25 @@ namespace XREngine.Components
             // This way, layout marks dirty transforms via MarkLocalModified, and PostUpdate
             // processes them in the same frame — no 1-frame lag.
             Engine.Time.Timer.UpdateFrame += UpdateLayout;
+            Engine.Time.Timer.CollectVisible += CollectVisibleItemsNonScreen;
+            Engine.Time.Timer.SwapBuffers += SwapBuffersNonScreen;
+
+            ResizeScreenSpace(CanvasTransform.GetActualBounds());
+            UpdateWorldSpaceQuadData();
         }
 
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             Engine.Time.Timer.UpdateFrame -= UpdateLayout;
+            Engine.Time.Timer.CollectVisible -= CollectVisibleItemsNonScreen;
+            Engine.Time.Timer.SwapBuffers -= SwapBuffersNonScreen;
+        }
+
+        protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
+        {
+            base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
+            UpdateWorldSpaceQuadData();
         }
 
         /// <summary>
@@ -239,6 +308,81 @@ namespace XREngine.Components
                 using var collectSample = Engine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace.CollectRenderedItems");
                 VisualScene2D.CollectRenderedItems(_renderPipeline.MeshRenderCommands, Camera2D, false, null, null, false);
             }
+        }
+
+        private void CollectVisibleItemsNonScreen()
+        {
+            if (!IsActive)
+                return;
+
+            var canvasTransform = CanvasTransform;
+            if (canvasTransform.DrawSpace == ECanvasDrawSpace.Screen || !PreferOffscreenRenderingForNonScreenSpaces)
+                return;
+
+            EnsureBatchCollectorWired();
+            if (_renderPipeline.Pipeline is not null)
+                VisualScene2D.CollectRenderedItems(_renderPipeline.MeshRenderCommands, Camera2D, false, null, null, false);
+        }
+
+        private void SwapBuffersNonScreen()
+        {
+            if (!IsActive)
+                return;
+
+            var canvasTransform = CanvasTransform;
+            if (canvasTransform.DrawSpace == ECanvasDrawSpace.Screen || !PreferOffscreenRenderingForNonScreenSpaces)
+                return;
+
+            BatchCollector.SwapBuffers();
+            _renderPipeline.MeshRenderCommands.SwapBuffers();
+            VisualScene2D.GlobalSwapBuffers();
+        }
+
+        private bool ShouldRenderWorldSpaceQuad(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
+        {
+            if (!IsActive)
+                return false;
+
+            var canvasTransform = CanvasTransform;
+            if (canvasTransform.DrawSpace == ECanvasDrawSpace.Screen || !PreferOffscreenRenderingForNonScreenSpaces)
+                return false;
+
+            return _worldSpaceQuadCommand.Mesh is not null;
+        }
+
+        private void RenderNonScreenCanvasToTexture()
+        {
+            if (!IsActive)
+                return;
+
+            var canvasTransform = CanvasTransform;
+            if (canvasTransform.DrawSpace == ECanvasDrawSpace.Screen || !PreferOffscreenRenderingForNonScreenSpaces)
+                return;
+
+            ResizeScreenSpace(canvasTransform.GetActualBounds());
+
+            _renderPipeline.Render(
+                VisualScene2D,
+                Camera2D,
+                null,
+                null,
+                _offscreenFbo,
+                null,
+                false,
+                false);
+        }
+
+        private void UpdateWorldSpaceQuadData()
+        {
+            var tfm = CanvasTransform;
+            float width = Math.Max(0.001f, tfm.ActualWidth);
+            float height = Math.Max(0.001f, tfm.ActualHeight);
+
+            var world = tfm.RenderMatrix;
+            _worldSpaceQuadCommand.WorldMatrix = Matrix4x4.CreateScale(width, height, 1.0f) * world;
+
+            _worldSpaceQuadRenderInfo.LocalCullingVolume = AABB.FromSize(new Vector3(width, height, 0.05f));
+            _worldSpaceQuadRenderInfo.CullingOffsetMatrix = Matrix4x4.CreateTranslation(width * 0.5f, height * 0.5f, 0.0f) * world;
         }
 
         public UIComponent? FindDeepestComponent(Vector2 normalizedViewportPosition)

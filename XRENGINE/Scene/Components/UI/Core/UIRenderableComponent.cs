@@ -34,8 +34,16 @@ namespace XREngine.Rendering.UI
             var tfm = BoundableTransform;
             if (!(tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false) || !tfm.IsVisibleInHierarchy)
                 return false;
+
             var canvas = tfm.ParentCanvas;
-            return canvas is not null && canvas.DrawSpace != ECanvasDrawSpace.Screen;
+            if (canvas is null || canvas.DrawSpace == ECanvasDrawSpace.Screen)
+                return false;
+
+            var canvasComponent = canvas.SceneNode?.GetComponent<UICanvasComponent>();
+            if (canvasComponent?.PreferOffscreenRenderingForNonScreenSpaces ?? true)
+                return false;
+
+            return true;
         }
 
         protected virtual bool ShouldRender2D(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
