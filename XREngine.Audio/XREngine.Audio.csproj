@@ -34,7 +34,7 @@
 
   <ItemGroup>
     <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
-    <PackageReference Include="FFmpeg.AutoGen" Version="8.0.0" />
+    <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
     <PackageReference Include="Google.Cloud.Speech.V1" Version="3.9.0" />
     <PackageReference Include="Google.Cloud.TextToSpeech.V1" Version="3.17.0" />
     <PackageReference Include="MathNet.Numerics" Version="5.0.0" />

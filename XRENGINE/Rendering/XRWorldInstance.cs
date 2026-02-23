@@ -867,13 +867,13 @@ namespace XREngine.Rendering
                 case nameof(PlayState):
                     if (field is EPlayState newState)
                     {
-                        Debug.Physics($"[XRWorldInstance] PlayState changed to {newState}, Engine.PlayMode.State={Engine.PlayMode.State}, SimulatePhysics={Engine.PlayMode.Configuration.SimulatePhysics}");
+                        Debug.Out($"[XRWorldInstance] PlayState changed to {newState}, Engine.PlayMode.State={Engine.PlayMode.State}, SimulatePhysics={Engine.PlayMode.Configuration.SimulatePhysics}");
                         switch (newState)
                         {
                             case EPlayState.Playing:
                                 // Keep physics enabled as soon as the world starts playing, even while play mode is still transitioning
                                 bool playModeActive = Engine.PlayMode.State is EPlayModeState.Play or EPlayModeState.EnteringPlay;
-                                Debug.Physics($"[XRWorldInstance] PlayState=Playing, playModeActive={playModeActive}");
+                                Debug.Out($"[XRWorldInstance] PlayState=Playing, playModeActive={playModeActive}");
                                 PhysicsEnabled = playModeActive && Engine.PlayMode.Configuration.SimulatePhysics;
                                 break;
                             case EPlayState.Stopped:

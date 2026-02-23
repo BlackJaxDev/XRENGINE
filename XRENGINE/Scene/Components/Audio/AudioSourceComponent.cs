@@ -284,6 +284,17 @@ namespace XREngine.Components
             set => SetField(ref _maxStreamingBuffers, value);
         }
 
+        /// <summary>
+        /// When <c>true</c>, the component's periodic <see cref="UpdatePosition"/>
+        /// tick will not call <see cref="DequeueConsumedBuffers"/>, leaving
+        /// buffer lifecycle entirely to the external consumer (e.g.
+        /// <c>UIVideoComponent</c> streaming drain loop).  This prevents a
+        /// thread-safety race between the update-thread tick and the
+        /// render-thread drain that can cause OpenAL <c>InvalidValue</c> errors.
+        /// </summary>
+        [Browsable(false)]
+        public bool ExternalBufferManagement { get; set; }
+
         public XREvent<(int frequency, bool stereo, float[] buffer)>? StreamingBufferEnqueuedFloat;
         public XREvent<(int frequency, bool stereo, short[] buffer)>? StreamingBufferEnqueuedShort;
         public XREvent<(int frequency, bool stereo, byte[] buffer)>? StreamingBufferEnqueuedByte;
@@ -308,24 +319,21 @@ namespace XREngine.Components
             }
             //}
         }
-        public void EnqueueStreamingBuffers(int frequency, bool stereo, params short[][] buffers)
+        public bool EnqueueStreamingBuffers(int frequency, bool stereo, params short[][] buffers)
         {
-            //if (Type == ESourceType.Static)
-            //    throw new InvalidOperationException("Cannot queue streaming buffers on a static source.");
-
-            //lock (ActiveListeners)
-            //{
+            bool anyQueued = false;
             foreach (var source in ActiveListeners.Values)
             {
                 foreach (var buffer in buffers)
                 {
                     var audioBuffer = source.ParentListener.TakeBuffer();
                     audioBuffer.SetData(buffer, frequency, stereo);
-                    source.QueueBuffers(MaxStreamingBuffers, audioBuffer);
+                    if (source.QueueBuffers(MaxStreamingBuffers, audioBuffer))
+                        anyQueued = true;
                     StreamingBufferEnqueuedShort?.Invoke((frequency, stereo, buffer));
                 }
             }
-            //}
+            return anyQueued;
         }
         public void EnqueueStreamingBuffers(int frequency, bool stereo, params byte[][] buffers)
         {
@@ -609,7 +617,8 @@ namespace XREngine.Components
             Vector3 worldPosition = Transform.WorldTranslation;
             UpdateValidListeners(worldPosition);
             UpdateOrientation(worldPosition);
-            DequeueConsumedBuffers();
+            if (!ExternalBufferManagement)
+                DequeueConsumedBuffers();
         }
 
         public bool IsStereo => Type switch

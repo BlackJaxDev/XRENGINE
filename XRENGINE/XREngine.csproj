@@ -65,13 +65,13 @@
   <ItemGroup>
     <Content Include="C:\Users\dnedd\.nuget\packages\naudio.lame\2.1.0\build\libmp3lame.32.dll" />
     <Content Include="C:\Users\dnedd\.nuget\packages\naudio.lame\2.1.0\build\libmp3lame.64.dll" />
-    <Content Include="ffmpeg.exe">
+    <Content Include="ffmpeg.exe" Condition="Exists('ffmpeg.exe')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="ffplay.exe">
+    <Content Include="ffplay.exe" Condition="Exists('ffplay.exe')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="ffprobe.exe">
+    <Content Include="ffprobe.exe" Condition="Exists('ffprobe.exe')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="openvr_api.dll">
@@ -88,7 +88,7 @@
     <PackageReference Include="BitsKit" Version="1.2.0" />
     <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
     <PackageReference Include="DotnetNoise" Version="1.0.0" />
-    <PackageReference Include="FFmpeg.AutoGen" Version="8.0.0" />
+    <PackageReference Include="FFmpeg.AutoGen" Version="7.1.1" />
     <PackageReference Include="GraphQL" Version="8.8.3" />
     <PackageReference Include="ImmediateReflection" Version="2.0.0" />
     <PackageReference Include="Jitter2" Version="2.7.8" />
@@ -258,6 +258,26 @@
   <Target Name="EnsureCoACD" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(CoACDBuildScript)') and ('$(CoACDRid)' != '') and ('$(ForceCoACDBuild)' == 'true' or !Exists('$(MSBuildProjectDirectory)\\runtimes\\$(CoACDRid)\\native\\lib_coacd.dll'))">
     <Message Text="Ensuring CoACD native library ($(CoACDRid))" Importance="High" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(CoACDBuildScript)&quot; -Rid $(CoACDRid) -Ref $(CoACDRef) -Configuration $(Configuration) $(ForceCoACDBuildSwitch)" />
+  </Target>
+
+  <Target Name="EnsureHlsReferenceFfmpeg" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <HlsReferenceFfmpegDir>$(MSBuildProjectDirectory)\..\Build\Dependencies\FFmpeg\HlsReference\win-x64</HlsReferenceFfmpegDir>
+      <FlyleafFfmpegDir>$(MSBuildProjectDirectory)\..\Build\Submodules\Flyleaf\FFmpeg</FlyleafFfmpegDir>
+    </PropertyGroup>
+
+    <ItemGroup Condition="Exists('$(FlyleafFfmpegDir)') and !Exists('$(HlsReferenceFfmpegDir)\avformat-62.dll') and !Exists('$(HlsReferenceFfmpegDir)\avformat-61.dll')">
+      <FlyleafFfmpegDll Include="$(FlyleafFfmpegDir)\*.dll" />
+    </ItemGroup>
+
+    <MakeDir Directories="$(HlsReferenceFfmpegDir)" Condition="'@(FlyleafFfmpegDll)' != ''" />
+    <Copy SourceFiles="@(FlyleafFfmpegDll)"
+          DestinationFolder="$(HlsReferenceFfmpegDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(FlyleafFfmpegDll)' != ''" />
+    <Message Text="Seeded HLS FFmpeg runtime from Flyleaf binaries into $(HlsReferenceFfmpegDir)."
+             Importance="High"
+             Condition="'@(FlyleafFfmpegDll)' != ''" />
   </Target>
 
   <Target Name="ForceFreetype64" AfterTargets="Build" Condition="Exists('$(Freetype64Source)')">

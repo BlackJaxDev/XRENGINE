@@ -719,18 +719,34 @@ namespace XREngine
         {
     #if DEBUG || EDITOR
             if (interval <= TimeSpan.Zero)
-            return true;
+                return true;
 
             long now = Stopwatch.GetTimestamp();
             long minTicks = (long)(interval.TotalSeconds * Stopwatch.Frequency);
 
             if (RateLimitedMessageCache.TryGetValue(key, out long last) && (now - last) < minTicks)
-            return false;
+                return false;
 
             RateLimitedMessageCache[key] = now;
             return true;
     #else
             return false;
+    #endif
+        }
+
+        /// <summary>
+        /// Rate-limited UI log. Intended for per-frame diagnostics.
+        /// </summary>
+        /// <param name="key">The unique key for the log message.</param>
+        /// <param name="interval">The minimum interval between log messages.</param>
+        /// <param name="message">The log message.</param>
+        /// <param name="args">Optional arguments for the log message.</param>
+        public static void UIEvery(string key, TimeSpan interval, string message, params object[] args)
+        {    
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            UI(message, args);
     #endif
         }
 
@@ -741,7 +757,7 @@ namespace XREngine
         {
     #if DEBUG || EDITOR
             if (!ShouldLogEvery(key, interval))
-            return;
+                return;
             Rendering(message, args);
     #endif
         }
@@ -753,7 +769,7 @@ namespace XREngine
         {
     #if DEBUG || EDITOR
             if (!ShouldLogEvery(key, interval))
-            return;
+                return;
             Log(ELogCategory.Rendering, EOutputVerbosity.Normal, false, "[WARN] " + message, args);
     #endif
         }
@@ -765,7 +781,7 @@ namespace XREngine
         {
     #if DEBUG || EDITOR
             if (!ShouldLogEvery(key, interval))
-            return;
+                return;
             Vulkan(message, args);
     #endif
         }
@@ -777,7 +793,7 @@ namespace XREngine
         {
     #if DEBUG || EDITOR
             if (!ShouldLogEvery(key, interval))
-            return;
+                return;
             Log(ELogCategory.Vulkan, EOutputVerbosity.Normal, false, "[WARN] " + message, args);
     #endif
         }

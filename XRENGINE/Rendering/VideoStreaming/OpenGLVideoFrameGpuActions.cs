@@ -134,7 +134,9 @@ internal sealed class OpenGLVideoFrameGpuActions : IVideoFrameGpuActions
                     GLEnum.UnsignedByte,
                     null);
             }
-            gl.BindTexture(TextureTarget.Texture2D, 0);
+            // Do NOT unbind — the engine already bound this texture on the
+            // active unit for the upcoming draw call.  Unbinding here would
+            // cause the draw to sample a null texture → black artifacts.
             _textureAllocated = true;
             _lastTextureWidth = w;
             _lastTextureHeight = h;
@@ -194,7 +196,9 @@ internal sealed class OpenGLVideoFrameGpuActions : IVideoFrameGpuActions
         }
 
         gl.BindBuffer(BufferTargetARB.PixelUnpackBuffer, 0);
-        gl.BindTexture(TextureTarget.Texture2D, 0);
+        // Do NOT unbind the texture — the engine bound it on the active
+        // texture unit for this draw call.  Removing the binding would
+        // cause subsequent sampling to return black.
 
         // ---- Step 3: Prevent engine from overwriting our upload ----
         // A Resize() on the XRTexture2D triggers Invalidate() on the

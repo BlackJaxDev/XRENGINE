@@ -65,8 +65,16 @@ namespace XREngine.Audio
         public XREvent<AudioBuffer>? BufferQueued;
         public XREvent<AudioBuffer>? BufferProcessed;
 
-        public unsafe void QueueBuffers(int maxbuffers, params AudioBuffer[] buffers)
+        /// <summary>
+        /// When <c>true</c> (default), <see cref="QueueBuffers"/> automatically
+        /// starts playback after enqueuing.  Set to <c>false</c> for streaming
+        /// scenarios where the caller controls playback timing (e.g. pre-buffering).
+        /// </summary>
+        public bool AutoPlayOnQueue { get; set; } = true;
+
+        public unsafe bool QueueBuffers(int maxbuffers, params AudioBuffer[] buffers)
         {
+            ParentListener.MakeCurrent();
             int buffersProcessed = BuffersProcessed;
             if (buffersProcessed > 0)
                 UnqueueConsumedBuffers(buffersProcessed);
@@ -76,7 +84,7 @@ namespace XREngine.Audio
                 // Return the passed-in buffers to the pool so they aren't leaked.
                 foreach (var leaked in buffers)
                     ParentListener.ReleaseBuffer(leaked);
-                return;
+                return false;
             }
 
             uint* handles = stackalloc uint[buffers.Length];
@@ -89,9 +97,14 @@ namespace XREngine.Audio
             }
             //Trace.WriteLineIf(handles.Length > 0, $"Queuing {handles.Length} buffers.");
             Api.SourceQueueBuffers(Handle, buffers.Length, handles);
+            ParentListener.VerifyError();
 
-            if (!IsPlaying)
+            if (AutoPlayOnQueue && !IsPlaying)
+            {
                 Api.SourcePlay(Handle);
+                ParentListener.VerifyError();
+            }
+            return true;
         }
         //public unsafe void UnqueueBuffers(params AudioBuffer[] buffers)
         //{
@@ -103,29 +116,75 @@ namespace XREngine.Audio
         //}
         public unsafe void UnqueueConsumedBuffers(int requestedCount = 0)
         {
+            ParentListener.MakeCurrent();
             bool looping = GetLooping();
             if (looping)
                 Debug.WriteLine("Warning: UnqueueConsumedBuffers called on a looping source.");
 
-            int count = Math.Min(_currentStreamingBuffers.Count, requestedCount <= 0 ? BuffersProcessed : requestedCount);
+            int processedNow = BuffersProcessed;
+            int requested = requestedCount <= 0 ? processedNow : requestedCount;
+            int count = Math.Min(_currentStreamingBuffers.Count, Math.Min(requested, processedNow));
             if (count == 0)
                 return;
 
             uint* handles = stackalloc uint[count];
+            // OpenAL fills 'handles' with the buffer IDs that were actually
+            // unqueued. We must NOT pre-populate this array with our expected
+            // IDs; doing so can desync source/buffer state and cause
+            // AL_INVALID_VALUE during long-running streaming playback.
+            Api.SourceUnqueueBuffers(Handle, count, handles);
+            ParentListener.VerifyError();
+
+            // Keep our managed queue in sync with OpenAL's processed queue.
             for (int i = 0; i < count; i++)
             {
-                var buf = _currentStreamingBuffers.Dequeue();
-                if (buf is not null)
+                uint handle = handles[i];
+                if (handle == 0)
+                    continue;
+
+                AudioBuffer? buf = RemoveTrackedStreamingBuffer(handle);
+                if (buf is null)
                 {
-                    handles[i] = buf.Handle;
-                    BufferProcessed?.Invoke(buf);
-                    ParentListener.ReleaseBuffer(buf);
+                    Debug.WriteLine($"Warning: Streaming buffer handle {handle} was unqueued by OpenAL but not tracked locally.");
+                    continue;
                 }
-                else
-                    Debug.WriteLine("Warning: UnqueueConsumedBuffers found a null buffer.");
+
+                BufferProcessed?.Invoke(buf);
+                ParentListener.ReleaseBuffer(buf);
             }
-            Api.SourceUnqueueBuffers(Handle, count, handles);
             //Trace.WriteLineIf(handles.Length > 0, $"Unqueued {handles.Length} buffers.");
+        }
+
+        private AudioBuffer? RemoveTrackedStreamingBuffer(uint handle)
+        {
+            if (_currentStreamingBuffers.Count == 0)
+                return null;
+
+            AudioBuffer? found = null;
+            int remaining = _currentStreamingBuffers.Count;
+            for (int i = 0; i < remaining; i++)
+            {
+                AudioBuffer item = _currentStreamingBuffers.Dequeue();
+                if (found is null && item.Handle == handle)
+                {
+                    found = item;
+                    continue;
+                }
+
+                _currentStreamingBuffers.Enqueue(item);
+            }
+
+            return found;
+        }
+
+        private void ReleaseAllTrackedStreamingBuffers()
+        {
+            while (_currentStreamingBuffers.Count > 0)
+            {
+                AudioBuffer buffer = _currentStreamingBuffers.Dequeue();
+                if (buffer is not null)
+                    ParentListener.ReleaseBuffer(buffer);
+            }
         }
         #endregion
 
@@ -896,12 +955,14 @@ namespace XREngine.Audio
 
         void IPoolable.OnPoolableReset()
         {
+            _currentStreamingBuffers.Clear();
             Handle = Api.GenSource();
             ParentListener.VerifyError();
         }
 
         void IPoolable.OnPoolableReleased()
         {
+            ReleaseAllTrackedStreamingBuffers();
             Api.SourceStop(Handle);
             Api.DeleteSource(Handle);
             Handle = 0u;
