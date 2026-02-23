@@ -1,3 +1,4 @@
+using System;
 using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Core.Attributes;
@@ -80,11 +81,24 @@ public partial class UIEditorComponent : UIComponent
         toolbarComp.SubmenuItemHeight = MenuHeight;
         _toolbar = toolbarComp;
 
+        if (EditorUnitTests.Toggles.UltralightWebView)
+        {
+            SceneNode webRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "WebViewRoot");
+            var webComp = webRoot.AddComponent<UIWebViewComponent>()!;
+            webComp.Backend = new UltralightGpuWebRendererBackend();
+            webComp.Url = string.IsNullOrWhiteSpace(EditorUnitTests.Toggles.UltralightWebViewUrl)
+                ? "https://blackjaxvr.com"
+                : EditorUnitTests.Toggles.UltralightWebViewUrl;
+
+            return;
+        }
+
         if (EditorUnitTests.Toggles.VideoStreaming)
         {
             SceneNode videoRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "VideoRoot");
-            var videoComp = videoRoot.AddComponent<UIVideoComponent>();
-            videoComp.StreamUrl = "https://twitch.tv/theava";
+            var videoComp = videoRoot.AddComponent<UIVideoComponent>()!;
+            if (!string.IsNullOrWhiteSpace(EditorUnitTests.Toggles.VideoStreamingUrl))
+                videoComp.StreamUrl = EditorUnitTests.Toggles.VideoStreamingUrl;
             if (EditorUnitTests.Toggles.VideoStreamingAudio)
                 videoRoot.AddComponent<AudioSourceComponent>();
 

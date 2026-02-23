@@ -56,7 +56,7 @@
             "args": [
                 "/d",
                 "/c",
-                "set XRE_WINDOW_TITLE=XRE Editor (Separate) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+                "set XRE_WINDOW_TITLE=XRE Editor (Separate) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
             "dependsOn": "build",
             "presentation": {
@@ -71,7 +71,7 @@
             "args": [
                 "/d",
                 "/c",
-                "set XRE_NET_MODE=Server && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+                "set XRE_NET_MODE=Server && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
             "dependsOn": "build",
             "presentation": {
@@ -86,7 +86,7 @@
             "args": [
                 "/d",
                 "/c",
-                "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+                "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
             "dependsOn": "build",
             "presentation": {
@@ -101,7 +101,7 @@
             "args": [
                 "/d",
                 "/c",
-                "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (Client 2) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+                "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (Client 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
             "dependsOn": "build",
             "presentation": {
@@ -116,7 +116,7 @@
             "args": [
                 "/d",
                 "/c",
-                "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\" && timeout /t 1 /nobreak > nul && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (Client 2) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+                "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\" && timeout /t 1 /nobreak > nul && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (Client 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
             "dependsOn": "build",
             "presentation": {
@@ -146,7 +146,7 @@
             "args": [
                 "/d",
                 "/c",
-                "set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 1) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+                "set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
             "dependsOn": "build",
             "presentation": {
@@ -161,7 +161,7 @@
             "args": [
                 "/d",
                 "/c",
-                "set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 2) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+                "set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
             "dependsOn": "build",
             "presentation": {
@@ -336,7 +336,7 @@
             "args": [
                 "/d",
                 "/c",
-                "set XRE_PROFILER_ENABLED=1 && set XRE_WINDOW_TITLE=XRE Editor (Profiled) && start \"\" /D \"${workspaceFolder}\\XREngine.Editor\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
+                "set XRE_PROFILER_ENABLED=1 && set XRE_WINDOW_TITLE=XRE Editor (Profiled) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
             "dependsOn": "build",
             "presentation": {

@@ -1,7 +1,9 @@
 using System;
+using System.IO;
 using UltralightNet;
 using UltralightNet.AppCore;
 using XREngine.Data.Rendering;
+using XREngine;
 
 namespace XREngine.Rendering.UI
 {
@@ -31,16 +33,37 @@ namespace XREngine.Rendering.UI
             Dispose();
 
             EnsureFontLoader();
+            string? resourcePathPrefix = ResolveUltralightResourcePathPrefix();
 
             _config = new ULConfig
             {
-                ForceRepaint = true
+                ForceRepaint = true,
             };
+
+            // Only set ResourcePathPrefix if we actually found resources on disk
+            if (resourcePathPrefix is not null)
+            {
+                _config = new ULConfig
+                {
+                    ForceRepaint = true,
+                    ResourcePathPrefix = resourcePathPrefix,
+                };
+            }
+
+            if (resourcePathPrefix is null)
+            {
+                Debug.LogWarning(
+                    "Ultralight resources not found (icudt67l.dat). " +
+                    "Proceeding with defaults; some content may not render correctly. " +
+                    "Run Tools/Dependencies/Get-UltralightResources.ps1 to download resources.");
+            }
 
             _viewConfig = new ULViewConfig
             {
                 IsAccelerated = false,
-                IsTransparent = transparentBackground
+                IsTransparent = transparentBackground,
+                EnableJavaScript = true,
+                InitialFocus = true,
             };
 
             _renderer = ULPlatform.CreateRenderer(_config.Value);
@@ -155,7 +178,45 @@ namespace XREngine.Rendering.UI
                 return;
 
             AppCoreMethods.SetPlatformFontLoader();
+            AppCoreMethods.ulEnablePlatformFileSystem(".");
             _fontLoaderInitialized = true;
+        }
+
+        private static string? ResolveUltralightResourcePathPrefix()
+        {
+            static string? EnsureDatFile(string resourceDir)
+            {
+                string dat = Path.Combine(resourceDir, "icudt67l.dat");
+                return File.Exists(dat) ? resourceDir : null;
+            }
+
+            foreach (string start in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })
+            {
+                string? cursor = start;
+                for (int depth = 0; depth < 8 && !string.IsNullOrEmpty(cursor); depth++)
+                {
+                    string[] candidates =
+                    [
+                        Path.Combine(cursor, "resources"),
+                        Path.Combine(cursor, "Build", "Dependencies", "Ultralight", "resources"),
+                        Path.Combine(cursor, "ThirdParty", "Ultralight", "resources"),
+                    ];
+
+                    for (int i = 0; i < candidates.Length; i++)
+                    {
+                        string? found = EnsureDatFile(candidates[i]);
+                        if (found is null)
+                            continue;
+
+                        string normalized = found.Replace('\\', '/');
+                        return normalized.EndsWith('/') ? normalized : normalized + '/';
+                    }
+
+                    cursor = Directory.GetParent(cursor)?.FullName;
+                }
+            }
+
+            return null;
         }
     }
 }

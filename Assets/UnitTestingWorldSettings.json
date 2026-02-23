@@ -1,68 +1,87 @@
-{
+﻿{
   "$id": "1",
   "WorldKind": "Default",
 
-  "UpdateFPS": 60.0,
+  "UpdateFPS": 120.0,
   "RenderFPS": 0.0,
   "FixedFPS": 30.0,
   "TickGroupedItemsInParallel": true,
   "RecalcChildMatricesType": "Asynchronous",
 
-  "RenderAPI": "Vulkan",
+  "RenderAPI": "OpenGL",
   "AllowShaderPipelines": false,
   "GPURenderDispatch": false,
-  "ForceDebugOpaquePipeline": false,
+  "ForceDebugOpaquePipeline": true,
   "BackgroundShader": false,
-  "RenderMeshBounds": true,
+  "StaticModelMaterialMode": "ForwardPlusTextured",
+  "RenderMeshBounds": false,
   "RenderPhysicsDebug": false,
   "VisualizeOctree": false,
   "VisualizeQuadtree": false,
   "RenderWindowsWhileInVR": true,
-  "RenderTransformDebugInfo": true,
-  "RenderTransformPoints": true,
-  "RenderTransformLines": true,
+  "RenderTransformDebugInfo": false,
+  "RenderTransformPoints": false,
+  "RenderTransformLines": false,
   "RenderTransformCapsules": false,
 
   "Skybox": true,
-  "Spline": false,
-  "DeferredDecal": false,
-  "Mirror": true,
-
-  "DirLight": true,
+  "DirLight": false,
   "DirLight2": false,
   "SpotLight": false,
   "PointLight": false,
-  "LightProbe": true,
-  "LightProbeCaptureMs": 100.0,
+  "LightProbe": false,
+  "LightProbeCaptureMs": 1000.0,
   "StopRealtimeCaptureSec": 5.0,
+  "DeferredDecal": false,
+  "Mirror": false,
+  "Spline": false,
 
   "AddEditorUI": true,
   "TransformTool": false,
   "DearImGuiUI": false,
   "EnableProfilerLogging": true,
   "RiveUI": false,
-  "VideoStreaming": false,
-  "VideoStreamingAudio": false,
+  "VideoStreaming": true,
+  "VideoStreamingAudio": true,
+  "VideoStreamingUrl": "https://twitch.tv/giantwaffle",
+  "UltralightWebView": false,
+  "UltralightWebViewUrl": "https://blackjaxvr.com",
 
   "AddCameraVRPickup": false,
-  "AllowEditingInVR": true,
+  "AllowEditingInVR": false,
+  "PreviewVRStereoViews": false,
   "Locomotion": false,
   "ThirdPersonPawn": false,
   "VRPawn": false,
-  "EmulatedVRPawn": false,
   "CharacterControllerCapsuleTranslationY": 1.6,
+  "UseOpenXR": true,
+  "EmulatedVRPawn": false,
   "SinglePassStereoVR": false,
 
   "AddPhysics": true,
-  "PhysicsBallCount": 10,
-  "PhysicsChain": true,
+  "PhysicsAPI": "Physx",
+  "PhysicsBallCount": 100,
+  "PhysicsChain": false,
 
   "ModelsToImport": [
     {
-      "Enabled": true,
+      "Enabled": false,
+      "Kind": "Animated",
+      "Path": "misc\\Mitsuki.fbx",
+      "ImportFlags": "Triangulate, FlipUVs",
+      "Scale": 1.0,
+      "ZUp": false,
+      "YawPitchRoll": {
+        "Yaw": 0.0,
+        "Pitch": 0.0,
+        "Roll": 0.0
+      }
+    },
+    {
+      "Enabled": false,
       "Kind": "Static",
-      "Path": "Models\\Sponza\\sponza.obj",
-      "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, SortByPrimitiveType, OptimizeMeshes, OptimizeGraph, FlipUVs, GenerateBoundingBoxes",
+      "Path": "Models\\Sponza2\\Sponza.obj",
+      "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",
       "Scale": 0.01,
       "ZUp": false
     }
@@ -73,17 +92,18 @@
   "AttachMicToAnimatedModel": true,
 
   "VMC": false,
-  "LipSync": true,
+  "LipSync": false,
   "FaceMotion3D": false,
   "FaceTracking": false,
-
   "AnimationClipVMD": false,
-  "AnimationClipAnim": true,
-  "AnimClipPath": "Assets\\Walks\\Basic Walk.anim",
+  "AnimationClipAnim": false,
+  "AnimClipPath": "Assets\\Walks\\Sexy Walk.anim",
   "AnimLooped": true,
   "IKTest": false,
   "TestAnimation": false,
 
   "AddCharacterIK": false,
-  "CreateUnitBox": true
+  "CreateUnitBox": false,
+  "StartInPlayModeWithoutTransitions": false
 }
+

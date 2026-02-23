@@ -46,6 +46,9 @@ public static partial class EditorUnitTests
         public bool PreviewVRStereoViews = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI (requires VRPawn).
         public bool VideoStreaming = false; //Adds a video streaming component to the scene for testing video streaming.
         public bool VideoStreamingAudio = false; //Adds a video streaming audio component to the scene for testing video streaming audio.
+        public string? VideoStreamingUrl { get; set; } = null; //Stream URL used by the video streaming test component.
+        public bool UltralightWebView = false; //Adds an Ultralight web view component to the scene for testing web page rendering.
+        public string UltralightWebViewUrl { get; set; } = "https://blackjaxvr.com"; //Page URL used by the Ultralight web view test component.
         public bool DearImGuiUI = true; //Adds a Dear ImGui overlay to the scene for testing immediate-mode UI.
         public bool EnableProfilerLogging = true; //Enables Engine.Profiler frame logging even without Dear ImGui.
         public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.

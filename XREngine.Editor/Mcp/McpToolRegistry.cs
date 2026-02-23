@@ -244,9 +244,7 @@ namespace XREngine.Editor.Mcp
         }
 
         private static bool IsInjectedParameter(ParameterInfo parameter)
-        {
-            return parameter.ParameterType == typeof(McpToolContext) || parameter.ParameterType == typeof(CancellationToken);
-        }
+            => parameter.ParameterType == typeof(McpToolContext) || parameter.ParameterType == typeof(CancellationToken);
 
         private static async Task<McpToolResponse> InvokeToolAsync(MethodInfo method, McpToolContext context, JsonElement arguments, CancellationToken token)
         {

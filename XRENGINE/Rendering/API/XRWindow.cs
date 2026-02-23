@@ -872,6 +872,7 @@ namespace XREngine.Rendering
         {
             string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
 
+/*
             Debug.RenderingEvery(
                 keyBase + ".Mode",
                 TimeSpan.FromSeconds(1),
@@ -883,6 +884,7 @@ namespace XREngine.Rendering
                 Viewports.Count,
                 TargetWorldInstance is null,
                 delta);
+*/
 
             if (!canRenderWindowViewports)
             {
