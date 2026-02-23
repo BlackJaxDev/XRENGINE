@@ -90,7 +90,7 @@ Running the editor launches the Unit Testing World, a collection of scenes that 
 The Unit Testing World is configured by a JSON file and loaded on startup.
 
 - **How it’s selected**: launch the Editor with `--unit-testing` (or set `XRE_WORLD_MODE=UnitTesting`).
-- **Where the JSON is loaded from**: the Editor looks for `Assets/UnitTestingWorldSettings.json` relative to the process **working directory** (`Environment.CurrentDirectory`). In the provided VS Code launch configs, the working directory is set to `XREngine.Editor/`, so the file used is typically `XREngine.Editor/Assets/UnitTestingWorldSettings.json`.
+- **Where the JSON is loaded from**: the Editor looks for `Assets/UnitTestingWorldSettings.json` relative to the process **working directory** (`Environment.CurrentDirectory`). In the provided VS Code launch configs, the working directory is set to the workspace root, so the file used is `Assets/UnitTestingWorldSettings.json`.
 - **What happens on load**: the JSON is deserialized into `UnitTestingWorld.Toggles` (type `UnitTestingWorld.Settings`). If the file doesn’t exist yet, a default one is written out.
 - **How it affects the world**: `UnitTestingWorld.CreateSelectedWorld(...)` switches on `Toggles.WorldKind` to choose which unit-test world factory to run, and the other toggle values control what gets added (models to import, lighting, physics, UI overlays, etc.).
 - **It also influences engine startup**: the Editor loads these toggles early so render/update settings (render API, tick rates, pipeline choices, etc.) can be applied consistently.

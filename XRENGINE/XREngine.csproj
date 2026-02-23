@@ -53,6 +53,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill.vert" />
+    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill.frag" />
+    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill_path.vert" />
+    <EmbeddedResource Include="Rendering\UI\Ultralight\Shaders\shader_fill_path.frag" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Remove="ffmpeg.exe" />
     <None Remove="ffplay.exe" />
     <None Remove="ffprobe.exe" />

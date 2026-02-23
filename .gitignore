@@ -403,3 +403,4 @@ docs/docfx/**/xrefmap.json
 docs/docfx/manifest.json
 XREngine.Server/imgui.ini
 XREngine.Editor/McpCaptures/
+Build/Dependencies/Ultralight/resources/

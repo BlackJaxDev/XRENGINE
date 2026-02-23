@@ -1,4 +1,5 @@
 using Extensions;
+using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using XREngine.Data;
@@ -67,6 +68,11 @@ namespace XREngine.Rendering.UI
         private readonly XRMaterialFrameBuffer _fbo;
         private IWebRendererBackend _backend = new NullWebRendererBackend();
         private bool _rendering;
+        private bool _pendingReinitialize = true;
+        private bool _pendingLoadUrl;
+        private bool _pendingResize;
+        private uint _requestedBackingWidth = 1;
+        private uint _requestedBackingHeight = 1;
         private uint _backingWidth = 1;
         private uint _backingHeight = 1;
         private int _currentPboIndex;
@@ -133,15 +139,14 @@ namespace XREngine.Rendering.UI
             switch (propName)
             {
                 case nameof(Url):
-                    if (!string.IsNullOrWhiteSpace(_url))
-                        _backend.LoadUrl(_url!);
+                    _pendingLoadUrl = true;
                     break;
                 case nameof(TransparentBackground):
-                    ReinitializeBackend();
+                    _pendingReinitialize = true;
                     break;
                 case nameof(Backend):
                     (prev as IWebRendererBackend)?.Dispose();
-                    ReinitializeBackend();
+                    _pendingReinitialize = true;
                     break;
             }
         }
@@ -164,7 +169,7 @@ namespace XREngine.Rendering.UI
             base.OnComponentActivated();
             Engine.Time.Timer.RenderFrame += RenderFrame;
             UpdateBackingSize();
-            ReinitializeBackend();
+            _pendingReinitialize = true;
         }
 
         protected internal override void OnComponentDeactivated()
@@ -180,7 +185,6 @@ namespace XREngine.Rendering.UI
             if (!IsActive)
                 return;
 
-            UpdateBackingSize();
             _backend.Initialize(_backingWidth, _backingHeight, _transparentBackground);
             if (!string.IsNullOrWhiteSpace(_url))
                 _backend.LoadUrl(_url!);
@@ -213,20 +217,12 @@ namespace XREngine.Rendering.UI
             uint w = (uint)bounds.Width.ClampMin(1.0f);
             uint h = (uint)bounds.Height.ClampMin(1.0f);
 
-            if (w == _backingWidth && h == _backingHeight)
+            if (w == _requestedBackingWidth && h == _requestedBackingHeight)
                 return;
 
-            _backingWidth = w;
-            _backingHeight = h;
-
-            EnsureWebTextureSize(w, h);
-            _fbo.Resize(w, h);
-
-            if (_backend.SupportsFramebuffer)
-                UpdateFramebufferTarget();
-
-            if (_backend.IsInitialized)
-                _backend.Resize(w, h);
+            _requestedBackingWidth = w;
+            _requestedBackingHeight = h;
+            _pendingResize = true;
         }
 
         private XRTexture2D EnsureWebTextureSize(uint width, uint height)
@@ -262,6 +258,8 @@ namespace XREngine.Rendering.UI
             _rendering = true;
             try
             {
+                ProcessPendingBackendChanges();
+
                 double delta = Engine.Time.Timer.Update.Delta;
                 _backend.Update(delta);
                 _backend.Render();
@@ -272,6 +270,71 @@ namespace XREngine.Rendering.UI
             finally
             {
                 _rendering = false;
+            }
+        }
+
+        private void ProcessPendingBackendChanges()
+        {
+            bool hasResize = _pendingResize;
+            bool hasReinitialize = _pendingReinitialize;
+            bool hasLoadUrl = _pendingLoadUrl;
+
+            if (!hasResize && !hasReinitialize && !hasLoadUrl)
+                return;
+
+            try
+            {
+                if (hasResize)
+                {
+                    _pendingResize = false;
+
+                    uint w = _requestedBackingWidth;
+                    uint h = _requestedBackingHeight;
+                    if (w != _backingWidth || h != _backingHeight)
+                    {
+                        _backingWidth = w;
+                        _backingHeight = h;
+
+                        EnsureWebTextureSize(w, h);
+                        _fbo.Resize(w, h);
+
+                        if (_backend.SupportsFramebuffer)
+                            UpdateFramebufferTarget();
+
+                        if (_backend.IsInitialized)
+                            _backend.Resize(w, h);
+                    }
+                }
+
+                if (hasReinitialize)
+                {
+                    _pendingReinitialize = false;
+                    _pendingLoadUrl = false;
+                    ReinitializeBackend();
+                    return;
+                }
+
+                if (hasLoadUrl)
+                {
+                    _pendingLoadUrl = false;
+                    if (!string.IsNullOrWhiteSpace(_url))
+                        _backend.LoadUrl(_url!);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"UIWebViewComponent backend init failed ({ex.Message}). Falling back to software backend.");
+                _pendingReinitialize = false;
+                _pendingLoadUrl = false;
+                _pendingResize = false;
+
+                // Auto-fallback: if the current backend is not already the software renderer, swap and retry once.
+                if (_backend is not UltralightWebRendererBackend)
+                {
+                    _backend.Dispose();
+                    _backend = new UltralightWebRendererBackend();
+                    _pendingReinitialize = true;
+                }
             }
         }
 

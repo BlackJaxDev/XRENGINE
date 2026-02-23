@@ -8,7 +8,7 @@
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/Build/Editor/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.Editor.exe",
             "args": [],
-            "cwd": "${workspaceFolder}/XREngine.Editor",
+            "cwd": "${workspaceFolder}",
             "console": "internalConsole",
             "stopAtEntry": false
         },
@@ -19,7 +19,7 @@
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/Build/Editor/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.Editor.exe",
             "args": ["--unit-testing"],
-            "cwd": "${workspaceFolder}/XREngine.Editor",
+            "cwd": "${workspaceFolder}",
             "console": "internalConsole",
             "stopAtEntry": false,
             "env": {
@@ -33,7 +33,7 @@
             "preLaunchTask": "prep-debug-client-with-server-and-client",
             "program": "${workspaceFolder}/Build/Editor/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.Editor.exe",
             "args": [],
-            "cwd": "${workspaceFolder}/XREngine.Editor",
+            "cwd": "${workspaceFolder}",
             "console": "internalConsole",
             "stopAtEntry": false,
             "env": {
@@ -71,7 +71,7 @@
             "preLaunchTask": "prep-debug-p2p-client-with-peer",
             "program": "${workspaceFolder}/Build/Editor/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.Editor.exe",
             "args": [],
-            "cwd": "${workspaceFolder}/XREngine.Editor",
+            "cwd": "${workspaceFolder}",
             "console": "internalConsole",
             "stopAtEntry": false,
             "env": {
