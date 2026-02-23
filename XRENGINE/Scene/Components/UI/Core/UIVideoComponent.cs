@@ -2,6 +2,7 @@
 using System.Threading.Tasks;
 using System;
 using System.IO;
+using System.Threading;
 using XREngine.Components;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
@@ -78,38 +79,71 @@ namespace XREngine.Rendering.UI
         // ═══════════════════════════════════════════════════════════════
 
         /// <summary>Target number of OpenAL buffers to keep queued on the audio source.</summary>
-        private const int TargetOpenAlQueuedBuffers = 24;
+        private const int TargetOpenAlQueuedBuffers = 40;
 
         /// <summary>Minimum queued buffers before we issue alSourcePlay (pre-buffer threshold).</summary>
-        private const int MinAudioBuffersBeforePlay = 14;
+        private const int MinAudioBuffersBeforePlay = 24;
 
         /// <summary>Max audio frames to submit per drain cycle (prevents stalling the render thread).</summary>
-        private const int MaxAudioFramesPerDrain = 48;
+        private const int MaxAudioFramesPerDrain = 96;
 
-        /// <summary>Requested maximum streaming buffer pool size on the AudioSourceComponent.</summary>
-        private const int TargetAudioSourceMaxStreamingBuffers = 64;
+        /// <summary>
+        /// Maximum streaming buffer pool size set on the AudioSourceComponent.
+        /// This is the hard ceiling for OpenAL queued buffers; any enqueue
+        /// attempt beyond this count is silently dropped. Must be large enough
+        /// to hold <see cref="TargetAudioQueuedDurationTicks"/> worth of audio
+        /// at the stream's frame size (typically ~21 ms per AAC frame at 48 kHz).
+        /// </summary>
+        private const int TargetAudioSourceMaxStreamingBuffers = 200;
 
-        /// <summary>Target total duration of audio data queued on the OpenAL source (1 s).</summary>
-        private const long TargetAudioQueuedDurationTicks = TimeSpan.TicksPerMillisecond * 1000;
+        /// <summary>Target total duration of audio data queued on the OpenAL source (3 s).</summary>
+        private const long TargetAudioQueuedDurationTicks = TimeSpan.TicksPerMillisecond * 3000;
 
-        /// <summary>Minimum queued audio duration before starting playback (500 ms).</summary>
-        private const long MinAudioQueuedDurationBeforePlayTicks = TimeSpan.TicksPerMillisecond * 500;
+        /// <summary>Minimum queued audio duration before starting playback (1.5 s).</summary>
+        private const long MinAudioQueuedDurationBeforePlayTicks = TimeSpan.TicksPerMillisecond * 1500;
+
+        /// <summary>
+        /// Minimum queued audio duration to restart playback after an underrun (200 ms).
+        /// Much lower than <see cref="MinAudioQueuedDurationBeforePlayTicks"/> so recovery
+        /// from a network stall resumes audio quickly instead of imposing a long silence gap.
+        /// </summary>
+        private const long UnderrunRecoveryMinDurationTicks = TimeSpan.TicksPerMillisecond * 200;
+
+        /// <summary>
+        /// Minimum queued buffers to restart playback after an underrun.
+        /// Corresponds to <see cref="UnderrunRecoveryMinDurationTicks"/>.
+        /// </summary>
+        private const int UnderrunRecoveryMinBuffers = 8;
+
+        /// <summary>Interval for the dedicated audio pump timer (10 ms).</summary>
+        private const int AudioPumpTimerIntervalMs = 10;
 
         // ═══════════════════════════════════════════════════════════════
         // Constants — Adaptive Catch-Up (Latency Reduction)
         // ═══════════════════════════════════════════════════════════════
 
-        /// <summary>Desired steady-state playback latency (500 ms). Pitch returns to 1.0 at this level.</summary>
-        private const long TargetPlaybackLatencyTicks = TimeSpan.TicksPerMillisecond * 500;
+        /// <summary>
+        /// Desired steady-state playback latency (3 s). Pitch returns to 1.0 at
+        /// this level. Must match <see cref="TargetAudioQueuedDurationTicks"/> so
+        /// the catch-up system disengages once the queue is at its normal depth.
+        /// </summary>
+        private const long TargetPlaybackLatencyTicks = TimeSpan.TicksPerMillisecond * 3000;
 
-        /// <summary>Latency threshold above which catch-up pitch engages (1.2 s).</summary>
-        private const long CatchUpEngageLatencyTicks = TimeSpan.TicksPerMillisecond * 1200;
+        /// <summary>
+        /// Latency threshold above which catch-up pitch engages (5 s). Must be
+        /// well above <see cref="TargetAudioQueuedDurationTicks"/> (3 s) so that
+        /// normal steady-state buffering never triggers a pitch increase.
+        /// </summary>
+        private const long CatchUpEngageLatencyTicks = TimeSpan.TicksPerMillisecond * 5000;
 
-        /// <summary>Latency at which catch-up pitch reaches its maximum value (3 s).</summary>
-        private const long CatchUpMaxLatencyTicks = TimeSpan.TicksPerMillisecond * 3000;
+        /// <summary>Latency at which catch-up pitch reaches its maximum value (10 s).</summary>
+        private const long CatchUpMaxLatencyTicks = TimeSpan.TicksPerMillisecond * 10000;
 
-        /// <summary>Maximum pitch multiplier during catch-up (5% speedup).</summary>
-        private const float CatchUpMaxPitch = 1.05f;
+        /// <summary>
+        /// Maximum pitch multiplier during catch-up (2% speedup). Kept very low
+        /// so even when catch-up is active it is barely audible.
+        /// </summary>
+        private const float CatchUpMaxPitch = 1.02f;
 
         // ═══════════════════════════════════════════════════════════════
         // Constants — Telemetry
@@ -325,6 +359,28 @@ namespace XREngine.Rendering.UI
         /// </summary>
         private bool _wasAudioPlaying;
 
+        /// <summary>
+        /// Non-reentrancy guard for audio draining so render and update ticks
+        /// cannot concurrently dequeue/submit audio.
+        /// </summary>
+        private int _audioDrainInProgress;
+
+        /// <summary>
+        /// Set <c>true</c> when an underrun is detected and cleared once playback
+        /// is re-established. While set, Phase 2 uses the smaller recovery
+        /// thresholds (<see cref="UnderrunRecoveryMinDurationTicks"/>,
+        /// <see cref="UnderrunRecoveryMinBuffers"/>) so audio resumes quickly.
+        /// </summary>
+        private volatile bool _audioUnderrunRecovery;
+
+        /// <summary>
+        /// Dedicated timer that pumps audio independently of the engine
+        /// update/render loop. Fires every <see cref="AudioPumpTimerIntervalMs"/>
+        /// on a thread-pool thread, immune to engine tick throttling, GC pauses
+        /// on the main thread, and render stalls.
+        /// </summary>
+        private Timer? _audioPumpTimer;
+
         // ═══════════════════════════════════════════════════════════════
         // Fields — Adaptive Catch-Up State
         // ═══════════════════════════════════════════════════════════════
@@ -415,6 +471,7 @@ namespace XREngine.Rendering.UI
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            _audioPumpTimer = new Timer(AudioPumpTimerCallback, null, AudioPumpTimerIntervalMs, AudioPumpTimerIntervalMs);
             StartStreamingPipeline();
         }
 
@@ -424,6 +481,8 @@ namespace XREngine.Rendering.UI
         /// </summary>
         protected internal override void OnComponentDeactivated()
         {
+            _audioPumpTimer?.Dispose();
+            _audioPumpTimer = null;
             base.OnComponentDeactivated();
             StopStreamingPipeline();
         }

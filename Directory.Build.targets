@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <YtDlpRepositoryPath Condition="'$(YtDlpRepositoryPath)' == ''">$(MSBuildThisFileDirectory)Build\Dependencies\YoutubeDL\yt-dlp.exe</YtDlpRepositoryPath>
+  </PropertyGroup>
+
+  <ItemGroup Condition="('$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe') and Exists('$(YtDlpRepositoryPath)')">
+    <Content Include="$(YtDlpRepositoryPath)">
+      <Link>yt-dlp.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

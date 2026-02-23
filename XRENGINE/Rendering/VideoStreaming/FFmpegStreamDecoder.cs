@@ -1,6 +1,7 @@
 using FFmpeg.AutoGen;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -143,7 +144,11 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         return Task.Run(() =>
         {
             if (!AllocateAndOpen(url, options))
-                throw new InvalidOperationException($"FFmpegStreamDecoder failed to open '{url}'.");
+            {
+                Cleanup();
+                Debug.LogWarning($"FFmpeg failed to open any streams for URL: {url}");
+                return;
+            }
 
             _running = true;
             Debug.Out($"FFmpeg stream decoder opened: url='{url}', video={_videoStreamIndex}, audio={_audioStreamIndex}");

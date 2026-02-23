@@ -28,6 +28,7 @@ Jitter 2 work is planned for lightweight usage such as for VTubing.
 - .NET 10 SDK
 - Windows 10/11 with a GPU capable of OpenGL 4.6
 - Optional: OpenXR-compatible headset or SteamVR setup for XR testing
+- Optional (required for YouTube URL playback): `yt-dlp` available on PATH or copied as `yt-dlp.exe` beside the app executable
 
 ## Quick Start
 ### 1) Clone (with submodules)
@@ -186,6 +187,16 @@ For a quick two-instance Editor networking test (server + client), there is a he
 	This requires Visual Studio (or Build Tools) with the **Desktop development with C++** workload. The script will fetch `premake5` automatically if missing.
 
 - Video/streaming codecs – the repo ships FFmpeg-family native DLLs (`avcodec`, `avformat`, etc.) under `XRENGINE/runtimes/win-x64/native` and copies them to output as needed (used by the Flyleaf integration).
+
+- YouTube URL extraction (`yt-dlp`) – YouTube links are resolved to a direct playable URL through `yt-dlp` before FFmpeg open. Install `yt-dlp` and keep it on PATH, or place `yt-dlp.exe` next to the Editor/Client/Server executable.
+
+	To install/update `yt-dlp` into the repo-standard dependency location, run:
+
+	```powershell
+	./Tools/Dependencies/Get-YtDlp.ps1
+	```
+
+	This downloads `yt-dlp.exe` to `Build/Dependencies/YoutubeDL/yt-dlp.exe` and the build copies it into app output folders automatically for executable projects.
 
 - NVIDIA features (DLSS / Reflex / Streamline) – **NVIDIA proprietary SDK binaries are not redistributed in this repo.** To enable these features locally, obtain the relevant NVIDIA SDK(s) from NVIDIA and drop the required DLLs into `ThirdParty/NVIDIA/SDK/win-x64/`. The build copies them into the output directory when present. See `ThirdParty/NVIDIA/SDK/README.md`.
 

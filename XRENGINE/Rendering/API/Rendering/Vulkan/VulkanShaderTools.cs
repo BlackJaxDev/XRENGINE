@@ -540,10 +540,90 @@ internal static class VulkanShaderAutoUniforms
         return !string.IsNullOrWhiteSpace(name);
     }
 
+    /// <summary>
+    /// Matches top-level bare <c>in</c> / <c>out</c> declarations that lack a
+    /// <c>layout(location = …)</c> qualifier and are NOT built-in interface blocks
+    /// (e.g. <c>gl_PerVertex</c>), <c>gl_*</c> variables, or interface-block openers.
+    /// Group "dir" = in|out, Group "rest" = everything after the direction keyword up to and including the semicolon.
+    /// </summary>
+    private static readonly Regex BareIODeclarationRegex = new(
+        @"^(?<indent>\s*)(?<dir>in|out)\s+(?<rest>(?!gl_)[A-Za-z_]\w*(?:\s+[A-Za-z_]\w*(?:\s*\[[^\]]*\])?)*\s*;)",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
+    /// <summary>
+    /// Finds the highest <c>location = N</c> value already declared in the source for a given direction.
+    /// </summary>
+    private static uint FindMaxIOLocation(string source, string direction)
+    {
+        Regex locationRegex = new(
+            $@"layout\s*\([^)]*location\s*=\s*(?<loc>\d+)[^)]*\)\s*{direction}\b",
+            RegexOptions.IgnoreCase);
+
+        uint max = 0;
+        bool found = false;
+        foreach (Match m in locationRegex.Matches(source))
+        {
+            if (uint.TryParse(m.Groups["loc"].Value, out uint loc))
+            {
+                found = true;
+                if (loc >= max) max = loc + 1;
+            }
+        }
+        return found ? max : 0;
+    }
+
+    private static string EnsureIOLocationQualifiers(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            return source;
+
+        // Pre-scan to find function bodies so we can skip bare in/out inside them.
+        HashSet<int> functionBodyLines = new();
+        string[] allLines = source.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        int braceDepth = 0;
+        for (int i = 0; i < allLines.Length; i++)
+        {
+            foreach (char ch in allLines[i])
+            {
+                if (ch == '{') braceDepth++;
+                else if (ch == '}') braceDepth = Math.Max(0, braceDepth - 1);
+            }
+            if (braceDepth > 0)
+                functionBodyLines.Add(i);
+        }
+
+        uint nextInLocation = FindMaxIOLocation(source, "in");
+        uint nextOutLocation = FindMaxIOLocation(source, "out");
+
+        // Track current line number for each match to skip function bodies.
+        string result = BareIODeclarationRegex.Replace(source, match =>
+        {
+            // Compute line number of the match.
+            int lineIndex = source[..match.Index].Split('\n').Length - 1;
+            if (functionBodyLines.Contains(lineIndex))
+                return match.Value;
+
+            string rest = match.Groups["rest"].Value;
+
+            // Skip interface blocks (type name followed by '{' after semicolon — but these would have { not ; so regex won't match).
+            // Skip gl_ builtins that somehow sneak through.
+            if (rest.StartsWith("gl_", StringComparison.Ordinal))
+                return match.Value;
+
+            string dir = match.Groups["dir"].Value;
+            string indent = match.Groups["indent"].Value;
+            uint loc = string.Equals(dir, "out", StringComparison.Ordinal) ? nextOutLocation++ : nextInLocation++;
+            return $"{indent}layout(location = {loc}) {dir} {rest}";
+        });
+
+        return result;
+    }
+
     private static string ApplyVulkanSourceFixups(string source)
     {
         string rewritten = source.Replace("gl_InstanceID", "gl_InstanceIndex", StringComparison.Ordinal);
         rewritten = FloatSuffixRegex.Replace(rewritten, "${num}");
+        rewritten = EnsureIOLocationQualifiers(rewritten);
         return rewritten;
     }
 

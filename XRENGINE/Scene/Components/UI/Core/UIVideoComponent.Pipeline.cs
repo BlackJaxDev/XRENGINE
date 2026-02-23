@@ -111,8 +111,8 @@ namespace XREngine.Rendering.UI
             _streamingSession.VideoSizeChanged += HandleStreamingVideoSizeChanged;
             _streamingRetryCount = resolved.RetryCount;
             _streamingOpenOptions = resolved.OpenOptions ?? new StreamOpenOptions();
-            _streamingOpenOptions.VideoQueueCapacity = Math.Max(_streamingOpenOptions.VideoQueueCapacity, 24);
-            _streamingOpenOptions.AudioQueueCapacity = Math.Max(_streamingOpenOptions.AudioQueueCapacity, 128);
+            _streamingOpenOptions.VideoQueueCapacity = Math.Max(_streamingOpenOptions.VideoQueueCapacity, 180);
+            _streamingOpenOptions.AudioQueueCapacity = Math.Max(_streamingOpenOptions.AudioQueueCapacity, 256);
             _streamOpenAttemptStartedTicks = GetEngineTimeTicks();
 
             BeginStreamingOpenWithSession(resolved.Url, _streamingOpenOptions);
@@ -154,8 +154,8 @@ namespace XREngine.Rendering.UI
             _streamingSession.VideoSizeChanged += HandleStreamingVideoSizeChanged;
             _streamingRetryCount = 0;
             _streamingOpenOptions = new StreamOpenOptions();
-            _streamingOpenOptions.VideoQueueCapacity = Math.Max(_streamingOpenOptions.VideoQueueCapacity, 24);
-            _streamingOpenOptions.AudioQueueCapacity = Math.Max(_streamingOpenOptions.AudioQueueCapacity, 128);
+            _streamingOpenOptions.VideoQueueCapacity = Math.Max(_streamingOpenOptions.VideoQueueCapacity, 180);
+            _streamingOpenOptions.AudioQueueCapacity = Math.Max(_streamingOpenOptions.AudioQueueCapacity, 256);
             _streamOpenAttemptStartedTicks = GetEngineTimeTicks();
             BeginStreamingOpenWithSession(variant.Url, _streamingOpenOptions);
         }

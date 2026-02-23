@@ -37,8 +37,15 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     /// <summary>Cap on how far into the future a frame's due-time may be before we clamp it.</summary>
     private const long MaxFutureDueWaitTicks = TimeSpan.TicksPerMillisecond * 100;
 
-    /// <summary>Target buffering depth used by the consumer to decide when to start playback.</summary>
-    private static readonly long TargetVideoBufferTicks = TimeSpan.FromMilliseconds(500).Ticks;
+    /// <summary>
+    /// Maximum lookahead tolerance for audio-clock-based video pacing.
+    /// A video frame is considered "due" when its PTS is within this many
+    /// ticks ahead of the current audio clock. Kept very small (≈1–2 frames
+    /// at 30 fps) so video stays tightly locked to audio. Previously 500 ms,
+    /// which allowed the catch-up sweep to consume half a second of frames
+    /// in a single burst, creating visible speed-up/pause cycles.
+    /// </summary>
+    private static readonly long TargetVideoBufferTicks = TimeSpan.FromMilliseconds(50).Ticks;
 
     // ═══════════════════════════════════════════════════════════════
     // Fields — Core Dependencies
@@ -61,7 +68,7 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     private readonly Queue<DecodedAudioFrame> _audioFrames = [];
 
     /// <summary>Maximum number of video frames buffered before backpressure blocks the decoder.</summary>
-    private int _videoQueueCapacity = 24;
+    private int _videoQueueCapacity = 180;
 
     /// <summary>Maximum number of audio frames buffered before backpressure blocks the decoder.</summary>
     private int _audioQueueCapacity = 8;
@@ -127,6 +134,12 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
 
     /// <inheritdoc />
     public bool IsOpen => _isOpen;
+
+    /// <inheritdoc />
+    public int QueuedVideoFrameCount { get { lock (_sync) return _videoFrames.Count; } }
+
+    /// <inheritdoc />
+    public int QueuedAudioFrameCount { get { lock (_sync) return _audioFrames.Count; } }
 
     // ═══════════════════════════════════════════════════════════════
     // Public API — Session Lifecycle
@@ -204,12 +217,15 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Attempts to dequeue the next video frame, applying wall-clock pacing
-    /// so frames are released at approximately the correct frame rate.
+    /// Attempts to dequeue the next video frame, using the audio clock as the
+    /// primary pacing reference so video never drifts ahead of or behind audio.
+    /// Falls back to wall-clock pacing only when no audio clock is available
+    /// (e.g. audio-free streams or before audio starts).
     /// </summary>
     /// <param name="audioClockTicks">
-    /// Current audio clock position in ticks (currently unused; pacing is
-    /// wall-clock based, but the parameter is preserved for future A/V sync).
+    /// Current audio clock position in stream-PTS ticks. When &gt; 0, video
+    /// frames are released when their PTS &le; audioClockTicks, keeping video
+    /// perfectly synced to the audio timeline. When 0, wall-clock fallback is used.
     /// </param>
     /// <param name="frame">The dequeued frame, if available.</param>
     /// <returns><c>true</c> if a frame was dequeued; <c>false</c> if it's not yet time or the queue is empty.</returns>
@@ -217,8 +233,6 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     {
         lock (_sync)
         {
-            _ = audioClockTicks; // Reserved for future A/V sync use.
-
             if (_videoFrames.Count == 0)
             {
                 frame = default;
@@ -230,7 +244,51 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
             long candidatePts = candidate.PresentationTimestampTicks;
             bool hasValidPts = candidatePts > 0 && _latestQueuedVideoPts >= candidatePts;
 
-            // Record the wall-clock start of playback on the first dequeue attempt.
+            // ── Audio-clock-based pacing (primary path) ──
+            // When the audio clock is active, video is released purely based
+            // on the audio timeline. A frame is "due" when its PTS is at or
+            // before the audio clock + a small look-ahead tolerance. This
+            // ensures video never races ahead of audio and never independently
+            // speeds up to meet wall-clock realtime.
+            //
+            // Only ONE frame is dequeued per call. The render loop runs at
+            // 60+ fps while video is typically 30 fps, so there are ~2 render
+            // calls per video frame — plenty of headroom to keep up. During
+            // minor stalls, video naturally catches up at one frame per render
+            // pass (smooth and imperceptible). A multi-frame sweep was tried
+            // but it amplified clock estimation noise into visible speed-up
+            // bursts.
+            if (audioClockTicks > 0 && hasValidPts)
+            {
+                if (candidatePts > audioClockTicks + TargetVideoBufferTicks)
+                {
+                    // Frame is in the future relative to audio — not due yet.
+                    frame = default;
+                    return false;
+                }
+
+                // Frame is due — dequeue it.
+                frame = _videoFrames.Dequeue();
+
+                // Update frame-duration tracking.
+                long dequeuedPts = frame.PresentationTimestampTicks;
+                if (dequeuedPts > 0)
+                {
+                    if (_lastDequeuedVideoPts > 0)
+                    {
+                        long deltaTicks = dequeuedPts - _lastDequeuedVideoPts;
+                        if (deltaTicks >= MinFrameDurationTicks && deltaTicks <= MaxSaneFrameDurationTicks)
+                            _fallbackFrameDurationTicks = deltaTicks;
+                    }
+                    _lastDequeuedVideoPts = dequeuedPts;
+                }
+
+                _lastVideoDequeueWallTicks = GetNowTicks();
+                return true;
+            }
+
+            // ── Wall-clock fallback (no audio clock yet, or no valid PTS) ──
+            // Used during startup before audio begins, or for audio-free streams.
             if (!_videoPlaybackStarted)
             {
                 _videoPlaybackStarted = true;
@@ -239,63 +297,49 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
 
             long nowTicks = GetNowTicks();
 
-            // ── Compute the wall-clock time at which this frame is "due" ──
-            if (hasValidPts)
+            // Stall recovery: clamp the last-dequeue timestamp so a render-loop
+            // pause doesn't cause a burst of instantly-due frames.
+            if (_lastVideoDequeueWallTicks > 0)
             {
-                // Use PTS delta to estimate the expected inter-frame duration.
-                long expectedFrameTicks = _fallbackFrameDurationTicks;
-                if (_lastDequeuedVideoPts > 0)
-                {
-                    long deltaTicks = candidatePts - _lastDequeuedVideoPts;
-                    if (deltaTicks >= MinFrameDurationTicks && deltaTicks <= MaxSaneFrameDurationTicks)
-                        expectedFrameTicks = deltaTicks;
-                }
-
-                long dueTicks = _lastVideoDequeueWallTicks > 0
-                    ? _lastVideoDequeueWallTicks + expectedFrameTicks
-                    : _videoPlaybackBaseWallTicks;
-
-                // Clamp excessively far-future due times to avoid long stalls
-                // (e.g. after a PTS discontinuity).
-                if (dueTicks - nowTicks > MaxFutureDueWaitTicks)
-                    dueTicks = nowTicks + Math.Min(expectedFrameTicks, MaxFutureDueWaitTicks);
-
-                // Not yet time — leave the frame in the queue.
-                if (nowTicks < dueTicks)
-                {
-                    frame = default;
-                    return false;
-                }
-            }
-            else
-            {
-                // No valid PTS — fall back to the fixed frame-rate cadence.
-                long dueTicks = _lastVideoDequeueWallTicks > 0
-                    ? _lastVideoDequeueWallTicks + _fallbackFrameDurationTicks
-                    : _videoPlaybackBaseWallTicks;
-
-                if (nowTicks < dueTicks)
-                {
-                    frame = default;
-                    return false;
-                }
+                long stallThreshold = _fallbackFrameDurationTicks * 3;
+                if (nowTicks - _lastVideoDequeueWallTicks > stallThreshold)
+                    _lastVideoDequeueWallTicks = nowTicks - _fallbackFrameDurationTicks;
             }
 
-            // ── Frame is due — dequeue and update tracking state ──
+            long expectedFrameTicks = _fallbackFrameDurationTicks;
+            if (hasValidPts && _lastDequeuedVideoPts > 0)
+            {
+                long deltaTicks = candidatePts - _lastDequeuedVideoPts;
+                if (deltaTicks >= MinFrameDurationTicks && deltaTicks <= MaxSaneFrameDurationTicks)
+                    expectedFrameTicks = deltaTicks;
+            }
+
+            long dueTicks = _lastVideoDequeueWallTicks > 0
+                ? _lastVideoDequeueWallTicks + expectedFrameTicks
+                : _videoPlaybackBaseWallTicks;
+
+            if (hasValidPts && dueTicks - nowTicks > MaxFutureDueWaitTicks)
+                dueTicks = nowTicks + Math.Min(expectedFrameTicks, MaxFutureDueWaitTicks);
+
+            if (nowTicks < dueTicks)
+            {
+                frame = default;
+                return false;
+            }
+
+            // Frame is due via wall-clock fallback.
             frame = _videoFrames.Dequeue();
 
-            long dequeuedPts = frame.PresentationTimestampTicks;
-            if (dequeuedPts > 0)
+            long pts = frame.PresentationTimestampTicks;
+            if (pts > 0)
             {
-                // Refine the fallback duration estimate from consecutive PTS deltas.
                 if (_lastDequeuedVideoPts > 0)
                 {
-                    long deltaTicks = dequeuedPts - _lastDequeuedVideoPts;
-                    if (deltaTicks >= MinFrameDurationTicks && deltaTicks <= MaxSaneFrameDurationTicks)
-                        _fallbackFrameDurationTicks = deltaTicks;
+                    long dt = pts - _lastDequeuedVideoPts;
+                    if (dt >= MinFrameDurationTicks && dt <= MaxSaneFrameDurationTicks)
+                        _fallbackFrameDurationTicks = dt;
                 }
-
-                _lastDequeuedVideoPts = dequeuedPts;
+                _lastDequeuedVideoPts = pts;
             }
 
             _lastVideoDequeueWallTicks = nowTicks;
@@ -331,13 +375,23 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
 
     /// <summary>
     /// Called by <see cref="FFmpegStreamDecoder"/> on its decode thread when
-    /// a video frame has been decoded. Blocks (backpressure) until the queue
-    /// has space, preventing the decoder from outrunning the consumer and
-    /// silently dropping frames (which caused visible video skipping).
+    /// a video frame has been decoded. Non-blocking: if the queue is full the
+    /// incoming frame is dropped immediately so the decode thread can move on
+    /// to audio packets without stalling. The previous bounded-wait approach
+    /// (16 × Sleep(1)) burned nearly all of the decode thread's time budget
+    /// when the render loop was slow or the window was unfocused, starving
+    /// audio decode entirely.
     /// </summary>
     private void OnDecodedVideoFrame(DecodedVideoFrame frame)
     {
-        while (true)
+        // Short bounded wait (2 iterations × Sleep(1) ≈ 2–30 ms).
+        // With the large default queue (180 frames ≈ 3 s at 60 fps) this
+        // rarely triggers, but it gives the render thread a brief chance
+        // to drain a slot before we drop.  Kept very short to avoid
+        // starving audio decode which runs on the same thread.
+        const int MaxWaitIterations = 2;
+
+        for (int waited = 0; ; waited++)
         {
             if (_closing)
                 return;
@@ -356,19 +410,24 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
                 }
             }
 
-            // Queue is full — yield briefly and retry.
+            if (waited >= MaxWaitIterations)
+                return; // Queue still full — drop this frame.
+
             Thread.Sleep(1);
         }
     }
 
     /// <summary>
     /// Called by <see cref="FFmpegStreamDecoder"/> on its decode thread when
-    /// an audio frame has been decoded. Blocks (backpressure) until the queue
-    /// has space.
+    /// an audio frame has been decoded. Uses bounded backpressure with a short
+    /// timeout so the decode thread is never blocked indefinitely — a stalled
+    /// audio consumer cannot freeze video decode.
     /// </summary>
     private void OnDecodedAudioFrame(DecodedAudioFrame frame)
     {
-        while (true)
+        const int MaxWaitMs = 50;
+
+        for (int waited = 0; ; waited++)
         {
             if (_closing)
                 return;
@@ -385,7 +444,9 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
                 }
             }
 
-            // Queue is full — yield briefly and retry.
+            if (waited >= MaxWaitMs)
+                return; // Audio consumer is too slow — drop to unblock decode thread.
+
             Thread.Sleep(1);
         }
     }

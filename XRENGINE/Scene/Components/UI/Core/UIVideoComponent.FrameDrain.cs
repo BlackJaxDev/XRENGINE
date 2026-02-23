@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using XREngine.Components;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.VideoStreaming;
@@ -18,6 +19,126 @@ namespace XREngine.Rendering.UI
 
     public partial class UIVideoComponent
     {
+        /// <summary>
+        /// Callback for the dedicated <see cref="_audioPumpTimer"/>. Runs on a
+        /// thread-pool thread every ~10 ms, completely independent of the
+        /// engine update/render loop frequency. This guarantees audio
+        /// submission continues even during GC pauses, render stalls, or when
+        /// the window is unfocused (engine target FPS = 0).
+        /// </summary>
+        private void AudioPumpTimerCallback(object? state)
+        {
+            if (_streamingSession is null)
+                return;
+
+            DrainStreamingAudio(_streamingSession, out _, out _);
+        }
+
+        /// <summary>
+        /// Drains and submits audio only. Safe to call from both update and
+        /// render paths; reentrancy is prevented by <see cref="_audioDrainInProgress"/>.
+        /// </summary>
+        private void DrainStreamingAudio(IMediaStreamSession session, out AudioSourceComponent? audioSource, out int queuedAudioBuffers)
+        {
+            audioSource = AudioSource;
+            queuedAudioBuffers = GetPlayableAudioBuffers(audioSource);
+
+            if (Interlocked.CompareExchange(ref _audioDrainInProgress, 1, 0) != 0)
+                return;
+
+            try
+            {
+                SuppressAutoPlayOnAudioSources(audioSource);
+                UpdateAudioClock(audioSource);
+
+                // ── Phase 1: Audio — fill OpenAL queue ──
+                // Reclaim consumed buffers FIRST so the playable count is accurate
+                // and OpenAL has maximum capacity for new submissions. Without this,
+                // processed (already-played) buffers inflate BuffersQueued, causing
+                // QueueBuffers to silently drop incoming audio when the pool ceiling
+                // (MaxStreamingBuffers) is reached.
+                audioSource?.DequeueConsumedBuffers();
+
+                int submittedAudioFrames = 0;
+                while (submittedAudioFrames < MaxAudioFramesPerDrain)
+                {
+                    // Stop once both buffering targets are met.
+                    if (GetEstimatedQueuedAudioDurationTicks(audioSource) >= TargetAudioQueuedDurationTicks &&
+                        queuedAudioBuffers >= TargetOpenAlQueuedBuffers)
+                        break;
+
+                    if (!session.TryDequeueAudioFrame(out DecodedAudioFrame audioFrame))
+                        break;
+
+                    if (!SubmitDecodedAudioFrame(audioFrame, audioSource))
+                        break; // OpenAL queue full or bad frame — stop draining to avoid losing already-dequeued frames.
+
+                    submittedAudioFrames++;
+                    queuedAudioBuffers = GetPlayableAudioBuffers(audioSource);
+                }
+
+                // ── Phase 2: Audio — start playback once pre-buffered ──
+                // Use lower thresholds during underrun recovery so audio resumes
+                // within ~200 ms instead of imposing a 1.5 s silence gap.
+                long minDuration = _audioUnderrunRecovery ? UnderrunRecoveryMinDurationTicks : MinAudioQueuedDurationBeforePlayTicks;
+                int  minBuffers  = _audioUnderrunRecovery ? UnderrunRecoveryMinBuffers : MinAudioBuffersBeforePlay;
+
+                if (GetEstimatedQueuedAudioDurationTicks(audioSource) >= minDuration &&
+                    queuedAudioBuffers >= minBuffers && audioSource is not null &&
+                    !audioSource.ActiveListeners.IsEmpty)
+                {
+                    // Check the *real* OpenAL source state, not the component-level
+                    // State property. AudioSourceComponent.Play() uses SetField,
+                    // which is a no-op when State is already Playing — so a source
+                    // that stopped after buffer exhaustion would never be restarted.
+                    // Calling AudioSource.Play() directly via the OpenAL wrapper
+                    // always issues alSourcePlay, restarting the source.
+                    foreach (var source in audioSource.ActiveListeners.Values)
+                    {
+                        if (!source.IsPlaying)
+                            source.Play();
+                    }
+
+                    // Clear recovery mode once playback is re-established.
+                    _audioUnderrunRecovery = false;
+                }
+
+                // ── Phase 3: Audio — track underrun transitions for telemetry ──
+                // An underrun is when an OpenAL source that was previously playing
+                // transitions to Stopped because it ran out of buffers. This is the
+                // actual audible glitch. Checking the source state is more reliable
+                // than the buffer count, which can transiently read as zero during
+                // normal queue housekeeping.
+                if (_hasReceivedFirstFrame && audioSource is not null)
+                {
+                    bool anySourcePlaying = audioSource.ActiveListeners.Values.Any(static s => s.IsPlaying);
+
+                    if (_wasAudioPlaying && !anySourcePlaying)
+                    {
+                        // Source was playing last frame but stopped now → underrun.
+                        _telemetryAudioUnderruns++;
+                        _audioUnderrunRecovery = true;
+                        long queuedMsAtUnderrun = GetEstimatedQueuedAudioDurationTicks(audioSource) / TimeSpan.TicksPerMillisecond;
+                        int playableBuffersAtUnderrun = GetPlayableAudioBuffers(audioSource);
+                        int sourceCount = audioSource.ActiveListeners.Count;
+                        Debug.UIWarning($"[AV Audio] Underrun detected: count={_telemetryAudioUnderruns}, queuedMs={queuedMsAtUnderrun}, playableBuffers={playableBuffersAtUnderrun}, activeSources={sourceCount}, submittedThisDrain={submittedAudioFrames}, targetQueuedMs={TargetAudioQueuedDurationTicks / TimeSpan.TicksPerMillisecond}, minBeforePlayMs={MinAudioQueuedDurationBeforePlayTicks / TimeSpan.TicksPerMillisecond}");
+                    }
+
+                    _wasAudioPlaying = anySourcePlaying;
+                }
+
+                // ── Phase 4: Adaptive catch-up pitch ──
+                UpdateCatchUpPitch(audioSource);
+
+                // Return latest queue depth after processing.
+                queuedAudioBuffers = GetPlayableAudioBuffers(audioSource);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _audioDrainInProgress, 0);
+            }
+        }
+
         // ═══════════════════════════════════════════════════════════════
         // Frame Drain Loop (runs on render thread each render pass)
         // ═══════════════════════════════════════════════════════════════
@@ -40,92 +161,33 @@ namespace XREngine.Rendering.UI
         /// </summary>
         private void DrainStreamingFramesOnMainThread(IMediaStreamSession session)
         {
-            var audioSource = AudioSource;
-            SuppressAutoPlayOnAudioSources(audioSource);
-            UpdateAudioClock(audioSource);
-
-            // ── Phase 1: Audio — fill OpenAL queue (submit BEFORE dequeue) ──
-            // Submit new audio BEFORE dequeuing consumed buffers so the OpenAL
-            // queue stays as full as possible during the frame. This prevents a
-            // brief low-water-mark window that can cause the source to starve.
-            int queuedAudioBuffers = GetPlayableAudioBuffers(audioSource);
-            int submittedAudioFrames = 0;
-            while ((GetEstimatedQueuedAudioDurationTicks(audioSource) < TargetAudioQueuedDurationTicks || queuedAudioBuffers < TargetOpenAlQueuedBuffers) &&
-                   submittedAudioFrames < MaxAudioFramesPerDrain &&
-                   session.TryDequeueAudioFrame(out DecodedAudioFrame audioFrame))
-            {
-                if (!SubmitDecodedAudioFrame(audioFrame, audioSource))
-                    continue;
-
-                submittedAudioFrames++;
-                queuedAudioBuffers = GetPlayableAudioBuffers(audioSource);
-            }
-
-            // Reclaim processed buffer objects AFTER submission so the OpenAL
-            // source never transiently runs dry between dequeue and refill.
-            audioSource?.DequeueConsumedBuffers();
-
-            // ── Phase 2: Audio — start playback once pre-buffered ──
-            if (GetEstimatedQueuedAudioDurationTicks(audioSource) >= MinAudioQueuedDurationBeforePlayTicks &&
-                queuedAudioBuffers >= MinAudioBuffersBeforePlay && audioSource is not null &&
-                !audioSource.ActiveListeners.IsEmpty)
-            {
-                // Check the *real* OpenAL source state, not the component-level
-                // State property. AudioSourceComponent.Play() uses SetField,
-                // which is a no-op when State is already Playing — so a source
-                // that stopped after buffer exhaustion would never be restarted.
-                // Calling AudioSource.Play() directly via the OpenAL wrapper
-                // always issues alSourcePlay, restarting the source.
-                foreach (var source in audioSource.ActiveListeners.Values)
-                {
-                    if (!source.IsPlaying)
-                        source.Play();
-                }
-            }
-
-            // ── Phase 3: Audio — track underrun transitions for telemetry ──
-            // An underrun is when an OpenAL source that was previously playing
-            // transitions to Stopped because it ran out of buffers. This is the
-            // actual audible glitch. Checking the source state is more reliable
-            // than the buffer count, which can transiently read as zero during
-            // normal queue housekeeping.
-            if (_hasReceivedFirstFrame && audioSource is not null)
-            {
-                bool anySourcePlaying = audioSource.ActiveListeners.Values.Any(static s => s.IsPlaying);
-
-                if (_wasAudioPlaying && !anySourcePlaying)
-                {
-                    // Source was playing last frame but stopped now → underrun.
-                    _telemetryAudioUnderruns++;
-                }
-
-                _wasAudioPlaying = anySourcePlaying;
-            }
-
-            // ── Phase 4: Adaptive catch-up pitch ──
-            UpdateCatchUpPitch(audioSource);
+            DrainStreamingAudio(session, out var audioSource, out int queuedAudioBuffers);
 
             // ── Phase 5: Video — dequeue and present one frame ──
             bool audioSyncActive = queuedAudioBuffers > 0 &&
                                    audioSource?.ActiveListeners.Values.Any(static source => source.IsPlaying) == true;
-            long audioClockTicks = audioSyncActive ? GetAudioClockForVideoSync() : 0;
+            long audioClockTicks = audioSyncActive ? GetAudioClockForVideoSync(audioSource) : 0;
             bool hasVideoFrame = false;
             DecodedVideoFrame videoFrame = default;
 
-            // Present at most one frame per render pass to avoid visible
-            // skipping caused by draining multiple due frames and only showing
-            // the most recent one.
-            while (session.TryDequeueVideoFrame(audioClockTicks, out DecodedVideoFrame candidate))
-            {
-                if (ShouldDropVideoFrame(candidate.PresentationTimestampTicks, audioClockTicks))
-                {
-                    _telemetryVideoFramesDropped++;
-                    continue;
-                }
+            // Startup gate: don't present the first video frame until audio is
+            // actually playing. This prevents startup desync where video races
+            // ahead during audio pre-buffer. After first presentation, keep
+            // draining video even if audio briefly underruns to avoid visible
+            // freezes from repeatedly re-applying the gate.
+            bool hasAudioPipeline = audioSource is not null && !audioSource.ActiveListeners.IsEmpty;
+            bool startupAudioGateOpen = !hasAudioPipeline || audioSyncActive || _hasReceivedFirstFrame;
 
+            // Dequeue at most one video frame per render pass. The session's
+            // TryDequeueVideoFrame releases a frame only when its PTS is at or
+            // behind the audio clock, so video stays locked to audio. One frame
+            // per call keeps catch-up smooth during stalls (the render loop at
+            // 60 fps naturally consumes past-due frames one per pass rather
+            // than in a visible burst).
+            if (startupAudioGateOpen && session.TryDequeueVideoFrame(audioClockTicks, out DecodedVideoFrame candidate))
+            {
                 videoFrame = candidate;
                 hasVideoFrame = true;
-                break;
             }
 
             if (hasVideoFrame)
@@ -212,8 +274,9 @@ namespace XREngine.Rendering.UI
                 return;
 
             long driftTicks = 0;
-            if (_audioClockTicks > 0 && _lastPresentedVideoPts > 0)
-                driftTicks = _lastPresentedVideoPts - _audioClockTicks;
+            long audioClockForTelemetry = GetAudioClockForVideoSync(AudioSource);
+            if (audioClockForTelemetry > 0 && _lastPresentedVideoPts > 0)
+                driftTicks = _lastPresentedVideoPts - audioClockForTelemetry;
 
             long driftMs = driftTicks / TimeSpan.TicksPerMillisecond;
             long estimatedQueuedMs = GetEstimatedQueuedAudioDurationTicks(AudioSource) / TimeSpan.TicksPerMillisecond;

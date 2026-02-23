@@ -27,15 +27,9 @@ namespace XREngine.Rendering.UI
         /// <returns><c>true</c> if the frame was successfully queued.</returns>
         private bool SubmitDecodedAudioFrame(DecodedAudioFrame frame, AudioSourceComponent? audioSource)
         {
-            if (audioSource is null || frame.InterleavedData.IsEmpty)
+            if (audioSource is null || frame.InterleavedData.IsEmpty || (!TryConvertToOpenAlPcm16(frame, out short[] pcm16, out bool stereo) || pcm16.Length == 0))
                 return false;
-
-            if (!TryConvertToOpenAlPcm16(frame, out short[] pcm16, out bool stereo))
-                return false;
-
-            if (pcm16.Length == 0)
-                return false;
-
+            
             int sampleRate = Math.Clamp(frame.SampleRate, 8000, 192000);
 
             // OpenAL requires all queued buffers on a source to share the
@@ -46,6 +40,7 @@ namespace XREngine.Rendering.UI
             if (_lastSubmittedAudioSampleRate != 0 &&
                 (_lastSubmittedAudioSampleRate != sampleRate || _lastSubmittedAudioStereo != stereo))
             {
+                Debug.UIWarning($"[AV Audio] Format change detected; flushing OpenAL queue. oldRate={_lastSubmittedAudioSampleRate}, newRate={sampleRate}, oldStereo={_lastSubmittedAudioStereo}, newStereo={stereo}, queuedMs={GetEstimatedQueuedAudioDurationTicks(audioSource) / TimeSpan.TicksPerMillisecond}, playableBuffers={GetPlayableAudioBuffers(audioSource)}");
                 foreach (var source in audioSource.ActiveListeners.Values)
                 {
                     source.Stop();
@@ -58,15 +53,24 @@ namespace XREngine.Rendering.UI
             _lastSubmittedAudioSampleRate = sampleRate;
             _lastSubmittedAudioStereo = stereo;
 
-            audioSource.EnqueueStreamingBuffers(sampleRate, stereo, pcm16);
+            if (!audioSource.EnqueueStreamingBuffers(sampleRate, stereo, pcm16))
+                return false; // OpenAL queue full (MaxStreamingBuffers ceiling hit) — caller should stop draining.
 
             // Track PTS and seed the audio clock from the first audio frame
             // so the video drain loop has a reference point for A/V sync.
             _lastPresentedAudioPts = frame.PresentationTimestampTicks;
             if (_audioClockTicks == long.MinValue && frame.PresentationTimestampTicks > 0)
+            {
                 _audioClockTicks = frame.PresentationTimestampTicks;
-
-            _audioClockLastEngineTicks = GetEngineTimeTicks();
+                // Seed the engine-time anchor so UpdateAudioClock starts from
+                // "now" when audio playback begins. This must ONLY happen
+                // during seeding — subsequent submits must NOT overwrite it,
+                // because UpdateAudioClock measures elapsed real-time from
+                // this value. Overwriting it in every submit "steals" the
+                // time spent in the submit loop, causing the audio clock to
+                // gradually drift behind real-time.
+                _audioClockLastEngineTicks = GetEngineTimeTicks();
+            }
             long frameDurationTicks = EstimateAudioDurationTicks(frame.SampleRate, stereo ? 2 : 1, sizeof(short), pcm16.Length * sizeof(short));
             _totalAudioDurationSubmittedTicks += frameDurationTicks;
             _totalAudioBuffersSubmitted++;
@@ -273,33 +277,84 @@ namespace XREngine.Rendering.UI
             if (_audioClockTicks == long.MinValue || _audioClockLastEngineTicks == long.MinValue)
                 return;
 
-            bool audioPlaying = audioSource?.ActiveListeners.Values.Any(static source => source.IsPlaying) == true;
-            if (!audioPlaying)
-                return;
-
             long nowTicks = GetEngineTimeTicks();
             if (nowTicks <= _audioClockLastEngineTicks)
                 return;
 
             long elapsedTicks = nowTicks - _audioClockLastEngineTicks;
+            // Always update the anchor so that elapsed time is never
+            // double-counted or lost. This is critical: if we only
+            // update when audio is playing, the delta accumulates
+            // during the pre-buffer silence and causes a burst jump
+            // the moment playback starts.
             _audioClockLastEngineTicks = nowTicks;
+
+            bool audioPlaying = audioSource?.ActiveListeners.Values.Any(static source => source.IsPlaying) == true;
+            if (!audioPlaying)
+                return; // Don't advance the PTS clock, but the anchor is still current.
+
             // Advance the audio clock proportional to the current pitch so that
             // video sync tracks the actual audio playback position.
             _audioClockTicks += (long)(elapsedTicks * _currentPitch);
         }
 
         /// <summary>
-        /// Returns the best available audio clock value for video sync.
-        /// Falls back to the last submitted audio PTS if the clock hasn't
-        /// been seeded yet.
+        /// Returns the best available estimate of the current audio playback
+        /// position in stream-PTS ticks, for video sync.
+        /// <para>
+        /// <b>Primary method (OpenAL-derived):</b> The PTS of the last submitted
+        /// audio frame minus the estimated remaining OpenAL queue depth. This is
+        /// anchored directly to the hardware playback rate and never drifts
+        /// relative to what the listener actually hears. It naturally tracks
+        /// pitch changes, hardware clock rate, and buffer consumption.
+        /// </para>
+        /// <para>
+        /// <b>Fallback (software clock):</b> Seeded from the first audio PTS and
+        /// advanced by engine wall-clock time. Only reached before any audio has
+        /// been submitted to OpenAL.
+        /// </para>
         /// </summary>
-        private long GetAudioClockForVideoSync()
+        private long GetAudioClockForVideoSync(AudioSourceComponent? audioSource)
         {
+            // Primary: derive from the actual OpenAL queue state.
+            // lastSubmittedPts is the PTS of the most recent audio frame pushed
+            // to OpenAL. Subtracting the estimated remaining queue duration
+            // gives us the approximate PTS of the sample currently being output.
+            //
+            // This is the ONLY reliable clock for video sync because it advances
+            // at exactly the rate OpenAL's hardware consumes buffers — the true
+            // audio playback rate. A software timer (Engine.ElapsedTime) drifts
+            // because it isn't locked to the audio hardware clock.
+            //
+            // The raw derived value has ~±21ms of jitter (one AAC buffer) which
+            // is well below a video frame duration (~33ms at 30fps). We use it
+            // directly WITHOUT smoothing, monotonic clamping, or rate limiting,
+            // because those filters caused the clock to ratchet steadily ahead
+            // of actual playback — every upward jitter spike was latched and
+            // never corrected, drifting ~10-20ms/s ahead.
+            //
+            // Guard: require ≥2 playable buffers. When playable=0 (transient
+            // underrun), queuedTicks=0 and derived would jump to lastPts (the
+            // far-future end of queued audio). With one-frame-per-call pacing
+            // the damage is limited, but returning 0 to pause video is safer.
+            if (_lastPresentedAudioPts > 0 && _totalAudioBuffersSubmitted > 0)
+            {
+                int playable = GetPlayableAudioBuffers(audioSource);
+                if (playable >= 2)
+                {
+                    long queuedTicks = GetEstimatedQueuedAudioDurationTicks(audioSource);
+                    long derived = _lastPresentedAudioPts - queuedTicks;
+                    if (derived > 0)
+                        return derived;
+                }
+                // Playable too low — return 0 so video pauses until buffers
+                // refill rather than jumping forward.
+            }
+
+            // Fallback: software clock (only before first audio submit).
             return _audioClockTicks != long.MinValue
                 ? _audioClockTicks
-                : _lastPresentedAudioPts > 0
-                    ? _lastPresentedAudioPts
-                    : 0;
+                : 0;
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -351,9 +406,20 @@ namespace XREngine.Rendering.UI
         /// audio latency is significantly above the target. Uses hysteresis to
         /// avoid oscillation: catch-up engages above <see cref="CatchUpEngageLatencyTicks"/>
         /// and disengages once latency falls to <see cref="TargetPlaybackLatencyTicks"/>.
+        /// <para>
+        /// Pitch increase is only applied when both the audio and video decode
+        /// queues have surplus frames available; speeding up audio without
+        /// matching video data causes A/V desync.
+        /// </para>
         /// </summary>
         private void UpdateCatchUpPitch(AudioSourceComponent? audioSource)
         {
+            if (_streamingOpenOptions?.EnableAdaptiveCatchUpPitch == false)
+            {
+                ApplyPitch(audioSource, 1.0f);
+                return;
+            }
+
             long queuedTicks = GetEstimatedQueuedAudioDurationTicks(audioSource);
             _playbackLatencyMs = queuedTicks / (double)TimeSpan.TicksPerMillisecond;
 
@@ -364,8 +430,22 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
+            // Gate: only speed up if the session has enough buffered frames in
+            // BOTH streams to sustain the faster playback rate. Without this,
+            // audio speeds up but video starves → visible desync.
+            bool bothStreamsHaveSurplus = false;
+            if (_streamingSession is not null)
+            {
+                int videoQueued = _streamingSession.QueuedVideoFrameCount;
+                int audioQueued = _streamingSession.QueuedAudioFrameCount;
+                // Require at least 30 video frames (~0.5 s at 60 fps) and
+                // 10 audio frames (~0.2 s) in the decode queue before allowing
+                // a pitch increase.
+                bothStreamsHaveSurplus = videoQueued >= 30 && audioQueued >= 10;
+            }
+
             float targetPitch;
-            if (queuedTicks >= CatchUpEngageLatencyTicks)
+            if (bothStreamsHaveSurplus && queuedTicks >= CatchUpEngageLatencyTicks)
             {
                 // Linearly ramp pitch from 1.0 at the engage threshold to
                 // CatchUpMaxPitch at CatchUpMaxLatencyTicks.
@@ -374,10 +454,10 @@ namespace XREngine.Rendering.UI
                 float ratio = Math.Clamp((float)excess / rampRange, 0f, 1f);
                 targetPitch = 1.0f + ratio * (CatchUpMaxPitch - 1.0f);
             }
-            else if (_currentPitch > 1.0f && queuedTicks > TargetPlaybackLatencyTicks)
+            else if (_currentPitch > 1.0f && bothStreamsHaveSurplus && queuedTicks > TargetPlaybackLatencyTicks)
             {
                 // Still catching up (hysteresis) — keep current pitch until
-                // we reach the target.
+                // we reach the target or a stream runs low on buffered frames.
                 targetPitch = _currentPitch;
             }
             else

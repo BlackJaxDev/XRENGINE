@@ -1,7 +1,7 @@
 
 #version 460
 
-out vec4 OutColor;
+layout(location = 0) out vec4 OutColor;
 
 uniform sampler2D Texture0;
 uniform float ScreenWidth;

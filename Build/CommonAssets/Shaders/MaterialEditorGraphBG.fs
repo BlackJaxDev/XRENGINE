@@ -1,6 +1,6 @@
 #version 450
 
-out vec4 OutColor;
+layout(location = 0) out vec4 OutColor;
 
 layout (location = 0) in vec3 FragPos;
 layout (location = 4) in vec2 FragUV0;
