@@ -67,5 +67,84 @@ public unsafe partial class VulkanRenderer
             else
                 TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
         }
+
+        /// <summary>
+        /// Uploads raw packed pixel data (e.g. RGB24 video frames) into the texture
+        /// via a Vulkan staging buffer, bypassing the engine's mipmap/DataSource path.
+        /// <para>
+        /// The image is (re-)created if the dimensions have changed, then:
+        /// <list type="number">
+        ///   <item>A host-visible staging buffer is allocated and filled via memcpy.</item>
+        ///   <item>The image is transitioned to <c>TransferDstOptimal</c>.</item>
+        ///   <item><c>vkCmdCopyBufferToImage</c> copies from the staging buffer to mip 0.</item>
+        ///   <item>The image is transitioned to <c>ShaderReadOnlyOptimal</c>.</item>
+        ///   <item>The staging buffer is released.</item>
+        /// </list>
+        /// </para>
+        /// </summary>
+        /// <param name="pixelData">Raw packed pixel bytes (e.g. RGB24).</param>
+        /// <param name="width">Frame width in pixels.</param>
+        /// <param name="height">Frame height in pixels.</param>
+        /// <returns><c>true</c> if the upload succeeded.</returns>
+        internal bool UploadVideoFrameData(ReadOnlySpan<byte> pixelData, uint width, uint height)
+        {
+            if (pixelData.IsEmpty || width == 0 || height == 0)
+                return false;
+
+            // Ensure the image object exists and is the right size.
+            // Resize the engine-side texture so that Generate() creates the
+            // correct Vulkan image dimensions.
+            if (Data.Width != width || Data.Height != height)
+                Data.Resize(width, height);
+
+            Generate();
+
+            if (Image.Handle == 0)
+                return false;
+
+            ulong requiredBytes = (ulong)pixelData.Length;
+
+            // Allocate a host-visible staging buffer and memcpy the pixel data.
+            BufferUsageFlags usage = BufferUsageFlags.TransferSrcBit;
+            if (Renderer.SupportsNvCopyMemoryIndirect && Renderer.SupportsBufferDeviceAddress)
+                usage |= BufferUsageFlags.ShaderDeviceAddressBit;
+
+            (Buffer stagingBuffer, DeviceMemory stagingMemory) = Renderer.CreateBufferRaw(
+                requiredBytes,
+                usage,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
+
+            // Map → memcpy → unmap.
+            void* mapped = null;
+            if (Api!.MapMemory(Device, stagingMemory, 0, requiredBytes, 0, &mapped) != Result.Success)
+            {
+                Renderer.DestroyBuffer(stagingBuffer, stagingMemory);
+                return false;
+            }
+
+            fixed (byte* srcPtr = pixelData)
+            {
+                System.Buffer.MemoryCopy(srcPtr, mapped, (long)requiredBytes, (long)requiredBytes);
+            }
+
+            Api.UnmapMemory(Device, stagingMemory);
+
+            // Transition → copy → transition.
+            try
+            {
+                TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
+
+                Extent3D extent = new(width, height, 1);
+                CopyBufferToImage(stagingBuffer, 0, 0, 1, extent, requiredBytes);
+
+                TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
+            }
+            finally
+            {
+                Renderer.DestroyBuffer(stagingBuffer, stagingMemory);
+            }
+
+            return true;
+        }
     }
 }

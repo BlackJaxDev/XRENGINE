@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -20,6 +22,7 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
     }
 
     private const string TwitchClientId = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+    private const string PlaybackAccessTokenSha256 = "0828119ded1c13477966434e15800ff57ddacf13ba1911c129dc2200705b0712";
     private static readonly TimeSpan InitialBackoff = TimeSpan.FromMilliseconds(250);
     private static readonly HttpClient Http = new();
 
@@ -33,13 +36,19 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
         TwitchSourceKind sourceKind = ParseTwitchSource(trimmed, out string? channel, out string? vodId);
         if (sourceKind == TwitchSourceKind.None)
         {
+            var (resolvedUrl, variants) = await SelectGenericPlaylistIfNeededAsync(trimmed, cancellationToken).ConfigureAwait(false);
+            Debug.Out($"Stream resolver: non-Twitch URL resolved to: '{resolvedUrl}'");
             return new ResolvedStream
             {
-                Url = trimmed,
+                Url = resolvedUrl,
                 RetryCount = 0,
-                OpenOptions = BuildOpenOptionsForGenericUrl(trimmed)
+                OpenOptions = BuildOpenOptionsForGenericUrl(resolvedUrl),
+                AvailableQualities = variants
             };
         }
+
+        string target = sourceKind == TwitchSourceKind.Vod ? $"VOD '{vodId}'" : $"channel '{channel}'";
+        Debug.Out($"Stream resolver: Twitch {sourceKind} detected — {target}");
 
         if (sourceKind == TwitchSourceKind.LiveChannel && string.IsNullOrWhiteSpace(channel))
             throw new InvalidOperationException("Twitch channel resolution produced an empty channel name.");
@@ -49,17 +58,20 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
 
         int retryCount = 0;
         (string token, string signature) = await RequestPlaybackTokenWithRetryAsync(sourceKind, channel, vodId, cancellationToken, retries => retryCount += retries).ConfigureAwait(false);
+        Debug.Out($"Stream resolver: Twitch token acquired (sig={signature[..Math.Min(8, signature.Length)]}...)");
 
         string masterPlaylistUrl = sourceKind == TwitchSourceKind.Vod
             ? BuildVodMasterPlaylistUrl(vodId!, token, signature)
             : BuildLiveMasterPlaylistUrl(channel!, token, signature);
-        string selectedUrl = await SelectBestPlaylistWithRetryAsync(masterPlaylistUrl, cancellationToken, retries => retryCount += retries).ConfigureAwait(false);
+        var (selectedUrl, twitchVariants) = await SelectBestPlaylistWithRetryAsync(masterPlaylistUrl, cancellationToken, retries => retryCount += retries).ConfigureAwait(false);
+        Debug.Out($"Stream resolver: Twitch variant selected: '{selectedUrl}'");
 
         return new ResolvedStream
         {
             Url = selectedUrl,
             RetryCount = retryCount,
-            OpenOptions = BuildOpenOptionsForTwitch()
+            OpenOptions = BuildOpenOptionsForTwitch(),
+            AvailableQualities = twitchVariants
         };
     }
 
@@ -80,25 +92,19 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, "https://gql.twitch.tv/gql");
                 request.Headers.Add("Client-ID", TwitchClientId);
+                request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Mozilla", "5.0"));
 
                 var payload = new
                 {
-                    operationName = "PlaybackAccessToken",
+                    operationName = "PlaybackAccessToken_Template",
+                    query = "query PlaybackAccessToken_Template($login: String!, $isLive: Boolean!, $vodID: ID!, $isVod: Boolean!, $playerType: String!) {  streamPlaybackAccessToken(channelName: $login, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: $playerType}) @include(if: $isLive) {    value    signature    __typename  }  videoPlaybackAccessToken(id: $vodID, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: $playerType}) @include(if: $isVod) {    value    signature    __typename  }}",
                     variables = new
                     {
                         isLive = sourceKind == TwitchSourceKind.LiveChannel,
                         login = sourceKind == TwitchSourceKind.LiveChannel ? channel : string.Empty,
                         isVod = sourceKind == TwitchSourceKind.Vod,
                         vodID = sourceKind == TwitchSourceKind.Vod ? vodId : string.Empty,
-                        playerType = "embed"
-                    },
-                    extensions = new
-                    {
-                        persistedQuery = new
-                        {
-                            version = 1,
-                            sha256Hash = "0828119ded1c13477966434e15800ff57ddacf13ba1911c129dc2200705b0712"
-                        }
+                        playerType = "site"
                     }
                 };
 
@@ -149,7 +155,7 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
         throw new InvalidOperationException($"Failed to resolve Twitch token for channel '{channel}' after {maxAttempts} attempts.");
     }
 
-    private static async Task<string> SelectBestPlaylistWithRetryAsync(
+    private static async Task<(string selectedUrl, IReadOnlyList<StreamVariantInfo> variants)> SelectBestPlaylistWithRetryAsync(
         string masterPlaylistUrl,
         CancellationToken cancellationToken,
         Action<int> onRetries)
@@ -163,9 +169,10 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
             try
             {
                 string playlist = await Http.GetStringAsync(masterPlaylistUrl, cancellationToken).ConfigureAwait(false);
-                string bestVariant = SelectBestVariant(masterPlaylistUrl, playlist);
+                var variants = StreamVariantInfo.ParseFromMasterPlaylist(masterPlaylistUrl, playlist);
+                string bestVariant = variants.Count > 0 ? variants[0].Url : SelectBestVariant(masterPlaylistUrl, playlist);
                 onRetries(retries);
-                return bestVariant;
+                return (bestVariant, variants);
             }
             catch when (attempt < maxAttempts)
             {
@@ -235,10 +242,14 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
     private static string BuildLiveMasterPlaylistUrl(string channel, string token, string signature)
         => $"https://usher.ttvnw.net/api/channel/hls/{channel}.m3u8" +
            "?player=twitchweb" +
+           "&platform=web" +
+           $"&p={RandomNumberGenerator.GetInt32(100000, 999999)}" +
            $"&token={Uri.EscapeDataString(token)}" +
            $"&sig={signature}" +
            "&allow_source=true" +
            "&allow_audio_only=true" +
+           "&playlist_include_framerate=true" +
+           "&supported_codecs=av1,h265,h264" +
            "&fast_bread=true";
 
     private static string BuildVodMasterPlaylistUrl(string vodId, string token, string signature)
@@ -270,6 +281,45 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
             return BuildOpenOptionsForTwitch();
 
         return new StreamOpenOptions();
+    }
+
+    private static async Task<(string selectedUrl, IReadOnlyList<StreamVariantInfo> variants)> SelectGenericPlaylistIfNeededAsync(string source, CancellationToken cancellationToken)
+    {
+        if (!Uri.TryCreate(source, UriKind.Absolute, out Uri? uri))
+            return (source, []);
+
+        string path = uri.AbsolutePath;
+        bool likelyHls = path.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase) ||
+                         source.Contains("m3u8", StringComparison.OrdinalIgnoreCase);
+        if (!likelyHls)
+            return (source, []);
+
+        const int maxAttempts = 2;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                string playlist = await Http.GetStringAsync(source, cancellationToken).ConfigureAwait(false);
+                var variants = StreamVariantInfo.ParseFromMasterPlaylist(source, playlist);
+                if (variants.Count > 0)
+                {
+                    string selected = variants[0].Url;
+                    Debug.Out($"Stream resolver: generic master playlist -> selected variant '{selected}'");
+                    return (selected, variants);
+                }
+
+                // No STREAM-INF found — this is already a media playlist.
+                return (source, []);
+            }
+            catch when (attempt < maxAttempts)
+            {
+                await Task.Delay(ComputeBackoff(attempt), cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        Debug.Out($"Stream resolver: generic HLS variant selection failed, using original URL '{source}'");
+        return (source, []);
     }
 
     private static TwitchSourceKind ParseTwitchSource(string source, out string? channel, out string? vodId)

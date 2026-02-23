@@ -288,7 +288,7 @@ public sealed class UIBatchCollector : IDisposable
         var version = _matQuadMesh!.GetDefaultVersion();
         version.Generate();
 
-        Debug.VulkanEvery(
+        Debug.UIEvery(
             "UIBatchCollector.RenderMaterialQuadBatch",
             TimeSpan.FromSeconds(5),
             "[UIBatch] RenderMaterialQuadBatch: pass={0}, entries={1}, capacity={2}",

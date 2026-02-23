@@ -12,52 +12,130 @@ namespace XREngine.Rendering.VideoStreaming;
 /// <summary>
 /// Opens an HLS (or other FFmpeg-supported) URL and decodes video/audio frames
 /// on a background thread, delivering them via callbacks.
-/// Replaces the previous Flyleaf-based HlsPlayerAdapter.
+/// <para>
+/// Architecture: A single background thread runs <see cref="DecodeLoop"/>, which
+/// reads packets from FFmpeg and decodes them into raw video (RGB24) and audio
+/// (interleaved PCM) frames. Decoded frames are delivered to <see cref="OnVideoFrame"/>
+/// and <see cref="OnAudioFrame"/> callbacks, which are typically wired to
+/// <see cref="HlsMediaStreamSession"/>'s backpressure-enqueue methods.
+/// </para>
+/// <para>
+/// Decoder-side frame pacing is intentionally disabled. Playback timing is
+/// controlled by backpressure from the session queue: the decode thread blocks
+/// in the callback when the queue is full.
+/// </para>
 /// </summary>
 internal sealed class FFmpegStreamDecoder : IDisposable
 {
+    // ═══════════════════════════════════════════════════════════════
+    // Constants
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>All decoded video frames are converted to this pixel format before delivery.</summary>
     private const AVPixelFormat TargetPixelFormat = AVPixelFormat.AV_PIX_FMT_RGB24;
+
+    /// <summary>Maximum consecutive packet-read failures before the decode loop aborts.</summary>
     private const int MaxReadRetries = 12;
 
+    // ═══════════════════════════════════════════════════════════════
+    // Fields — Thread Safety & Lifecycle
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>Lock guarding init/cleanup of FFmpeg contexts (decode thread uses them lock-free once started).</summary>
     private readonly Lock _lock = new();
+
+    /// <summary>Set once <see cref="Dispose"/> is called to prevent double-cleanup.</summary>
     private volatile bool _disposed;
+
+    /// <summary>Controls the decode loop — cleared to request a graceful stop.</summary>
     private volatile bool _running;
+
+    /// <summary>The background decode thread (started by <see cref="OpenAsync"/>).</summary>
     private Thread? _decodeThread;
 
-    // FFmpeg contexts (all access guarded by _lock during init/cleanup, then only on decode thread)
+    // ═══════════════════════════════════════════════════════════════
+    // Fields — FFmpeg Native Contexts
+    // All access guarded by _lock during init/cleanup, then only
+    // touched on the decode thread.
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>Top-level FFmpeg demuxer context (owns the opened stream).</summary>
     private unsafe AVFormatContext* _formatContext;
+
+    /// <summary>Video decoder context (H.264, etc.).</summary>
     private unsafe AVCodecContext* _videoCodecContext;
+
+    /// <summary>Audio decoder context (AAC, etc.).</summary>
     private unsafe AVCodecContext* _audioCodecContext;
+
+    /// <summary>Hardware device context (unused — HW accel is currently disabled).</summary>
     private unsafe AVBufferRef* _hwDeviceContext;
+
+    /// <summary>Reusable frame buffer for the current decoded frame.</summary>
     private unsafe AVFrame* _frame;
+
+    /// <summary>Reusable packet buffer for the current demuxed packet.</summary>
     private unsafe AVPacket* _packet;
+
+    /// <summary>Software scaler context for pixel-format conversion to <see cref="TargetPixelFormat"/>.</summary>
     private unsafe SwsContext* _swsContext;
+
+    /// <summary>Pixel format reported by hardware acceleration (used for HW→SW transfer detection).</summary>
     private AVPixelFormat _hwPixelFormat;
+
+    // ── Cached SwsContext parameters (to detect when re-creation is needed) ──
     private int _swsWidth;
     private int _swsHeight;
     private AVPixelFormat _swsSrcFormat;
 
+    // ═══════════════════════════════════════════════════════════════
+    // Fields — Stream Indices & State
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>Index of the selected video stream within the format context, or -1 if none.</summary>
     private int _videoStreamIndex = -1;
+
+    /// <summary>Index of the selected audio stream within the format context, or -1 if none.</summary>
     private int _audioStreamIndex = -1;
+
+    /// <summary>Running count of consecutive read failures (reset on success).</summary>
     private int _readRetryCount;
 
-    // Callbacks
-    public Action<DecodedVideoFrame>? OnVideoFrame { get; set; }
-    public Action<DecodedAudioFrame>? OnAudioFrame { get; set; }
-    public Action<int, int>? OnVideoSizeChanged { get; set; }
-    public Action<string>? OnError { get; set; }
-
+    /// <summary>Last reported video dimensions (used to detect size changes).</summary>
     private int _lastReportedWidth;
     private int _lastReportedHeight;
 
-    // Frame pacing: prevent decoding faster than real-time
-    private long _firstPtsTicks = long.MinValue;
-    private float _engineClockStartSeconds;
-    private const long MaxAheadTicks = TimeSpan.TicksPerSecond; // allow 1s decode-ahead
+    // ═══════════════════════════════════════════════════════════════
+    // Callbacks — Wired by HlsMediaStreamSession
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>Invoked on the decode thread for each decoded video frame.</summary>
+    public Action<DecodedVideoFrame>? OnVideoFrame { get; set; }
+
+    /// <summary>Invoked on the decode thread for each decoded audio frame.</summary>
+    public Action<DecodedAudioFrame>? OnAudioFrame { get; set; }
+
+    /// <summary>Invoked when the decoded video resolution changes (e.g. HLS quality switch).</summary>
+    public Action<int, int>? OnVideoSizeChanged { get; set; }
+
+    /// <summary>Invoked once when the video frame rate is detected from stream metadata.</summary>
+    public Action<double>? OnVideoFrameRateDetected { get; set; }
+
+    /// <summary>Invoked for non-fatal errors and warnings.</summary>
+    public Action<string>? OnError { get; set; }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Public API — Open / Stop / Dispose
+    // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Open the stream and start decoding on a background thread.
+    /// Opens the stream at <paramref name="url"/> with optional HTTP/HLS settings,
+    /// then starts a background decode thread that reads and decodes packets.
     /// </summary>
+    /// <param name="url">Stream URL (HLS playlist, RTMP, file, etc.).</param>
+    /// <param name="options">Optional HTTP headers, reconnect policy, queue sizes.</param>
+    /// <param name="cancellationToken">Token to cancel the open operation.</param>
+    /// <exception cref="InvalidOperationException">Thrown if FFmpeg fails to open the URL.</exception>
     public unsafe Task OpenAsync(string url, StreamOpenOptions? options, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -69,6 +147,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
             _running = true;
             Debug.Out($"FFmpeg stream decoder opened: url='{url}', video={_videoStreamIndex}, audio={_audioStreamIndex}");
+
             _decodeThread = new Thread(DecodeLoop)
             {
                 Name = "FFmpegStreamDecoder",
@@ -78,6 +157,10 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         }, cancellationToken);
     }
 
+    /// <summary>
+    /// Signals the decode loop to stop, waits up to 3 seconds for the thread
+    /// to exit, and then frees all native FFmpeg resources.
+    /// </summary>
     public void Stop()
     {
         _running = false;
@@ -85,6 +168,9 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         Cleanup();
     }
 
+    /// <summary>
+    /// Stops and disposes all resources. Safe to call multiple times.
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)
@@ -93,11 +179,17 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         Stop();
     }
 
-    // ─── Decode loop ───────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+    // Decode Loop
+    // ═══════════════════════════════════════════════════════════════
 
+    /// <summary>
+    /// Main entry point for the background decode thread.
+    /// Continuously reads and decodes packets until stopped or an
+    /// unrecoverable error occurs.
+    /// </summary>
     private void DecodeLoop()
     {
-        _engineClockStartSeconds = Engine.ElapsedTime;
         try
         {
             while (_running && !_disposed)
@@ -112,45 +204,23 @@ internal sealed class FFmpegStreamDecoder : IDisposable
     }
 
     /// <summary>
-    /// Sleeps the decode thread if we are decoding faster than real-time.
-    /// This prevents audio buffer overflow and wasted CPU on frames we'd drop.
+    /// Reads a single packet from the format context, routes it to the
+    /// appropriate decoder (video or audio), and handles read errors with
+    /// exponential-backoff retries.
     /// </summary>
-    private void PaceFrame(long ptsTicks)
-    {
-        if (ptsTicks <= 0)
-            return;
-
-        if (_firstPtsTicks == long.MinValue)
-        {
-            _firstPtsTicks = ptsTicks;
-            _engineClockStartSeconds = Engine.ElapsedTime;
-            return;
-        }
-
-        long streamElapsed = ptsTicks - _firstPtsTicks;
-        float engineElapsedSeconds = Math.Max(0.0f, Engine.ElapsedTime - _engineClockStartSeconds);
-        long engineElapsedTicks = (long)(engineElapsedSeconds * TimeSpan.TicksPerSecond);
-        long ahead = streamElapsed - engineElapsedTicks;
-
-        if (ahead > MaxAheadTicks)
-        {
-            int sleepMs = (int)((ahead - MaxAheadTicks / 2) / TimeSpan.TicksPerMillisecond);
-            if (sleepMs > 0 && sleepMs < 5000)
-                Thread.Sleep(sleepMs);
-        }
-    }
-
     private unsafe void ReadAndDecodeOnePacket()
     {
         int result = ffmpeg.av_read_frame(_formatContext, _packet);
         if (result < 0)
         {
+            // End of file — stop cleanly.
             if (result == ffmpeg.AVERROR_EOF)
             {
                 _running = false;
                 return;
             }
 
+            // Transient read failure — retry with exponential backoff.
             _readRetryCount++;
             if (_readRetryCount > MaxReadRetries)
             {
@@ -164,10 +234,11 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             return;
         }
 
-        _readRetryCount = 0;
+        _readRetryCount = 0; // Reset on successful read.
 
         try
         {
+            // Route the packet to the correct decoder based on stream index.
             if (_packet->stream_index == _videoStreamIndex)
                 DecodeVideoPacket();
             else if (_packet->stream_index == _audioStreamIndex)
@@ -179,8 +250,14 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         }
     }
 
-    // ─── Video decoding ────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+    // Video Decoding
+    // ═══════════════════════════════════════════════════════════════
 
+    /// <summary>
+    /// Sends the current video packet to the decoder and processes all
+    /// output frames (a single packet may produce zero or more frames).
+    /// </summary>
     private unsafe void DecodeVideoPacket()
     {
         if (_videoCodecContext == null)
@@ -193,8 +270,14 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             ProcessVideoFrame();
     }
 
+    /// <summary>
+    /// Converts a decoded video frame to RGB24, copies the pixel data to a
+    /// managed byte array, computes the presentation timestamp, and delivers
+    /// the result via <see cref="OnVideoFrame"/>.
+    /// </summary>
     private unsafe void ProcessVideoFrame()
     {
+        // If the frame came from HW accel, transfer it to a software frame.
         AVFrame* decodedFrame = GetHwFrame(_frame);
         try
         {
@@ -204,7 +287,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             if (width <= 0 || height <= 0)
                 return;
 
-            // Notify size change
+            // ── Notify resolution change (e.g. HLS quality switch) ──
             if (width != _lastReportedWidth || height != _lastReportedHeight)
             {
                 _lastReportedWidth = width;
@@ -212,19 +295,21 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                 OnVideoSizeChanged?.Invoke(width, height);
             }
 
-            // Convert to RGB24 if needed
+            // ── Convert to RGB24 if the decoded format differs ──
             AVFrame* rgbFrame = decodedFrame;
             bool freeRgb = false;
 
             if (decodedFrame->format != (int)TargetPixelFormat)
             {
                 var srcFmt = (AVPixelFormat)decodedFrame->format;
+
+                // Re-create the sws scaler when dimensions or format change.
                 if (_swsContext == null || width != _swsWidth || height != _swsHeight || srcFmt != _swsSrcFormat)
                 {
                     if (_swsContext != null)
                         ffmpeg.sws_freeContext(_swsContext);
 
-                    // SWS_BILINEAR = 2 (not exposed by FFmpeg.AutoGen)
+                    // SWS_BILINEAR = 2 (not exposed by FFmpeg.AutoGen as a named constant).
                     _swsContext = ffmpeg.sws_getContext(
                         width, height, srcFmt,
                         width, height, TargetPixelFormat,
@@ -240,6 +325,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                     }
                 }
 
+                // Allocate a temporary RGB frame for the scaled output.
                 rgbFrame = ffmpeg.av_frame_alloc();
                 rgbFrame->format = (int)TargetPixelFormat;
                 rgbFrame->width = width;
@@ -254,8 +340,8 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                     rgbFrame->data, rgbFrame->linesize);
             }
 
-            // Copy to managed array
-            int dataSize = width * height * 3;
+            // ── Copy pixel data to a managed byte array (row by row for stride safety) ──
+            int dataSize = width * height * 3; // RGB24 = 3 bytes per pixel
             byte[] data = new byte[dataSize];
             fixed (byte* dest = data)
             {
@@ -266,19 +352,20 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                     Buffer.MemoryCopy(src + row * srcStride, dest + row * dstStride, dstStride, dstStride);
             }
 
+            // ── Compute presentation timestamp (PTS) in 100ns ticks ──
             long pts = decodedFrame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
                 ? decodedFrame->best_effort_timestamp
                 : decodedFrame->pts;
 
-            // Convert pts from stream timebase to ticks (100ns units)
+            // Convert PTS from stream timebase units to .NET ticks (100ns).
             if (_videoStreamIndex >= 0 && pts != ffmpeg.AV_NOPTS_VALUE)
             {
                 AVRational tb = _formatContext->streams[_videoStreamIndex]->time_base;
                 pts = pts * TimeSpan.TicksPerSecond * tb.num / tb.den;
             }
 
+            // ── Deliver the decoded frame ──
             var frame = new DecodedVideoFrame(width, height, pts, VideoPixelFormat.Rgb24, data);
-            PaceFrame(pts);
             OnVideoFrame?.Invoke(frame);
 
             if (freeRgb)
@@ -286,6 +373,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         }
         finally
         {
+            // Clean up: free the HW-transferred frame, or unref the reusable frame.
             if (decodedFrame != _frame)
             {
                 ffmpeg.av_frame_free(&decodedFrame);
@@ -297,6 +385,10 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         }
     }
 
+    /// <summary>
+    /// If the decoded frame is in a hardware pixel format, transfers it to
+    /// a software frame. Otherwise returns the original frame unchanged.
+    /// </summary>
     private unsafe AVFrame* GetHwFrame(AVFrame* frame)
     {
         if (frame->format != (int)_hwPixelFormat)
@@ -306,15 +398,21 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         if (ffmpeg.av_hwframe_transfer_data(swFrame, frame, 0) < 0)
         {
             ffmpeg.av_frame_free(&swFrame);
-            return frame;
+            return frame; // Fallback: return original on transfer failure.
         }
 
         ffmpeg.av_frame_unref(frame);
         return swFrame;
     }
 
-    // ─── Audio decoding ────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+    // Audio Decoding
+    // ═══════════════════════════════════════════════════════════════
 
+    /// <summary>
+    /// Sends the current audio packet to the decoder and processes all
+    /// output frames.
+    /// </summary>
     private unsafe void DecodeAudioPacket()
     {
         if (_audioCodecContext == null)
@@ -327,6 +425,11 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             ProcessAudioFrame();
     }
 
+    /// <summary>
+    /// Converts a decoded audio frame from its native sample format
+    /// (possibly planar) to interleaved PCM, computes the PTS, and
+    /// delivers it via <see cref="OnAudioFrame"/>.
+    /// </summary>
     private unsafe void ProcessAudioFrame()
     {
         int channels = _audioCodecContext->ch_layout.nb_channels;
@@ -336,7 +439,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         if (channels <= 0 || sampleRate <= 0 || nbSamples <= 0)
             return;
 
-        // Determine sample format and data size
+        // ── Map FFmpeg sample format to our AudioSampleFormat enum ──
         AVSampleFormat fmt = (AVSampleFormat)_frame->format;
         AudioSampleFormat sampleFormat;
         int bytesPerSample;
@@ -364,7 +467,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                 bytesPerSample = 8;
                 break;
             default:
-                // Unsupported format - skip
+                // Unsupported sample format — skip this frame.
                 ffmpeg.av_frame_unref(_frame);
                 return;
         }
@@ -375,16 +478,18 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
         bool isPlanar = ffmpeg.av_sample_fmt_is_planar(fmt) != 0;
 
+        // ── Copy audio data, interleaving planar formats ──
         fixed (byte* dest = data)
         {
             if (!isPlanar)
             {
-                // Interleaved - straight copy
+                // Interleaved layout — straight memory copy.
                 Buffer.MemoryCopy((void*)_frame->data[0], dest, totalBytes, totalBytes);
             }
             else
             {
-                // Planar - interleave manually
+                // Planar layout — each channel is in a separate data[] plane.
+                // Interleave sample-by-sample: [L0 R0 L1 R1 ...].
                 for (int s = 0; s < nbSamples; s++)
                 {
                     for (int ch = 0; ch < channels; ch++)
@@ -397,6 +502,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             }
         }
 
+        // ── Compute presentation timestamp in .NET ticks ──
         long pts = _frame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
             ? _frame->best_effort_timestamp
             : _frame->pts;
@@ -410,15 +516,22 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             }
         }
 
+        // ── Deliver the decoded audio frame ──
         var frame = new DecodedAudioFrame(sampleRate, channels, sampleFormat, pts, data);
-        PaceFrame(pts);
         OnAudioFrame?.Invoke(frame);
 
         ffmpeg.av_frame_unref(_frame);
     }
 
-    // ─── Init / Cleanup ────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+    // Initialization — Stream Opening & Codec Setup
+    // ═══════════════════════════════════════════════════════════════
 
+    /// <summary>
+    /// Allocates and opens the FFmpeg format context for the given URL,
+    /// discovers video/audio streams, and opens their respective codecs.
+    /// </summary>
+    /// <returns><c>true</c> if at least one stream was successfully opened.</returns>
     private unsafe bool AllocateAndOpen(string url, StreamOpenOptions? options)
     {
         _formatContext = ffmpeg.avformat_alloc_context();
@@ -426,7 +539,11 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         AVDictionary* dict = null;
         try
         {
-            // Apply open options
+            // ── Probe / analysis budget (generous sizing matching Flyleaf defaults) ──
+            ffmpeg.av_dict_set(&dict, "probesize", (50L * 1024 * 1024).ToString(), 0);       // 50 MB
+            ffmpeg.av_dict_set(&dict, "analyzeduration", (10L * 1_000_000).ToString(), 0);    // 10 seconds
+
+            // ── HTTP options from caller ──
             if (!string.IsNullOrWhiteSpace(options?.UserAgent))
                 ffmpeg.av_dict_set(&dict, "user_agent", options!.UserAgent, 0);
 
@@ -440,10 +557,23 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                     ffmpeg.av_dict_set(&dict, "headers", headerBlock + "\r\n", 0);
             }
 
-            bool hls = url.Contains(".m3u8", StringComparison.OrdinalIgnoreCase);
-            if (hls)
-                ffmpeg.av_dict_set(&dict, "protocol_whitelist", "file,http,https,tcp,tls", 0);
+            // ── HLS-specific options ──
+            bool hls = url.Contains(".m3u8", StringComparison.OrdinalIgnoreCase)
+                     || url.Contains("hls", StringComparison.OrdinalIgnoreCase);
 
+            // NOTE: Do NOT set protocol_whitelist. Flyleaf's FFmpeg build includes
+            // the HLS demuxer which manages its own protocol whitelist internally
+            // (file,http,https,tcp,tls,crypto). Overriding it blocks crypto and
+            // data protocols needed for encrypted or embedded HLS segments.
+
+            if (hls)
+            {
+                // Disable HTTP keep-alive for HLS — prevents stale connections
+                // when the demuxer opens many short-lived segment requests.
+                ffmpeg.av_dict_set(&dict, "http_persistent", "0", 0);
+            }
+
+            // ── Reconnect policy ──
             if (options?.EnableReconnect == true)
             {
                 ffmpeg.av_dict_set(&dict, "reconnect", "1", 0);
@@ -451,24 +581,19 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                 ffmpeg.av_dict_set(&dict, "reconnect_delay_max", "5", 0);
             }
 
+            // Discard corrupt packets rather than passing them to the decoder.
             ffmpeg.av_dict_set(&dict, "fflags", "discardcorrupt", 0);
 
             if (options?.OpenTimeoutMs > 0)
                 ffmpeg.av_dict_set(&dict, "timeout", (options.OpenTimeoutMs * 1000).ToString(), 0);
 
+            // ── Open the format context ──
+            // Let FFmpeg auto-detect format (including HLS) — do NOT force
+            // av_find_input_format("hls"). Auto-detection works correctly
+            // with this FFmpeg build.
             AVFormatContext* pFmt = _formatContext;
-            int result;
-            if (hls)
-            {
-                var inputFormat = ffmpeg.av_find_input_format("hls");
-                result = inputFormat != null
-                    ? ffmpeg.avformat_open_input(&pFmt, url, inputFormat, &dict)
-                    : ffmpeg.avformat_open_input(&pFmt, url, null, &dict);
-            }
-            else
-            {
-                result = ffmpeg.avformat_open_input(&pFmt, url, null, &dict);
-            }
+            Debug.Out($"Streaming FFmpeg: avformat_open_input url='{url}' hls={hls}");
+            int result = ffmpeg.avformat_open_input(&pFmt, url, null, &dict);
             _formatContext = pFmt;
 
             if (result < 0)
@@ -477,27 +602,46 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                 OnError?.Invoke($"Failed to open stream: {err} (code {result})");
                 return false;
             }
+
+            Debug.Out("Streaming FFmpeg: avformat_open_input succeeded.");
         }
         finally
         {
             ffmpeg.av_dict_free(&dict);
         }
 
+        // ── Analyze stream info ──
+        Debug.Out("Streaming FFmpeg: avformat_find_stream_info...");
         if (ffmpeg.avformat_find_stream_info(_formatContext, null) < 0)
         {
             OnError?.Invoke("Failed to find stream info.");
             return false;
         }
 
-        // Find streams
-        for (int i = 0; i < _formatContext->nb_streams; i++)
+        string? fmtName = _formatContext->iformat != null
+            ? System.Runtime.InteropServices.Marshal.PtrToStringAnsi((nint)_formatContext->iformat->name)
+            : null;
+        long durationUs = _formatContext->duration;
+        Debug.Out($"Streaming FFmpeg: format='{fmtName}', nb_streams={_formatContext->nb_streams}, duration={durationUs}us");
+
+        // ── Select best video + audio streams ──
+        // Try FFmpeg's heuristic first, then fall back to first-discovered.
+        _videoStreamIndex = ffmpeg.av_find_best_stream(_formatContext, AVMediaType.AVMEDIA_TYPE_VIDEO, -1, -1, null, 0);
+        _audioStreamIndex = ffmpeg.av_find_best_stream(_formatContext, AVMediaType.AVMEDIA_TYPE_AUDIO, -1, -1, null, 0);
+
+        if (_videoStreamIndex < 0 || _audioStreamIndex < 0)
         {
-            var codecpar = _formatContext->streams[i]->codecpar;
-            if (codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO && _videoStreamIndex < 0)
-                _videoStreamIndex = i;
-            else if (codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_AUDIO && _audioStreamIndex < 0)
-                _audioStreamIndex = i;
+            for (int i = 0; i < _formatContext->nb_streams; i++)
+            {
+                var codecpar = _formatContext->streams[i]->codecpar;
+                if (codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_VIDEO && _videoStreamIndex < 0)
+                    _videoStreamIndex = i;
+                else if (codecpar->codec_type == AVMediaType.AVMEDIA_TYPE_AUDIO && _audioStreamIndex < 0)
+                    _audioStreamIndex = i;
+            }
         }
+
+        Debug.Out($"Streaming FFmpeg: videoStream={_videoStreamIndex}, audioStream={_audioStreamIndex}");
 
         if (_videoStreamIndex < 0 && _audioStreamIndex < 0)
         {
@@ -505,20 +649,28 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             return false;
         }
 
+        // ── Open codecs for the selected streams ──
         if (_videoStreamIndex >= 0)
             OpenVideoCodec();
 
         if (_audioStreamIndex >= 0)
             OpenAudioCodec();
 
+        // Allocate reusable frame and packet buffers for the decode loop.
         _frame = ffmpeg.av_frame_alloc();
         _packet = ffmpeg.av_packet_alloc();
 
         return true;
     }
 
+    /// <summary>
+    /// Opens and configures the video codec for the selected video stream.
+    /// Detects frame rate from stream metadata and reports it via
+    /// <see cref="OnVideoFrameRateDetected"/>.
+    /// </summary>
     private unsafe void OpenVideoCodec()
     {
+        AVStream* stream = _formatContext->streams[_videoStreamIndex];
         var codecpar = _formatContext->streams[_videoStreamIndex]->codecpar;
         var codec = ffmpeg.avcodec_find_decoder(codecpar->codec_id);
         if (codec == null)
@@ -530,6 +682,8 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
         _videoCodecContext = ffmpeg.avcodec_alloc_context3(codec);
         ffmpeg.avcodec_parameters_to_context(_videoCodecContext, codecpar);
+
+        // Use 4-thread frame-level parallelism for software decode.
         _videoCodecContext->thread_count = 4;
         _videoCodecContext->thread_type = ffmpeg.FF_THREAD_FRAME;
 
@@ -545,9 +699,24 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                 ffmpeg.avcodec_free_context(p);
             _videoCodecContext = null;
             _videoStreamIndex = -1;
+            return;
+        }
+
+        // Detect frame rate from multiple sources (avg > real > codec).
+        double? detectedFps = TryGetFrameRate(stream->avg_frame_rate)
+            ?? TryGetFrameRate(stream->r_frame_rate)
+            ?? TryGetFrameRate(_videoCodecContext->framerate);
+
+        if (detectedFps is > 0)
+        {
+            OnVideoFrameRateDetected?.Invoke(detectedFps.Value);
+            Debug.Out($"Streaming FFmpeg: detected video fps={detectedFps.Value:F3}");
         }
     }
 
+    /// <summary>
+    /// Opens and configures the audio codec for the selected audio stream.
+    /// </summary>
     private unsafe void OpenAudioCodec()
     {
         var codecpar = _formatContext->streams[_audioStreamIndex]->codecpar;
@@ -573,6 +742,16 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // Hardware Acceleration (currently disabled — retained for future use)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Attempts to initialize hardware-accelerated decoding for the given
+    /// device type. Currently unused because HW accel is incompatible with
+    /// the OpenGL rendering pipeline.
+    /// </summary>
+    /// <returns><c>true</c> if HW accel was successfully initialized.</returns>
     private unsafe bool TryInitHwAccel(AVCodecContext* ctx, AVHWDeviceType type)
     {
         fixed (AVBufferRef** p = &_hwDeviceContext)
@@ -583,6 +762,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
         ctx->hw_device_ctx = ffmpeg.av_buffer_ref(_hwDeviceContext);
 
+        // Search for a matching HW config that supports the requested device type.
         for (int i = 0; ; i++)
         {
             var config = ffmpeg.avcodec_get_hw_config(ctx->codec, i);
@@ -599,28 +779,40 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         return false;
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // Cleanup — Native Resource Deallocation
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Frees all allocated FFmpeg native resources in the correct order:
+    /// scaler → frame/packet → codecs → HW device → format context.
+    /// </summary>
     private unsafe void Cleanup()
     {
         _running = false;
 
+        // Free the software scaler context.
         if (_swsContext != null)
         {
             ffmpeg.sws_freeContext(_swsContext);
             _swsContext = null;
         }
 
+        // Free the reusable frame buffer.
         if (_frame != null)
         {
             fixed (AVFrame** p = &_frame)
                 ffmpeg.av_frame_free(p);
         }
 
+        // Free the reusable packet buffer.
         if (_packet != null)
         {
             fixed (AVPacket** p = &_packet)
                 ffmpeg.av_packet_free(p);
         }
 
+        // Free codec contexts.
         if (_videoCodecContext != null)
         {
             fixed (AVCodecContext** p = &_videoCodecContext)
@@ -633,12 +825,14 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                 ffmpeg.avcodec_free_context(p);
         }
 
+        // Free the HW device context (if any).
         if (_hwDeviceContext != null)
         {
             fixed (AVBufferRef** p = &_hwDeviceContext)
                 ffmpeg.av_buffer_unref(p);
         }
 
+        // Close the format context (also frees stream info).
         if (_formatContext != null)
         {
             fixed (AVFormatContext** p = &_formatContext)
@@ -646,6 +840,27 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // Utilities
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Validates an <see cref="AVRational"/> frame rate and returns it as
+    /// a <c>double</c>, or <c>null</c> if the value is out of the sane
+    /// range (1–240 fps).
+    /// </summary>
+    private static double? TryGetFrameRate(AVRational rate)
+    {
+        if (rate.num <= 0 || rate.den <= 0)
+            return null;
+
+        double fps = (double)rate.num / rate.den;
+        return fps is >= 1.0 and <= 240.0 ? fps : null;
+    }
+
+    /// <summary>
+    /// Converts an FFmpeg error code into a human-readable error string.
+    /// </summary>
     private static unsafe string GetFFmpegError(int errorCode)
     {
         byte[] buf = new byte[1024];
