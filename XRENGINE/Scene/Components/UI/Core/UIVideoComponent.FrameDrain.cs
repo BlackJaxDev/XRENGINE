@@ -1,5 +1,4 @@
 using System;
-using System.Threading;
 using XREngine.Components;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.VideoStreaming;
@@ -10,241 +9,455 @@ namespace XREngine.Rendering.UI
     // ═══════════════════════════════════════════════════════════════════
     // UIVideoComponent — Frame Drain Loop & Video Upload
     //
-    // Per-render-pass drain that dequeues decoded audio/video frames,
-    // submits audio to OpenAL, uploads one video frame to the GPU via
-    // the active renderer's upload path (PBO for OpenGL, staging
-    // buffer for Vulkan), detects rebuffer stalls, and emits A/V
-    // drift telemetry.
+    // Per-render-pass drain: submits audio to OpenAL, uploads one video
+    // frame to the GPU, and emits periodic A/V drift telemetry.
+    //
+    // All drain activity is single-threaded (render thread only). The
+    // audio pump timer has been removed; the render thread at 60+ fps
+    // provides sufficient pump frequency (~16 ms intervals).
     // ═══════════════════════════════════════════════════════════════════
 
     public partial class UIVideoComponent
     {
-        /// <summary>
-        /// Callback for the dedicated <see cref="_audioPumpTimer"/>. Runs on a
-        /// thread-pool thread every ~10 ms, completely independent of the
-        /// engine update/render loop frequency. This guarantees audio
-        /// submission continues even during GC pauses, render stalls, or when
-        /// the window is unfocused (engine target FPS = 0).
-        /// </summary>
-        private void AudioPumpTimerCallback(object? state)
-        {
-            if (_streamingSession is null)
-                return;
-
-            DrainStreamingAudio(_streamingSession, out _, out _);
-        }
+        // ═══════════════════════════════════════════════════════════════
+        // Audio Drain
+        // ═══════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Drains and submits audio only. Safe to call from both update and
-        /// render paths; reentrancy is prevented by <see cref="_audioDrainInProgress"/>.
+        /// Submits decoded audio frames to OpenAL and starts playback once
+        /// enough audio is pre-buffered. Returns the audioSource and the
+        /// current playable buffer count for the caller's video-gate logic.
         /// </summary>
-        private void DrainStreamingAudio(IMediaStreamSession session, out AudioSourceComponent? audioSource, out int queuedAudioBuffers)
+        private void DrainStreamingAudio(IMediaStreamSession session,
+                                         out AudioSourceComponent? audioSource,
+                                         out int queuedAudioBuffers)
         {
-            audioSource = AudioSource;
+            audioSource = _cachedAudioSource;
+
+            // Late-init: the AudioSourceComponent may have been added to the sibling
+            // list AFTER StartStreamingPipelineOnMainThread cached a null reference
+            // (this happens when UIVideoComponent is added to a node before
+            // AudioSourceComponent, e.g. UIEditorComponent adds them in that order).
+            // Refresh the cache here so audio starts working without a restart.
+            if (audioSource is null)
+            {
+                audioSource = GetSiblingComponent<AudioSourceComponent>();
+                if (audioSource is not null)
+                {
+                    _cachedAudioSource = audioSource;
+                    Debug.Out("[AV Setup] AudioSourceComponent discovered after pipeline start — cache refreshed. " +
+                              "Consider adding AudioSourceComponent before UIVideoComponent to avoid this.");
+                }
+                else
+                {
+                    long nowNoSrc = GetEngineTimeTicks();
+                    if (nowNoSrc - _lastNoListenersWarnTicks >= TimeSpan.TicksPerSecond * 5)
+                    {
+                        _lastNoListenersWarnTicks = nowNoSrc;
+                        Debug.UIWarning("[AV Audio] No sibling AudioSourceComponent found — audio is disabled. " +
+                                        "Add an AudioSourceComponent to the same scene node as UIVideoComponent.");
+                    }
+                }
+            }
+
+            SuppressAutoPlayOnAudioSources(audioSource);
+
+            // Reclaim processed OpenAL buffers first so the pool has room for
+            // new submissions and the BufferProcessed event fires, advancing
+            // _processedSampleCount for the hardware clock.
+            audioSource?.DequeueConsumedBuffers();
+
+            // Transition any STOPPED source (from natural underrun or any other
+            // cause) back to INITIAL before we start filling.  A stopped source
+            // reports every newly-queued buffer as "processed" immediately, so
+            // QueueBuffers churns through them one-at-a-time without accumulating
+            // enough for Phase 2's pre-buffer gate.  Rewind() resets the source
+            // to INITIAL state where BuffersProcessed = 0 and buffers accumulate
+            // normally.  This is safe to call on an already-INITIAL source (no-op).
+            //
+            // Additionally, if the clock was previously seeded it means audio
+            // was playing and hit a natural underrun.  During the gap, video
+            // continued via wall-clock fallback and advanced past the audio
+            // timeline.  Resetting clock accounting here lets SubmitDecodedAudioFrame
+            // re-seed _firstAudioPts with its fast-forward logic, aligning the
+            // audio clock to the current video position and eliminating drift.
+            if (audioSource is not null)
+            {
+                bool anyRewound = false;
+                foreach (var source in audioSource.ActiveListeners.Values)
+                {
+                    if (!source.IsPlaying && source.BuffersQueued == 0)
+                    {
+                        source.Rewind();
+                        anyRewound = true;
+                    }
+                }
+
+                if (anyRewound && _firstAudioPts != long.MinValue)
+                {
+                    Debug.Out($"[AV Audio] Underrun recovery: resetting clock accounting " +
+                              $"(prevClock={GetAudioClock() / TimeSpan.TicksPerMillisecond}ms, " +
+                              $"videoPts={_lastPresentedVideoPts / TimeSpan.TicksPerMillisecond}ms) " +
+                              $"so clock re-seeds aligned to video position.");
+                    _totalAudioDurationSubmittedTicks = 0;
+                    _totalAudioBuffersSubmitted = 0;
+                    _submittedSampleCounts.Clear();
+                    _processedSampleCount = 0;
+                    _firstAudioPts = long.MinValue;
+                    _driftEwmaSeeded = false;
+                    _driftEwmaTicks = 0;
+                    _telemetryCatchupDrops = 0;
+                }
+            }
+
             queuedAudioBuffers = GetPlayableAudioBuffers(audioSource);
 
-            if (Interlocked.CompareExchange(ref _audioDrainInProgress, 1, 0) != 0)
-                return;
-
-            try
+            // ── Phase 1: Fill the OpenAL queue ──
+            int submittedThisCycle = 0;
+            while (submittedThisCycle < MaxAudioFramesPerDrain)
             {
-                SuppressAutoPlayOnAudioSources(audioSource);
-                UpdateAudioClock(audioSource);
+                // Stop filling once both depth targets are satisfied.
+                if (GetEstimatedQueuedAudioDurationTicks(audioSource) >= TargetAudioQueuedDurationTicks &&
+                    queuedAudioBuffers >= TargetOpenAlQueuedBuffers)
+                    break;
 
-                // ── Phase 1: Audio — fill OpenAL queue ──
-                // Reclaim consumed buffers FIRST so the playable count is accurate
-                // and OpenAL has maximum capacity for new submissions. Without this,
-                // processed (already-played) buffers inflate BuffersQueued, causing
-                // QueueBuffers to silently drop incoming audio when the pool ceiling
-                // (MaxStreamingBuffers) is reached.
-                audioSource?.DequeueConsumedBuffers();
+                if (!session.TryDequeueAudioFrame(out DecodedAudioFrame audioFrame))
+                    break;
 
-                int submittedAudioFrames = 0;
-                while (submittedAudioFrames < MaxAudioFramesPerDrain)
+                if (!SubmitDecodedAudioFrame(audioFrame, audioSource, out bool queueFull))
                 {
-                    // Stop once both buffering targets are met.
-                    if (GetEstimatedQueuedAudioDurationTicks(audioSource) >= TargetAudioQueuedDurationTicks &&
-                        queuedAudioBuffers >= TargetOpenAlQueuedBuffers)
-                        break;
-
-                    if (!session.TryDequeueAudioFrame(out DecodedAudioFrame audioFrame))
-                        break;
-
-                    if (!SubmitDecodedAudioFrame(audioFrame, audioSource))
-                        break; // OpenAL queue full or bad frame — stop draining to avoid losing already-dequeued frames.
-
-                    submittedAudioFrames++;
-                    queuedAudioBuffers = GetPlayableAudioBuffers(audioSource);
+                    if (queueFull)
+                        break; // OpenAL pool at capacity — stop this cycle.
+                    // else: no listeners or bad frame — skip and try next.
                 }
 
-                // ── Phase 2: Audio — start playback once pre-buffered ──
-                // Use lower thresholds during underrun recovery so audio resumes
-                // within ~200 ms instead of imposing a 1.5 s silence gap.
-                long minDuration = _audioUnderrunRecovery ? UnderrunRecoveryMinDurationTicks : MinAudioQueuedDurationBeforePlayTicks;
-                int  minBuffers  = _audioUnderrunRecovery ? UnderrunRecoveryMinBuffers : MinAudioBuffersBeforePlay;
-
-                if (GetEstimatedQueuedAudioDurationTicks(audioSource) >= minDuration &&
-                    queuedAudioBuffers >= minBuffers && audioSource is not null &&
-                    !audioSource.ActiveListeners.IsEmpty)
-                {
-                    // Check the *real* OpenAL source state, not the component-level
-                    // State property. AudioSourceComponent.Play() uses SetField,
-                    // which is a no-op when State is already Playing — so a source
-                    // that stopped after buffer exhaustion would never be restarted.
-                    // Calling AudioSource.Play() directly via the OpenAL wrapper
-                    // always issues alSourcePlay, restarting the source.
-                    foreach (var source in audioSource.ActiveListeners.Values)
-                    {
-                        if (!source.IsPlaying)
-                            source.Play();
-                    }
-
-                    // Clear recovery mode once playback is re-established.
-                    _audioUnderrunRecovery = false;
-                }
-
-                // ── Phase 3: Audio — track underrun transitions for telemetry ──
-                // An underrun is when an OpenAL source that was previously playing
-                // transitions to Stopped because it ran out of buffers. This is the
-                // actual audible glitch. Checking the source state is more reliable
-                // than the buffer count, which can transiently read as zero during
-                // normal queue housekeeping.
-                if (_hasReceivedFirstFrame && audioSource is not null)
-                {
-                    bool anySourcePlaying = audioSource.ActiveListeners.Values.Any(static s => s.IsPlaying);
-
-                    if (_wasAudioPlaying && !anySourcePlaying)
-                    {
-                        // Source was playing last frame but stopped now → underrun.
-                        _telemetryAudioUnderruns++;
-                        _audioUnderrunRecovery = true;
-                        long queuedMsAtUnderrun = GetEstimatedQueuedAudioDurationTicks(audioSource) / TimeSpan.TicksPerMillisecond;
-                        int playableBuffersAtUnderrun = GetPlayableAudioBuffers(audioSource);
-                        int sourceCount = audioSource.ActiveListeners.Count;
-                        Debug.UIWarning($"[AV Audio] Underrun detected: count={_telemetryAudioUnderruns}, queuedMs={queuedMsAtUnderrun}, playableBuffers={playableBuffersAtUnderrun}, activeSources={sourceCount}, submittedThisDrain={submittedAudioFrames}, targetQueuedMs={TargetAudioQueuedDurationTicks / TimeSpan.TicksPerMillisecond}, minBeforePlayMs={MinAudioQueuedDurationBeforePlayTicks / TimeSpan.TicksPerMillisecond}");
-                    }
-
-                    _wasAudioPlaying = anySourcePlaying;
-                }
-
-                // ── Phase 4: Adaptive catch-up pitch ──
-                UpdateCatchUpPitch(audioSource);
-
-                // Return latest queue depth after processing.
+                submittedThisCycle++;
                 queuedAudioBuffers = GetPlayableAudioBuffers(audioSource);
             }
-            finally
+
+            bool hasListeners = audioSource is not null && !audioSource.ActiveListeners.IsEmpty;
+            bool anyPlaying = false;
+            if (hasListeners)
             {
-                Interlocked.Exchange(ref _audioDrainInProgress, 0);
+                foreach (var source in audioSource!.ActiveListeners.Values)
+                {
+                    if (source.IsPlaying)
+                    {
+                        anyPlaying = true;
+                        break;
+                    }
+                }
             }
+
+            // NOTE: No forced Play() call here.  The Rewind() block above
+            // ensures stopped sources transition to INITIAL state before
+            // Phase 1 filling, so buffers accumulate correctly.  Phase 2
+            // below handles the actual Play() after pre-buffering
+            // MinAudioBuffersBeforePlay (8) buffers.
+
+            // ── Phase 2: Start playback once pre-buffered ──
+            if (GetEstimatedQueuedAudioDurationTicks(audioSource) >= MinAudioQueuedDurationBeforePlayTicks &&
+                queuedAudioBuffers >= MinAudioBuffersBeforePlay &&
+                audioSource is not null && !audioSource.ActiveListeners.IsEmpty)
+            {
+                foreach (var source in audioSource.ActiveListeners.Values)
+                {
+                    if (!source.IsPlaying)
+                        source.Play();
+                }
+                _audioHasEverPlayed = true;
+            }
+
+            // ── Phase 3: Underrun telemetry ──
+            if (_hasReceivedFirstFrame && audioSource is not null)
+            {
+                anyPlaying = false;
+                foreach (var source in audioSource.ActiveListeners.Values)
+                    if (source.IsPlaying) { anyPlaying = true; break; }
+
+                if (_wasAudioPlaying && !anyPlaying)
+                {
+                    _telemetryAudioUnderruns++;
+                    Debug.UIWarning($"[AV Audio] Underrun #{_telemetryAudioUnderruns}: " +
+                                    $"queuedMs={GetEstimatedQueuedAudioDurationTicks(audioSource) / TimeSpan.TicksPerMillisecond} " +
+                                    $"playableBuffers={queuedAudioBuffers}");
+                }
+
+                _wasAudioPlaying = anyPlaying;
+            }
+
+            queuedAudioBuffers = GetPlayableAudioBuffers(audioSource);
         }
 
         // ═══════════════════════════════════════════════════════════════
-        // Frame Drain Loop (runs on render thread each render pass)
+        // Main Drain Loop (render thread, called each render pass)
         // ═══════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Main per-frame drain loop. Called synchronously on the render thread
-        /// during uniform setup. Performs in order:
-        /// <list type="number">
-        ///   <item>Suppress auto-play on audio sources (we control playback start).</item>
-        ///   <item>Advance the software audio clock.</item>
-        ///   <item>Submit decoded audio frames to OpenAL (before dequeuing consumed
-        ///         buffers to keep the queue maximally full).</item>
-        ///   <item>Reclaim processed OpenAL buffers.</item>
-        ///   <item>Start OpenAL playback once enough audio is pre-buffered.</item>
-        ///   <item>Track audio underrun transitions for telemetry.</item>
-        ///   <item>Update adaptive catch-up pitch.</item>
-        ///   <item>Dequeue and upload one video frame (dropping stale frames).</item>
-        ///   <item>Detect rebuffer stalls and emit periodic A/V drift telemetry.</item>
+        /// Full per-frame drain: audio fill → playback start → video present.
+        /// <para>
+        /// Video pacing uses the hardware audio clock as master:
+        /// <list type="bullet">
+        ///   <item>drift &gt; +<see cref="VideoHoldThresholdTicks"/> → hold (video ahead)</item>
+        ///   <item>drift &lt; <see cref="VideoDropThresholdTicks"/> → drop (video behind)</item>
+        ///   <item>drift &lt; <see cref="VideoResetThresholdTicks"/> → flush queues and resync</item>
+        ///   <item>No audio clock yet → wall-clock fallback inside <see cref="HlsMediaStreamSession"/></item>
         /// </list>
+        /// </para>
         /// </summary>
         private void DrainStreamingFramesOnMainThread(IMediaStreamSession session)
         {
             DrainStreamingAudio(session, out var audioSource, out int queuedAudioBuffers);
 
-            // ── Phase 5: Video — dequeue and present one frame ──
-            bool audioSyncActive = queuedAudioBuffers > 0 &&
-                                   audioSource?.ActiveListeners.Values.Any(static source => source.IsPlaying) == true;
-            long audioClockTicks = audioSyncActive ? GetAudioClockForVideoSync(audioSource) : 0;
-            bool hasVideoFrame = false;
-            DecodedVideoFrame videoFrame = default;
+            long nowTicks = GetEngineTimeTicks();
 
-            // Startup gate: don't present the first video frame until audio is
-            // actually playing. This prevents startup desync where video races
-            // ahead during audio pre-buffer. After first presentation, keep
-            // draining video even if audio briefly underruns to avoid visible
-            // freezes from repeatedly re-applying the gate.
+            // ── Phase 4: Compute audio clock ──
+            long audioClockTicks = GetAudioClock();
+            bool audioSyncActive = audioClockTicks > 0;
+
+            // Shift the clock forward by the estimated display pipeline latency
+            // so video frames are presented ahead of the raw audio position.
+            // By the time the GPU pipeline delivers them to the screen, the
+            // audio will have caught up and A/V appear perceptually aligned.
+            long videoClockTicks = audioSyncActive
+                ? audioClockTicks + VideoDisplayLatencyCompensationTicks
+                : audioClockTicks;
+
+            // ── Phase 5: Video gate ──
+            // When an audio source is present but hasn't started playing yet,
+            // hold video until the clock is live.  Once audio has played at
+            // least once in this session, allow wall-clock fallback immediately
+            // so the user sees smooth video instead of a freeze during format-
+            // change flushes and underrun recoveries.  On first startup (audio
+            // never played yet), fall back only after 750 ms of stall with an
+            // empty OpenAL queue (e.g. no AudioListenerComponent in the scene).
             bool hasAudioPipeline = audioSource is not null && !audioSource.ActiveListeners.IsEmpty;
-            bool startupAudioGateOpen = !hasAudioPipeline || audioSyncActive || _hasReceivedFirstFrame;
+            bool allowUnsyncedFallback = false;
 
-            // Dequeue at most one video frame per render pass. The session's
-            // TryDequeueVideoFrame releases a frame only when its PTS is at or
-            // behind the audio clock, so video stays locked to audio. One frame
-            // per call keeps catch-up smooth during stalls (the render loop at
-            // 60 fps naturally consumes past-due frames one per pass rather
-            // than in a visible burst).
-            if (startupAudioGateOpen && session.TryDequeueVideoFrame(audioClockTicks, out DecodedVideoFrame candidate))
+            if (hasAudioPipeline && !audioSyncActive && _hasReceivedFirstFrame)
             {
-                videoFrame = candidate;
-                hasVideoFrame = true;
-            }
-
-            if (hasVideoFrame)
-            {
-                ApplyDecodedVideoFrame(videoFrame);
-                _lastVideoFrameTicks = GetEngineTimeTicks();
-                _inRebuffer = false;
-                _hasReceivedFirstFrame = true;
-                _telemetryVideoFramesPresented++;
-            }
-            else if (session.IsOpen && _lastVideoFrameTicks > 0)
-            {
-                // ── Phase 6: Rebuffer detection ──
-                long gapTicks = GetEngineTimeTicks() - _lastVideoFrameTicks;
-                if (!_inRebuffer && gapTicks >= RebufferThresholdTicks)
+                if (_audioHasEverPlayed)
                 {
-                    _inRebuffer = true;
-                    _rebufferCount++;
-                    long gapMs = gapTicks / TimeSpan.TicksPerMillisecond;
-                    Debug.UIWarning($"Streaming rebuffer detected: count={_rebufferCount}, gapMs={gapMs}");
+                    // Audio was active before — allow video to continue via
+                    // wall-clock while audio re-buffers after format change
+                    // or underrun recovery.
+                    allowUnsyncedFallback = true;
+                }
+                else
+                {
+                    // First startup: conservative gate — wait for audio.
+                    long sinceLastVideo = _lastVideoFrameTicks > 0 ? nowTicks - _lastVideoFrameTicks : 0;
+                    bool noOpenAlAudio  = GetEstimatedQueuedAudioDurationTicks(audioSource) <= 0;
+
+                    if (sinceLastVideo >= RebufferThresholdTicks && noOpenAlAudio)
+                        allowUnsyncedFallback = true;
                 }
             }
 
-            // ── Phase 7: Telemetry ──
-            EmitDriftTelemetry();
-        }
+            if (allowUnsyncedFallback && !_audioSyncFallbackActive)
+            {
+                _audioSyncFallbackActive = true;
+                Debug.UIWarning("[AV Sync] Audio stalled; falling back to unsynced video.");
+            }
+            else if (_audioSyncFallbackActive && (audioSyncActive || !hasAudioPipeline))
+            {
+                _audioSyncFallbackActive = false;
+                Debug.Out("[AV Sync] Audio clock restored.");
+            }
 
-        /// <summary>
-        /// Determines whether a video frame should be dropped because it
-        /// lags too far behind the audio clock.
-        /// </summary>
-        private static bool ShouldDropVideoFrame(long videoPtsTicks, long audioClockTicks)
-        {
-            return audioClockTicks > 0 && videoPtsTicks + MaxVideoLagBehindAudioTicks + TargetVideoBufferTicks < audioClockTicks;
+            bool videoGateOpen = !hasAudioPipeline || audioSyncActive || allowUnsyncedFallback;
+
+            if (!videoGateOpen)
+            {
+                EmitDriftTelemetry(audioClockTicks);
+                return;
+            }
+
+            // ── Phase 6: Dequeue video frames and present the latest due frame ──
+            // When audio-clock sync is active, sweep through ALL frames whose
+            // PTS is at-or-before the audio clock (within the presentable window)
+            // and present only the most recent one.  Previous "presentable but
+            // stale" frames are soft-dropped so video never gradually falls
+            // behind audio due to render-rate < video-frame-rate.
+            bool presented = false;
+
+            const int maxDropsPerRender = 32;
+            int drops = 0;
+
+            bool hasFrameToPresent = false;
+            DecodedVideoFrame frameToPresent = default;
+
+            // ── Phase 6a: Compute adaptive drop threshold ──
+            // When the per-frame drift EWMA indicates video is consistently
+            // behind audio, tighten the drop window from the default −150 ms
+            // so we catch up faster.  Without this, video can lag audio by
+            // up to 149 ms indefinitely without ever triggering a drop.
+            long effectiveDropThreshold = VideoDropThresholdTicks; // −150 ms
+            if (_driftEwmaSeeded && _driftEwmaTicks < VideoCatchupDriftThresholdTicks)
+            {
+                // Target: half the EWMA magnitude behind the audio clock.
+                effectiveDropThreshold = _driftEwmaTicks / 2;
+                // Floor at ~1 frame at 60 fps (−16 ms) to avoid oscillation.
+                const long minDropThreshold = -(TimeSpan.TicksPerMillisecond * 16);
+                if (effectiveDropThreshold > minDropThreshold)
+                    effectiveDropThreshold = minDropThreshold;
+            }
+
+            while (session.TryDequeueVideoFrame(videoClockTicks, out DecodedVideoFrame candidate))
+            {
+                long videoPts = candidate.PresentationTimestampTicks;
+
+                if (audioSyncActive && videoPts > 0)
+                {
+                    long drift = videoPts - videoClockTicks;
+
+                    // Frame is too far ahead of the audio clock — hold until
+                    // the clock advances. The session also gates at this same
+                    // threshold, so this check is a safety net for edge cases.
+                    if (drift > VideoHoldThresholdTicks)
+                        break;
+
+                    // Extreme lag: flush queues and reset the clock so both
+                    // streams can restart from a clean state.
+                    if (drift < VideoResetThresholdTicks)
+                    {
+                        Debug.UIWarning($"[AV Sync] Extreme drift {drift / TimeSpan.TicksPerMillisecond}ms — " +
+                                        $"flushing queues and reseeding clock.");
+                        if (audioSource is not null)
+                            FlushAudioQueue(audioSource);
+                        // Clear submitted sample tracking so clock is reseeded on next audio frame.
+                        _submittedSampleCounts.Clear();
+                        _processedSampleCount = 0;
+                        _firstAudioPts = long.MinValue;                        _driftEwmaSeeded = false;
+                        _driftEwmaTicks = 0;
+                        _telemetryCatchupDrops = 0;                        _telemetryVideoFramesDropped++;
+                        drops++;
+                        if (drops >= maxDropsPerRender) break;
+                        continue;
+                    }
+
+                    // Normal drop: video lags too far, skip this frame.
+                    if (drift < effectiveDropThreshold)
+                    {
+                        if (effectiveDropThreshold != VideoDropThresholdTicks)
+                            _telemetryCatchupDrops++;
+                        _telemetryVideoFramesDropped++;
+                        drops++;
+                        if (drops >= maxDropsPerRender) break;
+                        continue;
+                    }
+                }
+
+                // Frame is in the presentable window.  Mark it as the best
+                // candidate so far — if a later frame is also due, it will
+                // replace this one (the stale one counts as a soft-drop).
+                if (hasFrameToPresent)
+                    _telemetryVideoFramesDropped++;
+
+                frameToPresent = candidate;
+                hasFrameToPresent = true;
+
+                // Without audio sync there is no reliable clock to sweep
+                // against, so present the first available frame immediately.
+                if (!audioSyncActive)
+                    break;
+
+                // With audio sync, keep sweeping: TryDequeueVideoFrame will
+                // return false once the next queued frame is in the future
+                // (PTS > videoClock + 40 ms), at which point we present the
+                // latest candidate found so far. This ensures video always
+                // shows the most current frame relative to the audio clock.
+            }
+
+            if (hasFrameToPresent)
+            {
+                ApplyDecodedVideoFrame(frameToPresent);
+                _lastVideoFrameTicks = nowTicks;
+                _inRebuffer = false;
+                _hasReceivedFirstFrame = true;
+                _telemetryVideoFramesPresented++;
+                presented = true;
+            }
+
+            // ── Phase 7: Update drift EWMA ──
+            // Track per-frame drift as an exponentially-weighted moving average
+            // so the adaptive drop threshold can tighten when video is
+            // consistently behind audio. Updated after presentation so the
+            // metric reflects the frame we actually showed.
+            if (hasFrameToPresent && audioSyncActive && frameToPresent.PresentationTimestampTicks > 0)
+            {
+                long frameDrift = frameToPresent.PresentationTimestampTicks - videoClockTicks;
+                _lastPresentedDriftTicks = frameDrift;
+                _driftIntervalMinTicks = _driftIntervalSamples == 0
+                    ? frameDrift
+                    : Math.Min(_driftIntervalMinTicks, frameDrift);
+                _driftIntervalMaxTicks = _driftIntervalSamples == 0
+                    ? frameDrift
+                    : Math.Max(_driftIntervalMaxTicks, frameDrift);
+                _driftIntervalSamples++;
+
+                if (!_driftEwmaSeeded)
+                {
+                    _driftEwmaTicks = frameDrift;
+                    _driftEwmaSeeded = true;
+                }
+                else
+                {
+                    _driftEwmaTicks = (long)(DriftEwmaAlpha * frameDrift + (1.0 - DriftEwmaAlpha) * _driftEwmaTicks);
+                }
+            }
+
+            // ── Phase 7a: Brief drift monitor (every 2 s) ──
+            // Log a compact drift status more frequently than the full telemetry
+            // interval to make slow-growing drift visible in logs.
+            if (_driftEwmaSeeded && audioSyncActive)
+            {
+                long driftNow = GetEngineTimeTicks();
+                if (driftNow - _driftStatusLastLogTicks >= DriftStatusIntervalTicks)
+                {
+                    _driftStatusLastLogTicks = driftNow;
+                    long ewmaMs = _driftEwmaTicks / TimeSpan.TicksPerMillisecond;
+                    long debtMs = _lastPresentedVideoPts > 0
+                        ? (videoClockTicks - _lastPresentedVideoPts) / TimeSpan.TicksPerMillisecond
+                        : 0;
+                    long threshMs = effectiveDropThreshold / TimeSpan.TicksPerMillisecond;
+                    if (Math.Abs(ewmaMs) > 5 || Math.Abs(debtMs) > 5 || _telemetryCatchupDrops > 0)
+                    {
+                        Debug.Out($"[AV Drift] ewma={ewmaMs}ms debt={debtMs}ms " +
+                                  $"catchupDrops={_telemetryCatchupDrops} threshold={threshMs}ms");
+                    }
+                }
+            }
+
+            if (!presented && session.IsOpen && _lastVideoFrameTicks > 0)
+            {
+                // ── Phase 8: Rebuffer detection ──
+                long gap = nowTicks - _lastVideoFrameTicks;
+                if (!_inRebuffer && gap >= RebufferThresholdTicks)
+                {
+                    _inRebuffer = true;
+                    _rebufferCount++;
+                    Debug.UIWarning($"[AV Video] Rebuffer #{_rebufferCount}: gapMs={gap / TimeSpan.TicksPerMillisecond}");
+                }
+            }
+
+            EmitDriftTelemetry(audioClockTicks);
         }
 
         // ═══════════════════════════════════════════════════════════════
         // Video Frame — GPU Upload
         // ═══════════════════════════════════════════════════════════════
 
-        /// <summary>
-        /// Applies a decoded video frame by resizing the texture (if needed)
-        /// and uploading the pixel data via the active renderer's GPU upload path.
-        /// </summary>
         private void ApplyDecodedVideoFrame(DecodedVideoFrame frame)
         {
-            // Resize the texture to match the stream resolution.
             if (frame.Width > 0 && frame.Height > 0)
                 WidthHeight = new IVector2(frame.Width, frame.Height);
 
             _lastPresentedVideoPts = frame.PresentationTimestampTicks;
 
-            // Only RGB24 packed data is supported for GPU upload.
             if (frame.PixelFormat != VideoPixelFormat.Rgb24 || frame.PackedData.IsEmpty)
                 return;
 
-            // Upload via the renderer's GPU upload path for efficient transfer.
             string? uploadError = null;
             if (_gpuVideoActions?.UploadVideoFrame(frame, VideoTexture, out uploadError) == true)
                 return;
@@ -257,12 +470,7 @@ namespace XREngine.Rendering.UI
         // Telemetry
         // ═══════════════════════════════════════════════════════════════
 
-        /// <summary>
-        /// Logs periodic A/V drift telemetry (every <see cref="TelemetryIntervalTicks"/>).
-        /// Reports video/audio PTS drift, frame counts, drop/underrun rates,
-        /// rebuffer events, estimated audio queue depth, latency, and pitch.
-        /// </summary>
-        private void EmitDriftTelemetry()
+        private void EmitDriftTelemetry(long audioClockTicks)
         {
             long now = GetEngineTimeTicks();
             if (_telemetryLastLogTicks > 0 && now - _telemetryLastLogTicks < TelemetryIntervalTicks)
@@ -273,14 +481,48 @@ namespace XREngine.Rendering.UI
             if (!_hasReceivedFirstFrame)
                 return;
 
-            long driftTicks = 0;
-            long audioClockForTelemetry = GetAudioClockForVideoSync(AudioSource);
-            if (audioClockForTelemetry > 0 && _lastPresentedVideoPts > 0)
-                driftTicks = _lastPresentedVideoPts - audioClockForTelemetry;
+            // Raw drift: videoPts vs raw audio clock (no display compensation).
+            long rawDriftTicks = 0;
+            // Effective drift: videoPts vs display-compensated clock (what pacing actually uses).
+            long effectiveDriftTicks = 0;
+            if (audioClockTicks > 0 && _lastPresentedVideoPts > 0)
+            {
+                rawDriftTicks = _lastPresentedVideoPts - audioClockTicks;
+                long videoClk = audioClockTicks + VideoDisplayLatencyCompensationTicks;
+                effectiveDriftTicks = _lastPresentedVideoPts - videoClk;
+            }
 
-            long driftMs = driftTicks / TimeSpan.TicksPerMillisecond;
-            long estimatedQueuedMs = GetEstimatedQueuedAudioDurationTicks(AudioSource) / TimeSpan.TicksPerMillisecond;
-            Debug.Out($"[AV Telemetry] drift={driftMs}ms, vPresented={_telemetryVideoFramesPresented}, vDropped={_telemetryVideoFramesDropped}, aSubmitted={_telemetryAudioFramesSubmitted}, aUnderruns={_telemetryAudioUnderruns}, rebuffers={_rebufferCount}, audioQueuedMs={estimatedQueuedMs}, latencyMs={_playbackLatencyMs:F0}, pitch={_currentPitch:F3}");
+            double audioClockMs = audioClockTicks / (double)TimeSpan.TicksPerMillisecond;
+            double videoPtsMs = _lastPresentedVideoPts > 0
+                ? _lastPresentedVideoPts / (double)TimeSpan.TicksPerMillisecond
+                : 0.0;
+            double rawDriftMs = rawDriftTicks / (double)TimeSpan.TicksPerMillisecond;
+            double effectiveDriftMs = effectiveDriftTicks / (double)TimeSpan.TicksPerMillisecond;
+            double ewmaMs = _driftEwmaTicks / (double)TimeSpan.TicksPerMillisecond;
+            double presentDriftMs = _lastPresentedDriftTicks / (double)TimeSpan.TicksPerMillisecond;
+            double frameAgeMs = _lastVideoFrameTicks > 0
+                ? (now - _lastVideoFrameTicks) / (double)TimeSpan.TicksPerMillisecond
+                : 0.0;
+            long queuedMs = GetEstimatedQueuedAudioDurationTicks(_cachedAudioSource) / TimeSpan.TicksPerMillisecond;
+
+            string driftRange = _driftIntervalSamples > 0
+                ? $"{_driftIntervalMinTicks / (double)TimeSpan.TicksPerMillisecond:F2}..{_driftIntervalMaxTicks / (double)TimeSpan.TicksPerMillisecond:F2}"
+                : "n/a";
+
+            Debug.Out($"[AV Telemetry] drift={effectiveDriftMs:F2}ms rawDrift={rawDriftMs:F2}ms " +
+                      $"presentDrift={presentDriftMs:F2}ms presentRange={driftRange}ms samples={_driftIntervalSamples} " +
+                      $"ewma={ewmaMs:F2}ms frameAge={frameAgeMs:F2}ms " +
+                      $"clock={audioClockMs:F2}ms vPts={videoPtsMs:F2}ms " +
+                      $"vPresented={_telemetryVideoFramesPresented} vDropped={_telemetryVideoFramesDropped} " +
+                      $"catchupDrops={_telemetryCatchupDrops} " +
+                      $"aSubmitted={_telemetryAudioFramesSubmitted} aUnderruns={_telemetryAudioUnderruns} " +
+                      $"rebuffers={_rebufferCount} audioQueuedMs={queuedMs} " +
+                      $"processedSamples={_processedSampleCount} sampleOffset={_primaryAudioSource?.SampleOffset ?? 0}");
+
+            // Reset present-time drift window for the next telemetry interval.
+            _driftIntervalSamples = 0;
+            _driftIntervalMinTicks = long.MaxValue;
+            _driftIntervalMaxTicks = long.MinValue;
         }
     }
 }

@@ -106,6 +106,24 @@ internal sealed class FFmpegStreamDecoder : IDisposable
     private int _lastReportedWidth;
     private int _lastReportedHeight;
 
+    /// <summary>
+    /// Estimated video frame duration in .NET ticks (100 ns). Seeded at 60 fps
+    /// and refined from stream metadata when available.
+    /// </summary>
+    private long _videoFrameDurationTicks = TimeSpan.TicksPerSecond / 60;
+
+    /// <summary>Last emitted video PTS in .NET ticks (monotonic timeline).</summary>
+    private long _lastVideoPtsTicks = long.MinValue;
+
+    /// <summary>
+    /// Current synthesized video PTS used when FFmpeg provides missing or
+    /// unusable timestamps.
+    /// </summary>
+    private long _syntheticVideoPtsTicks = long.MinValue;
+
+    /// <summary>Consecutive count of video frames with missing/unusable source PTS.</summary>
+    private int _videoMissingPtsStreak;
+
     // ═══════════════════════════════════════════════════════════════
     // Callbacks — Wired by HlsMediaStreamSession
     // ═══════════════════════════════════════════════════════════════
@@ -143,7 +161,23 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
         return Task.Run(() =>
         {
-            if (!AllocateAndOpen(url, options))
+            bool opened = false;
+            try
+            {
+                opened = AllocateAndOpen(url, options);
+            }
+            catch (Exception ex)
+            {
+                // avformat_open_input (or other native calls) can throw a
+                // native access-violation / SEH exception rather than
+                // returning a negative error code. Ensure we always clean
+                // up native resources and surface a clear error.
+                Cleanup();
+                throw new InvalidOperationException(
+                    $"FFmpeg native exception while opening '{url}': {ex.Message}", ex);
+            }
+
+            if (!opened)
             {
                 Cleanup();
                 Debug.LogWarning($"FFmpeg failed to open any streams for URL: {url}");
@@ -358,16 +392,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             }
 
             // ── Compute presentation timestamp (PTS) in 100ns ticks ──
-            long pts = decodedFrame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
-                ? decodedFrame->best_effort_timestamp
-                : decodedFrame->pts;
-
-            // Convert PTS from stream timebase units to .NET ticks (100ns).
-            if (_videoStreamIndex >= 0 && pts != ffmpeg.AV_NOPTS_VALUE)
-            {
-                AVRational tb = _formatContext->streams[_videoStreamIndex]->time_base;
-                pts = pts * TimeSpan.TicksPerSecond * tb.num / tb.den;
-            }
+            long pts = ResolveVideoPtsTicks(decodedFrame);
 
             // ── Deliver the decoded frame ──
             var frame = new DecodedVideoFrame(width, height, pts, VideoPixelFormat.Rgb24, data);
@@ -539,7 +564,18 @@ internal sealed class FFmpegStreamDecoder : IDisposable
     /// <returns><c>true</c> if at least one stream was successfully opened.</returns>
     private unsafe bool AllocateAndOpen(string url, StreamOpenOptions? options)
     {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            OnError?.Invoke("Cannot open stream: URL is null or empty.");
+            return false;
+        }
+
         _formatContext = ffmpeg.avformat_alloc_context();
+        if (_formatContext == null)
+        {
+            OnError?.Invoke("Failed to allocate AVFormatContext.");
+            return false;
+        }
 
         AVDictionary* dict = null;
         try
@@ -598,7 +634,21 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             // with this FFmpeg build.
             AVFormatContext* pFmt = _formatContext;
             Debug.Out($"Streaming FFmpeg: avformat_open_input url='{url}' hls={hls}");
-            int result = ffmpeg.avformat_open_input(&pFmt, url, null, &dict);
+
+            int result;
+            try
+            {
+                result = ffmpeg.avformat_open_input(&pFmt, url, null, &dict);
+            }
+            catch (Exception ex)
+            {
+                // avformat_open_input can throw a native SEH / access-violation
+                // exception instead of returning < 0. Treat it as an open failure
+                // and let the caller handle cleanup.
+                _formatContext = pFmt; // preserve whatever FFmpeg set
+                OnError?.Invoke($"Native exception in avformat_open_input: {ex.Message}");
+                return false;
+            }
             _formatContext = pFmt;
 
             if (result < 0)
@@ -716,6 +766,11 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         {
             OnVideoFrameRateDetected?.Invoke(detectedFps.Value);
             Debug.Out($"Streaming FFmpeg: detected video fps={detectedFps.Value:F3}");
+
+            long frameTicks = (long)Math.Round(TimeSpan.TicksPerSecond / detectedFps.Value);
+            _videoFrameDurationTicks = Math.Clamp(frameTicks,
+                TimeSpan.TicksPerMillisecond,
+                TimeSpan.TicksPerSecond);
         }
     }
 
@@ -796,6 +851,10 @@ internal sealed class FFmpegStreamDecoder : IDisposable
     {
         _running = false;
 
+        _lastVideoPtsTicks = long.MinValue;
+        _syntheticVideoPtsTicks = long.MinValue;
+        _videoMissingPtsStreak = 0;
+
         // Free the software scaler context.
         if (_swsContext != null)
         {
@@ -843,6 +902,67 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             fixed (AVFormatContext** p = &_formatContext)
                 ffmpeg.avformat_close_input(p);
         }
+    }
+
+    /// <summary>
+    /// Converts FFmpeg video timestamps to a monotonic .NET-tick timeline.
+    /// When FFmpeg timestamps are missing or non-monotonic, synthesizes PTS
+    /// using the estimated frame duration so downstream A/V sync logic can
+    /// stay on audio-clock pacing.
+    /// </summary>
+    private unsafe long ResolveVideoPtsTicks(AVFrame* decodedFrame)
+    {
+        long sourcePts = decodedFrame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
+            ? decodedFrame->best_effort_timestamp
+            : decodedFrame->pts;
+
+        long resolvedPts = long.MinValue;
+        bool hasResolvedPts = false;
+
+        if (_videoStreamIndex >= 0 && sourcePts != ffmpeg.AV_NOPTS_VALUE)
+        {
+            AVRational tb = _formatContext->streams[_videoStreamIndex]->time_base;
+            AVRational dstTb = new() { num = 1, den = (int)TimeSpan.TicksPerSecond };
+            resolvedPts = ffmpeg.av_rescale_q(sourcePts, tb, dstTb);
+            hasResolvedPts = resolvedPts >= 0;
+        }
+
+        // Reject non-monotonic timestamps; they break hasValidPts checks in
+        // the session and force wall-clock fallback.
+        if (hasResolvedPts && _lastVideoPtsTicks != long.MinValue && resolvedPts <= _lastVideoPtsTicks)
+            hasResolvedPts = false;
+
+        if (hasResolvedPts)
+        {
+            _videoMissingPtsStreak = 0;
+            _syntheticVideoPtsTicks = resolvedPts;
+            _lastVideoPtsTicks = resolvedPts;
+            return resolvedPts;
+        }
+
+        // Missing/invalid timestamp: synthesize a monotonic PTS.
+        _videoMissingPtsStreak++;
+
+        long step = Math.Max(TimeSpan.TicksPerMillisecond, _videoFrameDurationTicks);
+        if (_syntheticVideoPtsTicks == long.MinValue)
+        {
+            _syntheticVideoPtsTicks = _lastVideoPtsTicks != long.MinValue
+                ? _lastVideoPtsTicks + step
+                : step;
+        }
+        else
+        {
+            _syntheticVideoPtsTicks += step;
+        }
+
+        if (_videoMissingPtsStreak == 1 || _videoMissingPtsStreak % 300 == 0)
+        {
+            Debug.Out($"[AV Video] Synthesizing PTS for frame(s): streak={_videoMissingPtsStreak}, " +
+                      $"stepMs={step / (double)TimeSpan.TicksPerMillisecond:F2}");
+        }
+
+        _lastVideoPtsTicks = _syntheticVideoPtsTicks;
+        return _syntheticVideoPtsTicks;
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -2,6 +2,7 @@
 using System.Collections;
 using System.ComponentModel;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -515,6 +516,9 @@ namespace XREngine.Components
                     y is not RenderInfo2D right)
                     return 0;
 
+                if (ReferenceEquals(left, right))
+                    return 0;
+
                 if (left.LayerIndex > right.LayerIndex)
                     return -1;
 
@@ -527,7 +531,9 @@ namespace XREngine.Components
                 if (right.IndexWithinLayer > left.IndexWithinLayer)
                     return 1;
 
-                return 0;
+                // Tiebreaker: distinct RenderInfo2D instances must never compare as 0
+                // because SortedSet treats 0 as "same item" and silently drops duplicates.
+                return RuntimeHelpers.GetHashCode(left).CompareTo(RuntimeHelpers.GetHashCode(right));
             }
             public int Compare(object? x, object? y)
                 => Compare(x as RenderInfo2D, y as RenderInfo2D);

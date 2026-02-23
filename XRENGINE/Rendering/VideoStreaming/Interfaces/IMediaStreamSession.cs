@@ -16,6 +16,12 @@ public interface IMediaStreamSession : IDisposable
     /// <summary>Number of decoded audio frames currently buffered in the session queue.</summary>
     int QueuedAudioFrameCount { get; }
 
+    /// <summary>
+    /// Estimated buffered video duration in ticks (100 ns units) based on queued
+    /// frame count and observed/interpolated frame duration.
+    /// </summary>
+    long EstimatedQueuedVideoDurationTicks { get; }
+
     Task OpenAsync(string url, StreamOpenOptions? options, CancellationToken cancellationToken);
     void SetTargetFramebuffer(uint framebufferId);
     void Present();

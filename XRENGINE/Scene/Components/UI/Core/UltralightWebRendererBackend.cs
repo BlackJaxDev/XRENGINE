@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using UltralightNet;
 using UltralightNet.AppCore;
@@ -24,6 +25,11 @@ namespace XREngine.Rendering.UI
         private WebFrame _lastFrame;
         private bool _hasFrame;
         private bool _pixelsLocked;
+        private bool _loggedCompatibilityProbe;
+        private int _consoleMessageCount;
+
+        // Thread-safe input queue (same pattern as GPU backend)
+        private readonly ConcurrentQueue<Action<View>> _pendingInputEvents = new();
 
         public bool IsInitialized => _renderer is not null && _view is not null;
         public bool SupportsFramebuffer => false;
@@ -68,6 +74,7 @@ namespace XREngine.Rendering.UI
 
             _renderer = ULPlatform.CreateRenderer(_config.Value);
             _view = _renderer.CreateView(width, height, _viewConfig, null);
+            AttachDiagnostics();
         }
 
         public void Resize(uint width, uint height)
@@ -89,6 +96,11 @@ namespace XREngine.Rendering.UI
 
         public void Update(double deltaSeconds)
         {
+            if (_view is not null)
+            {
+                while (_pendingInputEvents.TryDequeue(out var action))
+                    action(_view);
+            }
             _renderer?.Update();
         }
 
@@ -152,6 +164,54 @@ namespace XREngine.Rendering.UI
             return _hasFrame;
         }
 
+        public void SendMouseMove(int x, int y)
+        {
+            if (_view is null)
+                return;
+
+            _pendingInputEvents.Enqueue(v => v.FireMouseEvent(new ULMouseEvent
+            {
+                Type = ULMouseEventType.MouseMoved,
+                Button = ULMouseEventButton.None,
+                X = x,
+                Y = y,
+            }));
+        }
+
+        public void SendMouseButton(bool pressed, WebMouseButton button, int x, int y)
+        {
+            if (_view is null)
+                return;
+
+            var mapped = MapMouseButton(button);
+            _pendingInputEvents.Enqueue(v =>
+            {
+                if (pressed)
+                    v.Focus();
+
+                v.FireMouseEvent(new ULMouseEvent
+                {
+                    Type = pressed ? ULMouseEventType.MouseDown : ULMouseEventType.MouseUp,
+                    Button = mapped,
+                    X = x,
+                    Y = y,
+                });
+            });
+        }
+
+        public void SendScroll(int deltaX, int deltaY)
+        {
+            if (_view is null)
+                return;
+
+            _pendingInputEvents.Enqueue(v => v.FireScrollEvent(new ULScrollEvent
+            {
+                Type = ULScrollEventType.ByPixel,
+                DeltaX = deltaX,
+                DeltaY = deltaY,
+            }));
+        }
+
         public void SetTargetFramebuffer(uint framebufferId)
         {
             // Not supported in software mode.
@@ -160,6 +220,12 @@ namespace XREngine.Rendering.UI
         public void Dispose()
         {
             UnlockPixelsIfNeeded();
+
+            if (_view is not null)
+            {
+                _view.OnFinishLoading -= HandleFinishLoading;
+                _view.OnAddConsoleMessage -= HandleConsoleMessage;
+            }
             
             _view?.Dispose();
             _view = null;
@@ -171,6 +237,49 @@ namespace XREngine.Rendering.UI
             _config = null;
             _viewConfig = null;
         }
+
+        private void AttachDiagnostics()
+        {
+            if (_view is null)
+                return;
+
+            _view.OnFinishLoading += HandleFinishLoading;
+            _view.OnAddConsoleMessage += HandleConsoleMessage;
+        }
+
+        private void HandleFinishLoading(ulong frameId, bool isMainFrame, string url)
+        {
+            if (!isMainFrame || _view is null || _loggedCompatibilityProbe)
+                return;
+
+            const string probeScript = "JSON.stringify({ua:navigator.userAgent,dpr:window.devicePixelRatio,innerWidth:window.innerWidth,innerHeight:window.innerHeight,href:location.href})";
+            string result = _view.EvaluateScript(probeScript, out string exception);
+
+            if (!string.IsNullOrWhiteSpace(exception))
+                Debug.LogWarning($"[UltralightProbe] EvaluateScript exception: {exception}");
+            else
+                Debug.Out($"[UltralightProbe] {result}");
+
+            _loggedCompatibilityProbe = true;
+        }
+
+        private void HandleConsoleMessage(ULMessageSource source, ULMessageLevel level, string message, uint lineNumber, uint columnNumber, string sourceId)
+        {
+            if (_consoleMessageCount >= 10)
+                return;
+
+            _consoleMessageCount++;
+            Debug.Out($"[UltralightConsole] {level} {source} {sourceId}:{lineNumber}:{columnNumber} {message}");
+        }
+
+        private static ULMouseEventButton MapMouseButton(WebMouseButton button)
+            => button switch
+            {
+                WebMouseButton.Left => ULMouseEventButton.Left,
+                WebMouseButton.Right => ULMouseEventButton.Right,
+                WebMouseButton.Middle => ULMouseEventButton.Middle,
+                _ => ULMouseEventButton.None,
+            };
 
         private static void EnsureFontLoader()
         {

@@ -109,10 +109,17 @@ namespace XREngine.Rendering.UI
             // Create and configure the streaming session.
             _streamingSession = StreamingSubsystem.CreateSession();
             _streamingSession.VideoSizeChanged += HandleStreamingVideoSizeChanged;
+            _cachedAudioSource = GetSiblingComponent<AudioSourceComponent>();
+            Debug.Out($"[AV Setup] Pipeline starting: audioSource={(
+                _cachedAudioSource != null
+                    ? "cached"
+                    : "null — AudioSourceComponent not yet a sibling; drain loop will refresh"
+                )}, url='{resolved.Url}'");
             _streamingRetryCount = resolved.RetryCount;
             _streamingOpenOptions = resolved.OpenOptions ?? new StreamOpenOptions();
-            _streamingOpenOptions.VideoQueueCapacity = Math.Max(_streamingOpenOptions.VideoQueueCapacity, 180);
-            _streamingOpenOptions.AudioQueueCapacity = Math.Max(_streamingOpenOptions.AudioQueueCapacity, 256);
+            _streamingOpenOptions.EnableAdaptiveCatchUpPitch = false;
+            _streamingOpenOptions.VideoQueueCapacity = Math.Max(_streamingOpenOptions.VideoQueueCapacity, 120);
+            _streamingOpenOptions.AudioQueueCapacity = Math.Max(_streamingOpenOptions.AudioQueueCapacity, 250);
             _streamOpenAttemptStartedTicks = GetEngineTimeTicks();
 
             BeginStreamingOpenWithSession(resolved.Url, _streamingOpenOptions);
@@ -152,10 +159,17 @@ namespace XREngine.Rendering.UI
 
             _streamingSession = StreamingSubsystem.CreateSession();
             _streamingSession.VideoSizeChanged += HandleStreamingVideoSizeChanged;
+            _cachedAudioSource = GetSiblingComponent<AudioSourceComponent>();
+            Debug.Out($"[AV Setup] Pipeline starting (variant): audioSource={(
+                _cachedAudioSource != null
+                    ? "cached"
+                    : "null — AudioSourceComponent not yet a sibling; drain loop will refresh"
+                )}, variant='{variant.DisplayLabel}'");
             _streamingRetryCount = 0;
             _streamingOpenOptions = new StreamOpenOptions();
-            _streamingOpenOptions.VideoQueueCapacity = Math.Max(_streamingOpenOptions.VideoQueueCapacity, 180);
-            _streamingOpenOptions.AudioQueueCapacity = Math.Max(_streamingOpenOptions.AudioQueueCapacity, 256);
+            _streamingOpenOptions.EnableAdaptiveCatchUpPitch = false;
+            _streamingOpenOptions.VideoQueueCapacity = 120;
+            _streamingOpenOptions.AudioQueueCapacity = 250;
             _streamOpenAttemptStartedTicks = GetEngineTimeTicks();
             BeginStreamingOpenWithSession(variant.Url, _streamingOpenOptions);
         }
@@ -170,24 +184,29 @@ namespace XREngine.Rendering.UI
         private void StopStreamingPipelineOnMainThread()
         {
             // Restore normal audio source behavior before tearing down.
-            var audioSource = AudioSource;
+            var audioSource = _cachedAudioSource;
             if (audioSource is not null)
             {
                 audioSource.ExternalBufferManagement = false;
                 foreach (var source in audioSource.ActiveListeners.Values)
-                {
                     source.AutoPlayOnQueue = true;
-                    source.Pitch = 1.0f;
-                }
+            }
+
+            // Unsubscribe from the primary source's BufferProcessed event.
+            if (_primaryAudioSource is not null)
+            {
+                _primaryAudioSource.BufferProcessed -= OnPrimaryBufferProcessed;
+                _primaryAudioSource = null;
             }
 
             // Close and dispose the streaming session.
-            if (_streamingSession is not null)
+            var session = _streamingSession;
+            _streamingSession = null;
+            if (session is not null)
             {
-                _streamingSession.VideoSizeChanged -= HandleStreamingVideoSizeChanged;
-                _streamingSession.Close();
-                _streamingSession.Dispose();
-                _streamingSession = null;
+                session.VideoSizeChanged -= HandleStreamingVideoSizeChanged;
+                session.Close();
+                session.Dispose();
             }
 
             // Dispose the GPU upload helper.
@@ -207,7 +226,6 @@ namespace XREngine.Rendering.UI
             // ── Reset all mutable state to defaults ──
             _streamingOpenOptions = null;
             _lastPresentedVideoPts = long.MinValue;
-            _lastPresentedAudioPts = long.MinValue;
             _lastSubmittedAudioSampleRate = 0;
             _lastSubmittedAudioStereo = false;
             _streamOpenAttemptStartedTicks = long.MinValue;
@@ -217,18 +235,32 @@ namespace XREngine.Rendering.UI
             _rebufferCount = 0;
             _streamingRetryCount = 0;
             _hasReceivedFirstFrame = false;
-            _audioClockTicks = long.MinValue;
+            _audioSyncFallbackActive = false;
+            // Hardware clock state
+            _firstAudioPts = long.MinValue;
+            _processedSampleCount = 0;
+            _submittedSampleCounts.Clear();
+            _primaryAudioSampleRate = 0;
+            // Audio pipeline helpers
+            _cachedAudioSource = null;
             _totalAudioDurationSubmittedTicks = 0;
             _totalAudioBuffersSubmitted = 0;
-            _audioClockLastEngineTicks = long.MinValue;
+            _wasAudioPlaying = false;
+            _audioHasEverPlayed = false;
+            // Diagnostic throttles
+            _lastNoListenersWarnTicks = 0;
+            _lastListenerDiagnosticTicks = 0;
+            _audioStartupDiagLogged = false;
+            // Telemetry
             _telemetryVideoFramesPresented = 0;
             _telemetryVideoFramesDropped = 0;
             _telemetryAudioFramesSubmitted = 0;
             _telemetryAudioUnderruns = 0;
             _telemetryLastLogTicks = 0;
-            _wasAudioPlaying = false;
-            _playbackLatencyMs = 0;
-            _currentPitch = 1.0f;
+            _lastPresentedDriftTicks = 0;
+            _driftIntervalSamples = 0;
+            _driftIntervalMinTicks = long.MaxValue;
+            _driftIntervalMaxTicks = long.MinValue;
         }
 
         // ═══════════════════════════════════════════════════════════════

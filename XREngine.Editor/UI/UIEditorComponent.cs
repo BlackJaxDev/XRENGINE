@@ -85,10 +85,13 @@ public partial class UIEditorComponent : UIComponent
         {
             SceneNode webRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "WebViewRoot");
             var webComp = webRoot.AddComponent<UIWebViewComponent>()!;
+            webRoot.AddComponent<UIWebViewInputComponent>();
             webComp.Backend = new UltralightGpuWebRendererBackend();
+            webComp.TransparentBackground = false;
             webComp.Url = string.IsNullOrWhiteSpace(EditorUnitTests.Toggles.UltralightWebViewUrl)
                 ? "https://blackjaxvr.com"
                 : EditorUnitTests.Toggles.UltralightWebViewUrl;
+            Debug.Out($"[UIEditor] Ultralight web view enabled. Url='{webComp.Url}'");
 
             return;
         }

@@ -44,6 +44,14 @@ public static partial class EditorUnitTests
                 str += $"\n{net.DataPerSecondString}";
                 str += $"\n{net.PacketsPerSecond}p/s";
             }
+            var videoComp = _editorComponent?.SceneNode.FindFirstDescendantComponent<UIVideoComponent>();
+            if (videoComp is not null)
+            {
+                string syncState = videoComp.DebugAudioSyncActive ? "on" : "off";
+                str += $"\nA/V: drift {videoComp.DebugPresentDriftMs:F1}ms";
+                str += $"\ndebt {videoComp.DebugVideoDebtMs:F1}ms";
+                str += $"\nunderruns {videoComp.DebugAudioUnderruns} ({syncState})";
+            }
             t.Text = str;
         }
 

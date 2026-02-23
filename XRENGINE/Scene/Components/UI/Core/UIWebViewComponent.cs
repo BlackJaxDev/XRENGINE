@@ -24,6 +24,14 @@ namespace XREngine.Rendering.UI
         IntPtr PixelDataPtr,
         int ByteLength);
 
+    public enum WebMouseButton
+    {
+        None = 0,
+        Left = 1,
+        Right = 2,
+        Middle = 3,
+    }
+
     /// <summary>
     /// Backend interface for rendering web content into a UI texture/FBO.
     /// </summary>
@@ -39,6 +47,9 @@ namespace XREngine.Rendering.UI
         void Render();
         bool TryGetFrame(out WebFrame frame);
         void SetTargetFramebuffer(uint framebufferId);
+        void SendMouseMove(int x, int y);
+        void SendMouseButton(bool pressed, WebMouseButton button, int x, int y);
+        void SendScroll(int deltaX, int deltaY);
     }
 
     internal sealed class NullWebRendererBackend : IWebRendererBackend
@@ -57,6 +68,9 @@ namespace XREngine.Rendering.UI
             return false;
         }
         public void SetTargetFramebuffer(uint framebufferId) { }
+        public void SendMouseMove(int x, int y) { }
+        public void SendMouseButton(bool pressed, WebMouseButton button, int x, int y) { }
+        public void SendScroll(int deltaX, int deltaY) { }
         public void Dispose() { }
     }
 
@@ -85,6 +99,9 @@ namespace XREngine.Rendering.UI
         
         // Cached DataSource for direct upload - reused by updating Address/Length
         private DataSource? _cachedDataSource;
+        private bool _loggedBackendInit;
+        private bool _loggedTargetFramebuffer;
+        private bool _loggedSoftwareFrame;
 
         private string? _url;
         public string? Url
@@ -189,6 +206,12 @@ namespace XREngine.Rendering.UI
             if (!string.IsNullOrWhiteSpace(_url))
                 _backend.LoadUrl(_url!);
 
+            if (!_loggedBackendInit)
+            {
+                Debug.Out($"[UIWebView] Backend initialized: type={_backend.GetType().Name}, size={_backingWidth}x{_backingHeight}, transparent={_transparentBackground}, supportsFramebuffer={_backend.SupportsFramebuffer}, url='{_url}'");
+                _loggedBackendInit = true;
+            }
+
             if (_backend.SupportsFramebuffer)
                 UpdateFramebufferTarget();
         }
@@ -206,6 +229,11 @@ namespace XREngine.Rendering.UI
                 {
                     _cachedGlFbo = glFbo;
                     _backend.SetTargetFramebuffer(glFbo.BindingId);
+                    if (!_loggedTargetFramebuffer)
+                    {
+                        Debug.Out($"[UIWebView] Target framebuffer bound: id={glFbo.BindingId}");
+                        _loggedTargetFramebuffer = true;
+                    }
                     break;
                 }
             }
@@ -265,7 +293,14 @@ namespace XREngine.Rendering.UI
                 _backend.Render();
 
                 if (!_backend.SupportsFramebuffer && _backend.TryGetFrame(out WebFrame frame))
+                {
                     ApplyFrame(frame);
+                    if (!_loggedSoftwareFrame)
+                    {
+                        Debug.Out($"[UIWebView] First software frame: {frame.Width}x{frame.Height}, bytes={frame.ByteLength}");
+                        _loggedSoftwareFrame = true;
+                    }
+                }
             }
             finally
             {

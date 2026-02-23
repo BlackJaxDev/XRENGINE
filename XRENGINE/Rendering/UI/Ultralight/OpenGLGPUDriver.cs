@@ -40,18 +40,13 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
     private readonly Stack<int> _freeTextures = new();
     private readonly Stack<int> _freeGeometry = new();
     private readonly Stack<int> _freeRenderBuffers = new();
+    private bool _loggedFirstCommandList;
 
+    /// <summary>Silently drains any accumulated GL errors so they don't leak into later calls.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void Check(string? operation = null, [CallerMemberName] string? caller = null, [CallerLineNumber] int line = default)
+    private void DrainGLErrors()
     {
-#if DEBUG
-        GLEnum error;
-        while ((error = _gl.GetError()) is not GLEnum.NoError)
-        {
-            string op = operation is not null ? $" after {operation}" : "";
-            Debug.Out($"[UltralightGL] {caller}:{line}{op} — {error}");
-        }
-#endif
+        while (_gl.GetError() is not GLEnum.NoError) { }
     }
 
     private readonly bool _dsa;
@@ -88,7 +83,7 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
         _gl.Uniform1(_gl.GetUniformLocation(_fillProgram, "Texture1"), 0);
         _gl.Uniform1(_gl.GetUniformLocation(_fillProgram, "Texture2"), 1);
 
-        Check();
+        DrainGLErrors();
 
         if (_dsa)
         {
@@ -268,7 +263,7 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
 
     public void UpdateTexture(uint entryId, ULBitmap bitmap)
     {
-        Check();
+        DrainGLErrors();
         uint textureId = Textures[(int)entryId].TextureId;
         uint width = bitmap.Width;
         uint height = bitmap.Height;
@@ -305,7 +300,7 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
                 _gl.TexImage2D(TextureTarget.Texture2D, 0, (int)InternalFormat.R8, width, height, 0, PixelFormat.Red, PixelType.UnsignedByte, pixels);
             bitmap.UnlockPixels();
         }
-        Check();
+        DrainGLErrors();
     }
 
     public void DestroyTexture(uint id)
@@ -403,40 +398,6 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
         var entry = _geometries[(int)id];
         uint vao, vbo, ebo;
 
-        if (_dsa)
-        {
-            vao = _gl.CreateVertexArray();
-            vbo = _gl.CreateBuffer();
-            ebo = _gl.CreateBuffer();
-
-            _gl.NamedBufferData(vbo, vb.size, vb.data, GLEnum.DynamicDraw);
-            _gl.NamedBufferData(ebo, ib.size, ib.data, GLEnum.DynamicDraw);
-
-            if (vb.Format is ULVertexBufferFormat.VBF_2f_4ub_2f_2f_28f)
-            {
-                SetupVertexAttribDSA(vao, vbo, 140,
-                    (0, 2, GLEnum.Float, false, 0),
-                    (1, 4, GLEnum.UnsignedByte, true, 8),
-                    (2, 2, GLEnum.Float, false, 12),
-                    (3, 2, GLEnum.Float, false, 20),
-                    (4, 4, GLEnum.Float, false, 28),
-                    (5, 4, GLEnum.Float, false, 44),
-                    (6, 4, GLEnum.Float, false, 60),
-                    (7, 4, GLEnum.Float, false, 76),
-                    (8, 4, GLEnum.Float, false, 92),
-                    (9, 4, GLEnum.Float, false, 108),
-                    (10, 4, GLEnum.Float, false, 124));
-            }
-            else
-            {
-                SetupVertexAttribDSA(vao, vbo, 20,
-                    (0, 2, GLEnum.Float, false, 0),
-                    (1, 4, GLEnum.UnsignedByte, true, 8),
-                    (2, 2, GLEnum.Float, false, 12));
-            }
-            _gl.VertexArrayElementBuffer(vao, ebo);
-        }
-        else
         {
             vao = _gl.GenVertexArray();
             _gl.BindVertexArray(vao);
@@ -483,17 +444,6 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
         entry.EboSize = (nuint)ib.size;
     }
 
-    private void SetupVertexAttribDSA(uint vao, uint vbo, uint stride, params (uint index, int size, GLEnum type, bool normalized, uint offset)[] attribs)
-    {
-        foreach (var (index, size, type, normalized, offset) in attribs)
-        {
-            _gl.EnableVertexArrayAttrib(vao, index);
-            _gl.VertexArrayAttribBinding(vao, index, 0);
-            _gl.VertexArrayAttribFormat(vao, index, size, type, normalized, offset);
-        }
-        _gl.VertexArrayVertexBuffer(vao, 0, vbo, 0, stride);
-    }
-
     public void UpdateGeometry(uint id, ULVertexBuffer vb, ULIndexBuffer ib)
     {
         var entry = _geometries[(int)id];
@@ -503,7 +453,7 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
             return;
         }
 
-        // If sizes changed, the buffer must be reallocated — destroy and recreate.
+        // If sizes changed, destroy and recreate (can't SubData into a smaller buffer).
         if ((nuint)vb.size != entry.VboSize || (nuint)ib.size != entry.EboSize)
         {
             DestroyGeometry(id);
@@ -511,25 +461,14 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
             return;
         }
 
-        // Same size — use SubData to update in-place (avoids DSA realloc driver bugs).
-        if (_dsa)
-        {
-            _gl.NamedBufferSubData(entry.Vbo, 0, vb.size, vb.data);
-            Check($"NamedBufferSubData(VBO={entry.Vbo}, size={vb.size})");
-            _gl.NamedBufferSubData(entry.Ebo, 0, ib.size, ib.data);
-            Check($"NamedBufferSubData(EBO={entry.Ebo}, size={ib.size})");
-        }
-        else
-        {
-            _gl.BindVertexArray(entry.Vao);
-            _gl.BindBuffer(BufferTargetARB.ArrayBuffer, entry.Vbo);
-            _gl.BufferSubData(BufferTargetARB.ArrayBuffer, 0, (nuint)vb.size, vb.data);
-            Check($"BufferSubData(VBO={entry.Vbo}, size={vb.size})");
-            _gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, entry.Ebo);
-            _gl.BufferSubData(BufferTargetARB.ElementArrayBuffer, 0, ib.size, ib.data);
-            Check($"BufferSubData(EBO={entry.Ebo}, size={ib.size})");
-            _gl.BindVertexArray(0);
-        }
+        // Always use bind-based path — DSA NamedBuffer(Sub)Data/creation triggers
+        // InvalidOperation on certain NVIDIA drivers.
+        _gl.BindVertexArray(entry.Vao);
+        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, entry.Vbo);
+        _gl.BufferSubData(BufferTargetARB.ArrayBuffer, 0, (nuint)vb.size, vb.data);
+        _gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, entry.Ebo);
+        _gl.BufferSubData(BufferTargetARB.ElementArrayBuffer, 0, ib.size, ib.data);
+        _gl.BindVertexArray(0);
     }
 
     public void DestroyGeometry(uint id)
@@ -545,7 +484,7 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
 
     public void UpdateCommandList(ULCommandList commandList)
     {
-        Check("entry (residual)");
+        DrainGLErrors();
         uint glLastProgram = default;
         uint glProgram = default;
         uint glViewportWidth = unchecked((uint)-1);
@@ -554,6 +493,12 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
         if (commandList.size is 0)
             return;
 
+        if (!_loggedFirstCommandList)
+        {
+            Debug.Out($"[UltralightGL] First command list: {commandList.size} commands, msaa_samples={_samples}, dsa={_dsa}.");
+            _loggedFirstCommandList = true;
+        }
+
         _gl.GetInteger(GetPName.CurrentProgram, (int*)&glLastProgram);
         glProgram = glLastProgram;
         _gl.Disable(EnableCap.ScissorTest);
@@ -561,13 +506,9 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
         _gl.DepthFunc(DepthFunction.Never);
         _gl.Enable(EnableCap.Blend);
         _gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
-        Check("initial state setup");
 
         if (!_dsa)
-        {
             _gl.BindBuffer(BufferTargetARB.UniformBuffer, _ubo);
-            Check($"BindBuffer(UBO={_ubo})");
-        }
 
         uint currentFramebuffer = uint.MaxValue;
         ULIntRect? currentScissors = null;
@@ -588,7 +529,6 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
             if (currentFramebuffer != framebufferToUse)
             {
                 _gl.BindFramebuffer(FramebufferTarget.Framebuffer, framebufferToUse);
-                Check($"BindFramebuffer({framebufferToUse})");
                 currentFramebuffer = framebufferToUse;
                 renderBufferEntry.Dirty = true;
                 if (rtTextureEntry.MultisampledFramebuffer != rtTextureEntry.Framebuffer &&
@@ -623,18 +563,11 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
                 uniforms.ClipSize = (uint)gpuState.ClipSize;
 
                 if (_dsa)
-                {
                     _gl.NamedBufferData(_ubo, 768, &uniforms, GLEnum.DynamicDraw);
-                    Check($"NamedBufferData(UBO={_ubo})");
-                }
                 else
-                {
                     _gl.BufferData(BufferTargetARB.UniformBuffer, 768, &uniforms, BufferUsageARB.DynamicDraw);
-                    Check("BufferData(UBO)");
-                }
 
                 _gl.BindVertexArray(geometryEntry.Vao);
-                Check($"BindVertexArray(VAO={geometryEntry.Vao})");
                 bool rebindFramebuffer = false;
 
                 if (gpuState.ShaderType is ULShaderType.Fill)
@@ -709,10 +642,8 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
                     currentBlend = gpuState.EnableBlend;
                 }
 
-                Check("pre-DrawElements");
                 _gl.DrawElements(PrimitiveType.Triangles, command.IndicesCount, DrawElementsType.UnsignedInt,
                     (void*)(command.IndicesOffset * sizeof(uint)));
-                Check($"DrawElements(count={command.IndicesCount}, offset={command.IndicesOffset})");
             }
             else if (command.CommandType is ULCommandType.ClearRenderBuffer)
             {
@@ -728,11 +659,9 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
         }
 
         _gl.UseProgram(glLastProgram);
-        Check($"UseProgram({glLastProgram})");
         _gl.BindVertexArray(0);
-        Check("BindVertexArray(0)");
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-        Check("BindFramebuffer(0)");
+        DrainGLErrors();
     }
 
     public void Dispose() { }
