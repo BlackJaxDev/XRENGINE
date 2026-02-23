@@ -10,6 +10,11 @@ Notes:
 - This lists direct `PackageReference`s from solution projects, not all transitive dependencies.
 - NVIDIA proprietary SDK binaries (DLSS/NGX, Reflex, Streamline) are **not redistributed** and are expected to be provided by end users via `ThirdParty/NVIDIA/SDK/win-x64/`.
 
+## External runtime tools (not redistributed)
+| Tool | Used by | Owner | License (best-effort) | URL | Notes |
+|---|---|---|---|---|---|
+| yt-dlp | YouTube stream URL resolution in `XREngine.Rendering.VideoStreaming.TwitchHlsStreamResolver` | yt-dlp | [Unlicense](https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE) | https://github.com/yt-dlp/yt-dlp | Required only for opening YouTube URLs. Install with `Tools/Dependencies/Get-YtDlp.ps1` (downloads to `Build/Dependencies/YoutubeDL/yt-dlp.exe`) or keep on PATH. Build copies it into executable output folders when present. |
+
 ## Git submodules / vendored submodules
 | Name | Path | Owner | License (best-effort) | URL |
 |---|---|---|---|---|

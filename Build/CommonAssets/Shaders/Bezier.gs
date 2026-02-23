@@ -7,7 +7,7 @@ uniform vec2 StartCPos;
 uniform vec2 EndCPos;
 uniform vec2 EndPos;
 
-out vec3 FragPos;
+layout(location = 0) out vec3 FragPos;
 
 vec2 evalBezier(float delta, int i, vec2 P0, vec2 P1, vec2 P2, vec2 P3)
 {

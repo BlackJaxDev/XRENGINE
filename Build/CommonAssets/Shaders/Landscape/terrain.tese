@@ -1,8 +1,8 @@
 #version 400
 
 layout (quads, fractional_odd_spacing, ccw) in;
-out vec2 texcoord;
-out float depth;
+layout(location = 0) out vec2 texcoord;
+layout(location = 1) out float depth;
 
 uniform sampler2D terrain;
 uniform mat4 mvp;

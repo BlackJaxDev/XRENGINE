@@ -1,7 +1,7 @@
 #version 460
 #extension GL_OVR_multiview2 : require
 
-out vec4 OutColor;
+layout(location = 0) out vec4 OutColor;
 
 layout (location = 4) in vec2 FragUV0;
 

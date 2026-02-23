@@ -370,6 +370,7 @@ Build/Tools/
 Build/Dependencies/CoACD/
 Build/Dependencies/FFmpeg/**
 !Build/Dependencies/FFmpeg/README.md
+Build/Dependencies/YoutubeDL/
 Build/RestirGI/
 
 # Submodules

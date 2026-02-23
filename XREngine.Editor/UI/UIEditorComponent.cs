@@ -83,7 +83,8 @@ public partial class UIEditorComponent : UIComponent
         if (EditorUnitTests.Toggles.VideoStreaming)
         {
             SceneNode videoRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "VideoRoot");
-            videoRoot.AddComponent<UIVideoComponent>();
+            var videoComp = videoRoot.AddComponent<UIVideoComponent>();
+            videoComp.StreamUrl = "https://twitch.tv/theava";
             if (EditorUnitTests.Toggles.VideoStreamingAudio)
                 videoRoot.AddComponent<AudioSourceComponent>();
 
