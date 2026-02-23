@@ -40,12 +40,11 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     /// <summary>
     /// Maximum lookahead tolerance for audio-clock-based video pacing.
     /// A video frame is considered "due" when its PTS is within this many
-    /// ticks ahead of the current audio clock. Kept very small (≈1–2 frames
-    /// at 30 fps) so video stays tightly locked to audio. Previously 500 ms,
-    /// which allowed the catch-up sweep to consume half a second of frames
-    /// in a single burst, creating visible speed-up/pause cycles.
+    /// ticks ahead of the current audio clock. Matched to the consumer's
+    /// VideoHoldThresholdTicks (+40 ms) so both layers agree on what "too
+    /// far ahead" means and the consumer hold check acts as a true safety net.
     /// </summary>
-    private static readonly long TargetVideoBufferTicks = TimeSpan.FromMilliseconds(50).Ticks;
+    private static readonly long TargetVideoBufferTicks = TimeSpan.TicksPerMillisecond * 40;
 
     // ═══════════════════════════════════════════════════════════════
     // Fields — Core Dependencies
@@ -140,6 +139,22 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
 
     /// <inheritdoc />
     public int QueuedAudioFrameCount { get { lock (_sync) return _audioFrames.Count; } }
+
+    /// <inheritdoc />
+    public long EstimatedQueuedVideoDurationTicks
+    {
+        get
+        {
+            lock (_sync)
+            {
+                if (_videoFrames.Count <= 0)
+                    return 0;
+
+                long frameDurationTicks = Math.Clamp(_fallbackFrameDurationTicks, MinFrameDurationTicks, MaxSaneFrameDurationTicks);
+                return _videoFrames.Count * frameDurationTicks;
+            }
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // Public API — Session Lifecycle
@@ -325,6 +340,55 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
             {
                 frame = default;
                 return false;
+            }
+
+            // If the render loop has fallen far behind while running in
+            // wall-clock mode (no audio clock), drop stale queued frames so
+            // playback stays near real time instead of devolving into
+            // slow-motion at one frame per render pass.
+            if (_videoFrames.Count > 1 && expectedFrameTicks > 0)
+            {
+                long lagTicks = nowTicks - dueTicks;
+                if (lagTicks > expectedFrameTicks)
+                {
+                    int framesBehind = (int)(lagTicks / expectedFrameTicks);
+                    int framesToDrop = Math.Min(_videoFrames.Count - 1, Math.Max(0, framesBehind - 1));
+
+                    while (framesToDrop-- > 0 && _videoFrames.Count > 1)
+                    {
+                        DecodedVideoFrame dropped = _videoFrames.Dequeue();
+                        long droppedPts = dropped.PresentationTimestampTicks;
+                        if (droppedPts > 0)
+                            _lastDequeuedVideoPts = droppedPts;
+
+                        _lastVideoDequeueWallTicks = _lastVideoDequeueWallTicks > 0
+                            ? _lastVideoDequeueWallTicks + expectedFrameTicks
+                            : nowTicks - expectedFrameTicks;
+                    }
+
+                    // Re-evaluate due-time after catch-up drops.
+                    if (_videoFrames.Count > 0)
+                    {
+                        DecodedVideoFrame next = _videoFrames.Peek();
+                        long nextPts = next.PresentationTimestampTicks;
+                        if (nextPts > 0 && _lastDequeuedVideoPts > 0)
+                        {
+                            long dt = nextPts - _lastDequeuedVideoPts;
+                            if (dt >= MinFrameDurationTicks && dt <= MaxSaneFrameDurationTicks)
+                                expectedFrameTicks = dt;
+                        }
+
+                        dueTicks = _lastVideoDequeueWallTicks > 0
+                            ? _lastVideoDequeueWallTicks + expectedFrameTicks
+                            : nowTicks;
+
+                        if (nowTicks < dueTicks)
+                        {
+                            frame = default;
+                            return false;
+                        }
+                    }
+                }
             }
 
             // Frame is due via wall-clock fallback.

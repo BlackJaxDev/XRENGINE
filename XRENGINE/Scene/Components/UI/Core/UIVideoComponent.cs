@@ -1,8 +1,9 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using System;
 using System.IO;
 using System.Threading;
+using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
@@ -32,11 +33,12 @@ namespace XREngine.Rendering.UI
     /// </list>
     /// </para>
     /// <para>
-    /// A/V sync is achieved by advancing a software audio clock that tracks
-    /// OpenAL playback progress, then using it to pace video frame release
-    /// inside <see cref="HlsMediaStreamSession.TryDequeueVideoFrame"/>.
-    /// An adaptive catch-up system adjusts audio pitch when buffered latency
-    /// exceeds the target, keeping the stream close to real-time.
+    /// A/V sync uses the OpenAL hardware sample-position clock as master:
+    /// <c>audioClock = (processedSamples + AL_SAMPLE_OFFSET) / sampleRate + firstPts - hwLatency</c>.
+    /// Video frames whose PTS is more than <see cref="VideoHoldThresholdTicks"/> ahead
+    /// of the clock are held; frames more than <see cref="VideoDropThresholdTicks"/>
+    /// behind are dropped. Extreme drift beyond <see cref="VideoResetThresholdTicks"/>
+    /// flushes both queues.
     /// </para>
     /// <para>
     /// This class is split across partial files by concern:
@@ -44,7 +46,7 @@ namespace XREngine.Rendering.UI
     ///   <item><b>UIVideoComponent.cs</b> — Constants, fields, properties, constructor, lifecycle, utilities.</item>
     ///   <item><b>UIVideoComponent.Pipeline.cs</b> — Stream start/stop, URL changes, session open &amp; retry.</item>
     ///   <item><b>UIVideoComponent.FrameDrain.cs</b> — Per-frame drain loop, video GPU upload, telemetry.</item>
-    ///   <item><b>UIVideoComponent.Audio.cs</b> — Audio submission, PCM conversion, clock, catch-up pitch.</item>
+    ///   <item><b>UIVideoComponent.Audio.cs</b> — Audio submission, PCM conversion, hardware clock.</item>
     /// </list>
     /// </para>
     /// </summary>
@@ -59,14 +61,8 @@ namespace XREngine.Rendering.UI
             VideoStreamingSubsystem.CreateDefault(HlsReferenceRuntime.CreateSession);
 
         // ═══════════════════════════════════════════════════════════════
-        // Constants — A/V Sync & Buffering Thresholds
+        // Constants — A/V Sync Thresholds
         // ═══════════════════════════════════════════════════════════════
-
-        /// <summary>Target amount of video data to buffer ahead (500 ms).</summary>
-        private const long TargetVideoBufferTicks = TimeSpan.TicksPerMillisecond * 500;
-
-        /// <summary>Maximum tolerable video lag behind the audio clock before frames are dropped (2 s).</summary>
-        private const long MaxVideoLagBehindAudioTicks = TimeSpan.TicksPerSecond * 2;
 
         /// <summary>How many times to retry opening a stream before giving up.</summary>
         private const int MaxStreamingOpenRetryAttempts = 5;
@@ -74,76 +70,83 @@ namespace XREngine.Rendering.UI
         /// <summary>Gap duration after which a rebuffer event is logged (750 ms).</summary>
         private const long RebufferThresholdTicks = TimeSpan.TicksPerMillisecond * 750;
 
+        /// <summary>
+        /// Estimated hardware audio output latency subtracted from the clock so that
+        /// video is synced to what the listener actually hears, not what OpenAL just
+        /// started playing. 50 ms is a conservative default; lower values (20–30 ms)
+        /// are fine if the hardware is known to have low latency.
+        /// </summary>
+        private const long HardwareAudioLatencyTicks = TimeSpan.TicksPerMillisecond * 50;
+
+        /// <summary>
+        /// Estimated display pipeline latency: the time between uploading a video
+        /// frame to the GPU (render-pass) and it actually appearing on screen
+        /// (after composition, swap-chain presentation, and monitor scanout).
+        /// With double/triple buffering at 60 Hz this is typically 33–50 ms.
+        /// <para>
+        /// This value is <b>added</b> to the audio clock when making video pacing
+        /// decisions, causing the sweep to present video frames slightly ahead of
+        /// the raw audio position. By the time the frame reaches the screen, the
+        /// audio has caught up and the two are perceptually aligned.
+        /// </para>
+        /// </summary>
+        private const long VideoDisplayLatencyCompensationTicks = TimeSpan.TicksPerMillisecond * 50;
+
+        /// <summary>
+        /// Video frames whose PTS is this many ticks ahead of the audio clock are
+        /// held (not presented) until the clock catches up (+40 ms).
+        /// </summary>
+        private const long VideoHoldThresholdTicks = TimeSpan.TicksPerMillisecond * 40;
+
+        /// <summary>
+        /// Video frames whose PTS lags the audio clock by more than this are dropped
+        /// immediately so the stream can catch up (−150 ms).
+        /// </summary>
+        private const long VideoDropThresholdTicks = -(TimeSpan.TicksPerMillisecond * 150);
+
+        /// <summary>
+        /// If video lags the audio clock by more than this, both queues are flushed
+        /// and the clock is reseeded to force an immediate resync (−500 ms).
+        /// </summary>
+        private const long VideoResetThresholdTicks = -(TimeSpan.TicksPerMillisecond * 500);
+
         // ═══════════════════════════════════════════════════════════════
         // Constants — OpenAL Audio Pipeline
         // ═══════════════════════════════════════════════════════════════
 
         /// <summary>Target number of OpenAL buffers to keep queued on the audio source.</summary>
-        private const int TargetOpenAlQueuedBuffers = 40;
+        private const int TargetOpenAlQueuedBuffers = 100;
 
         /// <summary>Minimum queued buffers before we issue alSourcePlay (pre-buffer threshold).</summary>
-        private const int MinAudioBuffersBeforePlay = 24;
+        private const int MinAudioBuffersBeforePlay = 8;
 
         /// <summary>Max audio frames to submit per drain cycle (prevents stalling the render thread).</summary>
         private const int MaxAudioFramesPerDrain = 96;
 
         /// <summary>
         /// Maximum streaming buffer pool size set on the AudioSourceComponent.
-        /// This is the hard ceiling for OpenAL queued buffers; any enqueue
-        /// attempt beyond this count is silently dropped. Must be large enough
-        /// to hold <see cref="TargetAudioQueuedDurationTicks"/> worth of audio
-        /// at the stream's frame size (typically ~21 ms per AAC frame at 48 kHz).
+        /// Must be large enough to hold <see cref="TargetAudioQueuedDurationTicks"/> worth
+        /// of audio at the stream's frame size (typically ~21 ms per AAC frame at 48 kHz).
+        /// 5 s at 48 kHz ≈ 234 buffers; 350 provides comfortable headroom.
         /// </summary>
-        private const int TargetAudioSourceMaxStreamingBuffers = 200;
-
-        /// <summary>Target total duration of audio data queued on the OpenAL source (3 s).</summary>
-        private const long TargetAudioQueuedDurationTicks = TimeSpan.TicksPerMillisecond * 3000;
-
-        /// <summary>Minimum queued audio duration before starting playback (1.5 s).</summary>
-        private const long MinAudioQueuedDurationBeforePlayTicks = TimeSpan.TicksPerMillisecond * 1500;
+        private const int TargetAudioSourceMaxStreamingBuffers = 350;
 
         /// <summary>
-        /// Minimum queued audio duration to restart playback after an underrun (200 ms).
-        /// Much lower than <see cref="MinAudioQueuedDurationBeforePlayTicks"/> so recovery
-        /// from a network stall resumes audio quickly instead of imposing a long silence gap.
+        /// Target total duration of audio data queued on the OpenAL source (5 s).
+        /// A deep target absorbs HLS segment-boundary download gaps that can cause
+        /// temporary delivery deficits (observed ~15–20 % deficit after Twitch
+        /// commercial breaks). Phase 1 fills aggressively up to this target.
         /// </summary>
-        private const long UnderrunRecoveryMinDurationTicks = TimeSpan.TicksPerMillisecond * 200;
+        private const long TargetAudioQueuedDurationTicks = TimeSpan.TicksPerSecond * 5;
 
         /// <summary>
-        /// Minimum queued buffers to restart playback after an underrun.
-        /// Corresponds to <see cref="UnderrunRecoveryMinDurationTicks"/>.
+        /// Minimum queued audio duration before starting playback (2 s).
+        /// A deeper pre-buffer cushion reduces the frequency of underruns on
+        /// live streams where the HLS decoder may produce audio at a slight
+        /// deficit vs real-time consumption, especially after format changes
+        /// at HLS segment boundaries (e.g. commercial break transitions).
         /// </summary>
-        private const int UnderrunRecoveryMinBuffers = 8;
-
-        /// <summary>Interval for the dedicated audio pump timer (10 ms).</summary>
-        private const int AudioPumpTimerIntervalMs = 10;
-
-        // ═══════════════════════════════════════════════════════════════
-        // Constants — Adaptive Catch-Up (Latency Reduction)
-        // ═══════════════════════════════════════════════════════════════
-
-        /// <summary>
-        /// Desired steady-state playback latency (3 s). Pitch returns to 1.0 at
-        /// this level. Must match <see cref="TargetAudioQueuedDurationTicks"/> so
-        /// the catch-up system disengages once the queue is at its normal depth.
-        /// </summary>
-        private const long TargetPlaybackLatencyTicks = TimeSpan.TicksPerMillisecond * 3000;
-
-        /// <summary>
-        /// Latency threshold above which catch-up pitch engages (5 s). Must be
-        /// well above <see cref="TargetAudioQueuedDurationTicks"/> (3 s) so that
-        /// normal steady-state buffering never triggers a pitch increase.
-        /// </summary>
-        private const long CatchUpEngageLatencyTicks = TimeSpan.TicksPerMillisecond * 5000;
-
-        /// <summary>Latency at which catch-up pitch reaches its maximum value (10 s).</summary>
-        private const long CatchUpMaxLatencyTicks = TimeSpan.TicksPerMillisecond * 10000;
-
-        /// <summary>
-        /// Maximum pitch multiplier during catch-up (2% speedup). Kept very low
-        /// so even when catch-up is active it is barely audible.
-        /// </summary>
-        private const float CatchUpMaxPitch = 1.02f;
+        private const long MinAudioQueuedDurationBeforePlayTicks = TimeSpan.TicksPerMillisecond * 2000;
 
         // ═══════════════════════════════════════════════════════════════
         // Constants — Telemetry
@@ -151,6 +154,26 @@ namespace XREngine.Rendering.UI
 
         /// <summary>Interval between periodic A/V drift telemetry log lines (10 s).</summary>
         private const long TelemetryIntervalTicks = TimeSpan.TicksPerSecond * 10;
+
+        /// <summary>
+        /// When the exponentially-weighted moving average (EWMA) of per-frame
+        /// drift falls below this threshold, the sweep loop tightens its drop
+        /// window to aggressively shed frames and catch up to the audio clock
+        /// (−33 ms ≈ 2 frames at 60 fps, ~1 frame at 30 fps).
+        /// </summary>
+        private const long VideoCatchupDriftThresholdTicks = -(TimeSpan.TicksPerMillisecond * 33);
+
+        /// <summary>
+        /// Smoothing factor for the EWMA of per-frame drift. Lower = more
+        /// smoothing. 0.1 responds over ~10 frames (≈167 ms at 60 fps).
+        /// </summary>
+        private const double DriftEwmaAlpha = 0.1;
+
+        /// <summary>
+        /// Interval between brief drift status log lines (2 s). Fires more
+        /// frequently than the full telemetry interval to catch slow-growing drift.
+        /// </summary>
+        private const long DriftStatusIntervalTicks = TimeSpan.TicksPerSecond * 2;
 
         // ═══════════════════════════════════════════════════════════════
         // Constants — Default Stream URL
@@ -168,6 +191,35 @@ namespace XREngine.Rendering.UI
         /// Attach one to the same entity to enable audio.
         /// </summary>
         public AudioSourceComponent? AudioSource => GetSiblingComponent<AudioSourceComponent>();
+
+        /// <summary>
+        /// Present-time drift in milliseconds for the most recently presented frame.
+        /// Negative means video behind the compensated A/V clock.
+        /// </summary>
+        public double DebugPresentDriftMs => _lastPresentedDriftTicks / (double)TimeSpan.TicksPerMillisecond;
+
+        /// <summary>
+        /// Positive means the current compensated video clock is ahead of the last
+        /// presented video PTS (i.e. video debt/lag), in milliseconds.
+        /// </summary>
+        public double DebugVideoDebtMs
+        {
+            get
+            {
+                long audioClockTicks = GetAudioClock();
+                if (audioClockTicks <= 0 || _lastPresentedVideoPts <= 0)
+                    return 0.0;
+
+                long videoClockTicks = audioClockTicks + VideoDisplayLatencyCompensationTicks;
+                return (videoClockTicks - _lastPresentedVideoPts) / (double)TimeSpan.TicksPerMillisecond;
+            }
+        }
+
+        /// <summary>Number of detected audio underruns in the current session.</summary>
+        public int DebugAudioUnderruns => _telemetryAudioUnderruns;
+
+        /// <summary>True when the audio hardware clock is currently active.</summary>
+        public bool DebugAudioSyncActive => GetAudioClock() > 0;
 
         private string? _streamUrl = GetConfiguredDefaultStreamUrl();
 
@@ -213,19 +265,6 @@ namespace XREngine.Rendering.UI
         public StreamVariantInfo? SelectedQuality => _selectedQuality;
 
         /// <summary>
-        /// Read-only current playback latency in milliseconds — the estimated
-        /// duration of audio data buffered in OpenAL awaiting playback.
-        /// Returns <c>0</c> when the stream is not playing.
-        /// </summary>
-        public double PlaybackLatencyMs => _playbackLatencyMs;
-
-        /// <summary>
-        /// The current playback pitch (1.0 = normal). Values above 1.0 indicate
-        /// the player is catching up to reduce latency.
-        /// </summary>
-        public float CurrentPlaybackPitch => _currentPitch;
-
-        /// <summary>
         /// Switch to a different quality variant. Stops the current session and
         /// reopens with the variant's media playlist URL.
         /// </summary>
@@ -239,7 +278,6 @@ namespace XREngine.Rendering.UI
             _selectedQuality = variant;
             Debug.Out($"Quality switch requested: {variant.DisplayLabel} -> {variant.Url}");
 
-            // Tear down current pipeline and restart with the variant URL directly.
             StopStreamingPipeline();
             StartStreamingPipelineWithVariant(variant);
         }
@@ -302,9 +340,6 @@ namespace XREngine.Rendering.UI
         /// <summary>PTS of the most recently uploaded video frame.</summary>
         private long _lastPresentedVideoPts = long.MinValue;
 
-        /// <summary>PTS of the most recently submitted audio frame.</summary>
-        private long _lastPresentedAudioPts = long.MinValue;
-
         /// <summary>Engine tick at which the current open attempt started (for latency measurement).</summary>
         private long _streamOpenAttemptStartedTicks = long.MinValue;
 
@@ -323,28 +358,68 @@ namespace XREngine.Rendering.UI
         /// <summary>Set after the first video frame is presented (guards telemetry logging).</summary>
         private volatile bool _hasReceivedFirstFrame;
 
-        // ═══════════════════════════════════════════════════════════════
-        // Fields — Audio Clock (Software A/V Sync)
-        // ═══════════════════════════════════════════════════════════════
-
         /// <summary>
-        /// Software audio clock in stream-PTS ticks. Advances by wall-clock
-        /// delta (scaled by pitch) each drain cycle while OpenAL is playing.
+        /// True while video is temporarily running in fallback mode without audio-clock sync
+        /// due to a stalled/empty audio pipeline.
         /// </summary>
-        private long _audioClockTicks = long.MinValue;
+        private bool _audioSyncFallbackActive;
+
+        // ═══════════════════════════════════════════════════════════════
+        // Fields — Hardware Audio Clock (Master A/V Sync)
+        // ═══════════════════════════════════════════════════════════════
 
         /// <summary>
-        /// Running total of submitted audio duration in ticks. Used together
-        /// with <see cref="_totalAudioBuffersSubmitted"/> to compute the average
-        /// buffer duration for queue-depth estimation.
+        /// Stream PTS of the first PCM sample submitted to OpenAL.
+        /// Together with <see cref="_processedSampleCount"/> and <see cref="AudioSource.SampleOffset"/>
+        /// this gives the exact current playback position in stream-PTS space.
+        /// </summary>
+        private long _firstAudioPts = long.MinValue;
+
+        /// <summary>
+        /// Cumulative count of PCM sample-frames (one stereo pair = one frame) that have
+        /// been fully played and unqueued from the primary OpenAL source.
+        /// Incremented in <see cref="OnPrimaryBufferProcessed"/> via the <see cref="AudioSource.BufferProcessed"/> event.
+        /// </summary>
+        private long _processedSampleCount;
+
+        /// <summary>
+        /// FIFO of PCM sample-frame counts, one entry per submitted buffer, in submission
+        /// order. Consumed in <see cref="OnPrimaryBufferProcessed"/> to advance
+        /// <see cref="_processedSampleCount"/> by exactly the right amount for each
+        /// buffer as it is unqueued by OpenAL.
+        /// </summary>
+        private readonly Queue<int> _submittedSampleCounts = new();
+
+        /// <summary>
+        /// The OpenAL source selected as the reference for the hardware clock.
+        /// Subscribed to <see cref="AudioSource.BufferProcessed"/> for sample counting.
+        /// Re-evaluated whenever listeners change.
+        /// </summary>
+        private AudioSource? _primaryAudioSource;
+
+        /// <summary>Sample rate of the last PCM buffer submitted to the primary source.</summary>
+        private int _primaryAudioSampleRate;
+
+        // ═══════════════════════════════════════════════════════════════
+        // Fields — Audio Pipeline Helpers
+        // ═══════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Cached reference to the sibling <see cref="AudioSourceComponent"/>, set when
+        /// the streaming pipeline starts and cleared when it stops. Avoids a
+        /// <c>GetSiblingComponent</c> lookup on every render-thread drain cycle.
+        /// </summary>
+        private AudioSourceComponent? _cachedAudioSource;
+
+        /// <summary>
+        /// Running total of submitted audio duration in ticks. Used with
+        /// <see cref="_totalAudioBuffersSubmitted"/> to compute average buffer duration
+        /// for queue-depth estimation (drain-stop condition).
         /// </summary>
         private long _totalAudioDurationSubmittedTicks;
 
         /// <summary>Total number of audio buffers submitted during this session.</summary>
         private int _totalAudioBuffersSubmitted;
-
-        /// <summary>Engine tick at which the audio clock was last advanced.</summary>
-        private long _audioClockLastEngineTicks = long.MinValue;
 
         /// <summary>Sample rate of the last submitted audio buffer (for format-change detection).</summary>
         private int _lastSubmittedAudioSampleRate;
@@ -354,42 +429,17 @@ namespace XREngine.Rendering.UI
 
         /// <summary>
         /// Tracks whether any OpenAL source was playing last cycle. Used to
-        /// detect Playing→Stopped transitions (actual audible underruns)
-        /// rather than counting every empty-queue observation.
+        /// detect Playing→Stopped transitions (audible underruns) for telemetry.
         /// </summary>
         private bool _wasAudioPlaying;
 
         /// <summary>
-        /// Non-reentrancy guard for audio draining so render and update ticks
-        /// cannot concurrently dequeue/submit audio.
+        /// Set True the first time Phase 2 starts audio playback during this
+        /// session. Remains True across format-change flushes and underrun
+        /// recoveries so the video gate can use wall-clock fallback instead of
+        /// freezing while audio re-buffers. Reset on pipeline stop.
         /// </summary>
-        private int _audioDrainInProgress;
-
-        /// <summary>
-        /// Set <c>true</c> when an underrun is detected and cleared once playback
-        /// is re-established. While set, Phase 2 uses the smaller recovery
-        /// thresholds (<see cref="UnderrunRecoveryMinDurationTicks"/>,
-        /// <see cref="UnderrunRecoveryMinBuffers"/>) so audio resumes quickly.
-        /// </summary>
-        private volatile bool _audioUnderrunRecovery;
-
-        /// <summary>
-        /// Dedicated timer that pumps audio independently of the engine
-        /// update/render loop. Fires every <see cref="AudioPumpTimerIntervalMs"/>
-        /// on a thread-pool thread, immune to engine tick throttling, GC pauses
-        /// on the main thread, and render stalls.
-        /// </summary>
-        private Timer? _audioPumpTimer;
-
-        // ═══════════════════════════════════════════════════════════════
-        // Fields — Adaptive Catch-Up State
-        // ═══════════════════════════════════════════════════════════════
-
-        /// <summary>Current playback latency in milliseconds (estimated from queued audio data).</summary>
-        private double _playbackLatencyMs;
-
-        /// <summary>Current audio pitch multiplier (1.0 = normal, &gt;1.0 = catching up).</summary>
-        private float _currentPitch = 1.0f;
+        private bool _audioHasEverPlayed;
 
         // ═══════════════════════════════════════════════════════════════
         // Fields — A/V Drift Telemetry
@@ -409,6 +459,33 @@ namespace XREngine.Rendering.UI
 
         /// <summary>Engine tick of the last telemetry log emission.</summary>
         private long _telemetryLastLogTicks;
+
+        /// <summary>EWMA of per-frame drift (videoPts − audioClock) in ticks. Negative = video behind.</summary>
+        private long _driftEwmaTicks;
+
+        /// <summary>Whether the drift EWMA has been seeded with its first measurement.</summary>
+        private bool _driftEwmaSeeded;
+
+        /// <summary>Count of frames dropped by the adaptive catch-up logic (tighter threshold).</summary>
+        private int _telemetryCatchupDrops;
+
+        /// <summary>Engine tick of the last brief drift status log emission.</summary>
+        private long _driftStatusLastLogTicks;
+
+        /// <summary>
+        /// Drift (videoPts - compensatedVideoClock) for the most recently
+        /// presented frame. Captured at present-time, not telemetry-time.
+        /// </summary>
+        private long _lastPresentedDriftTicks;
+
+        /// <summary>Minimum present-time drift observed since the last telemetry emission.</summary>
+        private long _driftIntervalMinTicks = long.MaxValue;
+
+        /// <summary>Maximum present-time drift observed since the last telemetry emission.</summary>
+        private long _driftIntervalMaxTicks = long.MinValue;
+
+        /// <summary>Number of present-time drift samples accumulated for the current telemetry window.</summary>
+        private int _driftIntervalSamples;
 
         // ═══════════════════════════════════════════════════════════════
         // Fields — Quality Selection
@@ -434,16 +511,6 @@ namespace XREngine.Rendering.UI
         /// resizable RGB8 texture. The texture starts at 1x1 and is resized to
         /// match the stream resolution when the first frame arrives.
         /// </summary>
-        /// <remarks>
-        /// Uses a plain 2D resizable texture — NOT a framebuffer texture.
-        /// A framebuffer attachment causes the engine to clear it during
-        /// FBO operations, producing black frames.
-        /// <para>
-        /// <c>Resizable = true</c> is critical: non-resizable textures use
-        /// <c>glTextureStorage2D</c> (immutable) which cannot be re-allocated,
-        /// causing the resize to fail silently.
-        /// </para>
-        /// </remarks>
         private static XRMaterial GetVideoMaterial()
         {
             var texture = new XRTexture2D(1u, 1u,
@@ -464,25 +531,14 @@ namespace XREngine.Rendering.UI
         // Component Lifecycle
         // ═══════════════════════════════════════════════════════════════
 
-        /// <summary>
-        /// Called when the component becomes active in the scene hierarchy.
-        /// Starts the streaming pipeline.
-        /// </summary>
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            _audioPumpTimer = new Timer(AudioPumpTimerCallback, null, AudioPumpTimerIntervalMs, AudioPumpTimerIntervalMs);
             StartStreamingPipeline();
         }
 
-        /// <summary>
-        /// Called when the component is deactivated or removed.
-        /// Stops the streaming pipeline and releases resources.
-        /// </summary>
         protected internal override void OnComponentDeactivated()
         {
-            _audioPumpTimer?.Dispose();
-            _audioPumpTimer = null;
             base.OnComponentDeactivated();
             StopStreamingPipeline();
         }
@@ -495,9 +551,6 @@ namespace XREngine.Rendering.UI
         {
             base.OnMaterialSettingUniforms(material, program);
 
-            // Drain decoded frames synchronously on the render thread.
-            // GPU texture uploads MUST happen on the thread that owns the
-            // graphics context; engine ticks run on thread-pool threads.
             if (_streamingSession is not null)
                 DrainStreamingFramesOnMainThread(_streamingSession);
         }
@@ -506,9 +559,7 @@ namespace XREngine.Rendering.UI
         // Utilities
         // ═══════════════════════════════════════════════════════════════
 
-        /// <summary>
-        /// Returns the current engine elapsed time as .NET ticks (100 ns units).
-        /// </summary>
+        /// <summary>Returns the current engine elapsed time as .NET ticks (100 ns units).</summary>
         private static long GetEngineTimeTicks()
             => (long)(Engine.ElapsedTime * TimeSpan.TicksPerSecond);
 
@@ -517,13 +568,8 @@ namespace XREngine.Rendering.UI
         /// then falling back to iterating engine windows.
         /// </summary>
         private static AbstractRenderer? GetActiveRenderer()
-        {
-            if (AbstractRenderer.Current is not null)
-                return AbstractRenderer.Current;
-
-            return Engine.Windows
-                .Select(window => window.Renderer)
-                .FirstOrDefault();
-        }
+            => AbstractRenderer.Current is not null
+                ? AbstractRenderer.Current
+                : Engine.Windows.Select(window => window.Renderer).FirstOrDefault();
     }
 }
