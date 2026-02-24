@@ -37,13 +37,14 @@
   "Spline": false,
 
   "AddEditorUI": true,
+  "CameraUIDrawSpaceOnInit": "World",
   "TransformTool": false,
   "DearImGuiUI": false,
   "EnableProfilerLogging": true,
   "RiveUI": false,
-  "VideoStreaming": true,
+  "VideoStreaming": false,
   "VideoStreamingAudio": true,
-  "VideoStreamingUrl": "https://twitch.tv/sodapoppin",
+  "VideoStreamingUrl": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
   "UltralightWebView": false,
   "UltralightWebViewUrl": "https://blackjaxvr.com",
 

@@ -51,15 +51,27 @@ namespace XREngine.Rendering.UI
             var tfm = BoundableTransform;
             if (!(tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false) || !tfm.IsVisibleInHierarchy)
                 return false;
+
             var canvas = tfm.ParentCanvas;
-            if (canvas is null || canvas.DrawSpace != ECanvasDrawSpace.Screen)
+            if (canvas is null)
                 return false;
+
+            var canvasComp = canvas.SceneNode?.GetComponent<UICanvasComponent>();
+
+            // Determine if this item should use the 2D render path:
+            // - Screen-space: always yes
+            // - Non-screen with offscreen FBO: yes (rendering to canvas's internal FBO)
+            // - Non-screen without offscreen: no (handled by ShouldRender3D as direct 3D objects)
+            if (canvas.DrawSpace != ECanvasDrawSpace.Screen)
+            {
+                if (!(canvasComp?.PreferOffscreenRenderingForNonScreenSpaces ?? false))
+                    return false;
+            }
 
             // Attempt batched rendering path: register with the canvas's batch collector
             // and skip the individual render command for this component.
             if (SupportsBatchedRendering)
             {
-                var canvasComp = canvas.SceneNode?.GetComponent<UICanvasComponent>();
                 if (canvasComp?.BatchCollector is { Enabled: true } collector)
                 {
                     if (RegisterWithBatchCollector(collector))

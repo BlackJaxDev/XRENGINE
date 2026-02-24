@@ -25,10 +25,16 @@ namespace XREngine.Scene
         public Quadtree<RenderInfo2D> RenderTree { get; } = new Quadtree<RenderInfo2D>(new BoundingRectangleF());
 
         public void SetBounds(BoundingRectangleF bounds)
-            => RenderTree.Remake(bounds);
+        {
+            lock (_renderablesLock)
+                RenderTree.Remake(bounds);
+        }
 
         public override void DebugRender(XRCamera? camera, bool onlyContainingItems = false)
-            => RenderTree.DebugRender(camera?.GetOrthoCameraBounds(), onlyContainingItems, RenderAABB);
+        {
+            lock (_renderablesLock)
+                RenderTree.DebugRender(camera?.GetOrthoCameraBounds(), onlyContainingItems, RenderAABB);
+        }
 
         private void RenderAABB(Vector2 extents, Vector2 center, ColorF4 color)
             => Engine.Rendering.Debug.RenderQuad(new Vector3(center, 0.0f) + AbstractRenderer.UIPositionBias, AbstractRenderer.UIRotation, extents, false, color);
@@ -38,7 +44,10 @@ namespace XREngine.Scene
         public void Raycast(
             Vector2 screenPoint,
             SortedDictionary<float, List<(IRenderable item, object? data)>> items)
-            => RenderTree.Raycast(screenPoint, items);
+        {
+            lock (_renderablesLock)
+                RenderTree.Raycast(screenPoint, items);
+        }
 
         public override void CollectRenderedItems(
             RenderCommandCollection meshRenderCommands,
@@ -61,33 +70,51 @@ namespace XREngine.Scene
         /// <param name="camera"></param>
         public void CollectRenderedItems(RenderCommandCollection commands, BoundingRectangleF? collectionVolume, XRCamera? camera)
         {
-            // Ensure pending UI renderables are flushed even when GlobalCollectVisible isn't called
-            // (e.g., screen-space UI path).
-            ProcessPendingRenderableOperations();
+            lock (_renderablesLock)
+            {
+                // Ensure pending UI renderables are flushed even when GlobalCollectVisible isn't called
+                // (e.g., screen-space UI path).
+                ProcessPendingRenderableOperations();
 
-            bool IntersectionTest(RenderInfo2D item, BoundingRectangleF cullingVolume, bool containsOnly)
-            {
-                if (item.CullingVolume is null)
-                    return false;
-                
-                var contain = cullingVolume.ContainmentOf(item.CullingVolume.Value);
-                return containsOnly ? contain == EContainment.Contains : contain != EContainment.Disjoint;
+                // Flush pending adds/removes and apply any pending Remake so the tree
+                // is fully populated before we walk it (avoids one-frame-delay from
+                // the deferred Swap that normally runs in GlobalSwapBuffers).
+                RenderTree.Swap();
+
+                bool IntersectionTest(RenderInfo2D item, BoundingRectangleF cullingVolume, bool containsOnly)
+                {
+                    if (item.CullingVolume is null)
+                        return false;
+
+                    var contain = cullingVolume.ContainmentOf(item.CullingVolume.Value);
+                    return containsOnly ? contain == EContainment.Contains : contain != EContainment.Disjoint;
+                }
+
+                int walkedCount = 0;
+                void AddRenderCommands(ITreeItem item)
+                {
+                    walkedCount++;
+                    if (item is RenderInfo renderable)
+                        renderable.CollectCommands(commands, camera);
+                }
+
+                if (collectionVolume is null)
+                    RenderTree.CollectAll(AddRenderCommands);
+                else
+                    RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
+
+                if (_diagFrames < 10 || _diagFrames % 300 == 0)
+                    Debug.Out($"[VS2D:Collect] frame={_diagFrames} flatCount={_renderables.Count} treeWalked={walkedCount} treeBounds={RenderTree.Bounds} vol={collectionVolume?.ToString() ?? "null"}");
+                _diagFrames++;
             }
-            void AddRenderCommands(ITreeItem item)
-            {
-                if (item is RenderInfo renderable)
-                    renderable.CollectCommands(commands, camera);
-            }
-            if (collectionVolume is null)
-                RenderTree.CollectAll(AddRenderCommands);
-            else
-                RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
         }
+        private int _diagFrames = 0;
 
         public IReadOnlyList<RenderInfo2D> Renderables => _renderables;
         private readonly List<RenderInfo2D> _renderables = [];
         private readonly HashSet<RenderInfo2D> _renderableSet = [];
         private readonly ConcurrentQueue<(RenderInfo2D renderable, bool add)> _pendingRenderableOperations = new(); // staged until PreCollectVisible runs on the collect visible thread
+        private readonly object _renderablesLock = new();
 
         public void AddRenderable(RenderInfo2D renderable)
             => _pendingRenderableOperations.Enqueue((renderable, true));
@@ -108,26 +135,33 @@ namespace XREngine.Scene
 
         public override IEnumerator<RenderInfo> GetEnumerator()
         {
-            foreach (var renderable in _renderables)
+            RenderInfo2D[] snapshot;
+            lock (_renderablesLock)
+                snapshot = [.. _renderables];
+
+            foreach (var renderable in snapshot)
                 yield return renderable;
         }
 
         private void ProcessPendingRenderableOperations()
         {
-            while (_pendingRenderableOperations.TryDequeue(out var operation))
+            lock (_renderablesLock)
             {
-                if (operation.add)
+                while (_pendingRenderableOperations.TryDequeue(out var operation))
                 {
-                    if (_renderableSet.Add(operation.renderable))
+                    if (operation.add)
                     {
-                        _renderables.Add(operation.renderable);
-                        RenderTree.Add(operation.renderable);
+                        if (_renderableSet.Add(operation.renderable))
+                        {
+                            _renderables.Add(operation.renderable);
+                            RenderTree.Add(operation.renderable);
+                        }
                     }
-                }
-                else if (_renderableSet.Remove(operation.renderable))
-                {
-                    _renderables.Remove(operation.renderable);
-                    RenderTree.Remove(operation.renderable);
+                    else if (_renderableSet.Remove(operation.renderable))
+                    {
+                        _renderables.Remove(operation.renderable);
+                        RenderTree.Remove(operation.renderable);
+                    }
                 }
             }
         }

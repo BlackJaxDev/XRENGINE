@@ -54,6 +54,8 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
         return container;
     }
 
+    private readonly FarToNearRenderCommandSorter _farToNearSorter = new();
+
     protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
         => new()
         {
@@ -61,6 +63,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
             { (int)EDefaultRenderPass.Background, null },
             { (int)EDefaultRenderPass.OpaqueDeferred, _nearToFarSorter },
             { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
+            { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
             { (int)EDefaultRenderPass.OnTopForward, null },
             { (int)EDefaultRenderPass.PostRender, null },
         };
@@ -93,6 +96,11 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
                 commands.Add<VPRC_DepthWrite>().Allow = true;
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
+
+                // Transparent pass for world-space UI canvas quads and other alpha-blended geometry.
+                commands.Add<VPRC_DepthWrite>().Allow = false;
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, false);
+                commands.Add<VPRC_DepthWrite>().Allow = true;
 
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, false);
                 commands.Add<VPRC_RenderDebugShapes>();
@@ -129,6 +137,11 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
                 commands.Add<VPRC_DepthWrite>().Allow = true;
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
+
+                // Transparent pass for world-space UI canvas quads and other alpha-blended geometry.
+                commands.Add<VPRC_DepthWrite>().Allow = false;
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, false);
+                commands.Add<VPRC_DepthWrite>().Allow = true;
 
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, false);
                 commands.Add<VPRC_RenderDebugShapes>();

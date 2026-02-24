@@ -100,7 +100,7 @@ public static partial class EditorUnitTests
             var rootCanvasNode = new SceneNode(parent.World, "TestUINode") { IsEditorOnly = true };
             var canvas = rootCanvasNode.AddComponent<UICanvasComponent>()!;
             var canvasTfm = canvas.CanvasTransform;
-            canvasTfm.DrawSpace = ECanvasDrawSpace.Screen;
+            canvasTfm.DrawSpace = Toggles.CameraUIDrawSpaceOnInit;
             canvasTfm.SetSize(new Vector2(1920.0f, 1080.0f));
             canvasTfm.Padding = new Vector4(0.0f);
 
@@ -120,6 +120,14 @@ public static partial class EditorUnitTests
                     if (parent.World is not null)
                     {
                         parent.World.AddToEditorScene(rootCanvasNode);
+
+                        // In unit-test world construction, UI components are often created before the
+                        // root node is attached to a world. When the world arrives later, component
+                        // activation callbacks (OnComponentActivated) are not guaranteed to run
+                        // automatically, so explicitly activate the tree once after world attach.
+                        if (rootCanvasNode.IsActiveSelf)
+                            rootCanvasNode.OnActivated();
+
                         parent.PropertyChanged -= OnParentWorldAssigned;
                     }
                 }
@@ -140,7 +148,7 @@ public static partial class EditorUnitTests
             if (Toggles.VisualizeQuadtree)
                 rootCanvasNode.AddComponent<DebugVisualizeQuadtreeComponent>();
 
-            screenSpaceCamera?.UserInterface = canvas;
+            screenSpaceCamera?.UserInterface = Toggles.CameraUIDrawSpaceOnInit == ECanvasDrawSpace.Screen ? canvas : null;
 
             if (EditorUnitTests.Toggles.RiveUI)
             {
