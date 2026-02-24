@@ -28,14 +28,21 @@ public static partial class EditorUnitTests
     {
         private static readonly bool DockFPSTopLeft = false;
         private static readonly Queue<float> _fpsAvg = new();
+        private static float _lastSampledRenderTimestamp = -1.0f;
 
         private static UIEditorComponent? _editorComponent = null;
 
         private static void TickFPS(UITextComponent t)
         {
-            _fpsAvg.Enqueue(1.0f / Engine.Time.Timer.Render.Delta);
-            if (_fpsAvg.Count > 60)
-                _fpsAvg.Dequeue();
+            // Only sample once per actual render frame to avoid duplicate stale samples
+            float renderTimestamp = Engine.Time.Timer.Render.LastTimestamp;
+            if (renderTimestamp != _lastSampledRenderTimestamp)
+            {
+                _lastSampledRenderTimestamp = renderTimestamp;
+                _fpsAvg.Enqueue(1.0f / Engine.Time.Timer.Render.Delta);
+                if (_fpsAvg.Count > 60)
+                    _fpsAvg.Dequeue();
+            }
             string str = $"{MathF.Round(_fpsAvg.Sum() / _fpsAvg.Count)}hz";
             var net = Engine.Networking;
             if (net is not null)
@@ -100,7 +107,45 @@ public static partial class EditorUnitTests
             var rootCanvasNode = new SceneNode(parent.World, "TestUINode") { IsEditorOnly = true };
             var canvas = rootCanvasNode.AddComponent<UICanvasComponent>()!;
             var canvasTfm = canvas.CanvasTransform;
-            canvasTfm.DrawSpace = Toggles.CameraUIDrawSpaceOnInit;
+            bool useOffscreenForNonScreenSpaces;
+            bool bindToCameraSpace;
+            switch (Toggles.CameraUIDrawSpaceOnInit)
+            {
+                case CameraUIDrawMode.Screen:
+                    canvasTfm.DrawSpace = ECanvasDrawSpace.Screen;
+                    useOffscreenForNonScreenSpaces = false;
+                    bindToCameraSpace = false;
+                    break;
+                case CameraUIDrawMode.World:
+                    canvasTfm.DrawSpace = ECanvasDrawSpace.World;
+                    useOffscreenForNonScreenSpaces = false;
+                    bindToCameraSpace = false;
+                    break;
+                case CameraUIDrawMode.Camera:
+                    canvasTfm.DrawSpace = ECanvasDrawSpace.Camera;
+                    useOffscreenForNonScreenSpaces = false;
+                    bindToCameraSpace = true;
+                    break;
+                case CameraUIDrawMode.WorldOffscreen:
+                    canvasTfm.DrawSpace = ECanvasDrawSpace.World;
+                    useOffscreenForNonScreenSpaces = true;
+                    bindToCameraSpace = false;
+                    break;
+                case CameraUIDrawMode.CameraOffscreen:
+                    canvasTfm.DrawSpace = ECanvasDrawSpace.Camera;
+                    useOffscreenForNonScreenSpaces = true;
+                    bindToCameraSpace = true;
+                    break;
+                default:
+                    canvasTfm.DrawSpace = ECanvasDrawSpace.Screen;
+                    useOffscreenForNonScreenSpaces = false;
+                    bindToCameraSpace = false;
+                    break;
+            }
+
+            canvas.PreferOffscreenRenderingForNonScreenSpaces = useOffscreenForNonScreenSpaces;
+            canvas.AutoDisableOffscreenForBackdropBlur = !useOffscreenForNonScreenSpaces;
+            canvasTfm.CameraSpaceCamera = bindToCameraSpace ? screenSpaceCamera?.Camera : null;
             canvasTfm.SetSize(new Vector2(1920.0f, 1080.0f));
             canvasTfm.Padding = new Vector4(0.0f);
 
@@ -148,7 +193,7 @@ public static partial class EditorUnitTests
             if (Toggles.VisualizeQuadtree)
                 rootCanvasNode.AddComponent<DebugVisualizeQuadtreeComponent>();
 
-            screenSpaceCamera?.UserInterface = Toggles.CameraUIDrawSpaceOnInit == ECanvasDrawSpace.Screen ? canvas : null;
+            screenSpaceCamera?.UserInterface = Toggles.CameraUIDrawSpaceOnInit == CameraUIDrawMode.Screen ? canvas : null;
 
             if (EditorUnitTests.Toggles.RiveUI)
             {

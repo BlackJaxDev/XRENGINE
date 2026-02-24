@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Info
 {
     public class RenderInfo2D : RenderInfo, IQuadtreeItem, IComparable<RenderInfo2D>
     {
+        private static int _canvasAssignDiagCount = 0;
         private int _layerIndex = 0;
         private int _indexWithinLayer = 0;
         private BoundingRectangleF? _cullingVolume;
@@ -110,12 +111,24 @@ namespace XREngine.Rendering.Info
                         if (field is UICanvasComponent newInstance)
                             newInstance.VisualScene2D?.AddRenderable(this);
                     }
+                    if (_canvasAssignDiagCount < 30)
+                    {
+                        string? ownerNodeName = (Owner as XRComponent)?.SceneNode?.Name;
+                        Debug.Out($"[RenderInfo2D:Canvas] owner={Owner?.GetType().Name} node='{ownerNodeName}' visible={IsVisible} prev={(prev as UICanvasComponent)?.SceneNode?.Name ?? "null"} next={(field as UICanvasComponent)?.SceneNode?.Name ?? "null"}");
+                        _canvasAssignDiagCount++;
+                    }
                     break;
                 case (nameof(IsVisible)):
                     if (IsVisible)
                         UserInterfaceCanvas?.VisualScene2D?.AddRenderable(this);
                     else
                         UserInterfaceCanvas?.VisualScene2D?.RemoveRenderable(this);
+                    if (_canvasAssignDiagCount < 30)
+                    {
+                        string? ownerNodeName = (Owner as XRComponent)?.SceneNode?.Name;
+                        Debug.Out($"[RenderInfo2D:Visible] owner={Owner?.GetType().Name} node='{ownerNodeName}' isVisible={IsVisible} canvas={UserInterfaceCanvas?.SceneNode?.Name ?? "null"}");
+                        _canvasAssignDiagCount++;
+                    }
                     break;
                 case nameof(CullingVolume):
                     QuadtreeNode?.QueueItemMoved(this);

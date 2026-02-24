@@ -131,7 +131,7 @@ namespace XREngine.Rendering.UI
                 if (dispatched > 0 && !_loggedFirstDispatch)
                 {
                     _loggedFirstDispatch = true;
-                    Debug.Out($"[UltralightGpuWeb] First input dispatch: {dispatched} event(s) on render thread.");
+                    Debug.UI($"[UltralightGpuWeb] First input dispatch: {dispatched} event(s) on render thread.");
                 }
             }
 
@@ -212,7 +212,7 @@ namespace XREngine.Rendering.UI
 
                 if (!_loggedMsaaResolve)
                 {
-                    Debug.Out($"[UltralightGpuWeb] MSAA resolved: msaaFbo={texEntry.MultisampledFramebuffer} → fbo={texEntry.Framebuffer}, size={srcWidth}x{srcHeight}.");
+                    Debug.UI($"[UltralightGpuWeb] MSAA resolved: msaaFbo={texEntry.MultisampledFramebuffer} → fbo={texEntry.Framebuffer}, size={srcWidth}x{srcHeight}.");
                     _loggedMsaaResolve = true;
                 }
             }
@@ -232,7 +232,7 @@ namespace XREngine.Rendering.UI
 
             if (!_loggedFirstBlit)
             {
-                Debug.Out($"[UltralightGpuWeb] First blit succeeded: srcTex={glTextureId}, msaa={texEntry.MultisampledFramebuffer != 0}, src={srcWidth}x{srcHeight}, dstFbo={_targetFramebufferId}.");
+                Debug.UI($"[UltralightGpuWeb] First blit succeeded: srcTex={glTextureId}, msaa={texEntry.MultisampledFramebuffer != 0}, src={srcWidth}x{srcHeight}, dstFbo={_targetFramebufferId}.");
                 _loggedFirstBlit = true;
             }
 
@@ -344,7 +344,7 @@ namespace XREngine.Rendering.UI
             if (!string.IsNullOrWhiteSpace(exception))
                 Debug.LogWarning($"[UltralightProbe] EvaluateScript exception: {exception}");
             else
-                Debug.Out($"[UltralightProbe] {result}");
+                Debug.UI($"[UltralightProbe] {result}");
 
             _loggedCompatibilityProbe = true;
         }
@@ -355,7 +355,7 @@ namespace XREngine.Rendering.UI
                 return;
 
             _consoleMessageCount++;
-            Debug.Out($"[UltralightConsole] {level} {source} {sourceId}:{lineNumber}:{columnNumber} {message}");
+            Debug.UI($"[UltralightConsole] {level} {source} {sourceId}:{lineNumber}:{columnNumber} {message}");
         }
 
         private static ULMouseEventButton MapMouseButton(WebMouseButton button)

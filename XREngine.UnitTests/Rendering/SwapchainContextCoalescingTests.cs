@@ -379,7 +379,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(30, CtxPipelineA),  // PassOrder 0
         ];
 
-        FrameOp[] sorted = compiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
 
         // Should be sorted by PassOrder: 30 (order 0), 20 (order 1), 10 (order 2)
         sorted[0].PassIndex.ShouldBe(30);
@@ -403,7 +403,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(10, CtxPipelineA),  // Known PassIndex → order 0
         ];
 
-        FrameOp[] sorted = compiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
 
         sorted[0].PassIndex.ShouldBe(10);
         sorted[1].PassIndex.ShouldBe(99);
@@ -415,7 +415,7 @@ public sealed class SwapchainContextCoalescingTests
         var compiler = new VulkanRenderGraphCompiler();
         FrameOp[] ops = [SwapchainClear(0, CtxPipelineA)];
 
-        FrameOp[] sorted = compiler.SortFrameOps(ops, VulkanCompiledRenderGraph.Empty);
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, VulkanCompiledRenderGraph.Empty);
 
         sorted.ShouldBeSameAs(ops);
     }
@@ -426,7 +426,7 @@ public sealed class SwapchainContextCoalescingTests
         var compiler = new VulkanRenderGraphCompiler();
         FrameOp[] ops = [];
 
-        FrameOp[] sorted = compiler.SortFrameOps(ops, VulkanCompiledRenderGraph.Empty);
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, VulkanCompiledRenderGraph.Empty);
 
         sorted.ShouldBeSameAs(ops);
     }
@@ -458,7 +458,7 @@ public sealed class SwapchainContextCoalescingTests
             SwapchainDraw(6, CtxPipelineB),
         ];
 
-        FrameOp[] sorted = compiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
 
         // Scene pipeline ops first (GroupOrder 0), then UI (GroupOrder 3)
         sorted[0].PassIndex.ShouldBe(0);
@@ -495,7 +495,7 @@ public sealed class SwapchainContextCoalescingTests
         VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
 
         // Step 2: Sort
-        FrameOp[] sorted = compiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
 
         // All ops should now share the same context
         FrameOpContext expectedContext = CtxPipelineA;
@@ -531,7 +531,7 @@ public sealed class SwapchainContextCoalescingTests
         ];
 
         VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
-        FrameOp[] sorted = compiler.SortFrameOps(ops, graph);
+        FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
 
         // All swapchain ops should have context A
         foreach (var op in sorted.Where(o => VulkanRenderGraphCompiler.OpTargetsSwapchain(o)))
@@ -565,7 +565,7 @@ public sealed class SwapchainContextCoalescingTests
             ];
 
             VulkanRenderGraphCompiler.CoalesceSwapchainContexts(ops);
-            FrameOp[] sorted = compiler.SortFrameOps(ops, graph);
+            FrameOp[] sorted = VulkanRenderGraphCompiler.SortFrameOps(ops, graph);
             allResults[run] = sorted.Select(o => o.PassIndex).ToArray();
         }
 

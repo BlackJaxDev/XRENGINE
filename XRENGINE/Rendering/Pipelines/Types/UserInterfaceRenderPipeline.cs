@@ -60,16 +60,15 @@ public class UserInterfaceRenderPipeline : RenderPipeline
     {
         ViewportRenderCommandContainer c = new(pipeline);
 
-        c.Add<VPRC_SetClears>().Set(null, 1.0f, 0);
+        // Clear the FBO to transparent black so only the UI content is visible
+        // when the texture is composited onto the world-space quad.
+        c.Add<VPRC_SetClears>().Set(new ColorF4(0f, 0f, 0f, 0f), 1.0f, 0);
         c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.PreRender;
 
         using (c.AddUsing<VPRC_PushOutputFBORenderArea>())
         {
-            using (c.AddUsing<VPRC_BindOutputFBO>(t => t.SetOptions(write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+            using (c.AddUsing<VPRC_BindOutputFBO>(t => t.SetOptions(write: true, clearColor: true, clearDepth: false, clearStencil: false)))
             {
-                //c.Add<VPRC_StencilMask>().Set(~0u);
-                //c.Add<VPRC_ClearByBoundFBO>();
-
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Less;
                 c.Add<VPRC_DepthWrite>().Allow = true;
 

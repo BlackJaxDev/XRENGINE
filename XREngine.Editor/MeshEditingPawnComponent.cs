@@ -5,6 +5,8 @@ using System.Numerics;
 using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Modeling;
+using XREngine.Rendering;
+using XREngine.Rendering.Modeling;
 using XREngine.Rendering.Picking;
 using XREngine.Scene.Transforms;
 
@@ -23,12 +25,26 @@ public enum PrimitiveSelectionMode
 /// </summary>
 public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
 {
+    private ModelingMeshMetadata _modelingMetadata = new()
+    {
+        SourcePrimitiveType = ModelingPrimitiveType.Triangles
+    };
+
     private EditableMesh? _mesh;
     public EditableMesh? Mesh
     {
         get => _mesh;
         set => SetField(ref _mesh, value);
     }
+
+    private XRMesh? _loadedMesh;
+    public XRMesh? LoadedMesh
+    {
+        get => _loadedMesh;
+        private set => SetField(ref _loadedMesh, value);
+    }
+
+    private ModelingMeshDocument? _loadedDocument;
     
     private TransformBase? _targetTransform;
     public TransformBase? TargetTransform
@@ -259,6 +275,42 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
 
     public (List<Vector3> Vertices, List<int> Indices) BakeToMeshData()
         => _mesh?.Bake() ?? throw new InvalidOperationException("No mesh is assigned to the MeshEditingPawnComponent.");
+    
+    public void LoadFromXRMesh(XRMesh mesh, XRMeshModelingImportOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+
+        ModelingMeshDocument document = XRMeshModelingImporter.Import(mesh, options);
+        _loadedDocument = document;
+        Mesh = EditableMeshConverter.ToEditable(document);
+        _modelingMetadata = document.Metadata.Clone();
+        LoadedMesh = mesh;
+        ClearSelection();
+    }
+
+    public XRMesh SaveToXRMesh(XRMeshModelingExportOptions? options = null)
+    {
+        if (_mesh is null)
+            throw new InvalidOperationException("No mesh is assigned to the MeshEditingPawnComponent.");
+
+        using IDisposable interactionScope = Undo.BeginUserInteraction();
+        using Undo.ChangeScope changeScope = Undo.BeginChange("Apply Mesh Editing Save");
+
+        Undo.Track(this);
+        if (LoadedMesh is not null)
+            Undo.Track(LoadedMesh);
+
+        ModelingMeshDocument document = EditableMeshConverter.FromEditable(_mesh, _modelingMetadata);
+        PreserveCompatibleAttributeChannels(document, _loadedDocument);
+        XRMesh mesh = XRMeshModelingExporter.Export(document, options);
+
+        _loadedDocument = document;
+        LoadedMesh = mesh;
+        return mesh;
+    }
+
+    public XRMesh BuildXRMesh(XRMeshModelingExportOptions? options = null)
+        => SaveToXRMesh(options);
 
     public void SetSelectionMode(PrimitiveSelectionMode mode)
     {
@@ -319,6 +371,42 @@ public sealed class MeshEditingPawnComponent : EditorFlyingCameraPawnComponent
             yield return face.A;
             yield return face.B;
             yield return face.C;
+        }
+    }
+
+    private static void PreserveCompatibleAttributeChannels(ModelingMeshDocument document, ModelingMeshDocument? sourceDocument)
+    {
+        if (sourceDocument is null)
+            return;
+
+        int vertexCount = document.Positions.Count;
+
+        if (sourceDocument.Normals is { Count: > 0 } normals && normals.Count == vertexCount)
+            document.Normals = [.. normals];
+
+        if (sourceDocument.Tangents is { Count: > 0 } tangents && tangents.Count == vertexCount)
+            document.Tangents = [.. tangents];
+
+        if (sourceDocument.TexCoordChannels is { Count: > 0 })
+        {
+            bool allCompatible = sourceDocument.TexCoordChannels.All(channel => channel is { Count: var count } && count == vertexCount);
+            if (allCompatible)
+            {
+                document.TexCoordChannels = sourceDocument.TexCoordChannels
+                    .Select(channel => channel is null ? new List<Vector2>() : [.. channel])
+                    .ToList();
+            }
+        }
+
+        if (sourceDocument.ColorChannels is { Count: > 0 })
+        {
+            bool allCompatible = sourceDocument.ColorChannels.All(channel => channel is { Count: var count } && count == vertexCount);
+            if (allCompatible)
+            {
+                document.ColorChannels = sourceDocument.ColorChannels
+                    .Select(channel => channel is null ? new List<Vector4>() : [.. channel])
+                    .ToList();
+            }
         }
     }
 }

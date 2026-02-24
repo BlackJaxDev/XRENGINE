@@ -767,19 +767,37 @@ namespace XREngine.Rendering
         /// Collects screen space UI items into the canvas' render pipeline.
         /// If AllowUIRender is false, the camera component has no UI canvas, or the canvas is not set to screen space, this will do nothing.
         /// </summary>
+        private static int s_vpScreenUIDiagCount = 0;
         private void CollectVisible_ScreenSpaceUI()
         {
             using var sample = Engine.Profiler.Start("XRViewport.CollectVisible_ScreenSpaceUI");
 
             if (!AllowUIRender)
+            {
+                if (s_vpScreenUIDiagCount < 5)
+                    Debug.Out($"[VP:ScreenUI] CollectVisible skipped: AllowUIRender=false VP[{Index}]");
                 return;
+            }
 
-            UICanvasComponent? ui = CameraComponent?.GetUserInterfaceOverlay();
+            UICanvasComponent? ui = ResolveScreenSpaceUICanvas();
             if (ui is null)
+            {
+                if (s_vpScreenUIDiagCount < 5)
+                    Debug.Out($"[VP:ScreenUI] CollectVisible skipped: ui=null CameraComponent={CameraComponent?.GetHashCode()} VP[{Index}]");
                 return;
+            }
 
             if (ui.CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
-                ui?.CollectVisibleItemsScreenSpace();
+            {
+                if (s_vpScreenUIDiagCount < 5)
+                    Debug.Out($"[VP:ScreenUI] CollectVisible dispatching to canvas. DrawSpace={ui.CanvasTransform.DrawSpace} active={ui.IsActive} VP[{Index}]");
+                s_vpScreenUIDiagCount++;
+                ui?.CollectVisibleItemsScreenSpace(this);
+            }
+            else if (s_vpScreenUIDiagCount < 5)
+            {
+                Debug.Out($"[VP:ScreenUI] CollectVisible skipped: DrawSpace={ui.CanvasTransform.DrawSpace} VP[{Index}]");
+            }
         }
 
         /// <summary>
@@ -846,7 +864,7 @@ namespace XREngine.Rendering
 
             using var sample = Engine.Profiler.Start("XRViewport.SwapBuffers_ScreenSpaceUI");
 
-            var ui = CameraComponent?.GetUserInterfaceOverlay();
+            var ui = ResolveScreenSpaceUICanvas();
             if (ui is null)
                 return;
 
@@ -1058,19 +1076,87 @@ namespace XREngine.Rendering
         /// - CameraComponent must have a UI overlay canvas
         /// - The canvas must be active and set to screen-space draw mode
         /// </summary>
+        private static int s_vpResolveUIDiagCount = 0;
         private UICanvasComponent? ResolveScreenSpaceUIForPipeline()
         {
             if (!AllowUIRender)
                 return null;
 
-            var ui = CameraComponent?.GetUserInterfaceOverlay();
+            var ui = ResolveScreenSpaceUICanvas();
             if (ui is null || !ui.IsActive)
+            {
+                if (s_vpResolveUIDiagCount < 5)
+                {
+                    Debug.Out($"[VP:ResolveUI] null/inactive: CamComp={CameraComponent?.GetHashCode()} ui={ui?.GetHashCode()} active={ui?.IsActive} VP[{Index}]");
+                    s_vpResolveUIDiagCount++;
+                }
                 return null;
+            }
 
             if (ui.CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen)
+            {
+                if (s_vpResolveUIDiagCount < 5)
+                {
+                    Debug.Out($"[VP:ResolveUI] wrong DrawSpace={ui.CanvasTransform.DrawSpace} VP[{Index}]");
+                    s_vpResolveUIDiagCount++;
+                }
                 return null;
+            }
+
+            if (s_vpResolveUIDiagCount < 5)
+            {
+                Debug.Out($"[VP:ResolveUI] OK: DrawSpace={ui.CanvasTransform.DrawSpace} active={ui.IsActive} VP[{Index}]");
+                s_vpResolveUIDiagCount++;
+            }
 
             return ui;
+        }
+
+        private UICanvasComponent? ResolveScreenSpaceUICanvas()
+        {
+            var camComp = CameraComponent;
+            if (camComp is null)
+                return null;
+
+            var direct = camComp.GetUserInterfaceOverlay();
+            if (direct is not null && direct.IsActive && direct.CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
+                return direct;
+
+            var world = World;
+            if (world is null)
+                return null;
+
+            UICanvasComponent? fallback = null;
+            foreach (var root in world.RootNodes)
+            {
+                if (root is null)
+                    continue;
+
+                var canvases = root.FindAllDescendantComponents<UICanvasComponent>();
+                foreach (var canvas in canvases)
+                {
+                    if (canvas is null || !canvas.IsActive)
+                        continue;
+
+                    if (canvas.CanvasTransform.DrawSpace != ECanvasDrawSpace.Screen)
+                        continue;
+
+                    fallback = canvas;
+                    break;
+                }
+
+                if (fallback is not null)
+                    break;
+            }
+
+            if (fallback is not null && !ReferenceEquals(camComp.UserInterface, fallback))
+            {
+                camComp.UserInterface = fallback;
+                ResizeCameraComponentUI();
+                Debug.Out($"[VP:ScreenUI] Rebound camera UI overlay to '{fallback.SceneNode?.Name ?? "<unnamed>"}' for VP[{Index}].");
+            }
+
+            return fallback;
         }
 
         /// <summary>
@@ -1084,7 +1170,7 @@ namespace XREngine.Rendering
             if (!AllowUIRender)
                 return;
 
-            var ui = CameraComponent?.GetUserInterfaceOverlay();
+            var ui = ResolveScreenSpaceUICanvas();
             if (ui is null || !ui.IsActive)
                 return;
 

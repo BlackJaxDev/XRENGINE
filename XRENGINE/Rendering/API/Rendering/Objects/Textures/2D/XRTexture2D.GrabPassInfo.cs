@@ -107,13 +107,18 @@ namespace XREngine.Rendering
                 uint w, h;
                 if (inFBO is not null)
                 {
-                    if (_readBuffer < EReadBufferMode.ColorAttachment0)
-                        return;
+                    // Front/back read-buffer modes are valid for viewport grabs, but when
+                    // rendering into an offscreen FBO (e.g. world-space UI canvas) we must
+                    // read from a color attachment. Fall back to ColorAttachment0 so grab-pass
+                    // materials (such as editor blur panels) still produce output.
+                    var readBuffer = _readBuffer < EReadBufferMode.ColorAttachment0
+                        ? EReadBufferMode.ColorAttachment0
+                        : _readBuffer;
                     
                     w = inFBO.Width;
                     h = inFBO.Height;
                     Resize(w, h);
-                    rend.BlitFBOToFBO(inFBO, fbo, _readBuffer, _colorBit, _depthBit, _stencilBit, _linearFilter);
+                    rend.BlitFBOToFBO(inFBO, fbo, readBuffer, _colorBit, _depthBit, _stencilBit, _linearFilter);
                 }
                 else if (viewport is not null)
                 {

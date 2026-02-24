@@ -14,6 +14,7 @@ namespace XREngine.Rendering.UI
         private bool _virtual = false;
         private float _upperVirtualBound = 0.0f;
         private float _lowerVirtualBound = 0.0f;
+        private float _contentScrollOffset = 0.0f;
 
         /// <summary>
         /// The width or height of each child component.
@@ -75,8 +76,22 @@ namespace XREngine.Rendering.UI
         public float VirtualRegionSize => UpperVirtualBound - LowerVirtualBound;
         public void SetVirtualBounds(float upper, float lower)
         {
-            UpperVirtualBound = upper;
-            LowerVirtualBound = lower;
+            if (_upperVirtualBound == upper && _lowerVirtualBound == lower)
+                return;
+            _upperVirtualBound = upper;
+            _lowerVirtualBound = lower;
+            InvalidateArrange();
+        }
+
+        /// <summary>
+        /// Scroll offset applied to content layout.
+        /// For vertical lists, positive values scroll down (reveal later items).
+        /// For horizontal lists, positive values scroll right.
+        /// </summary>
+        public float ContentScrollOffset
+        {
+            get => _contentScrollOffset;
+            set => SetField(ref _contentScrollOffset, value);
         }
         public void SetVirtualBoundsRelativeToTop(float size)
         {
@@ -101,6 +116,7 @@ namespace XREngine.Rendering.UI
                 case nameof(Virtual):
                 case nameof(UpperVirtualBound):
                 case nameof(LowerVirtualBound):
+                case nameof(ContentScrollOffset):
                     InvalidateArrange();
                     break;
             }
@@ -196,8 +212,8 @@ namespace XREngine.Rendering.UI
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ArrangeChildrenLeftTop(BoundingRectangleF parentRegion)
         {
-            float x = 0;
-            float y = _horizontal ? 0 : parentRegion.Height;
+            float x = _horizontal ? -_contentScrollOffset : 0;
+            float y = _horizontal ? 0 : parentRegion.Height + _contentScrollOffset;
 
             for (int i = 0; i < Children.Count; i++)
             {
@@ -322,17 +338,11 @@ namespace XREngine.Rendering.UI
             if (Virtual && (x + size < LowerVirtualBound || x > UpperVirtualBound))
             {
                 bc.Visibility = EVisibility.Hidden;
-                if (bc.SceneNode is not null)
-                    bc.SceneNode.IsActiveSelf = false;
             }
             else
             {
                 if (Virtual)
-                {
                     bc.Visibility = EVisibility.Visible;
-                    if (bc.SceneNode is not null)
-                        bc.SceneNode.IsActiveSelf = true;
-                }
                 bc.Arrange(new BoundingRectangleF(x, y, size, parentHeight));
             }
         }
@@ -343,17 +353,11 @@ namespace XREngine.Rendering.UI
             if (Virtual && (y + size < LowerVirtualBound || y > UpperVirtualBound))
             {
                 bc.Visibility = EVisibility.Hidden;
-                if (bc.SceneNode is not null)
-                    bc.SceneNode.IsActiveSelf = false;
             }
             else
             {
                 if (Virtual)
-                {
                     bc.Visibility = EVisibility.Visible;
-                    if (bc.SceneNode is not null)
-                        bc.SceneNode.IsActiveSelf = true;
-                }
                 bc.Arrange(new BoundingRectangleF(x, y, parentWidth, size));
             }
         }
@@ -481,10 +485,10 @@ namespace XREngine.Rendering.UI
 
         private void SizeChildrenLeftTop(BoundingRectangleF parentRegion)
         {
-            float x = 0;
+            float x = DisplayHorizontal ? -_contentScrollOffset : 0;
             float y = 0;
             if (!DisplayHorizontal)
-                y += parentRegion.Height;
+                y += parentRegion.Height + _contentScrollOffset;
             for (int i = 0; i < Children.Count; i++)
             {
                 TransformBase? child = Children[i];
@@ -521,15 +525,10 @@ namespace XREngine.Rendering.UI
                 if (x + size < LowerVirtualBound || x > UpperVirtualBound)
                 {
                     bc.Visibility = EVisibility.Hidden;
-                    if (bc.SceneNode is not null)
-                        bc.SceneNode.IsActiveSelf = false;
                 }
                 else
                 {
                     bc.Visibility = EVisibility.Visible;
-                    if (bc.SceneNode is not null)
-                        bc.SceneNode.IsActiveSelf = true;
-
                     bc.FitLayout(new BoundingRectangleF(x, y, size, parentHeight));
                 }
             }
@@ -546,15 +545,10 @@ namespace XREngine.Rendering.UI
                 if (y + size < LowerVirtualBound || y > UpperVirtualBound)
                 {
                     bc.Visibility = EVisibility.Hidden;
-                    if (bc.SceneNode is not null)
-                        bc.SceneNode.IsActiveSelf = false;
                 }
                 else
                 {
                     bc.Visibility = EVisibility.Visible;
-                    if (bc.SceneNode is not null)
-                        bc.SceneNode.IsActiveSelf = true;
-
                     bc.FitLayout(new BoundingRectangleF(x, y, parentWidth, size));
                 }
             }

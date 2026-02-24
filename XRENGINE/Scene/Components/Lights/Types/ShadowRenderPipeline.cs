@@ -40,16 +40,21 @@ namespace XREngine.Components.Lights
         }
         protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
         {
+            // Include all standard passes so that render commands targeting any pass
+            // are accepted into the collection (even if the command chain doesn't
+            // render them). This prevents MISSING_PASS warnings when scene traversal
+            // submits Background (skybox), DeferredDecals, or OnTopForward (debug
+            // gizmo) commands to shadow pipeline collections.
             return new()
             {
-                { -1, null }, //Prerender
-                //{ 0, _nearToFarSorter }, //No background pass
-                { 1, null }, //OpaqueDeferredLit
-                //{ 2, _nearToFarSorter }, //No decals
-                { 3, null }, //OpaqueForward
-                { 4, null }, //TransparentForward
-                //{ 5, _nearToFarSorter }, //No on top (UI)
-                { 6, null } //Postrender
+                { -1, null }, //PreRender
+                { 0, null },  //Background  – not rendered, but accepted to avoid warnings
+                { 1, null },  //OpaqueDeferredLit
+                { 2, null },  //DeferredDecals – not rendered, but accepted to avoid warnings
+                { 3, null },  //OpaqueForward
+                { 4, null },  //TransparentForward
+                { 5, null },  //OnTopForward – not rendered, but accepted to avoid warnings
+                { 6, null }   //PostRender
             };
         }
     }

@@ -500,7 +500,7 @@ namespace XREngine.Data.Trees
             //try
             //{
                 foreach (QuadtreeNode<T>? n in _subNodes)
-                    n?.FindAllIntersecting(point, intersecting);
+                    n?.FindAllIntersecting(point, intersecting, predicate);
             //}
             //catch (Exception ex)
             //{
@@ -512,19 +512,38 @@ namespace XREngine.Data.Trees
                 return;
 
             //IsLoopingItems = true;
-            //try
-            //{
+            try
+            {
                 foreach (T? item in _items)
-                    if (item.Contains(point) && (predicate?.Invoke(item) ?? true))
+                    if (item is not null && item.Contains(point) && (predicate?.Invoke(item) ?? true))
                         intersecting.Add(item);
-            //}
-            //catch (Exception ex)
-            //{
-            //    Trace.WriteLine(ex);
-            //}
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine(ex);
+            }
             //IsLoopingItems = false;
         }
         public void FindAllIntersecting(Vector2 point, SortedSet<T> intersecting, Predicate<T>? predicate = null)
+        {
+            ArgumentNullException.ThrowIfNull(intersecting);
+
+            // Collect into a plain list first so the SortedSet comparer never runs
+            // while mutable render-order keys may be changing on another thread.
+            List<T> buffer = [];
+            FindAllIntersectingInternal(point, buffer, predicate);
+
+            // Rebuild the set under a lock so callers that share the set across
+            // threads (e.g. UICanvasInputComponent) get a consistent snapshot.
+            lock (intersecting)
+            {
+                intersecting.Clear();
+                foreach (T item in buffer)
+                    intersecting.Add(item);
+            }
+        }
+
+        private void FindAllIntersectingInternal(Vector2 point, List<T> buffer, Predicate<T>? predicate)
         {
             if (!_bounds.Contains(point))
                 return;
@@ -533,7 +552,7 @@ namespace XREngine.Data.Trees
             try
             {
                 foreach (QuadtreeNode<T>? n in _subNodes)
-                    n?.FindAllIntersecting(point, intersecting, predicate);
+                    n?.FindAllIntersectingInternal(point, buffer, predicate);
             }
             catch (Exception ex)
             {
@@ -545,24 +564,32 @@ namespace XREngine.Data.Trees
                 return;
 
             //IsLoopingItems = true;
-            //try
-            //{
-            try
+            int index = 0;
+            while (true)
             {
-                foreach (T item in _items)
-                    if (item.Contains(point) && (predicate?.Invoke(item) ?? true))
-                        intersecting.Add(item);
+                T? item;
+                try
+                {
+                    if (index >= _items.Count)
+                        break;
+
+                    item = _items[index];
+                    index++;
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    // _items shrank between the Count check and the indexer; stop iterating.
+                    break;
+                }
+                catch (InvalidOperationException ex)
+                {
+                    Trace.WriteLine(ex);
+                    continue;
+                }
+
+                if (item is not null && item.Contains(point) && (predicate?.Invoke(item) ?? true))
+                    buffer.Add(item);
             }
-            catch (InvalidOperationException ex)
-            {
-                //This is thrown when the collection is modified while iterating
-                Trace.WriteLine(ex);
-            }
-            //}
-            //catch (Exception ex)
-            //{
-            //    Trace.WriteLine(ex);
-            //}
             //IsLoopingItems = false;
         }
         //public void FindAll(Shape shape, List<T> list, EContainment containment)

@@ -6,6 +6,8 @@
   href: load-balancer.md
 - name: Networking Overview
   href: networking-overview.md
+- name: Modeling XRMesh Editing
+  href: modeling-xrmesh-editing.md
 - name: Play Mode Architecture
   href: play-mode-architecture.md
 - name: Secondary GPU Context

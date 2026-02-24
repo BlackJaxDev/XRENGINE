@@ -168,7 +168,7 @@ namespace XREngine.Components
         protected virtual void MoveForward(bool pressed)
         {
             if (pressed)
-                Debug.Out($"[MoveForward] pressed, AllowKeyboardInput={AllowKeyboardInput}, FocusedUIComponent={LocalPlayerController?.FocusedUIComponent?.GetType().Name} ('{LocalPlayerController?.FocusedUIComponent?.Name}')");
+                Debug.UI($"[MoveForward] pressed, AllowKeyboardInput={AllowKeyboardInput}, FocusedUIComponent={LocalPlayerController?.FocusedUIComponent?.GetType().Name} ('{LocalPlayerController?.FocusedUIComponent?.Name}')");
 
             if (AllowKeyboardInput)
                 _incForward += KeyboardTranslateSpeed * (pressed ? 1.0f : -1.0f);
@@ -222,7 +222,7 @@ namespace XREngine.Components
             {
                 if (canvasInput.TopMostInteractable is { } interactable)
                 {
-                    Debug.Out($"[IsHoveringUI] TopMostInteractable = {interactable.GetType().Name} ('{interactable.Name}') on canvas '{canvasInput.Name}'");
+                    Debug.UI($"[IsHoveringUI] TopMostInteractable = {interactable.GetType().Name} ('{interactable.Name}') on canvas '{canvasInput.Name}'");
                     return true;
                 }
             }
@@ -244,7 +244,7 @@ namespace XREngine.Components
 
                 bool hovering = IsHoveringUI();
                 _rightClickDragging = !hovering;
-                Debug.Out($"[OnRightClick] pressed, IsHoveringUI={hovering}, _rightClickDragging={_rightClickDragging}, LinkedUICanvasInputs.Count={LinkedUICanvasInputs.Count}");
+                Debug.UI($"[OnRightClick] pressed, IsHoveringUI={hovering}, _rightClickDragging={_rightClickDragging}, LinkedUICanvasInputs.Count={LinkedUICanvasInputs.Count}");
 
                 // When right-clicking in the viewport (not over UI), clear the focused
                 // UI component so that keyboard input (WASD, arrows) is restored.

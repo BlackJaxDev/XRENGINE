@@ -1,6 +1,7 @@
 using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
+using XREngine.Data.Rendering;
 using XREngine.Editor.UI.Toolbar;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
@@ -75,6 +76,7 @@ public partial class UIToolbarComponent : UIComponent
     {
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
         menuMat.Material = EditorPanel.MakeBackgroundMaterial();
+        menuMat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
         var listTfm = listNode.SetTransform<UIListTransform>();
         listTfm.DisplayHorizontal = horizontal;
         listTfm.ItemSpacing = 0.0f;
@@ -125,6 +127,7 @@ public partial class UIToolbarComponent : UIComponent
         var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
         mat.EnableTransparency();
         background.Material = mat;
+        background.RenderPass = (int)EDefaultRenderPass.TransparentForward;
         var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
         buttonTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
         buttonTfm.Margins = new Vector4(Margin);
@@ -138,6 +141,7 @@ public partial class UIToolbarComponent : UIComponent
         if (tbd.Options.Length > 0)
         {
             UIListTransform submenuList = CreateMenu(buttonNode, false, null, null, [.. tbd.Options.Select(x => new ToolbarButton(x))], true, SubmenuItemHeight, toolbar);
+            submenuList.BlocksInputBehind = true;
             submenuList.Visibility = EVisibility.Collapsed;
             submenuList.ExcludeFromParentAutoCalcHeight = true;
             submenuList.ExcludeFromParentAutoCalcWidth = true;
@@ -183,6 +187,7 @@ public partial class UIToolbarComponent : UIComponent
         var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
         mat.EnableTransparency();
         background.Material = mat;
+        background.RenderPass = (int)EDefaultRenderPass.TransparentForward;
 
         var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
         buttonTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
@@ -200,7 +205,7 @@ public partial class UIToolbarComponent : UIComponent
         if (tbb.ChildOptions.Count > 0)
         {
             UIListTransform submenuList = CreateMenu(buttonNode, false, null, null, tbb.ChildOptions, true, SubmenuItemHeight, toolbar);
-
+            submenuList.BlocksInputBehind = true;
             submenuList.Visibility = EVisibility.Collapsed;
             submenuList.ExcludeFromParentAutoCalcHeight = true;
             submenuList.ExcludeFromParentAutoCalcWidth = true;

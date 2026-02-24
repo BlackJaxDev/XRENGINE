@@ -104,7 +104,7 @@ namespace XREngine.Scene
                     RenderTree.CollectVisible(collectionVolume, false, AddRenderCommands, IntersectionTest);
 
                 if (_diagFrames < 10 || _diagFrames % 300 == 0)
-                    Debug.Out($"[VS2D:Collect] frame={_diagFrames} flatCount={_renderables.Count} treeWalked={walkedCount} treeBounds={RenderTree.Bounds} vol={collectionVolume?.ToString() ?? "null"}");
+                    Debug.UI($"[VS2D:Collect] frame={_diagFrames} flatCount={_renderables.Count} treeWalked={walkedCount} treeBounds={RenderTree.Bounds} vol={collectionVolume?.ToString() ?? "null"}");
                 _diagFrames++;
             }
         }

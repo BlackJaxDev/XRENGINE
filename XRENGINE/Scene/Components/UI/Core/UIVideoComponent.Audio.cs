@@ -77,7 +77,7 @@ namespace XREngine.Rendering.UI
             if (!_audioStartupDiagLogged)
             {
                 _audioStartupDiagLogged = true;
-                Debug.Out($"[AV Audio Diag] First frame reached submission: " +
+                Debug.UI($"[AV Audio Diag] First frame reached submission: " +
                           $"rate={frame.SampleRate} ch={frame.ChannelCount} fmt={frame.SampleFormat} " +
                           $"pts={frame.PresentationTimestampTicks} bytes={frame.InterleavedData.Length} " +
                           $"pcm16={pcm16.Length} stereo={stereo} | " +
@@ -143,11 +143,11 @@ namespace XREngine.Rendering.UI
                 {
                     long headStartMs = (_lastPresentedVideoPts - audioPts) / TimeSpan.TicksPerMillisecond;
                     audioPts = _lastPresentedVideoPts;
-                    Debug.Out($"[AV Audio] Clock fast-forwarded by {headStartMs}ms to match video position.");
+                    Debug.UI($"[AV Audio] Clock fast-forwarded by {headStartMs}ms to match video position.");
                 }
 
                 _firstAudioPts = audioPts;
-                Debug.Out($"[AV Audio] Clock seeded from first submitted frame: pts={_firstAudioPts}.");
+                Debug.UI($"[AV Audio] Clock seeded from first submitted frame: pts={_firstAudioPts}.");
             }
 
             // Record per-buffer sample count for the hardware clock.
@@ -191,7 +191,7 @@ namespace XREngine.Rendering.UI
 
             string prevDesc = _primaryAudioSource is null ? "null" : "set";
             string nextDesc = candidate is null ? "null" : "set";
-            Debug.Out($"[AV Audio] Primary source changed: {prevDesc} → {nextDesc}. " +
+            Debug.UI($"[AV Audio] Primary source changed: {prevDesc} → {nextDesc}. " +
                       $"processedSamples={_processedSampleCount} " +
                       $"firstPts={(_firstAudioPts == long.MinValue ? "unseeded" : _firstAudioPts.ToString())}");
 
@@ -383,7 +383,7 @@ namespace XREngine.Rendering.UI
                     Debug.UIWarning("[AV Audio] 0 active listeners — audio will not play until an " +
                                     "AudioListenerComponent is in range.\n" + stateMsg);
                 else
-                    Debug.Out(stateMsg);
+                    Debug.UI(stateMsg);
             }
 
             foreach (var source in audioSource.ActiveListeners.Values)

@@ -92,6 +92,17 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _minWidth, value);
         }
 
+        private bool _blocksInputBehind;
+        /// <summary>
+        /// When true, this transform blocks UI input from reaching elements behind it (lower in the hierarchy).
+        /// Useful for dropdown menus, popups, and modal overlays that should prevent interaction with elements underneath.
+        /// </summary>
+        public bool BlocksInputBehind
+        {
+            get => _blocksInputBehind;
+            set => SetField(ref _blocksInputBehind, value);
+        }
+
         private Vector2 _normalizedPivot = Vector2.Zero;
         /// <summary>
         /// The origin of this component as a percentage of its size.

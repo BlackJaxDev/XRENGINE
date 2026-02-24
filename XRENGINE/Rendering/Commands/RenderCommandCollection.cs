@@ -28,6 +28,7 @@ namespace XREngine.Rendering.Commands
     public sealed class RenderCommandCollection : XRBase
     {
         private static readonly CpuRenderOcclusionCoordinator s_cpuOcclusionCoordinator = new();
+        private static int s_addCpuMissingPassDiagCount = 0;
 
         public bool IsShadowPass { get; private set; } = false;
         public void SetRenderPasses(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters, IEnumerable<RenderPassMetadata>? passMetadata = null)
@@ -122,7 +123,14 @@ namespace XREngine.Rendering.Commands
         {
             int pass = item.RenderPass;
             if (!_updatingPasses.TryGetValue(pass, out var set))
+            {
+                if (s_addCpuMissingPassDiagCount < 30)
+                {
+                    Debug.Out($"[RenderCommandCollection:AddCPU] MISSING_PASS pass={pass} cmd={item.GetType().Name} enabled={item.Enabled} updatingPassKeys=[{string.Join(",", _updatingPasses.Keys.OrderBy(static x => x))}]");
+                    s_addCpuMissingPassDiagCount++;
+                }
                 return; // No CPU pass found for this render command
+            }
 
             using (_lock.EnterScope())
             {
