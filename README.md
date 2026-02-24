@@ -120,6 +120,10 @@ Use **Terminal → Run Task…** and run any of these tasks (they build first wh
 - `start-client-no-debug` (Editor-as-client, port 5001)
 - `start-client2-no-debug` (Editor-as-client, port 5002)
 - `start-2-clients-no-debug`
+- `start-pose-server-no-debug` (server in `UnitTesting + NetworkingPose` world)
+- `start-pose-source-client-no-debug` (client sender, `XRE_POSE_ENTITY_ID=4242`, broadcast on)
+- `start-pose-receiver-client-no-debug` (client receiver, `XRE_POSE_ENTITY_ID=4242`, receive on)
+- `start-local-pose-sync-no-debug` (server + pose source + pose receiver)
 - `start-dedicated-server-no-debug` (runs `XREngine.Server.exe`)
 - `start-p2p-peer-no-debug` (P2P peer 1, port 5001)
 - `start-p2p-peer2-no-debug` (P2P peer 2, port 5002)
@@ -150,6 +154,11 @@ Common environment variables:
 - `XRE_UDP_CLIENT_RECEIVE_PORT=5001` (or `5002` for a second client)
 - `XRE_WINDOW_TITLE=...`
 - `XRE_WORLD_MODE=UnitTesting`
+- `XRE_UNIT_TEST_WORLD_KIND=NetworkingPose` (forces the dedicated networking+pose test world)
+- `XRE_NETWORKING_POSE_ROLE=server|sender|receiver` (role-specific initialization inside `NetworkingPose` world)
+- `XRE_POSE_ENTITY_ID=4242` (must match between sender/receiver for humanoid pose sync)
+- `XRE_POSE_BROADCAST_ENABLED=true|false`
+- `XRE_POSE_RECEIVE_ENABLED=true|false`
 
 If you want the “Unit Testing World” behavior, also pass `--unit-testing` under Project → Properties → Debug → **Command line arguments**.
 
@@ -166,10 +175,13 @@ Two common approaches:
 
 ## Network test helper
 
-For a quick two-instance Editor networking test (server + client), there is a helper script:
+For a quick networking test:
+- `Tools\\run_network_test.bat` launches server + client.
+- `Tools\\run_network_test.bat pose` launches server + pose source + pose receiver.
 
 ```powershell
-./run_network_test.bat
+./Tools/run_network_test.bat
+./Tools/run_network_test.bat pose
 ```
 
 ## Native Dependencies

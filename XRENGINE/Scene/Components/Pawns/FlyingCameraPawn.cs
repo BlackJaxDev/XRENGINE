@@ -219,6 +219,7 @@ namespace XREngine.Components
                     incUp * delta,
                     -incForward * delta);
 
+/*
                 float nowMove = Engine.Time.Timer.Time();
                 if (nowMove - _lastMoveTickLogTime > 0.5f)
                 {
@@ -226,6 +227,7 @@ namespace XREngine.Components
                     Debug.Out($"[MoveTick] delta={delta:0.####}, inc=({incRight:0.###},{incUp:0.###},{incForward:0.###}), pos=({before.X:0.###},{before.Y:0.###},{before.Z:0.###})->({tfm.Translation.X:0.###},{tfm.Translation.Y:0.###},{tfm.Translation.Z:0.###}), renderPos=({renderPos.X:0.###},{renderPos.Y:0.###},{renderPos.Z:0.###}), world={(tfm.World is null ? "null" : "ok")}");
                     _lastMoveTickLogTime = nowMove;
                 }
+*/
             }
 
             // Ensure render-space matrices are updated when input changes.

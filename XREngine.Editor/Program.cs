@@ -98,6 +98,7 @@ internal class Program
 
         // Load unit testing settings from JSON file into static toggles object that can be referenced throughout the editor and unit testing worlds.
         EditorUnitTests.Toggles = LoadUnitTestingSettings(false);
+        ApplyUnitTestingWorldKindOverride(EditorUnitTests.Toggles);
 
         // Retrieve the world, startup settings, and last game state to run the engine
         InitializeEditor(
@@ -415,6 +416,22 @@ internal class Program
                 settings = new EditorUnitTests.Settings();
         }
         return settings;
+    }
+
+    private static void ApplyUnitTestingWorldKindOverride(EditorUnitTests.Settings settings)
+    {
+        string? worldKindEnv = Environment.GetEnvironmentVariable("XRE_UNIT_TEST_WORLD_KIND");
+        if (string.IsNullOrWhiteSpace(worldKindEnv))
+            return;
+
+        if (Enum.TryParse<EditorUnitTests.UnitTestWorldKind>(worldKindEnv, true, out var kind))
+        {
+            settings.WorldKind = kind;
+            EngineDebug.Out($"Unit test world kind overridden to {kind} via XRE_UNIT_TEST_WORLD_KIND.");
+            return;
+        }
+
+        EngineDebug.Out($"Invalid XRE_UNIT_TEST_WORLD_KIND value '{worldKindEnv}'. Using {settings.WorldKind}.");
     }
 
     static EditorRenderInfo2D RenderInfo2DConstructor(IRenderable owner, RenderCommand[] commands)

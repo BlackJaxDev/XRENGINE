@@ -54,6 +54,12 @@ internal sealed class FFmpegStreamDecoder : IDisposable
     /// <summary>The background decode thread (started by <see cref="OpenAsync"/>).</summary>
     private Thread? _decodeThread;
 
+    /// <summary>
+    /// Set true when Stop/Dispose has been requested. OpenAsync checks this
+    /// before starting decode after native open to avoid start-after-stop races.
+    /// </summary>
+    private volatile bool _stopRequested;
+
     // ═══════════════════════════════════════════════════════════════
     // Fields — FFmpeg Native Contexts
     // All access guarded by _lock during init/cleanup, then only
@@ -161,38 +167,50 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
         return Task.Run(() =>
         {
-            bool opened = false;
-            try
+            lock (_lock)
             {
-                opened = AllocateAndOpen(url, options);
-            }
-            catch (Exception ex)
-            {
-                // avformat_open_input (or other native calls) can throw a
-                // native access-violation / SEH exception rather than
-                // returning a negative error code. Ensure we always clean
-                // up native resources and surface a clear error.
-                Cleanup();
-                throw new InvalidOperationException(
-                    $"FFmpeg native exception while opening '{url}': {ex.Message}", ex);
-            }
+                _stopRequested = false;
 
-            if (!opened)
-            {
-                Cleanup();
-                Debug.LogWarning($"FFmpeg failed to open any streams for URL: {url}");
-                return;
+                bool opened = false;
+                try
+                {
+                    opened = AllocateAndOpen(url, options);
+                }
+                catch (Exception ex)
+                {
+                    // avformat_open_input (or other native calls) can throw a
+                    // native access-violation / SEH exception rather than
+                    // returning a negative error code. Ensure we always clean
+                    // up native resources and surface a clear error.
+                    CleanupUnsafe();
+                    throw new InvalidOperationException(
+                        $"FFmpeg native exception while opening '{url}': {ex.Message}", ex);
+                }
+
+                if (!opened)
+                {
+                    CleanupUnsafe();
+                    Debug.LogWarning($"FFmpeg failed to open any streams for URL: {url}");
+                    return;
+                }
+
+                // Stop/Dispose may have been requested while native open was in progress.
+                if (_stopRequested || _disposed)
+                {
+                    CleanupUnsafe();
+                    return;
+                }
+
+                _running = true;
+                Debug.Out($"FFmpeg stream decoder opened: url='{url}', video={_videoStreamIndex}, audio={_audioStreamIndex}");
+
+                _decodeThread = new Thread(DecodeLoop)
+                {
+                    Name = "FFmpegStreamDecoder",
+                    IsBackground = true
+                };
+                _decodeThread.Start();
             }
-
-            _running = true;
-            Debug.Out($"FFmpeg stream decoder opened: url='{url}', video={_videoStreamIndex}, audio={_audioStreamIndex}");
-
-            _decodeThread = new Thread(DecodeLoop)
-            {
-                Name = "FFmpegStreamDecoder",
-                IsBackground = true
-            };
-            _decodeThread.Start();
         }, cancellationToken);
     }
 
@@ -202,9 +220,23 @@ internal sealed class FFmpegStreamDecoder : IDisposable
     /// </summary>
     public void Stop()
     {
-        _running = false;
-        _decodeThread?.Join(TimeSpan.FromSeconds(3));
-        Cleanup();
+        _stopRequested = true;
+
+        Thread? decodeThread;
+        lock (_lock)
+        {
+            _running = false;
+            decodeThread = _decodeThread;
+        }
+
+        decodeThread?.Join(TimeSpan.FromSeconds(3));
+
+        lock (_lock)
+        {
+            _running = false;
+            CleanupUnsafe();
+            _decodeThread = null;
+        }
     }
 
     /// <summary>
@@ -847,7 +879,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
     /// Frees all allocated FFmpeg native resources in the correct order:
     /// scaler → frame/packet → codecs → HW device → format context.
     /// </summary>
-    private unsafe void Cleanup()
+    private unsafe void CleanupUnsafe()
     {
         _running = false;
 

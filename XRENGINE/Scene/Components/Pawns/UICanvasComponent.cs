@@ -19,6 +19,8 @@ namespace XREngine.Components
     [RequiresTransform(typeof(UICanvasTransform))]
     public class UICanvasComponent : XRComponent, IRenderable
     {
+        private const float DefaultAutoWorldCanvasDistance = 1500.0f;
+
         public UICanvasTransform CanvasTransform => TransformAs<UICanvasTransform>(true)!;
 
         public RenderInfo[] RenderedObjects { get; }
@@ -57,7 +59,7 @@ namespace XREngine.Components
                 EPixelType.UnsignedByte,
                 EFrameBufferAttachment.ColorAttachment0);
 
-            _offscreenMaterial = XRMaterial.CreateUnlitAlphaTextureMaterialForward(offscreenTexture);
+            _offscreenMaterial = XRMaterial.CreateUnlitTextureMaterialForward(offscreenTexture);
             _offscreenMaterial.RenderOptions.CullMode = ECullMode.None;
 
             var quadMesh = XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false));
@@ -255,14 +257,18 @@ namespace XREngine.Components
             bool wasInvalidated = CanvasTransform.IsLayoutInvalidated;
             CanvasTransform.UpdateLayout();
 
+            var canvasTransform = CanvasTransform;
+            if (canvasTransform.DrawSpace == ECanvasDrawSpace.World && ShouldAutoPlaceWorldSpaceCanvas(canvasTransform))
+                UpdateWorldSpaceQuadData();
+
             if (!wasInvalidated)
                 return;
 
             // Screen-space UI is not owned by a world, so dirty transforms will not be
             // processed by XRWorldInstance.PostUpdate. Walk the tree and recalculate only
             // transforms that have been marked dirty (_localChanged or _worldChanged).
-            if (CanvasTransform.World is null || CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
-                RecalculateDirtyMatrices(CanvasTransform);
+            if (canvasTransform.World is null || canvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
+                RecalculateDirtyMatrices(canvasTransform);
         }
 
         /// <summary>
@@ -347,9 +353,13 @@ namespace XREngine.Components
             if (canvasTransform.DrawSpace == ECanvasDrawSpace.Screen || !PreferOffscreenRenderingForNonScreenSpaces)
                 return false;
 
+            if (canvasTransform.DrawSpace == ECanvasDrawSpace.World && ShouldAutoPlaceWorldSpaceCanvas(canvasTransform))
+                UpdateWorldSpaceQuadData();
+
             return _worldSpaceQuadCommand.Mesh is not null;
         }
 
+        private int _renderDiagCount = 0;
         private void RenderNonScreenCanvasToTexture()
         {
             if (!IsActive)
@@ -360,6 +370,15 @@ namespace XREngine.Components
                 return;
 
             ResizeScreenSpace(canvasTransform.GetActualBounds());
+
+            if (_renderDiagCount < 10)
+            {
+                var bounds = canvasTransform.GetActualBounds();
+                int renderCmds = _renderPipeline.MeshRenderCommands.GetRenderingCommandCount();
+                var batchCol = (_renderPipeline.Pipeline as UserInterfaceRenderPipeline)?.BatchCollector;
+                Debug.Out($"[UICanvas:Render] frame={_renderDiagCount} fboSize={_offscreenFbo.Width}x{_offscreenFbo.Height} renderCmds={renderCmds} batchEnabled={batchCol?.Enabled} bounds={bounds} pipeline={_renderPipeline.Pipeline?.GetType().Name}");
+                _renderDiagCount++;
+            }
 
             _renderPipeline.Render(
                 VisualScene2D,
@@ -378,11 +397,71 @@ namespace XREngine.Components
             float width = Math.Max(0.001f, tfm.ActualWidth);
             float height = Math.Max(0.001f, tfm.ActualHeight);
 
-            var world = tfm.RenderMatrix;
+            var world = ResolveWorldSpaceCanvasMatrix(tfm, width, height);
             _worldSpaceQuadCommand.WorldMatrix = Matrix4x4.CreateScale(width, height, 1.0f) * world;
 
             _worldSpaceQuadRenderInfo.LocalCullingVolume = AABB.FromSize(new Vector3(width, height, 0.05f));
             _worldSpaceQuadRenderInfo.CullingOffsetMatrix = Matrix4x4.CreateTranslation(width * 0.5f, height * 0.5f, 0.0f) * world;
+        }
+
+        private Matrix4x4 ResolveWorldSpaceCanvasMatrix(UICanvasTransform transform, float width, float height)
+        {
+            var world = transform.RenderMatrix;
+            if (transform.DrawSpace != ECanvasDrawSpace.World)
+                return world;
+
+            if (!ShouldAutoPlaceWorldSpaceCanvas(transform))
+                return world;
+
+            if (!TryGetPrimaryCameraBasis(out var cameraPosition, out var cameraForward, out var cameraUp, out var cameraRight))
+                return world;
+
+            var bottomLeft =
+                cameraPosition +
+                cameraForward * DefaultAutoWorldCanvasDistance -
+                cameraRight * (width * 0.5f) -
+                cameraUp * (height * 0.5f);
+
+            return Matrix4x4.CreateWorld(bottomLeft, -cameraForward, cameraUp);
+        }
+
+        private static bool ShouldAutoPlaceWorldSpaceCanvas(UICanvasTransform transform)
+        {
+            if (transform.Parent is not null)
+                return false;
+
+            if (transform.Translation.LengthSquared() > 0.0001f)
+                return false;
+
+            if (MathF.Abs(transform.DepthTranslation) > 0.0001f)
+                return false;
+
+            if (MathF.Abs(transform.RotationRadians) > 0.0001f)
+                return false;
+
+            if (Vector3.DistanceSquared(transform.Scale, Vector3.One) > 0.0001f)
+                return false;
+
+            return true;
+        }
+
+        private static bool TryGetPrimaryCameraBasis(out Vector3 position, out Vector3 forward, out Vector3 up, out Vector3 right)
+        {
+            position = Vector3.Zero;
+            forward = Globals.Forward;
+            up = Globals.Up;
+            right = Globals.Right;
+
+            var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
+            var cameraTransform = player?.ControlledPawn?.CameraComponent?.Transform;
+            if (cameraTransform is null)
+                return false;
+
+            position = cameraTransform.WorldTranslation;
+            forward = cameraTransform.WorldForward;
+            up = cameraTransform.WorldUp;
+            right = cameraTransform.WorldRight;
+            return true;
         }
 
         public UIComponent? FindDeepestComponent(Vector2 normalizedViewportPosition)

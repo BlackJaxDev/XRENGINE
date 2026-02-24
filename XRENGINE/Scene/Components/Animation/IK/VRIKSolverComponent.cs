@@ -74,6 +74,7 @@ namespace XREngine.Components.Animation
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            ApplyEnvironmentOverrides();
             if (PoseEntityId == 0)
                 PoseEntityId = PoseIdFromSceneNode();
 
@@ -225,6 +226,56 @@ namespace XREngine.Components.Animation
         {
             Guid guid = SceneNode?.ID ?? Guid.NewGuid();
             return BitConverter.ToUInt16(guid.ToByteArray(), 0);
+        }
+
+        private void ApplyEnvironmentOverrides()
+        {
+            if (TryGetUShortEnv("XRE_POSE_ENTITY_ID", out ushort poseEntityId) && poseEntityId > 0)
+            {
+                PoseEntityId = poseEntityId;
+                Debug.Out($"VRIK pose entity id overridden to {poseEntityId} via XRE_POSE_ENTITY_ID.");
+            }
+
+            if (TryGetBoolEnv("XRE_POSE_BROADCAST_ENABLED", out bool poseBroadcastEnabled))
+            {
+                PoseBroadcastEnabled = poseBroadcastEnabled;
+                Debug.Out($"VRIK pose broadcast overridden to {poseBroadcastEnabled} via XRE_POSE_BROADCAST_ENABLED.");
+            }
+
+            if (TryGetBoolEnv("XRE_POSE_RECEIVE_ENABLED", out bool poseReceiveEnabled))
+            {
+                PoseReceiveEnabled = poseReceiveEnabled;
+                Debug.Out($"VRIK pose receive overridden to {poseReceiveEnabled} via XRE_POSE_RECEIVE_ENABLED.");
+            }
+        }
+
+        private static bool TryGetUShortEnv(string name, out ushort value)
+        {
+            value = default;
+            string? raw = Environment.GetEnvironmentVariable(name);
+            return !string.IsNullOrWhiteSpace(raw) && ushort.TryParse(raw, out value);
+        }
+
+        private static bool TryGetBoolEnv(string name, out bool value)
+        {
+            value = default;
+            string? raw = Environment.GetEnvironmentVariable(name);
+            if (string.IsNullOrWhiteSpace(raw))
+                return false;
+
+            if (raw == "1")
+            {
+                value = true;
+                return true;
+            }
+
+            if (raw == "0")
+            {
+                value = false;
+                return true;
+            }
+
+            return bool.TryParse(raw, out value);
         }
 
         private void SubscribeNetworking()

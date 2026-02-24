@@ -1,27 +1,23 @@
 @echo off
 setlocal
 
-REM ============================================================================
-REM  XREngine Network Testing Script
-REM  Launches two editor instances for server<->client networking tests.
-REM ============================================================================
-
-REM Change to repository root (parent of Tools directory)
 set "REPO_ROOT=%~dp0.."
+set "EDITOR_EXE=%REPO_ROOT%\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.exe"
 cd /d "%REPO_ROOT%"
 
 echo ============================================================
 echo   XREngine Network Test Launcher
 echo ============================================================
 echo.
-echo This script will launch two editor instances:
-echo   1. Server instance (XRE_NET_MODE=Server)
-echo   2. Client instance (XRE_NET_MODE=Client)
+echo Usage:
+echo   run_network_test.bat           ^(server + client^)
+echo   run_network_test.bat pose      ^(server + pose source + pose receiver^)
 echo.
 
-REM Check if the editor has been built
-if not exist "XREngine.Editor\bin\Debug\net8.0\XREngine.Editor.dll" (
-    echo Building the editor first...
+if not exist "%EDITOR_EXE%" (
+    echo Editor executable not found at:
+    echo   %EDITOR_EXE%
+    echo Building editor first...
     dotnet build XREngine.Editor\XREngine.Editor.csproj
     if errorlevel 1 (
         echo Build failed! Please fix errors before running network test.
@@ -31,21 +27,40 @@ if not exist "XREngine.Editor\bin\Debug\net8.0\XREngine.Editor.dll" (
     echo.
 )
 
-echo Starting Server instance...
-start "XRE Server" cmd /c "cd /d "%REPO_ROOT%\XREngine.Editor" && set XRE_NET_MODE=Server && dotnet run --project XREngine.Editor.csproj --no-build"
+if /I "%~1"=="pose" goto :POSE_TEST
 
-REM Give the server a moment to start up
-timeout /t 3 /nobreak > nul
+echo Starting Server instance...
+start "XRE Server" cmd /c "set XRE_NET_MODE=Server && set XRE_WINDOW_TITLE=XRE Editor (Server) && start \"\" /D "%REPO_ROOT%" "%EDITOR_EXE%""
+timeout /t 2 /nobreak > nul
 
 echo Starting Client instance...
-start "XRE Client" cmd /c "cd /d "%REPO_ROOT%\XREngine.Editor" && set XRE_NET_MODE=Client && dotnet run --project XREngine.Editor.csproj --no-build"
+start "XRE Client" cmd /c "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D "%REPO_ROOT%" "%EDITOR_EXE%""
 
 echo.
 echo ============================================================
-echo   Both instances launched!
-echo   - Server window title: "XRE Server"
-echo   - Client window title: "XRE Client"
+echo   Server + client launched.
 echo ============================================================
+goto :DONE
+
+:POSE_TEST
+echo Starting Server instance...
+start "XRE Server" cmd /c "set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=NetworkingPose && set XRE_NETWORKING_POSE_ROLE=server && set XRE_NET_MODE=Server && set XRE_WINDOW_TITLE=XRE Editor (Pose Server) && start \"\" /D "%REPO_ROOT%" "%EDITOR_EXE%""
+timeout /t 2 /nobreak > nul
+
+echo Starting Pose Source client...
+start "XRE Pose Source" cmd /c "set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=NetworkingPose && set XRE_NETWORKING_POSE_ROLE=sender && set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_POSE_ENTITY_ID=4242 && set XRE_POSE_BROADCAST_ENABLED=1 && set XRE_POSE_RECEIVE_ENABLED=0 && set XRE_WINDOW_TITLE=XRE Editor (Pose Source) && start \"\" /D "%REPO_ROOT%" "%EDITOR_EXE%""
+timeout /t 1 /nobreak > nul
+
+echo Starting Pose Receiver client...
+start "XRE Pose Receiver" cmd /c "set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=NetworkingPose && set XRE_NETWORKING_POSE_ROLE=receiver && set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_POSE_ENTITY_ID=4242 && set XRE_POSE_BROADCAST_ENABLED=0 && set XRE_POSE_RECEIVE_ENABLED=1 && set XRE_WINDOW_TITLE=XRE Editor (Pose Receiver) && start \"\" /D "%REPO_ROOT%" "%EDITOR_EXE%""
+
+echo.
+echo ============================================================
+echo   Pose sync test launched.
+echo   Move avatar on Pose Source and verify Pose Receiver follows.
+echo ============================================================
+
+:DONE
 echo.
 echo Press any key to exit this launcher (instances will keep running)...
 pause > nul

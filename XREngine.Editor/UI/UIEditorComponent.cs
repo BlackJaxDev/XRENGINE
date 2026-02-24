@@ -99,11 +99,20 @@ public partial class UIEditorComponent : UIComponent
         if (EditorUnitTests.Toggles.VideoStreaming)
         {
             SceneNode videoRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "VideoRoot");
+
+            // Configure video components before first activation so we don't start the
+            // streaming pipeline with the default URL and then immediately restart with
+            // an override (which can leave transient black output if the override fails).
+            bool wasActive = videoRoot.IsActiveSelf;
+            videoRoot.IsActiveSelf = false;
+
             var videoComp = videoRoot.AddComponent<UIVideoComponent>()!;
             if (!string.IsNullOrWhiteSpace(EditorUnitTests.Toggles.VideoStreamingUrl))
                 videoComp.StreamUrl = EditorUnitTests.Toggles.VideoStreamingUrl;
             if (EditorUnitTests.Toggles.VideoStreamingAudio)
                 videoRoot.AddComponent<AudioSourceComponent>();
+
+            videoRoot.IsActiveSelf = wasActive;
 
             return;
         }

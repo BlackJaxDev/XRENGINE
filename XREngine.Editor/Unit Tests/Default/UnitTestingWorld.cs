@@ -142,6 +142,7 @@ public static partial class EditorUnitTests
             UnitTestWorldKind.MeshEditing => CreateMeshEditingWorld(setUI, isServer),
             UnitTestWorldKind.UberShader => CreateUberShaderWorld(setUI, isServer),
             UnitTestWorldKind.PhysxTesting => CreatePhysxTestingWorld(setUI, isServer),
+            UnitTestWorldKind.NetworkingPose => CreateNetworkingPoseWorld(setUI, isServer),
             _ => CreateUnitTestWorld(setUI, isServer),
         };
 

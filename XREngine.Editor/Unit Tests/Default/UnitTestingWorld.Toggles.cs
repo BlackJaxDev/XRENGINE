@@ -2,6 +2,7 @@ using Assimp;
 using Newtonsoft.Json;
 using System.Collections.Generic;
 using System.Linq;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Editor;
 
@@ -29,6 +30,7 @@ public static partial class EditorUnitTests
         MeshEditing,
         UberShader,
         PhysxTesting,
+        NetworkingPose,
     }
 
     public class Settings
@@ -41,6 +43,7 @@ public static partial class EditorUnitTests
 
         //Editor UI
         public bool AddEditorUI = false; //Adds the full editor UI to the camera.
+        public ECanvasDrawSpace CameraUIDrawSpaceOnInit { get; set; } = ECanvasDrawSpace.Screen; //Controls whether unit testing camera UI starts in screen or world space.
         public bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
         public bool AllowEditingInVR = true; //Allows the user to edit the scene from desktop in VR.
         public bool PreviewVRStereoViews = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI (requires VRPawn).
