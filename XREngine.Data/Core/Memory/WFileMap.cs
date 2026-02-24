@@ -4,7 +4,7 @@ namespace XREngine.Data
 {
     public class WFileMap : FileMap
     {
-        internal WFileMap(VoidPtr hFile, FileMapProtect protect, long offset, uint length)
+        internal WFileMap(VoidPtr hFile, FileMapProtect protect, long offset, long length)
         {
             long maxSize = offset + length;
             uint maxHigh = (uint)(maxSize >> 32);
@@ -25,10 +25,10 @@ namespace XREngine.Data
             using (Win32.SafeHandle h = Win32.CreateFileMapping(hFile, null, mProtect, maxHigh, maxLow, string.Empty))
             {
                 h.ErrorCheck();
-                _addr = Win32.MapViewOfFile(h.Handle, mAccess, (uint)(offset >> 32), (uint)offset, length);
+                _addr = Win32.MapViewOfFile(h.Handle, mAccess, (uint)(offset >> 32), (uint)offset, (nuint)length);
                 if (!_addr)
                     Marshal.ThrowExceptionForHR(Marshal.GetHRForLastWin32Error());
-                _length = (int)length;
+                _length = length;
             }
         }
 

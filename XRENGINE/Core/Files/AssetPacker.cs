@@ -9,6 +9,28 @@ namespace XREngine.Core.Files
     /// </summary>
     public static partial class AssetPacker
     {
+        /// <summary>Indicates what stage of packing a progress report refers to.</summary>
+        public enum PackPhase
+        {
+            /// <summary>About to start compressing the file.</summary>
+            Compressing,
+            /// <summary>LZMA progress update during compression of a large file (bytes processed so far).</summary>
+            CompressingLargeFile,
+            /// <summary>File has been compressed and written to the staging area.</summary>
+            Staged,
+        }
+
+        public readonly record struct PackProgress(
+            PackPhase Phase,
+            int ProcessedFiles,
+            int TotalFiles,
+            string RelativePath,
+            long SourceBytes,
+            long CompressedBytes,
+            long TotalSourceBytes,
+            long TotalCompressedBytes,
+            long GrandTotalBytes);
+
         private const int HashSize = 4; // Using 32-bit hash for path lookup
         private const int DataOffsetSize = 8; // 64-bit offset to data
         private const int CompressedSizeSize = 4; // Compressed data size
@@ -39,6 +61,14 @@ namespace XREngine.Core.Files
             public int BucketCount { get; } = bucketCount;
             public int[] Starts { get; } = starts;
             public int[] Counts { get; } = counts;
+        }
+
+        /// <summary>
+        /// Adapter that forwards SevenZip LZMA encoder progress to a simple callback.
+        /// </summary>
+        private sealed class LzmaProgressAdapter(Action<long> onProgress) : SevenZip.ICodeProgress
+        {
+            public void SetProgress(long inSize, long outSize) => onProgress(inSize);
         }
 
         private struct TocEntry
@@ -113,31 +143,215 @@ namespace XREngine.Core.Files
             WriteArchive(destinationPath, VersionV2, lookupMode, assets, sourceMap);
         }
 
-        public static void Pack(string inputDir, string outputFile, TocLookupMode? lookupMode = null)
+        /// <summary>
+        /// Default RAM budget for parallel compression (512 MB).
+        /// During packing, source files are batched so that each parallel chunk's
+        /// total source size stays under this limit.
+        /// </summary>
+        public const long DefaultMaxMemoryBytes = 512L * 1024 * 1024;
+
+        /// <summary>
+        /// Files larger than this threshold (10 MB) use chunked parallel LZMA
+        /// compression for significantly faster packing.
+        /// </summary>
+        public const long LargeFileThreshold = 10L * 1024 * 1024;
+
+        /// <summary>
+        /// Result of compressing a single file, produced in parallel.
+        /// </summary>
+        private readonly struct CompressedFileResult
+        {
+            public required string RelativePath { get; init; }
+            public required uint Hash { get; init; }
+            public required byte[] CompressedData { get; init; }
+            public required int SourceLength { get; init; }
+        }
+
+        /// <param name="inputDir">Directory whose contents will be packed.</param>
+        /// <param name="outputFile">Destination .pak file path.</param>
+        /// <param name="lookupMode">TOC lookup strategy (default: hash buckets).</param>
+        /// <param name="maxMemoryBytes">
+        /// Approximate RAM budget for parallel compression.  Files are batched so
+        /// that each chunk's total source size stays under this limit.  Pass 0 or
+        /// a negative value to use <see cref="DefaultMaxMemoryBytes"/>.
+        /// </param>
+        /// <param name="progress">Optional callback invoked after each file is staged.</param>
+        public static void Pack(
+            string inputDir,
+            string outputFile,
+            TocLookupMode? lookupMode = null,
+            long maxMemoryBytes = 0,
+            Action<PackProgress>? progress = null)
         {
             if (string.IsNullOrWhiteSpace(inputDir) || !Directory.Exists(inputDir))
                 throw new DirectoryNotFoundException($"Input directory '{inputDir}' does not exist.");
 
-            var assets = Directory.GetFiles(inputDir, "*", SearchOption.AllDirectories)
-                                   .Select(filePath =>
-                                   {
-                                       string relativePath = NormalizePath(Path.GetRelativePath(inputDir, filePath));
-                                       byte[] data = File.ReadAllBytes(filePath);
-                                       byte[] compressed = Compression.Compress(data, true);
-                                       return new PackedAsset
-                                       {
-                                           Path = relativePath,
-                                           Hash = FastHash(relativePath),
-                                           CompressedSize = compressed.Length,
-                                           CompressedData = compressed,
-                                       };
-                                   })
-                                   .ToList();
-
-            if (assets.Count == 0)
+            string[] files = Directory.GetFiles(inputDir, "*", SearchOption.AllDirectories);
+            if (files.Length == 0)
                 throw new InvalidOperationException("No files found to pack.");
 
-            WriteArchive(outputFile, CurrentVersion, lookupMode ?? DefaultLookupMode, assets, sourceMap: null);
+            if (maxMemoryBytes <= 0)
+                maxMemoryBytes = DefaultMaxMemoryBytes;
+
+            string? outputDirectory = Path.GetDirectoryName(outputFile);
+            if (!string.IsNullOrWhiteSpace(outputDirectory))
+                Directory.CreateDirectory(outputDirectory);
+
+            // Create an empty output file immediately so callers can see it exists.
+            using (new FileStream(outputFile, FileMode.Create, FileAccess.Write, FileShare.Read)) { }
+
+            // Pre-scan file sizes so we can partition into RAM-limited chunks.
+            long[] fileSizes = new long[files.Length];
+            for (int i = 0; i < files.Length; i++)
+                fileSizes[i] = new FileInfo(files[i]).Length;
+
+            long grandTotalBytes = 0;
+            for (int i = 0; i < fileSizes.Length; i++)
+                grandTotalBytes += fileSizes[i];
+
+            string stagingPath = Path.Combine(Path.GetTempPath(), $"xre_assetpack_staging_{Guid.NewGuid():N}.bin");
+            try
+            {
+                List<PackedAsset> assets = new(files.Length);
+                long totalSourceBytes = 0;
+                long totalCompressedBytes = 0;
+                int filesWritten = 0;
+
+                using (FileStream stagingStream = new(stagingPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1024 * 64, FileOptions.SequentialScan))
+                {
+                    int chunkStart = 0;
+                    while (chunkStart < files.Length)
+                    {
+                        // --- Build a chunk that fits within the RAM budget --------
+                        int chunkEnd = chunkStart;
+                        long chunkBytes = 0;
+                        while (chunkEnd < files.Length)
+                        {
+                            long next = fileSizes[chunkEnd];
+                            // Always include at least one file per chunk even if it
+                            // exceeds the budget on its own.
+                            if (chunkEnd > chunkStart && chunkBytes + next > maxMemoryBytes)
+                                break;
+                            chunkBytes += next;
+                            chunkEnd++;
+                        }
+
+                        int chunkLen = chunkEnd - chunkStart;
+                        var chunkResults = new CompressedFileResult[chunkLen];
+
+                        // --- Report what we're about to compress ----------------
+                        if (progress is not null)
+                        {
+                            for (int j = 0; j < chunkLen; j++)
+                            {
+                                int fileIndex = chunkStart + j;
+                                string relativePath = NormalizePath(Path.GetRelativePath(inputDir, files[fileIndex]));
+                                progress.Invoke(new PackProgress(
+                                    PackPhase.Compressing,
+                                    filesWritten + j + 1,
+                                    files.Length,
+                                    relativePath,
+                                    fileSizes[fileIndex],
+                                    0,
+                                    totalSourceBytes,
+                                    totalCompressedBytes,
+                                    grandTotalBytes));
+                            }
+                        }
+
+                        // --- Compress this chunk in parallel ---------------------
+                        Parallel.For(0, chunkLen, j =>
+                        {
+                            int fileIndex = chunkStart + j;
+                            string filePath = files[fileIndex];
+                            string relativePath = NormalizePath(Path.GetRelativePath(inputDir, filePath));
+                            byte[] data = File.ReadAllBytes(filePath);
+
+                            byte[] compressed;
+                            if (data.Length >= LargeFileThreshold)
+                            {
+                                // Large file: split into chunks and compress each
+                                // chunk in parallel for much faster throughput.
+                                Action<long>? chunkProgress = null;
+                                if (progress is not null)
+                                {
+                                    long totalSrc = totalSourceBytes;   // capture
+                                    long totalComp = totalCompressedBytes;
+                                    long grand = grandTotalBytes;       // capture
+                                    chunkProgress = bytesCompressed =>
+                                    {
+                                        progress.Invoke(new PackProgress(
+                                            PackPhase.CompressingLargeFile,
+                                            filesWritten + j + 1,
+                                            files.Length,
+                                            relativePath,
+                                            data.Length,
+                                            bytesCompressed,
+                                            totalSrc,
+                                            totalComp,
+                                            grand));
+                                    };
+                                }
+
+                                compressed = Compression.CompressChunked(data, progress: chunkProgress);
+                            }
+                            else
+                            {
+                                compressed = Compression.Compress(data, true);
+                            }
+
+                            chunkResults[j] = new CompressedFileResult
+                            {
+                                RelativePath = relativePath,
+                                Hash = FastHash(relativePath),
+                                CompressedData = compressed,
+                                SourceLength = data.Length,
+                            };
+                        });
+
+                        // --- Flush chunk to staging sequentially -----------------
+                        for (int j = 0; j < chunkLen; j++)
+                        {
+                            ref readonly CompressedFileResult r = ref chunkResults[j];
+
+                            long stagingOffset = stagingStream.Position;
+                            stagingStream.Write(r.CompressedData, 0, r.CompressedData.Length);
+
+                            assets.Add(new PackedAsset
+                            {
+                                Path = r.RelativePath,
+                                Hash = r.Hash,
+                                CompressedSize = r.CompressedData.Length,
+                                ExistingDataOffset = stagingOffset,
+                            });
+
+                            totalSourceBytes += r.SourceLength;
+                            totalCompressedBytes += r.CompressedData.Length;
+                            filesWritten++;
+
+                            progress?.Invoke(new PackProgress(
+                                PackPhase.Staged,
+                                filesWritten,
+                                files.Length,
+                                r.RelativePath,
+                                r.SourceLength,
+                                r.CompressedData.Length,
+                                totalSourceBytes,
+                                totalCompressedBytes,
+                                grandTotalBytes));
+                        }
+
+                        chunkStart = chunkEnd;
+                    }
+                }
+
+                using FileMap sourceMap = FileMap.FromFile(stagingPath, FileMapProtect.Read);
+                WriteArchive(outputFile, CurrentVersion, lookupMode ?? DefaultLookupMode, assets, sourceMap);
+            }
+            finally
+            {
+                try { File.Delete(stagingPath); } catch { }
+            }
         }
 
         private static unsafe void WriteArchive(string destinationPath, int version, TocLookupMode mode, List<PackedAsset> assets, FileMap? sourceMap)
@@ -187,8 +401,8 @@ namespace XREngine.Core.Files
 
             using FileStream stream = new(destinationPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.RandomAccess);
             stream.SetLength(totalSize);
-            using FileMap map = FileMap.FromStream(stream, FileMapProtect.ReadWrite, 0, (int)totalSize);
-            using var writer = new CookedBinaryWriter((byte*)map.Address, (int)totalSize, map);
+            using FileMap map = FileMap.FromStream(stream, FileMapProtect.ReadWrite, 0, totalSize);
+            using var writer = new CookedBinaryWriter((byte*)map.Address, totalSize, map);
 
             writer.Write(Magic);
             writer.Write(version);
@@ -276,7 +490,9 @@ namespace XREngine.Core.Files
             {
                 string relativePath = NormalizePath(Path.GetRelativePath(inputDir, filePath));
                 byte[] rawData = File.ReadAllBytes(filePath);
-                byte[] compressed = Compression.Compress(rawData, true);
+                byte[] compressed = rawData.Length >= LargeFileThreshold
+                    ? Compression.CompressChunked(rawData)
+                    : Compression.Compress(rawData, true);
 
                 PackedAsset asset = new()
                 {

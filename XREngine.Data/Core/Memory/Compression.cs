@@ -267,7 +267,7 @@ namespace XREngine.Data
             return Decompress(compressed, false);
         }
 
-        public static unsafe byte[] Compress(byte[] arr, bool longSize = false)
+        public static byte[] Compress(byte[] arr, bool longSize = false, SevenZip.ICodeProgress? progress = null)
         {
             SevenZip.Compression.LZMA.Encoder encoder = new();
             using MemoryStream inStream = new(arr);
@@ -276,12 +276,12 @@ namespace XREngine.Data
             if (longSize)
             {
                 outStream.Write(BitConverter.GetBytes(arr.LongLength), 0, 8);
-                encoder.Code(inStream, outStream, arr.LongLength, -1, null);
+                encoder.Code(inStream, outStream, arr.LongLength, -1, progress);
             }
             else
             {
                 outStream.Write(BitConverter.GetBytes(arr.Length), 0, 4);
-                encoder.Code(inStream, outStream, arr.Length, -1, null);
+                encoder.Code(inStream, outStream, arr.Length, -1, progress);
             }
             return outStream.ToArray();
         }
@@ -379,6 +379,10 @@ namespace XREngine.Data
         }
         public static byte[] Decompress(byte[] bytes, bool longLength = false)
         {
+            // Check for chunked-parallel format first.
+            if (bytes.Length > 0 && bytes[0] == ChunkedMagic)
+                return DecompressChunked(bytes);
+
             SevenZip.Compression.LZMA.Decoder decoder = new();
             using MemoryStream inStream = new(bytes);
             using MemoryStream outStream = new();
@@ -400,6 +404,162 @@ namespace XREngine.Data
 
             return outStream.ToArray();
         }
+
+        // ═══════════════════════ Chunked parallel LZMA ═══════════════════════
+        //
+        // Large files are split into chunks and each chunk is LZMA-compressed in
+        // parallel.  The packed blob format:
+        //
+        //   byte   ChunkedMagic (0xCB)          – distinguishes from raw LZMA
+        //   long   originalTotalSize             – uncompressed size
+        //   int    chunkCount
+        //   int[]  chunkCompressedSizes          – one entry per chunk
+        //   int[]  chunkOriginalSizes            – one entry per chunk
+        //   byte[] ...compressed chunk data...   – each is a standalone LZMA stream
+        //
+        // Each LZMA stream uses longSize=false (4-byte length prefix) since
+        // individual chunks are small enough to fit in an int.
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>Magic byte that identifies a chunked-parallel LZMA blob.</summary>
+        internal const byte ChunkedMagic = 0xCB;
+
+        /// <summary>Default chunk size for parallel LZMA compression (4 MB).</summary>
+        public const int DefaultChunkSize = 4 * 1024 * 1024;
+
+        /// <summary>
+        /// Compresses <paramref name="data"/> by splitting it into
+        /// <paramref name="chunkSize"/>-byte pieces, LZMA-compressing each piece in
+        /// parallel, and concatenating the results with a small index header.
+        /// </summary>
+        /// <param name="data">Uncompressed source data.</param>
+        /// <param name="chunkSize">
+        /// Size of each chunk in bytes.  The last chunk may be smaller.
+        /// Pass 0 or negative for <see cref="DefaultChunkSize"/>.
+        /// </param>
+        /// <param name="progress">
+        /// Optional callback invoked after each chunk finishes compressing.
+        /// The parameter is the cumulative number of source bytes compressed so far.
+        /// Thread-safe; may be called from multiple threads concurrently.
+        /// </param>
+        /// <returns>A byte array in the chunked-parallel format.</returns>
+        public static byte[] CompressChunked(byte[] data, int chunkSize = 0, Action<long>? progress = null)
+        {
+            if (chunkSize <= 0)
+                chunkSize = DefaultChunkSize;
+
+            int chunkCount = (data.Length + chunkSize - 1) / chunkSize;
+            if (chunkCount <= 0)
+                chunkCount = 1;
+
+            byte[][] compressedChunks = new byte[chunkCount][];
+            int[] chunkOriginalSizes = new int[chunkCount];
+            long compressedSoFar = 0;
+
+            Parallel.For(0, chunkCount, i =>
+            {
+                int offset = i * chunkSize;
+                int length = Math.Min(chunkSize, data.Length - offset);
+                chunkOriginalSizes[i] = length;
+
+                // Extract chunk and compress independently.
+                byte[] chunk = new byte[length];
+                Buffer.BlockCopy(data, offset, chunk, 0, length);
+                compressedChunks[i] = Compress(chunk, longSize: false);
+
+                // Report cumulative progress.
+                if (progress is not null)
+                {
+                    long cumulative = Interlocked.Add(ref compressedSoFar, length);
+                    progress(cumulative);
+                }
+            });
+
+            // --- Assemble the blob --------------------------------------------------
+            // Header: magic(1) + originalSize(8) + chunkCount(4) + sizes(4*N*2)
+            int headerSize = 1 + 8 + 4 + chunkCount * 4 * 2;
+            int totalCompressed = 0;
+            for (int i = 0; i < chunkCount; i++)
+                totalCompressed += compressedChunks[i].Length;
+
+            byte[] result = new byte[headerSize + totalCompressed];
+            int pos = 0;
+
+            result[pos++] = ChunkedMagic;
+            BitConverter.TryWriteBytes(result.AsSpan(pos), (long)data.Length);
+            pos += 8;
+            BitConverter.TryWriteBytes(result.AsSpan(pos), chunkCount);
+            pos += 4;
+
+            for (int i = 0; i < chunkCount; i++)
+            {
+                BitConverter.TryWriteBytes(result.AsSpan(pos), compressedChunks[i].Length);
+                pos += 4;
+            }
+
+            for (int i = 0; i < chunkCount; i++)
+            {
+                BitConverter.TryWriteBytes(result.AsSpan(pos), chunkOriginalSizes[i]);
+                pos += 4;
+            }
+
+            for (int i = 0; i < chunkCount; i++)
+            {
+                Buffer.BlockCopy(compressedChunks[i], 0, result, pos, compressedChunks[i].Length);
+                pos += compressedChunks[i].Length;
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Decompresses a blob produced by <see cref="CompressChunked"/>.
+        /// </summary>
+        internal static byte[] DecompressChunked(byte[] bytes)
+        {
+            int pos = 0;
+
+            if (bytes[pos++] != ChunkedMagic)
+                throw new InvalidOperationException("Not a chunked LZMA blob.");
+
+            long originalSize = BitConverter.ToInt64(bytes, pos);
+            pos += 8;
+
+            int chunkCount = BitConverter.ToInt32(bytes, pos);
+            pos += 4;
+
+            int[] compressedSizes = new int[chunkCount];
+            for (int i = 0; i < chunkCount; i++)
+            {
+                compressedSizes[i] = BitConverter.ToInt32(bytes, pos);
+                pos += 4;
+            }
+
+            int[] originalSizes = new int[chunkCount];
+            for (int i = 0; i < chunkCount; i++)
+            {
+                originalSizes[i] = BitConverter.ToInt32(bytes, pos);
+                pos += 4;
+            }
+
+            byte[] result = new byte[originalSize];
+            int destOffset = 0;
+
+            // Decompress chunks in order (could be parallelized later if desired).
+            for (int i = 0; i < chunkCount; i++)
+            {
+                byte[] chunkCompressed = new byte[compressedSizes[i]];
+                Buffer.BlockCopy(bytes, pos, chunkCompressed, 0, compressedSizes[i]);
+                pos += compressedSizes[i];
+
+                byte[] decompressed = Decompress(chunkCompressed, longLength: false);
+                Buffer.BlockCopy(decompressed, 0, result, destOffset, decompressed.Length);
+                destOffset += decompressed.Length;
+            }
+
+            return result;
+        }
+
 
         public static unsafe string CompressToString(DataSource source)
         {

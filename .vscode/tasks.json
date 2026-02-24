@@ -410,6 +410,24 @@
             "problemMatcher": []
         },
         {
+            "label": "cook-commonassets-archive",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\test_cook_commonassets.ps1",
+                "-NoBuild"
+            ],
+            "dependsOn": "build",
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "install-yt-dlp",
             "type": "shell",
             "command": "powershell",

@@ -7,12 +7,12 @@ namespace XREngine
     public abstract class FileMap : IDisposable
     {
         protected VoidPtr _addr;
-        protected int _length;
+        protected long _length;
         protected string? _path;
         protected FileStream? _baseStream;
 
         public VoidPtr Address => _addr;
-        public int Length { get => _length; set => _length = value; }
+        public long Length { get => _length; set => _length = value; }
         public string? FilePath => _path;
         public FileStream? BaseStream => _baseStream;
 
@@ -32,9 +32,9 @@ namespace XREngine
             => FromFile(path, FileMapProtect.ReadWrite, 0, 0);
         public static FileMap FromFile(string path, FileMapProtect prot)
             => FromFile(path, prot, 0, 0);
-        public static FileMap FromFile(string path, FileMapProtect prot, int offset, int length)
+        public static FileMap FromFile(string path, FileMapProtect prot, long offset, long length)
             => FromFile(path, prot, offset, length, FileOptions.RandomAccess);
-        public static FileMap FromFile(string path, FileMapProtect prot, int offset, int length, FileOptions options)
+        public static FileMap FromFile(string path, FileMapProtect prot, long offset, long length, FileOptions options)
         {
             FileStream stream;
             FileMap map;
@@ -64,9 +64,9 @@ namespace XREngine
             map._path = path; //In case we're using a temp file
             return map;
         }
-        public static FileMap? FromTempFile(int length)
+        public static FileMap? FromTempFile(long length)
             => FromTempFile(length, out _);
-        public static FileMap? FromTempFile(int length, out string path)
+        public static FileMap? FromTempFile(long length, out string path)
         {
             FileStream stream = new FileStream(path = Path.GetTempFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 8, FileOptions.RandomAccess | FileOptions.DeleteOnClose);
             try
@@ -85,36 +85,36 @@ namespace XREngine
             => FromStream(stream, FileMapProtect.ReadWrite, 0, 0);
         public static FileMap FromStream(FileStream stream, FileMapProtect prot)
             => FromStream(stream, prot, 0, 0);
-        public static FileMap FromStream(FileStream stream, FileMapProtect prot, int offset, int length)
+        public static FileMap FromStream(FileStream stream, FileMapProtect prot, long offset, long length)
         {
             //FileStream newStream = new FileStream(stream.Name, FileMode.Open, prot == FileMapProtect.Read ? FileAccess.Read : FileAccess.ReadWrite, FileShare.Read, 8, FileOptions.RandomAccess);
             //try { return FromStreamInternal(newStream, prot, offset, length); }
             //catch (Exception x) { newStream.Dispose(); throw x; }
 
             if (length == 0)
-                length = (int)stream.Length;
+                length = stream.Length;
             else
-                length = length.ClampMax((int)stream.Length);
+                length = length.ClampMax(stream.Length);
 
             return Environment.OSVersion.Platform switch
             {
-                PlatformID.Win32NT => new WFileMap(stream.SafeFileHandle.DangerousGetHandle(), prot, offset, (uint)length) { _path = stream.Name },
+                PlatformID.Win32NT => new WFileMap(stream.SafeFileHandle.DangerousGetHandle(), prot, offset, length) { _path = stream.Name },
                 _ => new CFileMap(stream, prot, offset, length) { _path = stream.Name },
             };
         }
 
-        public static FileMap FromStreamInternal(FileStream stream, FileMapProtect prot, int offset, int length)
+        public static FileMap FromStreamInternal(FileStream stream, FileMapProtect prot, long offset, long length)
         {
             if (length == 0)
-                length = (int)stream.Length;
+                length = stream.Length;
             else
-                length = length.ClampMax((int)stream.Length);
+                length = length.ClampMax(stream.Length);
 
-            length = length.ClampMin((int)stream.Length);
+            length = length.ClampMin(stream.Length);
 
             return Environment.OSVersion.Platform switch
             {
-                PlatformID.Win32NT => new WFileMap(stream.SafeFileHandle.DangerousGetHandle(), prot, offset, (uint)length) { _baseStream = stream, _path = stream.Name },
+                PlatformID.Win32NT => new WFileMap(stream.SafeFileHandle.DangerousGetHandle(), prot, offset, length) { _baseStream = stream, _path = stream.Name },
                 _ => new CFileMap(stream, prot, offset, length) { _baseStream = stream, _path = stream.Name },
             };
         }

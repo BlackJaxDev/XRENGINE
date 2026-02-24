@@ -90,7 +90,7 @@ namespace XREngine.Core.Files
         {
             using FileMap map = FileMap.FromFile(path, FileMapProtect.Read);
             Encoding = GetEncoding(map, out int bomLength);
-            Text = Encoding.GetString((byte*)map.Address + bomLength, map.Length - bomLength);
+            Text = Encoding.GetString((byte*)map.Address + bomLength, (int)(map.Length - bomLength));
         }
 
         public async Task<bool> LoadTextAsync(string path)

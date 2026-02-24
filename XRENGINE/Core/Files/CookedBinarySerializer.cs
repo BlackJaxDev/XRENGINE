@@ -56,7 +56,7 @@ public sealed unsafe class CookedBinaryWriter : IDisposable
     private byte* _cursor;
     private readonly byte* _end;
 
-    internal CookedBinaryWriter(byte* buffer, int length, FileMap? map = null)
+    internal CookedBinaryWriter(byte* buffer, long length, FileMap? map = null)
     {
         _map = map;
         _start = buffer;
@@ -120,8 +120,7 @@ public sealed unsafe class CookedBinaryWriter : IDisposable
 
     public void Write(byte[] data)
     {
-        if (data is null)
-            throw new ArgumentNullException(nameof(data));
+        ArgumentNullException.ThrowIfNull(data);
         WriteBytes(data);
     }
 
@@ -177,7 +176,7 @@ public sealed unsafe class CookedBinaryReader : IDisposable
     private byte* _cursor;
     private readonly byte* _end;
 
-    internal CookedBinaryReader(byte* buffer, int length, FileMap? map = null)
+    internal CookedBinaryReader(byte* buffer, long length, FileMap? map = null)
     {
         _map = map;
         _start = buffer;
@@ -185,7 +184,7 @@ public sealed unsafe class CookedBinaryReader : IDisposable
         _end = buffer + length;
     }
 
-    public int Remaining => (int)(_end - _cursor);
+    public long Remaining => _end - _cursor;
 
     public void Dispose()
         => _map?.Dispose();
