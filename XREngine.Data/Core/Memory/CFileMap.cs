@@ -7,7 +7,7 @@ namespace XREngine
         protected MemoryMappedFile _mappedFile;
         protected MemoryMappedViewAccessor _mappedFileAccessor;
 
-        public CFileMap(FileStream stream, FileMapProtect protect, int offset, int length)
+        public CFileMap(FileStream stream, FileMapProtect protect, long offset, long length)
         {
             MemoryMappedFileAccess cProtect = (protect == FileMapProtect.ReadWrite) 
                 ? MemoryMappedFileAccess.ReadWrite 

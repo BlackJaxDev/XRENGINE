@@ -565,6 +565,7 @@ public static partial class EditorImGuiUI
             DrawScenePanel();
             DrawInspectorPanel();
             DrawAssetExplorerPanel();
+            DrawArchiveInspectorPanel();
             DrawClosePromptDialog();
 
             // Tool windows
@@ -1122,6 +1123,9 @@ public static partial class EditorImGuiUI
             {
                 if (ImGui.MenuItem("Import Archive..."))
                     OpenArchiveImportDialog();
+
+                if (ImGui.MenuItem("Archive Inspector"))
+                    _showArchiveInspector = true;
 
                 if (ImGui.MenuItem("Shader Locking Tool"))
                     ShaderLockingWindow.Instance.Open();

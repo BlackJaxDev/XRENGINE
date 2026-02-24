@@ -13,6 +13,7 @@ using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
+using XREngine.Core.Files;
 using XREngine.Editor;
 using XREngine.Editor.Mcp;
 using XREngine.Native;
@@ -57,6 +58,9 @@ internal class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (TryRunCookCommonAssetsCommand(args))
+            return;
+
         //Begin tracking how long editor startup takes, and log the time when the first non-black frame is rendered.
         StartEditorStartupTimer();
 
@@ -669,5 +673,198 @@ internal class Program
         }
 
         return true;
+    }
+
+    private static bool TryRunCookCommonAssetsCommand(string[] args)
+    {
+        if (!TryParseCookCommonAssetsArgs(args, out bool cookFlagSeen, out string? sourcePath, out string? outputPath, out long packRamLimit, out string? error))
+        {
+            if (cookFlagSeen)
+            {
+                Console.Error.WriteLine(error ?? "Invalid arguments for --cook-common-assets.");
+                Environment.ExitCode = 1;
+                return true;
+            }
+
+            return false;
+        }
+
+        if (!cookFlagSeen)
+            return false;
+
+        try
+        {
+            RunCookCommonAssetsCommand(sourcePath, outputPath, packRamLimit);
+            Environment.ExitCode = 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Cook common assets failed: {ex.Message}");
+            Environment.ExitCode = 1;
+        }
+
+        return true;
+    }
+
+    private static bool TryParseCookCommonAssetsArgs(
+        string[] args,
+        out bool cookFlagSeen,
+        out string? sourcePath,
+        out string? outputPath,
+        out long packRamLimit,
+        out string? error)
+    {
+        cookFlagSeen = false;
+        sourcePath = null;
+        outputPath = null;
+        packRamLimit = 0;
+        error = null;
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            switch (arg.ToLowerInvariant())
+            {
+                case "--cook-common-assets":
+                    cookFlagSeen = true;
+                    break;
+                case "--cook-source":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing source directory after --cook-source.";
+                        return false;
+                    }
+                    sourcePath = args[++i];
+                    break;
+                case "--cook-output":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing archive file path after --cook-output.";
+                        return false;
+                    }
+                    outputPath = args[++i];
+                    break;
+                case "--pack-ram-limit":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --pack-ram-limit (in MB).";
+                        return false;
+                    }
+                    if (!long.TryParse(args[++i], out long mb) || mb <= 0)
+                    {
+                        error = "--pack-ram-limit must be a positive integer (in MB).";
+                        return false;
+                    }
+                    packRamLimit = mb * 1024 * 1024;
+                    break;
+            }
+        }
+
+        return cookFlagSeen;
+    }
+
+    private static void RunCookCommonAssetsCommand(string? sourcePathArg, string? outputPathArg, long packRamLimit = 0)
+    {
+        string repoRoot = FindRepositoryRootForCookCommand();
+
+        string sourcePath = ResolvePathAgainstRepoRoot(
+            sourcePathArg,
+            repoRoot,
+            Path.Combine("Build", "CommonAssets"));
+
+        string outputPath = ResolvePathAgainstRepoRoot(
+            outputPathArg,
+            repoRoot,
+            Path.Combine("Build", "Game", "Content", "GameContent.pak"));
+
+        if (!Directory.Exists(sourcePath))
+            throw new DirectoryNotFoundException($"Source directory not found: {sourcePath}");
+
+        string? outputDirectory = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrWhiteSpace(outputDirectory))
+            Directory.CreateDirectory(outputDirectory);
+
+        Console.WriteLine($"Cooking + packing {sourcePath}");
+        Console.WriteLine($"    -> {outputPath}");
+
+        // Use a fixed temp location so we can always find and clean it up,
+        // even if a previous run was killed mid-flight.
+        string tempIntermediate = Path.Combine(Path.GetTempPath(), "XREngine", "CookCommonAssets");
+        CleanDirectory(tempIntermediate);
+
+        try
+        {
+            var sw = Stopwatch.StartNew();
+
+            string cookedDirectory = ProjectBuilder.PrepareCookedContentDirectoryForTests(sourcePath, tempIntermediate, progress =>
+            {
+                if (progress.TotalFiles <= 0)
+                    return;
+
+                int percent = (int)((progress.ProcessedFiles * 100L) / progress.TotalFiles);
+                string mode = progress.CookedAsBinaryAsset ? "cooked" : "copied";
+                Console.WriteLine($"[cook {percent,3}%] {progress.ProcessedFiles}/{progress.TotalFiles} {mode}: {progress.RelativePath}");
+            });
+
+            if (File.Exists(outputPath))
+                File.Delete(outputPath);
+
+            long ramLimit = packRamLimit > 0 ? packRamLimit : AssetPacker.DefaultMaxMemoryBytes;
+            Console.WriteLine($"Pack RAM limit: {ramLimit / (1024 * 1024)} MB");
+
+            using var packProgress = new ConsolePackProgress();
+            AssetPacker.Pack(cookedDirectory, outputPath, maxMemoryBytes: ramLimit, progress: packProgress.HandleProgress);
+
+            sw.Stop();
+            var fi = new FileInfo(outputPath);
+            Console.WriteLine($"Archive ready: {fi.Length / (1024 * 1024)} MB in {sw.Elapsed.TotalSeconds:F1}s -> {outputPath}");
+        }
+        finally
+        {
+            CleanDirectory(tempIntermediate);
+        }
+    }
+
+    /// <summary>
+    /// Recursively deletes a directory if it exists, ignoring errors from locked files.
+    /// </summary>
+    private static void CleanDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Warning: could not fully clean temp directory '{path}': {ex.Message}");
+        }
+    }
+
+    private static string FindRepositoryRootForCookCommand()
+    {
+        string current = Path.GetFullPath(AppContext.BaseDirectory);
+
+        while (true)
+        {
+            if (File.Exists(Path.Combine(current, "XRENGINE.sln")))
+                return current;
+
+            string? parent = Directory.GetParent(current)?.FullName;
+            if (string.IsNullOrWhiteSpace(parent))
+                break;
+
+            current = parent;
+        }
+
+        throw new DirectoryNotFoundException("Unable to locate repository root containing XRENGINE.sln.");
+    }
+
+    private static string ResolvePathAgainstRepoRoot(string? value, string repoRoot, string defaultRelative)
+    {
+        string path = string.IsNullOrWhiteSpace(value) ? defaultRelative : value;
+        return Path.IsPathRooted(path)
+            ? Path.GetFullPath(path)
+            : Path.GetFullPath(Path.Combine(repoRoot, path));
     }
 }

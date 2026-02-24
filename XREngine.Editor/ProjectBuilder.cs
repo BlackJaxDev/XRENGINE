@@ -13,6 +13,15 @@ namespace XREngine.Editor;
 
 internal static class ProjectBuilder
 {
+    /// <summary>
+    /// Represents the progress of cooking a single asset during the content cooking step of the build process.
+    /// </summary>
+    /// <param name="ProcessedFiles">The number of asset files that have been processed so far.</param>
+    /// <param name="TotalFiles">The total number of asset files that need to be processed.</param>
+    /// <param name="RelativePath">The relative path of the asset being processed, relative to the root of the assets directory.</param>
+    /// <param name="CookedAsBinaryAsset">Indicates whether the asset was successfully cooked into a binary format (true) or if it was copied as-is (false).</param>
+    internal readonly record struct CookProgress(int ProcessedFiles, int TotalFiles, string RelativePath, bool CookedAsBinaryAsset);
+
     private const string StartupAssetName = "startup.asset";
 
     private sealed record BuildContext(
@@ -54,17 +63,18 @@ internal static class ProjectBuilder
             var job = Engine.Jobs.Schedule(RunBuildRoutine);
             job.Completed += OnJobFinished;
             job.Canceled += OnJobFinished;
-            job.Faulted += (j, ex) =>
-            {
-                Debug.LogException(ex, "Project build failed.");
-                OnJobFinished(j);
-            };
+            job.Faulted += OnJobFaulted;
 
             EditorJobTracker.Track(job, "Build Project", payload => payload as string);
             _activeJob = job;
         }
     }
 
+    private static void OnJobFaulted(Job j, Exception ex)
+    {
+        Debug.LogException(ex, "Project build failed.");
+        OnJobFinished(j);
+    }
     private static void OnJobFinished(Job job)
     {
         lock (_buildLock)
@@ -352,35 +362,59 @@ internal static class ProjectBuilder
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static string PrepareCookedContentDirectory(BuildContext context)
+    private static string PrepareCookedContentDirectory(BuildContext context, Action<CookProgress>? progress = null)
     {
         string cookedRoot = Path.Combine(context.IntermediateDirectory, "Build", "CookedContent");
         if (Directory.Exists(cookedRoot))
             Directory.Delete(cookedRoot, true);
         Directory.CreateDirectory(cookedRoot);
 
-        foreach (string sourceFile in Directory.EnumerateFiles(context.AssetsDirectory, "*", SearchOption.AllDirectories))
+        string[] sourceFiles = Directory.GetFiles(context.AssetsDirectory, "*", SearchOption.AllDirectories);
+        int totalFiles = sourceFiles.Length;
+
+        for (int i = 0; i < sourceFiles.Length; i++)
         {
+            string sourceFile = sourceFiles[i];
             string relative = Path.GetRelativePath(context.AssetsDirectory, sourceFile);
             string destination = Path.Combine(cookedRoot, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            bool cookedAsBinaryAsset = false;
 
             if (string.Equals(Path.GetExtension(sourceFile), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
             {
                 string yaml = File.ReadAllText(sourceFile, Encoding.UTF8);
-                var blob = CreateCookedBlobFromYaml(yaml, sourceFile);
-                WriteCookedBlob(destination, blob);
+                string? typeHint = ExtractAssetTypeHint(yaml);
+
+                if (string.IsNullOrWhiteSpace(typeHint))
+                {
+                    File.Copy(sourceFile, destination, true);
+                    continue;
+                }
+
+                try
+                {
+                    var blob = CreateCookedBlobFromYaml(yaml, sourceFile);
+                    WriteCookedBlob(destination, blob);
+                    cookedAsBinaryAsset = true;
+                    progress?.Invoke(new CookProgress(i + 1, totalFiles, relative, cookedAsBinaryAsset));
+                    continue;
+                }
+                catch (InvalidOperationException)
+                {
+                    File.Copy(sourceFile, destination, true);
+                    progress?.Invoke(new CookProgress(i + 1, totalFiles, relative, cookedAsBinaryAsset));
+                    continue;
+                }
             }
-            else
-            {
-                File.Copy(sourceFile, destination, true);
-            }
+
+            File.Copy(sourceFile, destination, true);
+            progress?.Invoke(new CookProgress(i + 1, totalFiles, relative, cookedAsBinaryAsset));
         }
 
         return cookedRoot;
     }
 
-    internal static string PrepareCookedContentDirectoryForTests(string assetsDirectory, string intermediateDirectory)
+    internal static string PrepareCookedContentDirectoryForTests(string assetsDirectory, string intermediateDirectory, Action<CookProgress>? progress = null)
     {
         if (string.IsNullOrWhiteSpace(assetsDirectory))
             throw new ArgumentException("Assets directory must be provided.", nameof(assetsDirectory));
@@ -413,7 +447,7 @@ internal static class ProjectBuilder
             Path.Combine(buildRoot, "Content.pak"),
             Path.Combine(buildRoot, "Config.pak"));
 
-        return PrepareCookedContentDirectory(context);
+        return PrepareCookedContentDirectory(context, progress);
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
@@ -485,7 +519,7 @@ internal static class ProjectBuilder
             if (!trimmed.StartsWith("__assetType:", StringComparison.Ordinal))
                 continue;
 
-            string value = trimmed.Substring("__assetType:".Length).Trim();
+            string value = trimmed["__assetType:".Length..].Trim();
             if (value.Length == 0)
                 continue;
 

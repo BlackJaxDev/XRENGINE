@@ -65,9 +65,9 @@ namespace System
         [DllImport("Kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern bool FlushViewOfFile(VoidPtr lpBaseAddress, uint dwNumberOfBytesToFlush);
         [DllImport("Kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        public static extern VoidPtr MapViewOfFile(VoidPtr hFileMappingObject, _FileMapAccess dwDesiredAccess, uint dwFileOffsetHigh, uint dwFileOffsetLow, uint dwNumberOfBytesToMap);
+        public static extern VoidPtr MapViewOfFile(VoidPtr hFileMappingObject, _FileMapAccess dwDesiredAccess, uint dwFileOffsetHigh, uint dwFileOffsetLow, nuint dwNumberOfBytesToMap);
         [DllImport("Kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        public static extern VoidPtr MapViewOfFileEx(VoidPtr hFileMappingObject, _FileMapAccess dwDesiredAccess, uint dwFileOffsetHigh, uint dwFileOffsetLow, uint dwNumberOfBytesToMap, VoidPtr lpBaseAddress);
+        public static extern VoidPtr MapViewOfFileEx(VoidPtr hFileMappingObject, _FileMapAccess dwDesiredAccess, uint dwFileOffsetHigh, uint dwFileOffsetLow, nuint dwNumberOfBytesToMap, VoidPtr lpBaseAddress);
         [DllImport("Kernel32.dll", CharSet = CharSet.Unicode)]
         public static extern VoidPtr OpenFileMapping(_FileMapAccess dwDesiredAccess, bool bInheritHandle, string lpName);
         [DllImport("Kernel32.dll", CharSet = CharSet.Unicode)]
