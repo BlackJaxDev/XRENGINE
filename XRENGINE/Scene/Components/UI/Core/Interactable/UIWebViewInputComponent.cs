@@ -43,7 +43,7 @@ namespace XREngine.Rendering.UI
             if (!_loggedRegister)
             {
                 _loggedRegister = true;
-                Debug.Out($"[WebViewInput] RegisterInput called (Unregister={input.Unregister})");
+                Debug.UI($"[WebViewInput] RegisterInput called (Unregister={input.Unregister})");
             }
             input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Pressed, LeftDown);
             input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Released, LeftUp);
@@ -65,7 +65,7 @@ namespace XREngine.Rendering.UI
             if (!_loggedFirstMove)
             {
                 _loggedFirstMove = true;
-                Debug.Out($"[WebViewInput] First MouseMoved: web({x},{y}) local({posLocal.X:F1},{posLocal.Y:F1})");
+                Debug.UI($"[WebViewInput] First MouseMoved: web({x},{y}) local({posLocal.X:F1},{posLocal.Y:F1})");
             }
             _webView?.Backend.SendMouseMove(x, y);
         }
@@ -75,7 +75,7 @@ namespace XREngine.Rendering.UI
             if (!_loggedFirstClick)
             {
                 _loggedFirstClick = true;
-                Debug.Out($"[WebViewInput] First LeftDown at ({_lastX},{_lastY})");
+                Debug.UI($"[WebViewInput] First LeftDown at ({_lastX},{_lastY})");
             }
             _webView?.Backend.SendMouseButton(true, WebMouseButton.Left, _lastX, _lastY);
         }

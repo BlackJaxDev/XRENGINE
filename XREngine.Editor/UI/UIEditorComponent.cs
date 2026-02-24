@@ -91,7 +91,7 @@ public partial class UIEditorComponent : UIComponent
             webComp.Url = string.IsNullOrWhiteSpace(EditorUnitTests.Toggles.UltralightWebViewUrl)
                 ? "https://blackjaxvr.com"
                 : EditorUnitTests.Toggles.UltralightWebViewUrl;
-            Debug.Out($"[UIEditor] Ultralight web view enabled. Url='{webComp.Url}'");
+            Debug.UI($"[UIEditor] Ultralight web view enabled. Url='{webComp.Url}'");
 
             return;
         }

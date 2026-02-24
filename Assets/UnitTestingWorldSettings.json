@@ -37,14 +37,14 @@
   "Spline": false,
 
   "AddEditorUI": true,
-  "CameraUIDrawSpaceOnInit": "World",
+  "CameraUIDrawSpaceOnInit": "Screen",
   "TransformTool": false,
   "DearImGuiUI": false,
   "EnableProfilerLogging": true,
   "RiveUI": false,
   "VideoStreaming": false,
   "VideoStreamingAudio": true,
-  "VideoStreamingUrl": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+  "VideoStreamingUrl": "https://www.twitch.tv/videos/2703548052",
   "UltralightWebView": false,
   "UltralightWebViewUrl": "https://blackjaxvr.com",
 

@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Reflection;
 using XREngine.Data.Colors;
+using XREngine.Editor.UI;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using static XREngine.Rendering.UI.UIToggleComponent;
@@ -148,54 +149,7 @@ public static partial class InspectorPropertyEditors
         public static Action<SceneNode, PropertyInfo, object?[]?> CreateBooleanEditor()
             => (n, prop, objects) =>
             {
-                var matComp = n.AddComponent<UIMaterialComponent>()!;
-                var mat = CreateUIOutlineMaterial()!;
-                mat.SetVector4(FillColorUniformName, ColorF4.Black);
-                //mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-                matComp!.Material = mat;
-
-                var tfm = matComp.BoundableTransform;
-                tfm.MinAnchor = new Vector2(0.0f, 0.0f);
-                tfm.MaxAnchor = new Vector2(0.0f, 0.0f);
-                tfm.Width = 20.0f;
-                tfm.Height = 20.0f;
-
-                n.NewChild(out UIToggleComponent toggleInput);
-                toggleInput.Property = prop;
-                toggleInput.Targets = objects;
-
-                n.NewChild(out UITextComponent textComp, "ToggleLabel");
-                textComp.Text = "";
-                textComp.FontSize = 16;
-                textComp.Color = ColorF4.White;
-                textComp.HorizontalAlignment = EHorizontalAlignment.Center;
-                textComp.VerticalAlignment = EVerticalAlignment.Center;
-
-                toggleInput.OnStateChanged += SetCheckState;
-                toggleInput.MouseDirectOverlapEnter += GotFocus;
-                toggleInput.MouseDirectOverlapLeave += LostFocus;
-
-                void GotFocus(UIInteractableComponent comp)
-                {
-                    mat.SetVector4(OutlineColorUniformName, ColorF4.White);
-                    textComp.Color = ColorF4.White;
-                }
-
-                void LostFocus(UIInteractableComponent comp)
-                {
-                    mat.SetVector4(OutlineColorUniformName, ColorF4.Gray);
-                    textComp.Color = ColorF4.Gray;
-                }
-
-                void SetCheckState(ECurrentState state)
-                {
-                    textComp.Text = state switch
-                    {
-                        ECurrentState.True => "?",
-                        ECurrentState.Intermediate => "¦",
-                        _ => "",
-                    };
-                }
+                NativeUIElements.CreateCheckboxToggle(n, prop, objects);
             };
     }
 }

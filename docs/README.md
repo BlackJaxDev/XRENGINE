@@ -4,6 +4,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 
 ## Architecture
 - [Architecture Overview](architecture/README.md)
+- [Modeling XRMesh Editing Architecture](architecture/modeling-xrmesh-editing.md)
 - [Play Mode Architecture](architecture/play-mode-architecture.md)
 - [Load Balancer](architecture/load-balancer.md)
 - [Job System](api/job-system.md)

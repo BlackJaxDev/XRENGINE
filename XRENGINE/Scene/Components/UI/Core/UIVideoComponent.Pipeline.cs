@@ -47,7 +47,7 @@ namespace XREngine.Rendering.UI
 
         private void StartStreamingPipelineOnMainThread()
         {
-            Debug.Out($"Streaming pipeline starting: url='{StreamUrl}'");
+            Debug.UI($"Streaming pipeline starting: url='{StreamUrl}'");
             if (string.IsNullOrWhiteSpace(StreamUrl))
             {
                 Debug.UIWarning("Streaming playback requires a valid StreamUrl.");
@@ -100,7 +100,7 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
-            Debug.Out($"Streaming source resolved: url='{resolved.Url}', retries={resolved.RetryCount}, qualities={resolved.AvailableQualities.Count}");
+            Debug.UI($"Streaming source resolved: url='{resolved.Url}', retries={resolved.RetryCount}, qualities={resolved.AvailableQualities.Count}");
 
             // Store discovered quality variants for UI quality selectors.
             _availableQualities = resolved.AvailableQualities;
@@ -110,7 +110,7 @@ namespace XREngine.Rendering.UI
             _streamingSession = StreamingSubsystem.CreateSession();
             _streamingSession.VideoSizeChanged += HandleStreamingVideoSizeChanged;
             _cachedAudioSource = GetSiblingComponent<AudioSourceComponent>();
-            Debug.Out($"[AV Setup] Pipeline starting: audioSource={(
+            Debug.UI($"[AV Setup] Pipeline starting: audioSource={(
                 _cachedAudioSource != null
                     ? "cached"
                     : "null — AudioSourceComponent not yet a sibling; drain loop will refresh"
@@ -136,7 +136,7 @@ namespace XREngine.Rendering.UI
 
         private void StartStreamingPipelineWithVariantOnMainThread(StreamVariantInfo variant)
         {
-            Debug.Out($"Streaming pipeline starting with variant: {variant.DisplayLabel}");
+            Debug.UI($"Streaming pipeline starting with variant: {variant.DisplayLabel}");
 
             if (_streamingSession != null)
                 StopStreamingPipelineOnMainThread();
@@ -160,7 +160,7 @@ namespace XREngine.Rendering.UI
             _streamingSession = StreamingSubsystem.CreateSession();
             _streamingSession.VideoSizeChanged += HandleStreamingVideoSizeChanged;
             _cachedAudioSource = GetSiblingComponent<AudioSourceComponent>();
-            Debug.Out($"[AV Setup] Pipeline starting (variant): audioSource={(
+            Debug.UI($"[AV Setup] Pipeline starting (variant): audioSource={(
                 _cachedAudioSource != null
                     ? "cached"
                     : "null — AudioSourceComponent not yet a sibling; drain loop will refresh"
@@ -220,7 +220,7 @@ namespace XREngine.Rendering.UI
             if (_streamOpenedTicks > 0)
             {
                 long uptimeMs = (GetEngineTimeTicks() - _streamOpenedTicks) / TimeSpan.TicksPerMillisecond;
-                Debug.Out($"Streaming telemetry: uptimeMs={uptimeMs}, rebufferCount={_rebufferCount}, retryCount={_streamingRetryCount}");
+                Debug.UI($"Streaming telemetry: uptimeMs={uptimeMs}, rebufferCount={_rebufferCount}, retryCount={_streamingRetryCount}");
             }
 
             // ── Reset all mutable state to defaults ──
@@ -288,7 +288,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         private void OnStreamingSessionOpenCompleted(Task task)
         {
-            Debug.Out($"Streaming session open completed: status={task.Status}, faulted={task.IsFaulted}");
+            Debug.UI($"Streaming session open completed: status={task.Status}, faulted={task.IsFaulted}");
 
             if (task.IsCanceled)
                 return;
@@ -327,7 +327,7 @@ namespace XREngine.Rendering.UI
             long openLatencyMs = _streamOpenAttemptStartedTicks > 0
                 ? (_streamOpenedTicks - _streamOpenAttemptStartedTicks) / TimeSpan.TicksPerMillisecond
                 : 0;
-            Debug.Out($"Streaming open telemetry: url='{_streamingCurrentUrl}', openLatencyMs={openLatencyMs}, retryCount={_streamingRetryCount}");
+            Debug.UI($"Streaming open telemetry: url='{_streamingCurrentUrl}', openLatencyMs={openLatencyMs}, retryCount={_streamingRetryCount}");
         }
 
         /// <summary>

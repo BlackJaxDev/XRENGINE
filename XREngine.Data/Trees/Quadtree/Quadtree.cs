@@ -193,10 +193,7 @@ namespace XREngine.Data.Trees
         }
 
         public void FindAllIntersectingSorted(Vector2 point, SortedSet<T> sortedSet, Predicate<T>? predicate = null)
-        {
-            sortedSet.Clear();
-            _head.FindAllIntersecting(point, sortedSet, predicate);
-        }
+            => _head.FindAllIntersecting(point, sortedSet, predicate);
 
         /// <summary>
         /// Finds all renderables that contain the given point.

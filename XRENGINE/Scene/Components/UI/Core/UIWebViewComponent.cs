@@ -208,7 +208,7 @@ namespace XREngine.Rendering.UI
 
             if (!_loggedBackendInit)
             {
-                Debug.Out($"[UIWebView] Backend initialized: type={_backend.GetType().Name}, size={_backingWidth}x{_backingHeight}, transparent={_transparentBackground}, supportsFramebuffer={_backend.SupportsFramebuffer}, url='{_url}'");
+                Debug.UI($"[UIWebView] Backend initialized: type={_backend.GetType().Name}, size={_backingWidth}x{_backingHeight}, transparent={_transparentBackground}, supportsFramebuffer={_backend.SupportsFramebuffer}, url='{_url}'");
                 _loggedBackendInit = true;
             }
 
@@ -231,7 +231,7 @@ namespace XREngine.Rendering.UI
                     _backend.SetTargetFramebuffer(glFbo.BindingId);
                     if (!_loggedTargetFramebuffer)
                     {
-                        Debug.Out($"[UIWebView] Target framebuffer bound: id={glFbo.BindingId}");
+                        Debug.UI($"[UIWebView] Target framebuffer bound: id={glFbo.BindingId}");
                         _loggedTargetFramebuffer = true;
                     }
                     break;
@@ -297,7 +297,7 @@ namespace XREngine.Rendering.UI
                     ApplyFrame(frame);
                     if (!_loggedSoftwareFrame)
                     {
-                        Debug.Out($"[UIWebView] First software frame: {frame.Width}x{frame.Height}, bytes={frame.ByteLength}");
+                        Debug.UI($"[UIWebView] First software frame: {frame.Width}x{frame.Height}, bytes={frame.ByteLength}");
                         _loggedSoftwareFrame = true;
                     }
                 }

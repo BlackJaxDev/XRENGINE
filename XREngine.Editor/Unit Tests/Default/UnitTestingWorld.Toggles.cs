@@ -33,6 +33,15 @@ public static partial class EditorUnitTests
         NetworkingPose,
     }
 
+    public enum CameraUIDrawMode
+    {
+        Screen,
+        World,
+        Camera,
+        WorldOffscreen,
+        CameraOffscreen,
+    }
+
     public class Settings
     {
         public UnitTestWorldKind WorldKind { get; set; } = UnitTestWorldKind.Default;
@@ -43,7 +52,7 @@ public static partial class EditorUnitTests
 
         //Editor UI
         public bool AddEditorUI = false; //Adds the full editor UI to the camera.
-        public ECanvasDrawSpace CameraUIDrawSpaceOnInit { get; set; } = ECanvasDrawSpace.Screen; //Controls whether unit testing camera UI starts in screen or world space.
+        public CameraUIDrawMode CameraUIDrawSpaceOnInit { get; set; } = CameraUIDrawMode.Screen; //Controls draw space and offscreen mode for unit testing camera UI.
         public bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
         public bool AllowEditingInVR = true; //Allows the user to edit the scene from desktop in VR.
         public bool PreviewVRStereoViews = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI (requires VRPawn).

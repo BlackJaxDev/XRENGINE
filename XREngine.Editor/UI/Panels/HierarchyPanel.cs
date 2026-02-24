@@ -3,15 +3,17 @@ using System.Collections.Generic;
 using System.Numerics;
 using XREngine;
 using XREngine.Data.Colors;
+using XREngine.Data.Rendering;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using static XREngine.Editor.EditorImGuiUI;
 
 namespace XREngine.Editor;
 
-public partial class HierarchyPanel : EditorPanel
+public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
 {
     private List<SceneNode> _rootNodes = [];
     public List<SceneNode> RootNodes
@@ -43,6 +45,16 @@ public partial class HierarchyPanel : EditorPanel
     private readonly Dictionary<UIInteractableComponent, Vector2> _pendingDragStarts = new();
     private SceneNode? _lastClickedNode;
     private float _lastClickTime = float.NegativeInfinity;
+    private UIListTransform? _treeListTransform;
+    private UIBoundableTransform? _scrollbarTrackTransform;
+    private UIBoundableTransform? _scrollbarThumbTransform;
+    private int _renderedNodeCount;
+    private float _scrollOffset;
+
+    private const float ScrollbarWidth = 8.0f;
+    private const float ScrollbarPadding = 4.0f;
+    private const float MinScrollbarThumbHeight = 24.0f;
+    private const float ScrollStepPixels = 32.0f;
 
     private bool _focusCameraOnDoubleClick = true;
     public bool FocusCameraOnDoubleClick
@@ -93,6 +105,11 @@ public partial class HierarchyPanel : EditorPanel
     {
         using var sample = Engine.Profiler.Start("HierarchyPanel.RemakeChildren");
         SceneNode.Transform.Clear();
+        _treeListTransform = null;
+        _scrollbarTrackTransform = null;
+        _scrollbarThumbTransform = null;
+        _renderedNodeCount = 0;
+        _scrollOffset = 0.0f;
         //Create the root menu transform - this is a horizontal list of buttons.
         CreateTree(SceneNode, this);
     }
@@ -124,9 +141,35 @@ public partial class HierarchyPanel : EditorPanel
         listTfm.ItemSpacing = 0;
         listTfm.Padding = new Vector4(0.0f);
         listTfm.ItemAlignment = EListAlignment.TopOrLeft;
+        listTfm.Virtual = true;
         listTfm.ItemSize = ItemHeight;
-        listTfm.Width = 150;
-        listTfm.Height = null;
+        _treeListTransform = listTfm;
+
+        var scrollbarTrackNode = parentNode.NewChild<UIMaterialComponent>(out var scrollbarTrackMat);
+        var scrollbarTrackTfm = scrollbarTrackNode.SetTransform<UIBoundableTransform>();
+        scrollbarTrackTfm.MinAnchor = new Vector2(1.0f, 0.0f);
+        scrollbarTrackTfm.MaxAnchor = new Vector2(1.0f, 1.0f);
+        scrollbarTrackTfm.Width = ScrollbarWidth;
+        scrollbarTrackTfm.Margins = new Vector4(0.0f, ScrollbarPadding, ScrollbarPadding, ScrollbarPadding);
+        var trackMat = XRMaterial.CreateUnlitColorMaterialForward(new ColorF4(0.0f, 0.0f, 0.0f, 0.15f));
+        trackMat.EnableTransparency();
+        scrollbarTrackMat.Material = trackMat;
+        scrollbarTrackMat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+        _scrollbarTrackTransform = scrollbarTrackTfm;
+
+        var scrollbarThumbNode = scrollbarTrackNode.NewChild<UIMaterialComponent>(out var scrollbarThumbMat);
+        var scrollbarThumbTfm = scrollbarThumbNode.SetTransform<UIBoundableTransform>();
+        scrollbarThumbTfm.MinAnchor = new Vector2(0.0f, 1.0f);
+        scrollbarThumbTfm.MaxAnchor = new Vector2(1.0f, 1.0f);
+        scrollbarThumbTfm.Height = MinScrollbarThumbHeight;
+        scrollbarThumbTfm.NormalizedPivot = new Vector2(0.0f, 1.0f);
+        scrollbarThumbTfm.BlocksInputBehind = true;
+        var thumbMat = XRMaterial.CreateUnlitColorMaterialForward(new ColorF4(1.0f, 1.0f, 1.0f, 0.35f));
+        thumbMat.EnableTransparency();
+        scrollbarThumbMat.Material = thumbMat;
+        scrollbarThumbMat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+        _scrollbarThumbTransform = scrollbarThumbTfm;
+
         EditorDragDropUtility.RegisterDropTarget(
             listTfm,
             HandleRootDrop,
@@ -138,8 +181,85 @@ public partial class HierarchyPanel : EditorPanel
         int renderedCount = 0;
 
         CreateNodes(listNode, RootNodes, ref renderedCount, maxToRender);
+        _renderedNodeCount = renderedCount;
         if (renderedCount < totalNodes)
             AddTruncationNotice(listNode, totalNodes - renderedCount);
+
+        UpdateScrollMetrics();
+    }
+
+    public bool HandleMouseScroll(float diff)
+    {
+        if (_treeListTransform is null)
+            return false;
+
+        float maxOffset = GetMaxScrollOffset();
+        if (maxOffset <= 0.0f)
+            return false;
+
+        _scrollOffset = Math.Clamp(_scrollOffset - (diff * ScrollStepPixels), 0.0f, maxOffset);
+        UpdateScrollMetrics();
+        return true;
+    }
+
+    private void UpdateScrollMetrics()
+    {
+        if (_treeListTransform is null)
+            return;
+
+        float viewportHeight = GetViewportHeight();
+        float maxOffset = GetMaxScrollOffset(viewportHeight);
+        _scrollOffset = Math.Clamp(_scrollOffset, 0.0f, maxOffset);
+
+        // Shift content by scroll offset; virtual bounds cull to the viewport
+        _treeListTransform.ContentScrollOffset = _scrollOffset;
+        _treeListTransform.SetVirtualBounds(viewportHeight, 0.0f);
+
+        UpdateScrollbarVisual(viewportHeight, maxOffset);
+    }
+
+    private float GetViewportHeight()
+    {
+        float panelHeight = BoundableTransform.ActualHeight;
+        if (panelHeight <= 0.0f)
+            panelHeight = BoundableTransform.Height ?? 300.0f;
+        return MathF.Max(ItemHeight, panelHeight - (ScrollbarPadding * 2.0f));
+    }
+
+    private float GetContentHeight()
+        => MathF.Max(0.0f, _renderedNodeCount * ItemHeight);
+
+    private float GetMaxScrollOffset()
+        => GetMaxScrollOffset(GetViewportHeight());
+
+    private float GetMaxScrollOffset(float viewportHeight)
+    {
+        float contentHeight = GetContentHeight();
+        return MathF.Max(0.0f, contentHeight - viewportHeight);
+    }
+
+    private void UpdateScrollbarVisual(float viewportHeight, float maxOffset)
+    {
+        if (_scrollbarTrackTransform is null || _scrollbarThumbTransform is null)
+            return;
+
+        float trackHeight = _scrollbarTrackTransform.ActualHeight;
+        if (trackHeight <= 0.0f)
+            trackHeight = viewportHeight;
+
+        float contentHeight = GetContentHeight();
+        bool canScroll = maxOffset > 0.0f && contentHeight > 0.0f;
+        _scrollbarTrackTransform.Visibility = canScroll ? EVisibility.Visible : EVisibility.Hidden;
+        _scrollbarThumbTransform.Visibility = canScroll ? EVisibility.Visible : EVisibility.Hidden;
+        if (!canScroll)
+            return;
+
+        float thumbHeight = MathF.Max(MinScrollbarThumbHeight, (viewportHeight / contentHeight) * trackHeight);
+        float travel = MathF.Max(0.0f, trackHeight - thumbHeight);
+        float ratio = maxOffset <= 0.0f ? 0.0f : _scrollOffset / maxOffset;
+
+        _scrollbarThumbTransform.Height = thumbHeight;
+        _scrollbarThumbTransform.Translation = new Vector2(0.0f, -travel * ratio);
     }
 
     private void CreateNodes(SceneNode listNode, IEnumerable<SceneNode> nodes, ref int renderedCount, int maxToRender)
@@ -164,6 +284,7 @@ public partial class HierarchyPanel : EditorPanel
             var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
             mat.EnableTransparency();
             background.Material = mat;
+            background.RenderPass = (int)EDefaultRenderPass.TransparentForward;
 
             var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
             buttonTfm.MaxAnchor = new Vector2(1.0f, 1.0f);

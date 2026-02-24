@@ -29,32 +29,78 @@ namespace XREngine.Rendering.UI
 
         //TODO: register callback on canvas to set RenderInfo3D/2D Visible property so no quadtree/octree culling is done if the canvas is not visible
 
+        private static int _shouldRender3DDiagCount = 0;
         protected virtual bool ShouldRender3D(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
         {
             var tfm = BoundableTransform;
+            bool diagLog = _shouldRender3DDiagCount < 20;
             if (!(tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false) || !tfm.IsVisibleInHierarchy)
+            {
+                if (diagLog)
+                {
+                    Debug.UI($"[ShouldRender3D] REJECTED {GetType().Name} on '{SceneNode?.Name}': parentCanvasActive={tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy} visibleInHierarchy={tfm.IsVisibleInHierarchy} parentCanvas={tfm.ParentCanvas?.SceneNode?.Name}");
+                    _shouldRender3DDiagCount++;
+                }
                 return false;
+            }
 
             var canvas = tfm.ParentCanvas;
             if (canvas is null || canvas.DrawSpace == ECanvasDrawSpace.Screen)
+            {
+                if (diagLog)
+                {
+                    Debug.UI($"[ShouldRender3D] REJECTED {GetType().Name} on '{SceneNode?.Name}': canvasNull={canvas is null} drawSpace={canvas?.DrawSpace}");
+                    _shouldRender3DDiagCount++;
+                }
                 return false;
+            }
 
             var canvasComponent = canvas.SceneNode?.GetComponent<UICanvasComponent>();
-            if (canvasComponent?.PreferOffscreenRenderingForNonScreenSpaces ?? true)
+            if (canvasComponent?.UseOffscreenRenderingForNonScreenSpaces() ?? true)
+            {
+                if (diagLog)
+                {
+                    Debug.UI($"[ShouldRender3D] REJECTED {GetType().Name} on '{SceneNode?.Name}': effectiveOffscreen={canvasComponent?.UseOffscreenRenderingForNonScreenSpaces()} preferOffscreen={canvasComponent?.PreferOffscreenRenderingForNonScreenSpaces} canvasComp={canvasComponent is not null}");
+                    _shouldRender3DDiagCount++;
+                }
                 return false;
+            }
+
+            if (diagLog)
+            {
+                Debug.UI($"[ShouldRender3D] ACCEPTED {GetType().Name} on '{SceneNode?.Name}': drawSpace={canvas.DrawSpace} mesh={Mesh is not null} renderPass={RenderCommand3D.RenderPass}");
+                _shouldRender3DDiagCount++;
+            }
 
             return true;
         }
 
+        private static int _shouldRender2DDiagCount = 0;
         protected virtual bool ShouldRender2D(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
         {
             var tfm = BoundableTransform;
+            bool diagLog = _shouldRender2DDiagCount < 20;
+
             if (!(tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false) || !tfm.IsVisibleInHierarchy)
+            {
+                if (diagLog)
+                {
+                    Debug.UI($"[ShouldRender2D] REJECTED {GetType().Name} on '{SceneNode?.Name}': parentCanvasActive={tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy} visibleInHierarchy={tfm.IsVisibleInHierarchy} parentCanvas={tfm.ParentCanvas?.SceneNode?.Name}");
+                    _shouldRender2DDiagCount++;
+                }
                 return false;
+            }
 
             var canvas = tfm.ParentCanvas;
             if (canvas is null)
+            {
+                if (diagLog)
+                {
+                    Debug.UI($"[ShouldRender2D] REJECTED {GetType().Name} on '{SceneNode?.Name}': canvas is null");
+                    _shouldRender2DDiagCount++;
+                }
                 return false;
+            }
 
             var canvasComp = canvas.SceneNode?.GetComponent<UICanvasComponent>();
 
@@ -64,8 +110,15 @@ namespace XREngine.Rendering.UI
             // - Non-screen without offscreen: no (handled by ShouldRender3D as direct 3D objects)
             if (canvas.DrawSpace != ECanvasDrawSpace.Screen)
             {
-                if (!(canvasComp?.PreferOffscreenRenderingForNonScreenSpaces ?? false))
+                if (!(canvasComp?.UseOffscreenRenderingForNonScreenSpaces() ?? false))
+                {
+                    if (diagLog)
+                    {
+                        Debug.UI($"[ShouldRender2D] REJECTED {GetType().Name} on '{SceneNode?.Name}': drawSpace={canvas.DrawSpace} effectiveOffscreen={canvasComp?.UseOffscreenRenderingForNonScreenSpaces()} preferOffscreen={canvasComp?.PreferOffscreenRenderingForNonScreenSpaces} canvasComp={canvasComp is not null}");
+                        _shouldRender2DDiagCount++;
+                    }
                     return false;
+                }
             }
 
             // Attempt batched rendering path: register with the canvas's batch collector
@@ -78,6 +131,12 @@ namespace XREngine.Rendering.UI
                         return false; // Successfully batched — skip individual command
                     // Registration failed (e.g. font not loaded yet); fall through to individual render
                 }
+            }
+
+            if (diagLog)
+            {
+                Debug.UI($"[ShouldRender2D] ACCEPTED {GetType().Name} on '{SceneNode?.Name}': drawSpace={canvas.DrawSpace} mesh={Mesh is not null} renderPass={RenderCommand2D.RenderPass}");
+                _shouldRender2DDiagCount++;
             }
 
             return true;

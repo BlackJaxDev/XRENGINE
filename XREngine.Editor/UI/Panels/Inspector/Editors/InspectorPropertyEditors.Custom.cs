@@ -362,27 +362,7 @@ public static partial class InspectorPropertyEditors
 
     private static void CreateInspectorButton(SceneNode parent, string text, Action onClick)
     {
-        var buttonNode = parent.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
-        EditorUI.Styles.UpdateButton(button);
-
-        var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
-        mat.EnableTransparency();
-        background.Material = mat;
-
-        var btnTransform = buttonNode.SetTransform<UIBoundableTransform>();
-        btnTransform.Height = 28.0f;
-        btnTransform.Width = null;
-        btnTransform.Margins = new Vector4(4.0f, 2.0f, 4.0f, 2.0f);
-
-        buttonNode.NewChild<UITextComponent>(out var label);
-        label.Text = text;
-        label.FontSize = EditorUI.Styles.PropertyNameFontSize;
-        label.Color = EditorUI.Styles.ButtonTextColor;
-        label.HorizontalAlignment = EHorizontalAlignment.Center;
-        label.VerticalAlignment = EVerticalAlignment.Center;
-        label.BoundableTransform.Margins = new Vector4(6.0f, 0.0f, 6.0f, 0.0f);
-
-        button.RegisterClickActions(_ =>
+        NativeUIElements.CreateButton(parent, text, _ =>
         {
             try
             {

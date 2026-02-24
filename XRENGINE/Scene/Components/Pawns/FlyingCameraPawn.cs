@@ -89,7 +89,7 @@ namespace XREngine.Components
                 float now = Engine.Time.Timer.Time();
                 if (now - _lastMouseMoveLogTime > 0.25f)
                 {
-                    Debug.Out($"[MouseMove] dx={x:0.###}, dy={y:0.###}, Rotating={Rotating}, Translating={Translating}");
+                    Debug.UI($"[MouseMove] dx={x:0.###}, dy={y:0.###}, Rotating={Rotating}, Translating={Translating}");
                     _lastMouseMoveLogTime = now;
                 }
             }

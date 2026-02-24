@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using System.Collections;
 using System.ComponentModel;
+using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Core.Attributes;
@@ -10,6 +11,7 @@ using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.UI;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Components
 {
@@ -216,6 +218,7 @@ namespace XREngine.Components
         public void RegisterInput(InputInterface input)
         {
             input.RegisterMouseMove(MouseMove, EMouseMoveType.Absolute);
+            input.RegisterMouseScroll(OnMouseScroll);
             input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Pressed, OnMouseInteractButtonDown);
             input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Released, OnMouseInteractButtonUp);
 
@@ -232,6 +235,25 @@ namespace XREngine.Components
             input.RegisterButtonEvent(EGamePadButton.DPadDown, EButtonInputType.Pressed, OnDPadDown);
             input.RegisterButtonEvent(EGamePadButton.DPadLeft, EButtonInputType.Pressed, OnDPadLeft);
             input.RegisterButtonEvent(EGamePadButton.DPadRight, EButtonInputType.Pressed, OnDPadRight);
+        }
+
+        private void OnMouseScroll(float diff)
+        {
+            if (MathF.Abs(diff) <= float.Epsilon)
+                return;
+
+            // Prefer the top-most element (including non-interactables), then fall back to interactables.
+            var node = TopMostElement?.SceneNode ?? TopMostInteractable?.SceneNode;
+            while (node is not null)
+            {
+                foreach (var comp in node.Components)
+                {
+                    if (comp is IUIScrollReceiver scrollReceiver && scrollReceiver.HandleMouseScroll(diff))
+                        return;
+                }
+
+                node = node.Parent;
+            }
         }
 
         /// <summary>
@@ -279,15 +301,35 @@ namespace XREngine.Components
         }
 
         private void CollectVisible()
-            => GetCameraCanvas()?.VisualScene2D?.RenderTree?.FindAllIntersectingSorted(CursorPositionWorld2D, UIElementIntersections, UIElementPredicate);
+        {
+            var tree = GetCameraCanvas()?.VisualScene2D?.RenderTree;
+            tree?.FindAllIntersectingSorted(CursorPositionWorld2D, UIElementIntersections, UIElementPredicate);
+        }
 
         private void SwapBuffers()
         {
             using var sample = Engine.Profiler.Start("UICanvasInputComponent.SwapBuffers");
-            TopMostElement = UIElementIntersections.FirstOrDefault(x => x.Owner is UIComponent)?.Owner as UIComponent;
-            TopMostInteractable = UIElementIntersections.FirstOrDefault(x => x.Owner is UIInteractableComponent)?.Owner as UIInteractableComponent;
-            //if (TopMostInteractable is not null)
-            //    Debug.Out($"Topmost interactable: {TopMostInteractable.Name}");
+
+            // If any intersected element has BlocksInputBehind, remove items not in its subtree.
+            FilterBlockedInput();
+
+            // Select the deepest (most nested) element under the cursor.
+            // Children are visually on top of parents, so with matching LayerIndex
+            // the deepest transform in the UI hierarchy should receive input.
+            TopMostElement = UIElementIntersections
+                .Where(x => x.Owner is UIComponent)
+                .OrderByDescending(x => (x.Owner as UIComponent)?.Transform?.Depth ?? int.MinValue)
+                .ThenByDescending(x => x.LayerIndex)
+                .ThenByDescending(x => x.IndexWithinLayer)
+                .FirstOrDefault()?.Owner as UIComponent;
+
+            TopMostInteractable = UIElementIntersections
+                .Where(x => x.Owner is UIInteractableComponent)
+                .OrderByDescending(x => (x.Owner as UIInteractableComponent)?.Transform?.Depth ?? int.MinValue)
+                .ThenByDescending(x => x.LayerIndex)
+                .ThenByDescending(x => x.IndexWithinLayer)
+                .FirstOrDefault()?.Owner as UIInteractableComponent;
+
             ValidateAndSwapIntersections();
             LastCursorPositionWorld2D = CursorPositionWorld2D;
         }
@@ -342,10 +384,7 @@ namespace XREngine.Components
                             // Check if the point is within the canvas' bounds
                             var bounds = canvasTransform.GetActualBounds();
                             Vector2 point = localIntersectionPoint.XY();
-                            if (bounds.Contains(point))
-                                uiCoord = point;
-                            else
-                                uiCoord = null;
+                            uiCoord = bounds.Contains(point) ? point : null;
                         }
                         else
                             uiCoord = null;
@@ -356,6 +395,60 @@ namespace XREngine.Components
                     break;
             }
             return uiCoord;
+        }
+
+        /// <summary>
+        /// If any intersected element has BlocksInputBehind set, filters out elements
+        /// that are not descendants of (or the same as) that blocking element.
+        /// This prevents hover/input from reaching elements underneath dropdowns, popups, etc.
+        /// </summary>
+        private void FilterBlockedInput()
+        {
+            // Find the frontmost (deepest) blocker
+            TransformBase? blockerTransform = null;
+            int blockerDepth = -1;
+
+            foreach (var item in UIElementIntersections)
+            {
+                if (item.Owner is not UIComponent ui)
+                    continue;
+
+                if (ui.Transform is UIBoundableTransform bt && bt.BlocksInputBehind)
+                {
+                    int depth = bt.Depth;
+                    if (depth > blockerDepth)
+                    {
+                        blockerDepth = depth;
+                        blockerTransform = bt;
+                    }
+                }
+            }
+
+            if (blockerTransform is null)
+                return;
+
+            // Remove items whose transform is not the blocker and not a descendant of the blocker
+            var toRemove = new List<RenderInfo2D>();
+            foreach (var item in UIElementIntersections)
+                if (item.Owner is UIComponent ui && !IsDescendantOfOrSelf(ui.Transform, blockerTransform))
+                    toRemove.Add(item);
+            
+            foreach (var item in toRemove)
+                UIElementIntersections.Remove(item);
+        }
+
+        /// <summary>
+        /// Returns true if <paramref name="candidate"/> is the same as <paramref name="ancestor"/>
+        /// or is a descendant (child, grandchild, etc.) of <paramref name="ancestor"/>.
+        /// </summary>
+        private static bool IsDescendantOfOrSelf(TransformBase? candidate, TransformBase ancestor)
+        {
+            for (var t = candidate; t is not null; t = t.Parent)
+            {
+                if (ReferenceEquals(t, ancestor))
+                    return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -426,18 +519,27 @@ namespace XREngine.Components
 
         }
 
+        private bool _subscribedToTimer;
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
             GetCameraCanvas()?.CanvasTransform.InvalidateLayout();
-            Engine.Time.Timer.CollectVisible += CollectVisible;
-            Engine.Time.Timer.SwapBuffers += SwapBuffers;
+            if (!_subscribedToTimer)
+            {
+                Engine.Time.Timer.CollectVisible += CollectVisible;
+                Engine.Time.Timer.SwapBuffers += SwapBuffers;
+                _subscribedToTimer = true;
+            }
         }
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
-            Engine.Time.Timer.CollectVisible -= CollectVisible;
-            Engine.Time.Timer.SwapBuffers -= SwapBuffers;
+            if (_subscribedToTimer)
+            {
+                Engine.Time.Timer.CollectVisible -= CollectVisible;
+                Engine.Time.Timer.SwapBuffers -= SwapBuffers;
+                _subscribedToTimer = false;
+            }
         }
 
         protected void OnChildAdded(UIComponent child)
@@ -487,7 +589,11 @@ namespace XREngine.Components
                 }
                 else
                 {
-                    //Had mouse over and still does now
+                    //Had mouse over and still does now — re-evaluate direct-over in case TopMost changed
+                    bool shouldBeDirectlyOver = inter == TopMostInteractable;
+                    if (inter.IsMouseDirectlyOver != shouldBeDirectlyOver)
+                        inter.IsMouseDirectlyOver = shouldBeDirectlyOver;
+
                     var uiTransform = inter.UITransform;
                     if (inter.NeedsMouseMove)
                         inter.MouseMoved(

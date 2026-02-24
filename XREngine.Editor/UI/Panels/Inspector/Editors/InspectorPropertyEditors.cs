@@ -78,55 +78,13 @@ public static partial class InspectorPropertyEditors
 
     private static T TextEditor<T>(SceneNode n, PropertyInfo prop, object?[]? objects) where T : UITextInputComponent
     {
-        var matComp = n.AddComponent<UIMaterialComponent>()!;
-        var mat = CreateUIOutlineMaterial()!;
-        //mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-        matComp!.Material = mat;
-
-        n.NewChild<UITextComponent, T, UIPropertyTextDriverComponent>(out var textComp, out var textInput, out var textDriver);
-        void GotFocus(UIInteractableComponent comp) => mat.SetVector4(OutlineColorUniformName, ColorF4.White);
-        void LostFocus(UIInteractableComponent comp) => mat.SetVector4(OutlineColorUniformName, ColorF4.Transparent);
-        textInput.MouseDirectOverlapEnter += GotFocus;
-        textInput.MouseDirectOverlapLeave += LostFocus;
-        textInput.Property = prop;
-        textInput.Targets = objects;
-
-        textComp!.FontSize = EditorUI.Styles.PropertyInputFontSize;
-        textComp.Color = EditorUI.Styles.PropertyInputTextColor;
-        textComp.HorizontalAlignment = EHorizontalAlignment.Left;
-        textComp.VerticalAlignment = EVerticalAlignment.Center;
-        textComp.BoundableTransform.Margins = new Vector4(5.0f, 2.0f, 5.0f, 2.0f);
-        textComp.ClipToBounds = true;
-        textComp.WrapMode = FontGlyphSet.EWrapMode.None;
-
-        textDriver!.Property = prop;
-        textDriver.Sources = objects;
-
-        return textInput;
+        var result = NativeUIElements.CreateTextInputField<T>(n, prop, objects);
+        return result.Input;
     }
     private static T ObjectSelector<T>(SceneNode n, PropertyInfo prop, object?[]? objects) where T : UITextInputComponent
     {
-        var matComp = n.AddComponent<UIMaterialComponent>()!;
-        var mat = CreateUIOutlineMaterial()!;
-        //mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-        matComp!.Material = mat;
-        n.NewChild<UITextComponent, T, UIPropertyTextDriverComponent>(out var textComp, out var textInput, out var textDriver);
-        void GotFocus(UIInteractableComponent comp) => mat.SetVector4(OutlineColorUniformName, ColorF4.White);
-        void LostFocus(UIInteractableComponent comp) => mat.SetVector4(OutlineColorUniformName, ColorF4.Transparent);
-        textInput.MouseDirectOverlapEnter += GotFocus;
-        textInput.MouseDirectOverlapLeave += LostFocus;
-        textInput.Property = prop;
-        textInput.Targets = objects;
-        textComp!.FontSize = EditorUI.Styles.PropertyInputFontSize;
-        textComp.Color = EditorUI.Styles.PropertyInputTextColor;
-        textComp.HorizontalAlignment = EHorizontalAlignment.Left;
-        textComp.VerticalAlignment = EVerticalAlignment.Center;
-        textComp.BoundableTransform.Margins = new Vector4(5.0f, 2.0f, 5.0f, 2.0f);
-        textComp.ClipToBounds = true;
-        textComp.WrapMode = FontGlyphSet.EWrapMode.None;
-        textDriver!.Property = prop;
-        textDriver.Sources = objects;
-        return textInput;
+        var result = NativeUIElements.CreateTextInputField<T>(n, prop, objects);
+        return result.Input;
     }
 
     private static Action<SceneNode, PropertyInfo, object?[]?>? CreateObjectEditor(Type propType)

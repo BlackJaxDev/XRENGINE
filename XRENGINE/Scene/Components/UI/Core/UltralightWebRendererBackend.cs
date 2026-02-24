@@ -258,7 +258,7 @@ namespace XREngine.Rendering.UI
             if (!string.IsNullOrWhiteSpace(exception))
                 Debug.LogWarning($"[UltralightProbe] EvaluateScript exception: {exception}");
             else
-                Debug.Out($"[UltralightProbe] {result}");
+                Debug.UI($"[UltralightProbe] {result}");
 
             _loggedCompatibilityProbe = true;
         }
@@ -269,7 +269,7 @@ namespace XREngine.Rendering.UI
                 return;
 
             _consoleMessageCount++;
-            Debug.Out($"[UltralightConsole] {level} {source} {sourceId}:{lineNumber}:{columnNumber} {message}");
+            Debug.UI($"[UltralightConsole] {level} {source} {sourceId}:{lineNumber}:{columnNumber} {message}");
         }
 
         private static ULMouseEventButton MapMouseButton(WebMouseButton button)

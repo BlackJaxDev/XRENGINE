@@ -1019,22 +1019,14 @@ public static partial class InspectorPropertyEditors
 
         private static void CreateInlineButton(SceneNode parent, string text, Action onClick)
         {
-            var buttonNode = parent.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
-            EditorUI.Styles.UpdateButton(button);
-            background.Material = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
-            var tfm = buttonNode.SetTransform<UIBoundableTransform>();
-            tfm.Width = ButtonWidth;
-            tfm.Height = ButtonHeight;
-            tfm.Margins = new Vector4(2.0f);
-
-            buttonNode.NewChild<UITextComponent>(out var label);
-            label.Text = text;
-            label.FontSize = EditorUI.Styles.PropertyInputFontSize ?? 14.0f;
-            label.Color = EditorUI.Styles.ButtonTextColor;
-            label.HorizontalAlignment = EHorizontalAlignment.Center;
-            label.VerticalAlignment = EVerticalAlignment.Center;
-
-            button.RegisterClickActions(_ => onClick());
+            NativeUIElements.CreateButton(
+                parent,
+                text,
+                _ => onClick(),
+                width: ButtonWidth,
+                height: ButtonHeight,
+                margins: new Vector4(2.0f),
+                fontSize: EditorUI.Styles.PropertyInputFontSize ?? 14.0f);
         }
 
         private static object? ConvertValue(object? value, Type targetType)
