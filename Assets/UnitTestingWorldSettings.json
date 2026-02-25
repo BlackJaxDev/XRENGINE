@@ -36,10 +36,10 @@
   "Mirror": false,
   "Spline": false,
 
-  "AddEditorUI": false,
+  "AddEditorUI": true,
   "CameraUIDrawSpaceOnInit": "Screen",
   "TransformTool": false,
-  "DearImGuiUI": true,
+  "DearImGuiUI": false,
   "EnableProfilerLogging": true,
   "RiveUI": false,
   "VideoStreaming": false,

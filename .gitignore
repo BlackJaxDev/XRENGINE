@@ -405,3 +405,4 @@ XREngine.Server/imgui.ini
 XREngine.Editor/McpCaptures/
 Build/Dependencies/Ultralight/resources/
 Build/Game/
+imgui.ini

@@ -23,6 +23,7 @@ internal static class ProjectBuilder
     internal readonly record struct CookProgress(int ProcessedFiles, int TotalFiles, string RelativePath, bool CookedAsBinaryAsset);
 
     private const string StartupAssetName = "startup.asset";
+    private const string CommonAssetsArchiveName = "CommonAssets.pak";
 
     private sealed record BuildContext(
         XRProject Project,
@@ -43,6 +44,42 @@ internal static class ProjectBuilder
     private static Job? _activeJob;
 
     public static bool IsBuilding => _activeJob is { IsRunning: true };
+
+    internal static void BuildCurrentProjectSynchronously(Action<JobProgress>? progressCallback = null)
+        => BuildCurrentProjectSynchronously(settingsOverride: null, progressCallback);
+
+    internal static void BuildCurrentProjectSynchronously(BuildSettings? settingsOverride, Action<JobProgress>? progressCallback = null)
+    {
+        lock (_buildLock)
+        {
+            if (_activeJob is { IsRunning: true })
+                throw new InvalidOperationException("A project build is already running.");
+        }
+
+        progressCallback?.Invoke(new JobProgress(0f, "Starting build..."));
+
+        var project = EnsureProjectLoaded();
+        var settings = settingsOverride ?? SnapshotSettings();
+        var context = CreateBuildContext(project, settings);
+        var steps = CreateSteps(settings, context);
+
+        if (steps.Count == 0)
+        {
+            progressCallback?.Invoke(new JobProgress(1f, "Nothing to build."));
+            return;
+        }
+
+        for (int i = 0; i < steps.Count; i++)
+        {
+            var step = steps[i];
+            Debug.Out(step.Description);
+            step.Action();
+            float progress = (i + 1f) / steps.Count;
+            progressCallback?.Invoke(new JobProgress(progress, step.Description));
+        }
+
+        progressCallback?.Invoke(new JobProgress(1f, "Build completed"));
+    }
 
     public static void RequestBuild()
     {
@@ -312,8 +349,12 @@ internal static class ProjectBuilder
         string? engineAssetsPath = Engine.Assets?.EngineAssetsPath;
         if (!string.IsNullOrWhiteSpace(engineAssetsPath) && Directory.Exists(engineAssetsPath))
         {
-            string engineAssetsDestination = Path.Combine(context.BuildRoot, "Build", "CommonAssets");
-            CopyDirectory(engineAssetsPath, engineAssetsDestination, includePdb);
+            string commonAssetsArchivePath = Path.Combine(context.ContentOutputDirectory, CommonAssetsArchiveName);
+            Directory.CreateDirectory(Path.GetDirectoryName(commonAssetsArchivePath)!);
+            if (File.Exists(commonAssetsArchivePath))
+                File.Delete(commonAssetsArchivePath);
+
+            AssetPacker.Pack(engineAssetsPath, commonAssetsArchivePath);
         }
     }
 

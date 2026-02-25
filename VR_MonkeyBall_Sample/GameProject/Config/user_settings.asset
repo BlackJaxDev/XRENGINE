@@ -1,0 +1,78 @@
+﻿__type: XREngine.UserSettings
+VSync: Adaptive
+TextureQuality: Highest
+ModelQuality: Highest
+SoundQuality: Highest
+AudioDisableFadeSeconds: 0.5
+GlobalIlluminationMode: LightProbesAndIbl
+WindowedResolution:
+  X: 1920
+  Y: 1080
+JobWorkersOverride:
+  HasOverride: false
+  Value: 0
+JobWorkerCapOverride:
+  HasOverride: false
+  Value: 0
+JobQueueLimitOverride:
+  HasOverride: false
+  Value: 0
+JobQueueWarningThresholdOverride:
+  HasOverride: false
+  Value: 0
+GPURenderDispatchOverride:
+  HasOverride: false
+  Value: false
+OutputVerbosityOverride:
+  HasOverride: false
+  Value: None
+EnableGpuIndirectDebugLoggingOverride:
+  HasOverride: false
+  Value: false
+EnableGpuIndirectCpuFallbackOverride:
+  HasOverride: false
+  Value: false
+EnableGpuIndirectValidationLoggingOverride:
+  HasOverride: false
+  Value: false
+AntiAliasingModeOverride:
+  HasOverride: false
+  Value: None
+MsaaSampleCountOverride:
+  HasOverride: false
+  Value: 0
+VSyncOverride:
+  HasOverride: false
+  Value: Off
+GlobalIlluminationModeOverride:
+  HasOverride: false
+  Value: None
+TickGroupedItemsInParallelOverride:
+  HasOverride: false
+  Value: false
+EnableNvidiaDlssOverride:
+  HasOverride: false
+  Value: false
+DlssQualityOverride:
+  HasOverride: false
+  Value: UltraPerformance
+EnableIntelXessOverride:
+  HasOverride: false
+  Value: false
+XessQualityOverride:
+  HasOverride: false
+  Value: UltraPerformance
+TargetUpdatesPerSecondOverride:
+  HasOverride: false
+  Value: 0
+FixedFramesPerSecondOverride:
+  HasOverride: false
+  Value: 0
+TargetFramesPerSecondOverride:
+  HasOverride: false
+  Value: 0
+UnfocusedTargetFramesPerSecondOverride:
+  HasOverride: false
+  Value: 0
+ID: 353617f0-aadd-40fe-9289-f0b4d9e6a7f4
+Name: User Settings

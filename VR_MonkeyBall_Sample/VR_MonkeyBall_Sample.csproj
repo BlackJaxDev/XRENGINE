@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>VR_MonkeyBall_Sample</RootNamespace>
+    <AssemblyName>VR_MonkeyBall_Sample</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+
+    <RepositoryRoot>$(MSBuildProjectDirectory)\..</RepositoryRoot>
+    <EditorProjectPath>$(RepositoryRoot)\XREngine.Editor\XREngine.Editor.csproj</EditorProjectPath>
+    <SampleGameProjectName>VR_MonkeyBall_Sample</SampleGameProjectName>
+    <SampleGameProjectRoot>$(MSBuildProjectDirectory)\GameProject</SampleGameProjectRoot>
+    <SampleGameProjectFile>$(SampleGameProjectRoot)\$(SampleGameProjectName).xrproj</SampleGameProjectFile>
+    <EditorAutomationPlatform>AnyCPU</EditorAutomationPlatform>
+  </PropertyGroup>
+
+  <Target Name="BuildEditorAutomation">
+    <Message Text="Building editor automation host ($(Configuration)|$(EditorAutomationPlatform))..." Importance="High" />
+    <Exec
+      WorkingDirectory="$(RepositoryRoot)"
+      Command="dotnet build &quot;$(EditorProjectPath)&quot; -c $(Configuration) -p:Platform=$(EditorAutomationPlatform)" />
+  </Target>
+
+  <Target Name="GenerateGameProject" DependsOnTargets="BuildEditorAutomation">
+    <Message
+      Text="XR project already exists at $(SampleGameProjectFile); skipping initialization."
+      Importance="High"
+      Condition="Exists('$(SampleGameProjectFile)')" />
+    <Message
+      Text="Generating XR project at $(SampleGameProjectRoot)..."
+      Importance="High"
+      Condition="!Exists('$(SampleGameProjectFile)')" />
+    <Exec
+      Condition="!Exists('$(SampleGameProjectFile)')"
+      WorkingDirectory="$(RepositoryRoot)"
+      Command="dotnet run --no-build --project &quot;$(EditorProjectPath)&quot; -c $(Configuration) -p:Platform=$(EditorAutomationPlatform) -- --init-project &quot;$(SampleGameProjectRoot)&quot; --project-name &quot;$(SampleGameProjectName)&quot;" />
+  </Target>
+
+  <Target Name="CookGameExe" DependsOnTargets="GenerateGameProject">
+    <Message Text="Cooking game executable from $(SampleGameProjectFile)..." Importance="High" />
+    <Exec
+      WorkingDirectory="$(RepositoryRoot)"
+      Command="dotnet run --no-build --project &quot;$(EditorProjectPath)&quot; -c $(Configuration) -p:Platform=$(EditorAutomationPlatform) -- --build-project &quot;$(SampleGameProjectFile)&quot;" />
+  </Target>
+</Project>

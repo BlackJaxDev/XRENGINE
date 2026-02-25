@@ -2,6 +2,8 @@ using Microsoft.Build.Evaluation;
 using Microsoft.Build.Execution;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Logging;
+using DiagnosticsProcess = System.Diagnostics.Process;
+using DiagnosticsProcessStartInfo = System.Diagnostics.ProcessStartInfo;
 using System.Text;
 using System.Xml.Linq;
 using XREngine;
@@ -439,7 +441,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             if (!BuildProjectFile(launcherProjectPath, configuration, platform, ["Publish"], extraProps, out string? publishLog))
             {
                 Debug.Out(publishLog ?? "Failed to publish launcher project.");
-                throw new InvalidOperationException("Failed to publish launcher executable. Check build output for details.");
+                throw new InvalidOperationException($"Failed to publish launcher executable. {publishLog}");
             }
 
             string launcherExePath = Path.Combine(publishDirectory, $"{launcherAssemblyName}.exe");
@@ -453,16 +455,50 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             if (!BuildProjectFile(launcherProjectPath, configuration, platform, out string? buildLog))
             {
                 Debug.Out(buildLog ?? "Failed to build launcher project.");
-                throw new InvalidOperationException("Failed to build launcher executable. Check build output for details.");
+                throw new InvalidOperationException($"Failed to build launcher executable. {buildLog}");
             }
 
-            string outputDirectory = Path.Combine(launcherRoot, "Build", configuration, platform, TargetFramework);
-            string launcherExePath = Path.Combine(outputDirectory, $"{launcherAssemblyName}.exe");
-            if (!File.Exists(launcherExePath))
-                throw new FileNotFoundException("Launcher executable was not produced by the build.", launcherExePath);
-
-            return launcherExePath;
+            return ResolveBuiltLauncherExecutablePath(launcherRoot, launcherAssemblyName, configuration, platform);
         }
+    }
+
+    private static string ResolveBuiltLauncherExecutablePath(
+        string launcherRoot,
+        string launcherAssemblyName,
+        string configuration,
+        string platform)
+    {
+        string fileName = $"{launcherAssemblyName}.exe";
+        string buildRoot = Path.Combine(launcherRoot, "Build");
+
+        string[] candidatePaths =
+        [
+            Path.Combine(buildRoot, platform, configuration, TargetFramework, "win-x64", fileName),
+            Path.Combine(buildRoot, configuration, platform, TargetFramework, "win-x64", fileName),
+            Path.Combine(buildRoot, platform, configuration, TargetFramework, fileName),
+            Path.Combine(buildRoot, configuration, platform, TargetFramework, fileName),
+            Path.Combine(buildRoot, configuration, TargetFramework, fileName),
+            Path.Combine(buildRoot, TargetFramework, fileName)
+        ];
+
+        foreach (string candidatePath in candidatePaths)
+        {
+            if (File.Exists(candidatePath))
+                return candidatePath;
+        }
+
+        if (Directory.Exists(buildRoot))
+        {
+            string[] matches = Directory.GetFiles(buildRoot, fileName, SearchOption.AllDirectories);
+            if (matches.Length > 0)
+            {
+                Array.Sort(matches, (left, right) =>
+                    File.GetLastWriteTimeUtc(right).CompareTo(File.GetLastWriteTimeUtc(left)));
+                return matches[0];
+            }
+        }
+
+        throw new FileNotFoundException("Launcher executable was not produced by the build.", Path.Combine(buildRoot, fileName));
     }
 
     /// <summary>
@@ -527,6 +563,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                     new XElement("TargetFramework", TargetFramework),
                     new XElement("ImplicitUsings", "enable"),
                     new XElement("Nullable", "enable"),
+                    new XElement("EnableDefaultCompileItems", "false"),
                     new XElement("AllowUnsafeBlocks", "true"),
                     new XElement("PublishAot", "false"),
                     new XElement("SelfContained", "false"),
@@ -555,25 +592,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     }
 
     private static bool BuildProjectFile(string projectFilePath, string configuration, string platform, out string? log)
-    {
-        var stringLogger = new StringLogger(LoggerVerbosity.Minimal);
-        var projectCollection = new ProjectCollection();
-        var buildParameters = new BuildParameters(projectCollection)
-        {
-            Loggers = [new ConsoleLogger(LoggerVerbosity.Minimal), stringLogger]
-        };
-
-        Dictionary<string, string?> props = new()
-        {
-            ["Configuration"] = configuration,
-            ["Platform"] = platform
-        };
-
-        var request = new BuildRequestData(projectFilePath, props, null, ["Build"], null);
-        BuildResult result = BuildManager.DefaultBuildManager.Build(buildParameters, request);
-        log = stringLogger.GetFullLog();
-        return result.OverallResult == BuildResultCode.Success;
-    }
+        => BuildProjectFile(projectFilePath, configuration, platform, ["Build"], extraProperties: null, out log);
 
     private static bool BuildProjectFile(
         string projectFilePath,
@@ -583,29 +602,44 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         IReadOnlyDictionary<string, string?>? extraProperties,
         out string? log)
     {
-        var stringLogger = new StringLogger(LoggerVerbosity.Minimal);
-        var projectCollection = new ProjectCollection();
-        var buildParameters = new BuildParameters(projectCollection)
+        var startInfo = new DiagnosticsProcessStartInfo("dotnet")
         {
-            Loggers = [new ConsoleLogger(LoggerVerbosity.Minimal), stringLogger]
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            WorkingDirectory = Path.GetDirectoryName(projectFilePath) ?? Environment.CurrentDirectory
         };
 
-        Dictionary<string, string?> props = new()
-        {
-            ["Configuration"] = configuration,
-            ["Platform"] = platform
-        };
+        startInfo.ArgumentList.Add("msbuild");
+        startInfo.ArgumentList.Add(projectFilePath);
+        startInfo.ArgumentList.Add("/restore");
+        startInfo.ArgumentList.Add("/nologo");
+        startInfo.ArgumentList.Add($"/t:{string.Join(";", targets)}");
+        startInfo.ArgumentList.Add($"/p:Configuration={configuration}");
+        startInfo.ArgumentList.Add($"/p:Platform={platform}");
 
         if (extraProperties is not null)
         {
             foreach (var kvp in extraProperties)
-                props[kvp.Key] = kvp.Value;
+            {
+                if (string.IsNullOrWhiteSpace(kvp.Key))
+                    continue;
+
+                string value = kvp.Value ?? string.Empty;
+                startInfo.ArgumentList.Add($"/p:{kvp.Key}={value}");
+            }
         }
 
-        var request = new BuildRequestData(projectFilePath, props, null, targets, null);
-        BuildResult result = BuildManager.DefaultBuildManager.Build(buildParameters, request);
-        log = stringLogger.GetFullLog();
-        return result.OverallResult == BuildResultCode.Success;
+        using DiagnosticsProcess process = DiagnosticsProcess.Start(startInfo)
+            ?? throw new InvalidOperationException($"Failed to start dotnet msbuild for '{projectFilePath}'.");
+
+        string stdout = process.StandardOutput.ReadToEnd();
+        string stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        log = string.Concat(stdout, string.IsNullOrWhiteSpace(stderr) ? string.Empty : Environment.NewLine + stderr);
+        return process.ExitCode == 0;
     }
 
     private static string EnsureTrailingSlash(string path)
@@ -632,12 +666,22 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string configArchive = string.IsNullOrWhiteSpace(settings.ConfigArchiveName)
             ? "GameConfig.pak"
             : settings.ConfigArchiveName;
+        string contentFolder = string.IsNullOrWhiteSpace(settings.ContentOutputFolder)
+            ? string.Empty
+            : settings.ContentOutputFolder;
+        string contentArchive = string.IsNullOrWhiteSpace(settings.ContentArchiveName)
+            ? "GameContent.pak"
+            : settings.ContentArchiveName;
+        const string commonAssetsArchive = "CommonAssets.pak";
 
         static string EscapeForLiteral(string value)
             => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
         string escapedConfigFolder = EscapeForLiteral(configFolder);
-        string escapedArchive = EscapeForLiteral(configArchive);
+        string escapedConfigArchive = EscapeForLiteral(configArchive);
+        string escapedContentFolder = EscapeForLiteral(contentFolder);
+        string escapedContentArchive = EscapeForLiteral(contentArchive);
+        string escapedCommonAssetsArchive = EscapeForLiteral(commonAssetsArchive);
         string escapedStartup = EscapeForLiteral(startupAssetName);
         string escapedEngine = EscapeForLiteral(engineSettingsAssetName);
         string escapedUser = EscapeForLiteral(userSettingsAssetName);
@@ -645,6 +689,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         var sb = new StringBuilder();
         sb.AppendLine("using System;");
         sb.AppendLine("using System.IO;");
+        sb.AppendLine("using System.Security.Cryptography;");
         sb.AppendLine("using System.Text;");
         sb.AppendLine("using XREngine;");
         sb.AppendLine("using XREngine.Core.Files;");
@@ -657,14 +702,25 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("    private static void Main(string[] args)");
         sb.AppendLine("    {");
         sb.AppendLine($"        string archivePath = string.IsNullOrWhiteSpace(\"{escapedConfigFolder}\") ?");
-        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedArchive}\") :");
-        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedConfigFolder}\", \"{escapedArchive}\");");
+        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedConfigArchive}\") :");
+        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedConfigFolder}\", \"{escapedConfigArchive}\");");
+        sb.AppendLine();
+        sb.AppendLine($"        string contentArchivePath = string.IsNullOrWhiteSpace(\"{escapedContentFolder}\") ?");
+        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedContentArchive}\") :");
+        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedContentFolder}\", \"{escapedContentArchive}\");");
+        sb.AppendLine();
+        sb.AppendLine($"        string commonAssetsArchivePath = string.IsNullOrWhiteSpace(\"{escapedContentFolder}\") ?");
+        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedCommonAssetsArchive}\") :");
+        sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedContentFolder}\", \"{escapedCommonAssetsArchive}\");");
         sb.AppendLine();
         sb.AppendLine("        if (!File.Exists(archivePath))");
         sb.AppendLine("        {");
         sb.AppendLine("            Console.Error.WriteLine($\"Config archive '{archivePath}' not found.\");");
         sb.AppendLine("            return;");
         sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        var runMode = ResolveRunMode(args);");
+        sb.AppendLine("        ConfigureAssetRoots(runMode, contentArchivePath, commonAssetsArchivePath);");
         sb.AppendLine();
         sb.AppendLine($"        var startup = LoadAsset<GameStartupSettings>(archivePath, \"{escapedStartup}\");");
         sb.AppendLine("        if (startup is null)");
@@ -675,7 +731,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine();
         sb.AppendLine($"        var editorPreferences = LoadAsset<EditorPreferences>(archivePath, \"{escapedEngine}\");");
         sb.AppendLine("        if (editorPreferences is not null)");
-        sb.AppendLine("            Engine.EditorPreferences = editorPreferences;");
+        sb.AppendLine("            Engine.GlobalEditorPreferences = editorPreferences;");
         sb.AppendLine();
         sb.AppendLine($"        var userSettings = LoadAsset<UserSettings>(archivePath, \"{escapedUser}\");");
         sb.AppendLine("        if (userSettings is not null)");
@@ -688,15 +744,205 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("    {");
         sb.AppendLine("        try");
         sb.AppendLine("        {");
-        sb.AppendLine("            byte[] yamlBytes = AssetPacker.GetAsset(archivePath, assetPath);");
-        sb.AppendLine("            string yaml = Encoding.UTF8.GetString(yamlBytes);");
-        sb.AppendLine("            return AssetManager.Deserializer.Deserialize<T>(yaml);");
+        sb.AppendLine("            byte[] cookedBytes = AssetPacker.GetAsset(archivePath, assetPath);");
+        sb.AppendLine("            return CookedAssetReader.LoadAsset<T>(cookedBytes);");
         sb.AppendLine("        }");
         sb.AppendLine("        catch (Exception ex)");
         sb.AppendLine("        {");
         sb.AppendLine("            Console.Error.WriteLine($\"Failed to load '{assetPath}': {ex.Message}\");");
         sb.AppendLine("            return default;");
         sb.AppendLine("        }");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private enum AssetRunMode");
+        sb.AppendLine("    {");
+        sb.AppendLine("        Dev,");
+        sb.AppendLine("        Publish");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static AssetRunMode ResolveRunMode(string[] args)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        for (int i = 0; i < args.Length; i++)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            string arg = args[i];");
+        sb.AppendLine("            if (!string.Equals(arg, \"--mode\", StringComparison.OrdinalIgnoreCase))");
+        sb.AppendLine("                continue;");
+        sb.AppendLine();
+        sb.AppendLine("            if (i + 1 >= args.Length)");
+        sb.AppendLine("                break;");
+        sb.AppendLine();
+        sb.AppendLine("            return ParseRunMode(args[i + 1]);");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        string? envMode = Environment.GetEnvironmentVariable(\"XRE_GAME_MODE\");");
+        sb.AppendLine("        if (!string.IsNullOrWhiteSpace(envMode))");
+        sb.AppendLine("            return ParseRunMode(envMode);");
+        sb.AppendLine();
+        sb.AppendLine("        return AssetRunMode.Publish;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static AssetRunMode ParseRunMode(string value)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        if (string.Equals(value, \"dev\", StringComparison.OrdinalIgnoreCase))");
+        sb.AppendLine("            return AssetRunMode.Dev;");
+        sb.AppendLine();
+        sb.AppendLine("        if (string.Equals(value, \"publish\", StringComparison.OrdinalIgnoreCase))");
+        sb.AppendLine("            return AssetRunMode.Publish;");
+        sb.AppendLine();
+        sb.AppendLine("        return AssetRunMode.Publish;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static void ConfigureAssetRoots(AssetRunMode runMode, string gameArchivePath, string engineArchivePath)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        switch (runMode)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            case AssetRunMode.Dev:");
+        sb.AppendLine("                ConfigureDevAssetRoots();");
+        sb.AppendLine("                break;");
+        sb.AppendLine();
+        sb.AppendLine("            default:");
+        sb.AppendLine("                ConfigurePublishAssetRoots(gameArchivePath, engineArchivePath);");
+        sb.AppendLine("                break;");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static void ConfigureDevAssetRoots()");
+        sb.AppendLine("    {");
+        sb.AppendLine("        Environment.SetEnvironmentVariable(\"XRE_ASSET_RUNTIME_MODE\", \"dev\");");
+        sb.AppendLine();
+        sb.AppendLine("        if (TryFindNearestDirectoryWithAssets(AppContext.BaseDirectory, out string? gameAssetsPath))");
+        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_GAME_ASSETS_PATH\", gameAssetsPath);");
+        sb.AppendLine("        else");
+        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_GAME_ASSETS_PATH\", null);");
+        sb.AppendLine();
+        sb.AppendLine("        if (TryFindNearestDirectoryWithEngineAssets(AppContext.BaseDirectory, out string? engineAssetsPath))");
+        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_ENGINE_ASSETS_PATH\", engineAssetsPath);");
+        sb.AppendLine("        else");
+        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_ENGINE_ASSETS_PATH\", null);");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static void ConfigurePublishAssetRoots(string gameArchivePath, string engineArchivePath)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        Environment.SetEnvironmentVariable(\"XRE_ASSET_RUNTIME_MODE\", \"publish\");");
+        sb.AppendLine();
+        sb.AppendLine("        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);");
+        sb.AppendLine("        if (string.IsNullOrWhiteSpace(localAppData))");
+        sb.AppendLine("            return;");
+        sb.AppendLine();
+        sb.AppendLine("        string cacheRoot = Path.Combine(localAppData, \"XREngine\", \"RuntimeArchiveCache\", ComputeStableToken(AppContext.BaseDirectory));");
+        sb.AppendLine();
+        sb.AppendLine("        if (File.Exists(gameArchivePath))");
+        sb.AppendLine("        {");
+        sb.AppendLine("            string gameAssetsRoot = Path.Combine(cacheRoot, \"GameAssets\");");
+        sb.AppendLine("            ExtractArchiveIfNeeded(gameArchivePath, gameAssetsRoot);");
+        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_GAME_ASSETS_PATH\", gameAssetsRoot);");
+        sb.AppendLine("        }");
+        sb.AppendLine("        else");
+        sb.AppendLine("        {");
+        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_GAME_ASSETS_PATH\", null);");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        if (File.Exists(engineArchivePath))");
+        sb.AppendLine("        {");
+        sb.AppendLine("            string engineAssetsRoot = Path.Combine(cacheRoot, \"CommonAssets\");");
+        sb.AppendLine("            ExtractArchiveIfNeeded(engineArchivePath, engineAssetsRoot);");
+        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_ENGINE_ASSETS_PATH\", engineAssetsRoot);");
+        sb.AppendLine("        }");
+        sb.AppendLine("        else");
+        sb.AppendLine("        {");
+        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_ENGINE_ASSETS_PATH\", null);");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static bool TryFindNearestDirectoryWithAssets(string startPath, out string? assetsPath)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        var dir = new DirectoryInfo(startPath);");
+        sb.AppendLine("        while (dir is not null)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            string candidate = Path.Combine(dir.FullName, \"Assets\");");
+        sb.AppendLine("            if (Directory.Exists(candidate))");
+        sb.AppendLine("            {");
+        sb.AppendLine("                assetsPath = candidate;");
+        sb.AppendLine("                return true;");
+        sb.AppendLine("            }");
+        sb.AppendLine();
+        sb.AppendLine("            dir = dir.Parent;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        assetsPath = null;");
+        sb.AppendLine("        return false;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static bool TryFindNearestDirectoryWithEngineAssets(string startPath, out string? engineAssetsPath)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        var dir = new DirectoryInfo(startPath);");
+        sb.AppendLine("        while (dir is not null)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            string candidate = Path.Combine(dir.FullName, \"Build\", \"CommonAssets\");");
+        sb.AppendLine("            if (Directory.Exists(candidate) && Directory.Exists(Path.Combine(candidate, \"Shaders\")))");
+        sb.AppendLine("            {");
+        sb.AppendLine("                engineAssetsPath = candidate;");
+        sb.AppendLine("                return true;");
+        sb.AppendLine("            }");
+        sb.AppendLine();
+        sb.AppendLine("            dir = dir.Parent;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        engineAssetsPath = null;");
+        sb.AppendLine("        return false;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static void ExtractArchiveIfNeeded(string archivePath, string destinationRoot)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        var archiveInfo = new FileInfo(archivePath);");
+        sb.AppendLine("        string stamp = BuildArchiveStamp(archiveInfo);");
+        sb.AppendLine("        string stampPath = Path.Combine(destinationRoot, \".archive.stamp\");");
+        sb.AppendLine();
+        sb.AppendLine("        if (Directory.Exists(destinationRoot) && File.Exists(stampPath))");
+        sb.AppendLine("        {");
+        sb.AppendLine("            string existingStamp = File.ReadAllText(stampPath);");
+        sb.AppendLine("            if (string.Equals(existingStamp, stamp, StringComparison.Ordinal))");
+        sb.AppendLine("                return;");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        if (Directory.Exists(destinationRoot))");
+        sb.AppendLine("            Directory.Delete(destinationRoot, recursive: true);");
+        sb.AppendLine();
+        sb.AppendLine("        Directory.CreateDirectory(destinationRoot);");
+        sb.AppendLine();
+        sb.AppendLine("        var info = AssetPacker.ReadArchiveInfo(archivePath);");
+        sb.AppendLine("        string destinationRootFullPath = Path.GetFullPath(destinationRoot);");
+        sb.AppendLine();
+        sb.AppendLine("        foreach (var entry in info.Entries)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            string relativePath = entry.Path.Replace('/', Path.DirectorySeparatorChar)");
+        sb.AppendLine("                .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);");
+        sb.AppendLine("            if (string.IsNullOrWhiteSpace(relativePath))");
+        sb.AppendLine("                continue;");
+        sb.AppendLine();
+        sb.AppendLine("            string outputPath = Path.GetFullPath(Path.Combine(destinationRootFullPath, relativePath));");
+        sb.AppendLine("            if (!outputPath.StartsWith(destinationRootFullPath, StringComparison.OrdinalIgnoreCase))");
+        sb.AppendLine("                continue;");
+        sb.AppendLine();
+        sb.AppendLine("            string? outputDirectory = Path.GetDirectoryName(outputPath);");
+        sb.AppendLine("            if (!string.IsNullOrWhiteSpace(outputDirectory))");
+        sb.AppendLine("                Directory.CreateDirectory(outputDirectory);");
+        sb.AppendLine();
+        sb.AppendLine("            byte[] data = AssetPacker.DecompressEntry(archivePath, entry);");
+        sb.AppendLine("            File.WriteAllBytes(outputPath, data);");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        File.WriteAllText(stampPath, stamp);");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    private static string BuildArchiveStamp(FileInfo archiveInfo)");
+        sb.AppendLine("        => $\"{archiveInfo.Length}:{archiveInfo.LastWriteTimeUtc.Ticks}\";");
+        sb.AppendLine();
+        sb.AppendLine("    private static string ComputeStableToken(string value)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        byte[] bytes = Encoding.UTF8.GetBytes(value);");
+        sb.AppendLine("        byte[] hash = SHA256.HashData(bytes);");
+        sb.AppendLine("        return Convert.ToHexString(hash, 0, 8);");
         sb.AppendLine("    }");
         sb.AppendLine("}");
         return sb.ToString();

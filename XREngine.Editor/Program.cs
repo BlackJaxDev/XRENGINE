@@ -1,6 +1,7 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using EngineDebug = XREngine.Debug;
 using System.Linq;
@@ -59,6 +60,12 @@ internal class Program
     private static void Main(string[] args)
     {
         if (TryRunCookCommonAssetsCommand(args))
+            return;
+
+        if (TryRunProjectCodeBuildCommand(args))
+            return;
+
+        if (TryRunProjectBuildCommand(args))
             return;
 
         //Begin tracking how long editor startup takes, and log the time when the first non-black frame is rendered.
@@ -602,11 +609,12 @@ internal class Program
                 return true;
         }
 
-        // Arguments parsed successfully, proceed with project initialization
-        // project name and directory is guaranteed to be non-null and valid if TryParse returns true
+        // Arguments parsed successfully, proceed with project initialization.
+        // Project name and directory are guaranteed to be non-null and valid if TryParse returns true.
         bool success = EditorProjectInitializer.InitializeNewProject(projectDirectory!, projectName!, Console.Out, Console.Error);
         Environment.ExitCode = success ? 0 : 1;
-        return success;
+        // The init command is an explicit one-shot CLI operation; do not continue into full editor startup.
+        return false;
     }
 
     /// <summary>
@@ -673,6 +681,579 @@ internal class Program
         }
 
         return true;
+    }
+
+    private static bool TryRunProjectBuildCommand(string[] args)
+    {
+        if (!TryParseProjectBuildArgs(
+            args,
+            out bool buildFlagSeen,
+            out string? projectPath,
+            out string? configurationArg,
+            out string? platformArg,
+            out string? outputSubfolderArg,
+            out string? launcherNameArg,
+            out bool? publishNativeAot,
+            out string? error))
+        {
+            if (buildFlagSeen)
+            {
+                Console.Error.WriteLine(error ?? "Invalid arguments for --build-project.");
+                Environment.ExitCode = 1;
+                Environment.Exit(Environment.ExitCode);
+                return true;
+            }
+
+            return false;
+        }
+
+        if (!buildFlagSeen)
+            return false;
+
+        try
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+            RunProjectBuildCommand(
+                projectPath,
+                configurationArg,
+                platformArg,
+                outputSubfolderArg,
+                launcherNameArg,
+                publishNativeAot);
+
+            Environment.ExitCode = 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Project build failed: {ex}");
+            Environment.ExitCode = 1;
+        }
+
+        Environment.Exit(Environment.ExitCode);
+        return true;
+    }
+
+    private static bool TryRunProjectCodeBuildCommand(string[] args)
+    {
+        if (!TryParseProjectCodeBuildArgs(
+            args,
+            out bool buildFlagSeen,
+            out string? projectPath,
+            out string? configurationArg,
+            out string? platformArg,
+            out string? error))
+        {
+            if (buildFlagSeen)
+            {
+                Console.Error.WriteLine(error ?? "Invalid arguments for --build-project-code.");
+                Environment.ExitCode = 1;
+                Environment.Exit(Environment.ExitCode);
+                return true;
+            }
+
+            return false;
+        }
+
+        if (!buildFlagSeen)
+            return false;
+
+        try
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            RunProjectCodeBuildCommand(projectPath, configurationArg, platformArg);
+            Environment.ExitCode = 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Project code build failed: {ex}");
+            Environment.ExitCode = 1;
+        }
+
+        Environment.Exit(Environment.ExitCode);
+        return true;
+    }
+
+    private static bool TryParseProjectCodeBuildArgs(
+        string[] args,
+        out bool buildFlagSeen,
+        out string? projectPath,
+        out string? configurationArg,
+        out string? platformArg,
+        out string? error)
+    {
+        buildFlagSeen = false;
+        projectPath = null;
+        configurationArg = null;
+        platformArg = null;
+        error = null;
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            switch (arg.ToLowerInvariant())
+            {
+                case "--build-project-code":
+                case "--compile-project":
+                case "-buildprojectcode":
+                case "-compileproject":
+                    buildFlagSeen = true;
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing project path after --build-project-code.";
+                        return false;
+                    }
+                    projectPath = args[++i];
+                    break;
+
+                case "--build-configuration":
+                case "--configuration":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --build-configuration.";
+                        return false;
+                    }
+                    configurationArg = args[++i];
+                    break;
+
+                case "--build-platform":
+                case "--platform":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --build-platform.";
+                        return false;
+                    }
+                    platformArg = args[++i];
+                    break;
+            }
+        }
+
+        if (!buildFlagSeen)
+            return false;
+
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            error = "A project path must be provided after --build-project-code.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static void RunProjectCodeBuildCommand(
+        string? projectPathArg,
+        string? configurationArg,
+        string? platformArg)
+    {
+        ConfigureMsBuildEnvironmentForHeadlessBuild();
+
+        string projectFilePath = ResolveProjectFilePathForBuild(projectPathArg);
+        Console.WriteLine($"Loading project from '{projectFilePath}'...");
+
+        if (!Engine.LoadProject(projectFilePath))
+        {
+            XRProject? fallbackProject = LoadProjectDescriptorFallback(projectFilePath);
+            if (fallbackProject is null || !Engine.LoadProject(fallbackProject))
+                throw new InvalidOperationException($"Failed to load XRProject from '{projectFilePath}'.");
+        }
+
+        EBuildConfiguration configuration = Engine.BuildSettings?.Configuration ?? EBuildConfiguration.Development;
+        if (!string.IsNullOrWhiteSpace(configurationArg) &&
+            !Enum.TryParse(configurationArg, true, out configuration))
+        {
+            throw new ArgumentException($"Unknown build configuration '{configurationArg}'.");
+        }
+
+        EBuildPlatform platform = Engine.BuildSettings?.Platform ?? EBuildPlatform.AnyCPU;
+        if (!string.IsNullOrWhiteSpace(platformArg) &&
+            !Enum.TryParse(platformArg, true, out platform))
+        {
+            throw new ArgumentException($"Unknown build platform '{platformArg}'.");
+        }
+
+        string managedConfiguration = ResolveManagedBuildConfiguration(configuration);
+        string managedPlatform = ResolveManagedBuildPlatform(platform);
+
+        Console.WriteLine($"Compiling managed game project ({managedConfiguration}|{managedPlatform})...");
+        CodeManager.Instance.RemakeSolutionAsDLL(false);
+        if (!CodeManager.Instance.CompileSolution(managedConfiguration, managedPlatform))
+            throw new InvalidOperationException("Managed project compile failed. See log for details.");
+
+        string binaryPath = CodeManager.Instance.GetBinaryPath(managedConfiguration, managedPlatform);
+        Console.WriteLine($"Managed project build completed: {binaryPath}");
+    }
+
+    private static string ResolveManagedBuildConfiguration(EBuildConfiguration configuration)
+        => configuration switch
+        {
+            EBuildConfiguration.Release => CodeManager.Config_Release,
+            _ => CodeManager.Config_Debug
+        };
+
+    private static string ResolveManagedBuildPlatform(EBuildPlatform platform)
+        => platform switch
+        {
+            EBuildPlatform.Windows64 => CodeManager.Platform_x64,
+            _ => CodeManager.Platform_AnyCPU
+        };
+
+    private static bool TryParseProjectBuildArgs(
+        string[] args,
+        out bool buildFlagSeen,
+        out string? projectPath,
+        out string? configurationArg,
+        out string? platformArg,
+        out string? outputSubfolderArg,
+        out string? launcherNameArg,
+        out bool? publishNativeAot,
+        out string? error)
+    {
+        buildFlagSeen = false;
+        projectPath = null;
+        configurationArg = null;
+        platformArg = null;
+        outputSubfolderArg = null;
+        launcherNameArg = null;
+        publishNativeAot = null;
+        error = null;
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+            switch (arg.ToLowerInvariant())
+            {
+                case "--build-project":
+                case "--cook-project":
+                case "-buildproject":
+                case "-cookproject":
+                    buildFlagSeen = true;
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing project path after --build-project.";
+                        return false;
+                    }
+                    projectPath = args[++i];
+                    break;
+
+                case "--build-configuration":
+                case "--configuration":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --build-configuration.";
+                        return false;
+                    }
+                    configurationArg = args[++i];
+                    break;
+
+                case "--build-platform":
+                case "--platform":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --build-platform.";
+                        return false;
+                    }
+                    platformArg = args[++i];
+                    break;
+
+                case "--output-subfolder":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --output-subfolder.";
+                        return false;
+                    }
+                    outputSubfolderArg = args[++i];
+                    break;
+
+                case "--launcher-name":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --launcher-name.";
+                        return false;
+                    }
+                    launcherNameArg = args[++i];
+                    break;
+
+                case "--publish-native-aot":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --publish-native-aot (expected true/false).";
+                        return false;
+                    }
+
+                    string boolArg = args[++i];
+                    if (!TryParseBooleanArgument(boolArg, out bool boolValue))
+                    {
+                        error = "--publish-native-aot must be true/false, yes/no, or 1/0.";
+                        return false;
+                    }
+
+                    publishNativeAot = boolValue;
+                    break;
+            }
+        }
+
+        if (!buildFlagSeen)
+            return false;
+
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            error = "A project path must be provided after --build-project.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static void RunProjectBuildCommand(
+        string? projectPathArg,
+        string? configurationArg,
+        string? platformArg,
+        string? outputSubfolderArg,
+        string? launcherNameArg,
+        bool? publishNativeAot)
+    {
+        ConfigureMsBuildEnvironmentForHeadlessBuild();
+
+        string projectFilePath = ResolveProjectFilePathForBuild(projectPathArg);
+        Console.WriteLine($"Loading project from '{projectFilePath}'...");
+
+        if (!Engine.LoadProject(projectFilePath))
+        {
+            XRProject? fallbackProject = LoadProjectDescriptorFallback(projectFilePath);
+            if (fallbackProject is null || !Engine.LoadProject(fallbackProject))
+                throw new InvalidOperationException($"Failed to load XRProject from '{projectFilePath}'.");
+        }
+
+        EnsureStartupSettingsLoadedForBuild();
+
+        BuildSettings settings = Engine.BuildSettings ?? new BuildSettings();
+        settings.CookContent = true;
+        settings.BuildManagedAssemblies = false;
+        settings.CopyGameAssemblies = false;
+        settings.CopyEngineBinaries = true;
+        settings.GenerateConfigArchive = true;
+        settings.BuildLauncherExecutable = true;
+
+        if (!string.IsNullOrWhiteSpace(configurationArg))
+        {
+            if (!Enum.TryParse(configurationArg, true, out EBuildConfiguration configuration))
+                throw new ArgumentException($"Unknown build configuration '{configurationArg}'.");
+
+            settings.Configuration = configuration;
+        }
+
+        if (!string.IsNullOrWhiteSpace(platformArg))
+        {
+            if (!Enum.TryParse(platformArg, true, out EBuildPlatform platform))
+                throw new ArgumentException($"Unknown build platform '{platformArg}'.");
+
+            settings.Platform = platform;
+        }
+
+        if (!string.IsNullOrWhiteSpace(outputSubfolderArg))
+            settings.OutputSubfolder = outputSubfolderArg.Trim();
+
+        if (!string.IsNullOrWhiteSpace(launcherNameArg))
+            settings.LauncherExecutableName = launcherNameArg.Trim();
+
+        if (publishNativeAot.HasValue)
+            settings.PublishLauncherAsNativeAot = publishNativeAot.Value;
+
+        Engine.BuildSettings = settings;
+        Console.WriteLine($"Resolved build settings: BuildManagedAssemblies={settings.BuildManagedAssemblies}, CopyGameAssemblies={settings.CopyGameAssemblies}, BuildLauncherExecutable={settings.BuildLauncherExecutable}");
+
+        Console.WriteLine($"Cooking project '{Engine.CurrentProject?.ProjectName ?? "Unknown"}' to launcher executable...");
+        ProjectBuilder.BuildCurrentProjectSynchronously(settings, progress =>
+        {
+            int percent = (int)Math.Clamp(progress.Value * 100f, 0f, 100f);
+            string message = progress.Payload as string ?? "Working...";
+            Console.WriteLine($"[build {percent,3}%] {message}");
+        });
+
+        if (Engine.CurrentProject?.BuildDirectory is null)
+            return;
+
+        string buildRoot = Path.Combine(Engine.CurrentProject.BuildDirectory, settings.OutputSubfolder ?? string.Empty);
+        string binariesPath = Path.Combine(buildRoot, settings.BinariesOutputFolder);
+        string exeName = string.IsNullOrWhiteSpace(settings.LauncherExecutableName)
+            ? "Game.exe"
+            : settings.LauncherExecutableName.Trim();
+        if (!exeName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            exeName += ".exe";
+        string exePath = Path.Combine(binariesPath, exeName);
+
+        if (File.Exists(exePath))
+            Console.WriteLine($"Cooked game executable ready: {exePath}");
+        else
+            Console.WriteLine($"Build finished. Expected launcher path: {exePath}");
+    }
+
+    private static void ConfigureMsBuildEnvironmentForHeadlessBuild()
+    {
+        string? existingSdksPath = Environment.GetEnvironmentVariable("MSBuildSDKsPath");
+        string? existingMsbuildPath = Environment.GetEnvironmentVariable("MSBUILD_EXE_PATH");
+        if (!string.IsNullOrWhiteSpace(existingSdksPath) &&
+            Directory.Exists(existingSdksPath) &&
+            !string.IsNullOrWhiteSpace(existingMsbuildPath) &&
+            File.Exists(existingMsbuildPath))
+        {
+            return;
+        }
+
+        string? dotnetRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        if (string.IsNullOrWhiteSpace(dotnetRoot))
+        {
+            string candidate = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
+            if (Directory.Exists(candidate))
+                dotnetRoot = candidate;
+        }
+
+        if (string.IsNullOrWhiteSpace(dotnetRoot))
+            return;
+
+        string sdkRoot = Path.Combine(dotnetRoot, "sdk");
+        if (!Directory.Exists(sdkRoot))
+            return;
+
+        string? selectedSdk = TryResolvePreferredSdkDirectory(sdkRoot);
+        if (string.IsNullOrWhiteSpace(selectedSdk))
+            return;
+
+        string sdksPath = Path.Combine(selectedSdk, "Sdks");
+        string msbuildPath = Path.Combine(selectedSdk, "MSBuild.dll");
+        if (!Directory.Exists(sdksPath) || !File.Exists(msbuildPath))
+            return;
+
+        Environment.SetEnvironmentVariable("MSBuildSDKsPath", sdksPath);
+        Environment.SetEnvironmentVariable("MSBUILD_EXE_PATH", msbuildPath);
+        Environment.SetEnvironmentVariable("MSBuildExtensionsPath", selectedSdk);
+        Environment.SetEnvironmentVariable("MSBuildExtensionsPath32", selectedSdk);
+        Environment.SetEnvironmentVariable("MSBuildToolsPath", selectedSdk);
+    }
+
+    private static string? TryResolvePreferredSdkDirectory(string sdkRoot)
+    {
+        string? explicitSdkVersion = Environment.GetEnvironmentVariable("DOTNET_SDK_VERSION");
+        if (!string.IsNullOrWhiteSpace(explicitSdkVersion))
+        {
+            string explicitPath = Path.Combine(sdkRoot, explicitSdkVersion);
+            if (Directory.Exists(explicitPath))
+                return explicitPath;
+        }
+
+        string[] candidates = Directory.GetDirectories(sdkRoot);
+        if (candidates.Length == 0)
+            return null;
+
+        return candidates
+            .OrderByDescending(path => path, Comparer<string>.Create(CompareSdkPaths))
+            .FirstOrDefault();
+    }
+
+    private static int CompareSdkPaths(string? leftPath, string? rightPath)
+    {
+        string leftName = Path.GetFileName(leftPath) ?? string.Empty;
+        string rightName = Path.GetFileName(rightPath) ?? string.Empty;
+
+        static Version ParseVersionPrefix(string value)
+        {
+            string numeric = value.Split('-', 2)[0];
+            return Version.TryParse(numeric, out var parsed) ? parsed : new Version(0, 0);
+        }
+
+        int versionComparison = ParseVersionPrefix(leftName).CompareTo(ParseVersionPrefix(rightName));
+        if (versionComparison != 0)
+            return versionComparison;
+
+        return string.Compare(leftName, rightName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveProjectFilePathForBuild(string? projectPathArg)
+    {
+        if (string.IsNullOrWhiteSpace(projectPathArg))
+            throw new ArgumentException("Project path is required.");
+
+        string normalizedPath = Path.GetFullPath(projectPathArg);
+        if (File.Exists(normalizedPath))
+            return normalizedPath;
+
+        if (!Directory.Exists(normalizedPath))
+            throw new DirectoryNotFoundException($"Project path does not exist: {normalizedPath}");
+
+        string[] projectFiles = Directory.GetFiles(normalizedPath, $"*.{XRProject.ProjectExtension}", SearchOption.TopDirectoryOnly);
+        if (projectFiles.Length == 1)
+            return projectFiles[0];
+
+        if (projectFiles.Length == 0)
+            throw new FileNotFoundException($"No .{XRProject.ProjectExtension} file found in '{normalizedPath}'.");
+
+        throw new InvalidOperationException($"Multiple .{XRProject.ProjectExtension} files found in '{normalizedPath}'. Provide an explicit project file path.");
+    }
+
+    private static XRProject? LoadProjectDescriptorFallback(string projectFilePath)
+    {
+        try
+        {
+            string yaml = File.ReadAllText(projectFilePath);
+            XRProject? project = AssetManager.Deserializer.Deserialize<XRProject>(yaml);
+            if (project is null)
+                return null;
+
+            project.FilePath = projectFilePath;
+            project.EnsureStructure();
+            return project;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void EnsureStartupSettingsLoadedForBuild()
+    {
+        string? assetsDirectory = Engine.CurrentProject?.AssetsDirectory;
+        if (string.IsNullOrWhiteSpace(assetsDirectory))
+            return;
+
+        string startupPath = Path.Combine(assetsDirectory, "startup.asset");
+        if (File.Exists(startupPath))
+        {
+            var loadedSettings = Engine.Assets.Load<GameStartupSettings>(startupPath);
+            if (loadedSettings is not null)
+            {
+                loadedSettings.Name = Engine.CurrentProject?.ProjectName ?? loadedSettings.Name;
+                Engine.GameSettings = loadedSettings;
+                return;
+            }
+        }
+
+        var fallback = Engine.GameSettings ?? new GameStartupSettings();
+        fallback.Name = Engine.CurrentProject?.ProjectName ?? fallback.Name;
+        fallback.FilePath ??= startupPath;
+        Engine.GameSettings = fallback;
+    }
+
+    private static bool TryParseBooleanArgument(string value, out bool parsed)
+    {
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "1":
+            case "true":
+            case "yes":
+            case "on":
+                parsed = true;
+                return true;
+
+            case "0":
+            case "false":
+            case "no":
+            case "off":
+                parsed = false;
+                return true;
+        }
+
+        parsed = false;
+        return false;
     }
 
     private static bool TryRunCookCommonAssetsCommand(string[] args)

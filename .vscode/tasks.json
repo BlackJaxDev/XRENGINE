@@ -428,6 +428,36 @@
             "problemMatcher": []
         },
         {
+            "label": "vr-monkeyball-generate-game-project",
+            "command": "dotnet",
+            "type": "shell",
+            "args": [
+                "msbuild",
+                "${workspaceFolder}/VR_MonkeyBall_Sample/VR_MonkeyBall_Sample.csproj",
+                "/t:GenerateGameProject",
+                "/p:Configuration=Debug"
+            ],
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "vr-monkeyball-cook-game-exe",
+            "command": "dotnet",
+            "type": "shell",
+            "args": [
+                "msbuild",
+                "${workspaceFolder}/VR_MonkeyBall_Sample/VR_MonkeyBall_Sample.csproj",
+                "/t:CookGameExe",
+                "/p:Configuration=Release"
+            ],
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": "$msCompile"
+        },
+        {
             "label": "install-yt-dlp",
             "type": "shell",
             "command": "powershell",

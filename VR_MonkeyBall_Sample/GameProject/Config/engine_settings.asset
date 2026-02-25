@@ -1,0 +1,173 @@
+﻿__type: XREngine.EditorPreferencesOverrides
+Theme:
+  ThemeNameOverride:
+    HasOverride: false
+    Value: 
+  QuadtreeIntersectedBoundsColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  QuadtreeContainedBoundsColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  OctreeIntersectedBoundsColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  OctreeContainedBoundsColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  Bounds2DColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  Bounds3DColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  TransformPointColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  TransformLineColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  TransformCapsuleColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  ConsoleGeneralColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  ConsoleRenderingColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  ConsoleOpenGLColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  ConsolePhysicsColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  ConsoleAnimationColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+  ConsoleUIColorOverride:
+    HasOverride: false
+    Value:
+      __type: XREngine.Data.Colors.ColorF4
+Debug:
+  RenderMesh3DBoundsOverride:
+    HasOverride: false
+    Value: false
+  RenderMesh2DBoundsOverride:
+    HasOverride: false
+    Value: false
+  RenderTransformDebugInfoOverride:
+    HasOverride: false
+    Value: false
+  RenderUITransformCoordinateOverride:
+    HasOverride: false
+    Value: false
+  RenderTransformLinesOverride:
+    HasOverride: false
+    Value: false
+  RenderTransformPointsOverride:
+    HasOverride: false
+    Value: false
+  RenderTransformCapsulesOverride:
+    HasOverride: false
+    Value: false
+  VisualizeDirectionalLightVolumesOverride:
+    HasOverride: false
+    Value: false
+  Preview3DWorldOctreeOverride:
+    HasOverride: false
+    Value: false
+  Preview2DWorldQuadtreeOverride:
+    HasOverride: false
+    Value: false
+  PreviewTracesOverride:
+    HasOverride: false
+    Value: false
+  RenderCullingVolumesOverride:
+    HasOverride: false
+    Value: false
+  VisualizeTransformIdOverride:
+    HasOverride: false
+    Value: false
+  RenderLightProbeTetrahedraOverride:
+    HasOverride: false
+    Value: false
+  DebugTextMaxLifespanOverride:
+    HasOverride: false
+    Value: 0
+  EnableThreadAllocationTrackingOverride:
+    HasOverride: false
+    Value: false
+  UseDebugOpaquePipelineOverride:
+    HasOverride: false
+    Value: false
+  ForceGpuPassthroughCullingOverride:
+    HasOverride: false
+    Value: false
+  AllowGpuCpuFallbackOverride:
+    HasOverride: false
+    Value: false
+  EnableProfilerFrameLoggingOverride:
+    HasOverride: false
+    Value: false
+  EnableRenderStatisticsTrackingOverride:
+    HasOverride: false
+    Value: false
+  EnableUILayoutDebugLoggingOverride:
+    HasOverride: false
+    Value: false
+  EnableProfilerUdpSendingOverride:
+    HasOverride: false
+    Value: false
+ViewportPresentationModeOverride:
+  HasOverride: false
+  Value: FullViewportBehindImGuiUI
+ScenePanelResizeDebounceMsOverride:
+  HasOverride: false
+  Value: 0
+McpServerEnabledOverride:
+  HasOverride: false
+  Value: false
+McpServerPortOverride:
+  HasOverride: false
+  Value: 0
+McpServerRequireAuthOverride:
+  HasOverride: false
+  Value: false
+McpServerAuthTokenOverride:
+  HasOverride: false
+  Value: 
+McpServerCorsAllowlistOverride:
+  HasOverride: false
+  Value: 
+McpServerMaxRequestBytesOverride:
+  HasOverride: false
+  Value: 0
+McpServerRequestTimeoutMsOverride:
+  HasOverride: false
+  Value: 0
+McpServerReadOnlyOverride:
+  HasOverride: false
+  Value: false
+McpServerAllowedToolsOverride:
+  HasOverride: false
+  Value: 
+McpServerDeniedToolsOverride:
+  HasOverride: false
+  Value: 
+ID: 98c94e75-4bbc-42ec-b9cc-4768bd6a9f53
+Name: Editor Preferences Overrides

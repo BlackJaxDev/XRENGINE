@@ -1,0 +1,18 @@
+﻿__type: XREngine.BuildSettings
+Configuration: Development
+Platform: Windows64
+OutputSubfolder: Game
+CleanOutputDirectory: true
+CookContent: true
+CopyEngineBinaries: true
+BuildLauncherExecutable: true
+GenerateConfigArchive: true
+SaveSettingsBeforeBuild: true
+ContentArchiveName: GameContent.pak
+ConfigArchiveName: GameConfig.pak
+ContentOutputFolder: Content
+ConfigOutputFolder: Config
+BinariesOutputFolder: Binaries
+LauncherExecutableName: Game.exe
+ID: 75c177ae-8266-4de6-a262-415812f289f3
+Name: Build Settings

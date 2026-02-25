@@ -29,6 +29,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.Profiler", "XREngi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.Profiler.UI", "XREngine.Profiler.UI\XREngine.Profiler.UI.csproj", "{775270A7-8636-477C-9155-7C6E01792A02}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VR_MonkeyBall_Sample", "VR_MonkeyBall_Sample\VR_MonkeyBall_Sample.csproj", "{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -195,6 +197,18 @@ Global
 		{775270A7-8636-477C-9155-7C6E01792A02}.Release|x64.Build.0 = Release|x64
 		{775270A7-8636-477C-9155-7C6E01792A02}.Release|x86.ActiveCfg = Release|Any CPU
 		{775270A7-8636-477C-9155-7C6E01792A02}.Release|x86.Build.0 = Release|Any CPU
+		{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}.Debug|x64.Build.0 = Debug|Any CPU
+		{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}.Debug|x86.Build.0 = Debug|Any CPU
+		{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}.Release|x64.ActiveCfg = Release|Any CPU
+		{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}.Release|x64.Build.0 = Release|Any CPU
+		{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}.Release|x86.ActiveCfg = Release|Any CPU
+		{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
