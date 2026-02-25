@@ -7,6 +7,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <IsPackable>false</IsPackable>
+    <Configurations>Debug;Development;Release;Publish</Configurations>
+    <Platforms>AnyCPU</Platforms>
 
     <RepositoryRoot>$(MSBuildProjectDirectory)\..</RepositoryRoot>
     <EditorProjectPath>$(RepositoryRoot)\XREngine.Editor\XREngine.Editor.csproj</EditorProjectPath>
@@ -14,13 +17,59 @@
     <SampleGameProjectRoot>$(MSBuildProjectDirectory)\GameProject</SampleGameProjectRoot>
     <SampleGameProjectFile>$(SampleGameProjectRoot)\$(SampleGameProjectName).xrproj</SampleGameProjectFile>
     <EditorAutomationPlatform>AnyCPU</EditorAutomationPlatform>
+
+    <EditorBuildConfiguration Condition="'$(EditorBuildConfiguration)' == ''">Debug</EditorBuildConfiguration>
+    <GameBuildConfiguration Condition="'$(GameBuildConfiguration)' == ''">Development</GameBuildConfiguration>
+    <GameBuildPlatform Condition="'$(GameBuildPlatform)' == ''">Windows64</GameBuildPlatform>
+    <GameOutputSubfolder Condition="'$(GameOutputSubfolder)' == ''">Game</GameOutputSubfolder>
+    <GameLauncherName Condition="'$(GameLauncherName)' == ''">Game.exe</GameLauncherName>
+    <GamePublishNativeAot Condition="'$(GamePublishNativeAot)' == ''">false</GamePublishNativeAot>
   </PropertyGroup>
 
+  <!-- Visual Studio profile mapping:
+       Debug/Development -> fast dev build
+       Release           -> optimized non-AOT build
+       Publish           -> optimized publish build with NativeAOT -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug' Or '$(Configuration)' == 'Development'">
+    <EditorBuildConfiguration>Debug</EditorBuildConfiguration>
+    <GameBuildConfiguration>Development</GameBuildConfiguration>
+    <GameOutputSubfolder>Game</GameOutputSubfolder>
+    <GamePublishNativeAot>false</GamePublishNativeAot>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <EditorBuildConfiguration>Release</EditorBuildConfiguration>
+    <GameBuildConfiguration>Release</GameBuildConfiguration>
+    <GameOutputSubfolder>Game</GameOutputSubfolder>
+    <GamePublishNativeAot>false</GamePublishNativeAot>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Publish'">
+    <EditorBuildConfiguration>Release</EditorBuildConfiguration>
+    <GameBuildConfiguration>Release</GameBuildConfiguration>
+    <GameOutputSubfolder>Publish</GameOutputSubfolder>
+    <GamePublishNativeAot>true</GamePublishNativeAot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="GameProject\Assets\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
+  </ItemGroup>
+
+  <Target Name="ShowResolvedBuildProfile" BeforeTargets="Build;BuildEditorAutomation;CompileGameManagedCode;BuildGameLauncher">
+    <Message
+      Importance="High"
+      Text="XR Build Profile: VS=$(Configuration)|$(Platform), Editor=$(EditorBuildConfiguration)|$(EditorAutomationPlatform), Game=$(GameBuildConfiguration)|$(GameBuildPlatform), Output=$(GameOutputSubfolder), Launcher=$(GameLauncherName), NativeAOT=$(GamePublishNativeAot)" />
+  </Target>
+
   <Target Name="BuildEditorAutomation">
-    <Message Text="Building editor automation host ($(Configuration)|$(EditorAutomationPlatform))..." Importance="High" />
+    <Message Text="Building editor automation host ($(EditorBuildConfiguration)|$(EditorAutomationPlatform))..." Importance="High" />
     <Exec
       WorkingDirectory="$(RepositoryRoot)"
-      Command="dotnet build &quot;$(EditorProjectPath)&quot; -c $(Configuration) -p:Platform=$(EditorAutomationPlatform)" />
+      Command="dotnet build &quot;$(EditorProjectPath)&quot; -c $(EditorBuildConfiguration) -p:Platform=$(EditorAutomationPlatform)" />
   </Target>
 
   <Target Name="GenerateGameProject" DependsOnTargets="BuildEditorAutomation">
@@ -35,13 +84,22 @@
     <Exec
       Condition="!Exists('$(SampleGameProjectFile)')"
       WorkingDirectory="$(RepositoryRoot)"
-      Command="dotnet run --no-build --project &quot;$(EditorProjectPath)&quot; -c $(Configuration) -p:Platform=$(EditorAutomationPlatform) -- --init-project &quot;$(SampleGameProjectRoot)&quot; --project-name &quot;$(SampleGameProjectName)&quot;" />
+      Command="dotnet run --no-build --project &quot;$(EditorProjectPath)&quot; -c $(EditorBuildConfiguration) -p:Platform=$(EditorAutomationPlatform) -- --init-project &quot;$(SampleGameProjectRoot)&quot; --project-name &quot;$(SampleGameProjectName)&quot;" />
   </Target>
 
-  <Target Name="CookGameExe" DependsOnTargets="GenerateGameProject">
+  <Target Name="CompileGameManagedCode" DependsOnTargets="GenerateGameProject">
+    <Message Text="Compiling managed game code ($(GameBuildConfiguration)|$(GameBuildPlatform))..." Importance="High" />
+    <Exec
+      WorkingDirectory="$(RepositoryRoot)"
+      Command="dotnet run --no-build --project &quot;$(EditorProjectPath)&quot; -c $(EditorBuildConfiguration) -p:Platform=$(EditorAutomationPlatform) -- --build-project-code &quot;$(SampleGameProjectFile)&quot; --build-configuration &quot;$(GameBuildConfiguration)&quot; --build-platform &quot;$(GameBuildPlatform)&quot;" />
+  </Target>
+
+  <Target Name="BuildGameLauncher" DependsOnTargets="GenerateGameProject">
     <Message Text="Cooking game executable from $(SampleGameProjectFile)..." Importance="High" />
     <Exec
       WorkingDirectory="$(RepositoryRoot)"
-      Command="dotnet run --no-build --project &quot;$(EditorProjectPath)&quot; -c $(Configuration) -p:Platform=$(EditorAutomationPlatform) -- --build-project &quot;$(SampleGameProjectFile)&quot;" />
+      Command="dotnet run --no-build --project &quot;$(EditorProjectPath)&quot; -c $(EditorBuildConfiguration) -p:Platform=$(EditorAutomationPlatform) -- --build-project &quot;$(SampleGameProjectFile)&quot; --build-configuration &quot;$(GameBuildConfiguration)&quot; --build-platform &quot;$(GameBuildPlatform)&quot; --output-subfolder &quot;$(GameOutputSubfolder)&quot; --launcher-name &quot;$(GameLauncherName)&quot; --publish-native-aot &quot;$(GamePublishNativeAot)&quot;" />
   </Target>
+
+  <Target Name="CookGameExe" DependsOnTargets="BuildGameLauncher" />
 </Project>

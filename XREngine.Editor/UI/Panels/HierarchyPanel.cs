@@ -139,6 +139,24 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         if (target.UserData is not SceneNode node)
             return;
 
+        // Verify the cursor is actually within this panel's bounds.
+        // The canvas-wide RightClick event can fire with a stale TopMostInteractable
+        // from a previous frame if the cursor moved off the panel between SwapBuffers
+        // and the input event. Reject those to avoid opening the context menu when
+        // the user is right-clicking in the 3D viewport.
+        var input = GetCanvasInput();
+        if (input is not null)
+        {
+            var cursor = input.CursorPositionWorld2D;
+            if (!BoundableTransform.Contains(cursor))
+                return;
+        }
+
+        // Also verify the target interactable actually belongs to this panel's subtree.
+        // This guards against other UI elements that happen to store SceneNode UserData.
+        if (target.SceneNode is null || !IsDescendantOf(target.SceneNode, SceneNode))
+            return;
+
         _contextMenuTargetNode = node;
 
         // Ensure context menu component exists
@@ -149,7 +167,6 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
             _contextMenu = menu;
         }
 
-        var input = GetCanvasInput();
         var pos = input?.CursorPositionWorld2D ?? Vector2.Zero;
 
         _contextMenu.Show(pos,

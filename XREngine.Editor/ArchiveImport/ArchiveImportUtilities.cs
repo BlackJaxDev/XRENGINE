@@ -78,7 +78,7 @@ internal static class ArchiveImportUtilities
     {
         var root = new ArchiveEntryNode("/", string.Empty, true);
 
-        using var archive = ArchiveFactory.Open(archivePath);
+        using var archive = ArchiveFactory.OpenArchive(archivePath, new SharpCompress.Readers.ReaderOptions());
         foreach (var entry in archive.Entries)
         {
             if (entry is null)
@@ -197,7 +197,7 @@ internal static class ArchiveImportUtilities
         int processed = 0;
         int total = selection.Count;
 
-        using var archive = ArchiveFactory.Open(archivePath);
+        using var archive = ArchiveFactory.OpenArchive(archivePath, new SharpCompress.Readers.ReaderOptions());
         foreach (var entry in archive.Entries)
         {
             cancellationToken.ThrowIfCancellationRequested();

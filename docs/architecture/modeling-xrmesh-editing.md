@@ -313,35 +313,50 @@ Use this checklist to add skinning/blendshape-aware editing and save behavior.
 ### 1. Skinning and blendshape document model
 
 - [x] Capture source skinning/blendshape presence flags in `ModelingMeshMetadata` during import.
-- [ ] Add DTO channels for per-vertex skin indices/weights in `ModelingMeshDocument`.
-- [ ] Add DTO channels for blendshape deltas (position/normal/tangent where available).
-- [ ] Extend validation to enforce skinning/blendshape channel cardinality and consistency rules.
+- [x] Add DTO channels for per-vertex skin indices/weights in `ModelingMeshDocument`.
+- [x] Add DTO channels for blendshape deltas (position/normal/tangent where available).
+- [x] Extend validation to enforce skinning/blendshape channel cardinality and consistency rules.
 
 ### 2. Skinning/blendshape bridge import-export
 
-- [ ] Import skin indices/weights from `XRMesh` into modeling DTOs.
-- [ ] Export preserved or reprojected skin indices/weights back to `XRMesh`.
-- [ ] Import blendshape target/frame data into modeling DTOs.
-- [ ] Export blendshape target/frame data back to `XRMesh`.
+- [x] Import skin indices/weights from `XRMesh` into modeling DTOs.
+- [x] Export preserved or reprojected skin indices/weights back to `XRMesh`.
+- [x] Import blendshape target/frame data into modeling DTOs.
+- [x] Export blendshape target/frame data back to `XRMesh`.
 
 ### 3. Topology-change preservation policies
 
-- [ ] Define explicit interpolation/reprojection rules for skinning and blendshape deltas across split/collapse/extrude/connect operations.
-- [ ] Define fallback behavior when exact preservation is impossible (drop channel, clamp, or fail export).
-- [ ] Emit structured validation warnings/errors when fallback paths are used.
+- [x] Define explicit interpolation/reprojection rules for skinning and blendshape deltas across split/collapse/extrude/connect operations.
+- [x] Define fallback behavior when exact preservation is impossible (drop channel, clamp, or fail export).
+- [x] Emit structured validation warnings/errors when fallback paths are used.
 
 ### 4. Editor workflow and UX
 
-- [ ] Surface skinning/blendshape preservation and fallback outcomes in editor-visible diagnostics.
-- [ ] Add export/save options for strict vs permissive fallback policy.
-- [ ] Ensure undo/redo captures skinning/blendshape-affecting edits and save outcomes.
+- [x] Surface skinning/blendshape preservation and fallback outcomes in editor-visible diagnostics.
+- [x] Add export/save options for strict vs permissive fallback policy.
+- [x] Ensure undo/redo captures skinning/blendshape-affecting edits and save outcomes.
 
 ### 5. Phase 2 tests and acceptance
 
-- [ ] Add unit tests for skinning/blendshape import-export preservation without topology changes.
-- [ ] Add unit tests for defined reprojection/fallback behavior under topology-changing edits.
-- [ ] Add integration round-trip tests for representative skinned meshes and blendshape meshes.
-- [ ] Confirm save contract remains valid (bounds/cache/notifications) with skinning/blendshape-enabled exports.
+- [x] Add unit tests for skinning/blendshape import-export preservation without topology changes.
+- [x] Add unit tests for defined reprojection/fallback behavior under topology-changing edits.
+- [x] Add integration round-trip tests for representative skinned meshes and blendshape meshes.
+- [x] Confirm save contract remains valid (bounds/cache/notifications) with skinning/blendshape-enabled exports.
+
+## Phase 3 Execution Todo List
+
+- [x] Design half-edge topology core
+- [x] Migrate `EditableMesh` to canonical topology
+- [x] Add manifold and integrity checks
+- [x] Implement extrude/inset/bevel/bridge
+- [x] Implement loop-cut and split/collapse
+- [x] Define per-operation attribute interpolation
+- [x] Integrate operations into editor tools
+- [x] Bind undo scopes per operation
+- [x] Add topology operator unit tests
+- [x] Add editor integration regression tests
+- [x] Run rendering and bridge regressions
+- [x] Update architecture docs for phase 3
 
 ## Test Strategy
 

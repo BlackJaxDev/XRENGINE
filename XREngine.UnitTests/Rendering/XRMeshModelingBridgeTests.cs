@@ -8,6 +8,7 @@ using XREngine.Modeling;
 using XREngine.Rendering;
 using XREngine.Rendering.Modeling;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -194,6 +195,225 @@ public class XRMeshModelingBridgeTests
         }
     }
 
+    [Test]
+    public void MeshEditingPawn_TopologyOperations_ProduceValidTopologyAndReprojectChannelsOnSave()
+    {
+        XRMesh sourceMesh = CreateIndexedQuadMeshWithSkinningAndBlendshapes();
+        SceneNode node = new("Mesh Editing Pawn Topology Operations Node");
+        MeshEditingPawnComponent pawn = node.AddComponent<MeshEditingPawnComponent>()
+            ?? throw new InvalidOperationException("Failed to create MeshEditingPawnComponent.");
+
+        pawn.LoadFromXRMesh(sourceMesh);
+
+        pawn.SetSelectionMode(PrimitiveSelectionMode.Face);
+        pawn.SelectSingle(0);
+        List<int> extruded = pawn.ExtrudeSelectedFaces(0.2f);
+        extruded.Count.ShouldBeGreaterThan(0);
+
+        pawn.SetSelectionMode(PrimitiveSelectionMode.Edge);
+        pawn.SelectSingle(0);
+        List<int> loopCut = pawn.LoopCutSelectedEdge(0.5f);
+        loopCut.Count.ShouldBeGreaterThan(0);
+
+        TopologyValidationReport topology = pawn.ValidateTopology();
+        topology.HasErrors.ShouldBeFalse();
+
+        XRMeshModelingExportOptions options = new()
+        {
+            SkinningBlendshapeFallbackPolicy = XRMeshModelingSkinningBlendshapeFallbackPolicy.PermissiveNearestSourceVertexReproject
+        };
+
+        XRMesh saved = pawn.SaveToXRMesh(options);
+        saved.VertexCount.ShouldBeGreaterThan(sourceMesh.VertexCount);
+        saved.HasSkinning.ShouldBeTrue();
+        saved.HasBlendshapes.ShouldBeTrue();
+        pawn.LastSaveDiagnostics.Any(x => x.Code == "skinning_blendshape_channels_reprojected").ShouldBeTrue();
+    }
+
+    [Test]
+    public void MeshEditingPawn_TopologyOperation_PushesUndoEntryPerOperation()
+    {
+        XRMesh sourceMesh = CreateIndexedQuadMeshWithAttributes();
+        SceneNode node = new("Mesh Editing Pawn Undo Node");
+        MeshEditingPawnComponent pawn = node.AddComponent<MeshEditingPawnComponent>()
+            ?? throw new InvalidOperationException("Failed to create MeshEditingPawnComponent.");
+
+        Undo.ClearHistory();
+        pawn.LoadFromXRMesh(sourceMesh);
+
+        int before = Undo.PendingUndo.Count;
+
+        pawn.SetSelectionMode(PrimitiveSelectionMode.Edge);
+        pawn.SelectSingle(0);
+        int splitVertex = pawn.SplitSelectedEdge(0.5f);
+        splitVertex.ShouldBeGreaterThanOrEqualTo(0);
+
+        int afterSplit = Undo.PendingUndo.Count;
+        afterSplit.ShouldBeGreaterThan(before);
+
+        pawn.SetSelectionMode(PrimitiveSelectionMode.Edge);
+        pawn.SelectSingle(0);
+        bool collapsed = pawn.CollapseSelectedEdge();
+        collapsed.ShouldBeTrue();
+
+        Undo.PendingUndo.Count.ShouldBeGreaterThan(afterSplit);
+    }
+
+    [Test]
+    public void RoundTrip_PreservesSkinningAndBlendshapeChannels()
+    {
+        XRMesh sourceMesh = CreateIndexedQuadMeshWithSkinningAndBlendshapes();
+
+        ModelingMeshDocument document = XRMeshModelingImporter.Import(sourceMesh);
+        document.SkinBones.ShouldNotBeNull();
+        document.SkinWeights.ShouldNotBeNull();
+        document.BlendshapeChannels.ShouldNotBeNull();
+
+        XRMesh roundTrippedMesh = XRMeshModelingExporter.Export(document);
+        roundTrippedMesh.UtilizedBones.Length.ShouldBe(sourceMesh.UtilizedBones.Length);
+        roundTrippedMesh.BlendshapeNames.ShouldBe(sourceMesh.BlendshapeNames);
+
+        for (int i = 0; i < sourceMesh.VertexCount; i++)
+        {
+            Vertex sourceVertex = sourceMesh.Vertices[i];
+            Vertex roundTripVertex = roundTrippedMesh.Vertices[i];
+
+            (sourceVertex.Weights?.Count ?? 0).ShouldBe(roundTripVertex.Weights?.Count ?? 0);
+            if (sourceVertex.Weights is { Count: > 0 } sourceWeights)
+            {
+                sourceWeights.Values.Select(x => x.weight).OrderBy(x => x).ToArray()
+                    .ShouldBe(roundTripVertex.Weights!.Values.Select(x => x.weight).OrderBy(x => x).ToArray());
+            }
+
+            sourceVertex.Blendshapes?.Select(x => x.name).ToArray().ShouldBe(roundTripVertex.Blendshapes?.Select(x => x.name).ToArray());
+            if (sourceVertex.Blendshapes is { Count: > 0 })
+            {
+                for (int blendshapeIndex = 0; blendshapeIndex < sourceVertex.Blendshapes.Count; blendshapeIndex++)
+                {
+                    sourceVertex.Blendshapes[blendshapeIndex].data.Position
+                        .ShouldBe(roundTripVertex.Blendshapes![blendshapeIndex].data.Position);
+                }
+            }
+        }
+    }
+
+    [Test]
+    public void Export_RejectsInvalidSkinWeightBoneIndex()
+    {
+        ModelingMeshDocument document = CreateScrambledQuadDocumentWithAttributes();
+        document.SkinBones =
+        [
+            new ModelingSkinBone
+            {
+                Name = "BoneA",
+                InverseBindMatrix = Matrix4x4.Identity
+            }
+        ];
+        document.SkinWeights =
+        [
+            [new ModelingSkinWeight(0, 1f)],
+            [new ModelingSkinWeight(9, 1f)],
+            [new ModelingSkinWeight(0, 1f)],
+            [new ModelingSkinWeight(0, 1f)]
+        ];
+
+        InvalidOperationException ex = Should.Throw<InvalidOperationException>(() => XRMeshModelingExporter.Export(document));
+        ex.Message.ShouldContain("skin_weight_bone_index_out_of_range");
+    }
+
+    [Test]
+    public void MeshEditingPawn_SaveToXRMesh_StrictFallback_ThrowsOnTopologyChange()
+    {
+        XRMesh sourceMesh = CreateIndexedQuadMeshWithSkinningAndBlendshapes();
+        SceneNode node = new("Strict Fallback Topology Change Node");
+        MeshEditingPawnComponent pawn = node.AddComponent<MeshEditingPawnComponent>()
+            ?? throw new InvalidOperationException("Failed to create MeshEditingPawnComponent.");
+
+        pawn.LoadFromXRMesh(sourceMesh);
+        pawn.SetSelectionMode(PrimitiveSelectionMode.Edge);
+        pawn.SelectSingle(0);
+        _ = pawn.InsertVertexOnSelection(new Vector3(0.5f, 0.0f, 0.0f));
+
+        XRMeshModelingExportOptions options = new()
+        {
+            SkinningBlendshapeFallbackPolicy = XRMeshModelingSkinningBlendshapeFallbackPolicy.Strict
+        };
+
+        InvalidOperationException ex = Should.Throw<InvalidOperationException>(() => pawn.SaveToXRMesh(options));
+        ex.Message.ShouldContain("Strict skinning/blendshape fallback policy");
+        pawn.LastSaveDiagnostics.Any(x => x.Code == "skinning_blendshape_strict_topology_changed").ShouldBeTrue();
+    }
+
+    [Test]
+    public void MeshEditingPawn_SaveToXRMesh_PermissiveDrop_RemovesSkinningAndBlendshapesOnTopologyChange()
+    {
+        XRMesh sourceMesh = CreateIndexedQuadMeshWithSkinningAndBlendshapes();
+        SceneNode node = new("Permissive Drop Topology Change Node");
+        MeshEditingPawnComponent pawn = node.AddComponent<MeshEditingPawnComponent>()
+            ?? throw new InvalidOperationException("Failed to create MeshEditingPawnComponent.");
+
+        pawn.LoadFromXRMesh(sourceMesh);
+        pawn.SetSelectionMode(PrimitiveSelectionMode.Edge);
+        pawn.SelectSingle(0);
+        _ = pawn.InsertVertexOnSelection(new Vector3(0.5f, 0.0f, 0.0f));
+
+        XRMeshModelingExportOptions options = new()
+        {
+            SkinningBlendshapeFallbackPolicy = XRMeshModelingSkinningBlendshapeFallbackPolicy.PermissiveDropChannels
+        };
+
+        XRMesh savedMesh = pawn.SaveToXRMesh(options);
+        savedMesh.VertexCount.ShouldBeGreaterThan(sourceMesh.VertexCount);
+        savedMesh.HasSkinning.ShouldBeFalse();
+        savedMesh.HasBlendshapes.ShouldBeFalse();
+        pawn.LastSaveDiagnostics.Any(x => x.Code == "skinning_blendshape_channels_dropped").ShouldBeTrue();
+    }
+
+    [Test]
+    public void MeshEditingPawn_SaveToXRMesh_PermissiveReproject_PreservesSkinningAndBlendshapeChannelsOnTopologyChange()
+    {
+        XRMesh sourceMesh = CreateIndexedQuadMeshWithSkinningAndBlendshapes();
+        SceneNode node = new("Permissive Reproject Topology Change Node");
+        MeshEditingPawnComponent pawn = node.AddComponent<MeshEditingPawnComponent>()
+            ?? throw new InvalidOperationException("Failed to create MeshEditingPawnComponent.");
+
+        pawn.LoadFromXRMesh(sourceMesh);
+        pawn.SetSelectionMode(PrimitiveSelectionMode.Edge);
+        pawn.SelectSingle(0);
+        _ = pawn.InsertVertexOnSelection(new Vector3(0.5f, 0.0f, 0.0f));
+
+        XRMeshModelingExportOptions options = new()
+        {
+            SkinningBlendshapeFallbackPolicy = XRMeshModelingSkinningBlendshapeFallbackPolicy.PermissiveNearestSourceVertexReproject
+        };
+
+        XRMesh savedMesh = pawn.SaveToXRMesh(options);
+        savedMesh.VertexCount.ShouldBeGreaterThan(sourceMesh.VertexCount);
+        savedMesh.HasSkinning.ShouldBeTrue();
+        savedMesh.HasBlendshapes.ShouldBeTrue();
+        savedMesh.BlendshapeNames.ShouldBe(sourceMesh.BlendshapeNames);
+        pawn.LastSaveDiagnostics.Any(x => x.Code == "skinning_blendshape_channels_reprojected").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Export_SaveContract_RemainsValidWithSkinningAndBlendshapeChannels()
+    {
+        XRMesh sourceMesh = CreateIndexedQuadMeshWithSkinningAndBlendshapes();
+        ModelingMeshDocument document = XRMeshModelingImporter.Import(sourceMesh);
+        document.Positions[0] = new Vector3(8f, 0f, 0f);
+
+        XRMesh exported = XRMeshModelingExporter.Export(document, new XRMeshModelingExportOptions
+        {
+            SkinningBlendshapeFallbackPolicy = XRMeshModelingSkinningBlendshapeFallbackPolicy.PermissiveNearestSourceVertexReproject
+        });
+
+        exported.HasSkinning.ShouldBeTrue();
+        exported.HasBlendshapes.ShouldBeTrue();
+        exported.Bounds.Max.X.ShouldBeGreaterThanOrEqualTo(8f);
+        exported.HasCachedIndexBuffer(EPrimitiveType.Triangles).ShouldBeFalse();
+        exported.HasAccelerationCache().ShouldBeFalse();
+    }
+
     private static XRMesh CreateIndexedQuadMesh()
     {
         List<Vertex> vertices =
@@ -274,6 +494,45 @@ public class XRMeshModelingBridgeTests
                 SourcePrimitiveType = ModelingPrimitiveType.Triangles
             }
         };
+    }
+
+    private static XRMesh CreateIndexedQuadMeshWithSkinningAndBlendshapes()
+    {
+        XRMesh mesh = CreateIndexedQuadMeshWithAttributes();
+
+        Transform boneA = new() { Name = "BoneA", InverseBindMatrix = Matrix4x4.Identity };
+        Transform boneB = new() { Name = "BoneB", InverseBindMatrix = Matrix4x4.CreateTranslation(0f, 0f, -1f) };
+        mesh.UtilizedBones =
+        [
+            (boneA, boneA.InverseBindMatrix),
+            (boneB, boneB.InverseBindMatrix)
+        ];
+
+        for (int i = 0; i < mesh.Vertices.Length; i++)
+        {
+            Vertex vertex = mesh.Vertices[i];
+            vertex.Weights = new Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>
+            {
+                [boneA] = (0.75f, boneA.InverseBindMatrix),
+                [boneB] = (0.25f, boneB.InverseBindMatrix)
+            };
+
+            vertex.Blendshapes =
+            [
+                (
+                    "Smile",
+                    new VertexData
+                    {
+                        Position = vertex.Position + new Vector3(0f, 0.05f, 0f),
+                        Normal = vertex.Normal,
+                        Tangent = vertex.Tangent
+                    }
+                )
+            ];
+        }
+
+        mesh.BlendshapeNames = ["Smile"];
+        return mesh;
     }
 
     private static MeshSnapshot CaptureMeshSnapshot(XRMesh mesh)

@@ -1028,8 +1028,6 @@ internal class Program
 
         BuildSettings settings = Engine.BuildSettings ?? new BuildSettings();
         settings.CookContent = true;
-        settings.BuildManagedAssemblies = false;
-        settings.CopyGameAssemblies = false;
         settings.CopyEngineBinaries = true;
         settings.GenerateConfigArchive = true;
         settings.BuildLauncherExecutable = true;
