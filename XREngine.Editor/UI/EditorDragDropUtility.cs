@@ -16,6 +16,7 @@ public static class EditorDragDropUtility
 {
     public const float DefaultActivationDistance = 8.0f;
     public const string SceneNodePayloadType = "SceneNode";
+    public const string AssetPathPayloadType = "AssetPath";
 
     private static UICanvasInputComponent? _inputComponent;
     private static DragSession? _activeSession;
@@ -40,11 +41,33 @@ public static class EditorDragDropUtility
             Engine.Time.Timer.SwapBuffers += OnSwapBuffers;
     }
 
+    // --- Scene node payloads ---
+
     public static DragPayload CreateSceneNodePayload(SceneNode node)
         => new(SceneNodePayloadType, node);
 
     public static bool IsSceneNodePayload(in DragPayload payload)
         => payload.TypeId == SceneNodePayloadType && payload.Data is SceneNode;
+
+    // --- Asset path payloads (Phase 8B) ---
+
+    public static DragPayload CreateAssetPayload(string path)
+        => new(AssetPathPayloadType, path);
+
+    public static bool IsAssetPathPayload(in DragPayload payload)
+        => payload.TypeId == AssetPathPayloadType && payload.Data is string;
+
+    public static bool TryGetAssetPath(in DragPayload payload, out string? path)
+    {
+        if (payload.TypeId == AssetPathPayloadType && payload.Data is string s)
+        {
+            path = s;
+            return true;
+        }
+
+        path = null;
+        return false;
+    }
 
     public static bool TryGetActivePayload(out DragPayload payload)
     {

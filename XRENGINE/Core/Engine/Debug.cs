@@ -180,7 +180,11 @@ namespace XREngine
                     return;
 
                 ELogCategory category = GuessExceptionCategory(ex);
-                LogException(category, ex, "[FirstChance] Exception thrown (may be handled)");
+                string firstChanceStackTrace = new StackTrace(1, true).ToString();
+                string message = string.IsNullOrWhiteSpace(firstChanceStackTrace)
+                    ? "[FirstChance] Exception thrown (may be handled)"
+                    : $"[FirstChance] Exception thrown (may be handled){Environment.NewLine}[FirstChance StackTrace]{Environment.NewLine}{firstChanceStackTrace}";
+                LogException(category, ex, message);
             }
             catch
             {

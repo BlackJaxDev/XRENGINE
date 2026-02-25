@@ -45,6 +45,27 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _postText, value);
         }
 
+        private bool _singleLineMode;
+        /// <summary>
+        /// When true, Enter submits the input (fires <see cref="Submitted"/>) instead of inserting a newline,
+        /// and Escape cancels the input (fires <see cref="Cancelled"/>).
+        /// </summary>
+        public bool SingleLineMode
+        {
+            get => _singleLineMode;
+            set => SetField(ref _singleLineMode, value);
+        }
+
+        /// <summary>
+        /// Fired when <see cref="SingleLineMode"/> is true and the user presses Enter.
+        /// </summary>
+        public event Action<UITextInputComponent>? Submitted;
+
+        /// <summary>
+        /// Fired when <see cref="SingleLineMode"/> is true and the user presses Escape.
+        /// </summary>
+        public event Action<UITextInputComponent>? Cancelled;
+
         /// <summary>
         /// Called on immediately inputted text before it is added to the text.
         /// </summary>
@@ -142,6 +163,7 @@ namespace XREngine.Rendering.UI
             input.RegisterKeyStateChange(EKey.ShiftRight, ShiftRight);
             input.RegisterKeyStateChange(EKey.CapsLock, CapsLock);
             input.RegisterKeyStateChange(EKey.Enter, Enter);
+            input.RegisterKeyStateChange(EKey.Escape, Escape);
         }
 
         private void OnCharacterTyped(char character)
@@ -152,7 +174,18 @@ namespace XREngine.Rendering.UI
         private void Enter(bool pressed)
         {
             if (pressed)
-                UserAddText(Environment.NewLine);
+            {
+                if (SingleLineMode)
+                    Submitted?.Invoke(this);
+                else
+                    UserAddText(Environment.NewLine);
+            }
+        }
+
+        private void Escape(bool pressed)
+        {
+            if (pressed && SingleLineMode)
+                Cancelled?.Invoke(this);
         }
 
         private void CapsLock(bool pressed)

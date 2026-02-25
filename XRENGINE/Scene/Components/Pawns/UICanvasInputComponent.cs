@@ -47,6 +47,38 @@ namespace XREngine.Components
             set => SetField(ref _focusedComponent, value);
         }
 
+        /// <summary>
+        /// True when a Ctrl key (left or right) is currently held.
+        /// </summary>
+        public bool IsCtrlHeld { get; private set; }
+
+        /// <summary>
+        /// True when a Shift key (left or right) is currently held.
+        /// </summary>
+        public bool IsShiftHeld { get; private set; }
+
+        /// <summary>
+        /// True when an Alt key (left or right) is currently held.
+        /// </summary>
+        public bool IsAltHeld { get; private set; }
+
+        /// <summary>
+        /// Fired when the left mouse button is pressed.
+        /// The interactable under the cursor is passed (may be null if clicking empty space).
+        /// </summary>
+        public event Action<UIInteractableComponent?>? LeftClickDown;
+
+        /// <summary>
+        /// Fired when the right mouse button is pressed while the cursor is over an interactable component.
+        /// The interactable under the cursor is passed as the argument.
+        /// </summary>
+        public event Action<UIInteractableComponent>? RightClick;
+
+        /// <summary>
+        /// Fired when the Escape key is pressed.
+        /// </summary>
+        public event Action? EscapePressed;
+
         private PawnComponent? _owningPawn;
         /// <summary>
         /// The pawn that has this HUD linked for screen or camera space use.
@@ -221,6 +253,15 @@ namespace XREngine.Components
             input.RegisterMouseScroll(OnMouseScroll);
             input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Pressed, OnMouseInteractButtonDown);
             input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Released, OnMouseInteractButtonUp);
+            input.RegisterMouseButtonEvent(EMouseButton.RightClick, EButtonInputType.Pressed, OnMouseRightButtonDown);
+
+            input.RegisterKeyStateChange(EKey.ControlLeft, OnCtrlLeftStateChanged);
+            input.RegisterKeyStateChange(EKey.ControlRight, OnCtrlRightStateChanged);
+            input.RegisterKeyStateChange(EKey.ShiftLeft, OnShiftLeftStateChanged);
+            input.RegisterKeyStateChange(EKey.ShiftRight, OnShiftRightStateChanged);
+            input.RegisterKeyStateChange(EKey.AltLeft, OnAltLeftStateChanged);
+            input.RegisterKeyStateChange(EKey.AltRight, OnAltRightStateChanged);
+            input.RegisterKeyStateChange(EKey.Escape, OnEscapeStateChanged);
 
             input.RegisterButtonEvent(EGamePadButton.FaceDown, EButtonInputType.Pressed, OnGamepadInteractButtonDown);
             input.RegisterButtonEvent(EGamePadButton.FaceDown, EButtonInputType.Released, OnGamepadInteractButtonUp);
@@ -473,6 +514,7 @@ namespace XREngine.Components
         private void OnMouseInteractButtonDown()
         {
             FocusedComponent = TopMostInteractable;
+            LeftClickDown?.Invoke(TopMostInteractable);
 
             if (FocusedComponent is not null && FocusedComponent.InteractOnButtonDown)
                 FocusedComponent.OnInteract();
@@ -481,6 +523,30 @@ namespace XREngine.Components
         {
             if (FocusedComponent is not null && TopMostInteractable == FocusedComponent && !FocusedComponent.InteractOnButtonDown)
                 OnInteract();
+        }
+
+        private void OnMouseRightButtonDown()
+        {
+            var target = TopMostInteractable;
+            if (target is not null)
+                RightClick?.Invoke(target);
+        }
+
+        // --- Modifier key tracking ---
+        private bool _ctrlLeft, _ctrlRight;
+        private bool _shiftLeft, _shiftRight;
+        private bool _altLeft, _altRight;
+
+        private void OnCtrlLeftStateChanged(bool pressed)  { _ctrlLeft = pressed;  IsCtrlHeld = _ctrlLeft || _ctrlRight; }
+        private void OnCtrlRightStateChanged(bool pressed) { _ctrlRight = pressed; IsCtrlHeld = _ctrlLeft || _ctrlRight; }
+        private void OnShiftLeftStateChanged(bool pressed)  { _shiftLeft = pressed;  IsShiftHeld = _shiftLeft || _shiftRight; }
+        private void OnShiftRightStateChanged(bool pressed) { _shiftRight = pressed; IsShiftHeld = _shiftLeft || _shiftRight; }
+        private void OnAltLeftStateChanged(bool pressed)  { _altLeft = pressed;  IsAltHeld = _altLeft || _altRight; }
+        private void OnAltRightStateChanged(bool pressed) { _altRight = pressed; IsAltHeld = _altLeft || _altRight; }
+        private void OnEscapeStateChanged(bool pressed)
+        {
+            if (pressed)
+                EscapePressed?.Invoke();
         }
         protected virtual void OnGamepadBackButtonDown()
         {

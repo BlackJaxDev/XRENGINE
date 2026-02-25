@@ -273,24 +273,7 @@ namespace System.Collections.Generic
             if (collection is null)
                 return;
 
-            // Materialize the collection immediately to avoid deferred enumeration
-            // that would call Contains() inside the write lock
-            List<T> items;
-            if (!_allowDuplicates)
-            {
-                if (!_allowNull)
-                    items = collection.Where(x => x != null && !Contains(x)).ToList();
-                else
-                    items = collection.Where(x => !Contains(x)).ToList();
-            }
-            else if (!_allowNull)
-            {
-                items = collection.Where(x => x != null).ToList();
-            }
-            else
-            {
-                items = collection.ToList();
-            }
+            List<T> items = PrepareItemsForInsertion(collection);
             
             if (items.Count == 0)
                 return;
@@ -412,10 +395,14 @@ namespace System.Collections.Generic
         public void RemoveRange(int index, int count) => RemoveRange(index, count, true, true);
         public void RemoveRange(int index, int count, bool reportRemovedRange, bool reportModified)
         {
-            IEnumerable<T> range = [];
+            List<IndexedItem> approvedRemovals = [];
+            List<T> removedItems = [];
 
             if (!_updating && reportRemovedRange)
-                range = GetRange(index, count);
+            {
+                approvedRemovals = SnapshotRangeIndexed(index, count);
+                removedItems = approvedRemovals.Select(x => x.Item).ToList();
+            }
 
             if (!_updating)
             {
@@ -426,20 +413,33 @@ namespace System.Collections.Generic
                 }
                 if (reportRemovedRange)
                 {
-                    if (!(PreRemovedRange?.Invoke(range) ?? true))
+                    if (!(PreRemovedRange?.Invoke(removedItems) ?? true))
                         return;
 
-                    if (PreAnythingRemoved != null)
-                        foreach (T item in range)
-                            if (!PreAnythingRemoved(item))
-                                range = range.Where(x => !ReferenceEquals(x, item));
+                    if (PreAnythingRemoved != null && approvedRemovals.Count > 0)
+                    {
+                        approvedRemovals = FilterApprovedRemovals(approvedRemovals);
+                        removedItems = approvedRemovals.Select(x => x.Item).ToList();
+                    }
                 }
             }
 
             try
             {
                 _lock?.EnterWriteLock();
-                _list.RemoveRange(index, count);
+                if (_updating || !reportRemovedRange)
+                {
+                    _list.RemoveRange(index, count);
+                }
+                else if (approvedRemovals.Count == count)
+                {
+                    _list.RemoveRange(index, count);
+                }
+                else
+                {
+                    for (int i = approvedRemovals.Count - 1; i >= 0; --i)
+                        _list.RemoveAt(approvedRemovals[i].Index);
+                }
             }
             catch (Exception ex)
             {
@@ -454,21 +454,32 @@ namespace System.Collections.Generic
             {
                 if (reportRemovedRange)
                 {
-                    PostRemovedRange?.Invoke(range);
+                    PostRemovedRange?.Invoke(removedItems);
                     if (PostAnythingRemoved != null)
-                        foreach (T item in range)
+                        foreach (T item in removedItems)
                             PostAnythingRemoved(item);
                 }
                 if (reportModified)
                 {
                     PostModified?.Invoke();
-                    CollectionChanged?.Invoke(this, new TCollectionChangedEventArgs<T>(ECollectionChangedAction.Remove, range.ToList()));
+                    CollectionChanged?.Invoke(this, new TCollectionChangedEventArgs<T>(ECollectionChangedAction.Remove, removedItems));
                 }
             }
 
         }
 
-        public IEnumerable<T> GetRange(int index, int count) => _list.GetRange(index, count);
+        public IEnumerable<T> GetRange(int index, int count)
+        {
+            try
+            {
+                _lock?.EnterReadLock();
+                return _list.GetRange(index, count);
+            }
+            finally
+            {
+                _lock?.ExitReadLock();
+            }
+        }
 
         public void RemoveAt(int index) => RemoveAt(index, true, true);
         public void RemoveAt(int index, bool reportRemoved, bool reportModified)
@@ -523,10 +534,27 @@ namespace System.Collections.Generic
         public void Clear() => Clear(true, true);
         public void Clear(bool reportRemovedRange, bool reportModified)
         {
-            IEnumerable<T> range = [];
+            List<IndexedItem> approvedRemovals = [];
+            List<T> removedItems = [];
 
             if (reportRemovedRange)
-                range = GetRange(0, Count);
+            {
+                try
+                {
+                    _lock?.EnterReadLock();
+                    if (_list.Count > 0)
+                    {
+                        approvedRemovals = new List<IndexedItem>(_list.Count);
+                        for (int i = 0; i < _list.Count; ++i)
+                            approvedRemovals.Add(new IndexedItem(i, _list[i]));
+                        removedItems = approvedRemovals.Select(x => x.Item).ToList();
+                    }
+                }
+                finally
+                {
+                    _lock?.ExitReadLock();
+                }
+            }
 
             if (!_updating)
             {
@@ -537,20 +565,33 @@ namespace System.Collections.Generic
                 }
                 if (reportRemovedRange)
                 {
-                    if (!(PreRemovedRange?.Invoke(range) ?? true))
+                    if (!(PreRemovedRange?.Invoke(removedItems) ?? true))
                         return;
 
-                    if (PreAnythingRemoved != null)
-                        foreach (T item in range)
-                            if (!PreAnythingRemoved(item))
-                                range = range.Where(x => !ReferenceEquals(x, item));
+                    if (PreAnythingRemoved != null && approvedRemovals.Count > 0)
+                    {
+                        approvedRemovals = FilterApprovedRemovals(approvedRemovals);
+                        removedItems = approvedRemovals.Select(x => x.Item).ToList();
+                    }
                 }
             }
 
             try
             {
                 _lock?.EnterWriteLock();
-                _list.Clear();
+                if (_updating || !reportRemovedRange)
+                {
+                    _list.Clear();
+                }
+                else if (approvedRemovals.Count == _list.Count)
+                {
+                    _list.Clear();
+                }
+                else
+                {
+                    for (int i = approvedRemovals.Count - 1; i >= 0; --i)
+                        _list.RemoveAt(approvedRemovals[i].Index);
+                }
             }
             catch (Exception ex)
             {
@@ -565,9 +606,9 @@ namespace System.Collections.Generic
             {
                 if (reportRemovedRange)
                 {
-                    PostRemovedRange?.Invoke(range);
+                    PostRemovedRange?.Invoke(removedItems);
                     if (PostAnythingRemoved != null)
-                        foreach (T item in range)
+                        foreach (T item in removedItems)
                             PostAnythingRemoved(item);
                 }
                 if (reportModified)
@@ -580,12 +621,16 @@ namespace System.Collections.Generic
         public void RemoveAll(Predicate<T> match) => RemoveAll(match, true, true);
         public void RemoveAll(Predicate<T> match, bool reportRemovedRange, bool reportModified)
         {
-            IEnumerable<T> matches = [];
+            List<IndexedItem> approvedRemovals = [];
+            List<T> removedItems = [];
 
             if (!_updating)
             {
                 if (reportRemovedRange)
-                    matches = FindAll(match);
+                {
+                    approvedRemovals = SnapshotMatchesIndexed(match);
+                    removedItems = approvedRemovals.Select(x => x.Item).ToList();
+                }
 
                 if (!_updating)
                 {
@@ -596,13 +641,14 @@ namespace System.Collections.Generic
                     }
                     if (reportRemovedRange)
                     {
-                        if (!(PreRemovedRange?.Invoke(matches) ?? true))
+                        if (!(PreRemovedRange?.Invoke(removedItems) ?? true))
                             return;
 
-                        if (PreAnythingRemoved != null)
-                            foreach (T item in matches)
-                                if (!PreAnythingRemoved(item))
-                                    matches = matches.Where(x => !ReferenceEquals(x, item));
+                        if (PreAnythingRemoved != null && approvedRemovals.Count > 0)
+                        {
+                            approvedRemovals = FilterApprovedRemovals(approvedRemovals);
+                            removedItems = approvedRemovals.Select(x => x.Item).ToList();
+                        }
                     }
                 }
             }
@@ -610,7 +656,15 @@ namespace System.Collections.Generic
             try
             {
                 _lock?.EnterWriteLock();
-                _list.RemoveAll(match);
+                if (_updating || !reportRemovedRange)
+                {
+                    _list.RemoveAll(match);
+                }
+                else
+                {
+                    for (int i = approvedRemovals.Count - 1; i >= 0; --i)
+                        _list.RemoveAt(approvedRemovals[i].Index);
+                }
             }
             catch (Exception ex)
             {
@@ -625,15 +679,15 @@ namespace System.Collections.Generic
             {
                 if (reportRemovedRange)
                 {
-                    PostRemovedRange?.Invoke(matches);
-                    if (PostAnythingRemoved != null && matches != null)
-                        foreach (T item in matches)
+                    PostRemovedRange?.Invoke(removedItems);
+                    if (PostAnythingRemoved != null)
+                        foreach (T item in removedItems)
                             PostAnythingRemoved(item);
                 }
                 if (reportModified)
                 {
                     PostModified?.Invoke();
-                    CollectionChanged?.Invoke(this, new TCollectionChangedEventArgs<T>(ECollectionChangedAction.Remove, matches!.ToArray()));
+                    CollectionChanged?.Invoke(this, new TCollectionChangedEventArgs<T>(ECollectionChangedAction.Remove, removedItems));
                 }
             }
         }
@@ -701,7 +755,7 @@ namespace System.Collections.Generic
                 if (reportInserted)
                 {
                     PostInserted?.Invoke(item, index);
-                    PostAnythingRemoved?.Invoke(item);
+                    PostAnythingAdded?.Invoke(item);
                 }
                 if (reportModified)
                 {
@@ -716,24 +770,7 @@ namespace System.Collections.Generic
             if (collection is null)
                 return;
 
-            // Materialize the collection immediately to avoid deferred enumeration
-            // that would call Contains() inside the write lock
-            List<T> items;
-            if (!_allowDuplicates)
-            {
-                if (!_allowNull)
-                    items = collection.Where(x => x != null && !Contains(x)).ToList();
-                else
-                    items = collection.Where(x => !Contains(x)).ToList();
-            }
-            else if (!_allowNull)
-            {
-                items = collection.Where(x => x != null).ToList();
-            }
-            else
-            {
-                items = collection.ToList();
-            }
+            List<T> items = PrepareItemsForInsertion(collection);
             
             if (items.Count == 0)
                 return;
@@ -793,7 +830,7 @@ namespace System.Collections.Generic
                 if (reportModified)
                 {
                     PostModified?.Invoke();
-                    CollectionChanged?.Invoke(this, new TCollectionChangedEventArgs<T>(ECollectionChangedAction.Remove, collection.ToList()));
+                    CollectionChanged?.Invoke(this, new TCollectionChangedEventArgs<T>(ECollectionChangedAction.Add, collection.ToList()));
                 }
             }
         }
@@ -994,13 +1031,26 @@ namespace System.Collections.Generic
             }
         }
 
-        int ICollection.Count => ((ICollection)_list).Count;
+        int ICollection.Count => Count;
         object ICollection.SyncRoot => ((ICollection)_list).SyncRoot;
         bool ICollection.IsSynchronized => ((ICollection)_list).IsSynchronized;
-        int IReadOnlyCollection<T>.Count => ((IReadOnlyCollection<T>)_list).Count;
+        int IReadOnlyCollection<T>.Count => Count;
 
         public int Count
-            => _list.Count;
+        {
+            get
+            {
+                try
+                {
+                    _lock?.EnterReadLock();
+                    return _list.Count;
+                }
+                finally
+                {
+                    _lock?.ExitReadLock();
+                }
+            }
+        }
 
         public bool IsReadOnly
             => ((ICollection<T>)_list).IsReadOnly;
@@ -1011,17 +1061,37 @@ namespace System.Collections.Generic
         object? IList.this[int index]
         {
             get => ((IList)_list)[index];
-            set => ((IList)_list)[index] = value;
+            set => this[index] = CastObjectValue(value);
         }
 
         T IReadOnlyList<T>.this[int index]
             => this[index];
 
         public int IndexOf(T value)
-            => _list.IndexOf(value);
+        {
+            try
+            {
+                _lock?.EnterReadLock();
+                return _list.IndexOf(value);
+            }
+            finally
+            {
+                _lock?.ExitReadLock();
+            }
+        }
 
         public void CopyTo(T[] array, int arrayIndex)
-            => _list.CopyTo(array, arrayIndex);
+        {
+            try
+            {
+                _lock?.EnterReadLock();
+                _list.CopyTo(array, arrayIndex);
+            }
+            finally
+            {
+                _lock?.ExitReadLock();
+            }
+        }
 
         void ICollection.CopyTo(Array array, int index)
             => CopyTo((T[])array, index);
@@ -1032,21 +1102,146 @@ namespace System.Collections.Generic
             => GetEnumerator();
 
         void ICollection<T>.Add(T item)
-            => ((ICollection<T>)_list).Add(item);
+            => Add(item);
 
         public int Add(object? value)
-            => ((IList)_list).Add(value);
+        {
+            T item = CastObjectValue(value);
+            if (!Add(item))
+                return -1;
+            return IndexOf(item);
+        }
 
         public bool Contains(object? value)
-            => ((IList)_list).Contains(value);
+        {
+            if (value is null)
+                return default(T) is null && Contains(default!);
+
+            return value is T item && Contains(item);
+        }
 
         public int IndexOf(object? value)
-            => ((IList)_list).IndexOf(value);
+        {
+            if (value is null)
+                return default(T) is null ? IndexOf(default!) : -1;
+
+            return value is T item ? IndexOf(item) : -1;
+        }
 
         public void Insert(int index, object? value)
-            => ((IList)_list).Insert(index, value);
+            => Insert(index, CastObjectValue(value));
 
         public void Remove(object? value)
-            => ((IList)_list).Remove(value);
+        {
+            if (value is null)
+            {
+                if (default(T) is null)
+                    Remove(default!);
+                return;
+            }
+
+            if (value is T item)
+                Remove(item);
+        }
+
+        private static T CastObjectValue(object? value)
+        {
+            if (value is null)
+            {
+                if (default(T) is null)
+                    return default!;
+
+                throw new ArgumentNullException(nameof(value));
+            }
+
+            if (value is T item)
+                return item;
+
+            throw new ArgumentException($"Value must be of type {typeof(T).FullName}.", nameof(value));
+        }
+
+        private readonly struct IndexedItem(int index, T item)
+        {
+            public int Index { get; } = index;
+            public T Item { get; } = item;
+        }
+
+        private List<T> PrepareItemsForInsertion(IEnumerable<T> collection)
+        {
+            IEnumerable<T> source = _allowNull ? collection : collection.Where(item => item is not null);
+            List<T> items = source.ToList();
+            if (items.Count == 0 || _allowDuplicates)
+                return items;
+
+            HashSet<T> seen;
+            try
+            {
+                _lock?.EnterReadLock();
+                seen = [.. _list];
+            }
+            finally
+            {
+                _lock?.ExitReadLock();
+            }
+
+            var deduped = new List<T>(items.Count);
+            foreach (T item in items)
+            {
+                if (seen.Add(item))
+                    deduped.Add(item);
+            }
+
+            return deduped;
+        }
+
+        private List<IndexedItem> SnapshotRangeIndexed(int index, int count)
+        {
+            try
+            {
+                _lock?.EnterReadLock();
+                var snapshot = new List<IndexedItem>(count);
+                for (int i = 0; i < count; ++i)
+                    snapshot.Add(new IndexedItem(index + i, _list[index + i]));
+                return snapshot;
+            }
+            finally
+            {
+                _lock?.ExitReadLock();
+            }
+        }
+
+        private List<IndexedItem> SnapshotMatchesIndexed(Predicate<T> match)
+        {
+            try
+            {
+                _lock?.EnterReadLock();
+                var snapshot = new List<IndexedItem>();
+                for (int i = 0; i < _list.Count; ++i)
+                {
+                    T item = _list[i];
+                    if (match(item))
+                        snapshot.Add(new IndexedItem(i, item));
+                }
+                return snapshot;
+            }
+            finally
+            {
+                _lock?.ExitReadLock();
+            }
+        }
+
+        private List<IndexedItem> FilterApprovedRemovals(List<IndexedItem> candidates)
+        {
+            if (candidates.Count == 0 || PreAnythingRemoved is null)
+                return candidates;
+
+            var approved = new List<IndexedItem>(candidates.Count);
+            foreach (var candidate in candidates)
+            {
+                if (PreAnythingRemoved(candidate.Item))
+                    approved.Add(candidate);
+            }
+            return approved;
+        }
     }
 }

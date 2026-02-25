@@ -60,7 +60,7 @@ namespace XREngine.Core.Files
             {
                 long fileSize = new FileInfo(archiveFilePath).Length;
                 using FileMap map = FileMap.FromFile(archiveFilePath, FileMapProtect.Read);
-                using var reader = new CookedBinaryReader((byte*)map.Address, map.Length);
+                using var reader = new CookedBinaryReader((byte*)map.Address.Pointer, map.Length);
 
                 int magic = reader.ReadInt32();
                 if (magic != Magic)

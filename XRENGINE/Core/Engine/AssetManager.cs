@@ -44,6 +44,8 @@ namespace XREngine
     {
         public const string AssetExtension = "asset";
         private const string ImportOptionsFileExtension = "import.yaml";
+        private const string EngineAssetsPathEnvVar = "XRE_ENGINE_ASSETS_PATH";
+        private const string GameAssetsPathEnvVar = "XRE_GAME_ASSETS_PATH";
 
         private static bool IsOnJobThread
             => JobManager.IsJobWorkerThread;
@@ -98,7 +100,12 @@ namespace XREngine
         public AssetManager(string? engineAssetsDirPath = null)
         {
             string? resolvedEngineAssetsPath = null;
-            if (!string.IsNullOrWhiteSpace(engineAssetsDirPath) && Directory.Exists(engineAssetsDirPath))
+            string? engineAssetsOverridePath = Environment.GetEnvironmentVariable(EngineAssetsPathEnvVar);
+            if (!string.IsNullOrWhiteSpace(engineAssetsOverridePath))
+            {
+                resolvedEngineAssetsPath = Path.GetFullPath(engineAssetsOverridePath);
+            }
+            else if (!string.IsNullOrWhiteSpace(engineAssetsDirPath) && Directory.Exists(engineAssetsDirPath))
             {
                 resolvedEngineAssetsPath = engineAssetsDirPath;
             }
@@ -122,13 +129,21 @@ namespace XREngine
 
             EngineAssetsPath = resolvedEngineAssetsPath;
 
-            // In sandbox mode (no project loaded), the editor commonly runs with
-            // Environment.CurrentDirectory pointing at the repo/project root.
-            // Prefer an existing '<cwd>/Assets' over '<exe>/Assets' to avoid writing
-            // import options/cache next to the build output.
-            string cwdAssets = Path.Combine(Environment.CurrentDirectory, "Assets");
-            if (!Directory.Exists(GameAssetsPath) && Directory.Exists(cwdAssets))
-                GameAssetsPath = cwdAssets;
+            string? gameAssetsOverridePath = Environment.GetEnvironmentVariable(GameAssetsPathEnvVar);
+            if (!string.IsNullOrWhiteSpace(gameAssetsOverridePath))
+            {
+                GameAssetsPath = gameAssetsOverridePath;
+            }
+            else
+            {
+                // In sandbox mode (no project loaded), the editor commonly runs with
+                // Environment.CurrentDirectory pointing at the repo/project root.
+                // Prefer an existing '<cwd>/Assets' over '<exe>/Assets' to avoid writing
+                // import options/cache next to the build output.
+                string cwdAssets = Path.Combine(Environment.CurrentDirectory, "Assets");
+                if (!Directory.Exists(GameAssetsPath) && Directory.Exists(cwdAssets))
+                    GameAssetsPath = cwdAssets;
+            }
 
             VerifyDirectoryExists(GameAssetsPath);
             Debug.Out($"Asset IO backend: {(DirectStorageIO.IsEnabled ? "DirectStorage-ready" : "Standard")} ({DirectStorageIO.Status})");

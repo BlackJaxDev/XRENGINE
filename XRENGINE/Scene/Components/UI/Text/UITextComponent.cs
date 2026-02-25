@@ -268,6 +268,8 @@ namespace XREngine.Rendering.UI
         {
             List<(Vector4 transform, Vector4 uvs)> glyphs = [];
             font.GetQuads(name, glyphs, fontSize, float.MaxValue, float.MaxValue, FontGlyphSet.EWrapMode.None, 5.0f);
+            if (glyphs.Count == 0)
+                return 0.0f;
             var (transform, _) = glyphs[^1];
             return transform.X + transform.Z;
         }
