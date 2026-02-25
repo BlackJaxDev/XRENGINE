@@ -178,7 +178,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         CreateCSProj(sourceRootFolder, exeProjPath, projectName, true, true, true, true, true, true, true, builds, platforms, 
             includedProjectPaths: [dllProjPath]);
 
-        CreateSolutionFile(builds, platforms, (dllProjPath, Guid.NewGuid()), (exeProjPath, Guid.NewGuid()));
+        // Place launcher first so IDEs default to running the generated launcher entrypoint.
+        CreateSolutionFile(builds, platforms, (exeProjPath, Guid.NewGuid()), (dllProjPath, Guid.NewGuid()));
 
         if (compileNow)
             _ = CompileSolution(Config_Release, Platform_x64);
@@ -211,6 +212,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 new XElement("RootNamespace", rootNamespace),
                 new XElement("AssemblyName", Path.GetFileNameWithoutExtension(projectFilePath)),
                 new XElement("ImplicitUsings", implicitUsings ? "enable" : "disable"),
+                new XElement("EnableDefaultCompileItems", "false"),
                 new XElement("AllowUnsafeBlocks", allowUnsafeBlocks ? "true" : "false"),
                 new XElement("PublishAot", aot ? "true" : "false"),
                 new XElement("LangVersion", languageVersion), //https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/configure-language-version
@@ -301,8 +303,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                     foreach (var build in builds)
                         foreach (var platform in platforms)
                         {
-                            solutionContent.AppendLine($"\t\t{{{projectGuid}}}.{build}|{platform}.ActiveCfg = {build}|{platform}");
-                            solutionContent.AppendLine($"\t\t{{{projectGuid}}}.{build}|{platform}.Build.0 = {build}|{platform}");
+                            solutionContent.AppendLine($"\t\t{projectGuid}.{build}|{platform}.ActiveCfg = {build}|{platform}");
+                            solutionContent.AppendLine($"\t\t{projectGuid}.{build}|{platform}.Build.0 = {build}|{platform}");
                         }
                 }
             }
@@ -322,7 +324,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         var projectCollection = new ProjectCollection();
         var buildParameters = new BuildParameters(projectCollection)
         {
-            Loggers = [new ConsoleLogger(LoggerVerbosity.Detailed), stringLogger]
+            Loggers = [stringLogger]
         };
 
         Dictionary<string, string?> props = new()
@@ -338,34 +340,57 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             return false;
         }
 
-        BuildRequestData buildRequest = new(GetSolutionPath(), props, null, ["Build"], null);
-        BuildResult buildResult = BuildManager.DefaultBuildManager.Build(buildParameters, buildRequest);
-
-        _isGameClientInvalid = false;
-
-        if (buildResult.OverallResult == BuildResultCode.Success)
+        BuildResult? buildResult = null;
+        bool inProcessBuildSucceeded;
+        try
         {
+            BuildRequestData buildRequest = new(solutionPath, props, null, ["Build"], null);
+            buildResult = BuildManager.DefaultBuildManager.Build(buildParameters, buildRequest);
+            inProcessBuildSucceeded = buildResult.OverallResult == BuildResultCode.Success;
+        }
+        catch (Exception ex)
+        {
+            Debug.Out($"In-process build threw an exception: {ex.Message}");
+            inProcessBuildSucceeded = false;
+        }
+
+        if (inProcessBuildSucceeded)
+        {
+            _isGameClientInvalid = false;
             Debug.Out("Build succeeded.");
             GameCSProjLoader.Unload("GAME");
             GameCSProjLoader.LoadFromPath("GAME", GetBinaryPath(config, platform));
             return true;
         }
-        else
+
+        Debug.Out("In-process build failed. Retrying with dotnet msbuild...");
+        if (BuildProjectFile(solutionPath, config, platform, out string? cliBuildLog))
         {
-            Debug.Out("Build failed. Details below:");
+            _isGameClientInvalid = false;
+            Debug.Out("Build succeeded.");
+            GameCSProjLoader.Unload("GAME");
+            GameCSProjLoader.LoadFromPath("GAME", GetBinaryPath(config, platform));
+            return true;
+        }
 
-            // Display all log messages from the string logger
-            string log = stringLogger.GetFullLog();
-            Debug.Out(log);
+        Debug.Out("Build failed. Details below:");
+        // Display all log messages from the in-process attempt
+        string log = stringLogger.GetFullLog();
+        Debug.Out(log);
+        // Display fallback CLI logs if available
+        if (!string.IsNullOrWhiteSpace(cliBuildLog))
+            Debug.Out(cliBuildLog);
 
-            // Extract and display errors from build result
+        // Extract and display errors from build result
+        if (buildResult is not null)
+        {
             foreach (var target in buildResult.ResultsByTarget.Values)
             {
                 foreach (var item in target.Items)
                 {
                     if (item.GetMetadata("Code") is null)
                         continue;
-                    
+
                     Debug.Out($"{item.GetMetadata("Code")}: {item.GetMetadata("Message")}");
 
                     // Include file and line information if available
@@ -374,22 +399,50 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                     string column = item.GetMetadata("Column") ?? string.Empty;
 
                     if (!string.IsNullOrEmpty(file))
-                    {
                         Debug.Out($"  at {file}:{line},{column}");
-                    }
                 }
             }
-
-            return false;
         }
+
+        return false;
     }
 
     public string GetBinaryPath(string config = Config_Debug, string platform = Platform_AnyCPU)
     {
         string projectName = GetProjectName();
-        // Output path matches: <ProjectFolder>/Build/<Config>/<Platform>/net10.0-windows7.0/<ProjectName>.dll
-        string outputPath = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Build", config, platform, TargetFramework);
-        return Path.Combine(outputPath, $"{projectName}.dll");
+        string dllName = $"{projectName}.dll";
+        string buildRoot = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Build");
+
+        string[] candidatePaths =
+        [
+            Path.Combine(buildRoot, config, platform, TargetFramework, dllName),
+            Path.Combine(buildRoot, platform, config, TargetFramework, dllName),
+            Path.Combine(buildRoot, config, TargetFramework, dllName),
+            Path.Combine(buildRoot, platform, TargetFramework, dllName)
+        ];
+
+        foreach (string candidatePath in candidatePaths)
+        {
+            if (File.Exists(candidatePath))
+                return candidatePath;
+        }
+
+        if (Directory.Exists(buildRoot))
+        {
+            string refSegment = $"{Path.DirectorySeparatorChar}ref{Path.DirectorySeparatorChar}";
+            string[] matches = Directory.GetFiles(buildRoot, dllName, SearchOption.AllDirectories);
+            string[] preferred = [.. matches.Where(path => !path.Contains(refSegment, StringComparison.OrdinalIgnoreCase))];
+
+            string[] selected = preferred.Length > 0 ? preferred : matches;
+            if (selected.Length > 0)
+            {
+                Array.Sort(selected, (left, right) =>
+                    File.GetLastWriteTimeUtc(right).CompareTo(File.GetLastWriteTimeUtc(left)));
+                return selected[0];
+            }
+        }
+
+        return Path.Combine(buildRoot, config, platform, TargetFramework, dllName);
     }
 
     public string BuildLauncherExecutable(
@@ -423,7 +476,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             launcherAssemblyName,
             platform,
             GetEngineAssemblyPaths(),
-            includeGameProject: settings.PublishLauncherAsNativeAot ? gameProjectPath : null);
+            includeGameProject: gameProjectPath);
 
         if (settings.PublishLauncherAsNativeAot)
         {

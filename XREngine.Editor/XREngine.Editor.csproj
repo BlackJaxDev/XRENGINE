@@ -50,11 +50,11 @@
     <PackageReference Include="MathNet.Numerics.Providers.CUDA" Version="5.0.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Meshoptimizer.NET" Version="1.0.7" />
-    <PackageReference Include="Microsoft.Build" Version="18.0.2" />
-    <PackageReference Include="Microsoft.Build.Framework" Version="18.0.2" />
+    <PackageReference Include="Microsoft.Build" Version="18.3.3" />
+    <PackageReference Include="Microsoft.Build.Framework" Version="18.3.3" />
     <PackageReference Include="NDILibDotNetCoreBase" Version="2024.7.22.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
-    <PackageReference Include="SharpCompress" Version="0.44.5" />
+    <PackageReference Include="SharpCompress" Version="0.46.2" />
     <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
     <PackageReference Include="Silk.NET" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Core" Version="2.23.0" />

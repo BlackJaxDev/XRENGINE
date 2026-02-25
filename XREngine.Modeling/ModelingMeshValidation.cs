@@ -148,6 +148,116 @@ public static class ModelingMeshValidation
             }
         }
 
+        if (document.SkinBones is not null)
+        {
+            for (int i = 0; i < document.SkinBones.Count; i++)
+            {
+                ModelingSkinBone? bone = document.SkinBones[i];
+                if (bone is null)
+                {
+                    report.Add(new ModelingMeshValidationIssue(
+                        ModelingValidationSeverity.Error,
+                        "skin_bone_null",
+                        $"Skin bone {i} is null.",
+                        i));
+                }
+            }
+        }
+
+        if (document.SkinWeights is not null)
+        {
+            ValidateChannelCardinality(report, "skin_weights", document.SkinWeights.Count, vertexCount);
+
+            int skinBoneCount = document.SkinBones?.Count ?? 0;
+            bool hasAnyWeights = false;
+
+            for (int vertexIndex = 0; vertexIndex < document.SkinWeights.Count; vertexIndex++)
+            {
+                List<ModelingSkinWeight>? weights = document.SkinWeights[vertexIndex];
+                if (weights is null)
+                {
+                    report.Add(new ModelingMeshValidationIssue(
+                        ModelingValidationSeverity.Error,
+                        "skin_weight_set_null",
+                        $"Skin weight set for vertex {vertexIndex} is null.",
+                        vertexIndex));
+                    continue;
+                }
+
+                if (weights.Count > 0)
+                    hasAnyWeights = true;
+
+                for (int weightIndex = 0; weightIndex < weights.Count; weightIndex++)
+                {
+                    ModelingSkinWeight weight = weights[weightIndex];
+                    if (weight.BoneIndex < 0 || weight.BoneIndex >= skinBoneCount)
+                    {
+                        report.Add(new ModelingMeshValidationIssue(
+                            ModelingValidationSeverity.Error,
+                            "skin_weight_bone_index_out_of_range",
+                            $"Skin weight bone index {weight.BoneIndex} is out of range for skin bone count {skinBoneCount}.",
+                            vertexIndex));
+                    }
+
+                    if (!float.IsFinite(weight.Weight) || weight.Weight < 0f)
+                    {
+                        report.Add(new ModelingMeshValidationIssue(
+                            ModelingValidationSeverity.Error,
+                            "skin_weight_invalid",
+                            $"Skin weight value {weight.Weight} for vertex {vertexIndex} is invalid.",
+                            vertexIndex));
+                    }
+                }
+            }
+
+            if (hasAnyWeights && skinBoneCount == 0)
+            {
+                report.Add(new ModelingMeshValidationIssue(
+                    ModelingValidationSeverity.Error,
+                    "skin_bones_missing",
+                    "Skin weights are present but no skin bones were provided."));
+            }
+        }
+
+        if (document.BlendshapeChannels is not null)
+        {
+            HashSet<string> blendshapeNames = new(StringComparer.Ordinal);
+            for (int i = 0; i < document.BlendshapeChannels.Count; i++)
+            {
+                ModelingBlendshapeChannel? channel = document.BlendshapeChannels[i];
+                if (channel is null)
+                {
+                    report.Add(new ModelingMeshValidationIssue(
+                        ModelingValidationSeverity.Error,
+                        "blendshape_channel_null",
+                        $"Blendshape channel {i} is null.",
+                        i));
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(channel.Name))
+                {
+                    report.Add(new ModelingMeshValidationIssue(
+                        ModelingValidationSeverity.Error,
+                        "blendshape_name_empty",
+                        $"Blendshape channel {i} has an empty name.",
+                        i));
+                }
+                else if (!blendshapeNames.Add(channel.Name))
+                {
+                    report.Add(new ModelingMeshValidationIssue(
+                        ModelingValidationSeverity.Error,
+                        "blendshape_name_duplicate",
+                        $"Blendshape channel name '{channel.Name}' is duplicated.",
+                        i));
+                }
+
+                ValidateChannelCardinality(report, $"blendshape_position_deltas_{i}", channel.PositionDeltas?.Count, vertexCount, i);
+                ValidateChannelCardinality(report, $"blendshape_normal_deltas_{i}", channel.NormalDeltas?.Count, vertexCount, i);
+                ValidateChannelCardinality(report, $"blendshape_tangent_deltas_{i}", channel.TangentDeltas?.Count, vertexCount, i);
+            }
+        }
+
         return report;
     }
 

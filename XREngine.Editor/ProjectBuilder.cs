@@ -385,6 +385,8 @@ internal static class ProjectBuilder
 
         File.Copy(sourceExePath, Path.Combine(destinationDirectory, executableName), true);
 
+        // Framework-dependent launchers need the managed entry assembly beside the renamed host exe.
+        CopyIfExists(Path.Combine(sourceDirectory, $"{sourceBaseName}.dll"), Path.Combine(destinationDirectory, $"{targetBaseName}.dll"));
         CopyIfExists(Path.Combine(sourceDirectory, $"{sourceBaseName}.runtimeconfig.json"), Path.Combine(destinationDirectory, $"{targetBaseName}.runtimeconfig.json"));
         CopyIfExists(Path.Combine(sourceDirectory, $"{sourceBaseName}.deps.json"), Path.Combine(destinationDirectory, $"{targetBaseName}.deps.json"));
 

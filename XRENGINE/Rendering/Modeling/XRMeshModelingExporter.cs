@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Text;
 using XREngine.Data.Rendering;
 using XREngine.Modeling;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.Modeling;
 
@@ -11,6 +12,8 @@ public static class XRMeshModelingExporter
     {
         ArgumentNullException.ThrowIfNull(document);
         options ??= new XRMeshModelingExportOptions();
+
+        EnforceFallbackPolicy(document, options);
 
         if (options.ValidateDocument)
         {
@@ -37,6 +40,8 @@ public static class XRMeshModelingExporter
         };
         mesh.Triangles = BuildTriangleList(ordering.TriangleIndices);
 
+        ApplySkinningAndBlendshapeChannels(mesh, document, ordering.NewToOldVertexMap);
+
         if (mesh.VertexCount != exportedVertexCount)
         {
             throw new InvalidOperationException(
@@ -52,6 +57,119 @@ public static class XRMeshModelingExporter
 
         ApplyExportContract(mesh);
         return mesh;
+    }
+
+    private static void EnforceFallbackPolicy(ModelingMeshDocument document, XRMeshModelingExportOptions options)
+    {
+        if (options.SkinningBlendshapeFallbackPolicy != XRMeshModelingSkinningBlendshapeFallbackPolicy.Strict)
+            return;
+
+        if (document.Metadata.HasSkinning)
+        {
+            bool hasSkinData = document.SkinBones is { Count: > 0 } && document.SkinWeights is { Count: > 0 };
+            if (!hasSkinData)
+            {
+                throw new InvalidOperationException(
+                    "Skinning fallback policy is Strict, but skinning channels are missing from the modeling document.");
+            }
+        }
+
+        if (document.Metadata.HasBlendshapes)
+        {
+            bool hasBlendshapeData = document.BlendshapeChannels is { Count: > 0 };
+            if (!hasBlendshapeData)
+            {
+                throw new InvalidOperationException(
+                    "Skinning/blendshape fallback policy is Strict, but blendshape channels are missing from the modeling document.");
+            }
+        }
+    }
+
+    private static void ApplySkinningAndBlendshapeChannels(XRMesh mesh, ModelingMeshDocument document, int[]? newToOldVertexMap)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+        ArgumentNullException.ThrowIfNull(document);
+
+        if (document.SkinBones is { Count: > 0 } skinBones && document.SkinWeights is { Count: > 0 } skinWeights)
+        {
+            TransformBase[] bones = new TransformBase[skinBones.Count];
+            var utilizedBones = new (TransformBase tfm, Matrix4x4 invBindWorldMtx)[skinBones.Count];
+            for (int i = 0; i < skinBones.Count; i++)
+            {
+                ModelingSkinBone sourceBone = skinBones[i];
+                Transform bone = new()
+                {
+                    Name = string.IsNullOrWhiteSpace(sourceBone.Name) ? $"ModelingBone_{i}" : sourceBone.Name,
+                    InverseBindMatrix = sourceBone.InverseBindMatrix
+                };
+
+                bones[i] = bone;
+                utilizedBones[i] = (bone, sourceBone.InverseBindMatrix);
+            }
+
+            mesh.UtilizedBones = utilizedBones;
+
+            for (int i = 0; i < mesh.Vertices.Length; i++)
+            {
+                int sourceIndex = newToOldVertexMap?[i] ?? i;
+                if (sourceIndex < 0 || sourceIndex >= skinWeights.Count)
+                    continue;
+
+                List<ModelingSkinWeight> sourceWeights = skinWeights[sourceIndex];
+                if (sourceWeights.Count == 0)
+                {
+                    mesh.Vertices[i].Weights = null;
+                    continue;
+                }
+
+                Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)> modeledWeights = [];
+                foreach (ModelingSkinWeight sourceWeight in sourceWeights)
+                {
+                    if (sourceWeight.BoneIndex < 0 || sourceWeight.BoneIndex >= bones.Length)
+                        continue;
+
+                    TransformBase bone = bones[sourceWeight.BoneIndex];
+                    Matrix4x4 inverseBind = utilizedBones[sourceWeight.BoneIndex].invBindWorldMtx;
+                    modeledWeights[bone] = (sourceWeight.Weight, inverseBind);
+                }
+
+                mesh.Vertices[i].Weights = modeledWeights.Count > 0 ? modeledWeights : null;
+            }
+        }
+
+        if (document.BlendshapeChannels is { Count: > 0 } blendshapeChannels)
+        {
+            mesh.BlendshapeNames = [.. blendshapeChannels.Select(x => x.Name)];
+
+            for (int i = 0; i < mesh.Vertices.Length; i++)
+            {
+                int sourceIndex = newToOldVertexMap?[i] ?? i;
+                Vertex vertex = mesh.Vertices[i];
+                List<(string name, VertexData data)> vertexBlendshapes = new(blendshapeChannels.Count);
+
+                for (int channelIndex = 0; channelIndex < blendshapeChannels.Count; channelIndex++)
+                {
+                    ModelingBlendshapeChannel channel = blendshapeChannels[channelIndex];
+                    if (sourceIndex < 0 || sourceIndex >= channel.PositionDeltas.Count)
+                        continue;
+
+                    VertexData blendshapeVertex = new()
+                    {
+                        Position = vertex.Position + channel.PositionDeltas[sourceIndex]
+                    };
+
+                    if (channel.NormalDeltas is not null && sourceIndex < channel.NormalDeltas.Count)
+                        blendshapeVertex.Normal = (vertex.Normal ?? Vector3.Zero) + channel.NormalDeltas[sourceIndex];
+
+                    if (channel.TangentDeltas is not null && sourceIndex < channel.TangentDeltas.Count)
+                        blendshapeVertex.Tangent = (vertex.Tangent ?? Vector3.Zero) + channel.TangentDeltas[sourceIndex];
+
+                    vertexBlendshapes.Add((channel.Name, blendshapeVertex));
+                }
+
+                vertex.Blendshapes = vertexBlendshapes.Count > 0 ? vertexBlendshapes : null;
+            }
+        }
     }
 
     /// <summary>

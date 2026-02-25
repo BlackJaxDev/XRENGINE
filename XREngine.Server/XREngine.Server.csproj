@@ -31,15 +31,15 @@
   
   <ItemGroup>
     <PackageReference Include="AssimpNetter" Version="6.0.2.1" />
-    <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.10.2" />
+    <PackageReference Include="Magick.NET-Q16-HDRI-AnyCPU" Version="14.10.3" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Microsoft.AspNetCore.Http" Version="2.3.9" />
-    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.3" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="SharpFont.Dependencies" Version="2.6.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
-    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.16.0" />
   </ItemGroup>
 
   <ItemGroup>

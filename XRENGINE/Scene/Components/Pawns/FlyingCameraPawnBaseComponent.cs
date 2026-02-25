@@ -1,6 +1,7 @@
 ﻿using Extensions;
 using System.ComponentModel;
 using XREngine.Input.Devices;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Components
 {
@@ -222,6 +223,15 @@ namespace XREngine.Components
             {
                 if (canvasInput.TopMostInteractable is { } interactable)
                 {
+                    // Re-validate that the cursor is actually inside the interactable's
+                    // world-space bounds. TopMostInteractable is set asynchronously during
+                    // SwapBuffers so it can be stale by the time input handlers read it.
+                    // Use AxisAlignedRegion (world-space AABB) rather than Contains() which
+                    // relies on ScreenToLocal and can give incorrect results for nested elements.
+                    if (interactable.UITransform is UIBoundableTransform bt
+                        && !bt.AxisAlignedRegion.Contains(canvasInput.CursorPositionWorld2D))
+                        continue;
+
                     Debug.UI($"[IsHoveringUI] TopMostInteractable = {interactable.GetType().Name} ('{interactable.Name}') on canvas '{canvasInput.Name}'");
                     return true;
                 }
@@ -229,7 +239,39 @@ namespace XREngine.Components
             return false;
         }
 
-        private bool _rightClickDragging = false;
+        protected bool _rightClickDragging = false;
+
+        /// <summary>
+        /// True while right mouse is held but drag hasn't activated yet because
+        /// IsHoveringUI() returned true on the initial press frame. Tick()
+        /// retries activation every frame until hover clears or the button is released.
+        /// </summary>
+        private bool _rightClickPendingDragActivation = false;
+
+        /// <summary>
+        /// Called by subclasses' Tick() each frame. If right-click is held but drag
+        /// hasn't started yet (due to a stale hover result on the press frame),
+        /// this retries activation.
+        /// </summary>
+        /// <returns>True if drag activation just succeeded this frame.</returns>
+        protected bool TryActivatePendingRightClickDrag()
+        {
+            if (!_rightClickPendingDragActivation || _rightClickDragging)
+                return false;
+
+            if (IsHoveringUI())
+                return false;
+
+            _rightClickPendingDragActivation = false;
+            _rightClickDragging = true;
+            Debug.UI($"[TryActivatePendingRightClickDrag] Drag activated (retry), LinkedUICanvasInputs.Count={LinkedUICanvasInputs.Count}");
+
+            var controller = LocalPlayerController;
+            if (controller is not null)
+                controller.FocusedUIComponent = null;
+
+            return true;
+        }
 
         protected virtual void OnRightClick(bool pressed)
         {
@@ -244,6 +286,7 @@ namespace XREngine.Components
 
                 bool hovering = IsHoveringUI();
                 _rightClickDragging = !hovering;
+                _rightClickPendingDragActivation = hovering; // retry in Tick if hover was stale
                 Debug.UI($"[OnRightClick] pressed, IsHoveringUI={hovering}, _rightClickDragging={_rightClickDragging}, LinkedUICanvasInputs.Count={LinkedUICanvasInputs.Count}");
 
                 // When right-clicking in the viewport (not over UI), clear the focused
@@ -258,6 +301,7 @@ namespace XREngine.Components
             else
             {
                 _rightClickDragging = false;
+                _rightClickPendingDragActivation = false;
             }
         }
         protected virtual void OnLeftClick(bool pressed)
