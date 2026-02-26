@@ -458,6 +458,108 @@
             "problemMatcher": "$msCompile"
         },
         {
+            "label": "Report-NewAllocations",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\Reports\\Find-NewAllocations.ps1",
+                "-Root",
+                "${workspaceFolder}",
+                "-OutFile",
+                "${workspaceFolder}\\docs\\work\\audit\\new-allocations.md"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Report-StaticClasses",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\Reports\\Find-StaticClasses.ps1",
+                "-RepoRoot",
+                "${workspaceFolder}",
+                "-OutFile",
+                "${workspaceFolder}\\docs\\work\\audit\\static-classes.md"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Report-ThreadTaskRuns",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\Reports\\Find-ThreadTaskRuns.ps1",
+                "-Root",
+                "${workspaceFolder}",
+                "-OutFile",
+                "${workspaceFolder}\\docs\\work\\audit\\thread-task-runs.md"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Report-Dependencies",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\Reports\\Generate-Dependencies.ps1"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Report-All-Audits",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "echo Running all audit reports..."
+            ],
+            "dependsOn": [
+                "Report-NewAllocations",
+                "Report-StaticClasses",
+                "Report-ThreadTaskRuns",
+                "Report-Dependencies"
+            ],
+            "dependsOrder": "sequence",
+            "group": "test",
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "Install-YtDlp",
             "type": "shell",
             "command": "powershell",
@@ -483,6 +585,22 @@
                 "Bypass",
                 "-File",
                 "${workspaceFolder}\\Tools\\Dependencies\\Get-NvComp.ps1"
+            ],
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Install-Phonon",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\Dependencies\\Get-Phonon.ps1"
             ],
             "presentation": {
                 "reveal": "always"

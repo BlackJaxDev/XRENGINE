@@ -1,5 +1,7 @@
 # Modern Vulkan Render Pipeline — Key Takeaways (from zeux.io)
 
+Status note (2026-02-26): this file is a deep technical reference and audit narrative. Canonical status/reporting is in `vulkan-report.md`, and canonical active backlog is in `vulkan-todo.md`.
+
 Source: https://zeux.io/2020/02/27/writing-an-efficient-vulkan-renderer/
 
 This summarizes the most important guidance for building a **modern, high-performance Vulkan renderer**. The article is from 2020, but the core performance principles are still highly relevant in 2026.

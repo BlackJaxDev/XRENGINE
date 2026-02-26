@@ -9,6 +9,7 @@ using System.Numerics;
 using System.Text;
 using System.Threading;
 using XREngine;
+using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
@@ -110,6 +111,7 @@ internal class Program
         // Load unit testing settings from JSON file into static toggles object that can be referenced throughout the editor and unit testing worlds.
         EditorUnitTests.Toggles = LoadUnitTestingSettings(false);
         ApplyUnitTestingWorldKindOverride(EditorUnitTests.Toggles);
+        ApplyAudioSettingsFromToggles(EditorUnitTests.Toggles);
 
         // Retrieve the world, startup settings, and last game state to run the engine
         InitializeEditor(
@@ -443,6 +445,15 @@ internal class Program
         }
 
         EngineDebug.Out($"Invalid XRE_UNIT_TEST_WORLD_KIND value '{worldKindEnv}'. Using {settings.WorldKind}.");
+    }
+
+    private static void ApplyAudioSettingsFromToggles(EditorUnitTests.Settings settings)
+    {
+        AudioSettings.AudioArchitectureV2 = settings.AudioArchitectureV2;
+        Engine.Audio.DefaultTransport = settings.AudioTransport;
+        Engine.Audio.DefaultEffects = settings.AudioEffects;
+
+        EngineDebug.Out($"Audio toggles applied: V2={AudioSettings.AudioArchitectureV2}, Transport={Engine.Audio.DefaultTransport}, Effects={Engine.Audio.DefaultEffects}");
     }
 
     static EditorRenderInfo2D RenderInfo2DConstructor(IRenderable owner, RenderCommand[] commands)

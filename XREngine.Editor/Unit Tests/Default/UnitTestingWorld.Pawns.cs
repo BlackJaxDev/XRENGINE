@@ -1,6 +1,6 @@
 using MagicPhysX;
-using Silk.NET.OpenAL;
 using System.Numerics;
+using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Components.Animation;
 using XREngine.Components.Movement;
@@ -62,7 +62,7 @@ public static partial class EditorUnitTests
 
             var listener = cameraNode.AddComponent<AudioListenerComponent>("Mesh Editing Listener")!;
             listener.Gain = 1.0f;
-            listener.DistanceModel = DistanceModel.InverseDistance;
+            listener.DistanceModel = EDistanceModel.InverseDistance;
             listener.DopplerFactor = 0.5f;
             listener.SpeedOfSound = 343.3f;
 
@@ -265,7 +265,7 @@ public static partial class EditorUnitTests
             SceneNode vrHeadsetNode = parentNode.NewChild("VRHeadsetNode");
             var listener = vrHeadsetNode.AddComponent<AudioListenerComponent>("VR HMD Listener")!;
             listener.Gain = 1.0f;
-            listener.DistanceModel = DistanceModel.InverseDistance;
+            listener.DistanceModel = EDistanceModel.InverseDistance;
             listener.DopplerFactor = 0.5f;
             listener.SpeedOfSound = 343.3f;
 
@@ -330,7 +330,7 @@ public static partial class EditorUnitTests
             {
                 var listener = cameraNode.AddComponent<AudioListenerComponent>("Desktop Flying Listener")!;
                 listener.Gain = 1.0f;
-                listener.DistanceModel = DistanceModel.InverseDistance;
+                listener.DistanceModel = EDistanceModel.InverseDistance;
                 listener.DopplerFactor = 0.5f;
                 listener.SpeedOfSound = 343.3f;
             }
@@ -392,7 +392,7 @@ public static partial class EditorUnitTests
 
             var listener = cameraNode.AddComponent<AudioListenerComponent>("Desktop Character Listener")!;
             listener.Gain = 1.0f;
-            listener.DistanceModel = DistanceModel.InverseDistance;
+            listener.DistanceModel = EDistanceModel.InverseDistance;
             listener.DopplerFactor = 0.5f;
             listener.SpeedOfSound = 343.3f;
 

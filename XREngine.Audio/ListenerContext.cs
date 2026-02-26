@@ -18,30 +18,113 @@ namespace XREngine.Audio
 
         public string? Name { get; set; }
 
-        public AL Api { get; } = AL.GetApi();
+        /// <summary>
+        /// Whether this listener was created with the V2 transport/effects architecture.
+        /// When true, delegates to <see cref="Transport"/> and <see cref="EffectsProcessor"/>.
+        /// When false, uses the legacy monolithic OpenAL code path.
+        /// </summary>
+        public bool IsV2 { get; }
+
+        // --- V2 path: transport/effects composition ---
+
+        /// <summary>
+        /// The audio output transport layer. Non-null only in V2 mode.
+        /// </summary>
+        public IAudioTransport? Transport { get; }
+
+        /// <summary>
+        /// The audio effects processor. Non-null only in V2 mode (may still be null if passthrough).
+        /// </summary>
+        public IAudioEffectsProcessor? EffectsProcessor { get; }
+
+        // --- Legacy path: direct OpenAL objects ---
+
+        public AL Api { get; }
         public ALContext Context { get; }
 
         internal Device* DeviceHandle { get; }
         internal Context* ContextHandle { get; }
 
-        public EffectContext? Effects { get; } = null;
-        public VorbisFormat? VorbisFormat { get; } = null;
-        public MP3Format? MP3Format { get; } = null;
-        public XRam? XRam { get; } = null;
-        public MultiChannelBuffers? MultiChannel { get; } = null;
-        public DoubleFormat? DoubleFormat { get; } = null;
-        public MULAWFormat? MuLawFormat { get; } = null;
-        public FloatFormat? FloatFormat { get; } = null;
-        public MCFormats? MCFormats { get; } = null;
-        public ALAWFormat? ALawFormat { get; } = null;
+        public EffectContext? Effects { get; }
+        public VorbisFormat? VorbisFormat { get; }
+        public MP3Format? MP3Format { get; }
+        public XRam? XRam { get; }
+        public MultiChannelBuffers? MultiChannel { get; }
+        public DoubleFormat? DoubleFormat { get; }
+        public MULAWFormat? MuLawFormat { get; }
+        public FloatFormat? FloatFormat { get; }
+        public MCFormats? MCFormats { get; }
+        public ALAWFormat? ALawFormat { get; }
 
-        public Capture? Capture { get; } = null;
+        public Capture? Capture { get; }
 
         public EventDictionary<uint, AudioSource> Sources { get; } = [];
         public EventDictionary<uint, AudioBuffer> Buffers { get; } = [];
 
+        /// <summary>
+        /// V2 constructor: composes a transport and effects processor.
+        /// Used when <see cref="AudioSettings.AudioArchitectureV2"/> is enabled.
+        /// </summary>
+        internal ListenerContext(IAudioTransport transport, IAudioEffectsProcessor? effectsProcessor)
+        {
+            IsV2 = true;
+            Transport = transport ?? throw new ArgumentNullException(nameof(transport));
+            EffectsProcessor = effectsProcessor;
+
+            // Bridge: expose OpenAL internals for code that still needs direct access
+            // (AudioSource EFX properties, AudioInputDevice capture, format extensions, etc.)
+            if (transport is OpenALTransport oalTransport)
+            {
+                Api = oalTransport.Api;
+                Context = oalTransport.Context;
+                DeviceHandle = oalTransport.DeviceHandle;
+                ContextHandle = oalTransport.ContextHandle;
+                VorbisFormat = oalTransport.VorbisFormat;
+                MP3Format = oalTransport.MP3Format;
+                MultiChannel = oalTransport.MultiChannel;
+                DoubleFormat = oalTransport.DoubleFormat;
+                MuLawFormat = oalTransport.MuLawFormat;
+                FloatFormat = oalTransport.FloatFormat;
+                MCFormats = oalTransport.MCFormats;
+                ALawFormat = oalTransport.ALawFormat;
+                XRam = oalTransport.XRam;
+                Capture = null; // Capture deferred to transport abstraction in later phase
+
+                // Wire up EFX processor's EffectContext
+                if (effectsProcessor is OpenALEfxProcessor efxProc)
+                {
+                    efxProc.SetListenerContext(this);
+                    Effects = efxProc.EffectContext;
+                }
+            }
+            else
+            {
+                // Non-OpenAL transport: OpenAL fields are default/null
+                Api = AL.GetApi(); // Needed to avoid null; won't be used
+                Context = ALContext.GetApi(false);
+                DeviceHandle = null;
+                ContextHandle = null;
+            }
+
+            _gain = transport is OpenALTransport oalt ? oalt.GetListenerGain() : 1.0f;
+
+            SourcePool = new ResourcePool<AudioSource>(() => new AudioSource(this));
+            BufferPool = new ResourcePool<AudioBuffer>(() => new AudioBuffer(this));
+
+            EffectsProcessor?.Initialize(new AudioEffectsSettings { SampleRate = Transport.SampleRate });
+
+            AudioDiagnostics.RecordListenerCreated(Name);
+        }
+
+        /// <summary>
+        /// Legacy constructor: monolithic OpenAL path (original behavior).
+        /// Used when <see cref="AudioSettings.AudioArchitectureV2"/> is disabled (default).
+        /// </summary>
         internal ListenerContext()
         {
+            IsV2 = false;
+            Api = AL.GetApi();
+
             if (Api.TryGetExtension<VorbisFormat>(out var vorbisFormat))
                 VorbisFormat = vorbisFormat;
             if (Api.TryGetExtension<MP3Format>(out var mp3Format))
@@ -66,22 +149,8 @@ namespace XREngine.Audio
 
             Context = ALContext.GetApi(false);
 
-            //string deviceSpecifier = "";
-            //if (Context.TryGetExtension<Enumeration>(null, out var e))
-            //{
-            //    var stringList = e.GetStringList(GetEnumerationContextStringList.DeviceSpecifiers);
-            //    foreach (var device in stringList)
-            //    {
-            //        Debug.WriteLine($"Found audio device \"{device}\"");
-            //        deviceSpecifier = device;
-            //    }
-            //    e.Dispose();
-            //}
-
             DeviceHandle = Context.OpenDevice(null);
             ContextHandle = Context.CreateContext(DeviceHandle, null);
-            //if (Context.TryGetExtension<Capture>(DeviceHandle, out var captureExtension))
-            //    Capture = captureExtension;
             MakeCurrent();
             VerifyError();
 
@@ -89,12 +158,21 @@ namespace XREngine.Audio
 
             SourcePool = new ResourcePool<AudioSource>(() => new AudioSource(this));
             BufferPool = new ResourcePool<AudioBuffer>(() => new AudioBuffer(this));
+
+            AudioDiagnostics.RecordListenerCreated(Name);
         }
 
         public static ListenerContext? CurrentContext { get; private set; }
 
         public void MakeCurrent()
         {
+            if (IsV2 && Transport is OpenALTransport oalTransport)
+            {
+                oalTransport.MakeCurrent();
+                CurrentContext = this;
+                return;
+            }
+
             if (CurrentContext == this)
                 return;
 
@@ -104,12 +182,21 @@ namespace XREngine.Audio
 
         public void VerifyError()
         {
+            if (IsV2 && Transport is OpenALTransport oalTransport)
+            {
+                oalTransport.VerifyError();
+                return;
+            }
+
             if (CurrentContext != this)
                 return;
 
             var error = Api.GetError();
             if (error != AudioError.NoError)
+            {
                 Trace.WriteLine($"OpenAL Error: {error}");
+                AudioDiagnostics.RecordOpenALError($"{error}");
+            }
         }
 
         private ResourcePool<AudioSource> SourcePool { get; }
@@ -180,37 +267,72 @@ namespace XREngine.Audio
 
         public float DopplerFactor
         {
-            get => GetDopplerFactor();
-            set => SetDopplerFactor(value);
+            get => IsV2 && Transport is OpenALTransport oal ? oal.GetDopplerFactor() : GetDopplerFactor();
+            set
+            {
+                if (IsV2 && Transport is OpenALTransport oal)
+                    oal.SetDopplerFactor(value);
+                else
+                    SetDopplerFactor(value);
+            }
         }
         public float SpeedOfSound
         {
-            get => GetSpeedOfSound();
-            set => SetSpeedOfSound(value);
+            get => IsV2 && Transport is OpenALTransport oal ? oal.GetSpeedOfSound() : GetSpeedOfSound();
+            set
+            {
+                if (IsV2 && Transport is OpenALTransport oal)
+                    oal.SetSpeedOfSound(value);
+                else
+                    SetSpeedOfSound(value);
+            }
         }
-        public DistanceModel DistanceModel
+        public EDistanceModel DistanceModel
         {
-            get => GetDistanceModel();
-            set => SetDistanceModel(value);
+            get => IsV2 ? GetDistanceModelV2() : GetDistanceModelLegacy();
+            set
+            {
+                if (IsV2)
+                    SetDistanceModelV2(value);
+                else
+                    SetDistanceModelLegacy(value);
+            }
         }
 
         public Vector3 Position
         {
-            get => GetPosition();
-            set => SetPosition(value);
+            get => IsV2 ? ((OpenALTransport)Transport!).GetListenerPosition() : GetPosition();
+            set
+            {
+                if (IsV2)
+                    Transport!.SetListenerPosition(value);
+                else
+                    SetPosition(value);
+            }
         }
         public Vector3 Velocity
         {
-            get => GetVelocity();
-            set => SetVelocity(value);
+            get => IsV2 ? ((OpenALTransport)Transport!).GetListenerVelocity() : GetVelocity();
+            set
+            {
+                if (IsV2)
+                    Transport!.SetListenerVelocity(value);
+                else
+                    SetVelocity(value);
+            }
         }
 
         public Vector3 Up
         {
             get
             {
-                GetOrientation(out _, out Vector3 up);
-                return up;
+                if (IsV2 && Transport is OpenALTransport oal)
+                {
+                    oal.GetListenerOrientation(out _, out Vector3 up);
+                    return up;
+                }
+                GetOrientation(out _, out Vector3 upLegacy);
+                return upLegacy;
             }
             set => SetOrientation(Forward, value);
         }
@@ -219,8 +341,13 @@ namespace XREngine.Audio
         {
             get
             {
-                GetOrientation(out Vector3 forward, out _);
-                return forward;
+                if (IsV2 && Transport is OpenALTransport oal)
+                {
+                    oal.GetListenerOrientation(out Vector3 forward, out _);
+                    return forward;
+                }
+                GetOrientation(out Vector3 forwardLegacy, out _);
+                return forwardLegacy;
             }
             set => SetOrientation(value, Up);
         }
@@ -270,7 +397,13 @@ namespace XREngine.Audio
         }
 
         private void UpdateGain()
-            => SetGain(Gain * GainScale * (Enabled ? 1.0f : 0.0f));
+        {
+            float effectiveGain = Gain * GainScale * (Enabled ? 1.0f : 0.0f);
+            if (IsV2)
+                Transport!.SetListenerGain(effectiveGain);
+            else
+                SetGain(effectiveGain);
+        }
 
         private void SetPosition(Vector3 position)
         {
@@ -307,6 +440,13 @@ namespace XREngine.Audio
         /// <param name="up"></param>
         public unsafe void SetOrientation(Vector3 forward, Vector3 up)
         {
+            if (IsV2)
+            {
+                Transport!.SetListenerOrientation(forward, up);
+                EffectsProcessor?.SetListenerPose(Position, forward, up);
+                return;
+            }
+
             MakeCurrent();
             float[] orientation = [forward.X, forward.Y, forward.Z, up.X, up.Y, up.Z];
             fixed (float* pOrientation = orientation)
@@ -358,10 +498,10 @@ namespace XREngine.Audio
             VerifyError();
             return speed;
         }
-        private DistanceModel GetDistanceModel()
+        private Silk.NET.OpenAL.DistanceModel GetDistanceModel()
         {
             MakeCurrent();
-            var model = (DistanceModel)Api.GetStateProperty(StateInteger.DistanceModel);
+            var model = (Silk.NET.OpenAL.DistanceModel)Api.GetStateProperty(StateInteger.DistanceModel);
             VerifyError();
             return model;
         }
@@ -378,22 +518,54 @@ namespace XREngine.Audio
             Api.SpeedOfSound(speed);
             VerifyError();
         }
-        private void SetDistanceModel(DistanceModel model)
+        private void SetDistanceModel(Silk.NET.OpenAL.DistanceModel model)
         {
             MakeCurrent();
             Api.DistanceModel(model);
             VerifyError();
             _calcGainDistModelFunc = model switch
             {
-                DistanceModel.InverseDistance => CalcInvDistGain,
-                DistanceModel.InverseDistanceClamped => CalcInvDistGainClamped,
-                DistanceModel.LinearDistance => CalcLinearGain,
-                DistanceModel.LinearDistanceClamped => CalcLinearGainClamped,
-                DistanceModel.ExponentDistance => CalcExpDistGain,
-                DistanceModel.ExponentDistanceClamped => CalcExpDistGainClamped,
+                Silk.NET.OpenAL.DistanceModel.InverseDistance => CalcInvDistGain,
+                Silk.NET.OpenAL.DistanceModel.InverseDistanceClamped => CalcInvDistGainClamped,
+                Silk.NET.OpenAL.DistanceModel.LinearDistance => CalcLinearGain,
+                Silk.NET.OpenAL.DistanceModel.LinearDistanceClamped => CalcLinearGainClamped,
+                Silk.NET.OpenAL.DistanceModel.ExponentDistance => CalcExpDistGain,
+                Silk.NET.OpenAL.DistanceModel.ExponentDistanceClamped => CalcExpDistGainClamped,
                 _ => null,
             };
         }
+
+        // --- EDistanceModel adapter methods for V2 path ---
+
+        private EDistanceModel GetDistanceModelV2()
+        {
+            if (Transport is OpenALTransport oal)
+                return (EDistanceModel)(int)oal.GetDistanceModel();
+            return EDistanceModel.InverseDistanceClamped;
+        }
+
+        private void SetDistanceModelV2(EDistanceModel model)
+        {
+            if (Transport is OpenALTransport oal)
+                oal.SetDistanceModel((DistanceModel)(int)model);
+
+            _calcGainDistModelFunc = model switch
+            {
+                EDistanceModel.InverseDistance => CalcInvDistGain,
+                EDistanceModel.InverseDistanceClamped => CalcInvDistGainClamped,
+                EDistanceModel.LinearDistance => CalcLinearGain,
+                EDistanceModel.LinearDistanceClamped => CalcLinearGainClamped,
+                EDistanceModel.ExponentDistance => CalcExpDistGain,
+                EDistanceModel.ExponentDistanceClamped => CalcExpDistGainClamped,
+                _ => null,
+            };
+        }
+
+        private EDistanceModel GetDistanceModelLegacy()
+            => (EDistanceModel)(int)GetDistanceModel();
+
+        private void SetDistanceModelLegacy(EDistanceModel model)
+            => SetDistanceModel((DistanceModel)(int)model);
 
         public event Action<ListenerContext>? Disposed;
 
@@ -407,6 +579,12 @@ namespace XREngine.Audio
             Buffers.Clear();
             SourcePool.Destroy(int.MaxValue);
             BufferPool.Destroy(int.MaxValue);
+
+            // Dispose V2 resources
+            EffectsProcessor?.Dispose();
+            Transport?.Dispose();
+
+            AudioDiagnostics.RecordListenerDisposed(Name);
             Disposed?.Invoke(this);
             GC.SuppressFinalize(this);
         }
@@ -438,6 +616,7 @@ namespace XREngine.Audio
         public void Tick(float deltaTime)
         {
             FadeGain(deltaTime);
+            EffectsProcessor?.Tick(deltaTime);
         }
 
         public XREvent<ListenerContext>? FadeCompleted { get; set; } = null;

@@ -8,6 +8,10 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="XREngine.UnitTests" />
+  </ItemGroup>
+
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <IsTrimmable>True</IsTrimmable>
     <IsAotCompatible>True</IsAotCompatible>
@@ -56,6 +60,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
+  </ItemGroup>
+
+  <!-- Steam Audio (Phonon) native library. Fetched via Tools\Dependencies\Get-Phonon.ps1 -->
+  <ItemGroup Condition="Exists('runtimes\win-x64\native\phonon.dll')">
+    <None Include="runtimes\win-x64\native\phonon.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>phonon.dll</Link>
+    </None>
   </ItemGroup>
 
 </Project>

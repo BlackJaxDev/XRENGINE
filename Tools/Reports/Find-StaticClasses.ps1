@@ -1,5 +1,6 @@
 param(
-    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot ".."))
+    [string]$RepoRoot = (Resolve-Path ".").Path,
+    [string]$OutFile = (Join-Path (Resolve-Path ".").Path "docs\work\audit\static-classes.md")
 )
 
 $ErrorActionPreference = "Stop"
@@ -66,12 +67,7 @@ foreach ($file in $csFiles) {
 
 $results = $results | Sort-Object Namespace, ClassName, File, Line
 
-$docsDir = Join-Path $RepoRoot "docs\\work"
-if (-not (Test-Path $docsDir)) {
-    New-Item -ItemType Directory -Path $docsDir | Out-Null
-}
-
-$outPath = Join-Path $docsDir "static-classes.md"
+New-Item -ItemType Directory -Force -Path (Split-Path $OutFile) | Out-Null
 
 $linesOut = New-Object System.Collections.Generic.List[string]
 $linesOut.Add("# Static Classes")
@@ -88,6 +84,6 @@ foreach ($item in $results) {
     $linesOut.Add("| $ns | $($item.ClassName) | $($item.File) | $($item.Line) |")
 }
 
-Set-Content -Path $outPath -Value $linesOut -Encoding UTF8
+Set-Content -Path $OutFile -Value $linesOut -Encoding UTF8
 
-Write-Host "Wrote $($results.Count) static classes to $outPath"
+Write-Host "Wrote $($results.Count) static classes to $OutFile"

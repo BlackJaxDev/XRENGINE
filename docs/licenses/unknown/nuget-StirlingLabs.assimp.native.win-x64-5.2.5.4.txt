@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'StirlingLabs.assimp.native.win-x64' (5.2.5.4).
+
+Resolved license: (unknown)
+RepositoryUrl: 
+ProjectUrl: 
+
