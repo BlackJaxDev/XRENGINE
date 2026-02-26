@@ -39,6 +39,10 @@ namespace XREngine
         private bool _mcpServerReadOnly = false;
         private string _mcpServerAllowedTools = string.Empty;
         private string _mcpServerDeniedTools = string.Empty;
+        private bool _mcpServerRateLimitEnabled = false;
+        private int _mcpServerRateLimitRequests = 120;
+        private int _mcpServerRateLimitWindowSeconds = 60;
+        private bool _mcpServerIncludeStatusInPing = true;
 
         [Category("Theme")]
         [DisplayName("Theme")]
@@ -204,6 +208,54 @@ namespace XREngine
             set => SetField(ref _mcpServerDeniedTools, value ?? string.Empty);
         }
 
+        /// <summary>
+        /// Whether per-client MCP request rate limiting is enabled.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Rate Limit Enabled")]
+        [Description("Enable per-client MCP request rate limiting.")]
+        public bool McpServerRateLimitEnabled
+        {
+            get => _mcpServerRateLimitEnabled;
+            set => SetField(ref _mcpServerRateLimitEnabled, value);
+        }
+
+        /// <summary>
+        /// Number of requests allowed per client within the configured window.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Rate Limit Requests")]
+        [Description("Maximum MCP requests per client in each rate-limit window.")]
+        public int McpServerRateLimitRequests
+        {
+            get => _mcpServerRateLimitRequests;
+            set => SetField(ref _mcpServerRateLimitRequests, Math.Max(1, value));
+        }
+
+        /// <summary>
+        /// Time window for MCP rate limiting.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Rate Limit Window (s)")]
+        [Description("Rate-limit window in seconds for MCP requests.")]
+        public int McpServerRateLimitWindowSeconds
+        {
+            get => _mcpServerRateLimitWindowSeconds;
+            set => SetField(ref _mcpServerRateLimitWindowSeconds, Math.Max(1, value));
+        }
+
+        /// <summary>
+        /// Whether ping responses include expanded health/status data.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Include Status In Ping")]
+        [Description("Include expanded server health/status payload in ping responses.")]
+        public bool McpServerIncludeStatusInPing
+        {
+            get => _mcpServerIncludeStatusInPing;
+            set => SetField(ref _mcpServerIncludeStatusInPing, value);
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -261,6 +313,10 @@ namespace XREngine
             McpServerReadOnly = source.McpServerReadOnly;
             McpServerAllowedTools = source.McpServerAllowedTools;
             McpServerDeniedTools = source.McpServerDeniedTools;
+            McpServerRateLimitEnabled = source.McpServerRateLimitEnabled;
+            McpServerRateLimitRequests = source.McpServerRateLimitRequests;
+            McpServerRateLimitWindowSeconds = source.McpServerRateLimitWindowSeconds;
+            McpServerIncludeStatusInPing = source.McpServerIncludeStatusInPing;
         }
 
         public void ApplyOverrides(EditorPreferencesOverrides overrides)
@@ -306,6 +362,18 @@ namespace XREngine
 
             if (overrides.McpServerDeniedToolsOverride is { HasOverride: true } mcpDeniedToolsOverride)
                 McpServerDeniedTools = mcpDeniedToolsOverride.Value ?? string.Empty;
+
+            if (overrides.McpServerRateLimitEnabledOverride is { HasOverride: true } mcpRateLimitEnabledOverride)
+                McpServerRateLimitEnabled = mcpRateLimitEnabledOverride.Value;
+
+            if (overrides.McpServerRateLimitRequestsOverride is { HasOverride: true } mcpRateLimitRequestsOverride)
+                McpServerRateLimitRequests = Math.Max(1, mcpRateLimitRequestsOverride.Value);
+
+            if (overrides.McpServerRateLimitWindowSecondsOverride is { HasOverride: true } mcpRateLimitWindowOverride)
+                McpServerRateLimitWindowSeconds = Math.Max(1, mcpRateLimitWindowOverride.Value);
+
+            if (overrides.McpServerIncludeStatusInPingOverride is { HasOverride: true } mcpStatusPingOverride)
+                McpServerIncludeStatusInPing = mcpStatusPingOverride.Value;
         }
     }
 

@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Numerics;
+using JoltPhysicsSharp;
 using MagicPhysX;
 using XREngine.Core.Attributes;
 using XREngine.Rendering.Physics.Physx;
@@ -870,48 +871,70 @@ namespace XREngine.Components.Physics
 
         private void ApplyActorProperties(IAbstractDynamicRigidBody body)
         {
-            if (body is not PhysxActor actor)
-                return;
-            
-            actor.GravityEnabled = _gravityEnabled;
-            actor.SimulationEnabled = _simulationEnabled;
-            actor.DebugVisualize = _debugVisualization;
-            actor.SendSleepNotifies = _sendSleepNotifies;
-            actor.CollisionGroup = _collisionGroup;
-            actor.GroupsMask = ToPhysxGroupsMask(_groupsMask);
-            actor.DominanceGroup = _dominanceGroup;
-            // PhysX disallows setting ownerClient once the actor is inserted into a scene.
-            if (actor.Scene is null)
-                actor.OwnerClient = _ownerClient;
-            if (_actorName is not null)
-                actor.Name = _actorName;
+            if (body is PhysxActor actor)
+            {
+                actor.GravityEnabled = _gravityEnabled;
+                actor.SimulationEnabled = _simulationEnabled;
+                actor.DebugVisualize = _debugVisualization;
+                actor.SendSleepNotifies = _sendSleepNotifies;
+                actor.CollisionGroup = _collisionGroup;
+                actor.GroupsMask = ToPhysxGroupsMask(_groupsMask);
+                actor.DominanceGroup = _dominanceGroup;
+                // PhysX disallows setting ownerClient once the actor is inserted into a scene.
+                if (actor.Scene is null)
+                    actor.OwnerClient = _ownerClient;
+                if (_actorName is not null)
+                    actor.Name = _actorName;
+            }
+            else if (body is JoltDynamicRigidBody jolt)
+            {
+                jolt.SetGravityEnabled(_gravityEnabled);
+                jolt.SetObjectLayer(_collisionGroup, _groupsMask.Word0);
+
+                if (!_simulationEnabled)
+                {
+                    Debug.Physics("[DynamicRigidBodyComponent] Jolt does not currently support SimulationEnabled parity; value cached only.");
+                }
+            }
         }
 
         private void ApplyDynamicBodyProperties(IAbstractDynamicRigidBody body)
         {
-            if (body is not PhysxDynamicRigidBody physx)
-                return;
-            
-            physx.Flags = ToPhysxRigidBodyFlags(_bodyFlags);
-            physx.LockFlags = ToPhysxLockFlags(_lockFlags);
-            physx.LinearDamping = _linearDamping;
-            physx.AngularDamping = _angularDamping;
-            physx.MaxLinearVelocity = _maxLinearVelocity;
-            physx.MaxAngularVelocity = _maxAngularVelocity;
-            physx.Mass = _mass;
-            physx.MassSpaceInertiaTensor = _massSpaceInertiaTensor;
-            physx.CMassLocalPose = (_centerOfMassPose.Rotation, _centerOfMassPose.Translation);
-            physx.MinCCDAdvanceCoefficient = _minCcdAdvanceCoefficient;
-            physx.MaxDepenetrationVelocity = _maxDepenetrationVelocity;
-            physx.MaxContactImpulse = _maxContactImpulse;
-            physx.ContactSlopCoefficient = _contactSlopCoefficient;
-            physx.StabilizationThreshold = _stabilizationThreshold;
-            physx.SleepThreshold = _sleepThreshold;
-            physx.ContactReportThreshold = _contactReportThreshold;
-            physx.WakeCounter = _wakeCounter;
-            physx.SolverIterationCounts = (_solverIterations.MinPositionIterations, _solverIterations.MinVelocityIterations);
-            if (_kinematicTarget.HasValue)
-                physx.KinematicTarget = _kinematicTarget;
+            if (body is PhysxDynamicRigidBody physx)
+            {
+                physx.Flags = ToPhysxRigidBodyFlags(_bodyFlags);
+                physx.LockFlags = ToPhysxLockFlags(_lockFlags);
+                physx.LinearDamping = _linearDamping;
+                physx.AngularDamping = _angularDamping;
+                physx.MaxLinearVelocity = _maxLinearVelocity;
+                physx.MaxAngularVelocity = _maxAngularVelocity;
+                physx.Mass = _mass;
+                physx.MassSpaceInertiaTensor = _massSpaceInertiaTensor;
+                physx.CMassLocalPose = (_centerOfMassPose.Rotation, _centerOfMassPose.Translation);
+                physx.MinCCDAdvanceCoefficient = _minCcdAdvanceCoefficient;
+                physx.MaxDepenetrationVelocity = _maxDepenetrationVelocity;
+                physx.MaxContactImpulse = _maxContactImpulse;
+                physx.ContactSlopCoefficient = _contactSlopCoefficient;
+                physx.StabilizationThreshold = _stabilizationThreshold;
+                physx.SleepThreshold = _sleepThreshold;
+                physx.ContactReportThreshold = _contactReportThreshold;
+                physx.WakeCounter = _wakeCounter;
+                physx.SolverIterationCounts = (_solverIterations.MinPositionIterations, _solverIterations.MinVelocityIterations);
+                if (_kinematicTarget.HasValue)
+                    physx.KinematicTarget = _kinematicTarget;
+            }
+            else if (body is JoltDynamicRigidBody jolt)
+            {
+                jolt.SetMotionQualityFromFlags(_bodyFlags);
+                jolt.SetLockFlags(_lockFlags);
+                jolt.SetLinearAndAngularDamping(_linearDamping, _angularDamping);
+                jolt.SetMass(_mass);
+
+                if (_kinematicTarget.HasValue)
+                    jolt.SetTransform(_kinematicTarget.Value.position, _kinematicTarget.Value.rotation, Activation.Activate);
+
+                Debug.Physics("[DynamicRigidBodyComponent] Jolt unsupported dynamic parity fields remain cached only: MaxLinearVelocity/MaxAngularVelocity/SolverIterations/Contact thresholds/CCD advanced tuning.");
+            }
         }
 
         private void ApplyShapeOffsets(IAbstractDynamicRigidBody body)

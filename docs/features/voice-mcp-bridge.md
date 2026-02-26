@@ -87,7 +87,7 @@ bridge.StartListening();
 |--------------|----------|
 | "undo" / "undo that" | `undo` |
 | "redo" / "redo that" | `redo` |
-| "delete" / "remove selected" | `delete_selected` |
+| "delete" / "remove selected" | `delete_selected_nodes` |
 | "what's selected?" | `get_selection` |
 | "deselect" / "clear selection" | `clear_selection` |
 
@@ -96,8 +96,8 @@ bridge.StartListening();
 |--------------|----------|
 | "create a sphere" | `create_primitive_shape` (Sphere) |
 | "add a cube" | `create_primitive_shape` (Cube) |
-| "spawn a cylinder" | `create_primitive_shape` (Cylinder) |
-| "make a plane" | `create_primitive_shape` (Plane) |
+| "spawn a cone" | `create_primitive_shape` (Cone) |
+| "make a box" | `create_primitive_shape` (Box) |
 
 ### Scene Management
 | Voice Command | MCP Tool |
@@ -105,8 +105,10 @@ bridge.StartListening();
 | "save" / "save world" | `save_world` |
 | "load world MyWorld" | `load_world` |
 | "list worlds" | `list_worlds` |
-| "show hierarchy" | `get_scene_hierarchy` |
-| "select Player" | `select_scene_node` |
+| "show hierarchy" | `list_scene_nodes` |
+| "select Player" | `select_node_by_name` |
+
+Legacy tool names such as `get_scene_hierarchy`, `select_scene_node`, and `delete_selected` are still accepted by MCP alias mapping for backward compatibility.
 
 ### Play Mode
 | Voice Command | MCP Tool |

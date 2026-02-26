@@ -381,10 +381,18 @@ namespace XREngine.Components.Physics
 
         private void ApplyCachedProperties(IAbstractStaticRigidBody? body)
         {
-            if (body is not PhysxActor actor)
+            if (body is PhysxActor actor)
+            {
+                ApplyCachedProperties(actor);
                 return;
+            }
 
-            ApplyCachedProperties(actor);
+            if (body is JoltStaticRigidBody jolt)
+            {
+                jolt.SetObjectLayer(_collisionGroup, _groupsMask.Word0);
+                if (!_simulationEnabled)
+                    Debug.Physics("[StaticRigidBodyComponent] Jolt does not currently support SimulationEnabled parity for static bodies; value cached only.");
+            }
         }
 
         private void ApplyCachedProperties(PhysxActor actor)

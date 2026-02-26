@@ -37,6 +37,10 @@ The MCP server settings are located in the **Global Editor Preferences** panel u
 | `McpServerReadOnly` | Block mutating tools and allow read-only operations only | `false` |
 | `McpServerAllowedTools` | Optional allow-list of tool names (comma/semicolon/newline separated) | `""` |
 | `McpServerDeniedTools` | Optional deny-list of tool names (comma/semicolon/newline separated) | `""` |
+| `McpServerRateLimitEnabled` | Enable per-client request rate limiting | `false` |
+| `McpServerRateLimitRequests` | Max requests allowed per client in each window | `120` |
+| `McpServerRateLimitWindowSeconds` | Rate-limit window duration in seconds | `60` |
+| `McpServerIncludeStatusInPing` | Include expanded health/status payload in `ping` response | `true` |
 
 Changes take effect immediately - the server will start or stop based on the `McpServerEnabled` setting, and will restart on a new port if `McpServerPort` is changed while running.
 
@@ -129,6 +133,17 @@ Authorization: Bearer <McpServerAuthToken>
 - Requests that exceed `McpServerRequestTimeoutMs` are canceled.
 - If `McpServerReadOnly` is enabled, mutating tools are blocked.
 - `McpServerAllowedTools` and `McpServerDeniedTools` can be used to enforce per-tool policy.
+- If `McpServerRateLimitEnabled` is enabled, per-client requests above quota return `429` with `Retry-After`.
+
+### Health Status Endpoint
+
+The server exposes an optional status endpoint:
+
+```
+GET http://localhost:5467/mcp/status
+```
+
+The response includes protocol metadata, enabled methods, uptime, and active security/rate-limit configuration.
 
 ### Request Format
 
@@ -195,6 +210,102 @@ For detailed documentation of each command including parameters and return value
 | `create_primitive_shape`     | Create primitive nodes (cube/box/sphere/cone) |
 | `save_world` / `load_world`  | Save or load world assets                      |
 | `list_tools`                 | List MCP tools from inside a tool call         |
+
+### Tool Aliases (Backward Compatibility)
+
+These aliases are accepted by `tools/call` and resolved to current tool names:
+
+| Alias | Canonical Tool |
+|-------|----------------|
+| `get_scene_hierarchy` | `list_scene_nodes` |
+| `select_scene_node` | `select_node_by_name` |
+| `delete_selected` | `delete_selected_nodes` |
+
+### Runtime Tool Registry (Generated)
+
+Generated from `McpToolRegistry.Tools` via:
+
+```powershell
+pwsh Tools/Reports/generate_mcp_docs.ps1
+```
+
+<!-- MCP_TOOL_TABLE:START -->
+
+| Tool | Description |
+|------|-------------|
+| `add_component_to_node` | Add a component to a scene node by type name. |
+| `capture_viewport_screenshot` | Capture a screenshot from a viewport or camera for LLM context. |
+| `clear_selection` | Clear the current scene-node selection. |
+| `create_prefab_from_node` | Create a prefab asset from a scene node hierarchy. |
+| `create_primitive_shape` | Create a primitive shape node in the active scene. |
+| `create_scene` | Create a new scene in the active world. |
+| `create_scene_node` | Create a scene node in the active world/scene. |
+| `delete_scene` | Delete a scene from the active world. |
+| `delete_scene_node` | Delete a scene node and its hierarchy. |
+| `delete_selected_nodes` | Delete all currently selected scene nodes. |
+| `duplicate_scene_node` | Duplicate a scene node (optionally with children). |
+| `enter_play_mode` | Enter play mode. |
+| `exit_play_mode` | Exit play mode. |
+| `export_scene` | Export a scene asset to a directory. |
+| `find_nodes_by_name` | Find scene nodes by name (exact or contains). |
+| `find_nodes_by_type` | Find scene nodes that have a component type. |
+| `focus_node_in_view` | Focus the editor camera on a scene node. |
+| `get_asset_info` | Get detailed info about a loaded asset by ID or path. |
+| `get_component_property` | Get a component property or field value by name. |
+| `get_component_schema` | Get detailed component type schema including properties and fields. |
+| `get_engine_state` | Get engine/editor play mode and high-level state flags. |
+| `get_job_manager_state` | Get job manager queues, workers, and queue capacity. |
+| `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
+| `get_prefab_structure` | Get the node hierarchy for a prefab source or variant. |
+| `get_render_capabilities` | Get renderer capability flags (GPU, extensions, ray tracing). |
+| `get_render_state` | Get current rendering pipeline and camera state. |
+| `get_scene_node_info` | Get detailed info about a scene node, including transform and components. |
+| `get_scene_statistics` | Get scene statistics including node and component counts. |
+| `get_selection` | Get the currently selected scene nodes. |
+| `get_time_state` | Get timing, delta, and target frequency information. |
+| `get_transform_decomposed` | Get local/world/render translation, rotation, and scale for a scene node. |
+| `get_transform_matrices` | Get local/world/render matrices for a scene node. |
+| `get_undo_history` | Get undo/redo history entries. |
+| `import_scene` | Import a scene asset from disk and add it to the active world. |
+| `instantiate_prefab` | Instantiate a prefab into the active scene. |
+| `list_active_jobs` | List jobs currently executing. |
+| `list_component_types` | List available component types and metadata. |
+| `list_components` | List components on a scene node. |
+| `list_input_devices` | List available input devices and connection state. |
+| `list_layers` | List known layers and layers used in the active world. |
+| `list_loaded_assets` | List assets currently loaded by the asset manager. |
+| `list_local_players` | List local player controllers, viewports, and input presence. |
+| `list_prefabs` | List loaded prefab assets. |
+| `list_scene_nodes` | List scene nodes in the active world/scene. |
+| `list_scenes` | List scenes in the active world. |
+| `list_tags` | List tags on a node or across the active world. |
+| `list_tools` | List all MCP tools currently registered by the editor. |
+| `list_transform_children` | List immediate child transforms for a scene node. |
+| `list_transform_types` | List available transform types. |
+| `list_worlds` | List active world instances and their scenes. |
+| `load_world` | Load a world asset and set it as active on the current world instance. |
+| `move_node_sibling` | Reorder a scene node among siblings. |
+| `redo` | Redo the most recently undone editor change. |
+| `remove_component` | Remove a component from a scene node. |
+| `rename_scene_node` | Rename a scene node by ID. |
+| `reparent_node` | Reparent a scene node to a new parent. |
+| `rotate_transform` | Apply a local rotation to a scene node's transform (degrees). |
+| `save_world` | Save the active world asset to disk. |
+| `select_node` | Select one or more scene nodes in the editor. |
+| `select_node_by_name` | Select scene nodes by display name. |
+| `set_active_scene` | Set a scene as active (first in scene list). |
+| `set_component_property` | Set a component property or field value by name. |
+| `set_layer` | Set the layer for a scene node. |
+| `set_node_active` | Set whether a scene node is active in the hierarchy. |
+| `set_node_active_recursive` | Set active state on a node and its children. |
+| `set_node_transform` | Set a scene node transform (translation, rotation, scale). |
+| `set_node_world_transform` | Set a scene node world transform (translation, rotation, scale). |
+| `set_tag` | Assign or remove a tag on a scene node. |
+| `set_transform` | Set a scene node transform (translation, rotation, scale). |
+| `toggle_scene_visibility` | Toggle scene visibility. |
+| `undo` | Undo the most recent editor change. |
+| `validate_scene` | Validate a scene for common hierarchy issues. |
+<!-- MCP_TOOL_TABLE:END -->
 
 ---
 

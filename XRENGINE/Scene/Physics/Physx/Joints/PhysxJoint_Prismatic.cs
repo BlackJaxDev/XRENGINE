@@ -1,8 +1,9 @@
 ﻿using MagicPhysX;
+using XREngine.Scene.Physics.Joints;
 
 namespace XREngine.Rendering.Physics.Physx.Joints
 {
-    public unsafe class PhysxJoint_Prismatic(PxPrismaticJoint* joint) : PhysxJoint, IPrismaticJoint
+    public unsafe class PhysxJoint_Prismatic(PxPrismaticJoint* joint) : PhysxJoint, IPrismaticJoint, IAbstractPrismaticJoint
     {
         public PxPrismaticJoint* _joint = joint;
 
@@ -39,5 +40,28 @@ namespace XREngine.Rendering.Physics.Physx.Joints
 
         public void SetPrismaticJointFlag(PxPrismaticJointFlag flag, bool value)
             => _joint->SetPrismaticJointFlagMut(flag, value);
+
+        #region IAbstractPrismaticJoint
+
+        float IAbstractPrismaticJoint.Position => Position;
+        float IAbstractPrismaticJoint.Velocity => Velocity;
+
+        bool IAbstractPrismaticJoint.EnableLimit
+        {
+            get => PrismaticFlags.HasFlag(PxPrismaticJointFlags.LimitEnabled);
+            set => SetPrismaticJointFlag(PxPrismaticJointFlag.LimitEnabled, value);
+        }
+
+        JointLinearLimitPair IAbstractPrismaticJoint.Limit
+        {
+            get
+            {
+                var (lower, upper, restitution, bounceThreshold, stiffness, damping) = Limit;
+                return new JointLinearLimitPair(lower, upper, stiffness, damping, restitution, bounceThreshold);
+            }
+            set => Limit = (value.Lower, value.Upper, value.Restitution, value.BounceThreshold, value.Stiffness, value.Damping);
+        }
+
+        #endregion
     }
 }

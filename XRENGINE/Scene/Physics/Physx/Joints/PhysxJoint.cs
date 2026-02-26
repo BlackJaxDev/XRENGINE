@@ -1,9 +1,10 @@
 ﻿using MagicPhysX;
 using System.Numerics;
+using XREngine.Scene.Physics.Joints;
 
 namespace XREngine.Rendering.Physics.Physx.Joints
 {
-    public abstract unsafe class PhysxJoint
+    public abstract unsafe class PhysxJoint : IAbstractJoint
     {
         public abstract PxJoint* JointBase { get; }
 
@@ -110,5 +111,61 @@ namespace XREngine.Rendering.Physics.Physx.Joints
         }
         public void SetActors(PxRigidActor* actor0, PxRigidActor* actor1)
             => JointBase->SetActorsMut(actor0, actor1);
+
+        #region IAbstractJoint
+
+        JointAnchor IAbstractJoint.LocalFrameA
+        {
+            get
+            {
+                var (p, q) = LocalPoseActor0;
+                return new JointAnchor(p, q);
+            }
+            set => LocalPoseActor0 = (value.Position, value.Rotation);
+        }
+
+        JointAnchor IAbstractJoint.LocalFrameB
+        {
+            get
+            {
+                var (p, q) = LocalPoseActor1;
+                return new JointAnchor(p, q);
+            }
+            set => LocalPoseActor1 = (value.Position, value.Rotation);
+        }
+
+        float IAbstractJoint.BreakForce
+        {
+            get => BreakForce.force;
+            set => BreakForce = (value, BreakForce.torque);
+        }
+
+        float IAbstractJoint.BreakTorque
+        {
+            get => BreakForce.torque;
+            set => BreakForce = (BreakForce.force, value);
+        }
+
+        Vector3 IAbstractJoint.RelativeLinearVelocity => RelativeLinearVelocity;
+        Vector3 IAbstractJoint.RelativeAngularVelocity => RelativeAngularVelocity;
+
+        float IAbstractJoint.InvMassScaleA { get => InvMassScale0; set => InvMassScale0 = value; }
+        float IAbstractJoint.InvMassScaleB { get => InvMassScale1; set => InvMassScale1 = value; }
+        float IAbstractJoint.InvInertiaScaleA { get => InvInertiaScale0; set => InvInertiaScale0 = value; }
+        float IAbstractJoint.InvInertiaScaleB { get => InvInertiaScale1; set => InvInertiaScale1 = value; }
+
+        bool IAbstractJoint.EnableCollision
+        {
+            get => Flags.HasFlag(PxConstraintFlags.CollisionEnabled);
+            set => SetFlag(PxConstraintFlag.CollisionEnabled, value);
+        }
+
+        bool IAbstractJoint.EnablePreprocessing
+        {
+            get => !Flags.HasFlag(PxConstraintFlags.DisablePreprocessing);
+            set => SetFlag(PxConstraintFlag.DisablePreprocessing, !value);
+        }
+
+        #endregion
     }
 }
