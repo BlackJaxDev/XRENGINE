@@ -280,6 +280,13 @@ public static partial class EditorImGuiUI
                 DrawArchiveDetailRow("File Size", FormatBytes(info.FileSize));
                 DrawArchiveDetailRow("Magic", $"0x{info.MagicNumber:X8} (\"FREK\")");
                 DrawArchiveDetailRow("Version", info.Version.ToString());
+                DrawArchiveDetailRow("Flags", info.Flags.ToString());
+                if (info.BuildTimestampUtcTicks > 0)
+                {
+                    DateTime buildUtc = new(info.BuildTimestampUtcTicks, DateTimeKind.Utc);
+                    DrawArchiveDetailRow("Build Timestamp", buildUtc.ToString("u"));
+                }
+                DrawArchiveDetailRow("Dead Bytes", FormatBytes(info.DeadBytes));
                 DrawArchiveDetailRow("Lookup Mode", info.LookupMode.ToString());
                 DrawArchiveDetailRow("File Count", info.FileCount.ToString());
                 DrawArchiveDetailRow("Total Compressed", FormatBytes(info.TotalCompressedBytes));
@@ -386,8 +393,11 @@ public static partial class EditorImGuiUI
                 {
                     ImGui.BeginTooltip();
                     ImGui.Text($"Compressed: {FormatBytes(child.Entry!.Value.CompressedSize)}");
+                    ImGui.Text($"Uncompressed: {FormatBytes(child.Entry!.Value.UncompressedSize)}");
+                    ImGui.Text($"Codec: {child.Entry!.Value.Codec}");
                     ImGui.Text($"Hash: 0x{child.Entry!.Value.Hash:X8}");
                     ImGui.Text($"Offset: 0x{child.Entry!.Value.DataOffset:X}");
+                    ImGui.Text($"Content XXH64: 0x{child.Entry!.Value.ContentHash:X16}");
                     ImGui.EndTooltip();
                 }
             }
@@ -490,6 +500,14 @@ public static partial class EditorImGuiUI
             DrawArchiveDetailRow("Hash", $"0x{entry.Hash:X8}");
             DrawArchiveDetailRow("Data Offset", $"0x{entry.DataOffset:X}");
             DrawArchiveDetailRow("Compressed Size", FormatBytes(entry.CompressedSize));
+            DrawArchiveDetailRow("Uncompressed Size", FormatBytes(entry.UncompressedSize));
+            DrawArchiveDetailRow("Codec", entry.Codec.ToString());
+            DrawArchiveDetailRow("Content XXH64", $"0x{entry.ContentHash:X16}");
+            if (entry.SourceTimestampUtcTicks > 0)
+            {
+                DateTime sourceUtc = new(entry.SourceTimestampUtcTicks, DateTimeKind.Utc);
+                DrawArchiveDetailRow("Source Timestamp", sourceUtc.ToString("u"));
+            }
 
             if (_archiveInspectorDecompressedData is not null)
                 DrawArchiveDetailRow("Decompressed Size", FormatBytes(_archiveInspectorDecompressedData.Length));

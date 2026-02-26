@@ -694,6 +694,7 @@ internal class Program
             out string? outputSubfolderArg,
             out string? launcherNameArg,
             out bool? publishNativeAot,
+            out string? defineConstantsArg,
             out string? error))
         {
             if (buildFlagSeen)
@@ -720,7 +721,8 @@ internal class Program
                 platformArg,
                 outputSubfolderArg,
                 launcherNameArg,
-                publishNativeAot);
+                publishNativeAot,
+                defineConstantsArg);
 
             Environment.ExitCode = 0;
         }
@@ -906,6 +908,7 @@ internal class Program
         out string? outputSubfolderArg,
         out string? launcherNameArg,
         out bool? publishNativeAot,
+        out string? defineConstantsArg,
         out string? error)
     {
         buildFlagSeen = false;
@@ -915,6 +918,7 @@ internal class Program
         outputSubfolderArg = null;
         launcherNameArg = null;
         publishNativeAot = null;
+        defineConstantsArg = null;
         error = null;
 
         for (int i = 0; i < args.Length; i++)
@@ -989,6 +993,17 @@ internal class Program
 
                     publishNativeAot = boolValue;
                     break;
+
+                case "--define-constants":
+                case "--launcher-define-constants":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --define-constants.";
+                        return false;
+                    }
+
+                    defineConstantsArg = args[++i];
+                    break;
             }
         }
 
@@ -1010,7 +1025,8 @@ internal class Program
         string? platformArg,
         string? outputSubfolderArg,
         string? launcherNameArg,
-        bool? publishNativeAot)
+        bool? publishNativeAot,
+        string? defineConstantsArg)
     {
         ConfigureMsBuildEnvironmentForHeadlessBuild();
 
@@ -1056,6 +1072,13 @@ internal class Program
 
         if (publishNativeAot.HasValue)
             settings.PublishLauncherAsNativeAot = publishNativeAot.Value;
+
+        if (!string.IsNullOrWhiteSpace(defineConstantsArg))
+            settings.LauncherDefineConstants = defineConstantsArg.Trim();
+        else if (settings.PublishLauncherAsNativeAot)
+            settings.LauncherDefineConstants = "XRE_PUBLISHED";
+        else
+            settings.LauncherDefineConstants = string.Empty;
 
         Engine.BuildSettings = settings;
         Console.WriteLine($"Resolved build settings: BuildManagedAssemblies={settings.BuildManagedAssemblies}, CopyGameAssemblies={settings.CopyGameAssemblies}, BuildLauncherExecutable={settings.BuildLauncherExecutable}");

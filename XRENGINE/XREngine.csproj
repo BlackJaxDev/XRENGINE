@@ -148,6 +148,7 @@
     <PackageReference Include="Silk.NET.OpenGL.Extensions.KHR" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenGL.Extensions.NV" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenGL.Extensions.OVR" Version="2.23.0" />
+    <PackageReference Include="System.IO.Hashing" Version="10.0.3" />
     <PackageReference Include="System.Management" Version="10.0.3" />
     <PackageReference Include="Silk.NET.OpenGLES.Extensions.EXT" Version="2.23.0" />
     <PackageReference Include="Silk.NET.OpenGLES.Extensions.NV" Version="2.23.0" />
@@ -278,13 +279,8 @@
     </ItemGroup>
 
     <MakeDir Directories="$(HlsReferenceFfmpegDir)" Condition="'@(FlyleafFfmpegDll)' != ''" />
-    <Copy SourceFiles="@(FlyleafFfmpegDll)"
-          DestinationFolder="$(HlsReferenceFfmpegDir)"
-          SkipUnchangedFiles="true"
-          Condition="'@(FlyleafFfmpegDll)' != ''" />
-    <Message Text="Seeded HLS FFmpeg runtime from Flyleaf binaries into $(HlsReferenceFfmpegDir)."
-             Importance="High"
-             Condition="'@(FlyleafFfmpegDll)' != ''" />
+    <Copy SourceFiles="@(FlyleafFfmpegDll)" DestinationFolder="$(HlsReferenceFfmpegDir)" SkipUnchangedFiles="true" Condition="'@(FlyleafFfmpegDll)' != ''" />
+    <Message Text="Seeded HLS FFmpeg runtime from Flyleaf binaries into $(HlsReferenceFfmpegDir)." Importance="High" Condition="'@(FlyleafFfmpegDll)' != ''" />
   </Target>
 
   <Target Name="ForceFreetype64" AfterTargets="Build" Condition="Exists('$(Freetype64Source)')">

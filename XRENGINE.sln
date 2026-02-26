@@ -29,8 +29,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.Profiler", "XREngi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XREngine.Profiler.UI", "XREngine.Profiler.UI\XREngine.Profiler.UI.csproj", "{775270A7-8636-477C-9155-7C6E01792A02}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VR_MonkeyBall_Sample", "VR_MonkeyBall_Sample\VR_MonkeyBall_Sample.csproj", "{AFD6FE91-52A4-46E5-A994-81EEBEEF59D8}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU

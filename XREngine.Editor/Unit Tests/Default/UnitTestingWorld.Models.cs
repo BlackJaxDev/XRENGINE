@@ -177,7 +177,7 @@ public static partial class EditorUnitTests
             string cwd = Environment.CurrentDirectory;
 
             // Mirrors how Rive loads assets: treat names as relative to the current working directory.
-            // The editor is usually launched with cwd = 'XREngine.Editor' (see run_editor.bat).
+            // The editor is usually launched with cwd = 'XREngine.Editor' (see Start-Editor.bat).
             string candidate = Path.Combine(cwd, rawPath);
             if (File.Exists(candidate))
                 return candidate;

@@ -9,6 +9,8 @@ namespace XREngine.Core.Files
         // Optimized string compression with prefix and dictionary compression
         private class StringCompressor
         {
+            #region Fields
+
             private List<string> _strings = [];
             private Dictionary<string, int> _stringOffsets = new(StringComparer.Ordinal);
             private readonly Dictionary<string, int> _commonSubstrings = new(StringComparer.Ordinal);
@@ -16,6 +18,10 @@ namespace XREngine.Core.Files
 
             // Offset relative to the beginning of the serialized string table data.
             public long DictionaryOffset { get; private set; }
+
+            #endregion
+
+            #region Constructors
 
             public StringCompressor(IEnumerable<string> strings)
             {
@@ -84,6 +90,10 @@ namespace XREngine.Core.Files
                 }
             }
 
+            #endregion
+
+            #region Table Building
+
             private void BuildUncompressedTable(IEnumerable<string> strings)
             {
                 _strings.Clear();
@@ -129,11 +139,19 @@ namespace XREngine.Core.Files
                 return builder.ToArray();
             }
 
+            #endregion
+
+            #region Lookup
+
             public int GetStringOffset(string str)
                 => _stringOffsets[str];
 
             public string GetString(int index)
                 => _strings[index];
+
+            #endregion
+
+            #region Nested Types
 
             private sealed class BufferBuilder
             {
@@ -170,6 +188,8 @@ namespace XREngine.Core.Files
                 public byte[] ToArray()
                     => _buffer.WrittenSpan.ToArray();
             }
+
+            #endregion
         }
     }
 }

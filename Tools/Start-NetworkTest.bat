@@ -10,8 +10,8 @@ echo   XREngine Network Test Launcher
 echo ============================================================
 echo.
 echo Usage:
-echo   run_network_test.bat           ^(server + client^)
-echo   run_network_test.bat pose      ^(server + pose source + pose receiver^)
+echo   Start-NetworkTest.bat           ^(server + client^)
+echo   Start-NetworkTest.bat pose      ^(server + pose source + pose receiver^)
 echo.
 
 if not exist "%EDITOR_EXE%" (

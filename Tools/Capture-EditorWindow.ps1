@@ -1,6 +1,6 @@
-# capture_xrengine.ps1
+# Capture-EditorWindow.ps1
 # Captures only the XREngine.Editor window by its process name.
-# Usage:  powershell -ExecutionPolicy Bypass -File Tools\capture_xrengine.ps1
+# Usage:  powershell -ExecutionPolicy Bypass -File Tools\Capture-EditorWindow.ps1
 # Output: Build\Logs\capture.png  (overwritten each run)
 #         Also prints per-pixel diagnostics to stdout.
 

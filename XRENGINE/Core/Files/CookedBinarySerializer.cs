@@ -186,6 +186,23 @@ public sealed unsafe class CookedBinaryReader : IDisposable
 
     public long Remaining => _end - _cursor;
 
+    /// <summary>The raw base pointer of the underlying buffer (mmap or pinned array).</summary>
+    internal byte* BaseAddress => _start;
+
+    /// <summary>
+    /// Returns a <see cref="ReadOnlySpan{T}"/> over the underlying buffer at the given
+    /// absolute <paramref name="offset"/> without copying or advancing the cursor.
+    /// The caller must ensure the <see cref="FileMap"/> (if any) stays alive for the
+    /// span's lifetime.
+    /// </summary>
+    internal ReadOnlySpan<byte> GetSpan(long offset, int length)
+    {
+        byte* target = _start + offset;
+        if (target < _start || target + length > _end)
+            throw new ArgumentOutOfRangeException(nameof(offset));
+        return new ReadOnlySpan<byte>(target, length);
+    }
+
     public void Dispose()
         => _map?.Dispose();
 
