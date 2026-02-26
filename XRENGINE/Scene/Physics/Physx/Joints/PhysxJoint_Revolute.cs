@@ -1,8 +1,9 @@
 ﻿using MagicPhysX;
+using XREngine.Scene.Physics.Joints;
 
 namespace XREngine.Rendering.Physics.Physx.Joints
 {
-    public unsafe class PhysxJoint_Revolute(PxRevoluteJoint* joint) : PhysxJoint, IHingeJoint
+    public unsafe class PhysxJoint_Revolute(PxRevoluteJoint* joint) : PhysxJoint, IHingeJoint, IAbstractHingeJoint
     {
         public PxRevoluteJoint* _joint = joint;
 
@@ -63,5 +64,44 @@ namespace XREngine.Rendering.Physics.Physx.Joints
 
         public void SetRevoluteJointFlag(PxRevoluteJointFlag flag, bool value)
             => _joint->SetRevoluteJointFlagMut(flag, value);
+
+        #region IAbstractHingeJoint
+
+        float IAbstractHingeJoint.AngleRadians => GetAngleRad();
+        float IAbstractHingeJoint.Velocity => GetVelocity();
+
+        bool IAbstractHingeJoint.EnableLimit
+        {
+            get => RevoluteFlags.HasFlag(PxRevoluteJointFlags.LimitEnabled);
+            set => SetRevoluteJointFlag(PxRevoluteJointFlag.LimitEnabled, value);
+        }
+
+        JointAngularLimitPair IAbstractHingeJoint.Limit
+        {
+            get
+            {
+                var (lower, upper, restitution, bounceThreshold, stiffness, damping) = Limit;
+                return new JointAngularLimitPair(lower, upper, stiffness, damping, restitution, bounceThreshold);
+            }
+            set => Limit = (value.LowerRadians, value.UpperRadians, value.Restitution, value.BounceThreshold, value.Stiffness, value.Damping);
+        }
+
+        bool IAbstractHingeJoint.EnableDrive
+        {
+            get => RevoluteFlags.HasFlag(PxRevoluteJointFlags.DriveEnabled);
+            set => SetRevoluteJointFlag(PxRevoluteJointFlag.DriveEnabled, value);
+        }
+
+        float IAbstractHingeJoint.DriveVelocity { get => DriveVelocity; set => DriveVelocity = value; }
+        float IAbstractHingeJoint.DriveForceLimit { get => DriveForceLimit; set => DriveForceLimit = value; }
+        float IAbstractHingeJoint.DriveGearRatio { get => DriveGearRatio; set => DriveGearRatio = value; }
+
+        bool IAbstractHingeJoint.DriveIsFreeSpin
+        {
+            get => RevoluteFlags.HasFlag(PxRevoluteJointFlags.DriveFreespin);
+            set => SetRevoluteJointFlag(PxRevoluteJointFlag.DriveFreespin, value);
+        }
+
+        #endregion
     }
 }

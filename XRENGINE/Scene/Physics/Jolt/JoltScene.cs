@@ -4,6 +4,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Scene;
+using XREngine.Scene.Physics.Joints;
 using XREngine.Rendering.Physics.Physx;
 using Ray = JoltPhysicsSharp.Ray;
 
@@ -45,6 +46,8 @@ namespace XREngine.Scene.Physics.Jolt
         private Dictionary<BodyID, JoltRigidActor> _rigidActors = new();
         private Dictionary<BodyID, JoltStaticRigidBody> _staticBodies = new();
         private Dictionary<BodyID, JoltDynamicRigidBody> _dynamicBodies = new();
+        private readonly HashSet<IAbstractJoint> _joints = [];
+        private BodyID _worldAnchorBodyID;
 
         public PhysicsSystem? PhysicsSystem => _physicsSystem;
         public JobSystem? JobSystem => _jobSystem;
@@ -197,6 +200,8 @@ namespace XREngine.Scene.Physics.Jolt
             _rigidActors.Clear();
             _staticBodies.Clear();
             _dynamicBodies.Clear();
+            _joints.Clear();
+            _worldAnchorBodyID = new BodyID(0);
 
             (_physicsSystem as IDisposable)?.Dispose();
             _physicsSystem = null;
@@ -205,11 +210,11 @@ namespace XREngine.Scene.Physics.Jolt
             _jobSystem = null;
         }
 
-        // Collision layers - matching the official JoltPhysicsSharp samples
-        private const int NumLayers = 2;
-        private ObjectLayerPairFilterTable? _objectLayerPairFilter;
-        private BroadPhaseLayerInterfaceTable? _broadPhaseLayerInterface;
-        private ObjectVsBroadPhaseLayerFilterTable? _objectVsBroadPhaseLayerFilter;
+        // Collision filtering based on Jolt object-layer masks.
+        private const int NumBroadPhaseLayers = 2;
+        private ObjectLayerPairFilterMask? _objectLayerPairFilter;
+        private BroadPhaseLayerInterfaceMask? _broadPhaseLayerInterface;
+        private ObjectVsBroadPhaseLayerFilterMask? _objectVsBroadPhaseLayerFilter;
 
         public override void Initialize()
         {
@@ -234,17 +239,13 @@ namespace XREngine.Scene.Physics.Jolt
                 try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] JobSystemThreadPool created successfully.{Environment.NewLine}"); } catch { }
 
                 // Set up collision filtering (required by PhysicsSystem)
-                // Layer 0 = NonMoving (static), Layer 1 = Moving (dynamic)
-                _objectLayerPairFilter = new ObjectLayerPairFilterTable(NumLayers);
-                _objectLayerPairFilter.EnableCollision(0, 1); // NonMoving vs Moving
-                _objectLayerPairFilter.EnableCollision(1, 1); // Moving vs Moving
-
-                // BroadPhase: 0 = NonMoving, 1 = Moving
-                _broadPhaseLayerInterface = new BroadPhaseLayerInterfaceTable(NumLayers, NumLayers);
-                _broadPhaseLayerInterface.MapObjectToBroadPhaseLayer(0, 0); // ObjectLayer 0 -> BroadPhaseLayer 0
-                _broadPhaseLayerInterface.MapObjectToBroadPhaseLayer(1, 1); // ObjectLayer 1 -> BroadPhaseLayer 1
-
-                _objectVsBroadPhaseLayerFilter = new ObjectVsBroadPhaseLayerFilterTable(_broadPhaseLayerInterface, NumLayers, _objectLayerPairFilter, NumLayers);
+                _objectLayerPairFilter = new ObjectLayerPairFilterMask();
+                _broadPhaseLayerInterface = new BroadPhaseLayerInterfaceMask(NumBroadPhaseLayers);
+                var staticLayer = new BroadPhaseLayer(0);
+                var movingLayer = new BroadPhaseLayer(1);
+                _broadPhaseLayerInterface.ConfigureLayer(staticLayer, 1u << 0, 0u);
+                _broadPhaseLayerInterface.ConfigureLayer(movingLayer, 0xFFFFFFFEu, 0u);
+                _objectVsBroadPhaseLayerFilter = new ObjectVsBroadPhaseLayerFilterMask(_broadPhaseLayerInterface);
 
                 PhysicsSystemSettings settings = new()
                 {
@@ -292,6 +293,7 @@ namespace XREngine.Scene.Physics.Jolt
                     UseManifoldReduction = true,
                 };
                 _physicsSystem = system;
+                EnsureWorldAnchorBody();
                 System.Diagnostics.Debug.WriteLine("[JoltScene] Initialize() completed successfully.");
             }
             catch (Exception ex)
@@ -342,6 +344,9 @@ namespace XREngine.Scene.Physics.Jolt
                 if (!_actors.TryGetValue(hitBodyID, out var hitActor))
                     continue;
 
+                if (!IsBodyLayerIncluded(hitBodyID, layerMask))
+                    continue;
+
                 var component = hitActor.GetOwningComponent();
                 if (component is null)
                     continue;
@@ -385,6 +390,9 @@ namespace XREngine.Scene.Physics.Jolt
                 if (!_actors.TryGetValue(hitBodyID, out var hitActor))
                     continue;
 
+                if (!IsBodyLayerIncluded(hitBodyID, layerMask))
+                    continue;
+
                 var component = hitActor.GetOwningComponent();
                 if (component is null)
                     continue;
@@ -423,6 +431,11 @@ namespace XREngine.Scene.Physics.Jolt
                     return false;
                 }
                 var hit = hits[0];
+                if (!IsBodyLayerIncluded(hit.BodyID, layerMask))
+                {
+                    hitFaceIndex = 0;
+                    return false;
+                }
                 hitFaceIndex = hit.subShapeID2;
                 return true;
             }
@@ -453,6 +466,9 @@ namespace XREngine.Scene.Physics.Jolt
             bool hasHit = false;
             foreach (var hit in hits)
             {
+                if (!IsBodyLayerIncluded(hit.BodyID, layerMask))
+                    continue;
+
                 if (_actors.TryGetValue(hit.BodyID, out var hitActor))
                 {
                     var component = hitActor.GetOwningComponent();
@@ -505,6 +521,12 @@ namespace XREngine.Scene.Physics.Jolt
                     return false;
                 }
                 var hit = hits[0];
+                if (!IsBodyLayerIncluded(hit.BodyID, layerMask))
+                {
+                    finishedCallback?.Invoke(items);
+                    return false;
+                }
+
                 if (_actors.TryGetValue(hit.BodyID, out var hitActor))
                 {
                     var component = hitActor.GetOwningComponent();
@@ -552,6 +574,116 @@ namespace XREngine.Scene.Physics.Jolt
 
         public static ObjectLayer GetObjectLayer(uint group, uint mask)
             => ObjectLayerPairFilterMask.GetObjectLayer(group, mask);
+
+        internal Vector3 GetBodyLinearVelocity(BodyID bodyID)
+            => _physicsSystem is null ? Vector3.Zero : _physicsSystem.BodyInterface.GetLinearVelocity(bodyID);
+
+        internal Vector3 GetBodyAngularVelocity(BodyID bodyID)
+            => _physicsSystem is null ? Vector3.Zero : _physicsSystem.BodyInterface.GetAngularVelocity(bodyID);
+
+        internal Vector3 GetBodyPosition(BodyID bodyID)
+            => _physicsSystem is null ? Vector3.Zero : _physicsSystem.BodyInterface.GetPosition(bodyID);
+
+        internal bool IsBodyLayerIncluded(BodyID bodyID, LayerMask layerMask)
+        {
+            if (_physicsSystem is null)
+                return false;
+
+            uint queryMask = unchecked((uint)layerMask.Value);
+            if (queryMask == 0)
+                return true;
+
+            ObjectLayer objectLayer = _physicsSystem.BodyInterface.GetObjectLayer(bodyID);
+            uint bodyGroup = ObjectLayerPairFilterMask.GetGroup(objectLayer);
+            return (queryMask & (1u << (int)bodyGroup)) != 0;
+        }
+
+        internal BodyID EnsureWorldAnchorBody()
+        {
+            if (_physicsSystem is null)
+                return new BodyID(0);
+
+            if (!_worldAnchorBodyID.IsInvalid)
+                return _worldAnchorBodyID;
+
+            BodyCreationSettings settings = new(
+                new BoxShape(new Vector3(0.05f), 0.0f),
+                Vector3.Zero,
+                Quaternion.Identity,
+                MotionType.Static,
+                new LayerMask(1).AsJoltObjectLayer());
+
+            _worldAnchorBodyID = _physicsSystem.BodyInterface.CreateAndAddBody(settings, Activation.DontActivate);
+            return _worldAnchorBodyID;
+        }
+
+        private bool TryGetBody(BodyID bodyID, out Body body)
+        {
+            body = default;
+            if (_physicsSystem is null || bodyID.IsInvalid)
+                return false;
+
+            var lockInterface = _physicsSystem.BodyLockInterface;
+            BodyLockRead bodyLock = default;
+            lockInterface.LockRead(bodyID, out bodyLock);
+            try
+            {
+                if (!bodyLock.Succeeded)
+                    return false;
+
+                body = bodyLock.Body;
+                return true;
+            }
+            finally
+            {
+                lockInterface.UnlockRead(bodyLock);
+            }
+        }
+
+        internal bool WithBodyWrite(BodyID bodyID, Action<Body> action)
+        {
+            if (_physicsSystem is null || bodyID.IsInvalid)
+                return false;
+
+            var lockInterface = _physicsSystem.BodyLockInterface;
+            BodyLockWrite bodyLock = default;
+            lockInterface.LockWrite(bodyID, out bodyLock);
+            try
+            {
+                if (!bodyLock.Succeeded)
+                    return false;
+
+                action(bodyLock.Body);
+                return true;
+            }
+            finally
+            {
+                lockInterface.UnlockWrite(bodyLock);
+            }
+        }
+
+        private BodyID ResolveJoltBody(IAbstractPhysicsActor? actor)
+            => actor is JoltActor jolt ? jolt.BodyID : EnsureWorldAnchorBody();
+
+        private bool TryBuildConstraint<TConstraint>(
+            BodyID bodyA,
+            BodyID bodyB,
+            Func<Body, Body, TConstraint> create,
+            out TConstraint? constraint)
+            where TConstraint : Constraint
+        {
+            constraint = null;
+
+            if (_physicsSystem is null)
+                return false;
+
+            if (!TryGetBody(bodyA, out var a) || !TryGetBody(bodyB, out var b))
+                return false;
+
+            constraint = create(a, b);
+            _physicsSystem.AddConstraint(constraint);
+            return true;
+        }
 
         public override void StepSimulation()
         {
@@ -622,6 +754,9 @@ namespace XREngine.Scene.Physics.Jolt
                 if (!_actors.TryGetValue(hitBodyID, out var hitActor))
                     continue;
 
+                if (!IsBodyLayerIncluded(hitBodyID, layerMask))
+                    continue;
+
                 // Filter by motion type to match PhysX query flags behavior
                 var motionType = _physicsSystem.BodyInterface.GetMotionType(hitBodyID);
                 if (motionType == MotionType.Static && !includeStatic)
@@ -674,6 +809,9 @@ namespace XREngine.Scene.Physics.Jolt
             {
                 var hitBodyID = result.BodyID2;
                 if (!_actors.TryGetValue(hitBodyID, out var hitActor))
+                    continue;
+
+                if (!IsBodyLayerIncluded(hitBodyID, layerMask))
                     continue;
 
                 // Filter by motion type to match PhysX query flags behavior
@@ -747,6 +885,9 @@ namespace XREngine.Scene.Physics.Jolt
                 if (!_actors.TryGetValue(hitBodyID, out var hitActor))
                     continue;
 
+                if (!IsBodyLayerIncluded(hitBodyID, layerMask))
+                    continue;
+
                 // Filter by motion type to match PhysX query flags behavior
                 var motionType = _physicsSystem.BodyInterface.GetMotionType(hitBodyID);
                 if (motionType == MotionType.Static && !includeStatic)
@@ -806,5 +947,208 @@ namespace XREngine.Scene.Physics.Jolt
             var adjustedPosition = pose.position + Vector3.Transform(offsetTranslation, pose.rotation);
             return (adjustedPosition, adjustedRotation);
         }
+
+        #region Joint Factory
+
+        public override IAbstractFixedJoint CreateFixedJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+        {
+            BodyID a = ResolveJoltBody(actorA);
+            BodyID b = ResolveJoltBody(actorB);
+
+            FixedConstraintSettings settings = new()
+            {
+                Space = ConstraintSpace.LocalToBodyCOM,
+                AutoDetectPoint = false,
+                Point1 = localFrameA.Position,
+                Point2 = localFrameB.Position,
+                AxisX1 = Vector3.UnitX,
+                AxisY1 = Vector3.UnitY,
+                AxisX2 = Vector3.UnitX,
+                AxisY2 = Vector3.UnitY,
+            };
+
+            if (!TryBuildConstraint(a, b, (body1, body2) => new FixedConstraint(settings, body1, body2), out FixedConstraint? constraint)
+                || constraint is null)
+                throw new InvalidOperationException("Failed to create Jolt fixed joint.");
+
+            var joint = new JoltFixedJoint(this, constraint, a, b, localFrameA, localFrameB);
+            _joints.Add(joint);
+            return joint;
+        }
+
+        public override IAbstractDistanceJoint CreateDistanceJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+        {
+            BodyID a = ResolveJoltBody(actorA);
+            BodyID b = ResolveJoltBody(actorB);
+
+            DistanceConstraintSettings settings = new()
+            {
+                Space = ConstraintSpace.LocalToBodyCOM,
+                Point1 = localFrameA.Position,
+                Point2 = localFrameB.Position,
+                MinDistance = 0.0f,
+                MaxDistance = float.MaxValue,
+                LimitsSpringSettings = new SpringSettings(SpringMode.StiffnessAndDamping, 0.0f, 0.0f)
+            };
+
+            if (!TryBuildConstraint(a, b, (body1, body2) => new DistanceConstraint(settings, body1, body2), out DistanceConstraint? constraint)
+                || constraint is null)
+                throw new InvalidOperationException("Failed to create Jolt distance joint.");
+
+            var joint = new JoltDistanceJoint(this, constraint, a, b, localFrameA, localFrameB);
+            _joints.Add(joint);
+            return joint;
+        }
+
+        public override IAbstractHingeJoint CreateHingeJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+        {
+            BodyID a = ResolveJoltBody(actorA);
+            BodyID b = ResolveJoltBody(actorB);
+
+            HingeConstraintSettings settings = new()
+            {
+                Space = ConstraintSpace.LocalToBodyCOM,
+                Point1 = localFrameA.Position,
+                Point2 = localFrameB.Position,
+                HingeAxis1 = Vector3.UnitX,
+                HingeAxis2 = Vector3.UnitX,
+                NormalAxis1 = Vector3.UnitY,
+                NormalAxis2 = Vector3.UnitY,
+                LimitsMin = -float.Pi,
+                LimitsMax = float.Pi,
+                LimitsSpringSettings = new SpringSettings(SpringMode.StiffnessAndDamping, 0.0f, 0.0f),
+                MotorSettings = new MotorSettings(),
+                MaxFrictionTorque = float.MaxValue,
+            };
+
+            if (!TryBuildConstraint(a, b, (body1, body2) => new HingeConstraint(settings, body1, body2), out HingeConstraint? constraint)
+                || constraint is null)
+                throw new InvalidOperationException("Failed to create Jolt hinge joint.");
+
+            var joint = new JoltHingeJoint(this, constraint, a, b, localFrameA, localFrameB);
+            _joints.Add(joint);
+            return joint;
+        }
+
+        public override IAbstractPrismaticJoint CreatePrismaticJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+        {
+            BodyID a = ResolveJoltBody(actorA);
+            BodyID b = ResolveJoltBody(actorB);
+
+            SliderConstraintSettings settings = new()
+            {
+                Space = ConstraintSpace.LocalToBodyCOM,
+                AutoDetectPoint = false,
+                Point1 = localFrameA.Position,
+                Point2 = localFrameB.Position,
+                SliderAxis1 = Vector3.UnitX,
+                SliderAxis2 = Vector3.UnitX,
+                NormalAxis1 = Vector3.UnitY,
+                NormalAxis2 = Vector3.UnitY,
+                LimitsMin = 0.0f,
+                LimitsMax = 0.0f,
+                LimitsSpringSettings = new SpringSettings(SpringMode.StiffnessAndDamping, 0.0f, 0.0f),
+                MotorSettings = new MotorSettings(),
+                MaxFrictionForce = float.MaxValue,
+            };
+
+            if (!TryBuildConstraint(a, b, (body1, body2) => new SliderConstraint(settings, body1, body2), out SliderConstraint? constraint)
+                || constraint is null)
+                throw new InvalidOperationException("Failed to create Jolt prismatic joint.");
+
+            var joint = new JoltPrismaticJoint(this, constraint, a, b, localFrameA, localFrameB);
+            _joints.Add(joint);
+            return joint;
+        }
+
+        public override IAbstractSphericalJoint CreateSphericalJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+        {
+            BodyID a = ResolveJoltBody(actorA);
+            BodyID b = ResolveJoltBody(actorB);
+
+            SwingTwistConstraintSettings settings = new()
+            {
+                Space = ConstraintSpace.LocalToBodyCOM,
+                Position1 = localFrameA.Position,
+                Position2 = localFrameB.Position,
+                TwistAxis1 = Vector3.UnitX,
+                TwistAxis2 = Vector3.UnitX,
+                PlaneAxis1 = Vector3.UnitY,
+                PlaneAxis2 = Vector3.UnitY,
+                SwingType = SwingType.Cone,
+                NormalHalfConeAngle = float.Pi,
+                PlaneHalfConeAngle = float.Pi,
+                TwistMinAngle = -float.Pi,
+                TwistMaxAngle = float.Pi,
+                MaxFrictionTorque = float.MaxValue,
+                SwingMotorSettings = new MotorSettings(),
+                TwistMotorSettings = new MotorSettings(),
+            };
+
+            if (!TryBuildConstraint(a, b, (body1, body2) => new SwingTwistConstraint(settings, body1, body2), out SwingTwistConstraint? constraint)
+                || constraint is null)
+                throw new InvalidOperationException("Failed to create Jolt spherical joint.");
+
+            var joint = new JoltSphericalJoint(this, constraint, a, b, localFrameA, localFrameB);
+            _joints.Add(joint);
+            return joint;
+        }
+
+        public override IAbstractD6Joint CreateD6Joint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+        {
+            BodyID a = ResolveJoltBody(actorA);
+            BodyID b = ResolveJoltBody(actorB);
+
+            SixDOFConstraintSettings settings = new()
+            {
+                Space = ConstraintSpace.LocalToBodyCOM,
+                Position1 = localFrameA.Position,
+                Position2 = localFrameB.Position,
+                AxisX1 = Vector3.UnitX,
+                AxisY1 = Vector3.UnitY,
+                AxisX2 = Vector3.UnitX,
+                AxisY2 = Vector3.UnitY,
+                SwingType = SwingType.Cone,
+            };
+
+            for (int i = 0; i < (int)SixDOFConstraintAxis.Count; i++)
+                settings.MakeFixedAxis((SixDOFConstraintAxis)i);
+
+            if (!TryBuildConstraint(a, b, (body1, body2) => new SixDOFConstraint(settings, body1, body2), out SixDOFConstraint? constraint)
+                || constraint is null)
+                throw new InvalidOperationException("Failed to create Jolt D6 joint.");
+
+            var joint = new JoltD6Joint(this, constraint, a, b, localFrameA, localFrameB);
+            _joints.Add(joint);
+            return joint;
+        }
+
+        public override void RemoveJoint(IAbstractJoint joint)
+        {
+            if (joint is not JoltJointBase jolt)
+                return;
+
+            if (_physicsSystem is not null)
+            {
+                _physicsSystem.RemoveConstraint(jolt.NativeConstraint);
+                (jolt.NativeConstraint as IDisposable)?.Dispose();
+            }
+
+            _joints.Remove(joint);
+        }
+
+        #endregion
     }
 }

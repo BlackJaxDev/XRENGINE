@@ -1,9 +1,10 @@
 ﻿using MagicPhysX;
 using System.Numerics;
+using XREngine.Scene.Physics.Joints;
 
 namespace XREngine.Rendering.Physics.Physx.Joints
 {
-    public unsafe class PhysxJoint_D6(PxD6Joint* joint) : PhysxJoint, IHingeJoint, IPrismaticJoint
+    public unsafe class PhysxJoint_D6(PxD6Joint* joint) : PhysxJoint, IHingeJoint, IPrismaticJoint, IAbstractD6Joint
     {
         public PxD6Joint* _joint = joint;
 
@@ -298,5 +299,158 @@ namespace XREngine.Rendering.Physics.Physx.Joints
             get => _joint->GetMotion(PxD6Axis.Swing2);
             set => _joint->SetMotionMut(PxD6Axis.Swing2, value);
         }
+
+        #region IAbstractD6Joint
+
+        float IAbstractD6Joint.TwistAngle => TwistAngle;
+        float IAbstractD6Joint.SwingYAngle => SwingYAngle;
+        float IAbstractD6Joint.SwingZAngle => SwingZAngle;
+
+        JointMotion IAbstractD6Joint.GetMotion(JointD6Axis axis)
+            => (JointMotion)(byte)_joint->GetMotion(MapAxis(axis));
+
+        void IAbstractD6Joint.SetMotion(JointD6Axis axis, JointMotion motion)
+            => _joint->SetMotionMut(MapAxis(axis), (PxD6Motion)(byte)motion);
+
+        JointLinearLimit IAbstractD6Joint.DistanceLimit
+        {
+            get
+            {
+                var (value, restitution, bounceThreshold, stiffness, damping) = DistanceLimit;
+                return new JointLinearLimit(value, stiffness, damping, restitution, bounceThreshold);
+            }
+            set => DistanceLimit = (value.Value, value.Restitution, value.BounceThreshold, value.Stiffness, value.Damping);
+        }
+
+        JointLinearLimitPair IAbstractD6Joint.GetLinearLimit(JointD6Axis axis)
+        {
+            PxJointLinearLimitPair limit = _joint->GetLinearLimit(MapAxis(axis));
+            return new JointLinearLimitPair(limit.lower, limit.upper, limit.stiffness, limit.damping, limit.restitution, limit.bounceThreshold);
+        }
+
+        void IAbstractD6Joint.SetLinearLimit(JointD6Axis axis, JointLinearLimitPair limit)
+        {
+            PxJointLinearLimitPair px = new()
+            {
+                lower = limit.Lower,
+                upper = limit.Upper,
+                restitution = limit.Restitution,
+                bounceThreshold = limit.BounceThreshold,
+                stiffness = limit.Stiffness,
+                damping = limit.Damping
+            };
+            _joint->SetLinearLimitMut(MapAxis(axis), &px);
+        }
+
+        JointAngularLimitPair IAbstractD6Joint.TwistLimit
+        {
+            get
+            {
+                var (lower, upper, restitution, bounceThreshold, stiffness, damping) = TwistLimit;
+                return new JointAngularLimitPair(lower, upper, stiffness, damping, restitution, bounceThreshold);
+            }
+            set
+            {
+                PxJointAngularLimitPair px = new()
+                {
+                    lower = value.LowerRadians,
+                    upper = value.UpperRadians,
+                    restitution = value.Restitution,
+                    bounceThreshold = value.BounceThreshold,
+                    stiffness = value.Stiffness,
+                    damping = value.Damping
+                };
+                _joint->SetTwistLimitMut(&px);
+            }
+        }
+
+        JointLimitCone IAbstractD6Joint.SwingLimit
+        {
+            get
+            {
+                var (yAngle, zAngle, restitution, bounceThreshold, stiffness, damping) = SwingLimit;
+                return new JointLimitCone(yAngle, zAngle, stiffness, damping, restitution, bounceThreshold);
+            }
+            set
+            {
+                PxJointLimitCone px = new()
+                {
+                    yAngle = value.YAngleRadians,
+                    zAngle = value.ZAngleRadians,
+                    restitution = value.Restitution,
+                    bounceThreshold = value.BounceThreshold,
+                    stiffness = value.Stiffness,
+                    damping = value.Damping
+                };
+                _joint->SetSwingLimitMut(&px);
+            }
+        }
+
+        JointDrive IAbstractD6Joint.GetDrive(JointD6DriveType driveType)
+        {
+            PxD6JointDrive drive = _joint->GetDrive(MapDrive(driveType));
+            return new JointDrive(drive.stiffness, drive.damping, drive.forceLimit,
+                drive.flags.HasFlag(PxD6JointDriveFlags.Acceleration));
+        }
+
+        void IAbstractD6Joint.SetDrive(JointD6DriveType driveType, JointDrive drive)
+        {
+            PxD6JointDrive px = new()
+            {
+                stiffness = drive.Stiffness,
+                damping = drive.Damping,
+                forceLimit = drive.ForceLimit,
+                flags = drive.IsAcceleration ? PxD6JointDriveFlags.Acceleration : 0
+            };
+            _joint->SetDriveMut(MapDrive(driveType), &px);
+        }
+
+        (Vector3 position, Quaternion rotation) IAbstractD6Joint.DrivePosition
+        {
+            get => DrivePosition;
+            set => DrivePosition = value;
+        }
+
+        (Vector3 linear, Vector3 angular) IAbstractD6Joint.DriveVelocity
+        {
+            get => DriveVelocity;
+            set => DriveVelocity = value;
+        }
+
+        float IAbstractD6Joint.ProjectionLinearTolerance
+        {
+            get => ProjectionLinearTolerance;
+            set => ProjectionLinearTolerance = value;
+        }
+
+        float IAbstractD6Joint.ProjectionAngularTolerance
+        {
+            get => ProjectionAngularTolerance;
+            set => ProjectionAngularTolerance = value;
+        }
+
+        private static PxD6Axis MapAxis(JointD6Axis axis) => axis switch
+        {
+            JointD6Axis.X => PxD6Axis.X,
+            JointD6Axis.Y => PxD6Axis.Y,
+            JointD6Axis.Z => PxD6Axis.Z,
+            JointD6Axis.Twist => PxD6Axis.Twist,
+            JointD6Axis.Swing1 => PxD6Axis.Swing1,
+            JointD6Axis.Swing2 => PxD6Axis.Swing2,
+            _ => PxD6Axis.X,
+        };
+
+        private static PxD6Drive MapDrive(JointD6DriveType driveType) => driveType switch
+        {
+            JointD6DriveType.X => PxD6Drive.X,
+            JointD6DriveType.Y => PxD6Drive.Y,
+            JointD6DriveType.Z => PxD6Drive.Z,
+            JointD6DriveType.Swing => PxD6Drive.Swing,
+            JointD6DriveType.Twist => PxD6Drive.Twist,
+            JointD6DriveType.Slerp => PxD6Drive.Slerp,
+            _ => PxD6Drive.X,
+        };
+
+        #endregion
     }
 }

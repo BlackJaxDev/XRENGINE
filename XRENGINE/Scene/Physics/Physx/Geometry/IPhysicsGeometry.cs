@@ -54,7 +54,14 @@ namespace XREngine.Rendering.Physics.Physx
                 return PxConvexMeshGeometry_new(Mesh, &scaleRot, flags);
             }
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
-            public readonly Shape AsJoltShape() => throw new NotImplementedException(); //new ConvexMeshShape(Mesh, Scale, Rotation, TightBounds);
+            public readonly Shape AsJoltShape()
+            {
+                System.Diagnostics.Debug.WriteLine("[IPhysicsGeometry] ConvexMesh->Jolt fallback shape used (source mesh pointer conversion unavailable).");
+                Shape shape = new BoxShape(new Vector3(0.05f), 0.0f);
+                shape = new ScaledShape(shape, Scale);
+                shape = new RotatedTranslatedShape(Vector3.Zero, Rotation, shape);
+                return shape;
+            }
         }
         public unsafe struct TriangleMesh(PxTriangleMesh* mesh, Vector3 scale, Quaternion rotation, bool tightBounds, bool doubleSided) : IPhysicsGeometry
         {
@@ -73,7 +80,14 @@ namespace XREngine.Rendering.Physics.Physx
                 return PxTriangleMeshGeometry_new(Mesh, &scaleRot, flags);
             }
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
-            public readonly Shape AsJoltShape() => throw new NotImplementedException(); //new TriangleMeshShape(Mesh, Scale, Rotation, TightBounds, DoubleSided);
+            public readonly Shape AsJoltShape()
+            {
+                System.Diagnostics.Debug.WriteLine("[IPhysicsGeometry] TriangleMesh->Jolt fallback shape used (source mesh pointer conversion unavailable).");
+                Shape shape = new BoxShape(new Vector3(0.1f), 0.0f);
+                shape = new ScaledShape(shape, Scale);
+                shape = new RotatedTranslatedShape(Vector3.Zero, Rotation, shape);
+                return shape;
+            }
         }
         public unsafe struct HeightField(PxHeightField* field, float heightScale, float rowScale, float columnScale, bool tightBounds, bool doubleSided) : IPhysicsGeometry
         {
@@ -90,7 +104,11 @@ namespace XREngine.Rendering.Physics.Physx
                 return PxHeightFieldGeometry_new(Field, flags, HeightScale, RowScale, ColumnScale);
             }
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
-            public readonly Shape AsJoltShape() => throw new NotImplementedException(); //new HeightFieldShape(Field, HeightScale, RowScale, ColumnScale, TightBounds, DoubleSided);
+            public readonly Shape AsJoltShape()
+            {
+                System.Diagnostics.Debug.WriteLine("[IPhysicsGeometry] HeightField->Jolt fallback shape used (source heightfield pointer conversion unavailable).");
+                return new BoxShape(new Vector3(MathF.Max(0.1f, RowScale), MathF.Max(0.1f, HeightScale), MathF.Max(0.1f, ColumnScale)), 0.0f);
+            }
         }
         public unsafe struct Plane() : IPhysicsGeometry
         {
@@ -111,7 +129,11 @@ namespace XREngine.Rendering.Physics.Physx
                 return g;
             }
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
-            public readonly Shape AsJoltShape() => throw new NotImplementedException(); //new ParticleSystemShape(Solver);
+            public readonly Shape AsJoltShape()
+            {
+                System.Diagnostics.Debug.WriteLine("[IPhysicsGeometry] ParticleSystem->Jolt fallback shape used (no direct particle-system shape in Jolt path).");
+                return new SphereShape(0.01f);
+            }
         }
         public unsafe struct TetrahedronMesh(PxTetrahedronMesh* mesh) : IPhysicsGeometry
         {
@@ -121,7 +143,11 @@ namespace XREngine.Rendering.Physics.Physx
                 => PxTetrahedronMeshGeometry_new(Mesh);
 
             public readonly DataSource GetPhysxStruct() => DataSource.FromStruct(GetGeometry());
-            public readonly Shape AsJoltShape() => throw new NotImplementedException(); //new TetrahedronMeshShape(Mesh);
+            public readonly Shape AsJoltShape()
+            {
+                System.Diagnostics.Debug.WriteLine("[IPhysicsGeometry] TetrahedronMesh->Jolt fallback shape used (source tet mesh pointer conversion unavailable).");
+                return new BoxShape(new Vector3(0.05f), 0.0f);
+            }
         }
 
         #region PhysX

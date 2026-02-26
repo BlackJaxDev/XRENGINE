@@ -1,8 +1,9 @@
 ﻿using MagicPhysX;
+using XREngine.Scene.Physics.Joints;
 
 namespace XREngine.Rendering.Physics.Physx.Joints
 {
-    public unsafe class PhysxJoint_Spherical(PxSphericalJoint* joint) : PhysxJoint
+    public unsafe class PhysxJoint_Spherical(PxSphericalJoint* joint) : PhysxJoint, IAbstractSphericalJoint
     {
         public PxSphericalJoint* _joint = joint;
 
@@ -33,5 +34,28 @@ namespace XREngine.Rendering.Physics.Physx.Joints
 
         public void SetSphericalJointFlag(PxSphericalJointFlag flag, bool value)
             => _joint->SetSphericalJointFlagMut(flag, value);
+
+        #region IAbstractSphericalJoint
+
+        float IAbstractSphericalJoint.SwingYAngle => SwingYAngle;
+        float IAbstractSphericalJoint.SwingZAngle => SwingZAngle;
+
+        bool IAbstractSphericalJoint.EnableLimitCone
+        {
+            get => SphericalFlags.HasFlag(PxSphericalJointFlags.LimitEnabled);
+            set => SetSphericalJointFlag(PxSphericalJointFlag.LimitEnabled, value);
+        }
+
+        JointLimitCone IAbstractSphericalJoint.LimitCone
+        {
+            get
+            {
+                var (zAngle, yAngle, restitution, bounceThreshold, stiffness, damping) = LimitCone;
+                return new JointLimitCone(yAngle, zAngle, stiffness, damping, restitution, bounceThreshold);
+            }
+            set => LimitCone = (value.ZAngleRadians, value.YAngleRadians, value.Restitution, value.BounceThreshold, value.Stiffness, value.Damping);
+        }
+
+        #endregion
     }
 }

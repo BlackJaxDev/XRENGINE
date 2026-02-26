@@ -33,6 +33,10 @@ namespace XREngine
         private OverrideableSetting<bool> _mcpServerReadOnlyOverride = new();
         private OverrideableSetting<string> _mcpServerAllowedToolsOverride = new();
         private OverrideableSetting<string> _mcpServerDeniedToolsOverride = new();
+        private OverrideableSetting<bool> _mcpServerRateLimitEnabledOverride = new();
+        private OverrideableSetting<int> _mcpServerRateLimitRequestsOverride = new();
+        private OverrideableSetting<int> _mcpServerRateLimitWindowSecondsOverride = new();
+        private OverrideableSetting<bool> _mcpServerIncludeStatusInPingOverride = new();
 
         [Category("Theme Overrides")]
         [Description("Overrides for editor theme and colors.")]
@@ -144,6 +148,38 @@ namespace XREngine
         {
             get => _mcpServerDeniedToolsOverride;
             set => SetField(ref _mcpServerDeniedToolsOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for enabling MCP per-client rate limiting.")]
+        public OverrideableSetting<bool> McpServerRateLimitEnabledOverride
+        {
+            get => _mcpServerRateLimitEnabledOverride;
+            set => SetField(ref _mcpServerRateLimitEnabledOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for MCP rate-limit request quota.")]
+        public OverrideableSetting<int> McpServerRateLimitRequestsOverride
+        {
+            get => _mcpServerRateLimitRequestsOverride;
+            set => SetField(ref _mcpServerRateLimitRequestsOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for MCP rate-limit window in seconds.")]
+        public OverrideableSetting<int> McpServerRateLimitWindowSecondsOverride
+        {
+            get => _mcpServerRateLimitWindowSecondsOverride;
+            set => SetField(ref _mcpServerRateLimitWindowSecondsOverride, value ?? new());
+        }
+
+        [Category("MCP Server Overrides")]
+        [Description("Override for including expanded status payload in MCP ping responses.")]
+        public OverrideableSetting<bool> McpServerIncludeStatusInPingOverride
+        {
+            get => _mcpServerIncludeStatusInPingOverride;
+            set => SetField(ref _mcpServerIncludeStatusInPingOverride, value ?? new());
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)

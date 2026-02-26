@@ -51,7 +51,34 @@ namespace XREngine.Scene
         }
 
         public readonly ObjectLayer AsJoltObjectLayer()
-            => new((uint)_mask);
+        {
+            uint mask = unchecked((uint)_mask);
+            uint group = GetLowestSetBitIndex(mask);
+            if (mask == 0)
+                mask = uint.MaxValue;
+            return ObjectLayerPairFilterMask.GetObjectLayer(group, mask);
+        }
+
+        public readonly uint AsJoltObjectLayerGroup()
+            => ObjectLayerPairFilterMask.GetGroup(AsJoltObjectLayer());
+
+        public readonly uint AsJoltObjectLayerMask()
+            => ObjectLayerPairFilterMask.GetMask(AsJoltObjectLayer());
+
+        private static uint GetLowestSetBitIndex(uint value)
+        {
+            if (value == 0)
+                return 0;
+
+            uint index = 0;
+            while ((value & 1u) == 0u)
+            {
+                value >>= 1;
+                index++;
+            }
+
+            return index;
+        }
 
         public static readonly LayerMask Everything = new(-1);
 

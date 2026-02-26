@@ -38,5 +38,15 @@ namespace XREngine.Scene.Physics.Jolt
         public override Vector3 LinearVelocity => Vector3.Zero;
         public override Vector3 AngularVelocity => Vector3.Zero;
         public override bool IsSleeping => true;
+
+        public void SetObjectLayer(ushort collisionGroup, uint groupsMaskWord0)
+        {
+            if (Scene?.PhysicsSystem is null)
+                return;
+
+            uint mask = groupsMaskWord0 == 0 ? uint.MaxValue : groupsMaskWord0;
+            ObjectLayer layer = ObjectLayerPairFilterMask.GetObjectLayer(collisionGroup, mask);
+            Scene.PhysicsSystem.BodyInterface.SetObjectLayer(BodyID, layer);
+        }
     }
 } 

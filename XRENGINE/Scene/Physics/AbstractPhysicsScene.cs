@@ -1,10 +1,12 @@
-﻿using System.Numerics;
+﻿using System.Collections.Concurrent;
+using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Physics.Physx;
 using XREngine.Components.Animation;
 using XREngine.Components.Physics;
+using XREngine.Scene.Physics.Joints;
 
 namespace XREngine.Scene
 {
@@ -134,6 +136,97 @@ namespace XREngine.Scene
         public abstract void RemoveActor(IAbstractPhysicsActor actor);
 
         public abstract void NotifyShapeChanged(IAbstractPhysicsActor actor);
+
+        #region Joint Factory
+
+        /// <summary>
+        /// Creates a fixed joint between two actors.
+        /// Either actor may be null to attach to the world frame.
+        /// </summary>
+        public abstract IAbstractFixedJoint CreateFixedJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB);
+
+        /// <summary>
+        /// Creates a distance joint between two actors.
+        /// </summary>
+        public abstract IAbstractDistanceJoint CreateDistanceJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB);
+
+        /// <summary>
+        /// Creates a hinge (revolute) joint between two actors.
+        /// </summary>
+        public abstract IAbstractHingeJoint CreateHingeJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB);
+
+        /// <summary>
+        /// Creates a prismatic (slider) joint between two actors.
+        /// </summary>
+        public abstract IAbstractPrismaticJoint CreatePrismaticJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB);
+
+        /// <summary>
+        /// Creates a spherical (ball-and-socket) joint between two actors.
+        /// </summary>
+        public abstract IAbstractSphericalJoint CreateSphericalJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB);
+
+        /// <summary>
+        /// Creates a D6 (configurable) joint between two actors.
+        /// </summary>
+        public abstract IAbstractD6Joint CreateD6Joint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB);
+
+        /// <summary>
+        /// Removes and releases a joint from the scene's tracking.
+        /// The native joint resources are freed.
+        /// </summary>
+        public abstract void RemoveJoint(IAbstractJoint joint);
+
+        #endregion
+
+        #region Joint Component Registration
+
+        /// <summary>
+        /// Maps native joint handles to the owning <see cref="PhysicsJointComponent"/>.
+        /// Used by break-callback routing to find the component that owns a native joint.
+        /// </summary>
+        private readonly ConcurrentDictionary<IAbstractJoint, PhysicsJointComponent> _jointComponentMap = new();
+
+        /// <summary>
+        /// Registers a component as the owner of a native joint. Called by <see cref="PhysicsJointComponent"/> after joint creation.
+        /// </summary>
+        public void RegisterJointComponent(IAbstractJoint nativeJoint, PhysicsJointComponent component)
+            => _jointComponentMap[nativeJoint] = component;
+
+        /// <summary>
+        /// Unregisters a component's joint from the map. Called before joint destruction.
+        /// </summary>
+        public void UnregisterJointComponent(IAbstractJoint nativeJoint)
+            => _jointComponentMap.TryRemove(nativeJoint, out _);
+
+        /// <summary>
+        /// Looks up the owning component for a native joint. Returns null if not found.
+        /// </summary>
+        public PhysicsJointComponent? FindJointComponent(IAbstractJoint nativeJoint)
+            => _jointComponentMap.TryGetValue(nativeJoint, out var comp) ? comp : null;
+
+        /// <summary>
+        /// Called by the physics backend when a constraint breaks.
+        /// Routes the break notification to the owning component.
+        /// </summary>
+        public void NotifyConstraintBroken(IAbstractJoint nativeJoint)
+        {
+            if (_jointComponentMap.TryGetValue(nativeJoint, out var component))
+                component.NotifyJointBroken();
+        }
+
+        #endregion
     }
     public interface IAbstractPhysicsActor
     {

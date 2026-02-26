@@ -25,9 +25,23 @@ namespace XREngine.Editor.Mcp
 
         private Task? _listenerTask;
         private int _port;
+        private DateTimeOffset _startedUtc;
+        private long _requestCounter;
+        private readonly McpRateLimiter _rateLimiter = new();
         private const int DefaultMaxRequestBytes = 1024 * 1024;
         private const int DefaultRequestTimeoutMs = 30000;
         private const int MaxIdempotencyEntries = 512;
+        private static readonly string[] s_supportedMethods =
+        [
+            "initialize",
+            "tools/list",
+            "tools/call",
+            "resources/list",
+            "resources/read",
+            "prompts/list",
+            "prompts/get",
+            "ping"
+        ];
         private static readonly object s_idempotencyLock = new();
         private static readonly Dictionary<string, object> s_idempotencyResults = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, string> s_toolAliases = new(StringComparer.OrdinalIgnoreCase)
@@ -106,7 +120,11 @@ namespace XREngine.Editor.Mcp
                 or nameof(EditorPreferences.McpServerRequestTimeoutMs)
                 or nameof(EditorPreferences.McpServerReadOnly)
                 or nameof(EditorPreferences.McpServerAllowedTools)
-                or nameof(EditorPreferences.McpServerDeniedTools))
+                or nameof(EditorPreferences.McpServerDeniedTools)
+                or nameof(EditorPreferences.McpServerRateLimitEnabled)
+                or nameof(EditorPreferences.McpServerRateLimitRequests)
+                or nameof(EditorPreferences.McpServerRateLimitWindowSeconds)
+                or nameof(EditorPreferences.McpServerIncludeStatusInPing))
                 UpdateServerState();
         }
 
@@ -146,8 +164,10 @@ namespace XREngine.Editor.Mcp
             _listener = new HttpListener();
             _listener.Prefixes.Add(Prefix);
             _listener.Start();
+            _startedUtc = DateTimeOffset.UtcNow;
             _listenerTask = Task.Run(() => ListenLoopAsync(_cts.Token));
             Debug.Out($"[MCP] Server started on {Prefix}");
+            LogStartupDiagnostics(Engine.EditorPreferences);
         }
 
         public void Stop()
@@ -206,18 +226,34 @@ namespace XREngine.Editor.Mcp
         private async Task HandleContextAsync(HttpListenerContext context, CancellationToken token)
         {
             var prefs = Engine.EditorPreferences;
+            long requestId = Interlocked.Increment(ref _requestCounter);
+            string clientKey = ResolveClientKey(context.Request);
             var response = context.Response;
             response.ContentType = "application/json";
+
+            LogRequest(requestId, "Incoming", context.Request, null, null);
+
             if (!ApplyCorsHeaders(context.Request, response, prefs))
             {
                 response.StatusCode = (int)HttpStatusCode.Forbidden;
+                LogRequest(requestId, "BlockedByCors", context.Request, response.StatusCode, null);
                 response.Close();
+                return;
+            }
+
+            if (string.Equals(context.Request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(context.Request.Url?.AbsolutePath, "/mcp/status", StringComparison.OrdinalIgnoreCase))
+            {
+                response.StatusCode = (int)HttpStatusCode.OK;
+                await WriteJsonResponseAsync(response, BuildStatusResult(prefs), token);
+                LogRequest(requestId, "Status", context.Request, response.StatusCode, null);
                 return;
             }
 
             if (string.Equals(context.Request.HttpMethod, "OPTIONS", StringComparison.OrdinalIgnoreCase))
             {
                 response.StatusCode = (int)HttpStatusCode.NoContent;
+                LogRequest(requestId, "Preflight", context.Request, response.StatusCode, null);
                 response.Close();
                 return;
             }
@@ -225,6 +261,7 @@ namespace XREngine.Editor.Mcp
             if (!string.Equals(context.Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase))
             {
                 response.StatusCode = (int)HttpStatusCode.MethodNotAllowed;
+                LogRequest(requestId, "MethodNotAllowed", context.Request, response.StatusCode, null);
                 response.Close();
                 return;
             }
@@ -234,13 +271,29 @@ namespace XREngine.Editor.Mcp
                 response.StatusCode = (int)HttpStatusCode.Unauthorized;
                 response.Headers.Add("WWW-Authenticate", "Bearer");
                 await WriteErrorResponseAsync(response, null, -32600, authError ?? "Unauthorized.", token);
+                LogRequest(requestId, "Unauthorized", context.Request, response.StatusCode, authError);
                 return;
+            }
+
+            if (prefs.McpServerRateLimitEnabled)
+            {
+                int maxRequests = Math.Max(1, prefs.McpServerRateLimitRequests);
+                int windowSeconds = Math.Max(1, prefs.McpServerRateLimitWindowSeconds);
+                if (!_rateLimiter.TryAcquire(clientKey, maxRequests, TimeSpan.FromSeconds(windowSeconds), DateTimeOffset.UtcNow, out var retryAfter))
+                {
+                    response.StatusCode = (int)HttpStatusCode.TooManyRequests;
+                    response.Headers["Retry-After"] = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
+                    await WriteErrorResponseAsync(response, null, -32029, "Rate limit exceeded.", token);
+                    LogRequest(requestId, "RateLimited", context.Request, response.StatusCode, $"retry_after={response.Headers["Retry-After"]}s");
+                    return;
+                }
             }
 
             int maxRequestBytes = Math.Max(1024, prefs.McpServerMaxRequestBytes <= 0 ? DefaultMaxRequestBytes : prefs.McpServerMaxRequestBytes);
             if (context.Request.ContentLength64 > maxRequestBytes)
             {
                 response.StatusCode = (int)HttpStatusCode.RequestEntityTooLarge;
+                LogRequest(requestId, "PayloadTooLarge", context.Request, response.StatusCode, $"content_length={context.Request.ContentLength64}");
                 response.Close();
                 return;
             }
@@ -258,12 +311,14 @@ namespace XREngine.Editor.Mcp
             catch (InvalidDataException)
             {
                 response.StatusCode = (int)HttpStatusCode.RequestEntityTooLarge;
+                LogRequest(requestId, "PayloadTooLarge", context.Request, response.StatusCode, "stream_limit_exceeded");
                 response.Close();
                 return;
             }
             catch (OperationCanceledException)
             {
                 response.StatusCode = (int)HttpStatusCode.RequestTimeout;
+                LogRequest(requestId, "Timeout", context.Request, response.StatusCode, "read_body_timeout");
                 response.Close();
                 return;
             }
@@ -276,6 +331,7 @@ namespace XREngine.Editor.Mcp
             catch
             {
                 response.StatusCode = (int)HttpStatusCode.BadRequest;
+                LogRequest(requestId, "InvalidJson", context.Request, response.StatusCode, null);
                 response.Close();
                 return;
             }
@@ -283,6 +339,7 @@ namespace XREngine.Editor.Mcp
             if (document is null)
             {
                 response.StatusCode = (int)HttpStatusCode.BadRequest;
+                LogRequest(requestId, "InvalidJson", context.Request, response.StatusCode, "document_null");
                 response.Close();
                 return;
             }
@@ -290,11 +347,12 @@ namespace XREngine.Editor.Mcp
             object? result;
             try
             {
-                result = await HandleRpcAsync(document.RootElement, requestToken);
+                result = await HandleRpcAsync(document.RootElement, requestToken, prefs);
             }
             catch (OperationCanceledException)
             {
                 response.StatusCode = (int)HttpStatusCode.RequestTimeout;
+                LogRequest(requestId, "Timeout", context.Request, response.StatusCode, "rpc_timeout");
                 response.Close();
                 return;
             }
@@ -302,6 +360,7 @@ namespace XREngine.Editor.Mcp
             if (result is null)
             {
                 response.StatusCode = (int)HttpStatusCode.NoContent;
+                LogRequest(requestId, "Notification", context.Request, response.StatusCode, null);
                 response.Close();
                 return;
             }
@@ -310,10 +369,11 @@ namespace XREngine.Editor.Mcp
             byte[] bytes = Encoding.UTF8.GetBytes(payload);
             response.ContentLength64 = bytes.Length;
             await response.OutputStream.WriteAsync(bytes, 0, bytes.Length, requestToken);
+            LogRequest(requestId, "Ok", context.Request, (int)HttpStatusCode.OK, $"bytes={bytes.Length}");
             response.Close();
         }
 
-        private async Task<object?> HandleRpcAsync(JsonElement root, CancellationToken token)
+        private async Task<object?> HandleRpcAsync(JsonElement root, CancellationToken token, EditorPreferences prefs)
         {
             if (root.ValueKind != JsonValueKind.Object)
                 return CreateError(root, -32600, "Invalid JSON-RPC request object.");
@@ -342,7 +402,7 @@ namespace XREngine.Editor.Mcp
                 "resources/read" => await HandleResourcesReadAsync(root, token),
                 "prompts/list" => BuildPromptsListResult(),
                 "prompts/get" => await HandlePromptsGetAsync(root, token),
-                "ping" => new { },
+                "ping" => BuildPingResult(prefs),
                 _ => CreateError(root, -32601, $"Unknown method '{method}'.")
             };
 
@@ -361,6 +421,56 @@ namespace XREngine.Editor.Mcp
             {
                 protocolVersion = "2024-11-05",
                 serverInfo = new { name = "XREngine.Editor", version = "0.1.0" },
+                capabilities = new
+                {
+                    tools = new { listChanged = false },
+                    resources = new { listChanged = false },
+                    prompts = new { listChanged = false }
+                }
+            };
+        }
+
+        private object BuildPingResult(EditorPreferences prefs)
+        {
+            if (!prefs.McpServerIncludeStatusInPing)
+                return new { ok = true };
+
+            return new
+            {
+                ok = true,
+                status = BuildStatusResult(prefs)
+            };
+        }
+
+        private object BuildStatusResult(EditorPreferences prefs)
+        {
+            string[] allowed = ParseList(prefs.McpServerAllowedTools);
+            string[] denied = ParseList(prefs.McpServerDeniedTools);
+
+            return new
+            {
+                protocolVersion = "2024-11-05",
+                serverInfo = new { name = "XREngine.Editor", version = "0.1.0" },
+                isRunning = IsRunning,
+                startedUtc = _startedUtc,
+                uptimeMs = _startedUtc == default ? 0 : (long)(DateTimeOffset.UtcNow - _startedUtc).TotalMilliseconds,
+                endpoint = Prefix,
+                methods = s_supportedMethods,
+                security = new
+                {
+                    requireAuth = prefs.McpServerRequireAuth,
+                    authConfigured = !string.IsNullOrWhiteSpace(prefs.McpServerAuthToken),
+                    corsAllowlist = prefs.McpServerCorsAllowlist,
+                    readOnly = prefs.McpServerReadOnly,
+                    allowedToolsCount = allowed.Length,
+                    deniedToolsCount = denied.Length,
+                    rateLimit = new
+                    {
+                        enabled = prefs.McpServerRateLimitEnabled,
+                        requests = prefs.McpServerRateLimitRequests,
+                        windowSeconds = prefs.McpServerRateLimitWindowSeconds
+                    }
+                },
                 capabilities = new
                 {
                     tools = new { listChanged = false },
@@ -799,7 +909,7 @@ namespace XREngine.Editor.Mcp
             if (!string.IsNullOrWhiteSpace(responseOrigin))
                 response.Headers["Access-Control-Allow-Origin"] = responseOrigin;
 
-            response.Headers["Access-Control-Allow-Methods"] = "POST, OPTIONS";
+            response.Headers["Access-Control-Allow-Methods"] = "POST, OPTIONS, GET";
             response.Headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
             response.Headers["Access-Control-Max-Age"] = "600";
 
@@ -861,6 +971,15 @@ namespace XREngine.Editor.Mcp
             return ms.ToArray();
         }
 
+        private async Task WriteJsonResponseAsync(HttpListenerResponse response, object payload, CancellationToken token)
+        {
+            string json = JsonSerializer.Serialize(payload, _serializerOptions);
+            byte[] bytes = Encoding.UTF8.GetBytes(json);
+            response.ContentLength64 = bytes.Length;
+            await response.OutputStream.WriteAsync(bytes, 0, bytes.Length, token);
+            response.Close();
+        }
+
         private async Task WriteErrorResponseAsync(HttpListenerResponse response, JsonElement? id, int code, string message, CancellationToken token)
         {
             var payload = JsonSerializer.Serialize(new
@@ -878,6 +997,38 @@ namespace XREngine.Editor.Mcp
             response.ContentLength64 = bytes.Length;
             await response.OutputStream.WriteAsync(bytes, 0, bytes.Length, token);
             response.Close();
+        }
+
+        private static string ResolveClientKey(HttpListenerRequest request)
+        {
+            string? forwarded = request.Headers["X-Forwarded-For"];
+            if (!string.IsNullOrWhiteSpace(forwarded))
+            {
+                string first = forwarded.Split(',')[0].Trim();
+                if (!string.IsNullOrWhiteSpace(first))
+                    return first;
+            }
+
+            return request.RemoteEndPoint?.Address.ToString() ?? "unknown";
+        }
+
+        private void LogRequest(long requestId, string phase, HttpListenerRequest request, int? statusCode, string? detail)
+        {
+            string method = request.HttpMethod;
+            string path = request.Url?.AbsolutePath ?? string.Empty;
+            string origin = request.Headers["Origin"] ?? string.Empty;
+            string authHeader = request.Headers["Authorization"] ?? string.Empty;
+            string redactedAuth = string.IsNullOrWhiteSpace(authHeader) ? "none" : "<redacted>";
+            string client = ResolveClientKey(request);
+
+            Debug.Out($"[MCP] req={requestId} phase={phase} client={client} method={method} path={path} status={statusCode?.ToString() ?? "-"} origin={origin} auth={redactedAuth} {detail}");
+        }
+
+        private static void LogStartupDiagnostics(EditorPreferences prefs)
+        {
+            Debug.Out($"[MCP] methods={string.Join(",", s_supportedMethods)} capabilities=tools/resources/prompts static_list_changed=false");
+            Debug.Out($"[MCP] security auth_required={prefs.McpServerRequireAuth} auth_token_configured={!string.IsNullOrWhiteSpace(prefs.McpServerAuthToken)} read_only={prefs.McpServerReadOnly} cors_allowlist='{prefs.McpServerCorsAllowlist}'");
+            Debug.Out($"[MCP] policy allowed='{prefs.McpServerAllowedTools}' denied='{prefs.McpServerDeniedTools}' rate_limit_enabled={prefs.McpServerRateLimitEnabled} rate_limit={prefs.McpServerRateLimitRequests}/{prefs.McpServerRateLimitWindowSeconds}s");
         }
 
         private static bool TryReadPort(string[] args, out int port)

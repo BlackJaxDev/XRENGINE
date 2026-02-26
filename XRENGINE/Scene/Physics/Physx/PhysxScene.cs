@@ -12,6 +12,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Physics.Physx.Joints;
 using XREngine.Scene;
+using XREngine.Scene.Physics.Joints;
 using static MagicPhysX.NativeMethods;
 using Quaternion = System.Numerics.Quaternion;
 
@@ -218,7 +219,27 @@ namespace XREngine.Rendering.Physics.Physx
             if (!TryGetSceneFromUserData(userData, out var scene) || scene is null)
                 return;
 
-            // Intentionally no-op for now; ensures native never calls a null function pointer.
+            for (uint i = 0; i < count; i++)
+            {
+                PxConstraintInfo info = constraints[i];
+                if (info.constraint is null)
+                    continue;
+
+                // Find the PhysxJoint whose Constraint pointer matches the broken one.
+                // The Joints dictionary is keyed by PxJoint*, so iterate to find a match.
+                PhysxJoint? broken = null;
+                foreach (var kvp in scene.Joints)
+                {
+                    if (kvp.Value.Constraint == info.constraint)
+                    {
+                        broken = kvp.Value;
+                        break;
+                    }
+                }
+
+                if (broken is not null)
+                    scene.NotifyConstraintBroken(broken);
+            }
         }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
@@ -935,6 +956,125 @@ namespace XREngine.Rendering.Physics.Physx
             //Debug.Log(ELogCategory.Physics, "[PhysxObj] + PhysxJoint_Spherical ptr=0x{0:X}", (nint)joint);
             return jointObj;
         }
+
+        #region Abstract Joint Factory
+
+        private static PxRigidActor* ResolvePhysxActor(IAbstractPhysicsActor? actor)
+        {
+            if (actor is PhysxRigidActor pxActor)
+                return pxActor.RigidActorPtr;
+            // Null means "world anchor" in PhysX
+            return null;
+        }
+
+        public override IAbstractFixedJoint CreateFixedJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+        {
+            PxRigidActor* a = ResolvePhysxActor(actorA);
+            PxRigidActor* b = ResolvePhysxActor(actorB);
+            PxTransform tfA = new() { p = localFrameA.Position, q = localFrameA.Rotation };
+            PxTransform tfB = new() { p = localFrameB.Position, q = localFrameB.Rotation };
+            var joint = PhysicsPtr->PhysPxFixedJointCreate(a, &tfA, b, &tfB);
+            var obj = new PhysxJoint_Fixed(joint);
+            Joints[(nint)joint] = obj;
+            FixedJoints[(nint)joint] = obj;
+            return obj;
+        }
+
+        public override IAbstractDistanceJoint CreateDistanceJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+        {
+            PxRigidActor* a = ResolvePhysxActor(actorA);
+            PxRigidActor* b = ResolvePhysxActor(actorB);
+            PxTransform tfA = new() { p = localFrameA.Position, q = localFrameA.Rotation };
+            PxTransform tfB = new() { p = localFrameB.Position, q = localFrameB.Rotation };
+            var joint = PhysicsPtr->PhysPxDistanceJointCreate(a, &tfA, b, &tfB);
+            var obj = new PhysxJoint_Distance(joint);
+            Joints[(nint)joint] = obj;
+            DistanceJoints[(nint)joint] = obj;
+            return obj;
+        }
+
+        public override IAbstractHingeJoint CreateHingeJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+        {
+            PxRigidActor* a = ResolvePhysxActor(actorA);
+            PxRigidActor* b = ResolvePhysxActor(actorB);
+            PxTransform tfA = new() { p = localFrameA.Position, q = localFrameA.Rotation };
+            PxTransform tfB = new() { p = localFrameB.Position, q = localFrameB.Rotation };
+            var joint = PhysicsPtr->PhysPxRevoluteJointCreate(a, &tfA, b, &tfB);
+            var obj = new PhysxJoint_Revolute(joint);
+            Joints[(nint)joint] = obj;
+            RevoluteJoints[(nint)joint] = obj;
+            return obj;
+        }
+
+        public override IAbstractPrismaticJoint CreatePrismaticJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+        {
+            PxRigidActor* a = ResolvePhysxActor(actorA);
+            PxRigidActor* b = ResolvePhysxActor(actorB);
+            PxTransform tfA = new() { p = localFrameA.Position, q = localFrameA.Rotation };
+            PxTransform tfB = new() { p = localFrameB.Position, q = localFrameB.Rotation };
+            var joint = PhysicsPtr->PhysPxPrismaticJointCreate(a, &tfA, b, &tfB);
+            var obj = new PhysxJoint_Prismatic(joint);
+            Joints[(nint)joint] = obj;
+            PrismaticJoints[(nint)joint] = obj;
+            return obj;
+        }
+
+        public override IAbstractSphericalJoint CreateSphericalJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+        {
+            PxRigidActor* a = ResolvePhysxActor(actorA);
+            PxRigidActor* b = ResolvePhysxActor(actorB);
+            PxTransform tfA = new() { p = localFrameA.Position, q = localFrameA.Rotation };
+            PxTransform tfB = new() { p = localFrameB.Position, q = localFrameB.Rotation };
+            var joint = PhysicsPtr->PhysPxSphericalJointCreate(a, &tfA, b, &tfB);
+            var obj = new PhysxJoint_Spherical(joint);
+            Joints[(nint)joint] = obj;
+            SphericalJoints[(nint)joint] = obj;
+            return obj;
+        }
+
+        public override IAbstractD6Joint CreateD6Joint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+        {
+            PxRigidActor* a = ResolvePhysxActor(actorA);
+            PxRigidActor* b = ResolvePhysxActor(actorB);
+            PxTransform tfA = new() { p = localFrameA.Position, q = localFrameA.Rotation };
+            PxTransform tfB = new() { p = localFrameB.Position, q = localFrameB.Rotation };
+            var joint = PhysicsPtr->PhysPxD6JointCreate(a, &tfA, b, &tfB);
+            var obj = new PhysxJoint_D6(joint);
+            Joints[(nint)joint] = obj;
+            D6Joints[(nint)joint] = obj;
+            return obj;
+        }
+
+        public override void RemoveJoint(IAbstractJoint joint)
+        {
+            if (joint is not PhysxJoint px)
+                return;
+
+            nint ptr = (nint)px.JointBase;
+            Joints.TryRemove(ptr, out _);
+            ContactJoints.TryRemove(ptr, out _);
+            DistanceJoints.TryRemove(ptr, out _);
+            D6Joints.TryRemove(ptr, out _);
+            FixedJoints.TryRemove(ptr, out _);
+            PrismaticJoints.TryRemove(ptr, out _);
+            RevoluteJoints.TryRemove(ptr, out _);
+            SphericalJoints.TryRemove(ptr, out _);
+            px.Release();
+        }
+
+        #endregion
 
         #endregion
 

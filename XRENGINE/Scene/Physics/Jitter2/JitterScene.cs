@@ -4,6 +4,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Scene;
+using XREngine.Scene.Physics.Joints;
 using static Jitter2.Collision.DynamicTree;
 using Quaternion = System.Numerics.Quaternion;
 
@@ -143,5 +144,42 @@ namespace XREngine.Rendering.Physics.Physx
         {
             throw new NotImplementedException();
         }
+
+        #region Joint Factory (not yet implemented for Jitter2)
+
+        public override IAbstractFixedJoint CreateFixedJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+            => throw new NotSupportedException("Jitter2 joint support is not yet implemented.");
+
+        public override IAbstractDistanceJoint CreateDistanceJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+            => throw new NotSupportedException("Jitter2 joint support is not yet implemented.");
+
+        public override IAbstractHingeJoint CreateHingeJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+            => throw new NotSupportedException("Jitter2 joint support is not yet implemented.");
+
+        public override IAbstractPrismaticJoint CreatePrismaticJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+            => throw new NotSupportedException("Jitter2 joint support is not yet implemented.");
+
+        public override IAbstractSphericalJoint CreateSphericalJoint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+            => throw new NotSupportedException("Jitter2 joint support is not yet implemented.");
+
+        public override IAbstractD6Joint CreateD6Joint(
+            IAbstractPhysicsActor? actorA, JointAnchor localFrameA,
+            IAbstractPhysicsActor? actorB, JointAnchor localFrameB)
+            => throw new NotSupportedException("Jitter2 joint support is not yet implemented.");
+
+        public override void RemoveJoint(IAbstractJoint joint)
+            => throw new NotSupportedException("Jitter2 joint support is not yet implemented.");
+
+        #endregion
     }
 }

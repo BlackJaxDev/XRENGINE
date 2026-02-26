@@ -1,8 +1,9 @@
 ﻿using MagicPhysX;
+using XREngine.Scene.Physics.Joints;
 
 namespace XREngine.Rendering.Physics.Physx.Joints
 {
-    public unsafe class PhysxJoint_Distance(PxDistanceJoint* joint) : PhysxJoint
+    public unsafe class PhysxJoint_Distance(PxDistanceJoint* joint) : PhysxJoint, IAbstractDistanceJoint
     {
         public PxDistanceJoint* _joint = joint;
         public override unsafe PxJoint* JointBase => (PxJoint*)_joint;
@@ -53,5 +54,28 @@ namespace XREngine.Rendering.Physics.Physx.Joints
 
         public void SetFlag(PxDistanceJointFlag flag, bool value)
             => _joint->SetDistanceJointFlagMut(flag, value);
+
+        #region IAbstractDistanceJoint
+
+        float IAbstractDistanceJoint.Distance => Distance;
+        float IAbstractDistanceJoint.MinDistance { get => MinDistance; set => MinDistance = value; }
+        float IAbstractDistanceJoint.MaxDistance { get => MaxDistance; set => MaxDistance = value; }
+        float IAbstractDistanceJoint.Stiffness { get => Stiffness; set => Stiffness = value; }
+        float IAbstractDistanceJoint.Damping { get => Damping; set => Damping = value; }
+        float IAbstractDistanceJoint.Tolerance { get => Tolerance; set => Tolerance = value; }
+
+        bool IAbstractDistanceJoint.EnableMinDistance
+        {
+            get => DistanceFlags.HasFlag(PxDistanceJointFlags.MinDistanceEnabled);
+            set => SetFlag(PxDistanceJointFlag.MinDistanceEnabled, value);
+        }
+
+        bool IAbstractDistanceJoint.EnableMaxDistance
+        {
+            get => DistanceFlags.HasFlag(PxDistanceJointFlags.MaxDistanceEnabled);
+            set => SetFlag(PxDistanceJointFlag.MaxDistanceEnabled, value);
+        }
+
+        #endregion
     }
 }
