@@ -19,7 +19,7 @@ public static partial class EditorUnitTests
         ENetworkingPoseRole role = ResolveNetworkingPoseRole();
 
         Toggles.WorldKind = UnitTestWorldKind.NetworkingPose;
-        Toggles.AddEditorUI = true;
+        Toggles.EditorType = UnitTestEditorType.Native;
         Toggles.VRPawn = true;
         Toggles.EmulatedVRPawn = true;
         Toggles.Locomotion = true;

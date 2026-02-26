@@ -180,7 +180,7 @@ public static partial class EditorUnitTests
                 parent.PropertyChanged += OnParentWorldAssigned;
             }
 
-            if (Toggles.RiveUI || Toggles.DearImGuiUI || Toggles.AddEditorUI)
+            if (Toggles.RiveUI || Toggles.EditorType != UnitTestEditorType.None)
             {
                 var inputComponent = rootCanvasNode.AddComponent<UICanvasInputComponent>();
                 if (inputComponent is not null)
@@ -230,7 +230,7 @@ public static partial class EditorUnitTests
                 }
             }
 
-            bool addDearImGui = EditorUnitTests.Toggles.DearImGuiUI;
+            bool addDearImGui = EditorUnitTests.Toggles.EditorType == UnitTestEditorType.IMGUI;
             if (addDearImGui)
             {
                 using var imGuiScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI.DearImGui");
@@ -246,9 +246,9 @@ public static partial class EditorUnitTests
                 dearImGuiComponent?.Draw += EditorImGuiUI.RenderEditor;
             }
             
-            if (Toggles.AddEditorUI)
+            if (Toggles.EditorType == UnitTestEditorType.Native)
             {
-                using var editorUiScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI.AddEditorUI");
+                using var editorUiScope = Engine.Profiler.Start("UnitTestingWorld.UserInterface.CreateEditorUI.Native");
                 //This will take care of editor UI arrangement operations for us
                 var mainUINode = rootCanvasNode.NewChild<UIEditorComponent>(out UIEditorComponent? editorComp);
                 if (editorComp.UITransform is UIBoundableTransform tfm)

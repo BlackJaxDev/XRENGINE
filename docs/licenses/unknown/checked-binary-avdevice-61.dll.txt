@@ -1,5 +1,0 @@
-﻿License file not detected for checked-in binary.
-
-Path: XRENGINE/avdevice-61.dll
-File: avdevice-61.dll
-

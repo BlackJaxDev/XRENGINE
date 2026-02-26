@@ -1,5 +1,0 @@
-﻿License file not detected for checked-in binary.
-
-Path: XRENGINE/avformat-61.dll
-File: avformat-61.dll
-

@@ -484,7 +484,7 @@ public static partial class EditorImGuiUI
             bool captureKeyboard = !inPlayMode && (io.WantCaptureKeyboard || io.WantTextInput);
             ImGuiUndoHelper.BeginFrame();
             
-            bool showSettings = EditorUnitTests.Toggles.DearImGuiUI;
+            bool showSettings = EditorUnitTests.Toggles.EditorType == EditorUnitTests.UnitTestEditorType.IMGUI;
             if (!showSettings)
             {
                 Engine.Input.SetUIInputCaptured(false);

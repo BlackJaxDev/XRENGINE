@@ -2,6 +2,7 @@ using Assimp;
 using Newtonsoft.Json;
 using System.Collections.Generic;
 using System.Linq;
+using XREngine.Audio;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Editor;
@@ -42,6 +43,13 @@ public static partial class EditorUnitTests
         CameraOffscreen,
     }
 
+    public enum UnitTestEditorType
+    {
+        None,
+        Native,
+        IMGUI,
+    }
+
     public class Settings
     {
         public UnitTestWorldKind WorldKind { get; set; } = UnitTestWorldKind.Default;
@@ -51,7 +59,7 @@ public static partial class EditorUnitTests
         public bool VisualizeQuadtree = false;
 
         //Editor UI
-        public bool AddEditorUI = false; //Adds the full editor UI to the camera.
+        public UnitTestEditorType EditorType { get; set; } = UnitTestEditorType.IMGUI; //Selects which editor UI pipeline to create for unit testing.
         public CameraUIDrawMode CameraUIDrawSpaceOnInit { get; set; } = CameraUIDrawMode.Screen; //Controls draw space and offscreen mode for unit testing camera UI.
         public bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
         public bool AllowEditingInVR = true; //Allows the user to edit the scene from desktop in VR.
@@ -61,7 +69,6 @@ public static partial class EditorUnitTests
         public string? VideoStreamingUrl { get; set; } = null; //Stream URL used by the video streaming test component.
         public bool UltralightWebView = false; //Adds an Ultralight web view component to the scene for testing web page rendering.
         public string UltralightWebViewUrl { get; set; } = "https://blackjaxvr.com"; //Page URL used by the Ultralight web view test component.
-        public bool DearImGuiUI = true; //Adds a Dear ImGui overlay to the scene for testing immediate-mode UI.
         public bool EnableProfilerLogging = true; //Enables Engine.Profiler frame logging even without Dear ImGui.
         public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.
         public bool GPURenderDispatch = false; //Uses GPU render dispatch for rendering instead of CPU culling and issuing draw calls.
@@ -137,6 +144,9 @@ public static partial class EditorUnitTests
         public bool SoundNode = false;
         public bool Microphone = false; //Adds a microphone to the scene for testing audio capture.
         public bool AttachMicToAnimatedModel = true; //If true, the microphone output will be attached to the animated model instead of the flying camera.
+        public bool AudioArchitectureV2 { get; set; } = AudioSettings.AudioArchitectureV2;
+        public AudioTransportType AudioTransport { get; set; } = AudioTransportType.OpenAL;
+        public AudioEffectsType AudioEffects { get; set; } = AudioEffectsType.OpenAL_EFX;
 
         //Face and lip sync
         public bool VMC = false; //Adds a VMC capture component to the avatar for testing.

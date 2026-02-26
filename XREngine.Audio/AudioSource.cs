@@ -84,6 +84,7 @@ namespace XREngine.Audio
                 // Return the passed-in buffers to the pool so they aren't leaked.
                 foreach (var leaked in buffers)
                     ParentListener.ReleaseBuffer(leaked);
+                AudioDiagnostics.RecordBufferOverflow(Handle, buffers.Length);
                 return false;
             }
 
@@ -98,6 +99,7 @@ namespace XREngine.Audio
             //Trace.WriteLineIf(handles.Length > 0, $"Queuing {handles.Length} buffers.");
             Api.SourceQueueBuffers(Handle, buffers.Length, handles);
             ParentListener.VerifyError();
+            AudioDiagnostics.RecordBuffersQueued(Handle, buffers.Length, BuffersQueued);
 
             if (AutoPlayOnQueue && !IsPlaying)
             {
@@ -125,7 +127,11 @@ namespace XREngine.Audio
             int requested = requestedCount <= 0 ? processedNow : requestedCount;
             int count = Math.Min(_currentStreamingBuffers.Count, Math.Min(requested, processedNow));
             if (count == 0)
+            {
+                if (requestedCount > 0)
+                    AudioDiagnostics.RecordBufferUnderflow(Handle, _currentStreamingBuffers.Count);
                 return;
+            }
 
             uint* handles = stackalloc uint[count];
             // OpenAL fills 'handles' with the buffer IDs that were actually
@@ -153,6 +159,7 @@ namespace XREngine.Audio
                 ParentListener.ReleaseBuffer(buf);
             }
             //Trace.WriteLineIf(handles.Length > 0, $"Unqueued {handles.Length} buffers.");
+            AudioDiagnostics.RecordBuffersUnqueued(Handle, count, _currentStreamingBuffers.Count);
         }
 
         private AudioBuffer? RemoveTrackedStreamingBuffer(uint handle)
@@ -287,32 +294,40 @@ namespace XREngine.Audio
         /// </summary>
         public void Play()
         {
+            var prev = SourceState;
             Api.SourcePlay(Handle);
             ParentListener.VerifyError();
+            AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Playing));
         }
         /// <summary>
         /// Stops the source from playing.
         /// </summary>
         public void Stop()
         {
+            var prev = SourceState;
             Api.SourceStop(Handle);
             ParentListener.VerifyError();
+            AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Stopped));
         }
         /// <summary>
         /// Pauses the source.
         /// </summary>
         public void Pause()
         {
+            var prev = SourceState;
             Api.SourcePause(Handle);
             ParentListener.VerifyError();
+            AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Paused));
         }
         /// <summary>
         /// Sets the source to play from the beginning (initial state).
         /// </summary>
         public void Rewind()
         {
+            var prev = SourceState;
             Api.SourceRewind(Handle);
             ParentListener.VerifyError();
+            AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Initial));
         }
         #endregion
 

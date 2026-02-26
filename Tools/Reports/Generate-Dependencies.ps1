@@ -1,7 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
-$root = Split-Path -Parent $PSScriptRoot
+$root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $outPath = Join-Path $root 'docs\DEPENDENCIES.md'
+$auditOutPath = Join-Path $root 'docs\work\audit\DEPENDENCIES.md'
 $licensesDir = Join-Path $root 'docs\licenses'
 
 $nugetRoot = if ($env:NUGET_PACKAGES) {
@@ -1124,4 +1125,8 @@ foreach ($f in $checkedBinaries) {
 }
 
 $lines | Out-File -LiteralPath $outPath -Encoding utf8
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $auditOutPath) | Out-Null
+$auditLines = $lines | ForEach-Object { $_ -replace '\(licenses/', '(../../licenses/' }
+$auditLines | Out-File -LiteralPath $auditOutPath -Encoding utf8
 Write-Output "Wrote: $outPath"
+Write-Output "Wrote: $auditOutPath"

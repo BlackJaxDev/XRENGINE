@@ -4,8 +4,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
-using Silk.NET.OpenAL;
 using System.Numerics;
+using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Server.Instances;
@@ -288,7 +288,7 @@ namespace XREngine.Networking
             var pawnComp = cameraNode.AddComponent<EditorFlyingCameraPawnComponent>();
             var listener = cameraNode.AddComponent<AudioListenerComponent>()!;
             listener.Gain = 1.0f;
-            listener.DistanceModel = DistanceModel.InverseDistance;
+            listener.DistanceModel = EDistanceModel.InverseDistance;
             listener.DopplerFactor = 0.5f;
             listener.SpeedOfSound = 343.3f;
 

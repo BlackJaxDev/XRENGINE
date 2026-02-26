@@ -1,5 +1,4 @@
-﻿using Silk.NET.OpenAL;
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Numerics;
 using XREngine.Audio;
 using YamlDotNet.Serialization;
@@ -52,9 +51,9 @@ namespace XREngine.Components
         [Category("Audio Settings")]
         [DisplayName("Distance Model")]
         [Description("Attenuation model used for distance calculations.")]
-        public DistanceModel DistanceModel
+        public EDistanceModel DistanceModel
         {
-            get => Listener?.DistanceModel ?? DistanceModel.None;
+            get => Listener?.DistanceModel ?? EDistanceModel.None;
             set
             {
                 if (Listener is not null)

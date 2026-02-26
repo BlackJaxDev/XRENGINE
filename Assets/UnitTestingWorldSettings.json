@@ -36,10 +36,9 @@
   "Mirror": false,
   "Spline": false,
 
-  "AddEditorUI": true,
+  "EditorType": "IMGUI",
   "CameraUIDrawSpaceOnInit": "Screen",
   "TransformTool": false,
-  "DearImGuiUI": false,
   "EnableProfilerLogging": true,
   "RiveUI": false,
   "VideoStreaming": false,
@@ -91,6 +90,9 @@
   "SoundNode": false,
   "Microphone": false,
   "AttachMicToAnimatedModel": true,
+  "AudioArchitectureV2": false,
+  "AudioTransport": "OpenAL",
+  "AudioEffects": "OpenAL_EFX",
 
   "VMC": false,
   "LipSync": false,

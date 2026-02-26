@@ -4,7 +4,7 @@ param(
     [string]$Root = (Resolve-Path ".").Path,
 
     [Parameter(Mandatory = $false)]
-    [string]$OutFile = (Join-Path (Resolve-Path ".").Path "docs\work\new-allocations.md")
+    [string]$OutFile = (Join-Path (Resolve-Path ".").Path "docs\work\audit\new-allocations.md")
 )
 
 $ErrorActionPreference = "Stop"
