@@ -406,3 +406,7 @@ XREngine.Editor/McpCaptures/
 Build/Dependencies/Ultralight/resources/
 Build/Game/
 imgui.ini
+Build/Dependencies/NvComp/
+Samples/Build/Engine/
+Samples/MonkeyBallVR/Build/
+Samples/MonkeyBallVR/Intermediate/

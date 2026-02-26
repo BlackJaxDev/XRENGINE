@@ -53,7 +53,7 @@ git submodule update --init --recursive
 Windows convenience script (does the same and prints status):
 
 ```powershell
-./init_submodules.bat
+./Tools/Initialize-Submodules.bat
 ```
 
 ### 2) Build
@@ -80,7 +80,7 @@ dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj
 Shortcut script:
 
 ```powershell
-./run_editor.bat
+./Tools/Start-Editor.bat
 ```
 
 Running the editor launches the Unit Testing World, a collection of scenes that exercise rendering, animation, physics, audio, and XR workflows. Use this environment to verify changes and explore current functionality.
@@ -115,25 +115,25 @@ Use **Run and Debug** (Ctrl+Shift+D), then pick one of these launch configuratio
 
 Use **Terminal → Run Task…** and run any of these tasks (they build first where needed):
 
-- `start-editor-no-debug`
-- `start-server-no-debug` (Editor-as-server, `XRE_NET_MODE=Server`)
-- `start-client-no-debug` (Editor-as-client, port 5001)
-- `start-client2-no-debug` (Editor-as-client, port 5002)
-- `start-2-clients-no-debug`
-- `start-pose-server-no-debug` (server in `UnitTesting + NetworkingPose` world)
-- `start-pose-source-client-no-debug` (client sender, `XRE_POSE_ENTITY_ID=4242`, broadcast on)
-- `start-pose-receiver-client-no-debug` (client receiver, `XRE_POSE_ENTITY_ID=4242`, receive on)
-- `start-local-pose-sync-no-debug` (server + pose source + pose receiver)
-- `start-dedicated-server-no-debug` (runs `XREngine.Server.exe`)
-- `start-p2p-peer-no-debug` (P2P peer 1, port 5001)
-- `start-p2p-peer2-no-debug` (P2P peer 2, port 5002)
+- `Start-Editor-NoDebug`
+- `Start-Server-NoDebug` (Editor-as-server, `XRE_NET_MODE=Server`)
+- `Start-Client-NoDebug` (Editor-as-client, port 5001)
+- `Start-Client2-NoDebug` (Editor-as-client, port 5002)
+- `Start-2Clients-NoDebug`
+- `Start-PoseServer-NoDebug` (server in `UnitTesting + NetworkingPose` world)
+- `Start-PoseSourceClient-NoDebug` (client sender, `XRE_POSE_ENTITY_ID=4242`, broadcast on)
+- `Start-PoseReceiverClient-NoDebug` (client receiver, `XRE_POSE_ENTITY_ID=4242`, receive on)
+- `Start-LocalPoseSync-NoDebug` (server + pose source + pose receiver)
+- `Start-DedicatedServer-NoDebug` (runs `XREngine.Server.exe`)
+- `Start-P2PPeer-NoDebug` (P2P peer 1, port 5001)
+- `Start-P2PPeer2-NoDebug` (P2P peer 2, port 5002)
 
 There are also “prep” tasks used by the debug configurations:
 
-- `prep-debug-server-with-2-clients`, `prep-debug-server-only`
-- `prep-debug-client-with-server-and-client`
-- `prep-debug-p2p-client-with-peer`
-- `prep-debug-vrclient-with-editor`
+- `Prep-DebugServer-With2Clients`, `Prep-DebugServer-Only`
+- `Prep-DebugClient-WithServerAndClient`
+- `Prep-DebugP2PClient-WithPeer`
+- `Prep-DebugVRClient-WithEditor`
 
 ## Launch Options (Visual Studio)
 
@@ -176,12 +176,12 @@ Two common approaches:
 ## Network test helper
 
 For a quick networking test:
-- `Tools\\run_network_test.bat` launches server + client.
-- `Tools\\run_network_test.bat pose` launches server + pose source + pose receiver.
+- `Tools\\Start-NetworkTest.bat` launches server + client.
+- `Tools\\Start-NetworkTest.bat pose` launches server + pose source + pose receiver.
 
 ```powershell
-./Tools/run_network_test.bat
-./Tools/run_network_test.bat pose
+./Tools/Start-NetworkTest.bat
+./Tools/Start-NetworkTest.bat pose
 ```
 
 ## Native Dependencies
@@ -192,8 +192,8 @@ For a quick networking test:
 - `Rive` (UI) – the managed Rive wrapper is sourced from `Build/Submodules/rive-sharp`, and the engine loads `rive.dll` from `XRENGINE/runtimes/win-x64/native`. If you need to rebuild it (or other submodule binaries), use:
 
 	```powershell
-	./build_submodules.bat Debug x64
-	# or: ./build_submodules.bat Release x64
+	./Tools/Build-Submodules.bat Debug x64
+	# or: ./Tools/Build-Submodules.bat Release x64
 	```
 
 	This requires Visual Studio (or Build Tools) with the **Desktop development with C++** workload. The script will fetch `premake5` automatically if missing.

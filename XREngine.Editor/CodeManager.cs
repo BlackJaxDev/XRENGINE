@@ -13,12 +13,25 @@ using XREngine.Rendering;
 
 internal partial class CodeManager : XRSingleton<CodeManager>
 {
+    #region Constants
+
     public const string SolutionFormatVersion = "12.00";
     public const string VisualStudioVersion = "17.4.33213.308";
     public const string MinimumVisualStudioVersion = "10.0.40219.1";
     public const string LegacyProjectGuid = "FAE04EC0-301F-11D3-BF4B-00C04F79EFBC";
     public const string ModernProjectGuid = "9A19103F-16F7-4668-BE54-9A1E7A4F7556";
     public const string TargetFramework = "net10.0-windows7.0";
+
+    public const string Config_Debug = "Debug";
+    public const string Config_Release = "Release";
+
+    public const string Platform_AnyCPU = "Any CPU";
+    public const string Platform_x64 = "x64";
+    public const string Platform_x86 = "x86";
+
+    #endregion
+
+    #region State & Properties
 
     private bool _isGameClientInvalid = true;
     private bool _gameFilesChanged = true;
@@ -32,6 +45,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         get => _compileOnChange;
         set => SetField(ref _compileOnChange, value);
     }
+
+    #endregion
+
+    #region File Monitoring
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
@@ -104,12 +121,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         _gameFilesChanged = true;
     }
 
-    public const string Config_Debug = "Debug";
-    public const string Config_Release = "Release";
+    #endregion
 
-    public const string Platform_AnyCPU = "Any CPU";
-    public const string Platform_x64 = "x64";
-    public const string Platform_x86 = "x86";
+    #region Path Resolution
 
     /// <summary>
     /// Gets the name of the project from the game settings or returns a default name.
@@ -123,7 +137,17 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     /// </summary>
     /// <returns></returns>
     public string GetSolutionPath()
-        => Path.Combine(Engine.Assets.LibrariesPath, $"{GetProjectName()}.sln");
+        => Path.Combine(GetManagedProjectRootPath(), $"{GetProjectName()}.sln");
+
+    private string GetManagedProjectRootPath()
+        => Engine.CurrentProject?.ProjectDirectory ?? Engine.Assets.LibrariesPath;
+
+    private string GetManagedGameProjectPath()
+        => Path.Combine(GetManagedProjectRootPath(), $"{GetProjectName()}.csproj");
+
+    #endregion
+
+    #region Solution Generation
 
     /// <summary>
     /// Regenerates project files and optionally compiles the game client as a DLL.
@@ -133,10 +157,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     public void RemakeSolutionAsDLL(bool compileNow = true)
     {
         string sourceRootFolder = Engine.Assets.GameAssetsPath;
-        string outputFolder = Engine.Assets.LibrariesPath;
         string projectName = GetProjectName();
 
-        string dllProjPath = Path.Combine(outputFolder, projectName, $"{projectName}.csproj");
+        string dllProjPath = GetManagedGameProjectPath();
 
         string[] builds = [Config_Debug, Config_Release];
         string[] platforms = [Platform_AnyCPU, Platform_x64];
@@ -161,11 +184,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     public void RemakeSolutionAsExe(bool compileNow = true)
     {
         string sourceRootFolder = Engine.Assets.GameAssetsPath;
-        string outputFolder = Engine.Assets.LibrariesPath;
         string projectName = GetProjectName();
 
-        string dllProjPath = Path.Combine(outputFolder, projectName, $"{projectName}.csproj");
-        string exeProjPath = Path.Combine(outputFolder, projectName, $"{projectName}.exe.csproj");
+        string dllProjPath = GetManagedGameProjectPath();
+        string exeProjPath = Path.Combine(GetManagedProjectRootPath(), $"{projectName}.exe.csproj");
 
         string[] builds = [Config_Release];
         string[] platforms = [Platform_x64];
@@ -184,6 +206,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         if (compileNow)
             _ = CompileSolution(Config_Release, Platform_x64);
     }
+
+    #endregion
+
+    #region Project & Solution File Creation
 
     private static void CreateCSProj(
         string sourceRootFolder,
@@ -316,6 +342,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         _gameFilesChanged = false;
     }
 
+    #endregion
+
+    #region Compilation
+
     public bool CompileSolution(string config = Config_Debug, string platform = Platform_AnyCPU)
     {
         // Create a custom string logger to capture all output
@@ -411,39 +441,47 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     {
         string projectName = GetProjectName();
         string dllName = $"{projectName}.dll";
-        string buildRoot = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Build");
+        string primaryBuildRoot = Path.Combine(GetManagedProjectRootPath(), "Build");
+        string legacyBuildRoot = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Build");
 
-        string[] candidatePaths =
-        [
-            Path.Combine(buildRoot, config, platform, TargetFramework, dllName),
-            Path.Combine(buildRoot, platform, config, TargetFramework, dllName),
-            Path.Combine(buildRoot, config, TargetFramework, dllName),
-            Path.Combine(buildRoot, platform, TargetFramework, dllName)
-        ];
-
-        foreach (string candidatePath in candidatePaths)
+        foreach (string buildRoot in new[] { primaryBuildRoot, legacyBuildRoot })
         {
-            if (File.Exists(candidatePath))
-                return candidatePath;
-        }
+            string[] candidatePaths =
+            [
+                Path.Combine(buildRoot, config, platform, TargetFramework, dllName),
+                Path.Combine(buildRoot, platform, config, TargetFramework, dllName),
+                Path.Combine(buildRoot, config, TargetFramework, dllName),
+                Path.Combine(buildRoot, platform, TargetFramework, dllName)
+            ];
 
-        if (Directory.Exists(buildRoot))
-        {
-            string refSegment = $"{Path.DirectorySeparatorChar}ref{Path.DirectorySeparatorChar}";
-            string[] matches = Directory.GetFiles(buildRoot, dllName, SearchOption.AllDirectories);
-            string[] preferred = [.. matches.Where(path => !path.Contains(refSegment, StringComparison.OrdinalIgnoreCase))];
-
-            string[] selected = preferred.Length > 0 ? preferred : matches;
-            if (selected.Length > 0)
+            foreach (string candidatePath in candidatePaths)
             {
-                Array.Sort(selected, (left, right) =>
-                    File.GetLastWriteTimeUtc(right).CompareTo(File.GetLastWriteTimeUtc(left)));
-                return selected[0];
+                if (File.Exists(candidatePath))
+                    return candidatePath;
+            }
+
+            if (Directory.Exists(buildRoot))
+            {
+                string refSegment = $"{Path.DirectorySeparatorChar}ref{Path.DirectorySeparatorChar}";
+                string[] matches = Directory.GetFiles(buildRoot, dllName, SearchOption.AllDirectories);
+                string[] preferred = [.. matches.Where(path => !path.Contains(refSegment, StringComparison.OrdinalIgnoreCase))];
+
+                string[] selected = preferred.Length > 0 ? preferred : matches;
+                if (selected.Length > 0)
+                {
+                    Array.Sort(selected, (left, right) =>
+                        File.GetLastWriteTimeUtc(right).CompareTo(File.GetLastWriteTimeUtc(left)));
+                    return selected[0];
+                }
             }
         }
 
-        return Path.Combine(buildRoot, config, platform, TargetFramework, dllName);
+        return Path.Combine(primaryBuildRoot, config, platform, TargetFramework, dllName);
     }
+
+    #endregion
+
+    #region Launcher Building
 
     public string BuildLauncherExecutable(
         BuildSettings settings,
@@ -457,11 +495,12 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string launcherRoot = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Launcher");
         Directory.CreateDirectory(launcherRoot);
 
-        string gameProjectPath = Path.Combine(Engine.Assets.LibrariesPath, projectName, $"{projectName}.csproj");
+        string gameProjectPath = GetManagedGameProjectPath();
 
         string programPath = Path.Combine(launcherRoot, "Program.cs");
         string launcherAssemblyName = $"{projectName}.Launcher";
         string launcherProjectPath = Path.Combine(launcherRoot, $"{launcherAssemblyName}.csproj");
+        string defineConstants = settings.LauncherDefineConstants?.Trim() ?? string.Empty;
 
         string programSource = BuildLauncherProgramSource(
             settings,
@@ -491,6 +530,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 ["RuntimeIdentifier"] = "win-x64"
             };
 
+            if (!string.IsNullOrWhiteSpace(defineConstants))
+                extraProps["DefineConstants"] = defineConstants;
+
             if (!BuildProjectFile(launcherProjectPath, configuration, platform, ["Publish"], extraProps, out string? publishLog))
             {
                 Debug.Out(publishLog ?? "Failed to publish launcher project.");
@@ -505,7 +547,16 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         }
         else
         {
-            if (!BuildProjectFile(launcherProjectPath, configuration, platform, out string? buildLog))
+            Dictionary<string, string?>? extraProps = null;
+            if (!string.IsNullOrWhiteSpace(defineConstants))
+            {
+                extraProps = new Dictionary<string, string?>
+                {
+                    ["DefineConstants"] = defineConstants
+                };
+            }
+
+            if (!BuildProjectFile(launcherProjectPath, configuration, platform, ["Build"], extraProps, out string? buildLog))
             {
                 Debug.Out(buildLog ?? "Failed to build launcher project.");
                 throw new InvalidOperationException($"Failed to build launcher executable. {buildLog}");
@@ -644,6 +695,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         project.Save(projectFilePath);
     }
 
+    #endregion
+
+    #region Build Process
+
     private static bool BuildProjectFile(string projectFilePath, string configuration, string platform, out string? log)
         => BuildProjectFile(projectFilePath, configuration, platform, ["Build"], extraProperties: null, out log);
 
@@ -707,6 +762,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         return path + Path.DirectorySeparatorChar;
     }
 
+    #endregion
+
+    #region Launcher Code Generation
+
     private static string BuildLauncherProgramSource(
         BuildSettings settings,
         string startupAssetName,
@@ -742,10 +801,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         var sb = new StringBuilder();
         sb.AppendLine("using System;");
         sb.AppendLine("using System.IO;");
-        sb.AppendLine("using System.Security.Cryptography;");
-        sb.AppendLine("using System.Text;");
         sb.AppendLine("using XREngine;");
-        sb.AppendLine("using XREngine.Core.Files;");
         sb.AppendLine();
         sb.AppendLine("namespace GeneratedLauncher;");
         sb.AppendLine();
@@ -766,238 +822,41 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedCommonAssetsArchive}\") :");
         sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedContentFolder}\", \"{escapedCommonAssetsArchive}\");");
         sb.AppendLine();
+        sb.AppendLine("#if XRE_PUBLISHED");
         sb.AppendLine("        if (!File.Exists(archivePath))");
         sb.AppendLine("        {");
         sb.AppendLine("            Console.Error.WriteLine($\"Config archive '{archivePath}' not found.\");");
         sb.AppendLine("            return;");
         sb.AppendLine("        }");
         sb.AppendLine();
-        sb.AppendLine("        var runMode = ResolveRunMode(args);");
-        sb.AppendLine("        ConfigureAssetRoots(runMode, contentArchivePath, commonAssetsArchivePath);");
+        sb.AppendLine("        AssetManager.ConfigurePublishedArchives(");
+        sb.AppendLine("            archivePath,");
+        sb.AppendLine("            File.Exists(contentArchivePath) ? contentArchivePath : null,");
+        sb.AppendLine("            File.Exists(commonAssetsArchivePath) ? commonAssetsArchivePath : null);");
+        sb.AppendLine("#else");
+        sb.AppendLine("        AssetManager.ConfigurePublishedArchives(null, null, null);");
+        sb.AppendLine("#endif");
         sb.AppendLine();
-        sb.AppendLine($"        var startup = LoadAsset<GameStartupSettings>(archivePath, \"{escapedStartup}\");");
+        sb.AppendLine($"        var startup = Engine.Assets.Load<GameStartupSettings>(\"{escapedStartup}\") ?? Engine.Assets.LoadGameAsset<GameStartupSettings>(\"{escapedStartup}\");");
         sb.AppendLine("        if (startup is null)");
         sb.AppendLine("        {");
-        sb.AppendLine("            Console.Error.WriteLine(\"Failed to load startup settings from archive.\");");
+        sb.AppendLine("            Console.Error.WriteLine(\"Failed to load startup settings.\");");
         sb.AppendLine("            return;");
         sb.AppendLine("        }");
         sb.AppendLine();
-        sb.AppendLine($"        var editorPreferences = LoadAsset<EditorPreferences>(archivePath, \"{escapedEngine}\");");
+        sb.AppendLine($"        var editorPreferences = Engine.Assets.Load<EditorPreferences>(\"{escapedEngine}\");");
         sb.AppendLine("        if (editorPreferences is not null)");
         sb.AppendLine("            Engine.GlobalEditorPreferences = editorPreferences;");
         sb.AppendLine();
-        sb.AppendLine($"        var userSettings = LoadAsset<UserSettings>(archivePath, \"{escapedUser}\");");
+        sb.AppendLine($"        var userSettings = Engine.Assets.Load<UserSettings>(\"{escapedUser}\");");
         sb.AppendLine("        if (userSettings is not null)");
         sb.AppendLine("            Engine.UserSettings = userSettings;");
         sb.AppendLine();
         sb.AppendLine("        Engine.Run(startup, Engine.LoadOrGenerateGameState());");
         sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private static T? LoadAsset<T>(string archivePath, string assetPath)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        try");
-        sb.AppendLine("        {");
-        sb.AppendLine("            byte[] cookedBytes = AssetPacker.GetAsset(archivePath, assetPath);");
-        sb.AppendLine("            return CookedAssetReader.LoadAsset<T>(cookedBytes);");
-        sb.AppendLine("        }");
-        sb.AppendLine("        catch (Exception ex)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            Console.Error.WriteLine($\"Failed to load '{assetPath}': {ex.Message}\");");
-        sb.AppendLine("            return default;");
-        sb.AppendLine("        }");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private enum AssetRunMode");
-        sb.AppendLine("    {");
-        sb.AppendLine("        Dev,");
-        sb.AppendLine("        Publish");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private static AssetRunMode ResolveRunMode(string[] args)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        for (int i = 0; i < args.Length; i++)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            string arg = args[i];");
-        sb.AppendLine("            if (!string.Equals(arg, \"--mode\", StringComparison.OrdinalIgnoreCase))");
-        sb.AppendLine("                continue;");
-        sb.AppendLine();
-        sb.AppendLine("            if (i + 1 >= args.Length)");
-        sb.AppendLine("                break;");
-        sb.AppendLine();
-        sb.AppendLine("            return ParseRunMode(args[i + 1]);");
-        sb.AppendLine("        }");
-        sb.AppendLine();
-        sb.AppendLine("        string? envMode = Environment.GetEnvironmentVariable(\"XRE_GAME_MODE\");");
-        sb.AppendLine("        if (!string.IsNullOrWhiteSpace(envMode))");
-        sb.AppendLine("            return ParseRunMode(envMode);");
-        sb.AppendLine();
-        sb.AppendLine("        return AssetRunMode.Publish;");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private static AssetRunMode ParseRunMode(string value)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        if (string.Equals(value, \"dev\", StringComparison.OrdinalIgnoreCase))");
-        sb.AppendLine("            return AssetRunMode.Dev;");
-        sb.AppendLine();
-        sb.AppendLine("        if (string.Equals(value, \"publish\", StringComparison.OrdinalIgnoreCase))");
-        sb.AppendLine("            return AssetRunMode.Publish;");
-        sb.AppendLine();
-        sb.AppendLine("        return AssetRunMode.Publish;");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private static void ConfigureAssetRoots(AssetRunMode runMode, string gameArchivePath, string engineArchivePath)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        switch (runMode)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            case AssetRunMode.Dev:");
-        sb.AppendLine("                ConfigureDevAssetRoots();");
-        sb.AppendLine("                break;");
-        sb.AppendLine();
-        sb.AppendLine("            default:");
-        sb.AppendLine("                ConfigurePublishAssetRoots(gameArchivePath, engineArchivePath);");
-        sb.AppendLine("                break;");
-        sb.AppendLine("        }");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private static void ConfigureDevAssetRoots()");
-        sb.AppendLine("    {");
-        sb.AppendLine("        Environment.SetEnvironmentVariable(\"XRE_ASSET_RUNTIME_MODE\", \"dev\");");
-        sb.AppendLine();
-        sb.AppendLine("        if (TryFindNearestDirectoryWithAssets(AppContext.BaseDirectory, out string? gameAssetsPath))");
-        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_GAME_ASSETS_PATH\", gameAssetsPath);");
-        sb.AppendLine("        else");
-        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_GAME_ASSETS_PATH\", null);");
-        sb.AppendLine();
-        sb.AppendLine("        if (TryFindNearestDirectoryWithEngineAssets(AppContext.BaseDirectory, out string? engineAssetsPath))");
-        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_ENGINE_ASSETS_PATH\", engineAssetsPath);");
-        sb.AppendLine("        else");
-        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_ENGINE_ASSETS_PATH\", null);");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private static void ConfigurePublishAssetRoots(string gameArchivePath, string engineArchivePath)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        Environment.SetEnvironmentVariable(\"XRE_ASSET_RUNTIME_MODE\", \"publish\");");
-        sb.AppendLine();
-        sb.AppendLine("        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);");
-        sb.AppendLine("        if (string.IsNullOrWhiteSpace(localAppData))");
-        sb.AppendLine("            return;");
-        sb.AppendLine();
-        sb.AppendLine("        string cacheRoot = Path.Combine(localAppData, \"XREngine\", \"RuntimeArchiveCache\", ComputeStableToken(AppContext.BaseDirectory));");
-        sb.AppendLine();
-        sb.AppendLine("        if (File.Exists(gameArchivePath))");
-        sb.AppendLine("        {");
-        sb.AppendLine("            string gameAssetsRoot = Path.Combine(cacheRoot, \"GameAssets\");");
-        sb.AppendLine("            ExtractArchiveIfNeeded(gameArchivePath, gameAssetsRoot);");
-        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_GAME_ASSETS_PATH\", gameAssetsRoot);");
-        sb.AppendLine("        }");
-        sb.AppendLine("        else");
-        sb.AppendLine("        {");
-        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_GAME_ASSETS_PATH\", null);");
-        sb.AppendLine("        }");
-        sb.AppendLine();
-        sb.AppendLine("        if (File.Exists(engineArchivePath))");
-        sb.AppendLine("        {");
-        sb.AppendLine("            string engineAssetsRoot = Path.Combine(cacheRoot, \"CommonAssets\");");
-        sb.AppendLine("            ExtractArchiveIfNeeded(engineArchivePath, engineAssetsRoot);");
-        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_ENGINE_ASSETS_PATH\", engineAssetsRoot);");
-        sb.AppendLine("        }");
-        sb.AppendLine("        else");
-        sb.AppendLine("        {");
-        sb.AppendLine("            Environment.SetEnvironmentVariable(\"XRE_ENGINE_ASSETS_PATH\", null);");
-        sb.AppendLine("        }");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private static bool TryFindNearestDirectoryWithAssets(string startPath, out string? assetsPath)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        var dir = new DirectoryInfo(startPath);");
-        sb.AppendLine("        while (dir is not null)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            string candidate = Path.Combine(dir.FullName, \"Assets\");");
-        sb.AppendLine("            if (Directory.Exists(candidate))");
-        sb.AppendLine("            {");
-        sb.AppendLine("                assetsPath = candidate;");
-        sb.AppendLine("                return true;");
-        sb.AppendLine("            }");
-        sb.AppendLine();
-        sb.AppendLine("            dir = dir.Parent;");
-        sb.AppendLine("        }");
-        sb.AppendLine();
-        sb.AppendLine("        assetsPath = null;");
-        sb.AppendLine("        return false;");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private static bool TryFindNearestDirectoryWithEngineAssets(string startPath, out string? engineAssetsPath)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        var dir = new DirectoryInfo(startPath);");
-        sb.AppendLine("        while (dir is not null)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            string candidate = Path.Combine(dir.FullName, \"Build\", \"CommonAssets\");");
-        sb.AppendLine("            if (Directory.Exists(candidate) && Directory.Exists(Path.Combine(candidate, \"Shaders\")))");
-        sb.AppendLine("            {");
-        sb.AppendLine("                engineAssetsPath = candidate;");
-        sb.AppendLine("                return true;");
-        sb.AppendLine("            }");
-        sb.AppendLine();
-        sb.AppendLine("            dir = dir.Parent;");
-        sb.AppendLine("        }");
-        sb.AppendLine();
-        sb.AppendLine("        engineAssetsPath = null;");
-        sb.AppendLine("        return false;");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private static void ExtractArchiveIfNeeded(string archivePath, string destinationRoot)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        var archiveInfo = new FileInfo(archivePath);");
-        sb.AppendLine("        string stamp = BuildArchiveStamp(archiveInfo);");
-        sb.AppendLine("        string stampPath = Path.Combine(destinationRoot, \".archive.stamp\");");
-        sb.AppendLine();
-        sb.AppendLine("        if (Directory.Exists(destinationRoot) && File.Exists(stampPath))");
-        sb.AppendLine("        {");
-        sb.AppendLine("            string existingStamp = File.ReadAllText(stampPath);");
-        sb.AppendLine("            if (string.Equals(existingStamp, stamp, StringComparison.Ordinal))");
-        sb.AppendLine("                return;");
-        sb.AppendLine("        }");
-        sb.AppendLine();
-        sb.AppendLine("        if (Directory.Exists(destinationRoot))");
-        sb.AppendLine("            Directory.Delete(destinationRoot, recursive: true);");
-        sb.AppendLine();
-        sb.AppendLine("        Directory.CreateDirectory(destinationRoot);");
-        sb.AppendLine();
-        sb.AppendLine("        var info = AssetPacker.ReadArchiveInfo(archivePath);");
-        sb.AppendLine("        string destinationRootFullPath = Path.GetFullPath(destinationRoot);");
-        sb.AppendLine();
-        sb.AppendLine("        foreach (var entry in info.Entries)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            string relativePath = entry.Path.Replace('/', Path.DirectorySeparatorChar)");
-        sb.AppendLine("                .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);");
-        sb.AppendLine("            if (string.IsNullOrWhiteSpace(relativePath))");
-        sb.AppendLine("                continue;");
-        sb.AppendLine();
-        sb.AppendLine("            string outputPath = Path.GetFullPath(Path.Combine(destinationRootFullPath, relativePath));");
-        sb.AppendLine("            if (!outputPath.StartsWith(destinationRootFullPath, StringComparison.OrdinalIgnoreCase))");
-        sb.AppendLine("                continue;");
-        sb.AppendLine();
-        sb.AppendLine("            string? outputDirectory = Path.GetDirectoryName(outputPath);");
-        sb.AppendLine("            if (!string.IsNullOrWhiteSpace(outputDirectory))");
-        sb.AppendLine("                Directory.CreateDirectory(outputDirectory);");
-        sb.AppendLine();
-        sb.AppendLine("            byte[] data = AssetPacker.DecompressEntry(archivePath, entry);");
-        sb.AppendLine("            File.WriteAllBytes(outputPath, data);");
-        sb.AppendLine("        }");
-        sb.AppendLine();
-        sb.AppendLine("        File.WriteAllText(stampPath, stamp);");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private static string BuildArchiveStamp(FileInfo archiveInfo)");
-        sb.AppendLine("        => $\"{archiveInfo.Length}:{archiveInfo.LastWriteTimeUtc.Ticks}\";");
-        sb.AppendLine();
-        sb.AppendLine("    private static string ComputeStableToken(string value)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        byte[] bytes = Encoding.UTF8.GetBytes(value);");
-        sb.AppendLine("        byte[] hash = SHA256.HashData(bytes);");
-        sb.AppendLine("        return Convert.ToHexString(hash, 0, 8);");
-        sb.AppendLine("    }");
         sb.AppendLine("}");
         return sb.ToString();
     }
+
+    #endregion
 }

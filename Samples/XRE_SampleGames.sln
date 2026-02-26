@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.4.33213.308
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MonkeyBallVR", "MonkeyBallVR/MonkeyBallVR.csproj", "{49DD2345-D1D4-B210-69F0-60AE26CA580E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Development Debug|Any CPU = Development Debug|Any CPU
+		Development Release|Any CPU = Development Release|Any CPU
+		Published Release|Any CPU = Published Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{49DD2345-D1D4-B210-69F0-60AE26CA580E}.Development Debug|Any CPU.ActiveCfg = Development Debug|AnyCPU
+		{49DD2345-D1D4-B210-69F0-60AE26CA580E}.Development Debug|Any CPU.Build.0 = Development Debug|AnyCPU
+		{49DD2345-D1D4-B210-69F0-60AE26CA580E}.Development Release|Any CPU.ActiveCfg = Development Release|AnyCPU
+		{49DD2345-D1D4-B210-69F0-60AE26CA580E}.Development Release|Any CPU.Build.0 = Development Release|AnyCPU
+		{49DD2345-D1D4-B210-69F0-60AE26CA580E}.Published Release|Any CPU.ActiveCfg = Published Release|AnyCPU
+		{49DD2345-D1D4-B210-69F0-60AE26CA580E}.Published Release|Any CPU.Build.0 = Published Release|AnyCPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

@@ -45,6 +45,26 @@ namespace XREngine.Core.Files
             };
         }
 
+        /// <summary>
+        /// Loads a cooked asset from a <see cref="ReadOnlySpan{T}"/> without requiring
+        /// a <c>byte[]</c> allocation for the outer envelope.  The decompressed bytes
+        /// from the archive can be passed directly here.
+        /// </summary>
+        [RequiresUnreferencedCode(ReflectionWarningMessage)]
+        [RequiresDynamicCode(ReflectionWarningMessage)]
+        public static object? LoadAsset(ReadOnlySpan<byte> cookedData, Type? expectedType = null)
+        {
+            if (cookedData.IsEmpty)
+                throw new ArgumentException("Cooked data is empty.", nameof(cookedData));
+
+            var blob = MemoryPackSerializer.Deserialize<CookedAssetBlob>(cookedData);
+            return blob.Format switch
+            {
+                CookedAssetFormat.BinaryV1 => DeserializeBinary(blob, expectedType),
+                _ => throw new NotSupportedException($"Unsupported cooked asset format '{blob.Format}'.")
+            };
+        }
+
         [RequiresUnreferencedCode(ReflectionWarningMessage)]
         [RequiresDynamicCode(ReflectionWarningMessage)]
         private static object? DeserializeBinary(CookedAssetBlob blob, Type? expectedType)

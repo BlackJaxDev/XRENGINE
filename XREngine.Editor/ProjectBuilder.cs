@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
+using System.Text.Json;
 using MemoryPack;
 using XREngine;
 using XREngine.Core.Files;
@@ -13,6 +14,8 @@ namespace XREngine.Editor;
 
 internal static class ProjectBuilder
 {
+    #region Nested Types
+
     /// <summary>
     /// Represents the progress of cooking a single asset during the content cooking step of the build process.
     /// </summary>
@@ -24,6 +27,8 @@ internal static class ProjectBuilder
 
     private const string StartupAssetName = "startup.asset";
     private const string CommonAssetsArchiveName = "CommonAssets.pak";
+
+    private sealed record AssetTimestampEntry(string Path, long LastWriteUtcTicks, long Length);
 
     private sealed record BuildContext(
         XRProject Project,
@@ -39,6 +44,10 @@ internal static class ProjectBuilder
         string ConfigArchivePath);
 
     private sealed record BuildStep(string Description, Action Action);
+
+    #endregion
+
+    #region State & Public API
 
     private static readonly object _buildLock = new();
     private static Job? _activeJob;
@@ -60,6 +69,7 @@ internal static class ProjectBuilder
 
         var project = EnsureProjectLoaded();
         var settings = settingsOverride ?? SnapshotSettings();
+        AssetPacker.ArchiveCopyBufferBytes = settings.ArchiveCopyBufferBytes;
         var context = CreateBuildContext(project, settings);
         var steps = CreateSteps(settings, context);
 
@@ -107,6 +117,10 @@ internal static class ProjectBuilder
         }
     }
 
+    #endregion
+
+    #region Build Orchestration
+
     private static void OnJobFaulted(Job j, Exception ex)
     {
         Debug.LogException(ex, "Project build failed.");
@@ -127,6 +141,7 @@ internal static class ProjectBuilder
 
         var project = EnsureProjectLoaded();
         var settings = SnapshotSettings();
+        AssetPacker.ArchiveCopyBufferBytes = settings.ArchiveCopyBufferBytes;
         var context = CreateBuildContext(project, settings);
         var steps = CreateSteps(settings, context);
 
@@ -241,6 +256,10 @@ internal static class ProjectBuilder
         return steps;
     }
 
+    #endregion
+
+    #region Build Steps
+
     private static void PrepareOutputDirectories(BuildContext context, bool cleanRoot)
     {
         try
@@ -268,13 +287,18 @@ internal static class ProjectBuilder
         if (!Directory.Exists(context.AssetsDirectory))
             throw new DirectoryNotFoundException($"Assets directory not found at '{context.AssetsDirectory}'.");
 
-        string cookedDir = PrepareCookedContentDirectory(context);
+        if (!ShouldUseIncrementalArchives(context))
+        {
+            string cookedDir = PrepareCookedContentDirectory(context);
+            Directory.CreateDirectory(Path.GetDirectoryName(context.ContentArchivePath)!);
+            if (File.Exists(context.ContentArchivePath))
+                File.Delete(context.ContentArchivePath);
 
-        Directory.CreateDirectory(Path.GetDirectoryName(context.ContentArchivePath)!);
-        if (File.Exists(context.ContentArchivePath))
-            File.Delete(context.ContentArchivePath);
+            AssetPacker.Pack(cookedDir, context.ContentArchivePath);
+            return;
+        }
 
-        AssetPacker.Pack(cookedDir, context.ContentArchivePath);
+        BuildContentArchiveIncremental(context);
     }
 
     private static void GenerateConfigArchive(BuildContext context)
@@ -292,11 +316,24 @@ internal static class ProjectBuilder
         WriteCookedAsset(Engine.UserSettings ?? new UserSettings(), Path.Combine(staging, XRProject.UserSettingsFileName));
 
         Directory.CreateDirectory(Path.GetDirectoryName(context.ConfigArchivePath)!);
-        if (File.Exists(context.ConfigArchivePath))
-            File.Delete(context.ConfigArchivePath);
+        try
+        {
+            if (!ShouldUseIncrementalArchives(context) || !File.Exists(context.ConfigArchivePath))
+            {
+                if (File.Exists(context.ConfigArchivePath))
+                    File.Delete(context.ConfigArchivePath);
 
-        AssetPacker.Pack(staging, context.ConfigArchivePath);
-        Directory.Delete(staging, true);
+                AssetPacker.Pack(staging, context.ConfigArchivePath);
+                return;
+            }
+
+            RepackConfigArchiveIncremental(context, staging);
+        }
+        finally
+        {
+            if (Directory.Exists(staging))
+                Directory.Delete(staging, true);
+        }
     }
 
     private static void BuildManagedAssemblies(string configuration, string platform)
@@ -351,10 +388,23 @@ internal static class ProjectBuilder
         {
             string commonAssetsArchivePath = Path.Combine(context.ContentOutputDirectory, CommonAssetsArchiveName);
             Directory.CreateDirectory(Path.GetDirectoryName(commonAssetsArchivePath)!);
-            if (File.Exists(commonAssetsArchivePath))
-                File.Delete(commonAssetsArchivePath);
 
-            AssetPacker.Pack(engineAssetsPath, commonAssetsArchivePath);
+            if (!ShouldUseIncrementalArchives(context))
+            {
+                if (File.Exists(commonAssetsArchivePath))
+                    File.Delete(commonAssetsArchivePath);
+
+                AssetPacker.Pack(engineAssetsPath, commonAssetsArchivePath);
+            }
+            else
+            {
+                RepackArchiveFromSourceIncremental(
+                    sourceDirectory: engineAssetsPath,
+                    archivePath: commonAssetsArchivePath,
+                    intermediateDirectory: context.IntermediateDirectory,
+                    deltaFolderName: "CommonAssetsDelta",
+                    transformFile: static (source, destination) => File.Copy(source, destination, true));
+            }
         }
     }
 
@@ -396,6 +446,234 @@ internal static class ProjectBuilder
         }
     }
 
+    #endregion
+
+    #region Incremental Build
+
+    private static bool ShouldUseIncrementalArchives(BuildContext context)
+        => context.Settings.PublishLauncherAsNativeAot;
+
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    private static void BuildContentArchiveIncremental(BuildContext context)
+    {
+        RepackArchiveFromSourceIncremental(
+            sourceDirectory: context.AssetsDirectory,
+            archivePath: context.ContentArchivePath,
+            intermediateDirectory: context.IntermediateDirectory,
+            deltaFolderName: "CookedContentDelta",
+            transformFile: (source, destination) => WriteCookedAssetFile(source, destination));
+    }
+
+    private static void RepackConfigArchiveIncremental(BuildContext context, string stagingDirectory)
+    {
+        IReadOnlyCollection<string> existingPaths;
+        try
+        {
+            existingPaths = new HashSet<string>(AssetPacker.GetAssetPaths(context.ConfigArchivePath), StringComparer.Ordinal);
+        }
+        catch
+        {
+            if (File.Exists(context.ConfigArchivePath))
+                File.Delete(context.ConfigArchivePath);
+            AssetPacker.Pack(stagingDirectory, context.ConfigArchivePath);
+            return;
+        }
+
+        string deltaDirectory = Path.Combine(context.IntermediateDirectory, "Build", "ConfigDelta");
+        if (Directory.Exists(deltaDirectory))
+            Directory.Delete(deltaDirectory, true);
+
+        HashSet<string> stagedPaths = new(StringComparer.Ordinal);
+        List<string> changedPaths = [];
+
+        foreach (string filePath in Directory.GetFiles(stagingDirectory, "*", SearchOption.AllDirectories))
+        {
+            string relativePath = NormalizePath(Path.GetRelativePath(stagingDirectory, filePath));
+            stagedPaths.Add(relativePath);
+
+            bool changed = true;
+            try
+            {
+                byte[] archiveData = AssetPacker.GetAsset(context.ConfigArchivePath, relativePath);
+                byte[] stagedData = File.ReadAllBytes(filePath);
+                changed = !archiveData.AsSpan().SequenceEqual(stagedData);
+            }
+            catch (FileNotFoundException)
+            {
+                changed = true;
+            }
+
+            if (!changed)
+                continue;
+
+            string destination = Path.Combine(deltaDirectory, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(filePath, destination, true);
+            changedPaths.Add(relativePath);
+        }
+
+        List<string> removedPaths = [];
+        foreach (string path in existingPaths)
+        {
+            if (!stagedPaths.Contains(path))
+                removedPaths.Add(path);
+        }
+
+        if (changedPaths.Count == 0 && removedPaths.Count == 0)
+            return;
+
+        AssetPacker.Repack(
+            context.ConfigArchivePath,
+            changedPaths.Count > 0 ? deltaDirectory : string.Empty,
+            [.. removedPaths]);
+    }
+
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    private static void RepackArchiveFromSourceIncremental(
+        string sourceDirectory,
+        string archivePath,
+        string intermediateDirectory,
+        string deltaFolderName,
+        Action<string, string> transformFile)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
+
+        Dictionary<string, AssetTimestampEntry> currentSnapshot = CaptureDirectorySnapshot(sourceDirectory);
+
+        if (!File.Exists(archivePath))
+        {
+            string fullStagingDir = Path.Combine(intermediateDirectory, "Build", deltaFolderName + "_Full");
+            StageFiles(sourceDirectory, fullStagingDir, currentSnapshot.Keys, transformFile);
+            AssetPacker.Pack(fullStagingDir, archivePath);
+            return;
+        }
+
+        // Read archive metadata (timestamps are embedded in the TOC)
+        AssetPacker.ArchiveInfo archiveInfo;
+        try
+        {
+            archiveInfo = AssetPacker.ReadArchiveInfo(archivePath);
+        }
+        catch
+        {
+            // Corrupt or unreadable archive — do a full repack
+            string fullStagingDir = Path.Combine(intermediateDirectory, "Build", deltaFolderName + "_FallbackFull");
+            StageFiles(sourceDirectory, fullStagingDir, currentSnapshot.Keys, transformFile);
+            if (File.Exists(archivePath))
+                File.Delete(archivePath);
+            AssetPacker.Pack(fullStagingDir, archivePath);
+            return;
+        }
+
+        // Build a lookup from the embedded TOC timestamps
+        Dictionary<string, long> embeddedTimestamps = new(StringComparer.Ordinal);
+        foreach (var entry in archiveInfo.Entries)
+            embeddedTimestamps[entry.Path] = entry.SourceTimestampUtcTicks;
+
+        // Determine which source files have changed vs. the embedded timestamp
+        List<string> changedPaths = [];
+        foreach (var (path, current) in currentSnapshot)
+        {
+            if (!embeddedTimestamps.TryGetValue(path, out long embeddedTicks) ||
+                embeddedTicks != current.LastWriteUtcTicks)
+            {
+                changedPaths.Add(path);
+            }
+        }
+
+        // Determine which archive entries have no corresponding source file
+        List<string> removedPaths = [];
+        foreach (string existingPath in embeddedTimestamps.Keys)
+        {
+            if (!currentSnapshot.ContainsKey(existingPath))
+                removedPaths.Add(existingPath);
+        }
+
+        if (changedPaths.Count == 0 && removedPaths.Count == 0)
+            return;
+
+        string deltaDirectory = Path.Combine(intermediateDirectory, "Build", deltaFolderName);
+        if (changedPaths.Count > 0)
+            StageFiles(sourceDirectory, deltaDirectory, changedPaths, transformFile);
+
+        AssetPacker.Repack(
+            archivePath,
+            changedPaths.Count > 0 ? deltaDirectory : string.Empty,
+            [.. removedPaths]);
+    }
+
+    private static void StageFiles(
+        string sourceDirectory,
+        string destinationDirectory,
+        IEnumerable<string> relativePaths,
+        Action<string, string> transformFile)
+    {
+        if (Directory.Exists(destinationDirectory))
+            Directory.Delete(destinationDirectory, true);
+        Directory.CreateDirectory(destinationDirectory);
+
+        foreach (string relativePath in relativePaths)
+        {
+            string sourcePath = Path.Combine(sourceDirectory, ToSystemPath(relativePath));
+            if (!File.Exists(sourcePath))
+                continue;
+
+            string destinationPath = Path.Combine(destinationDirectory, ToSystemPath(relativePath));
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+            transformFile(sourcePath, destinationPath);
+        }
+    }
+
+    private static Dictionary<string, AssetTimestampEntry> CaptureDirectorySnapshot(string rootDirectory)
+    {
+        Dictionary<string, AssetTimestampEntry> snapshot = new(StringComparer.Ordinal);
+        foreach (string filePath in Directory.GetFiles(rootDirectory, "*", SearchOption.AllDirectories))
+        {
+            string relativePath = NormalizePath(Path.GetRelativePath(rootDirectory, filePath));
+            var fileInfo = new FileInfo(filePath);
+            snapshot[relativePath] = new AssetTimestampEntry(relativePath, fileInfo.LastWriteTimeUtc.Ticks, fileInfo.Length);
+        }
+
+        return snapshot;
+    }
+
+    #endregion
+
+    #region Content Cooking
+
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    private static void WriteCookedAssetFile(string sourceFile, string destination)
+    {
+        if (TryWriteCookedAssetFile(sourceFile, destination))
+            return;
+
+        File.Copy(sourceFile, destination, true);
+    }
+
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    private static bool TryWriteCookedAssetFile(string sourceFile, string destination)
+    {
+        if (!string.Equals(Path.GetExtension(sourceFile), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string yaml = File.ReadAllText(sourceFile, Encoding.UTF8);
+        string? typeHint = ExtractAssetTypeHint(yaml);
+
+        if (string.IsNullOrWhiteSpace(typeHint))
+            return false;
+
+        try
+        {
+            var blob = CreateCookedBlobFromYaml(yaml, sourceFile);
+            WriteCookedBlob(destination, blob);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
     private static void WriteCookedAsset(object data, string destination)
     {
@@ -425,29 +703,12 @@ internal static class ProjectBuilder
 
             if (string.Equals(Path.GetExtension(sourceFile), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
             {
-                string yaml = File.ReadAllText(sourceFile, Encoding.UTF8);
-                string? typeHint = ExtractAssetTypeHint(yaml);
-
-                if (string.IsNullOrWhiteSpace(typeHint))
-                {
+                cookedAsBinaryAsset = TryWriteCookedAssetFile(sourceFile, destination);
+                if (!cookedAsBinaryAsset)
                     File.Copy(sourceFile, destination, true);
-                    continue;
-                }
 
-                try
-                {
-                    var blob = CreateCookedBlobFromYaml(yaml, sourceFile);
-                    WriteCookedBlob(destination, blob);
-                    cookedAsBinaryAsset = true;
-                    progress?.Invoke(new CookProgress(i + 1, totalFiles, relative, cookedAsBinaryAsset));
-                    continue;
-                }
-                catch (InvalidOperationException)
-                {
-                    File.Copy(sourceFile, destination, true);
-                    progress?.Invoke(new CookProgress(i + 1, totalFiles, relative, cookedAsBinaryAsset));
-                    continue;
-                }
+                progress?.Invoke(new CookProgress(i + 1, totalFiles, relative, cookedAsBinaryAsset));
+                continue;
             }
 
             File.Copy(sourceFile, destination, true);
@@ -572,6 +833,16 @@ internal static class ProjectBuilder
         return null;
     }
 
+    #endregion
+
+    #region Utilities
+
+    private static string NormalizePath(string path)
+        => path.Replace('\\', '/');
+
+    private static string ToSystemPath(string normalizedPath)
+        => normalizedPath.Replace('/', Path.DirectorySeparatorChar);
+
     private static string ResolveConfiguration(EBuildConfiguration configuration)
         => configuration switch
         {
@@ -641,4 +912,6 @@ internal static class ProjectBuilder
         string fallback = string.IsNullOrWhiteSpace(requested) ? "Game.exe" : requested.Trim();
         return fallback.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? fallback : fallback + ".exe";
     }
+
+    #endregion
 }

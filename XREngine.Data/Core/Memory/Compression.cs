@@ -1,8 +1,11 @@
-﻿using System.Numerics;
+﻿using System.Buffers;
+using System.Numerics;
 using System.Text;
+using K4os.Compression.LZ4;
 using Silk.NET.Core.Native;
 using Silk.NET.DirectStorage;
 using XREngine.Data.Transforms.Rotations;
+using ZstdSharp;
 
 namespace XREngine.Data
 {
@@ -405,6 +408,66 @@ namespace XREngine.Data
             return outStream.ToArray();
         }
 
+        /// <summary>
+        /// Decompresses LZMA data from a <see cref="ReadOnlySpan{T}"/> without first
+        /// copying it into a managed <c>byte[]</c>.  This is the zero-copy-friendly
+        /// overload used when reading directly from memory-mapped archive data.
+        /// </summary>
+        /// <remarks>
+        /// The LZMA <see cref="SevenZip.Compression.LZMA.Decoder"/> is stream-based, so
+        /// we wrap the span in an <see cref="UnmanagedMemoryStream"/> (no copy).  The
+        /// decompressed output is written into a pooled buffer from
+        /// <see cref="System.Buffers.ArrayPool{T}"/> and then right-sized.
+        /// </remarks>
+        public static unsafe byte[] Decompress(ReadOnlySpan<byte> span, bool longLength = false)
+        {
+            if (span.IsEmpty)
+                return [];
+
+            // Chunked-parallel format check.
+            if (span[0] == ChunkedMagic)
+            {
+                // Chunked decompress currently requires byte[]; copy once.
+                return DecompressChunked(span.ToArray());
+            }
+
+            fixed (byte* ptr = span)
+            {
+                using var inStream = new UnmanagedMemoryStream(ptr, span.Length);
+
+                byte[] properties = new byte[5];
+                inStream.Read(properties, 0, 5);
+
+                int sizeByteCount = longLength ? 8 : 4;
+                Span<byte> lengthBuf = stackalloc byte[8];
+                inStream.Read(lengthBuf[..sizeByteCount]);
+
+                long len = longLength
+                    ? BitConverter.ToInt64(lengthBuf)
+                    : BitConverter.ToInt32(lengthBuf);
+
+                SevenZip.Compression.LZMA.Decoder decoder = new();
+                decoder.SetDecoderProperties(properties);
+
+                // Pool the output buffer to avoid a large GC allocation per asset load.
+                byte[] pooled = System.Buffers.ArrayPool<byte>.Shared.Rent(checked((int)len));
+                try
+                {
+                    using var outStream = new MemoryStream(pooled, 0, (int)len, writable: true);
+                    decoder.Code(inStream, outStream, inStream.Length - 5 - sizeByteCount, len, null);
+
+                    // Right-size: the caller owns this array, so copy out of the pooled buffer.
+                    byte[] result = new byte[len];
+                    Buffer.BlockCopy(pooled, 0, result, 0, (int)len);
+                    return result;
+                }
+                finally
+                {
+                    System.Buffers.ArrayPool<byte>.Shared.Return(pooled);
+                }
+            }
+        }
+
         // ═══════════════════════ Chunked parallel LZMA ═══════════════════════
         //
         // Large files are split into chunks and each chunk is LZMA-compressed in
@@ -558,6 +621,249 @@ namespace XREngine.Data
             }
 
             return result;
+        }
+
+
+        // ═══════════════════════════ LZ4 (span-native) ══════════════════════════
+        //
+        // Uses K4os.Compression.LZ4 which provides ReadOnlySpan<byte> APIs.
+        // Blob format: [int32 uncompressedSize][LZ4 compressed block]
+        // ─────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Compresses <paramref name="source"/> using LZ4 (high-speed block mode).
+        /// Returns <c>[int32 originalSize][compressed block]</c>.
+        /// </summary>
+        public static byte[] CompressLz4(ReadOnlySpan<byte> source, LZ4Level level = LZ4Level.L00_FAST)
+        {
+            // LZ4Codec.Encode returns 0 for empty input — handle as special case.
+            if (source.Length == 0)
+            {
+                byte[] header = new byte[sizeof(int)];
+                BitConverter.TryWriteBytes(header, 0);
+                return header;
+            }
+
+            int maxEncoded = LZ4Codec.MaximumOutputSize(source.Length);
+            byte[] output = new byte[sizeof(int) + maxEncoded];
+            BitConverter.TryWriteBytes(output.AsSpan(0, sizeof(int)), source.Length);
+            int encoded = LZ4Codec.Encode(source, output.AsSpan(sizeof(int)), level);
+            if (encoded <= 0)
+                throw new InvalidOperationException("LZ4 compression failed.");
+            Array.Resize(ref output, sizeof(int) + encoded);
+            return output;
+        }
+
+        /// <summary>
+        /// Decompresses an LZ4 blob produced by <see cref="CompressLz4"/>.
+        /// Zero-copy: reads directly from the span, output is pooled then right-sized.
+        /// </summary>
+        public static byte[] DecompressLz4(ReadOnlySpan<byte> compressed)
+        {
+            if (compressed.Length < sizeof(int))
+                throw new InvalidOperationException("LZ4 blob too short.");
+
+            int originalSize = BitConverter.ToInt32(compressed);
+            if (originalSize == 0)
+                return [];
+
+            ReadOnlySpan<byte> payload = compressed[sizeof(int)..];
+
+            byte[] pooled = ArrayPool<byte>.Shared.Rent(originalSize);
+            try
+            {
+                int decoded = LZ4Codec.Decode(payload, pooled.AsSpan(0, originalSize));
+                if (decoded != originalSize)
+                    throw new InvalidOperationException($"LZ4 decode size mismatch: expected {originalSize}, got {decoded}.");
+                byte[] result = new byte[originalSize];
+                Buffer.BlockCopy(pooled, 0, result, 0, originalSize);
+                return result;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(pooled);
+            }
+        }
+
+        // ═══════════════════════════ Zstd (span-native) ═════════════════════════
+        //
+        // Uses ZstdSharp (pure managed .NET) which provides ReadOnlySpan<byte> APIs.
+        // Blob format: native Zstd frame (self-describing, includes uncompressed size).
+        // ─────────────────────────────────────────────────────────────────────────
+
+        /// <summary>Default Zstd compression level.  3 is a good balance of speed and ratio.</summary>
+        public const int DefaultZstdLevel = 3;
+
+        /// <summary>
+        /// Compresses <paramref name="source"/> using Zstandard.
+        /// The output is a standard Zstd frame which is self-describing.
+        /// </summary>
+        public static byte[] CompressZstd(ReadOnlySpan<byte> source, int level = DefaultZstdLevel)
+        {
+            using var compressor = new Compressor(level);
+            // Wrap includes content size in frame header for decompression.
+            return compressor.Wrap(source).ToArray();
+        }
+
+        /// <summary>
+        /// Decompresses a Zstd frame produced by <see cref="CompressZstd"/>.
+        /// Zero-copy on input; output is pooled then right-sized.
+        /// </summary>
+        public static byte[] DecompressZstd(ReadOnlySpan<byte> compressed)
+        {
+            using var decompressor = new Decompressor();
+
+            // Try to read uncompressed size from the Zstd frame header.
+            ulong contentSize = Decompressor.GetDecompressedSize(compressed);
+            if (contentSize > 0 && contentSize <= int.MaxValue)
+            {
+                int size = (int)contentSize;
+                byte[] pooled = ArrayPool<byte>.Shared.Rent(size);
+                try
+                {
+                    int written = decompressor.Unwrap(compressed, pooled.AsSpan(0, size));
+                    byte[] result = new byte[written];
+                    Buffer.BlockCopy(pooled, 0, result, 0, written);
+                    return result;
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(pooled);
+                }
+            }
+
+            // Fallback: unknown size — let ZstdSharp allocate internally.
+            return decompressor.Unwrap(compressed).ToArray();
+        }
+
+        // ════════════════════════ GDeflate (archive codec) ══════════════════════
+        //
+        // Wraps the existing TryCompressGDeflate / TryDecompressGDeflate for use
+        // via the unified codec dispatch.  These require the expected decompressed
+        // length to be stored in the archive TOC (UncompressedSize field).
+        // ────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Compresses <paramref name="source"/> using GDeflate via DirectStorage.
+        /// Throws if the GDeflate codec is not available on this system.
+        /// </summary>
+        public static byte[] CompressGDeflateOrThrow(ReadOnlySpan<byte> source)
+        {
+            if (!TryCompressGDeflate(source, out byte[] encoded))
+                throw new InvalidOperationException("GDeflate compression is not available (DirectStorage codec not loaded).");
+            return encoded;
+        }
+
+        /// <summary>
+        /// Decompresses a GDeflate blob.  Requires the known uncompressed size
+        /// from the archive TOC.
+        /// </summary>
+        public static byte[] DecompressGDeflateOrThrow(ReadOnlySpan<byte> compressed, int uncompressedSize)
+        {
+            if (!TryDecompressGDeflate(compressed, uncompressedSize, out byte[] decoded))
+                throw new InvalidOperationException("GDeflate decompression failed or is not available.");
+            return decoded;
+        }
+
+        // ═══════════════════ nvCOMP stub (GPU-accelerated) ══════════════════════
+        //
+        // NVIDIA nvCOMP provides GPU-accelerated compression/decompression via CUDA.
+        // On Blackwell+, the hardware Decompression Engine handles LZ4/Snappy/Deflate
+        // with zero SM usage.  On older CUDA GPUs, SM-based fallback is used.
+        //
+        // Integration requires:
+        //  1. nvcomp.dll (not on NuGet — separate NVIDIA download)
+        //  2. CUDA runtime (cudart)
+        //  3. P/Invoke bindings to nvcompBatchedLZ4DecompressAsync, etc.
+        //  4. GPU buffer management (cudaMalloc / cudaFree / cudaMemcpy)
+        //
+        // The stub below provides the API surface.  When nvcomp.dll is present,
+        // it will be used; otherwise it falls back to CPU LZ4.
+        // ────────────────────────────────────────────────────────────────────────
+
+        /// <summary>Whether the nvCOMP native library is loaded and usable.</summary>
+        public static bool IsNvCompAvailable => NvCompInterop.IsAvailable;
+
+        /// <summary>
+        /// Compresses using nvCOMP (GPU LZ4).  Falls back to CPU <see cref="CompressLz4"/>
+        /// if the GPU path is unavailable.
+        /// </summary>
+        public static byte[] CompressNvComp(ReadOnlySpan<byte> source)
+        {
+            if (NvCompInterop.IsAvailable)
+            {
+                try
+                {
+                    return NvCompInterop.Compress(source);
+                }
+                catch
+                {
+                    // Fall back to CPU path if native interop is present but runtime
+                    // invocation fails (ABI drift, driver/runtime mismatch, etc.).
+                }
+            }
+
+            // Fallback: CPU LZ4
+            return CompressLz4(source);
+        }
+
+        /// <summary>
+        /// Decompresses using nvCOMP (GPU LZ4).  Falls back to CPU <see cref="DecompressLz4"/>
+        /// if the GPU path is unavailable.
+        /// </summary>
+        public static byte[] DecompressNvComp(ReadOnlySpan<byte> compressed)
+        {
+            if (NvCompInterop.IsAvailable)
+            {
+                try
+                {
+                    return NvCompInterop.Decompress(compressed);
+                }
+                catch
+                {
+                    // Fall back to CPU path if native interop is present but runtime
+                    // invocation fails (ABI drift, driver/runtime mismatch, etc.).
+                }
+            }
+
+            // Fallback: CPU LZ4
+            return DecompressLz4(compressed);
+        }
+
+        // ══════════════════════ Unified codec dispatch ══════════════════════════
+
+        /// <summary>
+        /// Compresses <paramref name="source"/> using the specified <paramref name="codec"/>.
+        /// </summary>
+        public static byte[] Compress(ReadOnlySpan<byte> source, CompressionCodec codec)
+        {
+            return codec switch
+            {
+                CompressionCodec.Lzma => Compress(source.ToArray(), longSize: true),
+                CompressionCodec.Lz4 => CompressLz4(source),
+                CompressionCodec.Zstd => CompressZstd(source),
+                CompressionCodec.GDeflate => CompressGDeflateOrThrow(source),
+                CompressionCodec.NvComp => CompressNvComp(source),
+                _ => throw new NotSupportedException($"Unknown compression codec: {codec}"),
+            };
+        }
+
+        /// <summary>
+        /// Decompresses <paramref name="compressed"/> that was encoded with
+        /// <paramref name="codec"/>.  For codecs that need the uncompressed size
+        /// (GDeflate), pass it via <paramref name="uncompressedSize"/>.
+        /// </summary>
+        public static byte[] Decompress(ReadOnlySpan<byte> compressed, CompressionCodec codec, int uncompressedSize = 0)
+        {
+            return codec switch
+            {
+                CompressionCodec.Lzma => Decompress(compressed, longLength: true),
+                CompressionCodec.Lz4 => DecompressLz4(compressed),
+                CompressionCodec.Zstd => DecompressZstd(compressed),
+                CompressionCodec.GDeflate => DecompressGDeflateOrThrow(compressed, uncompressedSize),
+                CompressionCodec.NvComp => DecompressNvComp(compressed),
+                _ => throw new NotSupportedException($"Unknown compression codec: {codec}"),
+            };
         }
 
 

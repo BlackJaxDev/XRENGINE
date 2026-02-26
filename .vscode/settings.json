@@ -1,3 +1,4 @@
 {
-    "cmake.sourceDirectory": "${workspaceFolder}/Build/Dependencies/CoACD/sources/spdlog/example"
+    "cmake.sourceDirectory": "${workspaceFolder}/Build/Dependencies/CoACD/sources/spdlog/example",
+    "python.terminal.activateEnvironment": false
 }

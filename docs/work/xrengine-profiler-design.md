@@ -321,9 +321,9 @@ All the aggregation/cache logic (`ProfilerRootMethodAggregate`, `AggregatedChild
 
 ### Phase 5 — Polish & Tasks
 
-- [x] **5.1** Add VS Code task `start-profiler-no-debug` to `.vscode/tasks.json`. Also added `start-editor-with-profiler-no-debug` (launches editor with `XRE_PROFILER_ENABLED=1`).
+- [x] **5.1** Add VS Code task `Start-Profiler-NoDebug` to `.vscode/tasks.json`. Also added `Start-Editor-WithProfiler-NoDebug` (launches editor with `XRE_PROFILER_ENABLED=1`).
 - [x] **5.2** Add VS Code launch configuration for debugging the profiler. Added "Debug Profiler" and "Debug Profiler (with Editor)" configs to `launch.json`.
-- [x] **5.3** Add `build-profiler` task. Added to `tasks.json`.
+- [x] **5.3** Add `Build-Profiler` task. Added to `tasks.json`.
 - [ ] **5.4** Test end-to-end: run editor with `XRE_PROFILER_ENABLED=1`, launch profiler app, verify all panels match.
 - [ ] **5.5** Measure sender overhead — profile with and without sender enabled, confirm < 0.1 ms per frame on sender thread.
 - [x] **5.6** Handle multiple engine instances — profiler shows "Known Sources" table in Connection Info panel when multiple heartbeats arrive from different PIDs. Warning displayed about interleaved data with recommendation to use separate ports.

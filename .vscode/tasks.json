@@ -2,7 +2,7 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "build",
+            "label": "Build-Editor",
             "command": "dotnet",
             "type": "shell",
             "args": [
@@ -18,7 +18,7 @@
             "problemMatcher": "$msCompile"
         },
         {
-            "label": "build-server",
+            "label": "Build-Server",
             "command": "dotnet",
             "type": "shell",
             "args": [
@@ -34,7 +34,7 @@
             "problemMatcher": "$msCompile"
         },
         {
-            "label": "build-vrclient",
+            "label": "Build-VRClient",
             "command": "dotnet",
             "type": "shell",
             "args": [
@@ -50,7 +50,7 @@
             "problemMatcher": "$msCompile"
         },
         {
-            "label": "start-editor-no-debug",
+            "label": "Start-Editor-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -58,14 +58,14 @@
                 "/c",
                 "set XRE_WINDOW_TITLE=XRE Editor (Separate) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
-            "dependsOn": "build",
+            "dependsOn": "Build-Editor",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "start-server-no-debug",
+            "label": "Start-Server-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -73,14 +73,14 @@
                 "/c",
                 "set XRE_NET_MODE=Server && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
-            "dependsOn": "build",
+            "dependsOn": "Build-Editor",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "start-client-no-debug",
+            "label": "Start-Client-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -88,14 +88,14 @@
                 "/c",
                 "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
-            "dependsOn": "build",
+            "dependsOn": "Build-Editor",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "start-client2-no-debug",
+            "label": "Start-Client2-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -103,14 +103,14 @@
                 "/c",
                 "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (Client 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
-            "dependsOn": "build",
+            "dependsOn": "Build-Editor",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "start-pose-source-client-no-debug",
+            "label": "Start-PoseSourceClient-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -118,14 +118,14 @@
                 "/c",
                 "set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=NetworkingPose && set XRE_NETWORKING_POSE_ROLE=sender && set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_POSE_ENTITY_ID=4242 && set XRE_POSE_BROADCAST_ENABLED=1 && set XRE_POSE_RECEIVE_ENABLED=0 && set XRE_WINDOW_TITLE=XRE Editor (Pose Source) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
-            "dependsOn": "build",
+            "dependsOn": "Build-Editor",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "start-pose-server-no-debug",
+            "label": "Start-PoseServer-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -133,14 +133,14 @@
                 "/c",
                 "set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=NetworkingPose && set XRE_NETWORKING_POSE_ROLE=server && set XRE_NET_MODE=Server && set XRE_WINDOW_TITLE=XRE Editor (Pose Server) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
-            "dependsOn": "build",
+            "dependsOn": "Build-Editor",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "start-pose-receiver-client-no-debug",
+            "label": "Start-PoseReceiverClient-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -148,14 +148,14 @@
                 "/c",
                 "set XRE_WORLD_MODE=UnitTesting && set XRE_UNIT_TEST_WORLD_KIND=NetworkingPose && set XRE_NETWORKING_POSE_ROLE=receiver && set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_POSE_ENTITY_ID=4242 && set XRE_POSE_BROADCAST_ENABLED=0 && set XRE_POSE_RECEIVE_ENABLED=1 && set XRE_WINDOW_TITLE=XRE Editor (Pose Receiver) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
-            "dependsOn": "build",
+            "dependsOn": "Build-Editor",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "start-local-pose-sync-no-debug",
+            "label": "Start-LocalPoseSync-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -164,9 +164,9 @@
                 "echo Starting local server + pose source + pose receiver..."
             ],
             "dependsOn": [
-                "start-pose-server-no-debug",
-                "start-pose-source-client-no-debug",
-                "start-pose-receiver-client-no-debug"
+                "Start-PoseServer-NoDebug",
+                "Start-PoseSourceClient-NoDebug",
+                "Start-PoseReceiverClient-NoDebug"
             ],
             "dependsOrder": "sequence",
             "presentation": {
@@ -175,7 +175,7 @@
             "problemMatcher": []
         },
         {
-            "label": "start-2-clients-no-debug",
+            "label": "Start-2Clients-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -183,14 +183,14 @@
                 "/c",
                 "set XRE_NET_MODE=Client && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (Client 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\" && timeout /t 1 /nobreak > nul && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (Client 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
-            "dependsOn": "build",
+            "dependsOn": "Build-Editor",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "start-dedicated-server-no-debug",
+            "label": "Start-DedicatedServer-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -198,14 +198,14 @@
                 "/c",
                 "start \"\" /D \"${workspaceFolder}\\XREngine.Server\" \"${workspaceFolder}\\XREngine.Server\\bin\\Debug\\net10.0-windows10.0.26100.0\\XREngine.Server.exe\""
             ],
-            "dependsOn": "build-server",
+            "dependsOn": "Build-Server",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "start-p2p-peer-no-debug",
+            "label": "Start-P2PPeer-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -213,14 +213,14 @@
                 "/c",
                 "set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5001 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 1) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
-            "dependsOn": "build",
+            "dependsOn": "Build-Editor",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "start-p2p-peer2-no-debug",
+            "label": "Start-P2PPeer2-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -228,14 +228,14 @@
                 "/c",
                 "set XRE_NET_MODE=P2PClient && set XRE_UDP_CLIENT_RECEIVE_PORT=5002 && set XRE_WINDOW_TITLE=XRE Editor (P2P Peer 2) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
-            "dependsOn": "build",
+            "dependsOn": "Build-Editor",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "prep-debug-server-with-2-clients",
+            "label": "Prep-DebugServer-With2Clients",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -244,8 +244,8 @@
                 "echo Preparing dedicated server debug session..."
             ],
             "dependsOn": [
-                "build-server",
-                "start-2-clients-no-debug"
+                "Build-Server",
+                "Start-2Clients-NoDebug"
             ],
             "dependsOrder": "sequence",
             "presentation": {
@@ -254,7 +254,7 @@
             "problemMatcher": []
         },
         {
-            "label": "prep-debug-server-only",
+            "label": "Prep-DebugServer-Only",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -263,7 +263,7 @@
                 "echo Preparing dedicated server debug session (server only)..."
             ],
             "dependsOn": [
-                "build-server"
+                "Build-Server"
             ],
             "dependsOrder": "sequence",
             "presentation": {
@@ -272,7 +272,7 @@
             "problemMatcher": []
         },
         {
-            "label": "prep-debug-client-with-server-and-client",
+            "label": "Prep-DebugClient-WithServerAndClient",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -281,8 +281,8 @@
                 "echo Preparing client debug session (server + extra client)..."
             ],
             "dependsOn": [
-                "start-dedicated-server-no-debug",
-                "start-client2-no-debug"
+                "Start-DedicatedServer-NoDebug",
+                "Start-Client2-NoDebug"
             ],
             "dependsOrder": "sequence",
             "presentation": {
@@ -291,7 +291,7 @@
             "problemMatcher": []
         },
         {
-            "label": "prep-debug-p2p-client-with-peer",
+            "label": "Prep-DebugP2PClient-WithPeer",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -300,7 +300,7 @@
                 "echo Preparing P2P client debug session (peer client only)..."
             ],
             "dependsOn": [
-                "start-p2p-peer2-no-debug"
+                "Start-P2PPeer2-NoDebug"
             ],
             "dependsOrder": "sequence",
             "presentation": {
@@ -309,7 +309,7 @@
             "problemMatcher": []
         },
         {
-            "label": "prep-debug-vrclient-with-editor",
+            "label": "Prep-DebugVRClient-WithEditor",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -318,8 +318,8 @@
                 "echo Preparing VRClient debug session (editor runs separately)..."
             ],
             "dependsOn": [
-                "start-editor-no-debug",
-                "build-vrclient"
+                "Start-Editor-NoDebug",
+                "Build-VRClient"
             ],
             "dependsOrder": "sequence",
             "presentation": {
@@ -328,7 +328,7 @@
             "problemMatcher": []
         },
         {
-            "label": "test-surfelgi",
+            "label": "Test-SurfelGi",
             "command": "dotnet",
             "type": "shell",
             "args": [
@@ -346,7 +346,7 @@
             "problemMatcher": "$msCompile"
         },
         {
-            "label": "test-vulkan-phase3-regression",
+            "label": "Test-VulkanPhase3-Regression",
             "command": "dotnet",
             "type": "process",
             "args": [
@@ -364,7 +364,7 @@
             "problemMatcher": "$msCompile"
         },
         {
-            "label": "build-profiler",
+            "label": "Build-Profiler",
             "command": "dotnet",
             "type": "shell",
             "args": [
@@ -380,7 +380,7 @@
             "problemMatcher": "$msCompile"
         },
         {
-            "label": "start-profiler-no-debug",
+            "label": "Start-Profiler-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -388,14 +388,14 @@
                 "/c",
                 "start \"\" /D \"${workspaceFolder}\\XREngine.Profiler\" \"${workspaceFolder}\\XREngine.Profiler\\bin\\Debug\\net10.0-windows7.0\\XREngine.Profiler.exe\""
             ],
-            "dependsOn": "build-profiler",
+            "dependsOn": "Build-Profiler",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "start-editor-with-profiler-no-debug",
+            "label": "Start-Editor-WithProfiler-NoDebug",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -403,14 +403,14 @@
                 "/c",
                 "set XRE_PROFILER_ENABLED=1 && set XRE_WINDOW_TITLE=XRE Editor (Profiled) && start \"\" /D \"${workspaceFolder}\" \"${workspaceFolder}\\Build\\Editor\\Debug\\AnyCPU\\Debug\\net10.0-windows7.0\\XREngine.Editor.exe\""
             ],
-            "dependsOn": "build",
+            "dependsOn": "Build-Editor",
             "presentation": {
                 "reveal": "silent"
             },
             "problemMatcher": []
         },
         {
-            "label": "cook-commonassets-archive",
+            "label": "Cook-CommonAssets-Archive",
             "type": "shell",
             "command": "powershell",
             "args": [
@@ -418,17 +418,17 @@
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                "${workspaceFolder}\\Tools\\test_cook_commonassets.ps1",
+                "${workspaceFolder}\\Tools\\Test-CookCommonAssets.ps1",
                 "-NoBuild"
             ],
-            "dependsOn": "build",
+            "dependsOn": "Build-Editor",
             "presentation": {
                 "reveal": "always"
             },
             "problemMatcher": []
         },
         {
-            "label": "vr-monkeyball-generate-game-project",
+            "label": "Build-VRMonkeyBall-GenerateGameProject",
             "command": "dotnet",
             "type": "shell",
             "args": [
@@ -443,7 +443,7 @@
             "problemMatcher": "$msCompile"
         },
         {
-            "label": "vr-monkeyball-cook-game-exe",
+            "label": "Build-VRMonkeyBall-CookGameExe",
             "command": "dotnet",
             "type": "shell",
             "args": [
@@ -458,7 +458,7 @@
             "problemMatcher": "$msCompile"
         },
         {
-            "label": "install-yt-dlp",
+            "label": "Install-YtDlp",
             "type": "shell",
             "command": "powershell",
             "args": [
@@ -467,6 +467,22 @@
                 "Bypass",
                 "-File",
                 "${workspaceFolder}\\Tools\\Dependencies\\Get-YtDlp.ps1"
+            ],
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Install-NvComp",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\Dependencies\\Get-NvComp.ps1"
             ],
             "presentation": {
                 "reveal": "always"

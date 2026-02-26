@@ -2,19 +2,19 @@
   <PropertyGroup>
     <TargetFramework>net10.0-windows7.0</TargetFramework>
     <OutputType>Library</OutputType>
-    <RootNamespace>VR_MonkeyBall_Sample</RootNamespace>
-    <AssemblyName>VR_MonkeyBall_Sample</AssemblyName>
+    <RootNamespace>MonkeyBallVR</RootNamespace>
+    <AssemblyName>MonkeyBallVR</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <IsPackable>false</IsPackable>
-    <Configurations>Debug;Development;Release;Publish</Configurations>
+    <Configurations>Development Debug;Development Release;Published Release</Configurations>
     <Platforms>AnyCPU</Platforms>
 
-    <RepositoryRoot>$(MSBuildProjectDirectory)\..</RepositoryRoot>
+    <RepositoryRoot>$(MSBuildProjectDirectory)\..\..</RepositoryRoot>
     <EditorProjectPath>$(RepositoryRoot)\XREngine.Editor\XREngine.Editor.csproj</EditorProjectPath>
-    <SampleGameProjectName>VR_MonkeyBall_Sample</SampleGameProjectName>
-    <SampleGameProjectRoot>$(MSBuildProjectDirectory)\GameProject</SampleGameProjectRoot>
+    <SampleGameProjectName>MonkeyBallVR</SampleGameProjectName>
+    <SampleGameProjectRoot>$(MSBuildProjectDirectory)</SampleGameProjectRoot>
     <SampleGameProjectFile>$(SampleGameProjectRoot)\$(SampleGameProjectName).xrproj</SampleGameProjectFile>
     <EditorAutomationPlatform>AnyCPU</EditorAutomationPlatform>
 
@@ -24,39 +24,39 @@
     <GameOutputSubfolder Condition="'$(GameOutputSubfolder)' == ''">Game</GameOutputSubfolder>
     <GameLauncherName Condition="'$(GameLauncherName)' == ''">Game.exe</GameLauncherName>
     <GamePublishNativeAot Condition="'$(GamePublishNativeAot)' == ''">false</GamePublishNativeAot>
+    <GameDefineConstants Condition="'$(GameDefineConstants)' == ''"></GameDefineConstants>
   </PropertyGroup>
 
-  <!-- Visual Studio profile mapping:
-       Debug/Development -> fast dev build
-       Release           -> optimized non-AOT build
-       Publish           -> optimized publish build with NativeAOT -->
-  <PropertyGroup Condition="'$(Configuration)' == 'Debug' Or '$(Configuration)' == 'Development'">
+  <PropertyGroup Condition="'$(Configuration)' == 'Development Debug'">
     <EditorBuildConfiguration>Debug</EditorBuildConfiguration>
     <GameBuildConfiguration>Development</GameBuildConfiguration>
     <GameOutputSubfolder>Game</GameOutputSubfolder>
     <GamePublishNativeAot>false</GamePublishNativeAot>
+    <GameDefineConstants></GameDefineConstants>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+  <PropertyGroup Condition="'$(Configuration)' == 'Development Release'">
     <EditorBuildConfiguration>Release</EditorBuildConfiguration>
-    <GameBuildConfiguration>Release</GameBuildConfiguration>
+    <GameBuildConfiguration>Development</GameBuildConfiguration>
     <GameOutputSubfolder>Game</GameOutputSubfolder>
     <GamePublishNativeAot>false</GamePublishNativeAot>
+    <GameDefineConstants></GameDefineConstants>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(Configuration)' == 'Publish'">
+  <PropertyGroup Condition="'$(Configuration)' == 'Published Release'">
     <EditorBuildConfiguration>Release</EditorBuildConfiguration>
     <GameBuildConfiguration>Release</GameBuildConfiguration>
     <GameOutputSubfolder>Publish</GameOutputSubfolder>
     <GamePublishNativeAot>true</GamePublishNativeAot>
+    <GameDefineConstants>XRE_PUBLISHED</GameDefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="GameProject\Assets\**\*.cs" />
+    <Compile Include="Assets\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
+    <ProjectReference Include="..\..\XRENGINE\XREngine.csproj" />
   </ItemGroup>
 
   <Target Name="ShowResolvedBuildProfile" BeforeTargets="Build;BuildEditorAutomation;CompileGameManagedCode;BuildGameLauncher">
@@ -98,7 +98,7 @@
     <Message Text="Cooking game executable from $(SampleGameProjectFile)..." Importance="High" />
     <Exec
       WorkingDirectory="$(RepositoryRoot)"
-      Command="dotnet run --no-build --project &quot;$(EditorProjectPath)&quot; -c $(EditorBuildConfiguration) -p:Platform=$(EditorAutomationPlatform) -- --build-project &quot;$(SampleGameProjectFile)&quot; --build-configuration &quot;$(GameBuildConfiguration)&quot; --build-platform &quot;$(GameBuildPlatform)&quot; --output-subfolder &quot;$(GameOutputSubfolder)&quot; --launcher-name &quot;$(GameLauncherName)&quot; --publish-native-aot &quot;$(GamePublishNativeAot)&quot;" />
+      Command="dotnet run --no-build --project &quot;$(EditorProjectPath)&quot; -c $(EditorBuildConfiguration) -p:Platform=$(EditorAutomationPlatform) -- --build-project &quot;$(SampleGameProjectFile)&quot; --build-configuration &quot;$(GameBuildConfiguration)&quot; --build-platform &quot;$(GameBuildPlatform)&quot; --output-subfolder &quot;$(GameOutputSubfolder)&quot; --launcher-name &quot;$(GameLauncherName)&quot; --publish-native-aot &quot;$(GamePublishNativeAot)&quot; --define-constants &quot;$(GameDefineConstants)&quot;" />
   </Target>
 
   <Target Name="CookGameExe" DependsOnTargets="BuildGameLauncher" />

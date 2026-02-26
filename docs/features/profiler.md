@@ -140,7 +140,7 @@ set XRE_PROFILER_ENABLED=1
 set XRE_PROFILER_PORT=9200
 ```
 
-The VS Code task **start-editor-with-profiler-no-debug** does this automatically.
+The VS Code task **Start-Editor-WithProfiler-NoDebug** does this automatically.
 
 ### Option 2: Runtime Toggle
 
@@ -164,9 +164,9 @@ UdpProfilerSender.Stop();
 
 | Task | Description |
 |------|-------------|
-| `build-profiler` | Builds `XREngine.Profiler.csproj` |
-| `start-profiler-no-debug` | Builds and launches the profiler app |
-| `start-editor-with-profiler-no-debug` | Launches the editor with `XRE_PROFILER_ENABLED=1` |
+| `Build-Profiler` | Builds `XREngine.Profiler.csproj` |
+| `Start-Profiler-NoDebug` | Builds and launches the profiler app |
+| `Start-Editor-WithProfiler-NoDebug` | Launches the editor with `XRE_PROFILER_ENABLED=1` |
 
 ### Launch Configurations (`.vscode/launch.json`)
 
@@ -177,8 +177,8 @@ UdpProfilerSender.Stop();
 
 ### Typical Workflow
 
-1. Run the **start-editor-with-profiler-no-debug** task (or launch the editor with `XRE_PROFILER_ENABLED=1`).
-2. Run the **start-profiler-no-debug** task, or select **Debug Profiler** from the launch dropdown.
+1. Run the **Start-Editor-WithProfiler-NoDebug** task (or launch the editor with `XRE_PROFILER_ENABLED=1`).
+2. Run the **Start-Profiler-NoDebug** task, or select **Debug Profiler** from the launch dropdown.
 3. The profiler window connects automatically — the overlay disappears and panels populate.
 
 ## Project Structure

@@ -9,6 +9,10 @@ namespace XREngine
     [MemoryPackable]
     public partial class BuildSettings : XRAsset
     {
+        public const int DefaultArchiveCopyBufferBytes = 1024 * 1024;
+        public const int MinArchiveCopyBufferBytes = 64 * 1024;
+        public const int MaxArchiveCopyBufferBytes = 16 * 1024 * 1024;
+
         private EBuildConfiguration _configuration = EBuildConfiguration.Development;
         private EBuildPlatform _platform = EBuildPlatform.Windows64;
         private string _outputSubfolder = "Game";
@@ -28,6 +32,8 @@ namespace XREngine
         private string _configOutputFolder = "Config";
         private string _binariesOutputFolder = "Binaries";
         private string _launcherExecutableName = "Game.exe";
+        private string _launcherDefineConstants = string.Empty;
+        private int _archiveCopyBufferBytes = DefaultArchiveCopyBufferBytes;
 
         [Category("Build Target")]
         public EBuildConfiguration Configuration
@@ -161,6 +167,24 @@ namespace XREngine
         {
             get => _launcherExecutableName;
             set => SetField(ref _launcherExecutableName, string.IsNullOrWhiteSpace(value) ? "Game.exe" : value);
+        }
+
+        [Category("Build Target")]
+        [Description("Semicolon-delimited compile constants passed when building the generated launcher project.")]
+        public string LauncherDefineConstants
+        {
+            get => _launcherDefineConstants;
+            set => SetField(ref _launcherDefineConstants, value ?? string.Empty);
+        }
+
+        [Category("Build Target")]
+        [Description("Buffer size in bytes used when repacking/compacting archives to copy existing payload data in chunks. Lower values reduce peak RAM usage; higher values can improve throughput.")]
+        public int ArchiveCopyBufferBytes
+        {
+            get => _archiveCopyBufferBytes;
+            set => SetField(
+                ref _archiveCopyBufferBytes,
+                Math.Clamp(value, MinArchiveCopyBufferBytes, MaxArchiveCopyBufferBytes));
         }
     }
 }
