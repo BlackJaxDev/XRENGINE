@@ -386,11 +386,14 @@ namespace XREngine.Rendering.Physics.Physx
                 return;
 
             // Native safety: PhysX controllers are not tolerant of NaN/Inf inputs.
-            if (!float.IsFinite(delta.X) || !float.IsFinite(delta.Y) || !float.IsFinite(delta.Z))
+            if (!float.IsFinite(delta.X) || 
+                !float.IsFinite(delta.Y) || 
+                !float.IsFinite(delta.Z) || 
+                !float.IsFinite(minDist) || 
+                !float.IsFinite(elapsedTime) || 
+                elapsedTime <= 0.0f)
                 return;
-            if (!float.IsFinite(minDist) || !float.IsFinite(elapsedTime) || elapsedTime <= 0.0f)
-                return;
-
+            
             _inputBuffer.Enqueue((delta, minDist, elapsedTime));
         }
 
@@ -494,11 +497,13 @@ namespace XREngine.Rendering.Physics.Physx
                 return;
 
             // Native safety: PhysX controllers are not tolerant of NaN/Inf inputs.
-            if (!float.IsFinite(delta.X) || !float.IsFinite(delta.Y) || !float.IsFinite(delta.Z))
+            if (!float.IsFinite(delta.X) || 
+                !float.IsFinite(delta.Y) || 
+                !float.IsFinite(delta.Z) || 
+                !float.IsFinite(minDist) || 
+                !float.IsFinite(elapsedTime) || elapsedTime <= 0.0f)
                 return;
-            if (!float.IsFinite(minDist) || !float.IsFinite(elapsedTime) || elapsedTime <= 0.0f)
-                return;
-
+            
             PxVec3 d = PxVec3_new_3(delta.X, delta.Y, delta.Z);
 
             //lock (_nativeCallLock)

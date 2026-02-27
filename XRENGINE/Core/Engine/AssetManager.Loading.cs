@@ -573,28 +573,49 @@ namespace XREngine
         private bool TryResolveCachePath(string filePath, Type assetType, out string cachePath)
         {
             cachePath = string.Empty;
-            if (string.IsNullOrWhiteSpace(GameCachePath) || string.IsNullOrWhiteSpace(GameAssetsPath))
+            if (string.IsNullOrWhiteSpace(GameCachePath))
                 return false;
 
-            string projectAssetsRoot = GameAssetsPath;
-            string normalizedAssets = Path.GetFullPath(projectAssetsRoot);
             string normalizedSource = Path.GetFullPath(filePath);
 
-            if (!normalizedSource.StartsWith(normalizedAssets, StringComparison.OrdinalIgnoreCase))
-                return false;
+            // Try game assets first, then engine assets.
+            string? relativePath = TryMakeRelativeTo(normalizedSource, GameAssetsPath);
+            string cacheSubfolder = string.Empty;
+            if (relativePath is null)
+            {
+                relativePath = TryMakeRelativeTo(normalizedSource, EngineAssetsPath);
+                cacheSubfolder = "Engine";
+            }
 
-            string relativePath = Path.GetRelativePath(normalizedAssets, normalizedSource);
-            if (relativePath.StartsWith(".."))
+            if (relativePath is null)
                 return false;
 
             string? relativeDirectory = Path.GetDirectoryName(relativePath);
             string originalFileName = Path.GetFileName(relativePath);
             string typeSuffix = assetType.FullName ?? assetType.Name;
             string cacheFileName = $"{originalFileName}.{typeSuffix}.{AssetExtension}";
+
+            string cacheRoot = string.IsNullOrEmpty(cacheSubfolder)
+                ? GameCachePath!
+                : Path.Combine(GameCachePath!, cacheSubfolder);
+
             cachePath = string.IsNullOrWhiteSpace(relativeDirectory)
-                ? Path.Combine(GameCachePath!, cacheFileName)
-                : Path.Combine(GameCachePath!, relativeDirectory, cacheFileName);
+                ? Path.Combine(cacheRoot, cacheFileName)
+                : Path.Combine(cacheRoot, relativeDirectory, cacheFileName);
             return true;
+        }
+
+        private static string? TryMakeRelativeTo(string normalizedSource, string? root)
+        {
+            if (string.IsNullOrWhiteSpace(root))
+                return null;
+
+            string normalizedRoot = Path.GetFullPath(root);
+            if (!normalizedSource.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            string relative = Path.GetRelativePath(normalizedRoot, normalizedSource);
+            return relative.StartsWith("..", StringComparison.Ordinal) ? null : relative;
         }
 
         private static bool TryLoadCachedAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string cachePath, string originalPath, DateTime sourceTimestampUtc, out T? asset) where T : XRAsset, new()
@@ -705,7 +726,36 @@ namespace XREngine
             }
         }
 
-        private static T? Load3rdPartyAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
+        private AssetImportContext CreateImportContext(string filePath)
+        {
+            string? cacheDir = null;
+            if (!string.IsNullOrWhiteSpace(GameCachePath))
+            {
+                string normalizedSource = Path.GetFullPath(filePath);
+                string? relativePath = TryMakeRelativeTo(normalizedSource, GameAssetsPath);
+                string cacheSubfolder = string.Empty;
+                if (relativePath is null)
+                {
+                    relativePath = TryMakeRelativeTo(normalizedSource, EngineAssetsPath);
+                    cacheSubfolder = "Engine";
+                }
+
+                if (relativePath is not null)
+                {
+                    string? relativeDirectory = Path.GetDirectoryName(relativePath);
+                    string cacheRoot = string.IsNullOrEmpty(cacheSubfolder)
+                        ? GameCachePath!
+                        : Path.Combine(GameCachePath!, cacheSubfolder);
+                    cacheDir = string.IsNullOrWhiteSpace(relativeDirectory)
+                        ? cacheRoot
+                        : Path.Combine(cacheRoot, relativeDirectory);
+                }
+            }
+
+            return new AssetImportContext(filePath, cacheDir);
+        }
+
+        private T? Load3rdPartyAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
         {
             var exts = typeof(T).GetCustomAttribute<XR3rdPartyExtensionsAttribute>()?.Extensions;
             var match = exts?.FirstOrDefault(e => e.ext == ext);
@@ -740,7 +790,8 @@ namespace XREngine
                     {
                         OriginalPath = filePath
                     };
-                    if (asset.Load3rdParty(filePath))
+                    var context = CreateImportContext(filePath);
+                    if (asset.Load3rdParty(filePath, context))
                         return asset;
                     else
                     {
@@ -756,7 +807,7 @@ namespace XREngine
             }
         }
 
-        private static XRAsset? Load3rdPartyAsset(string filePath, string ext, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type type)
+        private XRAsset? Load3rdPartyAsset(string filePath, string ext, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type type)
         {
             var exts = type.GetCustomAttribute<XR3rdPartyExtensionsAttribute>()?.Extensions;
             var match = exts?.FirstOrDefault(e => e.ext == ext);
@@ -794,8 +845,8 @@ namespace XREngine
                     }
 
                     asset.OriginalPath = filePath;
-                    
-                    if (asset.Load3rdParty(filePath))
+                    var context = CreateImportContext(filePath);
+                    if (asset.Load3rdParty(filePath, context))
                         return asset;
                     else
                     {
@@ -811,7 +862,7 @@ namespace XREngine
             }
         }
 
-        private static async Task<T?> Load3rdPartyAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
+        private async Task<T?> Load3rdPartyAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
         {
             var exts = typeof(T).GetCustomAttribute<XR3rdPartyExtensionsAttribute>()?.Extensions;
             var match = exts?.FirstOrDefault(e => e.ext == ext);
@@ -855,7 +906,8 @@ namespace XREngine
                     {
                         OriginalPath = filePath
                     };
-                    if (await asset.Load3rdPartyAsync(filePath).ConfigureAwait(false))
+                    var context = CreateImportContext(filePath);
+                    if (await asset.Load3rdPartyAsync(filePath, context).ConfigureAwait(false))
                         return asset;
                     else
                     {
