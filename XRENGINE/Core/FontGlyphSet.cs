@@ -51,10 +51,13 @@ namespace XREngine.Rendering
 
         public override void Reload(string path)
             => Load3rdParty(path);
-        public override bool Load3rdParty(string filePath)
+        public override bool Load3rdParty(string filePath, AssetImportContext context)
         {
-            string folder = Path.GetDirectoryName(filePath)!;
             string name = Path.GetFileNameWithoutExtension(filePath);
+
+            // Resolve atlas output path via the import context —
+            // the engine places auxiliary files in the correct cache directory automatically.
+            string atlasPath = context.ResolveAuxiliaryPath($"{name}.png");
 
             // Load the font using SharpFont
             using Library lib = new();
@@ -73,7 +76,7 @@ namespace XREngine.Rendering
             }
             Characters = characters;
             SKTypeface typeface = SKTypeface.FromFile(filePath);
-            GenerateFontAtlas(typeface, characters, Path.Combine(folder, $"{name}.png"), FontDrawSize);
+            GenerateFontAtlas(typeface, characters, atlasPath, FontDrawSize);
             return true;
         }
 
@@ -243,10 +246,14 @@ namespace XREngine.Rendering
                 }
             }
 
-            // Save the atlas texture
+            // Save the atlas texture to the (cache) output path.
+            string? outputDir = Path.GetDirectoryName(outputAtlasPath);
+            if (!string.IsNullOrWhiteSpace(outputDir))
+                Directory.CreateDirectory(outputDir);
+
             using (var image = SKImage.FromBitmap(atlasBitmap))
             using (var data = image.Encode(SKEncodedImageFormat.Png, 100))
-            using (var stream = File.OpenWrite(outputAtlasPath))
+            using (var stream = new FileStream(outputAtlasPath, FileMode.Create, FileAccess.Write, FileShare.Read))
             {
                 data.SaveTo(stream);
             }

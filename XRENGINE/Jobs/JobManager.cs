@@ -28,6 +28,7 @@ namespace XREngine
         private static readonly TimeSpan BackpressureLogInterval = TimeSpan.FromSeconds(1);
         private static readonly long StarvationWarningTicks = (long)(StarvationWarningThreshold.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
         private static readonly TimeSpan RemoteWorkerIdleTimeout = TimeSpan.FromSeconds(30);
+        private const int WorkerWakePollMs = 50;
         private readonly ConcurrentQueue<Job>[] _pendingByPriority =
         [
             new(), // Lowest
@@ -85,6 +86,7 @@ namespace XREngine
 
         private readonly object _deferredWorkerLock = new();
         private Task? _deferredWorkerTask;
+        private int _shutdownState;
 
         public int WorkerCount => _workers.Length;
         public IRemoteJobTransport? RemoteTransport { get; set; }
@@ -530,14 +532,11 @@ namespace XREngine
             var token = _cts.Token;
             while (!token.IsCancellationRequested)
             {
-                try
-                {
-                    _readySignal.Wait(token);
-                }
-                catch (OperationCanceledException)
-                {
+                if (!_readySignal.Wait(WorkerWakePollMs))
+                    continue;
+
+                if (token.IsCancellationRequested)
                     break;
-                }
 
                 if (!TryDequeueWithAging(_pendingByPriority, JobAffinity.Any, out var job, out var bucket))
                     continue;
@@ -553,23 +552,28 @@ namespace XREngine
             var token = _cts.Token;
             while (!token.IsCancellationRequested)
             {
+                bool signaled;
                 try
                 {
-                    if (!_remoteReadySignal.Wait(RemoteWorkerIdleTimeout, token))
-                    {
-                        if (IsRemoteQueueEmpty())
-                        {
-                            ClearRemoteWorkerTask();
-                            return;
-                        }
-
-                        // If there are jobs but we timed out, loop again to wait.
-                        continue;
-                    }
+                    signaled = _remoteReadySignal.Wait(RemoteWorkerIdleTimeout, token);
                 }
                 catch (OperationCanceledException)
                 {
+                    // RemoteWorkerIdleTimeout overload can still throw if token fires
+                    // during the kernel wait on some runtimes; treat as shutdown.
                     break;
+                }
+
+                if (!signaled)
+                {
+                    if (IsRemoteQueueEmpty())
+                    {
+                        ClearRemoteWorkerTask();
+                        return;
+                    }
+
+                    // If there are jobs but we timed out, loop again to wait.
+                    continue;
                 }
 
                 if (!TryDequeueWithAging(_pendingRemoteByPriority, JobAffinity.Remote, out var job, out var bucket))
@@ -844,6 +848,9 @@ namespace XREngine
 
         public void Shutdown()
         {
+            if (Interlocked.Exchange(ref _shutdownState, 1) != 0)
+                return;
+
             try
             {
                 _cts.Cancel();

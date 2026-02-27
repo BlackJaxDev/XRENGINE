@@ -292,6 +292,25 @@ namespace XREngine.Core.Files
             => false;
 
         /// <summary>
+        /// Loads asset data from a 3rd-party file format with an import context.
+        /// The context provides cache-aware paths for auxiliary outputs (atlas textures, etc.)
+        /// so that derived types never need to resolve cache paths themselves.
+        /// </summary>
+        /// <param name="filePath">The path to the 3rd-party file to load.</param>
+        /// <param name="context">Import context supplied by the engine's asset pipeline.</param>
+        /// <returns>
+        /// <see langword="true"/> if the file was successfully loaded; otherwise, <see langword="false"/>.
+        /// </returns>
+        /// <remarks>
+        /// The default implementation delegates to <see cref="Load3rdParty(string)"/>.
+        /// Override this method when your asset type generates auxiliary files during import
+        /// (e.g., font atlas textures) — use <see cref="AssetImportContext.ResolveAuxiliaryPath"/>
+        /// to determine where to write them.
+        /// </remarks>
+        public virtual bool Load3rdParty(string filePath, AssetImportContext context)
+            => Load3rdParty(filePath);
+
+        /// <summary>
         /// Loads asset data from a 3rd-party file format asynchronously.
         /// </summary>
         /// <param name="filePath">The path to the 3rd-party file to load.</param>
@@ -305,6 +324,22 @@ namespace XREngine.Core.Files
         /// </remarks>
         public virtual async Task<bool> Load3rdPartyAsync(string filePath)
             => await Task.Run(() => Load3rdParty(filePath));
+
+        /// <summary>
+        /// Loads asset data from a 3rd-party file format asynchronously with an import context.
+        /// </summary>
+        /// <param name="filePath">The path to the 3rd-party file to load.</param>
+        /// <param name="context">Import context supplied by the engine's asset pipeline.</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation, containing 
+        /// <see langword="true"/> if successful; otherwise, <see langword="false"/>.
+        /// </returns>
+        /// <remarks>
+        /// The default implementation runs <see cref="Load3rdParty(string, AssetImportContext)"/> on a background thread.
+        /// Override for true async implementations.
+        /// </remarks>
+        public virtual async Task<bool> Load3rdPartyAsync(string filePath, AssetImportContext context)
+            => await Task.Run(() => Load3rdParty(filePath, context));
 
         /// <summary>
         /// Imports a 3rd-party file into this asset with optional import settings.

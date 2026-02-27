@@ -37,17 +37,11 @@ namespace XREngine.Editor.Mcp
             }
         }
 
-        private sealed class FixedWindowCounter
+        private sealed class FixedWindowCounter(DateTimeOffset windowStart, int count)
         {
-            public FixedWindowCounter(DateTimeOffset windowStart, int count)
-            {
-                WindowStart = windowStart;
-                Count = count;
-            }
-
             public object Sync { get; } = new();
-            public DateTimeOffset WindowStart { get; set; }
-            public int Count { get; set; }
+            public DateTimeOffset WindowStart { get; set; } = windowStart;
+            public int Count { get; set; } = count;
         }
     }
 }

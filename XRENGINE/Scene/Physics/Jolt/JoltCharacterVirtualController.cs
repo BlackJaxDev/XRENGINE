@@ -51,8 +51,7 @@ namespace XREngine.Scene.Physics.Jolt
             set
             {
                 _position = value;
-                if (_character is not null)
-                    _character.Position = value;
+                _character?.Position = value;
             }
         }
 
@@ -287,11 +286,9 @@ namespace XREngine.Scene.Physics.Jolt
 
             foreach (var c in _character.GetActiveContacts())
             {
-                if (!c.HadCollision)
+                if (!c.HadCollision || c.IsSensorB)
                     continue;
-                if (c.IsSensorB)
-                    continue;
-
+                
                 float upDot = Vector3.Dot(c.ContactNormal, UpDirection);
                 if (upDot > 0.5f)
                     _collidingDown = true;
