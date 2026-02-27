@@ -86,6 +86,12 @@ namespace XREngine.Editor.Mcp
             targetWorld.Scenes.Add(scene);
             world.LoadScene(scene);
 
+            var capturedWorld = world;
+            var capturedTargetWorld = targetWorld;
+            Undo.RecordStructuralChange("MCP Create Scene",
+                undoAction: () => { capturedWorld.UnloadScene(scene); capturedTargetWorld.Scenes.Remove(scene); },
+                redoAction: () => { capturedTargetWorld.Scenes.Add(scene); capturedWorld.LoadScene(scene); });
+
             return Task.FromResult(new McpToolResponse($"Created scene '{name}'.", new { id = scene.ID }));
         }
 
@@ -103,8 +109,30 @@ namespace XREngine.Editor.Mcp
             if (!TryResolveScene(world, sceneName, out var scene, out var error) || scene is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene not found.", isError: true));
 
+            var capturedWorld = world;
+            var capturedTargetWorld = world.TargetWorld;
+            int sceneIndex = capturedTargetWorld?.Scenes.IndexOf(scene) ?? -1;
+            bool wasVisible = scene.IsVisible;
+
             world.UnloadScene(scene);
             world.TargetWorld?.Scenes.Remove(scene);
+
+            Undo.RecordStructuralChange("MCP Delete Scene",
+                undoAction: () =>
+                {
+                    if (capturedTargetWorld is not null && sceneIndex >= 0)
+                        capturedTargetWorld.Scenes.Insert(sceneIndex, scene);
+                    else
+                        capturedTargetWorld?.Scenes.Add(scene);
+                    if (wasVisible)
+                        capturedWorld.LoadScene(scene);
+                },
+                redoAction: () =>
+                {
+                    capturedWorld.UnloadScene(scene);
+                    capturedTargetWorld?.Scenes.Remove(scene);
+                });
+
             return Task.FromResult(new McpToolResponse($"Deleted scene '{scene.Name ?? scene.ID.ToString()}'."));
         }
 
@@ -123,6 +151,7 @@ namespace XREngine.Editor.Mcp
             if (!TryResolveScene(world, sceneName, out var scene, out var error) || scene is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene not found.", isError: true));
 
+            using var _ = Undo.TrackChange("MCP Toggle Scene Visibility", scene);
             scene.IsVisible = isVisible;
             if (isVisible)
                 world.LoadScene(scene);
@@ -150,6 +179,10 @@ namespace XREngine.Editor.Mcp
             if (!TryResolveScene(world, sceneName, out var scene, out var error) || scene is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene not found.", isError: true));
 
+            int oldIndex = targetWorld.Scenes.IndexOf(scene);
+            bool wasVisible = scene.IsVisible;
+            var capturedWorld = world;
+
             targetWorld.Scenes.Remove(scene);
             targetWorld.Scenes.Insert(0, scene);
             if (!scene.IsVisible)
@@ -157,6 +190,31 @@ namespace XREngine.Editor.Mcp
                 scene.IsVisible = true;
                 world.LoadScene(scene);
             }
+
+            Undo.RecordStructuralChange("MCP Set Active Scene",
+                undoAction: () =>
+                {
+                    targetWorld.Scenes.Remove(scene);
+                    if (oldIndex >= 0 && oldIndex <= targetWorld.Scenes.Count)
+                        targetWorld.Scenes.Insert(oldIndex, scene);
+                    else
+                        targetWorld.Scenes.Add(scene);
+                    if (!wasVisible)
+                    {
+                        capturedWorld.UnloadScene(scene);
+                        scene.IsVisible = false;
+                    }
+                },
+                redoAction: () =>
+                {
+                    targetWorld.Scenes.Remove(scene);
+                    targetWorld.Scenes.Insert(0, scene);
+                    if (!scene.IsVisible)
+                    {
+                        scene.IsVisible = true;
+                        capturedWorld.LoadScene(scene);
+                    }
+                });
 
             return Task.FromResult(new McpToolResponse($"Set '{scene.Name ?? scene.ID.ToString()}' as the active scene."));
         }
@@ -215,13 +273,37 @@ namespace XREngine.Editor.Mcp
             if (scene is null)
                 return Task.FromResult(new McpToolResponse("Failed to load scene asset.", isError: true));
 
+            bool wasInList = targetWorld.Scenes.Contains(scene);
+            bool? originalVisibility = forceVisible.HasValue ? scene.IsVisible : (bool?)null;
+
             if (forceVisible.HasValue)
                 scene.IsVisible = forceVisible.Value;
 
-            if (!targetWorld.Scenes.Contains(scene))
+            if (!wasInList)
                 targetWorld.Scenes.Add(scene);
 
             world.LoadScene(scene);
+
+            var capturedWorld = world;
+            var capturedTargetWorld = targetWorld;
+            Undo.RecordStructuralChange("MCP Import Scene",
+                undoAction: () =>
+                {
+                    capturedWorld.UnloadScene(scene);
+                    if (!wasInList)
+                        capturedTargetWorld.Scenes.Remove(scene);
+                    if (originalVisibility.HasValue)
+                        scene.IsVisible = originalVisibility.Value;
+                },
+                redoAction: () =>
+                {
+                    if (forceVisible.HasValue)
+                        scene.IsVisible = forceVisible.Value;
+                    if (!capturedTargetWorld.Scenes.Contains(scene))
+                        capturedTargetWorld.Scenes.Add(scene);
+                    capturedWorld.LoadScene(scene);
+                });
+
             return Task.FromResult(new McpToolResponse($"Imported scene '{scene.Name ?? scene.ID.ToString()}'.", new { id = scene.ID }));
         }
 

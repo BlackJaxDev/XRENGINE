@@ -69,10 +69,39 @@ namespace XREngine
                         return;
                     }
 
-                    Task tp = Task.Run(PopulatePoints);
-                    Task tl = Task.Run(PopulateLines);
-                    Task tt = Task.Run(PopulateTriangles);
-                    Task.WaitAll(tp, tl, tt);
+                    var mode = Engine.EditorPreferences?.Debug?.DebugShapePopulationMode
+                        ?? EDebugShapePopulationMode.Tasks;
+
+                    switch (mode)
+                    {
+                        case EDebugShapePopulationMode.Tasks:
+                        {
+                            Task tp = Task.Run(PopulatePoints);
+                            Task tl = Task.Run(PopulateLines);
+                            Task tt = Task.Run(PopulateTriangles);
+                            Task.WaitAll(tp, tl, tt);
+                            break;
+                        }
+                        case EDebugShapePopulationMode.ParallelInvoke:
+                            Parallel.Invoke(PopulatePoints, PopulateLines, PopulateTriangles);
+                            break;
+                        case EDebugShapePopulationMode.JobSystem:
+                        {
+                            var hp = Engine.Jobs.Schedule(new ActionJob(PopulatePoints), JobPriority.High);
+                            var hl = Engine.Jobs.Schedule(new ActionJob(PopulateLines), JobPriority.High);
+                            var ht = Engine.Jobs.Schedule(new ActionJob(PopulateTriangles), JobPriority.High);
+                            hp.Wait();
+                            hl.Wait();
+                            ht.Wait();
+                            break;
+                        }
+                        case EDebugShapePopulationMode.Sequential:
+                        default:
+                            PopulatePoints();
+                            PopulateLines();
+                            PopulateTriangles();
+                            break;
+                    }
                 }
 
                 private static void PopulateTriangles()

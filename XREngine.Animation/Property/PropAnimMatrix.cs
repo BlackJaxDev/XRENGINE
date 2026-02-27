@@ -81,13 +81,13 @@ namespace XREngine.Animation
         public new MatrixKeyframe? Next
         {
             get => _next as MatrixKeyframe;
-            set => _next = value;
+            set => SetField(ref _next, value);
         }
         [Browsable(false)]
         public new MatrixKeyframe? Prev
         {
             get => _prev as MatrixKeyframe;
-            set => _prev = value;
+            set => SetField(ref _prev, value);
         }
 
         public Matrix4x4 Interpolate(float second)

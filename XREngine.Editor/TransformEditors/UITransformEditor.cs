@@ -36,27 +36,27 @@ public sealed class UITransformEditor : IXRTransformEditor
         string stylingId = ui.StylingID ?? string.Empty;
         if (ImGui.InputText("Styling ID", ref stylingId, 256u))
         {
-            ImGuiUndoHelper.UpdateScope($"Edit Styling ID {transformLabel}", ui);
+            ImGuiUndoHelper.TrackDragUndo($"Edit Styling ID {transformLabel}", ui);
             ui.StylingID = stylingId;
             var queued = stylingId;
             EnqueueSceneEdit(() => ui.StylingID = queued);
         }
         else
         {
-            ImGuiUndoHelper.UpdateScope($"Edit Styling ID {transformLabel}", ui);
+            ImGuiUndoHelper.TrackDragUndo($"Edit Styling ID {transformLabel}", ui);
         }
 
         string stylingClass = ui.StylingClass ?? string.Empty;
         if (ImGui.InputText("Styling Class", ref stylingClass, 256u))
         {
-            ImGuiUndoHelper.UpdateScope($"Edit Styling Class {transformLabel}", ui);
+            ImGuiUndoHelper.TrackDragUndo($"Edit Styling Class {transformLabel}", ui);
             ui.StylingClass = stylingClass;
             var queued = stylingClass;
             EnqueueSceneEdit(() => ui.StylingClass = queued);
         }
         else
         {
-            ImGuiUndoHelper.UpdateScope($"Edit Styling Class {transformLabel}", ui);
+            ImGuiUndoHelper.TrackDragUndo($"Edit Styling Class {transformLabel}", ui);
         }
 
         ImGui.Spacing();
@@ -70,7 +70,7 @@ public sealed class UITransformEditor : IXRTransformEditor
         ImGui.SameLine();
         ImGui.SetNextItemWidth(-1f);
         bool edited = ImGui.DragFloat2("##Translation", ref translation, 0.05f);
-        ImGuiUndoHelper.UpdateScope($"Move {transformLabel}", ui);
+        ImGuiUndoHelper.TrackDragUndo($"Move {transformLabel}", ui);
         if (!edited)
             return;
 
@@ -87,7 +87,7 @@ public sealed class UITransformEditor : IXRTransformEditor
         ImGui.SameLine();
         ImGui.SetNextItemWidth(-1f);
         bool edited = ImGui.DragFloat("##Depth", ref depth, 0.01f);
-        ImGuiUndoHelper.UpdateScope($"Adjust Depth {transformLabel}", ui);
+        ImGuiUndoHelper.TrackDragUndo($"Adjust Depth {transformLabel}", ui);
         if (!edited)
             return;
 
@@ -104,7 +104,7 @@ public sealed class UITransformEditor : IXRTransformEditor
         ImGui.SameLine();
         ImGui.SetNextItemWidth(-1f);
         bool edited = ImGui.DragFloat3("##Scale", ref scale, 0.05f);
-        ImGuiUndoHelper.UpdateScope($"Scale {transformLabel}", ui);
+        ImGuiUndoHelper.TrackDragUndo($"Scale {transformLabel}", ui);
         if (!edited)
             return;
 
@@ -121,7 +121,7 @@ public sealed class UITransformEditor : IXRTransformEditor
         ImGui.SameLine();
         ImGui.SetNextItemWidth(-1f);
         bool edited = ImGui.DragFloat("##RotationDegrees", ref rotation, 0.5f);
-        ImGuiUndoHelper.UpdateScope($"Rotate {transformLabel}", ui);
+        ImGuiUndoHelper.TrackDragUndo($"Rotate {transformLabel}", ui);
         if (!edited)
             return;
 

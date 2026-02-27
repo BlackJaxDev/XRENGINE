@@ -34,7 +34,15 @@ namespace XREngine.Rendering.Physics.Physx
         }
         public PhysxScene()
         {
-            _visualizer = new(GetPoint, GetLine, GetTriangle);
+            _visualizer = new(GetPoint, GetLine, GetTriangle)
+            {
+                BulkPopulatePoints = BulkWritePoints,
+                BulkPopulateLines = BulkWriteLines,
+                BulkPopulateTriangles = BulkWriteTriangles,
+                BulkPopulatePointsCompressed = BulkWritePointsCompressed,
+                BulkPopulateLinesCompressed = BulkWriteLinesCompressed,
+                BulkPopulateTrianglesCompressed = BulkWriteTrianglesCompressed,
+            };
         }
 
         public static void Init()
@@ -2537,9 +2545,151 @@ namespace XREngine.Rendering.Physics.Physx
             ((c >> 16) & 0xFF) / 255.0f,
             ((c >> 24) & 0xFF) / 255.0f);
 
+        #region Bulk direct-memory writers (no per-element delegate dispatch)
+
+        private unsafe void BulkWritePoints(IntPtr dest, int count)
+        {
+            float* d = (float*)dest;
+            PxDebugPoint* src = _debugPoints;
+            const float inv = 1.0f / 255.0f;
+            for (int i = 0; i < count; i++)
+            {
+                int x = i * 8;
+                ref PxDebugPoint p = ref src[i];
+                d[x + 0] = p.pos.x;
+                d[x + 1] = p.pos.y;
+                d[x + 2] = p.pos.z;
+                d[x + 3] = 0.0f;
+                uint c = p.color;
+                d[x + 4] = ((c >> 00) & 0xFF) * inv;
+                d[x + 5] = ((c >> 08) & 0xFF) * inv;
+                d[x + 6] = ((c >> 16) & 0xFF) * inv;
+                d[x + 7] = ((c >> 24) & 0xFF) * inv;
+            }
+        }
+
+        private unsafe void BulkWriteLines(IntPtr dest, int count)
+        {
+            float* d = (float*)dest;
+            PxDebugLine* src = _debugLines;
+            const float inv = 1.0f / 255.0f;
+            for (int i = 0; i < count; i++)
+            {
+                int x = i * 12;
+                ref PxDebugLine ln = ref src[i];
+                d[x + 0] = ln.pos0.x;
+                d[x + 1] = ln.pos0.y;
+                d[x + 2] = ln.pos0.z;
+                d[x + 3] = 0.0f;
+                d[x + 4] = ln.pos1.x;
+                d[x + 5] = ln.pos1.y;
+                d[x + 6] = ln.pos1.z;
+                d[x + 7] = 0.0f;
+                uint c = ln.color0;
+                d[x + 8] = ((c >> 00) & 0xFF) * inv;
+                d[x + 9] = ((c >> 08) & 0xFF) * inv;
+                d[x + 10] = ((c >> 16) & 0xFF) * inv;
+                d[x + 11] = ((c >> 24) & 0xFF) * inv;
+            }
+        }
+
+        private unsafe void BulkWriteTriangles(IntPtr dest, int count)
+        {
+            float* d = (float*)dest;
+            PxDebugTriangle* src = _debugTriangles;
+            const float inv = 1.0f / 255.0f;
+            for (int i = 0; i < count; i++)
+            {
+                int x = i * 16;
+                ref PxDebugTriangle tri = ref src[i];
+                d[x + 0] = tri.pos0.x;
+                d[x + 1] = tri.pos0.y;
+                d[x + 2] = tri.pos0.z;
+                d[x + 3] = 0.0f;
+                d[x + 4] = tri.pos1.x;
+                d[x + 5] = tri.pos1.y;
+                d[x + 6] = tri.pos1.z;
+                d[x + 7] = 0.0f;
+                d[x + 8] = tri.pos2.x;
+                d[x + 9] = tri.pos2.y;
+                d[x + 10] = tri.pos2.z;
+                d[x + 11] = 0.0f;
+                uint c = tri.color0;
+                d[x + 12] = ((c >> 00) & 0xFF) * inv;
+                d[x + 13] = ((c >> 08) & 0xFF) * inv;
+                d[x + 14] = ((c >> 16) & 0xFF) * inv;
+                d[x + 15] = ((c >> 24) & 0xFF) * inv;
+            }
+        }
+
+        #endregion
+
+        #region Compressed bulk direct-memory writers (packed uint color, no padding)
+
+        private unsafe void BulkWritePointsCompressed(IntPtr dest, int count)
+        {
+            float* d = (float*)dest;
+            PxDebugPoint* src = _debugPoints;
+            for (int i = 0; i < count; i++)
+            {
+                int x = i * 4;
+                ref PxDebugPoint p = ref src[i];
+                d[x + 0] = p.pos.x;
+                d[x + 1] = p.pos.y;
+                d[x + 2] = p.pos.z;
+                ((uint*)d)[x + 3] = p.color; // RGBA8 packed uint — no conversion needed
+            }
+        }
+
+        private unsafe void BulkWriteLinesCompressed(IntPtr dest, int count)
+        {
+            float* d = (float*)dest;
+            PxDebugLine* src = _debugLines;
+            for (int i = 0; i < count; i++)
+            {
+                int x = i * 7;
+                ref PxDebugLine ln = ref src[i];
+                d[x + 0] = ln.pos0.x;
+                d[x + 1] = ln.pos0.y;
+                d[x + 2] = ln.pos0.z;
+                d[x + 3] = ln.pos1.x;
+                d[x + 4] = ln.pos1.y;
+                d[x + 5] = ln.pos1.z;
+                ((uint*)d)[x + 6] = ln.color0;
+            }
+        }
+
+        private unsafe void BulkWriteTrianglesCompressed(IntPtr dest, int count)
+        {
+            float* d = (float*)dest;
+            PxDebugTriangle* src = _debugTriangles;
+            for (int i = 0; i < count; i++)
+            {
+                int x = i * 10;
+                ref PxDebugTriangle tri = ref src[i];
+                d[x + 0] = tri.pos0.x;
+                d[x + 1] = tri.pos0.y;
+                d[x + 2] = tri.pos0.z;
+                d[x + 3] = tri.pos1.x;
+                d[x + 4] = tri.pos1.y;
+                d[x + 5] = tri.pos1.z;
+                d[x + 6] = tri.pos2.x;
+                d[x + 7] = tri.pos2.y;
+                d[x + 8] = tri.pos2.z;
+                ((uint*)d)[x + 9] = tri.color0;
+            }
+        }
+
+        #endregion
+
         private void PopulateDebugBuffers()
         {
             var rb = RenderBuffer;
+
+            // Read the buffer format preference and apply it before buffers are (re)created by the count setters.
+            var format = Engine.EditorPreferences?.Debug?.DebugPrimitiveBufferFormat
+                ?? EDebugPrimitiveBufferFormat.Expanded;
+            _visualizer.UseCompressedBuffers = format == EDebugPrimitiveBufferFormat.Compressed;
 
             _visualizer.PointCount = rb->GetNbPoints();
             _visualizer.LineCount = rb->GetNbLines();

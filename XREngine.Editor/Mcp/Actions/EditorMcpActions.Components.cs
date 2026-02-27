@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 using XREngine.Components;
 using XREngine.Data.Core;
+using XREngine.Scene;
 
 namespace XREngine.Editor.Mcp
 {
@@ -44,6 +45,19 @@ namespace XREngine.Editor.Mcp
             var component = node!.AddComponent(componentType, componentName);
             if (component is null)
                 return Task.FromResult(new McpToolResponse($"Failed to add component '{componentTypeName}' to '{nodeId}'.", isError: true));
+
+            // Record structural undo
+            var nodeCapture = node!;
+            using var _ = Undo.TrackChange($"MCP Add {componentType.Name}", component);
+            Undo.RecordStructuralChange($"Add {componentType.Name}",
+                undoAction: () =>
+                {
+                    nodeCapture.DetachComponent(component);
+                },
+                redoAction: () =>
+                {
+                    nodeCapture.ReattachComponent(component);
+                });
 
             return Task.FromResult(new McpToolResponse($"Added component '{componentType.Name}' to '{nodeId}'.", new
             {
@@ -132,6 +146,7 @@ namespace XREngine.Editor.Mcp
                 if (!McpToolRegistry.TryConvertValue(value, property.PropertyType, out var converted, out var error))
                     return Task.FromResult(new McpToolResponse(error ?? "Unable to deserialize value.", isError: true));
 
+                using var _ = Undo.TrackChange($"MCP Set {property.Name}", component);
                 property.SetValue(component, converted);
                 return Task.FromResult(new McpToolResponse($"Set property '{property.Name}' on '{componentType.Name}'."));
             }
@@ -142,6 +157,7 @@ namespace XREngine.Editor.Mcp
                 if (!McpToolRegistry.TryConvertValue(value, field.FieldType, out var converted, out var error))
                     return Task.FromResult(new McpToolResponse(error ?? "Unable to deserialize value.", isError: true));
 
+                using var _f = Undo.TrackChange($"MCP Set {field.Name}", component);
                 field.SetValue(component, converted);
                 return Task.FromResult(new McpToolResponse($"Set field '{field.Name}' on '{componentType.Name}'."));
             }
@@ -233,7 +249,23 @@ namespace XREngine.Editor.Mcp
             if (component is null)
                 return Task.FromResult(new McpToolResponse(compError ?? "Component not found on the specified node.", isError: true));
 
-            component.Destroy();
+            var nodeCapture = node!;
+            string compTypeName = component.GetType().Name;
+            nodeCapture.DetachComponent(component);
+
+            // Record structural undo
+            using var interaction = Undo.BeginUserInteraction();
+            using var scope = Undo.BeginChange($"MCP Remove {compTypeName}");
+            Undo.RecordStructuralChange($"Remove {compTypeName}",
+                undoAction: () =>
+                {
+                    nodeCapture.ReattachComponent(component);
+                },
+                redoAction: () =>
+                {
+                    nodeCapture.DetachComponent(component);
+                });
+
             return Task.FromResult(new McpToolResponse($"Removed component '{component.ID}' from '{nodeId}'."));
         }
     }

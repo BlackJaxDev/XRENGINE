@@ -15,7 +15,7 @@ namespace XREngine.Animation
         public float BlendDuration
         {
             get => _invDuration == 0.0f ? 0.0f : 1.0f / _invDuration;
-            set => _invDuration = value == 0.0f ? 0.0f : 1.0f / value;
+            set => SetField(ref _invDuration, value == 0.0f ? 0.0f : 1.0f / value);
         }
 
         private AnimStateTransition? _currentTransition;

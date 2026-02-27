@@ -314,7 +314,7 @@ namespace XREngine.Components
                 _client = client;
                 _activeStream = stream;
                 DispatchConnected();
-                _receiveTask = Task.Run(() => ReceiveLoopAsync(stream, token));
+                _receiveTask = ReceiveLoopAsync(stream, token);
                 return true;
             }
             catch (OperationCanceledException ex)

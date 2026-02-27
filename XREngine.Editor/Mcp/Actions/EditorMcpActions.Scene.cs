@@ -132,6 +132,7 @@ namespace XREngine.Editor.Mcp
             if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
+            using var _ = Undo.TrackChange("MCP Set Node Active", node);
             node.IsActiveSelf = isActive;
             return Task.FromResult(new McpToolResponse($"Set '{nodeId}' active={isActive}."));
         }
@@ -164,6 +165,12 @@ namespace XREngine.Editor.Mcp
                     return Task.FromResult(new McpToolResponse(parentError ?? "Parent node not found.", isError: true));
             }
 
+            var oldParent = node.Transform.Parent;
+            using var interaction = Undo.BeginUserInteraction();
+            using var scope = Undo.BeginChange("MCP Reparent Node");
+            Undo.RecordStructuralChange("Reparent Node",
+                undoAction: () => node.Transform.SetParent(oldParent, preserveWorldTransform, EParentAssignmentMode.Immediate),
+                redoAction: () => node.Transform.SetParent(newParent?.Transform, preserveWorldTransform, EParentAssignmentMode.Immediate));
             node.Transform.SetParent(newParent?.Transform, preserveWorldTransform, EParentAssignmentMode.Immediate);
             return Task.FromResult(new McpToolResponse($"Reparented '{nodeId}' to '{newParentId ?? "<root>"}'."));
         }
@@ -185,7 +192,48 @@ namespace XREngine.Editor.Mcp
             if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
-            node.Destroy();
+            var world = context.WorldInstance;
+            var tfm = node.Transform;
+            var parentTransform = tfm.Parent;
+            bool wasActive = node.IsActiveSelf;
+            string nodeName = node.Name ?? SceneNode.DefaultName;
+
+            // Soft-delete: detach from parent/root and deactivate
+            if (parentTransform is not null)
+            {
+                parentTransform.RemoveChild(tfm, EParentAssignmentMode.Immediate);
+            }
+            else
+            {
+                world.RootNodes.Remove(node);
+                // Try to find and remove from owning scene
+                foreach (var scene in world.TargetWorld?.Scenes ?? [])
+                    scene.RootNodes.Remove(node);
+            }
+            node.IsActiveSelf = false;
+
+            // Record structural undo
+            using var interaction = Undo.BeginUserInteraction();
+            using var scope = Undo.BeginChange($"MCP Delete {nodeName}");
+            Undo.RecordStructuralChange($"Delete {nodeName}",
+                undoAction: () =>
+                {
+                    if (parentTransform is not null)
+                        tfm.SetParent(parentTransform, false, EParentAssignmentMode.Immediate);
+                    else
+                        world.RootNodes.Add(node);
+                    node.IsActiveSelf = wasActive;
+                    Undo.TrackSceneNode(node);
+                },
+                redoAction: () =>
+                {
+                    if (parentTransform is not null)
+                        parentTransform.RemoveChild(tfm, EParentAssignmentMode.Immediate);
+                    else
+                        world.RootNodes.Remove(node);
+                    node.IsActiveSelf = false;
+                });
+
             return Task.FromResult(new McpToolResponse($"Deleted scene node '{nodeId}'."));
         }
 
@@ -235,6 +283,39 @@ namespace XREngine.Editor.Mcp
                     world.RootNodes.Add(node);
             }
 
+            // Record structural undo
+            Undo.TrackSceneNode(node);
+            var parentTfm = node.Transform.Parent;
+            var sceneCapture = scene;
+            var worldCapture = world;
+            using var interaction = Undo.BeginUserInteraction();
+            using var scope = Undo.BeginChange($"MCP Create {name}");
+            Undo.RecordStructuralChange($"Create {name}",
+                undoAction: () =>
+                {
+                    if (parentTfm is not null)
+                        parentTfm.RemoveChild(node.Transform, EParentAssignmentMode.Immediate);
+                    else
+                    {
+                        sceneCapture.RootNodes.Remove(node);
+                        worldCapture.RootNodes.Remove(node);
+                    }
+                    node.IsActiveSelf = false;
+                },
+                redoAction: () =>
+                {
+                    if (parentTfm is not null)
+                        node.Transform.SetParent(parentTfm, false, EParentAssignmentMode.Immediate);
+                    else
+                    {
+                        sceneCapture.RootNodes.Add(node);
+                        if (sceneCapture.IsVisible)
+                            worldCapture.RootNodes.Add(node);
+                    }
+                    node.IsActiveSelf = true;
+                    Undo.TrackSceneNode(node);
+                });
+
             return Task.FromResult(new McpToolResponse($"Created scene node '{name}'.", new { id = node.ID, path = BuildNodePath(node) }));
         }
 
@@ -255,6 +336,7 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(name))
                 name = SceneNode.DefaultName;
 
+            using var _ = Undo.TrackChange("MCP Rename Node", node);
             node.Name = name;
             return Task.FromResult(new McpToolResponse($"Renamed '{nodeId}' to '{name}'."));
         }
@@ -317,6 +399,30 @@ namespace XREngine.Editor.Mcp
                     world.RootNodes.Add(clone);
             }
 
+            // Record structural undo for duplication
+            var cloneParentTfm = clone.Transform.Parent;
+            using var interaction = Undo.BeginUserInteraction();
+            using var scope = Undo.BeginChange("MCP Duplicate Node");
+            Undo.TrackSceneNode(clone);
+            Undo.RecordStructuralChange("Duplicate Node",
+                undoAction: () =>
+                {
+                    if (cloneParentTfm is not null)
+                        cloneParentTfm.RemoveChild(clone.Transform, EParentAssignmentMode.Immediate);
+                    else
+                        world.RootNodes.Remove(clone);
+                    clone.IsActiveSelf = false;
+                },
+                redoAction: () =>
+                {
+                    if (cloneParentTfm is not null)
+                        clone.Transform.SetParent(cloneParentTfm, false, EParentAssignmentMode.Immediate);
+                    else
+                        world.RootNodes.Add(clone);
+                    clone.IsActiveSelf = true;
+                    Undo.TrackSceneNode(clone);
+                });
+
             return Task.FromResult(new McpToolResponse($"Duplicated scene node '{nodeId}'.", new { id = clone.ID, path = BuildNodePath(clone) }));
         }
 
@@ -369,6 +475,20 @@ namespace XREngine.Editor.Mcp
                     targetIndex = siblings.Count;
                 parent.InsertChild(node, targetIndex);
 
+                int capturedOldIndex = currentIndex;
+                int capturedNewIndex = targetIndex;
+                Undo.RecordStructuralChange("Move Node Sibling",
+                    undoAction: () =>
+                    {
+                        parent.RemoveChild(node);
+                        parent.InsertChild(node, Math.Min(capturedOldIndex, parent.Transform.Children.Count));
+                    },
+                    redoAction: () =>
+                    {
+                        parent.RemoveChild(node);
+                        parent.InsertChild(node, Math.Min(capturedNewIndex, parent.Transform.Children.Count));
+                    });
+
                 return Task.FromResult(new McpToolResponse($"Moved '{nodeId}' to sibling index {targetIndex}."));
             }
 
@@ -401,15 +521,35 @@ namespace XREngine.Editor.Mcp
                 targetRootIndex = scene.RootNodes.Count;
             scene.RootNodes.Insert(targetRootIndex, node);
 
-            if (scene.IsVisible)
+            void SyncWorldRoots()
             {
+                if (!scene.IsVisible)
+                    return;
+
                 var worldRoots = world.RootNodes;
                 foreach (var root in scene.RootNodes)
                     worldRoots.Remove(root);
-
                 foreach (var root in scene.RootNodes)
                     worldRoots.Add(root);
             }
+
+            SyncWorldRoots();
+
+            int capturedOldRootIndex = rootIndex;
+            int capturedNewRootIndex = targetRootIndex;
+            Undo.RecordStructuralChange("Move Root Node",
+                undoAction: () =>
+                {
+                    scene.RootNodes.Remove(node);
+                    scene.RootNodes.Insert(Math.Min(capturedOldRootIndex, scene.RootNodes.Count), node);
+                    SyncWorldRoots();
+                },
+                redoAction: () =>
+                {
+                    scene.RootNodes.Remove(node);
+                    scene.RootNodes.Insert(Math.Min(capturedNewRootIndex, scene.RootNodes.Count), node);
+                    SyncWorldRoots();
+                });
 
             return Task.FromResult(new McpToolResponse($"Moved root '{nodeId}' to index {targetRootIndex}.", new { index = targetRootIndex }));
         }
@@ -429,7 +569,10 @@ namespace XREngine.Editor.Mcp
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             foreach (var entry in EnumerateHierarchy(node))
+            {
+                using var _ = Undo.TrackChange("MCP Set Node Active Recursive", entry);
                 entry.IsActiveSelf = isActive;
+            }
 
             return Task.FromResult(new McpToolResponse($"Set active={isActive} for '{nodeId}' and its children."));
         }
@@ -654,6 +797,7 @@ namespace XREngine.Editor.Mcp
                 return Task.FromResult(new McpToolResponse("Provide layer_index or layer_name.", isError: true));
             }
 
+            using var _ = Undo.TrackChange("MCP Set Layer", node);
             node.Layer = layer;
             return Task.FromResult(new McpToolResponse($"Set layer for '{nodeId}' to {node.Layer}.", new { layer = node.Layer }));
         }
@@ -815,6 +959,8 @@ namespace XREngine.Editor.Mcp
             if (yaw.HasValue) worldRotator.Yaw = yaw.Value;
             if (roll.HasValue) worldRotator.Roll = roll.Value;
 
+            using var _ = Undo.TrackChange("MCP Set World Transform", transform);
+
             if (translationX.HasValue || translationY.HasValue || translationZ.HasValue || pitch.HasValue || yaw.HasValue || roll.HasValue)
                 transform.SetWorldTranslationRotation(worldTranslation, worldRotator.ToQuaternion());
 
@@ -933,6 +1079,44 @@ namespace XREngine.Editor.Mcp
                 scene.RootNodes.Add(instance);
                 if (scene.IsVisible)
                     world.RootNodes.Add(instance);
+
+                // Record structural undo for the root-level prefab instance
+                Undo.TrackSceneNode(instance);
+                var sceneCapture = scene;
+                var worldCapture = world;
+                Undo.RecordStructuralChange("MCP Instantiate Prefab",
+                    undoAction: () =>
+                    {
+                        sceneCapture.RootNodes.Remove(instance);
+                        worldCapture.RootNodes.Remove(instance);
+                        instance.IsActiveSelf = false;
+                    },
+                    redoAction: () =>
+                    {
+                        sceneCapture.RootNodes.Add(instance);
+                        if (sceneCapture.IsVisible)
+                            worldCapture.RootNodes.Add(instance);
+                        instance.IsActiveSelf = true;
+                        Undo.TrackSceneNode(instance);
+                    });
+            }
+            else
+            {
+                // Record structural undo for the parented prefab instance
+                Undo.TrackSceneNode(instance);
+                var parentTfm = instance.Transform.Parent;
+                Undo.RecordStructuralChange("MCP Instantiate Prefab",
+                    undoAction: () =>
+                    {
+                        parentTfm?.RemoveChild(instance.Transform, EParentAssignmentMode.Immediate);
+                        instance.IsActiveSelf = false;
+                    },
+                    redoAction: () =>
+                    {
+                        instance.Transform.SetParent(parentTfm, false, EParentAssignmentMode.Immediate);
+                        instance.IsActiveSelf = true;
+                        Undo.TrackSceneNode(instance);
+                    });
             }
 
             return Task.FromResult(new McpToolResponse("Instantiated prefab.", new { id = instance.ID, path = BuildNodePath(instance) }));

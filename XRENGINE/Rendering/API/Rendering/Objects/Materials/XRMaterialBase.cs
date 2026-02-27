@@ -62,7 +62,7 @@ namespace XREngine.Rendering
         public RenderingParameters RenderOptions
         {
             get => _renderOptions ??= new();
-            set => _renderOptions = value ?? new();
+            set => SetField(ref _renderOptions, value ?? new());
         }
 
         protected ShaderVar[] _parameters = [];

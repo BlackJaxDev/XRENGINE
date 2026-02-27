@@ -139,7 +139,7 @@ namespace XREngine.Components.Animation
             public Vector3 IKPosition
             {
                 get => _ikPosition;
-                set => _ikPosition = value;
+                set => SetField(ref _ikPosition, value);
             }
 
             [NonSerialized]
@@ -151,7 +151,7 @@ namespace XREngine.Components.Animation
             public Quaternion IKRotation
             {
                 get => _ikRotation;
-                set => _ikRotation = value;
+                set => SetField(ref _ikRotation, value);
             }
 
             [NonSerialized]

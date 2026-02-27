@@ -34,7 +34,7 @@ namespace XREngine.Rendering.UI
                     RegenerateIndices();
                 return _indices!;
             }
-            set => _indices = value; 
+            set => SetField(ref _indices, value); 
         }
 
         public bool InvertY

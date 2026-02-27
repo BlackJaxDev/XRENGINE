@@ -39,7 +39,7 @@ public sealed partial class GaussianSplatCloud : XRAsset
     public AABB Bounds
     {
         get => _bounds;
-        private set => _bounds = value;
+        private set => SetField(ref _bounds, value);
     }
 
     public void Clear()

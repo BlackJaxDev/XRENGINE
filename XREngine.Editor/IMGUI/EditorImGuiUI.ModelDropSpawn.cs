@@ -192,6 +192,30 @@ public static partial class EditorImGuiUI
         if (instance is null)
             return;
 
+        // Record structural undo
+        var parentTfm = instance.Transform.Parent;
+        using var interaction = Undo.BeginUserInteraction();
+        using var scope = Undo.BeginChange("Spawn Prefab");
+        Undo.TrackSceneNode(instance);
+        Undo.RecordStructuralChange("Spawn Prefab",
+            undoAction: () =>
+            {
+                if (parentTfm is not null)
+                    parentTfm.RemoveChild(instance.Transform, Scene.Transforms.EParentAssignmentMode.Immediate);
+                else
+                    world.RootNodes.Remove(instance);
+                instance.IsActiveSelf = false;
+            },
+            redoAction: () =>
+            {
+                if (parentTfm is not null)
+                    instance.Transform.SetParent(parentTfm, false, Scene.Transforms.EParentAssignmentMode.Immediate);
+                else
+                    world.RootNodes.Add(instance);
+                instance.IsActiveSelf = true;
+                Undo.TrackSceneNode(instance);
+            });
+
         Selection.SceneNode = instance;
         MarkSceneHierarchyDirty(instance, owningScene: null, world);
     }
@@ -227,6 +251,30 @@ public static partial class EditorImGuiUI
         var modelComponent = node.AddComponent<ModelComponent>();
         if (modelComponent is not null)
             modelComponent.Model = model;
+
+        // Record structural undo
+        var parentTfm = node.Transform.Parent;
+        using var interaction = Undo.BeginUserInteraction();
+        using var scope = Undo.BeginChange("Spawn Model");
+        Undo.TrackSceneNode(node);
+        Undo.RecordStructuralChange("Spawn Model",
+            undoAction: () =>
+            {
+                if (parentTfm is not null)
+                    parentTfm.RemoveChild(node.Transform, Scene.Transforms.EParentAssignmentMode.Immediate);
+                else
+                    world.RootNodes.Remove(node);
+                node.IsActiveSelf = false;
+            },
+            redoAction: () =>
+            {
+                if (parentTfm is not null)
+                    node.Transform.SetParent(parentTfm, false, Scene.Transforms.EParentAssignmentMode.Immediate);
+                else
+                    world.RootNodes.Add(node);
+                node.IsActiveSelf = true;
+                Undo.TrackSceneNode(node);
+            });
 
         Selection.SceneNode = node;
         MarkSceneHierarchyDirty(node, owningScene: null, world);

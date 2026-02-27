@@ -190,7 +190,7 @@ namespace XREngine.Components
 
                 _listener = listener;
                 _listenerCts = new CancellationTokenSource();
-                _acceptTask = Task.Run(() => AcceptLoopAsync(listener, _listenerCts.Token));
+                _acceptTask = AcceptLoopAsync(listener, _listenerCts.Token);
                 _isRunning = true;
                 DispatchStarted();
             }
@@ -289,7 +289,7 @@ namespace XREngine.Components
             NetworkStream stream = client.GetStream();
             var state = new ClientState(descriptor.Id, client, stream);
             _clients[descriptor.Id] = state;
-            state.ReceiveTask = Task.Run(() => ReceiveClientLoopAsync(state, descriptor, serverToken));
+            state.ReceiveTask = ReceiveClientLoopAsync(state, descriptor, serverToken);
             return descriptor;
         }
 

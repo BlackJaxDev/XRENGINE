@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Components;
 using XREngine.Data.Colors;
+using XREngine.Data.Core;
 using XREngine.Scene.Components.Landscape;
 using XREngine.Scene.Components.Landscape.Interfaces;
 using XREngine.Scene.Components.Landscape.TerrainModules;
@@ -290,39 +291,47 @@ public sealed class GPULandscapeComponentEditor : IXRComponentEditor
         string name = layer.Name ?? string.Empty;
         if (ImGui.InputText("Name", ref name, 256))
             layer.Name = name;
+        ImGuiUndoHelper.TrackDragUndo("Layer Name", layer);
 
         // Tint
         Vector3 tint = new(layer.Tint.R, layer.Tint.G, layer.Tint.B);
         if (ImGui.ColorEdit3("Tint", ref tint, ColorPickerFlags))
             layer.Tint = new ColorF4(tint.X, tint.Y, tint.Z, 1.0f);
+        ImGuiUndoHelper.TrackDragUndo("Layer Tint", layer);
 
         // UV Tiling and Offset
         Vector2 tiling = layer.Tiling;
         if (ImGui.DragFloat2("UV Tiling", ref tiling, 0.01f, 0.001f, 100.0f, "%.3f"))
             layer.Tiling = Vector2.Max(new Vector2(0.001f), tiling);
+        ImGuiUndoHelper.TrackDragUndo("Layer UV Tiling", layer);
 
         Vector2 offset = layer.Offset;
         if (ImGui.DragFloat2("UV Offset", ref offset, 0.01f, -100.0f, 100.0f, "%.3f"))
             layer.Offset = offset;
+        ImGuiUndoHelper.TrackDragUndo("Layer UV Offset", layer);
 
         // Metallic/Roughness
         float metallic = layer.Metallic;
         if (ImGui.SliderFloat("Metallic", ref metallic, 0.0f, 1.0f, "%.2f"))
             layer.Metallic = metallic;
+        ImGuiUndoHelper.TrackDragUndo("Layer Metallic", layer);
 
         float roughness = layer.Roughness;
         if (ImGui.SliderFloat("Roughness", ref roughness, 0.0f, 1.0f, "%.2f"))
             layer.Roughness = roughness;
+        ImGuiUndoHelper.TrackDragUndo("Layer Roughness", layer);
 
         // Normal Scale
         float normalStrength = layer.NormalStrength;
         if (ImGui.DragFloat("Normal Strength", ref normalStrength, 0.01f, 0.0f, 2.0f, "%.2f"))
             layer.NormalStrength = MathF.Max(0.0f, normalStrength);
+        ImGuiUndoHelper.TrackDragUndo("Layer Normal Strength", layer);
 
         // Height/Parallax strength
         float heightStrength = layer.HeightStrength;
         if (ImGui.DragFloat("Height Strength", ref heightStrength, 0.001f, 0.0f, 0.5f, "%.3f"))
             layer.HeightStrength = MathF.Max(0.0f, heightStrength);
+        ImGuiUndoHelper.TrackDragUndo("Layer Height Strength", layer);
 
         ImGui.Spacing();
         ImGui.TextDisabled("Textures:");
@@ -366,7 +375,10 @@ public sealed class GPULandscapeComponentEditor : IXRComponentEditor
             // Module enable checkbox
             bool enabled = module.Enabled;
             if (ImGui.Checkbox("##ModEnabled", ref enabled))
+            {
+                using var _ = Undo.TrackChange("Module Enabled", module);
                 module.Enabled = enabled;
+            }
 
             ImGui.SameLine();
 

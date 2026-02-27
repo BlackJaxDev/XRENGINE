@@ -301,7 +301,7 @@ namespace XREngine.Components
                 return;
 
             CancellationToken token = _discoveryCts!.Token;
-            _listenTask = Task.Run(() => ListenLoopAsync(token), token);
+            _listenTask = ListenLoopAsync(token);
         }
 
         private void StartAdvertisingInternal()
@@ -310,7 +310,7 @@ namespace XREngine.Components
                 return;
 
             CancellationToken token = _discoveryCts!.Token;
-            _broadcastTask = Task.Run(() => BroadcastLoopAsync(token), token);
+            _broadcastTask = BroadcastLoopAsync(token);
         }
 
         private async Task ListenLoopAsync(CancellationToken token)

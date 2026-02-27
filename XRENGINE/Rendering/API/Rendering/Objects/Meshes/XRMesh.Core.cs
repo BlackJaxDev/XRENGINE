@@ -98,7 +98,7 @@ public partial class XRMesh : XRAsset
     public AABB Bounds
     {
         get => _bounds;
-        private set => _bounds = value;
+        private set => SetField(ref _bounds, value);
     }
 
     // Bone usage / skinning

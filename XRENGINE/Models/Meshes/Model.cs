@@ -19,7 +19,7 @@ namespace XREngine.Rendering.Models
         public EventList<SubMesh> Meshes
         {
             get => _meshes;
-            set => _meshes = value ?? [];
+            set => SetField(ref _meshes, value ?? []);
         }
     }
 }

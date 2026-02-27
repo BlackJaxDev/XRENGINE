@@ -5,7 +5,6 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
-using XREngine.Rendering.GI;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -75,7 +74,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (compositeFbo is null || forwardFbo is null)
                 return;
 
-            if (!RadianceCascadeRegistry.TryGetFirstActive(world, out RadianceCascadeComponent? cascadeComponent) || cascadeComponent is null)
+            if (!RadianceCascadeComponent.Registry.TryGetFirstActive(world, out RadianceCascadeComponent? cascadeComponent) || cascadeComponent is null)
             {
                 outputTexture.Clear(ColorF4.Transparent);
                 return;

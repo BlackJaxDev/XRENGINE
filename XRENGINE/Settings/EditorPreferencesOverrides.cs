@@ -440,6 +440,9 @@ namespace XREngine
         private OverrideableSetting<bool> _enableRenderStatisticsTrackingOverride = new();
         private OverrideableSetting<bool> _enableUILayoutDebugLoggingOverride = new();
         private OverrideableSetting<bool> _enableProfilerUdpSendingOverride = new();
+        private OverrideableSetting<EDebugShapePopulationMode> _debugShapePopulationModeOverride = new();
+        private OverrideableSetting<EDebugVisualizerPopulationMode> _debugVisualizerPopulationModeOverride = new();
+        private OverrideableSetting<EDebugPrimitiveBufferFormat> _debugPrimitiveBufferFormatOverride = new();
 
         public OverrideableSetting<bool> RenderMesh3DBoundsOverride
         {
@@ -577,6 +580,24 @@ namespace XREngine
         {
             get => _enableProfilerUdpSendingOverride;
             set => SetField(ref _enableProfilerUdpSendingOverride, value ?? new());
+        }
+
+        public OverrideableSetting<EDebugShapePopulationMode> DebugShapePopulationModeOverride
+        {
+            get => _debugShapePopulationModeOverride;
+            set => SetField(ref _debugShapePopulationModeOverride, value ?? new());
+        }
+
+        public OverrideableSetting<EDebugVisualizerPopulationMode> DebugVisualizerPopulationModeOverride
+        {
+            get => _debugVisualizerPopulationModeOverride;
+            set => SetField(ref _debugVisualizerPopulationModeOverride, value ?? new());
+        }
+
+        public OverrideableSetting<EDebugPrimitiveBufferFormat> DebugPrimitiveBufferFormatOverride
+        {
+            get => _debugPrimitiveBufferFormatOverride;
+            set => SetField(ref _debugPrimitiveBufferFormatOverride, value ?? new());
         }
     }
 }

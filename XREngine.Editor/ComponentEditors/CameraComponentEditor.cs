@@ -6,6 +6,7 @@ using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
@@ -960,14 +961,14 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
         else
         {
-            DrawSchemaCategories(schema, state);
+            DrawSchemaCategories(schema, state, component);
             DrawAdvancedPostProcessingInspector(state, visited);
         }
 
         ImGui.PopID();
     }
 
-    private static void DrawSchemaCategories(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state)
+    private static void DrawSchemaCategories(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, CameraComponent component)
     {
         foreach (var category in schema.Categories)
         {
@@ -984,14 +985,14 @@ public sealed class CameraComponentEditor : IXRComponentEditor
                 if (!schema.TryGetStage(stageKey, out var stage) || !state.TryGetStage(stageKey, out var stageState))
                     continue;
 
-                DrawSchemaStage(stage, stageState);
+                DrawSchemaStage(stage, stageState, component);
             }
 
             ImGui.PopID();
         }
     }
 
-    private static void DrawSchemaStage(PostProcessStageDescriptor stage, PostProcessStageState stageState)
+    private static void DrawSchemaStage(PostProcessStageDescriptor stage, PostProcessStageState stageState, CameraComponent component)
     {
         if (stage.Parameters.Count == 0)
             return;
@@ -999,13 +1000,15 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         ImGui.PushID(stage.Key);
         ImGui.TextDisabled($"— {stage.DisplayName} —");
 
+        XRBase? undoTarget = (stageState.BackingInstance as XRBase) ?? component;
+
         foreach (var param in stage.Parameters)
-            DrawSchemaParameter(param, stageState);
+            DrawSchemaParameter(param, stageState, undoTarget);
 
         ImGui.PopID();
     }
 
-    private static void DrawSchemaParameter(PostProcessParameterDescriptor param, PostProcessStageState stageState)
+    private static void DrawSchemaParameter(PostProcessParameterDescriptor param, PostProcessStageState stageState, XRBase? undoTarget)
     {
         if (param.VisibilityCondition != null && stageState.BackingInstance != null)
         {
@@ -1018,22 +1021,22 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         switch (param.Kind)
         {
             case PostProcessParameterKind.Bool:
-                DrawBoolParameter(param, stageState);
+                DrawBoolParameter(param, stageState, undoTarget);
                 break;
             case PostProcessParameterKind.Int:
-                DrawIntParameter(param, stageState);
+                DrawIntParameter(param, stageState, undoTarget);
                 break;
             case PostProcessParameterKind.Float:
-                DrawFloatParameter(param, stageState);
+                DrawFloatParameter(param, stageState, undoTarget);
                 break;
             case PostProcessParameterKind.Vector2:
-                DrawVector2Parameter(param, stageState);
+                DrawVector2Parameter(param, stageState, undoTarget);
                 break;
             case PostProcessParameterKind.Vector3:
-                DrawVector3Parameter(param, stageState);
+                DrawVector3Parameter(param, stageState, undoTarget);
                 break;
             case PostProcessParameterKind.Vector4:
-                DrawVector4Parameter(param, stageState);
+                DrawVector4Parameter(param, stageState, undoTarget);
                 break;
             default:
                 ImGui.TextDisabled($"{param.DisplayName}: (unsupported type)");
@@ -1043,19 +1046,22 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         ImGui.PopID();
     }
 
-    private static void DrawBoolParameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    private static void DrawBoolParameter(PostProcessParameterDescriptor param, PostProcessStageState state, XRBase? undoTarget)
     {
         bool fallback = ExtractDefault(param, false);
         bool value = state.GetValue(param.Name, fallback);
         if (ImGui.Checkbox(param.DisplayName, ref value))
+        {
+            using var _ = Undo.TrackChange(param.DisplayName, undoTarget);
             state.SetValue(param.Name, value);
+        }
     }
 
-    private static void DrawIntParameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    private static void DrawIntParameter(PostProcessParameterDescriptor param, PostProcessStageState state, XRBase? undoTarget)
     {
         if (param.EnumOptions.Count > 0)
         {
-            DrawEnumParameter(param, state);
+            DrawEnumParameter(param, state, undoTarget);
             return;
         }
 
@@ -1067,9 +1073,10 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         if (ImGui.SliderInt(param.DisplayName, ref value, (int)min, (int)max))
             state.SetValue(param.Name, value);
+        ImGuiUndoHelper.TrackDragUndo(param.DisplayName, undoTarget);
     }
 
-    private static void DrawEnumParameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    private static void DrawEnumParameter(PostProcessParameterDescriptor param, PostProcessStageState state, XRBase? undoTarget)
     {
         int fallback = ExtractDefault(param, 0);
         int value = state.GetValue(param.Name, fallback);
@@ -1082,6 +1089,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
                 bool selected = option.Value == value;
                 if (ImGui.Selectable(option.Label, selected) && !selected)
                 {
+                    using var _ = Undo.TrackChange(param.DisplayName, undoTarget);
                     state.SetValue(param.Name, option.Value);
                     value = option.Value;
                 }
@@ -1093,7 +1101,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
     }
 
-    private static void DrawFloatParameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    private static void DrawFloatParameter(PostProcessParameterDescriptor param, PostProcessStageState state, XRBase? undoTarget)
     {
         float fallback = ExtractDefault(param, 0.0f);
         float value = state.GetValue(param.Name, fallback);
@@ -1114,18 +1122,20 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             if (ImGui.DragFloat(param.DisplayName, ref value, step, min, max, format))
                 state.SetValue(param.Name, value);
         }
+        ImGuiUndoHelper.TrackDragUndo(param.DisplayName, undoTarget);
     }
 
-    private static void DrawVector2Parameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    private static void DrawVector2Parameter(PostProcessParameterDescriptor param, PostProcessStageState state, XRBase? undoTarget)
     {
         Vector2 fallback = ExtractDefault(param, Vector2.Zero);
         Vector2 value = state.GetValue(param.Name, fallback);
 
         if (ImGui.DragFloat2(param.DisplayName, ref value, param.Step ?? 0.01f))
             state.SetValue(param.Name, value);
+        ImGuiUndoHelper.TrackDragUndo(param.DisplayName, undoTarget);
     }
 
-    private static void DrawVector3Parameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    private static void DrawVector3Parameter(PostProcessParameterDescriptor param, PostProcessStageState state, XRBase? undoTarget)
     {
         Vector3 fallback = ExtractDefault(param, Vector3.Zero);
         Vector3 value = state.GetValue(param.Name, fallback);
@@ -1138,10 +1148,12 @@ public sealed class CameraComponentEditor : IXRComponentEditor
                 value = NormalizeLuminanceWeights(value, Engine.Rendering.Settings.DefaultLuminance);
                 state.SetValue(param.Name, value);
             }
+            ImGuiUndoHelper.TrackDragUndo(param.DisplayName, undoTarget);
 
             ImGui.SameLine();
             if (ImGui.SmallButton("Default"))
             {
+                using var _ = Undo.TrackChange("Luminance Weights Default", undoTarget);
                 value = NormalizeLuminanceWeights(Engine.Rendering.Settings.DefaultLuminance, Engine.Rendering.Settings.DefaultLuminance);
                 state.SetValue(param.Name, value);
             }
@@ -1149,6 +1161,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             ImGui.SameLine();
             if (ImGui.SmallButton("Rec.709"))
             {
+                using var _ = Undo.TrackChange("Luminance Weights Rec.709", undoTarget);
                 value = NormalizeLuminanceWeights(new Vector3(0.2126f, 0.7152f, 0.0722f), Engine.Rendering.Settings.DefaultLuminance);
                 state.SetValue(param.Name, value);
             }
@@ -1156,6 +1169,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             ImGui.SameLine();
             if (ImGui.SmallButton("Rec.601"))
             {
+                using var _ = Undo.TrackChange("Luminance Weights Rec.601", undoTarget);
                 value = NormalizeLuminanceWeights(new Vector3(0.299f, 0.587f, 0.114f), Engine.Rendering.Settings.DefaultLuminance);
                 state.SetValue(param.Name, value);
             }
@@ -1163,6 +1177,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             ImGui.SameLine();
             if (ImGui.SmallButton("Equal"))
             {
+                using var _ = Undo.TrackChange("Luminance Weights Equal", undoTarget);
                 value = NormalizeLuminanceWeights(new Vector3(1.0f, 1.0f, 1.0f), Engine.Rendering.Settings.DefaultLuminance);
                 state.SetValue(param.Name, value);
             }
@@ -1178,6 +1193,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         if (changed)
             state.SetValue(param.Name, value);
+        ImGuiUndoHelper.TrackDragUndo(param.DisplayName, undoTarget);
     }
 
     private static Vector3 NormalizeLuminanceWeights(Vector3 w, Vector3 fallback)
@@ -1191,7 +1207,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         return w / sum;
     }
 
-    private static void DrawVector4Parameter(PostProcessParameterDescriptor param, PostProcessStageState state)
+    private static void DrawVector4Parameter(PostProcessParameterDescriptor param, PostProcessStageState state, XRBase? undoTarget)
     {
         Vector4 fallback = ExtractDefault(param, Vector4.Zero);
         Vector4 value = state.GetValue(param.Name, fallback);
@@ -1202,6 +1218,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         if (changed)
             state.SetValue(param.Name, value);
+        ImGuiUndoHelper.TrackDragUndo(param.DisplayName, undoTarget);
     }
 
     private static T ExtractDefault<T>(PostProcessParameterDescriptor descriptor, T fallback)

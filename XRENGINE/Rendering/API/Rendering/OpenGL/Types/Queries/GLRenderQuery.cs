@@ -86,18 +86,23 @@ namespace XREngine.Rendering.OpenGL
                     AwaitResult();
                     break;
                 default:
-                    Task.Run(() => AwaitResult()).ContinueWith(t => onReady(this));
+                    _ = Task.Run(() =>
+                    {
+                        AwaitResult();
+                        onReady(this);
+                    });
                     break;
             }
         }
 
-        public async Task AwaitResultAsync()
-            => await Task.Run(() => AwaitResult());
+        public Task AwaitResultAsync()
+            => Task.Run(AwaitResult);
 
-        public async Task<long> AwaitLongResultAsync()
-        {
-            await Task.Run(() => AwaitResult());
-            return GetQueryObject(EGetQueryObject.QueryResult);
-        }
+        public Task<long> AwaitLongResultAsync()
+            => Task.Run(() =>
+            {
+                AwaitResult();
+                return GetQueryObject(EGetQueryObject.QueryResult);
+            });
     }
 }

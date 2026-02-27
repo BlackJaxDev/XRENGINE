@@ -125,7 +125,7 @@ namespace XREngine.Components
             _listener.Start();
 
             _listenerCts = new CancellationTokenSource();
-            _listenTask = Task.Run(() => ListenLoopAsync(_listener, _listenerCts.Token));
+            _listenTask = ListenLoopAsync(_listener, _listenerCts.Token);
         }
 
         /// <summary>
@@ -191,7 +191,7 @@ namespace XREngine.Components
                     continue;
                 }
 
-                _ = Task.Run(() => HandleContextAsync(context!, token));
+                _ = HandleContextAsync(context!, token);
             }
         }
 

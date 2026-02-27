@@ -263,7 +263,8 @@ namespace XREngine.Components
                 await socket.ConnectAsync(uri, timeoutCts.Token).ConfigureAwait(false);
                 _socket = socket;
                 DispatchConnected();
-                _receiveTask = Task.Run(() => ReceiveLoopAsync(socket, timeoutCts.Token));
+                // Use the outer token, not the connect-timeout CTS (which is disposed when TryConnectAsync returns).
+                _receiveTask = ReceiveLoopAsync(socket, token);
                 return true;
             }
             catch (OperationCanceledException ex)

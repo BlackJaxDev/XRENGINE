@@ -354,19 +354,25 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
 
         bool autoCreate = component.AutoCreateRigidBody;
         if (ImGui.Checkbox("Auto-create rigid body", ref autoCreate))
+        {
+            using var _ = Undo.TrackChange("Auto-create Rigid Body", component);
             component.AutoCreateRigidBody = autoCreate;
+        }
 
         float density = component.Density;
         if (ImGui.DragFloat("Density", ref density, 0.01f, 0.001f, 1000f, "%.3f"))
             component.Density = MathF.Max(0.0001f, density);
+        ImGuiUndoHelper.TrackDragUndo("Density", component);
 
         Vector3 translation = component.ShapeOffsetTranslation;
         if (ImGui.DragFloat3("Shape Offset", ref translation, 0.01f))
             component.ShapeOffsetTranslation = translation;
+        ImGuiUndoHelper.TrackDragUndo("Shape Offset", component);
 
         Vector4 rotation = RigidBodyEditorShared.QuaternionToVector4(component.ShapeOffsetRotation);
         if (ImGui.DragFloat4("Shape Rotation (xyzw)", ref rotation, 0.01f))
             component.ShapeOffsetRotation = RigidBodyEditorShared.Vector4ToQuaternion(rotation);
+        ImGuiUndoHelper.TrackDragUndo("Shape Rotation", component);
     }
 
     private static void DrawActorSettings(DynamicRigidBodyComponent component)
@@ -376,23 +382,36 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
 
         bool gravityEnabled = component.GravityEnabled;
         if (ImGui.Checkbox("Gravity Enabled", ref gravityEnabled))
+        {
+            using var _ = Undo.TrackChange("Gravity Enabled", component);
             component.GravityEnabled = gravityEnabled;
+        }
 
         bool simulationEnabled = component.SimulationEnabled;
         if (ImGui.Checkbox("Simulation Enabled", ref simulationEnabled))
+        {
+            using var _ = Undo.TrackChange("Simulation Enabled", component);
             component.SimulationEnabled = simulationEnabled;
+        }
 
         bool debugVisualization = component.DebugVisualization;
         if (ImGui.Checkbox("Debug Visualization", ref debugVisualization))
+        {
+            using var _ = Undo.TrackChange("Debug Visualization", component);
             component.DebugVisualization = debugVisualization;
+        }
 
         bool sendSleep = component.SendSleepNotifies;
         if (ImGui.Checkbox("Send Sleep Notifies", ref sendSleep))
+        {
+            using var _ = Undo.TrackChange("Send Sleep Notifies", component);
             component.SendSleepNotifies = sendSleep;
+        }
 
         int collisionGroup = component.CollisionGroup;
         if (ImGui.InputInt("Collision Group", ref collisionGroup))
             component.CollisionGroup = (ushort)Math.Clamp(collisionGroup, 0, ushort.MaxValue);
+        ImGuiUndoHelper.TrackDragUndo("Collision Group", component);
 
         var mask = component.GroupsMask;
         mask = RigidBodyEditorShared.DrawGroupsMaskControls(mask);
@@ -401,14 +420,17 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
         int dominanceGroup = component.DominanceGroup;
         if (ImGui.InputInt("Dominance Group", ref dominanceGroup))
             component.DominanceGroup = (byte)Math.Clamp(dominanceGroup, byte.MinValue, byte.MaxValue);
+        ImGuiUndoHelper.TrackDragUndo("Dominance Group", component);
 
         int ownerClient = component.OwnerClient;
         if (ImGui.InputInt("Owner Client", ref ownerClient))
             component.OwnerClient = (byte)Math.Clamp(ownerClient, byte.MinValue, byte.MaxValue);
+        ImGuiUndoHelper.TrackDragUndo("Owner Client", component);
 
         string actorName = component.ActorName ?? string.Empty;
         if (ImGui.InputText("Actor Name", ref actorName, 128))
             component.ActorName = actorName;
+        ImGuiUndoHelper.TrackDragUndo("Actor Name", component);
     }
 
     private static void DrawDynamicsSettings(DynamicRigidBodyComponent component)
@@ -424,6 +446,7 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
             DrawFlagCheckbox("CCD Max Contact Impulse", PhysicsRigidBodyFlags.EnableCcdMaxContactImpulse, ref bodyFlags) |
             DrawFlagCheckbox("CCD Friction", PhysicsRigidBodyFlags.EnableCcdFriction, ref bodyFlags))
         {
+            using var _ = Undo.TrackChange("Body Flags", component);
             component.BodyFlags = bodyFlags;
         }
 
@@ -435,32 +458,39 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
             DrawLockCheckbox("Lock Angular Y", PhysicsLockFlags.AngularY, ref lockFlags) |
             DrawLockCheckbox("Lock Angular Z", PhysicsLockFlags.AngularZ, ref lockFlags))
         {
+            using var _ = Undo.TrackChange("Lock Flags", component);
             component.LockFlags = lockFlags;
         }
 
         float linearDamping = component.LinearDamping;
         if (ImGui.DragFloat("Linear Damping", ref linearDamping, 0.01f, 0.0f, 100.0f))
             component.LinearDamping = MathF.Max(0.0f, linearDamping);
+        ImGuiUndoHelper.TrackDragUndo("Linear Damping", component);
 
         float angularDamping = component.AngularDamping;
         if (ImGui.DragFloat("Angular Damping", ref angularDamping, 0.01f, 0.0f, 100.0f))
             component.AngularDamping = MathF.Max(0.0f, angularDamping);
+        ImGuiUndoHelper.TrackDragUndo("Angular Damping", component);
 
         float maxLinearVelocity = component.MaxLinearVelocity;
         if (ImGui.DragFloat("Max Linear Velocity", ref maxLinearVelocity, 0.1f, 0.0f, 1000.0f))
             component.MaxLinearVelocity = MathF.Max(0.0f, maxLinearVelocity);
+        ImGuiUndoHelper.TrackDragUndo("Max Linear Velocity", component);
 
         float maxAngularVelocity = component.MaxAngularVelocity;
         if (ImGui.DragFloat("Max Angular Velocity", ref maxAngularVelocity, 0.1f, 0.0f, 1000.0f))
             component.MaxAngularVelocity = MathF.Max(0.0f, maxAngularVelocity);
+        ImGuiUndoHelper.TrackDragUndo("Max Angular Velocity", component);
 
         float mass = component.Mass;
         if (ImGui.DragFloat("Mass", ref mass, 0.01f, 0.0001f, 100000.0f, "%.4f"))
             component.Mass = MathF.Max(0.0001f, mass);
+        ImGuiUndoHelper.TrackDragUndo("Mass", component);
 
         Vector3 inertia = component.MassSpaceInertiaTensor;
         if (ImGui.DragFloat3("Mass Space Inertia Tensor", ref inertia, 0.01f))
             component.MassSpaceInertiaTensor = inertia;
+        ImGuiUndoHelper.TrackDragUndo("Inertia Tensor", component);
 
         var massFrame = component.CenterOfMassLocalPose;
         Vector3 comTranslation = massFrame.Translation;
@@ -470,6 +500,7 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
             massFrame.Translation = comTranslation;
             massFrameChanged = true;
         }
+        ImGuiUndoHelper.TrackDragUndo("Center Of Mass", component);
 
         Vector4 comRotation = RigidBodyEditorShared.QuaternionToVector4(massFrame.Rotation);
         if (ImGui.DragFloat4("Center Of Mass Rotation", ref comRotation, 0.01f))
@@ -477,6 +508,7 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
             massFrame.Rotation = RigidBodyEditorShared.Vector4ToQuaternion(comRotation);
             massFrameChanged = true;
         }
+        ImGuiUndoHelper.TrackDragUndo("Center Of Mass Rotation", component);
 
         if (massFrameChanged)
             component.CenterOfMassLocalPose = massFrame;
@@ -484,34 +516,42 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
         float minCcdAdvance = component.MinCcdAdvanceCoefficient;
         if (ImGui.DragFloat("Min CCD Advance Coefficient", ref minCcdAdvance, 0.001f, 0.0f, 1.0f))
             component.MinCcdAdvanceCoefficient = Math.Clamp(minCcdAdvance, 0.0f, 1.0f);
+        ImGuiUndoHelper.TrackDragUndo("Min CCD Advance", component);
 
         float maxDepenetration = component.MaxDepenetrationVelocity;
         if (ImGui.DragFloat("Max Depenetration Velocity", ref maxDepenetration, 0.1f, 0.0f, 1000.0f))
             component.MaxDepenetrationVelocity = MathF.Max(0.0f, maxDepenetration);
+        ImGuiUndoHelper.TrackDragUndo("Max Depenetration", component);
 
         float maxContactImpulse = component.MaxContactImpulse;
         if (ImGui.DragFloat("Max Contact Impulse", ref maxContactImpulse, 0.1f, 0.0f, 100000.0f))
             component.MaxContactImpulse = MathF.Max(0.0f, maxContactImpulse);
+        ImGuiUndoHelper.TrackDragUndo("Max Contact Impulse", component);
 
         float contactSlop = component.ContactSlopCoefficient;
         if (ImGui.DragFloat("Contact Slop Coefficient", ref contactSlop, 0.001f, 0.0f, 1.0f))
             component.ContactSlopCoefficient = Math.Clamp(contactSlop, 0.0f, 1.0f);
+        ImGuiUndoHelper.TrackDragUndo("Contact Slop", component);
 
         float stabilization = component.StabilizationThreshold;
         if (ImGui.DragFloat("Stabilization Threshold", ref stabilization, 0.01f, 0.0f, 100.0f))
             component.StabilizationThreshold = MathF.Max(0.0f, stabilization);
+        ImGuiUndoHelper.TrackDragUndo("Stabilization", component);
 
         float sleepThreshold = component.SleepThreshold;
         if (ImGui.DragFloat("Sleep Threshold", ref sleepThreshold, 0.001f, 0.0f, 10.0f))
             component.SleepThreshold = MathF.Max(0.0f, sleepThreshold);
+        ImGuiUndoHelper.TrackDragUndo("Sleep Threshold", component);
 
         float contactReport = component.ContactReportThreshold;
         if (ImGui.DragFloat("Contact Report Threshold", ref contactReport, 0.1f, 0.0f, 100000.0f))
             component.ContactReportThreshold = MathF.Max(0.0f, contactReport);
+        ImGuiUndoHelper.TrackDragUndo("Contact Report", component);
 
         float wakeCounter = component.WakeCounter;
         if (ImGui.DragFloat("Wake Counter", ref wakeCounter, 0.01f, 0.0f, 10.0f))
             component.WakeCounter = MathF.Max(0.0f, wakeCounter);
+        ImGuiUndoHelper.TrackDragUndo("Wake Counter", component);
 
         var iterations = component.SolverIterations;
         int positionIters = (int)iterations.MinPositionIterations;
@@ -521,19 +561,23 @@ public sealed class DynamicRigidBodyComponentEditor : IXRComponentEditor
             iterations.MinPositionIterations = (uint)Math.Max(0, positionIters);
             component.SolverIterations = iterations;
         }
+        ImGuiUndoHelper.TrackDragUndo("Position Iterations", component);
         if (ImGui.InputInt("Min Velocity Iterations", ref velocityIters))
         {
             iterations.MinVelocityIterations = (uint)Math.Max(0, velocityIters);
             component.SolverIterations = iterations;
         }
+        ImGuiUndoHelper.TrackDragUndo("Velocity Iterations", component);
 
         Vector3 linearVelocity = component.LinearVelocity;
         if (ImGui.DragFloat3("Linear Velocity", ref linearVelocity, 0.01f))
             component.LinearVelocity = linearVelocity;
+        ImGuiUndoHelper.TrackDragUndo("Linear Velocity", component);
 
         Vector3 angularVelocity = component.AngularVelocity;
         if (ImGui.DragFloat3("Angular Velocity", ref angularVelocity, 0.01f))
             component.AngularVelocity = angularVelocity;
+        ImGuiUndoHelper.TrackDragUndo("Angular Velocity", component);
 
         if (component.KinematicTarget.HasValue)
         {
@@ -618,15 +662,20 @@ public sealed class StaticRigidBodyComponentEditor : IXRComponentEditor
 
         bool autoCreate = component.AutoCreateRigidBody;
         if (ImGui.Checkbox("Auto-create rigid body", ref autoCreate))
+        {
+            using var _ = Undo.TrackChange("Auto-create Rigid Body", component);
             component.AutoCreateRigidBody = autoCreate;
+        }
 
         Vector3 translation = component.ShapeOffsetTranslation;
         if (ImGui.DragFloat3("Shape Offset", ref translation, 0.01f))
             component.ShapeOffsetTranslation = translation;
+        ImGuiUndoHelper.TrackDragUndo("Shape Offset", component);
 
         Vector4 rotation = RigidBodyEditorShared.QuaternionToVector4(component.ShapeOffsetRotation);
         if (ImGui.DragFloat4("Shape Rotation (xyzw)", ref rotation, 0.01f))
             component.ShapeOffsetRotation = RigidBodyEditorShared.Vector4ToQuaternion(rotation);
+        ImGuiUndoHelper.TrackDragUndo("Shape Rotation", component);
     }
 
     private static void DrawActorSettings(StaticRigidBodyComponent component)
@@ -636,23 +685,36 @@ public sealed class StaticRigidBodyComponentEditor : IXRComponentEditor
 
         bool gravityEnabled = component.GravityEnabled;
         if (ImGui.Checkbox("Gravity Enabled", ref gravityEnabled))
+        {
+            using var _ = Undo.TrackChange("Gravity Enabled", component);
             component.GravityEnabled = gravityEnabled;
+        }
 
         bool simulationEnabled = component.SimulationEnabled;
         if (ImGui.Checkbox("Simulation Enabled", ref simulationEnabled))
+        {
+            using var _ = Undo.TrackChange("Simulation Enabled", component);
             component.SimulationEnabled = simulationEnabled;
+        }
 
         bool debugVisualization = component.DebugVisualization;
         if (ImGui.Checkbox("Debug Visualization", ref debugVisualization))
+        {
+            using var _ = Undo.TrackChange("Debug Visualization", component);
             component.DebugVisualization = debugVisualization;
+        }
 
         bool sendSleep = component.SendSleepNotifies;
         if (ImGui.Checkbox("Send Sleep Notifies", ref sendSleep))
+        {
+            using var _ = Undo.TrackChange("Send Sleep Notifies", component);
             component.SendSleepNotifies = sendSleep;
+        }
 
         int collisionGroup = component.CollisionGroup;
         if (ImGui.InputInt("Collision Group", ref collisionGroup))
             component.CollisionGroup = (ushort)Math.Clamp(collisionGroup, 0, ushort.MaxValue);
+        ImGuiUndoHelper.TrackDragUndo("Collision Group", component);
 
         var mask = component.GroupsMask;
         mask = RigidBodyEditorShared.DrawGroupsMaskControls(mask);
@@ -661,13 +723,16 @@ public sealed class StaticRigidBodyComponentEditor : IXRComponentEditor
         int dominanceGroup = component.DominanceGroup;
         if (ImGui.InputInt("Dominance Group", ref dominanceGroup))
             component.DominanceGroup = (byte)Math.Clamp(dominanceGroup, byte.MinValue, byte.MaxValue);
+        ImGuiUndoHelper.TrackDragUndo("Dominance Group", component);
 
         int ownerClient = component.OwnerClient;
         if (ImGui.InputInt("Owner Client", ref ownerClient))
             component.OwnerClient = (byte)Math.Clamp(ownerClient, byte.MinValue, byte.MaxValue);
+        ImGuiUndoHelper.TrackDragUndo("Owner Client", component);
 
         string actorName = component.ActorName ?? string.Empty;
         if (ImGui.InputText("Actor Name", ref actorName, 128))
             component.ActorName = actorName;
+        ImGuiUndoHelper.TrackDragUndo("Actor Name", component);
     }
 }

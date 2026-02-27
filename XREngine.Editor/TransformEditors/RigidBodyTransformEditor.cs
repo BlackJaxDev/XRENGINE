@@ -47,7 +47,7 @@ public sealed class RigidBodyTransformEditor : IXRTransformEditor
 
         int modeIndex = selectedIndex;
         bool changed = ImGui.Combo("Interpolation Mode##RigidBodyInterpolation", ref modeIndex, InterpolationNames, InterpolationNames.Length);
-        ImGuiUndoHelper.UpdateScope($"Change Interpolation Mode {transformLabel}", rigidBody);
+        ImGuiUndoHelper.TrackDragUndo($"Change Interpolation Mode {transformLabel}", rigidBody);
         if (!changed)
             return;
 
@@ -64,7 +64,7 @@ public sealed class RigidBodyTransformEditor : IXRTransformEditor
         Vector3 offset = rigidBody.PositionOffset;
         ImGui.SetNextItemWidth(-1f);
         bool edited = ImGui.DragFloat3("Position Offset (World X/Y/Z)##RigidBodyPositionOffset", ref offset, 0.05f);
-        ImGuiUndoHelper.UpdateScope($"Adjust Position Offset {transformLabel}", rigidBody);
+        ImGuiUndoHelper.TrackDragUndo($"Adjust Position Offset {transformLabel}", rigidBody);
         if (!edited)
             return;
 
@@ -83,7 +83,7 @@ public sealed class RigidBodyTransformEditor : IXRTransformEditor
             : "Post-Rotation Offset (Pitch/Yaw/Roll Degrees)##RigidBodyPostRot";
         bool edited = ImGui.DragFloat3(label, ref euler, 0.5f);
         string action = preRotation ? "Pre-Rotation Offset" : "Post-Rotation Offset";
-        ImGuiUndoHelper.UpdateScope($"Adjust {action} {transformLabel}", rigidBody);
+        ImGuiUndoHelper.TrackDragUndo($"Adjust {action} {transformLabel}", rigidBody);
         if (!edited)
             return;
 
@@ -126,6 +126,7 @@ public sealed class RigidBodyTransformEditor : IXRTransformEditor
         if (ImGui.DragFloat3("Body Position##RigidBodyWorldPosition", ref editedPosition, 0.01f))
             changed = true;
         ImGui.PopItemWidth();
+        ImGuiUndoHelper.TrackDragUndo($"Adjust Rigid Body Position {transformLabel}", rigidBody);
 
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("World-space XYZ position");
@@ -141,7 +142,7 @@ public sealed class RigidBodyTransformEditor : IXRTransformEditor
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("World-space pitch/yaw/roll (degrees)");
 
-        ImGuiUndoHelper.UpdateScope($"Adjust Rigid Body Transform {transformLabel}", rigidBody);
+        ImGuiUndoHelper.TrackDragUndo($"Adjust Rigid Body Rotation {transformLabel}", rigidBody);
         if (!changed)
             return;
 

@@ -10,6 +10,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Editor;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor.Mcp
 {
@@ -59,10 +60,56 @@ namespace XREngine.Editor.Mcp
             if (targets.Length == 0)
                 return Task.FromResult(new McpToolResponse("No selected nodes found in the active world.", isError: true));
 
-            foreach (var node in targets)
-                node.Destroy();
+            var world = context.WorldInstance;
+            // Capture pre-deletion state for each node
+            var nodeStates = targets.Select(node => new
+            {
+                Node = node,
+                ParentTransform = node.Transform.Parent,
+                WasActive = node.IsActiveSelf
+            }).ToArray();
+
+            // Soft-delete all nodes
+            foreach (var state in nodeStates)
+            {
+                if (state.ParentTransform is not null)
+                    state.ParentTransform.RemoveChild(state.Node.Transform, EParentAssignmentMode.Immediate);
+                else
+                    world.RootNodes.Remove(state.Node);
+
+                state.Node.IsActiveSelf = false;
+            }
 
             Selection.Clear();
+
+            // Record structural undo
+            using var interaction = Undo.BeginUserInteraction();
+            using var scope = Undo.BeginChange("MCP Delete Selected Nodes");
+            Undo.RecordStructuralChange($"Delete {targets.Length} node(s)",
+                undoAction: () =>
+                {
+                    foreach (var state in nodeStates)
+                    {
+                        if (state.ParentTransform is not null)
+                            state.Node.Transform.SetParent(state.ParentTransform, false, EParentAssignmentMode.Immediate);
+                        else
+                            world.RootNodes.Add(state.Node);
+                        state.Node.IsActiveSelf = state.WasActive;
+                        Undo.TrackSceneNode(state.Node);
+                    }
+                },
+                redoAction: () =>
+                {
+                    foreach (var state in nodeStates)
+                    {
+                        if (state.ParentTransform is not null)
+                            state.ParentTransform.RemoveChild(state.Node.Transform, EParentAssignmentMode.Immediate);
+                        else
+                            world.RootNodes.Remove(state.Node);
+                        state.Node.IsActiveSelf = false;
+                    }
+                });
+
             return Task.FromResult(new McpToolResponse($"Deleted {targets.Length} selected node(s)."));
         }
 
@@ -203,6 +250,30 @@ namespace XREngine.Editor.Mcp
                     node.Destroy();
                     return Task.FromResult(new McpToolResponse($"Unsupported shape_type '{shapeType}'. Supported: cube, box, sphere, cone.", isError: true));
             }
+
+            // Record structural undo for primitive creation
+            var parentTfm = node.Transform.Parent;
+            using var interaction = Undo.BeginUserInteraction();
+            using var changeScope = Undo.BeginChange("MCP Create Primitive");
+            Undo.TrackSceneNode(node);
+            Undo.RecordStructuralChange("Create Primitive",
+                undoAction: () =>
+                {
+                    if (parentTfm is not null)
+                        parentTfm.RemoveChild(node.Transform, EParentAssignmentMode.Immediate);
+                    else
+                        world.RootNodes.Remove(node);
+                    node.IsActiveSelf = false;
+                },
+                redoAction: () =>
+                {
+                    if (parentTfm is not null)
+                        node.Transform.SetParent(parentTfm, false, EParentAssignmentMode.Immediate);
+                    else
+                        world.RootNodes.Add(node);
+                    node.IsActiveSelf = true;
+                    Undo.TrackSceneNode(node);
+                });
 
             Selection.SceneNode = node;
             return Task.FromResult(new McpToolResponse($"Created {normalized} primitive.", new { id = node.ID, path = BuildNodePath(node) }));

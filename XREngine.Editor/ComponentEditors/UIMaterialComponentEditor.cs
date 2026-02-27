@@ -51,7 +51,10 @@ public sealed class UIMaterialComponentEditor : IXRComponentEditor
             ImGuiAssetUtilities.DrawAssetField("UIMaterialComponent.Material", uiMat.Material, asset =>
             {
                 if (!ReferenceEquals(uiMat.Material, asset))
+                {
+                    using var _ = Undo.TrackChange("Set UI Material", uiMat);
                     uiMat.Material = asset;
+                }
             });
 
             ImGui.TableNextRow();

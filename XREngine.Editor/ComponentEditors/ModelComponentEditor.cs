@@ -153,7 +153,10 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             ImGuiAssetUtilities.DrawAssetField("ComponentModel", modelComponent.Model, asset =>
             {
                 if (!ReferenceEquals(modelComponent.Model, asset))
+                {
+                    using var _ = Undo.TrackChange("Set Model", modelComponent);
                     modelComponent.Model = asset;
+                }
             });
 
             ImGui.TableNextRow();
@@ -585,6 +588,8 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         }
 
         billboard.ApplyCaptureResult(result, matchBounds: true);
+
+        using var _ = Undo.TrackChange("Create Impostor", modelComponent);
         modelComponent.IsActive = false;
 
         if (wasAdded)
@@ -780,6 +785,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                         f.SetValue(value);
                         renderer?.Material?.MarkDirty();
                     }
+                    ImGuiUndoHelper.TrackDragUndo("Shader Float", f);
                     break;
                 }
             case ShaderArrayBase a:
@@ -796,6 +802,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                         i.SetValue(value);
                         renderer?.Material?.MarkDirty();
                     }
+                    ImGuiUndoHelper.TrackDragUndo("Shader Int", i);
                     break;
                 }
             case ShaderUInt ui:
@@ -808,6 +815,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                         ui.SetValue((uint)intValue);
                         renderer?.Material?.MarkDirty();
                     }
+                    ImGuiUndoHelper.TrackDragUndo("Shader UInt", ui);
                     break;
                 }
             case ShaderBool b:
@@ -816,6 +824,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                     ImGui.SetNextItemWidth(-1f);
                     if (ImGui.Checkbox("##Bool", ref value))
                     {
+                        using var _ = Undo.TrackChange("Shader Bool", b);
                         b.SetValue(value);
                         renderer?.Material?.MarkDirty();
                     }
@@ -830,6 +839,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                         v2.SetValue(value);
                         renderer?.Material?.MarkDirty();
                     }
+                    ImGuiUndoHelper.TrackDragUndo("Shader Vec2", v2);
                     break;
                 }
             case ShaderVector3 v3:
@@ -841,6 +851,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                         v3.SetValue(value);
                         renderer?.Material?.MarkDirty();
                     }
+                    ImGuiUndoHelper.TrackDragUndo("Shader Vec3", v3);
                     break;
                 }
             case ShaderVector4 v4:
@@ -852,6 +863,7 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                         v4.SetValue(value);
                         renderer?.Material?.MarkDirty();
                     }
+                    ImGuiUndoHelper.TrackDragUndo("Shader Vec4", v4);
                     break;
                 }
             case ShaderMat4 m4:
@@ -1643,8 +1655,13 @@ public sealed class ModelComponentEditor : IXRComponentEditor
 
     private static void ApplySharedMaterial(SubMesh subMesh, XRMaterial? material)
     {
+        using var interaction = Undo.BeginUserInteraction();
+        using var scope = Undo.BeginChange("Apply Shared Material");
         foreach (var lod in subMesh.LODs)
+        {
+            Undo.Track(lod);
             lod.Material = material;
+        }
     }
 
     private static string FormatRenderCommandLabel(RenderableMesh? runtimeMesh)
@@ -1762,13 +1779,20 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 if (ImGui.Checkbox("Override##AssetMaterial", ref overrideMaterial))
                 {
                     if (!overrideMaterial && !ReferenceEquals(lod.Material, sharedMaterial))
+                    {
+                        using var _ = Undo.TrackChange("Reset LOD Material", lod);
                         lod.Material = sharedMaterial;
+                    }
                 }
 
                 ImGui.SameLine();
                 if (overrideMaterial)
                 {
-                    ImGuiAssetUtilities.DrawAssetField("AssetMaterial", lod.Material, asset => lod.Material = asset, AssetFieldOptions.ForMaterials());
+                    ImGuiAssetUtilities.DrawAssetField("AssetMaterial", lod.Material, asset =>
+                    {
+                        using var _ = Undo.TrackChange("Set LOD Material", lod);
+                        lod.Material = asset;
+                    }, AssetFieldOptions.ForMaterials());
                 }
                 else
                 {
@@ -1779,7 +1803,11 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             }
             else
             {
-                ImGuiAssetUtilities.DrawAssetField("AssetMaterial", lod.Material, asset => lod.Material = asset, AssetFieldOptions.ForMaterials());
+                ImGuiAssetUtilities.DrawAssetField("AssetMaterial", lod.Material, asset =>
+                {
+                    using var _ = Undo.TrackChange("Set LOD Material", lod);
+                    lod.Material = asset;
+                }, AssetFieldOptions.ForMaterials());
             }
 
             ImGui.EndTable();
@@ -1822,7 +1850,11 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 ImGui.TableSetColumnIndex(0);
                 ImGui.TextUnformatted("Runtime Material");
                 ImGui.TableSetColumnIndex(1);
-                ImGuiAssetUtilities.DrawAssetField("RuntimeMaterial", renderer.Material, asset => renderer.Material = asset, AssetFieldOptions.ForMaterials());
+                ImGuiAssetUtilities.DrawAssetField("RuntimeMaterial", renderer.Material, asset =>
+                {
+                    using var _ = Undo.TrackChange("Set Runtime Material", renderer);
+                    renderer.Material = asset;
+                }, AssetFieldOptions.ForMaterials());
 
                 ImGui.EndTable();
             }

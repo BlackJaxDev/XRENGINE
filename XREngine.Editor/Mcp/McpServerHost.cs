@@ -165,7 +165,7 @@ namespace XREngine.Editor.Mcp
             _listener.Prefixes.Add(Prefix);
             _listener.Start();
             _startedUtc = DateTimeOffset.UtcNow;
-            _listenerTask = Task.Run(() => ListenLoopAsync(_cts.Token));
+            _listenerTask = ListenLoopAsync(_cts.Token);
             Debug.Out($"[MCP] Server started on {Prefix}");
             LogStartupDiagnostics(Engine.EditorPreferences);
         }
@@ -219,7 +219,7 @@ namespace XREngine.Editor.Mcp
                 if (context is null)
                     continue;
 
-                _ = Task.Run(() => HandleContextAsync(context, token), token);
+                _ = HandleContextAsync(context, token);
             }
         }
 

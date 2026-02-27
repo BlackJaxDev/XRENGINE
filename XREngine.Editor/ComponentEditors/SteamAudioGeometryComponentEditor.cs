@@ -87,6 +87,7 @@ public sealed class SteamAudioGeometryComponentEditor : IXRComponentEditor
                 bool selected = i == currentPreset;
                 if (ImGui.Selectable(Presets[i].Name, selected))
                 {
+                    using var _ = Undo.TrackChange("Set Audio Material Preset", geo);
                     geo.Material = CloneMaterial(Presets[i].Material);
                 }
                 if (selected)
@@ -105,6 +106,7 @@ public sealed class SteamAudioGeometryComponentEditor : IXRComponentEditor
             mat.Absorption = Vector3.Clamp(absorption, Vector3.Zero, Vector3.One);
             geo.Material = mat; // Trigger dirty flag
         }
+        ImGuiUndoHelper.TrackDragUndo("Absorption", geo);
 
         // Scattering (scalar)
         float scattering = mat.Scattering;
@@ -113,6 +115,7 @@ public sealed class SteamAudioGeometryComponentEditor : IXRComponentEditor
             mat.Scattering = scattering;
             geo.Material = mat;
         }
+        ImGuiUndoHelper.TrackDragUndo("Scattering", geo);
 
         // Transmission (3-band)
         Vector3 transmission = mat.Transmission;
@@ -121,6 +124,7 @@ public sealed class SteamAudioGeometryComponentEditor : IXRComponentEditor
             mat.Transmission = Vector3.Clamp(transmission, Vector3.Zero, Vector3.One);
             geo.Material = mat;
         }
+        ImGuiUndoHelper.TrackDragUndo("Transmission", geo);
     }
 
     private static void DrawActionsSection(SteamAudioGeometryComponent geo)
