@@ -12,6 +12,3 @@
 [submodule "Build/Submodules/OpenVR.NET"]
 	path = Build/Submodules/OpenVR.NET
 	url = https://github.com/BlackJaxDev/OpenVR.NET.git
-[submodule "Build/Submodules/Flyleaf"]
-	path = Build/Submodules/Flyleaf
-	url = https://github.com/SuRGeoNix/Flyleaf

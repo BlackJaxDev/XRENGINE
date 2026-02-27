@@ -64,6 +64,8 @@
     <None Remove="ffplay.exe" />
     <None Remove="ffprobe.exe" />
     <None Remove="openvr_api.dll" />
+    <None Remove="OVRLipSync.dll" />
+    <None Remove="RestirGI.Native.dll" />
     <None Remove="Rendering\GI\cmake" />
     <None Remove="Rendering\GI\RestirGI.Native.cpp" />
     <None Remove="rive.dll" />
@@ -227,8 +229,10 @@
     <None Update="nis.license.txt">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Update="OVRLipSync.dll">
+    <None Include="$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll" Condition="Exists('$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll')">
+      <Link>OVRLipSync.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
     <None Update="runtimes\win-x64\native\lib_coacd.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -245,7 +249,8 @@
     <None Update="runtimes\win-x64\native\rive.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="RestirGI.Native.dll">
+    <None Include="$(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll" Condition="Exists('$(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll')">
+      <Link>RestirGI.Native.dll</Link>
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </None>
@@ -263,6 +268,34 @@
     <None Remove="C:\Users\dnedd\.nuget\packages\naudio.lame\2.1.0\build\libmp3lame.64.dll" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\docs\licenses\nuget\FFmpeg.AutoGen-7.1.1-LGPL-3.0.txt" Condition="Exists('..\docs\licenses\nuget\FFmpeg.AutoGen-7.1.1-LGPL-3.0.txt')">
+      <Link>licenses\FFmpeg.AutoGen-LGPL-3.0.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="..\docs\licenses\nuget\Silk.NET.OpenAL.Soft.Native-1.23.1-LGPL-2.0-or-later.txt" Condition="Exists('..\docs\licenses\nuget\Silk.NET.OpenAL.Soft.Native-1.23.1-LGPL-2.0-or-later.txt')">
+      <Link>licenses\OpenAL-Soft-LGPL-2.0-or-later.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="..\docs\licenses\copyleft\LGPL-2.0-or-later.txt" Condition="Exists('..\docs\licenses\copyleft\LGPL-2.0-or-later.txt')">
+      <Link>licenses\LGPL-2.0-or-later.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="..\docs\licenses\copyleft\LGPL-2.1-or-later.txt" Condition="Exists('..\docs\licenses\copyleft\LGPL-2.1-or-later.txt')">
+      <Link>licenses\LGPL-2.1-or-later.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="..\docs\licenses\copyleft\LGPL-3.0.txt" Condition="Exists('..\docs\licenses\copyleft\LGPL-3.0.txt')">
+      <Link>licenses\LGPL-3.0.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
   <Target Name="EnsureCoACD" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT' and Exists('$(CoACDBuildScript)') and ('$(CoACDRid)' != '') and ('$(ForceCoACDBuild)' == 'true' or !Exists('$(MSBuildProjectDirectory)\\runtimes\\$(CoACDRid)\\native\\lib_coacd.dll'))">
     <Message Text="Ensuring CoACD native library ($(CoACDRid))" Importance="High" />
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(CoACDBuildScript)&quot; -Rid $(CoACDRid) -Ref $(CoACDRef) -Configuration $(Configuration) $(ForceCoACDBuildSwitch)" />
@@ -271,16 +304,16 @@
   <Target Name="EnsureHlsReferenceFfmpeg" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT'">
     <PropertyGroup>
       <HlsReferenceFfmpegDir>$(MSBuildProjectDirectory)\..\Build\Dependencies\FFmpeg\HlsReference\win-x64</HlsReferenceFfmpegDir>
-      <FlyleafFfmpegDir>$(MSBuildProjectDirectory)\..\Build\Submodules\Flyleaf\FFmpeg</FlyleafFfmpegDir>
+      <FfmpegSeedDir>$(MSBuildProjectDirectory)\..\Build\Dependencies\FFmpeg\Seed\win-x64</FfmpegSeedDir>
     </PropertyGroup>
 
-    <ItemGroup Condition="Exists('$(FlyleafFfmpegDir)') and !Exists('$(HlsReferenceFfmpegDir)\avformat-62.dll') and !Exists('$(HlsReferenceFfmpegDir)\avformat-61.dll')">
-      <FlyleafFfmpegDll Include="$(FlyleafFfmpegDir)\*.dll" />
+    <ItemGroup Condition="Exists('$(FfmpegSeedDir)') and !Exists('$(HlsReferenceFfmpegDir)\avformat-62.dll') and !Exists('$(HlsReferenceFfmpegDir)\avformat-61.dll')">
+      <FfmpegSeedDll Include="$(FfmpegSeedDir)\*.dll" />
     </ItemGroup>
 
-    <MakeDir Directories="$(HlsReferenceFfmpegDir)" Condition="'@(FlyleafFfmpegDll)' != ''" />
-    <Copy SourceFiles="@(FlyleafFfmpegDll)" DestinationFolder="$(HlsReferenceFfmpegDir)" SkipUnchangedFiles="true" Condition="'@(FlyleafFfmpegDll)' != ''" />
-    <Message Text="Seeded HLS FFmpeg runtime from Flyleaf binaries into $(HlsReferenceFfmpegDir)." Importance="High" Condition="'@(FlyleafFfmpegDll)' != ''" />
+    <MakeDir Directories="$(HlsReferenceFfmpegDir)" Condition="'@(FfmpegSeedDll)' != ''" />
+    <Copy SourceFiles="@(FfmpegSeedDll)" DestinationFolder="$(HlsReferenceFfmpegDir)" SkipUnchangedFiles="true" Condition="'@(FfmpegSeedDll)' != ''" />
+    <Message Text="Seeded HLS FFmpeg runtime from Build/Dependencies FFmpeg seed into $(HlsReferenceFfmpegDir)." Importance="High" Condition="'@(FfmpegSeedDll)' != ''" />
   </Target>
 
   <Target Name="ForceFreetype64" AfterTargets="Build" Condition="Exists('$(Freetype64Source)')">
@@ -293,6 +326,8 @@
   </Target>
 
   <PropertyGroup>
+    <MetaOvrLipSyncWinX64Dir Condition="'$(MetaOvrLipSyncWinX64Dir)' == ''">$(MSBuildProjectDirectory)\..\ThirdParty\Meta\OVRLipSync\win-x64\</MetaOvrLipSyncWinX64Dir>
+    <NvidiaRtxgiWinX64Dir Condition="'$(NvidiaRtxgiWinX64Dir)' == ''">$(MSBuildProjectDirectory)\..\ThirdParty\NVIDIA\RTXGI\win-x64\</NvidiaRtxgiWinX64Dir>
     <NvidiaSdkWinX64Dir Condition="'$(NvidiaSdkWinX64Dir)' == ''">$(MSBuildProjectDirectory)\..\ThirdParty\NVIDIA\SDK\win-x64\</NvidiaSdkWinX64Dir>
   </PropertyGroup>
 
@@ -314,8 +349,10 @@
   <Target Name="CopyRestirNative" AfterTargets="Build">
     <PropertyGroup>
       <RestirNativeSource>$(SolutionDir)Build\RestirGI\bin\$(Configuration)\RestirGINative.dll</RestirNativeSource>
-      <RestirNativeDest>$(MSBuildThisFileDirectory)RestirGI.Native.dll</RestirNativeDest>
+      <RestirNativeDestDir>$(NvidiaRtxgiWinX64Dir)</RestirNativeDestDir>
+      <RestirNativeDest>$(RestirNativeDestDir)RestirGI.Native.dll</RestirNativeDest>
     </PropertyGroup>
+    <MakeDir Directories="$(RestirNativeDestDir)" Condition="Exists('$(RestirNativeSource)') and '$(RestirNativeDestDir)' != ''" />
     <Copy SourceFiles="$(RestirNativeSource)" DestinationFiles="$(RestirNativeDest)" SkipUnchangedFiles="true" Condition="Exists('$(RestirNativeSource)')" />
   </Target>
 

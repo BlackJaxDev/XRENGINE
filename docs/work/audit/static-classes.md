@@ -2,7 +2,7 @@
 
 Generated: 2026-02-26
 
-Total: 353
+Total: 335
 
 | Namespace | Class | File | Line |
 | --- | --- | --- | --- |
@@ -24,7 +24,6 @@ Total: 353
 | (none) | BvhStats | XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.BvhStats.cs | 12 |
 | (none) | ByteExtension | XREngine.Extensions/Numbers/Byte.cs | 3 |
 | (none) | CameraParameterEditorRegistry | XRENGINE/Rendering/Camera/ICameraParameterCustomEditor.cs | 48 |
-| (none) | Charsets | Build/Submodules/Flyleaf/Plugins/SubtitlesConverter/Core/Charsets.cs | 40 |
 | (none) | CoACD | XREngine.Data/Tools/CoACD.cs | 10 |
 | (none) | ColorExtensions | XREngine.Extensions/Numbers/ColorExtensions.cs | 5 |
 | (none) | Compression | XREngine.Data/Core/Memory/Compression.cs | 12 |
@@ -139,10 +138,6 @@ Total: 353
 | (none) | PlaneHelper | XREngine.Data/Geometry/Plane.cs | 7 |
 | (none) | PlayMode | XRENGINE/Engine/Subclasses/Engine.PlayMode.cs | 14 |
 | (none) | Program | Build/Submodules/CoACD/build/win-x64/_deps/boost-src/libs/math/example/dot_net_example/distribution_explorer/Program.cs | 7 |
-| (none) | Program | Build/Submodules/Flyleaf/Samples/FlyleafAudioPlayer (Custom) (WinForms)/Program.cs | 3 |
-| (none) | Program | Build/Submodules/Flyleaf/Samples/FlyleafDownloader (WinForms)/Program.cs | 9 |
-| (none) | Program | Build/Submodules/Flyleaf/Samples/FlyleafExtractor (WinForms)/Program.cs | 6 |
-| (none) | Program | Build/Submodules/Flyleaf/Samples/FlyleafPlayer (Custom)  (WinForms)/Program.cs | 9 |
 | (none) | ProjectionMatrixCombiner | XRENGINE/Core/ProjectionMatrixCombiner.cs | 10 |
 | (none) | QuaternionExtension | XREngine.Extensions/Numbers/QuaternionExtension.cs | 5 |
 | (none) | RadianceCascadeRegistry | XRENGINE/Rendering/GI/RadianceCascadeRegistry.cs | 10 |
@@ -210,19 +205,6 @@ Total: 353
 | ConsoleSandbox | RaycastSingle | Submodules/MagicPhysX/sandbox/ConsoleSandbox/RaycastSingle.cs | 7 |
 | ConsoleSandbox | RevoluteJoint | Submodules/MagicPhysX/sandbox/ConsoleSandbox/RevoluteJoint.cs | 7 |
 | ConsoleSandbox | SphericalJoint | Submodules/MagicPhysX/sandbox/ConsoleSandbox/SphericalJoint.cs | 7 |
-| FlyleafLib | Engine | Build/Submodules/Flyleaf/FlyleafLib/Engine/Engine.cs | 10 |
-| FlyleafLib | Logger | Build/Submodules/Flyleaf/FlyleafLib/Utils/Logger.cs | 3 |
-| FlyleafLib | NativeMethods | Build/Submodules/Flyleaf/FlyleafLib/Utils/NativeMethods.cs | 8 |
-| FlyleafLib | Utils | Build/Submodules/Flyleaf/FlyleafLib/Utils/NativeMethods.cs | 6 |
-| FlyleafLib | Utils | Build/Submodules/Flyleaf/FlyleafLib/Utils/ObservableDictionary.cs | 7 |
-| FlyleafLib | Utils | Build/Submodules/Flyleaf/FlyleafLib/Utils/Utils.cs | 14 |
-| FlyleafLib | Utils | Build/Submodules/Flyleaf/FlyleafLib/Utils/ZOrderHandler.cs | 9 |
-| FlyleafLib | ZOrderHandler | Build/Submodules/Flyleaf/FlyleafLib/Utils/ZOrderHandler.cs | 11 |
-| FlyleafLib.MediaFramework.MediaFrame | ParseSubtitles | Build/Submodules/Flyleaf/FlyleafLib/MediaFramework/MediaFrame/SubtitlesFrame.cs | 46 |
-| FlyleafLib.MediaFramework.MediaRenderer | ShaderCompiler | Build/Submodules/Flyleaf/FlyleafLib/MediaFramework/MediaRenderer/ShaderCompiler.cs | 12 |
-| FlyleafLib.MediaFramework.MediaRenderer | ShaderCompiler | Build/Submodules/Flyleaf/FlyleafLib/MediaFramework/MediaRenderer/ShaderCompiler.PS.cs | 22 |
-| FlyleafLib.MediaFramework.MediaRenderer | ShaderCompiler | Build/Submodules/Flyleaf/FlyleafLib/MediaFramework/MediaRenderer/ShaderCompiler.VS.cs | 3 |
-| FlyleafPlayer | ApplicationActivator | Build/Submodules/Flyleaf/Samples/FlyleafPlayer (WPF Control) (WPF)/ApplicationActivator.cs | 12 |
 | GeneratedLauncher | Program | Samples/MonkeyBallVR/Intermediate/VR_MonkeyBall_Sample/Launcher/Program.cs | 7 |
 | MagicPhysX.Toolkit.Internal | Extensions | Submodules/MagicPhysX/samples/MagicPhysX.Toolkit/Toolkit/Internal/Extensions.cs | 6 |
 | MagicPhysX.Toolkit.Internal | PxRigidDynamicLockFlagsExtensions | Submodules/MagicPhysX/samples/MagicPhysX.Toolkit/Toolkit/Internal/PxRigidDynamicLockFlagsExtensions.cs | 5 |

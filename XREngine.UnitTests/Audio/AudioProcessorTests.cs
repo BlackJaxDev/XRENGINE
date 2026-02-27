@@ -283,8 +283,8 @@ namespace XREngine.UnitTests.Audio
             {
                 processor.SupportsHRTF.ShouldBeTrue();
                 processor.SupportsOcclusion.ShouldBeTrue();
-                processor.SupportsReflections.ShouldBeFalse("Reflections are Phase 5.");
-                processor.SupportsPathing.ShouldBeFalse("Pathing is Phase 5.");
+                processor.SupportsReflections.ShouldBeTrue("Reflections implemented in Phase 5.");
+                processor.SupportsPathing.ShouldBeTrue("Pathing implemented in Phase 5.");
                 processor.SupportsSceneGeometry.ShouldBeTrue();
             }
         }

@@ -538,7 +538,7 @@
             "problemMatcher": []
         },
         {
-            "label": "Report-All-Audits",
+            "label": "Report-All-AuditReports",
             "type": "shell",
             "command": "cmd",
             "args": [
@@ -549,8 +549,7 @@
             "dependsOn": [
                 "Report-NewAllocations",
                 "Report-StaticClasses",
-                "Report-ThreadTaskRuns",
-                "Report-Dependencies"
+                "Report-ThreadTaskRuns"
             ],
             "dependsOrder": "sequence",
             "group": "test",

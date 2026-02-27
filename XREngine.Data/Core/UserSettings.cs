@@ -44,6 +44,11 @@ namespace XREngine
         private float _audioDisableFadeSeconds = 0.5f;
         private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
 
+        private EAudioTransport _audioTransport = EAudioTransport.OpenAL;
+        private EAudioEffects _audioEffects = EAudioEffects.OpenAL_EFX;
+        private bool _audioArchitectureV2 = false;
+        private int _audioSampleRate = 44100;
+
         [Category("Display")]
         [Description("Vertical sync mode preference. This may be overridden by project/user override settings in the cascade.")]
         public EVSyncMode VSync
@@ -119,6 +124,34 @@ namespace XREngine
         {
             get => _audioDisableFadeSeconds;
             set => SetField(ref _audioDisableFadeSeconds, value);
+        }
+        [Category("Audio")]
+        [Description("Preferred audio transport backend. Games and editor preferences may override this.")]
+        public EAudioTransport AudioTransport
+        {
+            get => _audioTransport;
+            set => SetField(ref _audioTransport, value);
+        }
+        [Category("Audio")]
+        [Description("Preferred audio effects processor. Games and editor preferences may override this.")]
+        public EAudioEffects AudioEffects
+        {
+            get => _audioEffects;
+            set => SetField(ref _audioEffects, value);
+        }
+        [Category("Audio")]
+        [Description("Enable the V2 streaming audio architecture (buffer-queue based). Requires restart.")]
+        public bool AudioArchitectureV2
+        {
+            get => _audioArchitectureV2;
+            set => SetField(ref _audioArchitectureV2, value);
+        }
+        [Category("Audio")]
+        [Description("Audio output sample rate in Hz (e.g. 44100, 48000). Requires restart.")]
+        public int AudioSampleRate
+        {
+            get => _audioSampleRate;
+            set => SetField(ref _audioSampleRate, value);
         }
         [Category("Performance")]
         [Description("Optional target FPS while unfocused (e.g. background throttling). Null inherits TargetFramesPerSecond.")]

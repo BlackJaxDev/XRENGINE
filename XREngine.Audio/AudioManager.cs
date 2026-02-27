@@ -100,7 +100,7 @@ namespace XREngine.Audio
                 IAudioTransport transport = transportType switch
                 {
                     AudioTransportType.OpenAL => new OpenALTransport(),
-                    AudioTransportType.NAudio => CreateFallbackOpenAlTransport("NAudio transport is not implemented yet. Falling back to OpenAL."),
+                    AudioTransportType.NAudio => CreateNAudioTransport(),
                     _ => CreateFallbackOpenAlTransport($"Unknown audio transport '{transportType}'. Falling back to OpenAL."),
                 };
 
@@ -123,7 +123,7 @@ namespace XREngine.Audio
         /// <summary>
         /// Validates a transport/effects combination and auto-corrects invalid pairings.
         /// </summary>
-        internal static (AudioTransportType Transport, AudioEffectsType Effects) ValidateCombo(
+        public static (AudioTransportType Transport, AudioEffectsType Effects) ValidateCombo(
             AudioTransportType transport,
             AudioEffectsType effects)
         {
@@ -174,6 +174,20 @@ namespace XREngine.Audio
             return new OpenALTransport();
         }
 
+        private static NAudioTransport CreateNAudioTransport()
+        {
+            var transport = new NAudioTransport();
+            try
+            {
+                transport.Open();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AudioManager] NAudioTransport.Open() failed: {ex.Message}. Transport will work without output device.");
+            }
+            return transport;
+        }
+
         public void FadeIn(float fadeSeconds, Action? onComplete = null)
         {
             void FadeCompleted(ListenerContext l)
@@ -210,6 +224,40 @@ namespace XREngine.Audio
         {
             foreach (var listener in _listeners)
                 listener.Tick(deltaTime);
+        }
+
+        /// <summary>
+        /// Tears down and recreates every active listener using the current
+        /// <see cref="DefaultTransport"/> / <see cref="DefaultEffects"/> settings.
+        /// Use after changing the global transport or effects type at runtime.
+        /// </summary>
+        /// <remarks>
+        /// Existing <see cref="AudioSource"/>-to-listener bindings are lost; callers
+        /// are expected to re-acquire listeners from the new set.
+        /// </remarks>
+        public void RecreateListeners()
+        {
+            if (!AudioSettings.AudioArchitectureV2)
+            {
+                Debug.WriteLine("[AudioManager] RecreateListeners only supported under V2 architecture.");
+                return;
+            }
+
+            // Snapshot current listener names for recreation.
+            var names = _listeners.Select(l => l.Name).ToList();
+
+            // Dispose all existing listeners (each fires Disposed → removes itself).
+            while (_listeners.Count > 0)
+            {
+                var last = _listeners[^1];
+                last.Dispose();
+            }
+
+            // Recreate with updated transport/effects.
+            foreach (var name in names)
+                NewListener(name);
+
+            Debug.WriteLine($"[AudioManager] Recreated {names.Count} listener(s) with Transport={DefaultTransport}, Effects={DefaultEffects}.");
         }
 
         public AudioManager() { }

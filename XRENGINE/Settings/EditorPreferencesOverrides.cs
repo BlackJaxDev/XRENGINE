@@ -38,6 +38,12 @@ namespace XREngine
         private OverrideableSetting<int> _mcpServerRateLimitWindowSecondsOverride = new();
         private OverrideableSetting<bool> _mcpServerIncludeStatusInPingOverride = new();
 
+        // Audio overrides (Editor > Game > User cascade)
+        private OverrideableSetting<EAudioTransport> _audioTransportOverride = new();
+        private OverrideableSetting<EAudioEffects> _audioEffectsOverride = new();
+        private OverrideableSetting<bool> _audioArchitectureV2Override = new();
+        private OverrideableSetting<int> _audioSampleRateOverride = new();
+
         [Category("Theme Overrides")]
         [Description("Overrides for editor theme and colors.")]
         public EditorThemeOverrides Theme
@@ -180,6 +186,56 @@ namespace XREngine
         {
             get => _mcpServerIncludeStatusInPingOverride;
             set => SetField(ref _mcpServerIncludeStatusInPingOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Editor override for audio transport backend.
+        /// Highest priority in the audio cascade (Editor > Game > User).
+        /// Useful for testing specific backends during development.
+        /// </summary>
+        [Category("Audio Overrides")]
+        [Description("Editor override for audio transport backend (for dev/testing).")]
+        public OverrideableSetting<EAudioTransport> AudioTransportOverride
+        {
+            get => _audioTransportOverride;
+            set => SetField(ref _audioTransportOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Editor override for audio effects processor.
+        /// Highest priority in the audio cascade (Editor > Game > User).
+        /// Useful for testing specific effects pipelines during development.
+        /// </summary>
+        [Category("Audio Overrides")]
+        [Description("Editor override for audio effects processor (for dev/testing).")]
+        public OverrideableSetting<EAudioEffects> AudioEffectsOverride
+        {
+            get => _audioEffectsOverride;
+            set => SetField(ref _audioEffectsOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Editor override for the V2 streaming audio architecture.
+        /// Highest priority in the audio cascade (Editor > Game > User).
+        /// </summary>
+        [Category("Audio Overrides")]
+        [Description("Editor override for V2 streaming audio architecture (for dev/testing).")]
+        public OverrideableSetting<bool> AudioArchitectureV2Override
+        {
+            get => _audioArchitectureV2Override;
+            set => SetField(ref _audioArchitectureV2Override, value ?? new());
+        }
+
+        /// <summary>
+        /// Editor override for audio sample rate.
+        /// Highest priority in the audio cascade (Editor > Game > User).
+        /// </summary>
+        [Category("Audio Overrides")]
+        [Description("Editor override for audio sample rate in Hz (for dev/testing).")]
+        public OverrideableSetting<int> AudioSampleRateOverride
+        {
+            get => _audioSampleRateOverride;
+            set => SetField(ref _audioSampleRateOverride, value ?? new());
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)

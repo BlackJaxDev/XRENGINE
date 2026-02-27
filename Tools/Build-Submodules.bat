@@ -39,9 +39,6 @@ if errorlevel 1 (
     call :build_project "Build\Submodules\OpenVR.NET\OpenVR.NET\OpenVR.NET.csproj"
     if errorlevel 1 set "SUBMODULE_FAILURE=1"
 
-    call :build_project "Build\Submodules\Flyleaf\FlyleafLib\FlyleafLib.csproj"
-    if errorlevel 1 set "SUBMODULE_FAILURE=1"
-
     call :build_project "Build\Submodules\OscCore-NET9\OscCore.csproj"
     if errorlevel 1 set "SUBMODULE_FAILURE=1"
 

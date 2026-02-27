@@ -1,5 +1,0 @@
-﻿License file not detected for checked-in binary.
-
-Path: XRENGINE/runtimes/win-x64/native/libmagicphysx.dll
-File: libmagicphysx.dll
-
