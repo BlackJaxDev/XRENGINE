@@ -674,7 +674,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         _stippledTriangleMesh = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
 
         // Create the material with stippled shader
-        var fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "StippledTriangle.fs"), EShaderType.Fragment);
+        var fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "StippledTriangle.fs"), EShaderType.Fragment);
         ShaderVar[] vars =
         [
             new ShaderVector4(HoveredFaceFillColor, "FillColor"),

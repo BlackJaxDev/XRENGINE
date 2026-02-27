@@ -1109,7 +1109,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public bool UseProbeGridAcceleration
     {
         get => _useProbeGridAcceleration;
-        set => _useProbeGridAcceleration = value;
+        set => SetField(ref _useProbeGridAcceleration, value);
     }
 
     private struct ProbePositionData

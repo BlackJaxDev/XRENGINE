@@ -178,6 +178,12 @@ Likely doc touchpoints:
 - Add comments only when they clarify non-obvious reasoning.
 - No legacy API preservation is required pre-ship; improve APIs freely when it yields a better v1.
 
+### XRBase Field Mutation Rule
+
+- For any class deriving from `XRBase` (directly or indirectly), do **not** set backing fields directly from property setters or similar mutation paths.
+- Use `SetField(...)` for state changes so the engine's change-notification/invalidation pipeline remains correct and consistent.
+- When touching existing code that assigns fields directly in `XRBase`-derived types, prefer refactoring to `SetField(...)` as part of the change.
+
 ### Warnings Policy
 
 - Keep compiler warnings to a minimum. New code must not introduce warnings.

@@ -136,6 +136,44 @@ namespace XREngine.Scene
         }
 
         /// <summary>
+        /// Detaches a component from this scene node without destroying it.
+        /// The component is removed from the internal list, its events are unhooked,
+        /// and it is deactivated, but it remains alive for potential reattachment.
+        /// </summary>
+        /// <param name="component">The component to detach.</param>
+        /// <returns><c>true</c> if the component was successfully detached; otherwise, <c>false</c>.</returns>
+        public bool DetachComponent(XRComponent component)
+        {
+            if (!ComponentsInternal.Contains(component))
+                return false;
+
+            ComponentsInternal.Remove(component);
+            component.Destroying -= ComponentDestroying;
+            component.Destroyed -= ComponentDestroyed;
+
+            if (component.IsActive)
+                component.OnComponentDeactivated();
+
+            return true;
+        }
+
+        /// <summary>
+        /// Reattaches a previously detached component to this scene node.
+        /// The component is added back to the internal list, its events are hooked,
+        /// and it is reactivated if the node is active.
+        /// </summary>
+        /// <param name="component">The component to reattach.</param>
+        public void ReattachComponent(XRComponent component)
+        {
+            ComponentsInternal.Add(component);
+            component.Destroying += ComponentDestroying;
+            component.Destroyed += ComponentDestroyed;
+
+            if (IsActiveInHierarchy && World is not null)
+                component.OnComponentActivated();
+        }
+
+        /// <summary>
         /// Returns the first component of type T attached to the scene node.
         /// </summary>
         public T1? GetComponent<T1>() where T1 : XRComponent

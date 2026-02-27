@@ -216,7 +216,7 @@ namespace XREngine.Components
         public TextToSpeechComponent? TextToSpeech
         {
             get => _textToSpeech ??= GetSiblingComponent<TextToSpeechComponent>(false);
-            set => _textToSpeech = value;
+            set => SetField(ref _textToSpeech, value);
         }
 
         /// <summary>

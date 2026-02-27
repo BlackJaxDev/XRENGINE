@@ -66,7 +66,7 @@ public class SteamAudioProbeComponent : XRComponent
     public EProbeGenerationMode GenerationMode
     {
         get => _generationMode;
-        set => _generationMode = value;
+        set => SetField(ref _generationMode, value);
     }
 
     /// <summary>
@@ -78,7 +78,7 @@ public class SteamAudioProbeComponent : XRComponent
     public float ProbeSpacing
     {
         get => _probeSpacing;
-        set => _probeSpacing = MathF.Max(0.1f, value);
+        set => SetField(ref _probeSpacing, MathF.Max(0.1f, value));
     }
 
     /// <summary>
@@ -90,7 +90,7 @@ public class SteamAudioProbeComponent : XRComponent
     public float ProbeHeight
     {
         get => _probeHeight;
-        set => _probeHeight = MathF.Max(0.0f, value);
+        set => SetField(ref _probeHeight, MathF.Max(0.0f, value));
     }
 
     /// <summary>
@@ -102,7 +102,7 @@ public class SteamAudioProbeComponent : XRComponent
     public Vector3 VolumeExtents
     {
         get => _volumeExtents;
-        set => _volumeExtents = Vector3.Max(value, new Vector3(0.1f));
+        set => SetField(ref _volumeExtents, Vector3.Max(value, new Vector3(0.1f)));
     }
 
     /// <summary>
@@ -114,7 +114,7 @@ public class SteamAudioProbeComponent : XRComponent
     public float ManualProbeRadius
     {
         get => _manualProbeRadius;
-        set => _manualProbeRadius = MathF.Max(0.01f, value);
+        set => SetField(ref _manualProbeRadius, MathF.Max(0.01f, value));
     }
 
     /// <summary>
@@ -127,7 +127,7 @@ public class SteamAudioProbeComponent : XRComponent
     public bool AutoGenerate
     {
         get => _autoGenerate;
-        set => _autoGenerate = value;
+        set => SetField(ref _autoGenerate, value);
     }
 
     /// <summary>
@@ -139,7 +139,7 @@ public class SteamAudioProbeComponent : XRComponent
     public bool AutoAttach
     {
         get => _autoAttach;
-        set => _autoAttach = value;
+        set => SetField(ref _autoAttach, value);
     }
 
     // ------------------------------------------------------------------

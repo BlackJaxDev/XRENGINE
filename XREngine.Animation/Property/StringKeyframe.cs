@@ -7,12 +7,12 @@
         public new StringKeyframe? Next
         {
             get => _next as StringKeyframe;
-            set => _next = value;
+            set => SetField(ref _next, value);
         }
         public new StringKeyframe? Prev
         {
             get => _prev as StringKeyframe;
-            set => _prev = value;
+            set => SetField(ref _prev, value);
         }
 
         public override void ReadFromString(string str)

@@ -334,7 +334,7 @@ namespace XREngine.Rendering.Commands
         public IGpuBvhProvider? BvhProvider
         {
             get => _externalBvhProvider ?? (_useInternalBvh ? this as IGpuBvhProvider : null);
-            set => _externalBvhProvider = value;
+            set => SetField(ref _externalBvhProvider, value);
         }
 
         /// <summary>
@@ -1057,7 +1057,7 @@ namespace XREngine.Rendering.Commands
         private uint UpdatingCommandCount
         {
             get => _updatingCommandCount;
-            set => _updatingCommandCount = value;
+            set => SetField(ref _updatingCommandCount, value);
         }
 
         /// <summary>Gets the current allocated capacity of the command buffer.</summary>

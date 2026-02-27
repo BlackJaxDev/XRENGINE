@@ -34,7 +34,7 @@ public sealed class StandardTransformEditor : IXRTransformEditor
         Vector3 translation = standard.Translation;
         ImGui.SetNextItemWidth(-1f);
         bool edited = ImGui.DragFloat3("Translation##TransformTranslation", ref translation, 0.05f);
-        ImGuiUndoHelper.UpdateScope($"Move {transformLabel}", standard);
+        ImGuiUndoHelper.TrackDragUndo($"Move {transformLabel}", standard);
         if (!edited)
             return;
 
@@ -49,7 +49,7 @@ public sealed class StandardTransformEditor : IXRTransformEditor
         Vector3 rotation = rotator.PitchYawRoll;
         ImGui.SetNextItemWidth(-1f);
         bool edited = ImGui.DragFloat3("Rotation (Pitch/Yaw/Roll)##TransformRotation", ref rotation, 0.5f);
-        ImGuiUndoHelper.UpdateScope($"Rotate {transformLabel}", standard);
+        ImGuiUndoHelper.TrackDragUndo($"Rotate {transformLabel}", standard);
         if (!edited)
             return;
 
@@ -66,7 +66,7 @@ public sealed class StandardTransformEditor : IXRTransformEditor
         Vector3 scale = standard.Scale;
         ImGui.SetNextItemWidth(-1f);
         bool edited = ImGui.DragFloat3("Scale##TransformScale", ref scale, 0.05f);
-        ImGuiUndoHelper.UpdateScope($"Scale {transformLabel}", standard);
+        ImGuiUndoHelper.TrackDragUndo($"Scale {transformLabel}", standard);
         if (!edited)
             return;
 
@@ -84,7 +84,7 @@ public sealed class StandardTransformEditor : IXRTransformEditor
 
         int orderIndex = selectedIndex;
         bool changed = ImGui.Combo("Order##TransformOrder", ref orderIndex, OrderNames, OrderNames.Length);
-        ImGuiUndoHelper.UpdateScope($"Change Transform Order {transformLabel}", standard);
+        ImGuiUndoHelper.TrackDragUndo($"Change Transform Order {transformLabel}", standard);
         if (!changed)
             return;
 

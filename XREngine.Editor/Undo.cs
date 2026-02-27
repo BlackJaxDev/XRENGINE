@@ -235,6 +235,91 @@ public static class Undo
     }
 
     /// <summary>
+    /// Convenience method that combines <see cref="Track"/>, <see cref="BeginUserInteraction"/>,
+    /// and <see cref="BeginChange"/> into a single disposable scope. Ideal for instant-action
+    /// undo sites (checkboxes, buttons, asset-picker callbacks, MCP actions) where the
+    /// three-line boilerplate is redundant.
+    /// </summary>
+    /// <param name="description">Human-readable description of the change.</param>
+    /// <param name="target">The <see cref="XRBase"/> object to snapshot. May be <c>null</c>.</param>
+    /// <returns>A disposable that closes both the change scope and user interaction context on dispose.</returns>
+    /// <example>
+    /// <code>
+    /// using var _ = Undo.TrackChange("Toggle Visibility", scene);
+    /// scene.IsVisible = !scene.IsVisible;
+    /// </code>
+    /// </example>
+    public static InstantChangeScope TrackChange(string description, XRBase? target)
+        => new(description, target);
+
+    /// <inheritdoc cref="TrackChange(string, XRBase?)"/>
+    /// <remarks>
+    /// Overload that accepts <see cref="object"/>. If <paramref name="target"/> is an
+    /// <see cref="XRBase"/> instance it will be tracked; otherwise tracking is skipped.
+    /// Useful in generic paths like the property editor where the owner may or may not
+    /// derive from <see cref="XRBase"/>.
+    /// </remarks>
+    public static InstantChangeScope TrackChange(string description, object? target)
+        => new(description, target as XRBase);
+
+    /// <summary>
+    /// Records a structural change (create, delete, reparent, etc.) that cannot be
+    /// expressed as a simple property mutation. The caller provides delegate pairs
+    /// that reverse and reapply the operation.
+    /// </summary>
+    /// <param name="description">A human-readable description of the change (e.g., "Delete Node", "Add Component").</param>
+    /// <param name="undoAction">Delegate that reverses the operation.</param>
+    /// <param name="redoAction">Delegate that reapplies the operation.</param>
+    /// <remarks>
+    /// <para>
+    /// If a <see cref="ChangeScope"/> is active, the structural step is added to that scope
+    /// and committed together with any property changes when the scope is disposed.
+    /// Otherwise, the step is immediately committed as a standalone undo action.
+    /// </para>
+    /// <para>
+    /// This method respects the same recording rules as property changes: it only records
+    /// when a user interaction context is active and recording is not suppressed.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// using var ui = Undo.BeginUserInteraction();
+    /// using var scope = Undo.BeginChange("Delete Node");
+    /// var parent = node.Transform.Parent;
+    /// int childIndex = parent.Children.IndexOf(node.Transform);
+    /// node.Destroy();
+    /// Undo.RecordStructuralChange("Delete Node",
+    ///     undo: () => { /* re-insert node */ },
+    ///     redo: () => { node.Destroy(); });
+    /// </code>
+    /// </example>
+    public static void RecordStructuralChange(string description, Action undoAction, Action redoAction)
+    {
+        if (!RecordingAllowed)
+            return;
+
+        var step = new StructuralUndoStep(description, undoAction, redoAction);
+        bool addedImmediate = false;
+
+        lock (_sync)
+        {
+            if (_scopeStack.Count > 0)
+            {
+                _scopeStack.Peek().AddStructuralStep(step);
+                return;
+            }
+
+            var action = new UndoAction(description, [step], DateTime.UtcNow);
+            _undoStack.Push(action);
+            _redoStack.Clear();
+            addedImmediate = true;
+        }
+
+        if (addedImmediate)
+            RaiseHistoryChanged();
+    }
+
+    /// <summary>
     /// Begins a user interaction context that enables property change recording.
     /// </summary>
     /// <returns>
@@ -834,11 +919,11 @@ public static class Undo
             scope.Completed = true;
 
             // Don't commit if canceled or empty
-            if (scope.IsCanceled || scope.Changes.Count == 0)
+            if (scope.IsCanceled || scope.Steps.Count == 0)
                 return;
 
             // Clone changes to prevent external modification
-            var steps = scope.Changes.Select(c => c.Clone()).ToList();
+            var steps = scope.Steps.Select(s => s.Clone()).ToList();
             committedAction = new UndoAction(scope.Description, steps, scope.TimestampUtc);
             _undoStack.Push(committedAction);
             _redoStack.Clear();
@@ -1293,7 +1378,7 @@ public static class Undo
     /// </summary>
     /// <param name="Description">A human-readable description of the action.</param>
     /// <param name="TimestampUtc">When the action was recorded (UTC).</param>
-    /// <param name="Changes">The list of individual property changes in this action.</param>
+    /// <param name="Changes">The list of individual change descriptions in this action.</param>
     public sealed record UndoEntry(string Description, DateTime TimestampUtc, IReadOnlyList<UndoChangeInfo> Changes);
 
     /// <summary>
@@ -1305,7 +1390,25 @@ public static class Undo
     /// <param name="PropertyName">The name of the changed property.</param>
     /// <param name="PreviousValue">The value before the change.</param>
     /// <param name="NewValue">The value after the change.</param>
-    public sealed record UndoChangeInfo(WeakReference<XRBase> Target, string TargetDisplayName, Type TargetType, string PropertyName, object? PreviousValue, object? NewValue);
+    public sealed record UndoChangeInfo(WeakReference<XRBase>? Target, string TargetDisplayName, Type? TargetType, string PropertyName, object? PreviousValue, object? NewValue);
+
+    /// <summary>
+    /// Common interface for all undo step types within an <see cref="UndoAction"/>.
+    /// </summary>
+    internal interface IUndoStep
+    {
+        /// <summary>Reverts the change (undo direction).</summary>
+        void ApplyOld();
+
+        /// <summary>Reapplies the change (redo direction).</summary>
+        void ApplyNew();
+
+        /// <summary>Creates a UI-facing description of the step.</summary>
+        UndoChangeInfo ToInfo();
+
+        /// <summary>Creates an independent copy for storage on the undo stack.</summary>
+        IUndoStep Clone();
+    }
 
     /// <summary>
     /// Represents a scope for grouping multiple property changes into a single undoable action.
@@ -1345,6 +1448,12 @@ public static class Undo
         /// Gets the list of property changes accumulated in this scope.
         /// </summary>
         internal List<PropertyChangeStep> Changes { get; } = [];
+
+        /// <summary>
+        /// Gets the list of all undo steps (property and structural) accumulated in this scope.
+        /// This is the unified list used for committing to the undo stack.
+        /// </summary>
+        internal List<IUndoStep> Steps { get; } = [];
 
         /// <summary>
         /// Gets a value indicating whether this scope has been canceled.
@@ -1398,7 +1507,10 @@ public static class Undo
             {
                 // If reverting to original, remove the change entirely
                 if (Equals(existing.OriginalValue, newValue))
+                {
                     Changes.Remove(existing);
+                    Steps.Remove(existing);
+                }
                 else
                     // Otherwise just update the new value
                     existing.UpdateNewValue(newValue);
@@ -1406,7 +1518,9 @@ public static class Undo
             else
             {
                 // Add new change
-                Changes.Add(new PropertyChangeStep(target, propertyName, previousValue, newValue));
+                var step = new PropertyChangeStep(target, propertyName, previousValue, newValue);
+                Changes.Add(step);
+                Steps.Add(step);
             }
 
             // Update timestamp to reflect the most recent change
@@ -1414,9 +1528,57 @@ public static class Undo
         }
 
         /// <summary>
+        /// Adds a structural undo step to this scope. Structural steps represent operations
+        /// that cannot be expressed as property changes (e.g., node creation/deletion, reparenting).
+        /// </summary>
+        /// <param name="step">The structural step to add.</param>
+        internal void AddStructuralStep(IUndoStep step)
+        {
+            Steps.Add(step);
+            TimestampUtc = DateTime.UtcNow;
+        }
+
+        /// <summary>
         /// Completes this scope, committing accumulated changes to the undo stack.
         /// </summary>
         public void Dispose() => CompleteScope(this);
+    }
+
+    /// <summary>
+    /// A disposable scope that combines <see cref="Track"/>, <see cref="BeginUserInteraction"/>,
+    /// and <see cref="BeginChange"/> into a single value. Disposes both the change scope and
+    /// user interaction context when the scope ends.
+    /// </summary>
+    /// <remarks>
+    /// This is the return type of <see cref="TrackChange(string, XRBase?)"/>. Use it with
+    /// a <c>using</c> declaration for instant-action undo sites:
+    /// <code>
+    /// using var _ = Undo.TrackChange("Set Property", target);
+    /// target.SomeProperty = newValue;
+    /// </code>
+    /// </remarks>
+    public readonly struct InstantChangeScope : IDisposable
+    {
+        private readonly ChangeScope _change;
+        private readonly IDisposable _interaction;
+
+        internal InstantChangeScope(string description, XRBase? target)
+        {
+            if (target is not null)
+                Track(target);
+
+            _interaction = BeginUserInteraction();
+            _change = BeginChange(description);
+        }
+
+        /// <summary>
+        /// Disposes the change scope first, then the user interaction context.
+        /// </summary>
+        public void Dispose()
+        {
+            _change.Dispose();
+            _interaction.Dispose();
+        }
     }
 
     /// <summary>
@@ -1435,7 +1597,7 @@ public static class Undo
     /// Can restore either the original value (<see cref="ApplyOld"/>) or the new value (<see cref="ApplyNew"/>).
     /// </para>
     /// </remarks>
-    internal sealed class PropertyChangeStep(XRBase target, string propertyName, object? previousValue, object? newValue)
+    internal sealed class PropertyChangeStep(XRBase target, string propertyName, object? previousValue, object? newValue) : IUndoStep
     {
         /// <summary>
         /// Cached PropertyInfo for the property, resolved lazily.
@@ -1488,6 +1650,9 @@ public static class Undo
         /// </summary>
         /// <returns>A new <see cref="PropertyChangeStep"/> with the same values.</returns>
         public PropertyChangeStep Clone() => new(Target, PropertyName, OriginalValue, CurrentValue);
+
+        /// <inheritdoc />
+        IUndoStep IUndoStep.Clone() => Clone();
 
         /// <summary>
         /// Creates an <see cref="UndoChangeInfo"/> record for this step, for UI display.
@@ -1638,9 +1803,9 @@ public static class Undo
     /// Redo applies changes in forward order (FIFO).
     /// </para>
     /// </remarks>
-    private sealed class UndoAction(string description, List<Undo.PropertyChangeStep> changes, DateTime timestampUtc)
+    private sealed class UndoAction(string description, List<IUndoStep> steps, DateTime timestampUtc)
     {
-        private readonly List<PropertyChangeStep> _changes = changes;
+        private readonly List<IUndoStep> _steps = steps;
 
         /// <summary>
         /// Gets the human-readable description of this action.
@@ -1653,22 +1818,21 @@ public static class Undo
         public DateTime TimestampUtc { get; } = timestampUtc;
 
         /// <summary>
-        /// Undoes all changes in this action by applying original values in reverse order.
+        /// Undoes all steps in this action in reverse order.
         /// </summary>
         public void Undo()
         {
-            // Apply in reverse order to handle any dependencies correctly
-            for (int i = _changes.Count - 1; i >= 0; i--)
-                _changes[i].ApplyOld();
+            for (int i = _steps.Count - 1; i >= 0; i--)
+                _steps[i].ApplyOld();
         }
 
         /// <summary>
-        /// Redoes all changes in this action by applying new values in forward order.
+        /// Redoes all steps in this action in forward order.
         /// </summary>
         public void Redo()
         {
-            foreach (var change in _changes)
-                change.ApplyNew();
+            foreach (var step in _steps)
+                step.ApplyNew();
         }
 
         /// <summary>
@@ -1676,7 +1840,37 @@ public static class Undo
         /// </summary>
         /// <returns>An <see cref="UndoEntry"/> containing action details.</returns>
         public UndoEntry ToEntry()
-            => new(Description, TimestampUtc, _changes.Select(c => c.ToInfo()).ToList());
+            => new(Description, TimestampUtc, _steps.Select(s => s.ToInfo()).ToList());
+    }
+
+    /// <summary>
+    /// Represents an arbitrary structural undo/redo step backed by delegates.
+    /// Used for operations that cannot be expressed as simple property changes,
+    /// such as node creation/deletion, component add/remove, and reparenting.
+    /// </summary>
+    /// <param name="description">Human-readable description of this step.</param>
+    /// <param name="undoAction">Delegate that reverses the operation.</param>
+    /// <param name="redoAction">Delegate that reapplies the operation.</param>
+    internal sealed class StructuralUndoStep(string description, Action undoAction, Action redoAction) : IUndoStep
+    {
+        /// <summary>Gets the human-readable description of this step.</summary>
+        public string Description { get; } = description;
+
+        private readonly Action _undoAction = undoAction;
+        private readonly Action _redoAction = redoAction;
+
+        /// <inheritdoc />
+        public void ApplyOld() => _undoAction();
+
+        /// <inheritdoc />
+        public void ApplyNew() => _redoAction();
+
+        /// <inheritdoc />
+        public UndoChangeInfo ToInfo()
+            => new(null, Description, null, "(structural)", null, null);
+
+        /// <inheritdoc />
+        public IUndoStep Clone() => new StructuralUndoStep(Description, _undoAction, _redoAction);
     }
 
     /// <summary>

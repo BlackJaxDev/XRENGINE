@@ -19,15 +19,12 @@ layout(std430, binding = 0) buffer TrianglesBuffer
     Triangle Triangles[];
 };
 
-out gl_PerVertex
-{
-	vec4 gl_Position;
-	float gl_PointSize;
-	float gl_ClipDistance[];
-};
+#include "../helper/DebugPerVertex.glsl"
 
 uniform mat4 InverseViewMatrix;
 uniform mat4 ProjMatrix;
+
+#include "../helper/DebugTriangle.glsl"
 
 void main()
 {
@@ -35,17 +32,6 @@ void main()
 
     int index = instanceID[0];
     Triangle tri = Triangles[index];
-    
-    MatColor = tri.color;
 
-    gl_Position = viewProj * vec4(tri.p0.xyz, 1.0);
-    EmitVertex();
-    
-    gl_Position = viewProj * vec4(tri.p1.xyz, 1.0);
-    EmitVertex();
-
-    gl_Position = viewProj * vec4(tri.p2.xyz, 1.0);
-    EmitVertex();
-    
-    EndPrimitive();
+    EmitTriangle(viewProj, tri.p0.xyz, tri.p1.xyz, tri.p2.xyz, tri.color);
 }

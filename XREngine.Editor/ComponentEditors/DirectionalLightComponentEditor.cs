@@ -46,14 +46,17 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
             scale.Z = MathF.Max(0.02f, scale.Z);
             light.Scale = scale;
         }
+        ImGuiUndoHelper.TrackDragUndo("Shadow Volume Scale", light);
 
         int cascades = light.CascadeCount;
         if (ImGui.SliderInt("Cascade Count", ref cascades, 1, 8))
             light.CascadeCount = cascades;
+        ImGuiUndoHelper.TrackDragUndo("Cascade Count", light);
 
         float overlap = light.CascadeOverlapPercent;
         if (ImGui.SliderFloat("Cascade Overlap %", ref overlap, 0.0f, 1.0f, "%.3f"))
             light.CascadeOverlapPercent = overlap;
+        ImGuiUndoHelper.TrackDragUndo("Cascade Overlap", light);
 
         float[] percentages = light.CascadePercentages;
         if (percentages.Length != light.CascadeCount)

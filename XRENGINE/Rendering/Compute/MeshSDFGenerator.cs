@@ -50,7 +50,7 @@ namespace XREngine.Rendering.Compute
         public float MaxDistance
         {
             get => _maxDistance;
-            set => _maxDistance = Math.Max(0.1f, value);
+            set => SetField(ref _maxDistance, Math.Max(0.1f, value));
         }
 
         /// <summary>
@@ -59,7 +59,7 @@ namespace XREngine.Rendering.Compute
         public bool UseSpatialAcceleration
         {
             get => _useSpatialAcceleration;
-            set => _useSpatialAcceleration = value;
+            set => SetField(ref _useSpatialAcceleration, value);
         }
 
         /// <summary>
@@ -68,7 +68,7 @@ namespace XREngine.Rendering.Compute
         public float Epsilon
         {
             get => _epsilon;
-            set => _epsilon = Math.Max(1e-8f, Math.Min(1e-3f, value));
+            set => SetField(ref _epsilon, Math.Max(1e-8f, Math.Min(1e-3f, value)));
         }
 
         /// <summary>
@@ -77,7 +77,7 @@ namespace XREngine.Rendering.Compute
         public int MaxIterations
         {
             get => _maxIterations;
-            set => _maxIterations = Math.Max(100, Math.Min(10000, value));
+            set => SetField(ref _maxIterations, Math.Max(100, Math.Min(10000, value)));
         }
 
         #endregion

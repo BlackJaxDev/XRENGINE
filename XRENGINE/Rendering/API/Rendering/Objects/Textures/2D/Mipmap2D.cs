@@ -86,7 +86,7 @@ namespace XREngine.Rendering
         public byte[]? DataBytes
         {
             get => _bytes?.GetBytes();
-            set => _bytes = value is null ? null : new DataSource(value);
+            set => SetField(ref _bytes, value is null ? null : new DataSource(value));
         }
         public uint Width
         {

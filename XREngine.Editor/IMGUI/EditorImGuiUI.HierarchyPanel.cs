@@ -213,6 +213,17 @@ public static partial class EditorImGuiUI
             ImGui.EndDragDropSource();
         }
 
+        if (ImGui.BeginDragDropTarget())
+        {
+            if (ImGuiSceneNodeDragDrop.Accept() is SceneNode droppedNode
+                && !ReferenceEquals(droppedNode, node)
+                && !IsHierarchyDescendantOf(node, droppedNode))
+            {
+                ReparentHierarchyNode(droppedNode, node.Transform, world, owningScene);
+            }
+            ImGui.EndDragDropTarget();
+        }
+
         ImGui.SameLine();
 
         if (isRenaming)
@@ -250,6 +261,7 @@ public static partial class EditorImGuiUI
             ImGui.SetTooltip("Toggle node active state");
         if (checkboxToggled)
         {
+            using var _ = Undo.TrackChange("Toggle Node Active", node);
             node.IsActiveSelf = activeSelf;
             MarkSceneHierarchyDirty(node, owningScene, world);
         }
@@ -349,9 +361,20 @@ public static partial class EditorImGuiUI
 
         var tfm = node.Transform;
         var parentTransform = tfm.Parent;
+        bool wasActive = node.IsActiveSelf;
+        string nodeName = node.Name ?? SceneNode.DefaultName;
+
+        // Capture state for undo before making changes
+        var worldCapture = world;
+        var sceneCapture = owningScene;
+
+        // Capture undo context before making changes
+        using var interaction = Undo.BeginUserInteraction();
+        using var scope = Undo.BeginChange($"Delete {nodeName}");
+
         if (parentTransform is not null)
         {
-            parentTransform.RemoveChild(tfm, true);
+            parentTransform.RemoveChild(tfm, EParentAssignmentMode.Immediate);
         }
         else
         {
@@ -360,6 +383,34 @@ public static partial class EditorImGuiUI
         }
 
         FinalizeSceneNodeDeletion(node);
+
+        Undo.RecordStructuralChange($"Delete {nodeName}",
+            undoAction: () =>
+            {
+                // Restore: reattach to parent or root, reactivate
+                if (parentTransform is not null)
+                    tfm.SetParent(parentTransform, false, EParentAssignmentMode.Immediate);
+                else
+                {
+                    sceneCapture?.RootNodes.Add(node);
+                    worldCapture.RootNodes.Add(node);
+                }
+                node.IsActiveSelf = wasActive;
+                Undo.TrackSceneNode(node);
+            },
+            redoAction: () =>
+            {
+                // Re-delete
+                if (parentTransform is not null)
+                    parentTransform.RemoveChild(tfm, EParentAssignmentMode.Immediate);
+                else
+                {
+                    worldCapture.RootNodes.Remove(node);
+                    sceneCapture?.RootNodes.Remove(node);
+                }
+                node.IsActiveSelf = false;
+            });
+
         MarkSceneHierarchyDirty(node, owningScene, world);
     }
 
@@ -371,6 +422,25 @@ public static partial class EditorImGuiUI
     private static void CreateChildSceneNode(SceneNode parent, XRScene? owningScene, XRWorldInstance world)
     {
         SceneNode child = new(parent);
+        Undo.TrackSceneNode(child);
+
+        // Record structural undo
+        var parentCapture = parent;
+        using var interaction = Undo.BeginUserInteraction();
+        using var scope = Undo.BeginChange("Create Child Node");
+        Undo.RecordStructuralChange("Create Child Node",
+            undoAction: () =>
+            {
+                parentCapture.Transform.RemoveChild(child.Transform, EParentAssignmentMode.Immediate);
+                child.IsActiveSelf = false;
+            },
+            redoAction: () =>
+            {
+                child.Transform.SetParent(parentCapture.Transform, false, EParentAssignmentMode.Immediate);
+                child.IsActiveSelf = true;
+                Undo.TrackSceneNode(child);
+            });
+
         MarkSceneHierarchyDirty(child, owningScene, world);
         BeginHierarchyNodeRename(child);
     }
@@ -385,6 +455,7 @@ public static partial class EditorImGuiUI
             newName = SceneNode.DefaultName;
 
         var node = _nodePendingRename;
+        using var _ = Undo.TrackChange("Rename Node", node);
         node.Name = newName;
         MarkSceneHierarchyDirty(node, null, TryGetActiveWorldInstance());
         CancelHierarchyNodeRename();
@@ -581,6 +652,7 @@ public static partial class EditorImGuiUI
         if (scene.IsVisible == visible)
             return;
 
+        using var _ = Undo.TrackChange("Toggle Scene Visibility", scene);
         scene.IsVisible = visible;
         scene.MarkDirty();
     }
@@ -591,11 +663,31 @@ public static partial class EditorImGuiUI
         if (targetWorld is null)
             return;
 
+        bool wasVisible = scene.IsVisible;
+
         scene.IsVisible = false;
         world.UnloadScene(scene);
         targetWorld.Scenes.Remove(scene);
         ClearSelectionForScene(scene, world);
         scene.MarkDirty();
+
+        // Record structural undo
+        using var interaction = Undo.BeginUserInteraction();
+        using var scope = Undo.BeginChange("Unload Scene");
+        Undo.RecordStructuralChange("Unload Scene",
+            undoAction: () =>
+            {
+                targetWorld.Scenes.Add(scene);
+                world.LoadScene(scene);
+                scene.IsVisible = wasVisible;
+                Undo.TrackScene(scene);
+            },
+            redoAction: () =>
+            {
+                scene.IsVisible = false;
+                world.UnloadScene(scene);
+                targetWorld.Scenes.Remove(scene);
+            });
     }
 
     private static void ClearSelectionForScene(XRScene scene, XRWorldInstance world)
@@ -658,6 +750,73 @@ public static partial class EditorImGuiUI
         {
             world?.TargetWorld?.MarkDirty();
         }
+    }
+
+    /// <summary>
+    /// Reparent a dragged node under a new parent with structural undo.
+    /// </summary>
+    private static void ReparentHierarchyNode(SceneNode droppedNode, TransformBase newParent, XRWorldInstance world, XRScene? owningScene)
+    {
+        var draggedTfm = droppedNode.Transform;
+        var oldParent = draggedTfm.Parent;
+        bool wasRoot = oldParent is null;
+        string nodeName = droppedNode.Name ?? SceneNode.DefaultName;
+
+        using var interaction = Undo.BeginUserInteraction();
+        using var scope = Undo.BeginChange($"Reparent {nodeName}");
+
+        // Remove from root lists if it was a root node
+        if (wasRoot)
+        {
+            world.RootNodes.Remove(droppedNode);
+            owningScene?.RootNodes.Remove(droppedNode);
+        }
+
+        draggedTfm.SetParent(newParent, true, EParentAssignmentMode.Immediate);
+
+        var worldCapture = world;
+        var sceneCapture = owningScene;
+        Undo.RecordStructuralChange($"Reparent {nodeName}",
+            undoAction: () =>
+            {
+                if (wasRoot)
+                {
+                    draggedTfm.SetParent(null, true, EParentAssignmentMode.Immediate);
+                    sceneCapture?.RootNodes.Add(droppedNode);
+                    worldCapture.RootNodes.Add(droppedNode);
+                }
+                else
+                {
+                    draggedTfm.SetParent(oldParent, true, EParentAssignmentMode.Immediate);
+                }
+            },
+            redoAction: () =>
+            {
+                if (wasRoot)
+                {
+                    worldCapture.RootNodes.Remove(droppedNode);
+                    sceneCapture?.RootNodes.Remove(droppedNode);
+                }
+                draggedTfm.SetParent(newParent, true, EParentAssignmentMode.Immediate);
+            });
+
+        MarkSceneHierarchyDirty(droppedNode, owningScene, world);
+    }
+
+    /// <summary>
+    /// Returns true if <paramref name="node"/> is a descendant of <paramref name="potentialAncestor"/>.
+    /// Used to prevent circular reparenting during drag-drop.
+    /// </summary>
+    private static bool IsHierarchyDescendantOf(SceneNode node, SceneNode potentialAncestor)
+    {
+        var current = node.Transform.Parent;
+        while (current is not null)
+        {
+            if (ReferenceEquals(current.SceneNode, potentialAncestor))
+                return true;
+            current = current.Parent;
+        }
+        return false;
     }
 
     private static void DrawWorldHeader(XRWorldInstance world)

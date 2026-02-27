@@ -23,12 +23,12 @@ namespace XREngine.Rendering.Models.Materials
         public StencilTestFace FrontFace
         {
             get => _frontFace;
-            set => _frontFace = value ?? new StencilTestFace();
+            set => SetField(ref _frontFace, value ?? new StencilTestFace());
         }
         public StencilTestFace BackFace
         {
             get => _backFace;
-            set => _backFace = value ?? new StencilTestFace();
+            set => SetField(ref _backFace, value ?? new StencilTestFace());
         }
 
         public override string ToString()

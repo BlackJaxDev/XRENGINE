@@ -595,6 +595,7 @@ public static partial class EditorImGuiUI
                 {
                     try
                     {
+                        using var _ = Undo.TrackChange($"Clear {property.Name}", owner);
                         property.SetValue(owner, null);
                         NotifyInspectorValueEdited(owner);
                         ImGui.TreePop();
@@ -691,6 +692,7 @@ public static partial class EditorImGuiUI
                     {
                         try
                         {
+                            using var _ = Undo.TrackChange($"Replace {property.Name}", owner);
                             property.SetValue(owner, replacement);
                             NotifyInspectorValueEdited(owner);
                             return true;
@@ -773,8 +775,15 @@ public static partial class EditorImGuiUI
                             ImGui.SameLine(0f, 6f);
                             if (ImGui.SmallButton("Remove"))
                             {
+                                object? removedItem = i < adapter.Count ? adapter.Items[i] : null;
+                                int removedIndex = i;
                                 if (adapter.TryRemoveAt(i))
                                 {
+                                    var capturedOwner = owner;
+                                    var capturedAdapter = adapter;
+                                    Undo.RecordStructuralChange("Remove Collection Element",
+                                        undoAction: () => { capturedAdapter.TryInsert(removedIndex, removedItem); NotifyInspectorValueEdited(capturedOwner); },
+                                        redoAction: () => { capturedAdapter.TryRemoveAt(removedIndex); NotifyInspectorValueEdited(capturedOwner); });
                                     NotifyInspectorValueEdited(owner);
                                     ImGui.PopID();
                                     i--;
@@ -875,12 +884,12 @@ public static partial class EditorImGuiUI
                             if (runtimeType is not null && IsSimpleSettingType(runtimeType))
                             {
                                 object? currentValue = item;
-                                DrawCollectionSimpleElement(currentList, runtimeType, i, ref currentValue, elementCanModify);
+                                DrawCollectionSimpleElement(currentList, runtimeType, i, ref currentValue, elementCanModify, owner);
                             }
                             else if (IsSimpleSettingType(effectiveDeclaredType))
                             {
                                 object? currentValue = item;
-                                DrawCollectionSimpleElement(currentList, effectiveDeclaredType, i, ref currentValue, elementCanModify);
+                                DrawCollectionSimpleElement(currentList, effectiveDeclaredType, i, ref currentValue, elementCanModify, owner);
                             }
                             else
                             {
@@ -890,7 +899,7 @@ public static partial class EditorImGuiUI
                         else if (runtimeType is not null && IsSimpleSettingType(runtimeType))
                         {
                             object? currentValue = item;
-                            DrawCollectionSimpleElement(currentList, runtimeType, i, ref currentValue, elementCanModify);
+                            DrawCollectionSimpleElement(currentList, runtimeType, i, ref currentValue, elementCanModify, owner);
                         }
                         else
                         {
@@ -1002,8 +1011,16 @@ public static partial class EditorImGuiUI
                         if (ImGui.Button($"Add Element##{property.Name}"))
                         {
                             object? newElement = adapter.CreateDefaultElement();
+                            int insertIndex = adapter.Count;
                             if (adapter.TryAdd(newElement))
+                            {
+                                var capturedOwner = owner;
+                                var capturedAdapter = adapter;
+                                Undo.RecordStructuralChange("Add Collection Element",
+                                    undoAction: () => { capturedAdapter.TryRemoveAt(insertIndex); NotifyInspectorValueEdited(capturedOwner); },
+                                    redoAction: () => { capturedAdapter.TryAdd(newElement); NotifyInspectorValueEdited(capturedOwner); });
                                 NotifyInspectorValueEdited(owner);
+                            }
                         }
                     }
                 }
@@ -1192,6 +1209,7 @@ public static partial class EditorImGuiUI
             bool isNullable = !elementType.IsValueType || Nullable.GetUnderlyingType(elementType) is not null;
             bool isCurrentlyNull = currentValue is null;
             bool handled = false;
+            XRBase? undoTarget = owner as XRBase ?? _inspectorAssetContext;
 
             if (effectiveType == typeof(bool))
             {
@@ -1200,6 +1218,7 @@ public static partial class EditorImGuiUI
                 {
                     if (ImGui.Checkbox("##Value", ref boolValue) && canModifyElements)
                     {
+                        using var _u = Undo.TrackChange("Edit Dictionary Value", undoTarget);
                         if (TryAssignDictionaryValue(dictionary, key, boolValue, owner))
                         {
                             currentValue = boolValue;
@@ -1223,6 +1242,7 @@ public static partial class EditorImGuiUI
                     if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumNames, enumNames.Length) && canModifyElements && selectedIndex >= 0 && selectedIndex < enumNames.Length)
                     {
                         object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
+                        using var _u = Undo.TrackChange("Edit Dictionary Value", undoTarget);
                         if (TryAssignDictionaryValue(dictionary, key, newValue, owner))
                         {
                             currentValue = newValue;
@@ -1247,6 +1267,8 @@ public static partial class EditorImGuiUI
                         }
                     }
                 }
+                if (undoTarget is not null)
+                    ImGuiUndoHelper.TrackDragUndo("Edit Dictionary Value", undoTarget);
                 handled = true;
             }
             else if (effectiveType == typeof(Vector2))
@@ -1264,6 +1286,8 @@ public static partial class EditorImGuiUI
                         }
                     }
                 }
+                if (undoTarget is not null)
+                    ImGuiUndoHelper.TrackDragUndo("Edit Dictionary Value", undoTarget);
                 handled = true;
             }
             else if (effectiveType == typeof(Vector3))
@@ -1281,6 +1305,8 @@ public static partial class EditorImGuiUI
                         }
                     }
                 }
+                if (undoTarget is not null)
+                    ImGuiUndoHelper.TrackDragUndo("Edit Dictionary Value", undoTarget);
                 handled = true;
             }
             else if (effectiveType == typeof(Vector4))
@@ -1298,6 +1324,8 @@ public static partial class EditorImGuiUI
                         }
                     }
                 }
+                if (undoTarget is not null)
+                    ImGuiUndoHelper.TrackDragUndo("Edit Dictionary Value", undoTarget);
                 handled = true;
             }
             else if (TryDrawNumericEditor(effectiveType, canModifyElements, ref currentValue, ref isCurrentlyNull, newValue => TryAssignDictionaryValue(dictionary, key, newValue, owner), "##Value"))
@@ -1322,20 +1350,28 @@ public static partial class EditorImGuiUI
                         if (TryGetDefaultValue(effectiveType, out var defaultValue) && defaultValue is not null)
                         {
                             ImGui.SameLine();
-                            if (ImGui.SmallButton("Set") && TryAssignDictionaryValue(dictionary, key, defaultValue, owner))
+                            if (ImGui.SmallButton("Set"))
                             {
-                                currentValue = defaultValue;
-                                isCurrentlyNull = false;
+                                using var _u = Undo.TrackChange("Set Dictionary Value", undoTarget);
+                                if (TryAssignDictionaryValue(dictionary, key, defaultValue, owner))
+                                {
+                                    currentValue = defaultValue;
+                                    isCurrentlyNull = false;
+                                }
                             }
                         }
                     }
                     else
                     {
                         ImGui.SameLine();
-                        if (ImGui.SmallButton("Clear") && TryAssignDictionaryValue(dictionary, key, null, owner))
+                        if (ImGui.SmallButton("Clear"))
                         {
-                            currentValue = null;
-                            isCurrentlyNull = true;
+                            using var _u = Undo.TrackChange("Clear Dictionary Value", undoTarget);
+                            if (TryAssignDictionaryValue(dictionary, key, null, owner))
+                            {
+                                currentValue = null;
+                                isCurrentlyNull = true;
+                            }
                         }
                     }
                 }
@@ -1402,6 +1438,12 @@ public static partial class EditorImGuiUI
             try
             {
                 dictionary[uniqueKey] = newValue;
+
+                var capturedOwner = owner;
+                Undo.RecordStructuralChange("Add Dictionary Entry",
+                    undoAction: () => { dictionary.Remove(uniqueKey); NotifyInspectorValueEdited(capturedOwner); },
+                    redoAction: () => { dictionary[uniqueKey] = newValue; NotifyInspectorValueEdited(capturedOwner); });
+
                 NotifyInspectorValueEdited(owner);
                 return true;
             }
@@ -1503,27 +1545,28 @@ public static partial class EditorImGuiUI
 
             try
             {
+                object? resolvedKey = key;
                 if (key is null)
                 {
-                    object? match = FindDictionaryKeyByEquality(dictionary, null);
-                    if (match is null)
+                    resolvedKey = FindDictionaryKeyByEquality(dictionary, null);
+                    if (resolvedKey is null)
                         return false;
-                    dictionary.Remove(match);
-                    return true;
+                }
+                else if (!dictionary.Contains(key))
+                {
+                    resolvedKey = FindDictionaryKeyByEquality(dictionary, key);
+                    if (resolvedKey is null)
+                        return false;
                 }
 
-                if (dictionary.Contains(key))
-                {
-                    dictionary.Remove(key);
-                    return true;
-                }
+                object? removedValue = dictionary[resolvedKey!];
+                dictionary.Remove(resolvedKey!);
 
-                object? equalityMatch = FindDictionaryKeyByEquality(dictionary, key);
-                if (equalityMatch is not null)
-                {
-                    dictionary.Remove(equalityMatch);
-                    return true;
-                }
+                Undo.RecordStructuralChange("Remove Dictionary Entry",
+                    undoAction: () => { dictionary[resolvedKey!] = removedValue; },
+                    redoAction: () => { dictionary.Remove(resolvedKey!); });
+
+                return true;
             }
             catch (Exception ex)
             {
@@ -1547,7 +1590,14 @@ public static partial class EditorImGuiUI
 
             try
             {
+                object? previous = dictionary[key];
                 dictionary[key] = instance;
+
+                var capturedOwner = owner;
+                Undo.RecordStructuralChange("Replace Dictionary Entry",
+                    undoAction: () => { dictionary[key] = previous; NotifyInspectorValueEdited(capturedOwner); },
+                    redoAction: () => { dictionary[key] = instance; NotifyInspectorValueEdited(capturedOwner); });
+
                 NotifyInspectorValueEdited(owner);
                 return true;
             }
@@ -2198,6 +2248,7 @@ public static partial class EditorImGuiUI
                     return false;
                 }
 
+                using var _ = Undo.TrackChange($"Create {property.Name}", owner);
                 property.SetValue(owner, instance);
                 NotifyInspectorValueEdited(owner);
                 return true;
@@ -2221,6 +2272,7 @@ public static partial class EditorImGuiUI
             {
                 try
                 {
+                    using var _ = Undo.TrackChange($"Set {property.Name}", owner);
                     property.SetValue(owner, selected);
                     NotifyInspectorValueEdited(owner);
                 }
@@ -2458,8 +2510,15 @@ public static partial class EditorImGuiUI
             object? instance = CreateInstanceForCollectionType(type);
             if (instance is null)
                 return false;
+
+            int insertIndex = adapter.Count;
             if (!adapter.TryAdd(instance))
                 return false;
+
+            var capturedOwner = owner;
+            Undo.RecordStructuralChange("Add Collection Element",
+                undoAction: () => { adapter.TryRemoveAt(insertIndex); NotifyInspectorValueEdited(capturedOwner); },
+                redoAction: () => { adapter.TryAdd(instance); NotifyInspectorValueEdited(capturedOwner); });
 
             NotifyInspectorValueEdited(owner);
             return true;
@@ -2470,8 +2529,15 @@ public static partial class EditorImGuiUI
             object? instance = CreateInstanceForCollectionType(type);
             if (instance is null)
                 return false;
+
+            object? previous = index < adapter.Count ? adapter.Items[index] : null;
             if (!adapter.TryReplace(index, instance))
                 return false;
+
+            var capturedOwner = owner;
+            Undo.RecordStructuralChange("Replace Collection Element",
+                undoAction: () => { adapter.TryReplace(index, previous); NotifyInspectorValueEdited(capturedOwner); },
+                redoAction: () => { adapter.TryReplace(index, instance); NotifyInspectorValueEdited(capturedOwner); });
 
             NotifyInspectorValueEdited(owner);
             return true;
@@ -2519,13 +2585,14 @@ public static partial class EditorImGuiUI
             ImGuiAssetUtilities.DrawAssetField<TAsset>(id, typedCurrent, asset => assign(asset), options: null, allowClear: allowClear, allowCreateOrReplace: allowCreateOrReplace);
         }
 
-        private static void DrawCollectionSimpleElement(IList list, Type elementType, int index, ref object? currentValue, bool canModifyElements)
+        private static void DrawCollectionSimpleElement(IList list, Type elementType, int index, ref object? currentValue, bool canModifyElements, object? owner = null)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawCollectionSimpleElement");
             Type effectiveType = Nullable.GetUnderlyingType(elementType) ?? elementType;
             bool isNullable = !elementType.IsValueType || Nullable.GetUnderlyingType(elementType) is not null;
             bool isCurrentlyNull = currentValue is null;
             bool handled = false;
+            XRBase? undoTarget = owner as XRBase ?? _inspectorAssetContext;
 
             if (effectiveType == typeof(bool))
             {
@@ -2534,6 +2601,7 @@ public static partial class EditorImGuiUI
                 {
                     if (ImGui.Checkbox("##Value", ref boolValue) && canModifyElements)
                     {
+                        using var _u = Undo.TrackChange("Edit Collection Element", undoTarget);
                         if (TryAssignCollectionValue(list, index, boolValue))
                         {
                             currentValue = boolValue;
@@ -2557,6 +2625,7 @@ public static partial class EditorImGuiUI
                     if (enumNames.Length > 0 && ImGui.Combo("##Value", ref selectedIndex, enumNames, enumNames.Length) && canModifyElements && selectedIndex >= 0 && selectedIndex < enumNames.Length)
                     {
                         object newValue = Enum.Parse(effectiveType, enumNames[selectedIndex]);
+                        using var _u = Undo.TrackChange("Edit Collection Element", undoTarget);
                         if (TryAssignCollectionValue(list, index, newValue))
                         {
                             currentValue = newValue;
@@ -2581,6 +2650,8 @@ public static partial class EditorImGuiUI
                         }
                     }
                 }
+                if (undoTarget is not null)
+                    ImGuiUndoHelper.TrackDragUndo("Edit Collection Element", undoTarget);
                 handled = true;
             }
             else if (effectiveType == typeof(Vector2))
@@ -2598,6 +2669,8 @@ public static partial class EditorImGuiUI
                         }
                     }
                 }
+                if (undoTarget is not null)
+                    ImGuiUndoHelper.TrackDragUndo("Edit Collection Element", undoTarget);
                 handled = true;
             }
             else if (effectiveType == typeof(Vector3))
@@ -2615,6 +2688,8 @@ public static partial class EditorImGuiUI
                         }
                     }
                 }
+                if (undoTarget is not null)
+                    ImGuiUndoHelper.TrackDragUndo("Edit Collection Element", undoTarget);
                 handled = true;
             }
             else if (effectiveType == typeof(Vector4))
@@ -2632,6 +2707,8 @@ public static partial class EditorImGuiUI
                         }
                     }
                 }
+                if (undoTarget is not null)
+                    ImGuiUndoHelper.TrackDragUndo("Edit Collection Element", undoTarget);
                 handled = true;
             }
 
@@ -2659,6 +2736,7 @@ public static partial class EditorImGuiUI
                             ImGui.SameLine();
                             if (ImGui.SmallButton("Set"))
                             {
+                                using var _u = Undo.TrackChange("Set Collection Element", undoTarget);
                                 if (TryAssignCollectionValue(list, index, defaultValue))
                                 {
                                     currentValue = defaultValue;
@@ -2672,6 +2750,7 @@ public static partial class EditorImGuiUI
                         ImGui.SameLine();
                         if (ImGui.SmallButton("Clear"))
                         {
+                            using var _u = Undo.TrackChange("Clear Collection Element", undoTarget);
                             if (TryAssignCollectionValue(list, index, null))
                             {
                                 currentValue = null;
@@ -2798,7 +2877,7 @@ public static partial class EditorImGuiUI
             if (undoTarget is null)
                 return;
 
-            ImGuiUndoHelper.UpdateScope(description, undoTarget);
+            ImGuiUndoHelper.TrackDragUndo(description, undoTarget);
         }
 
         private static void NotifyInspectorValueEdited(InspectorTargetSet targets)
@@ -2866,8 +2945,14 @@ public static partial class EditorImGuiUI
                 {
                     try
                     {
+                        using var interaction = Undo.BeginUserInteraction();
+                        using var scope = Undo.BeginChange($"Set {property.Name}");
                         foreach (var target in targets.Targets)
+                        {
+                            if (target is XRBase xrBase)
+                                Undo.Track(xrBase);
                             property.SetValue(target, selected);
+                        }
                         NotifyInspectorValueEdited(targets);
                     }
                     catch (Exception ex)
@@ -3225,8 +3310,14 @@ public static partial class EditorImGuiUI
                 {
                     try
                     {
+                        using var interaction = Undo.BeginUserInteraction();
+                        using var scope = Undo.BeginChange($"Set {field.Name}");
                         foreach (var target in targets.Targets)
+                        {
+                            if (target is XRBase xrBase)
+                                Undo.Track(xrBase);
                             field.SetValue(target, selected);
+                        }
                         NotifyInspectorValueEdited(targets);
                     }
                     catch (Exception ex)
@@ -3257,6 +3348,9 @@ public static partial class EditorImGuiUI
                     ImGui.SetNextItemWidth(-1f);
 
                 handled = DrawInlineValueEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, Apply, "##Value");
+
+                if (handled)
+                    UpdateInspectorUndoScope($"Edit {field.Name}", targets);
 
                 if (!handled)
                 {
@@ -3314,6 +3408,7 @@ public static partial class EditorImGuiUI
                         object? instance = Activator.CreateInstance(effectiveType);
                         if (instance is not null)
                         {
+                            using var _ = Undo.TrackChange($"Create {field.Name}", owner);
                             field.SetValue(owner, instance);
                             NotifyInspectorValueEdited(owner);
                         }
@@ -3388,6 +3483,8 @@ public static partial class EditorImGuiUI
                             object? instance = Activator.CreateInstance(declaredType);
                             if (instance is not null)
                             {
+                                using var _ = Undo.TrackChange($"Create {row.MemberName}", owner);
+
                                 if (property is not null)
                                     property.SetValue(owner, instance);
                                 else
@@ -3434,6 +3531,8 @@ public static partial class EditorImGuiUI
                     {
                         if (ImGui.SmallButton("Set Null"))
                         {
+                            using var _ = Undo.TrackChange($"Clear {row.MemberName}", owner);
+
                             if (property is not null)
                                 property.SetValue(owner, null);
                             else
@@ -3543,7 +3642,13 @@ public static partial class EditorImGuiUI
             if (ImGui.SmallButton("Add Callback"))
             {
                 calls = GetOrCreatePersistentCalls(eventInstance, owner);
-                calls.Add(new XRPersistentCall());
+                var newCall = new XRPersistentCall();
+                calls.Add(newCall);
+                var capturedCalls = calls;
+                var capturedOwner = owner;
+                Undo.RecordStructuralChange("Add Callback",
+                    undoAction: () => { capturedCalls.Remove(newCall); NotifyInspectorValueEdited(capturedOwner); },
+                    redoAction: () => { capturedCalls.Add(newCall); NotifyInspectorValueEdited(capturedOwner); });
                 NotifyInspectorValueEdited(owner);
                 callCount = calls.Count;
             }
@@ -3591,7 +3696,14 @@ public static partial class EditorImGuiUI
                     float removeButtonSize = ImGui.GetFrameHeight();
                     if (ImGui.Button("X", new Vector2(removeButtonSize, removeButtonSize)))
                     {
+                        var removedCall = calls[i];
+                        int removedIndex = i;
+                        var capturedCalls = calls;
+                        var capturedOwner = owner;
                         calls.RemoveAt(i);
+                        Undo.RecordStructuralChange("Remove Callback",
+                            undoAction: () => { capturedCalls.Insert(removedIndex, removedCall); NotifyInspectorValueEdited(capturedOwner); },
+                            redoAction: () => { capturedCalls.RemoveAt(removedIndex); NotifyInspectorValueEdited(capturedOwner); });
                         NotifyInspectorValueEdited(owner);
                         ImGui.PopID();
                         i--;
@@ -3661,8 +3773,10 @@ public static partial class EditorImGuiUI
                 }
                 else
                 {
+                    XRBase? undoTarget = owner as XRBase ?? _inspectorAssetContext;
                     DrawSceneNodePicker(world, node =>
                     {
+                        if (undoTarget is not null) { using var _undo = Undo.TrackChange("Set Callback Node", undoTarget); }
                         call.NodeId = node.ID;
                         call.TargetObjectId = Guid.Empty;
                         call.MethodName = null;
@@ -3678,6 +3792,7 @@ public static partial class EditorImGuiUI
 
         private static void DrawPersistentCallMethodCombo(object owner, XRPersistentCall call, EventSignatureOption[] signatureOptions)
         {
+            XRBase? undoTarget = owner as XRBase ?? _inspectorAssetContext;
             SceneNode? selectedNode = ResolveSceneNode(call.NodeId);
 
             var methodOptions = selectedNode is null
@@ -3690,6 +3805,7 @@ public static partial class EditorImGuiUI
             {
                 if (ImGui.SmallButton("Clear"))
                 {
+                    if (undoTarget is not null) { using var _undo = Undo.TrackChange("Clear Callback Method", undoTarget); }
                     call.TargetObjectId = Guid.Empty;
                     call.MethodName = null;
                     call.ParameterTypeNames = null;
@@ -3714,6 +3830,7 @@ public static partial class EditorImGuiUI
                             string uniqueId = $"{opt.TargetObject.ID}:{opt.Method.MetadataToken}:{opt.Signature.TupleExpanded}";
                             if (ImGui.Selectable($"    {opt.DisplayLabel}##{uniqueId}", selected))
                             {
+                                if (undoTarget is not null) { using var _undo = Undo.TrackChange("Set Callback Method", undoTarget); }
                                 call.TargetObjectId = opt.TargetObject.ID;
                                 call.MethodName = opt.Method.Name;
                                 call.ParameterTypeNames = opt.Method.GetParameters().Select(p => p.ParameterType.AssemblyQualifiedName ?? p.ParameterType.FullName ?? p.ParameterType.Name).ToArray();
@@ -3918,6 +4035,7 @@ public static partial class EditorImGuiUI
 
         private static void DrawOverrideableSettingRow(object owner, SettingPropertyDescriptor descriptor, IOverrideableSetting setting)
         {
+            XRBase? undoTarget = owner as XRBase ?? _inspectorAssetContext;
             Type overrideType = setting.ValueType;
             Type? overrideUnderlying = Nullable.GetUnderlyingType(overrideType);
             Type overrideEffectiveType = overrideUnderlying ?? overrideType;
@@ -3974,6 +4092,9 @@ public static partial class EditorImGuiUI
                             return TryApplyInspectorValue(owner, baseProperty, baseValue, newValue);
                         }, "##BaseValue");
 
+                        if (handled && undoTarget is not null)
+                            ImGuiUndoHelper.TrackDragUndo("Edit Base Setting", undoTarget);
+
                         if (!handled)
                             ImGui.TextUnformatted(FormatSettingValue(baseValue));
                     }
@@ -3986,6 +4107,7 @@ public static partial class EditorImGuiUI
             bool checkboxValue = hasOverride;
             if (ImGui.Checkbox("##HasOverride", ref checkboxValue) && overrideCanWrite)
             {
+                if (undoTarget is not null) { using var _undo = Undo.TrackChange("Toggle Override", undoTarget); }
                 setting.HasOverride = checkboxValue;
                 hasOverride = checkboxValue;
                 NotifyInspectorValueEdited(owner);
@@ -4005,6 +4127,10 @@ public static partial class EditorImGuiUI
                     NotifyInspectorValueEdited(owner);
                     return true;
                 }, "##OverrideValue");
+
+                if (handled && undoTarget is not null)
+                    ImGuiUndoHelper.TrackDragUndo("Edit Override Setting", undoTarget);
+
                 if (!handled)
                     ImGui.TextUnformatted(FormatSettingValue(overrideValue));
                 ImGui.PopID();

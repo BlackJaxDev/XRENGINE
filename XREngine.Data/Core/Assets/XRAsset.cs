@@ -86,7 +86,7 @@ namespace XREngine.Core.Files
         public string SerializedAssetType
         {
             get => GetType().FullName ?? GetType().Name;
-            private set => _serializedAssetType = value;
+            private set => SetField(ref _serializedAssetType, value);
         }
 
         #endregion

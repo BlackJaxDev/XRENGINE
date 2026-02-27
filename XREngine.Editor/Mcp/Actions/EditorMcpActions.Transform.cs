@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Threading.Tasks;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
+using XREngine.Editor;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor.Mcp
@@ -69,6 +70,8 @@ namespace XREngine.Editor.Mcp
 
             bool useWorld = string.Equals(space, "world", StringComparison.OrdinalIgnoreCase);
 
+            using var _ = Undo.TrackChange("MCP Set Transform", transform);
+
             if (translationX.HasValue || translationY.HasValue || translationZ.HasValue)
             {
                 if (useWorld)
@@ -119,6 +122,8 @@ namespace XREngine.Editor.Mcp
 
             if (node!.Transform is not Transform transform)
                 return Task.FromResult(new McpToolResponse($"Scene node '{nodeId}' does not use a standard Transform.", isError: true));
+
+            using var _ = Undo.TrackChange("MCP Rotate Transform", transform);
 
             var rotator = new Rotator(pitch, yaw, roll);
             transform.ApplyRotation(rotator.ToQuaternion());

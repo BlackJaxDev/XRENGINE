@@ -521,6 +521,27 @@
             "problemMatcher": []
         },
         {
+            "label": "Report-XRBaseDirectFieldAssignments",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\Reports\\Find-XRBaseDirectFieldAssignments.ps1",
+                "-RepoRoot",
+                "${workspaceFolder}",
+                "-OutFile",
+                "${workspaceFolder}\\docs\\work\\audit\\xrbase-direct-field-assignments.md"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "Report-Dependencies",
             "type": "shell",
             "command": "powershell",
@@ -549,7 +570,8 @@
             "dependsOn": [
                 "Report-NewAllocations",
                 "Report-StaticClasses",
-                "Report-ThreadTaskRuns"
+                "Report-ThreadTaskRuns",
+                "Report-XRBaseDirectFieldAssignments"
             ],
             "dependsOrder": "sequence",
             "group": "test",

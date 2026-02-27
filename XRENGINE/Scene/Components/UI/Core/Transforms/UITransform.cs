@@ -169,7 +169,7 @@ namespace XREngine.Rendering.UI
         public Vector2 DesiredSize
         {
             get => _desiredSize;
-            protected set => _desiredSize = value;
+            protected set => SetField(ref _desiredSize, value);
         }
 
         /// <summary>
@@ -372,7 +372,7 @@ namespace XREngine.Rendering.UI
                 Parent?.VerifyPlacementInfo(this, ref _placementInfo);
                 return _placementInfo;
             }
-            set => _placementInfo = value;
+            set => SetField(ref _placementInfo, value);
         }
 
         /// <summary>

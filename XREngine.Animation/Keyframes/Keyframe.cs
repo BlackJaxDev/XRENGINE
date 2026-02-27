@@ -82,8 +82,7 @@ namespace XREngine.Animation
                     if (_next != key)
                     {
                         key._next = _next;
-                        if (_next != null)
-                            _next._prev = key;
+                        _next?._prev = key;
                     }
 
                     key._prev = this;
@@ -107,8 +106,7 @@ namespace XREngine.Animation
                     if (_prev != key)
                     {
                         key._prev = _prev;
-                        if (_prev != null)
-                            _prev._next = key;
+                        _prev?._next = key;
                     }
 
                     key._next = this;
@@ -129,15 +127,11 @@ namespace XREngine.Animation
         private void PostKeyLinkUpdate(Keyframe key, bool notifyChange)
         {
             //Get owning track from next or prev
-            if (!key.IsFirst)
-                key.OwningTrack = key.Prev?.OwningTrack;
-            else
-            {
-                if (!key.IsLast)
-                    key.OwningTrack = key.Next?.OwningTrack;
-                else
-                    throw new Exception();
-            }
+            key.OwningTrack = !key.IsFirst 
+                ? (key.Prev?.OwningTrack) 
+                : !key.IsLast 
+                    ? (key.Next?.OwningTrack) 
+                    : throw new Exception("Keyframe is not linked to any track after linking.");
 
             //Update owning track first and last references
             if (key.OwningTrack != null)
@@ -158,7 +152,7 @@ namespace XREngine.Animation
             if (key._prev == key ||
                 key._next == key ||
                 (key._next == key._prev && key._next != null))
-                throw new Exception();
+                throw new Exception("Keyframe is linked to itself or has invalid next/prev references.");
         }
 
         public abstract string WriteToString();
@@ -167,10 +161,8 @@ namespace XREngine.Animation
 
         public void Remove(bool notifyChange = true)
         {
-            if (_next != null)
-                _next._prev = _prev;
-            if (_prev != null)
-                _prev._next = _next;
+            _next?._prev = _prev;
+            _prev?._next = _next;
 
             if (OwningTrack != null)
             {

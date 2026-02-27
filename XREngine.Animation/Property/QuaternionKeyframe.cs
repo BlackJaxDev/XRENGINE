@@ -63,12 +63,12 @@ namespace XREngine.Animation
         public new QuaternionKeyframe? Next
         {
             get => _next as QuaternionKeyframe;
-            set => _next = value;
+            set => SetField(ref _next, value);
         }
         public new QuaternionKeyframe? Prev
         {
             get => _prev as QuaternionKeyframe;
-            set => _prev = value;
+            set => SetField(ref _prev, value);
         }
 
         public float TrackLength => OwningTrack?.LengthInSeconds ?? 0.0f;

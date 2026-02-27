@@ -5,7 +5,6 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
-using XREngine.Rendering.GI;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 
@@ -63,7 +62,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (compositeFbo is null || forwardFbo is null)
                 return;
 
-            if (!LightVolumeRegistry.TryGetFirstActive(world, out LightVolumeComponent? volume) || volume is null)
+            if (!LightVolumeComponent.Registry.TryGetFirstActive(world, out LightVolumeComponent? volume) || volume is null)
             {
                 outputTexture.Clear(ColorF4.Transparent);
                 return;

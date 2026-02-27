@@ -63,7 +63,7 @@ public class SteamAudioGeometryComponent : XRComponent
     public bool IsDynamic
     {
         get => _isDynamic;
-        set => _isDynamic = value;
+        set => SetField(ref _isDynamic, value);
     }
 
     // ------------------------------------------------------------------

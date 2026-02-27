@@ -96,7 +96,7 @@ namespace XREngine.Rendering.Models.Materials
         public string Name
         {
             get => _name;
-            set => _name = (value ?? "").ReplaceWhitespace("");
+            set => SetField(ref _name, (value ?? "").ReplaceWhitespace(""));
         }
 
         [Browsable(false)]

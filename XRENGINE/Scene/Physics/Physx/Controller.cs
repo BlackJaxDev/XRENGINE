@@ -296,21 +296,21 @@ namespace XREngine.Rendering.Physics.Physx
         public DelGetBehaviorFlagsShape2? BehaviorCallbackShape
         {
             get => _behaviorCallbackShape;
-            set => _behaviorCallbackShape = value;
+            set => SetField(ref _behaviorCallbackShape, value);
         }
 
         /// <summary>Callback for obstacle behavior flags. Invoked during CCT movement.</summary>
         public DelGetBehaviorFlagsObstacle2? BehaviorCallbackObstacle
         {
             get => _behaviorCallbackObstacle;
-            set => _behaviorCallbackObstacle = value;
+            set => SetField(ref _behaviorCallbackObstacle, value);
         }
 
         /// <summary>Callback for controller-vs-controller behavior flags. Invoked during CCT movement.</summary>
         public DelGetBehaviorFlagsController2? BehaviorCallbackController
         {
             get => _behaviorCallbackController;
-            set => _behaviorCallbackController = value;
+            set => SetField(ref _behaviorCallbackController, value);
         }
 
         #endregion

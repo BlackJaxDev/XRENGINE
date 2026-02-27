@@ -134,7 +134,7 @@ namespace XREngine.Rendering.Physics.Physx
         public DelFilterControllerCollision? FilterControllerCollisionCallback
         {
             get => _filterControllerCollision;
-            set => _filterControllerCollision = value;
+            set => SetField(ref _filterControllerCollision, value);
         }
 
         /// <summary>
@@ -144,7 +144,7 @@ namespace XREngine.Rendering.Physics.Physx
         public DelPreFilterCallback? PreFilterCallbackDelegate
         {
             get => _preFilterCallback;
-            set => _preFilterCallback = value;
+            set => SetField(ref _preFilterCallback, value);
         }
 
         /// <summary>
@@ -154,7 +154,7 @@ namespace XREngine.Rendering.Physics.Physx
         public DelPostFilterCallback? PostFilterCallbackDelegate
         {
             get => _postFilterCallback;
-            set => _postFilterCallback = value;
+            set => SetField(ref _postFilterCallback, value);
         }
 
         public Dictionary<nint, ObstacleContext> ObstacleContexts { get; } = [];

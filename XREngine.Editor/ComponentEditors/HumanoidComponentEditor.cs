@@ -71,11 +71,17 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
     {
         bool solveIk = humanoid.SolveIK;
         if (ImGui.Checkbox("Solve IK", ref solveIk))
+        {
+            using var _ = Undo.TrackChange("Toggle Solve IK", humanoid);
             humanoid.SolveIK = solveIk;
+        }
 
         bool debugVisibility = humanoid.RenderInfo.IsVisible;
         if (ImGui.Checkbox("Show Debug Skeleton", ref debugVisibility))
+        {
+            using var _ = Undo.TrackChange("Toggle Debug Skeleton", humanoid);
             humanoid.RenderInfo.IsVisible = debugVisibility;
+        }
     }
 
     private static void DrawIkSection(HumanoidComponent humanoid)
@@ -92,35 +98,38 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         ImGui.TableSetColumnIndex(0);
         ImGui.TextUnformatted("Arms");
         ImGui.TableSetColumnIndex(1);
-        DrawIkToggle("LeftArm", humanoid.LeftArmIKEnabled, value => humanoid.LeftArmIKEnabled = value);
+        DrawIkToggle("LeftArm", humanoid.LeftArmIKEnabled, value => humanoid.LeftArmIKEnabled = value, humanoid);
         ImGui.TableSetColumnIndex(2);
-        DrawIkToggle("RightArm", humanoid.RightArmIKEnabled, value => humanoid.RightArmIKEnabled = value);
+        DrawIkToggle("RightArm", humanoid.RightArmIKEnabled, value => humanoid.RightArmIKEnabled = value, humanoid);
 
         ImGui.TableNextRow();
         ImGui.TableSetColumnIndex(0);
         ImGui.TextUnformatted("Legs");
         ImGui.TableSetColumnIndex(1);
-        DrawIkToggle("LeftLeg", humanoid.LeftLegIKEnabled, value => humanoid.LeftLegIKEnabled = value);
+        DrawIkToggle("LeftLeg", humanoid.LeftLegIKEnabled, value => humanoid.LeftLegIKEnabled = value, humanoid);
         ImGui.TableSetColumnIndex(2);
-        DrawIkToggle("RightLeg", humanoid.RightLegIKEnabled, value => humanoid.RightLegIKEnabled = value);
+        DrawIkToggle("RightLeg", humanoid.RightLegIKEnabled, value => humanoid.RightLegIKEnabled = value, humanoid);
 
         ImGui.TableNextRow();
         ImGui.TableSetColumnIndex(0);
         ImGui.TextUnformatted("Spine");
         ImGui.TableSetColumnIndex(1);
-        DrawIkToggle("HipToHead", humanoid.HipToHeadIKEnabled, value => humanoid.HipToHeadIKEnabled = value);
+        DrawIkToggle("HipToHead", humanoid.HipToHeadIKEnabled, value => humanoid.HipToHeadIKEnabled = value, humanoid);
         ImGui.TableSetColumnIndex(2);
         ImGui.TextDisabled("--");
 
         ImGui.EndTable();
     }
 
-    private static void DrawIkToggle(string id, bool value, Action<bool> setter)
+    private static void DrawIkToggle(string id, bool value, Action<bool> setter, HumanoidComponent humanoid)
     {
         ImGui.PushID(id);
         bool toggle = value;
         if (ImGui.Checkbox("##Toggle", ref toggle))
+        {
+            using var _ = Undo.TrackChange($"Toggle {id} IK", humanoid);
             setter(toggle);
+        }
         ImGui.PopID();
     }
 
@@ -135,22 +144,22 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthStretch, 0.20f);
         ImGui.TableHeadersRow();
 
-        DrawTargetRow("Head", humanoid.HeadTarget, value => humanoid.HeadTarget = value);
-        DrawTargetRow("Chest", humanoid.ChestTarget, value => humanoid.ChestTarget = value);
-        DrawTargetRow("Hips", humanoid.HipsTarget, value => humanoid.HipsTarget = value);
-        DrawTargetRow("Left Hand", humanoid.LeftHandTarget, value => humanoid.LeftHandTarget = value);
-        DrawTargetRow("Right Hand", humanoid.RightHandTarget, value => humanoid.RightHandTarget = value);
-        DrawTargetRow("Left Foot", humanoid.LeftFootTarget, value => humanoid.LeftFootTarget = value);
-        DrawTargetRow("Right Foot", humanoid.RightFootTarget, value => humanoid.RightFootTarget = value);
-        DrawTargetRow("Left Elbow", humanoid.LeftElbowTarget, value => humanoid.LeftElbowTarget = value);
-        DrawTargetRow("Right Elbow", humanoid.RightElbowTarget, value => humanoid.RightElbowTarget = value);
-        DrawTargetRow("Left Knee", humanoid.LeftKneeTarget, value => humanoid.LeftKneeTarget = value);
-        DrawTargetRow("Right Knee", humanoid.RightKneeTarget, value => humanoid.RightKneeTarget = value);
+        DrawTargetRow("Head", humanoid.HeadTarget, value => humanoid.HeadTarget = value, humanoid);
+        DrawTargetRow("Chest", humanoid.ChestTarget, value => humanoid.ChestTarget = value, humanoid);
+        DrawTargetRow("Hips", humanoid.HipsTarget, value => humanoid.HipsTarget = value, humanoid);
+        DrawTargetRow("Left Hand", humanoid.LeftHandTarget, value => humanoid.LeftHandTarget = value, humanoid);
+        DrawTargetRow("Right Hand", humanoid.RightHandTarget, value => humanoid.RightHandTarget = value, humanoid);
+        DrawTargetRow("Left Foot", humanoid.LeftFootTarget, value => humanoid.LeftFootTarget = value, humanoid);
+        DrawTargetRow("Right Foot", humanoid.RightFootTarget, value => humanoid.RightFootTarget = value, humanoid);
+        DrawTargetRow("Left Elbow", humanoid.LeftElbowTarget, value => humanoid.LeftElbowTarget = value, humanoid);
+        DrawTargetRow("Right Elbow", humanoid.RightElbowTarget, value => humanoid.RightElbowTarget = value, humanoid);
+        DrawTargetRow("Left Knee", humanoid.LeftKneeTarget, value => humanoid.LeftKneeTarget = value, humanoid);
+        DrawTargetRow("Right Knee", humanoid.RightKneeTarget, value => humanoid.RightKneeTarget = value, humanoid);
 
         ImGui.EndTable();
     }
 
-    private static void DrawTargetRow(string label, (TransformBase? tfm, Matrix4x4 offset) target, Action<(TransformBase? tfm, Matrix4x4 offset)> setter)
+    private static void DrawTargetRow(string label, (TransformBase? tfm, Matrix4x4 offset) target, Action<(TransformBase? tfm, Matrix4x4 offset)> setter, HumanoidComponent humanoid)
     {
         ImGui.PushID(label);
         ImGui.TableNextRow();
@@ -166,6 +175,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         Vector2 nodeRectMax = ImGui.GetItemRectMax();
         TryHandleSceneNodeDrop(sceneNode =>
         {
+            using var _ = Undo.TrackChange($"Set {label} Target", humanoid);
             setter((sceneNode.Transform, target.offset));
             return true;
         }, out bool targetPreviewActive);
@@ -179,6 +189,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         Vector3 translation = target.offset.Translation;
         ImGui.SetNextItemWidth(-1f);
         bool offsetChanged = ImGui.DragFloat3("##Offset", ref translation, 0.01f);
+        ImGuiUndoHelper.TrackDragUndo($"{label} Offset", humanoid);
 
         ImGui.TableSetColumnIndex(3);
         bool selectionAvailable = Selection.SceneNode?.Transform is not null;
@@ -188,13 +199,19 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         {
             var selectedTransform = Selection.SceneNode?.Transform;
             if (selectedTransform is not null)
+            {
+                using var _ = Undo.TrackChange($"Set {label} Target", humanoid);
                 setter((selectedTransform, target.offset));
+            }
         }
         if (!selectionAvailable)
             ImGui.EndDisabled();
         ImGui.SameLine();
         if (ImGui.Button("Clear"))
+        {
+            using var _ = Undo.TrackChange($"Clear {label} Target", humanoid);
             setter((null, Matrix4x4.Identity));
+        }
 
         if (offsetChanged)
         {

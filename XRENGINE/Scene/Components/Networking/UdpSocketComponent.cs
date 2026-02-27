@@ -229,7 +229,7 @@ namespace XREngine.Components
 
                 _client = client;
                 _receiveCts = new CancellationTokenSource();
-                _receiveTask = Task.Run(() => ReceiveLoopAsync(client, _receiveCts.Token));
+                _receiveTask = ReceiveLoopAsync(client, _receiveCts.Token);
                 DispatchBound((IPEndPoint)client.Client.LocalEndPoint!);
             }
             finally

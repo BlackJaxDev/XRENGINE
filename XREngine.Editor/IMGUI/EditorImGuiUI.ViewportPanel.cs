@@ -254,8 +254,13 @@ public static partial class EditorImGuiUI
         {
             if (modelComponent.TryGetSourceSubMesh(meshHit.Mesh, out var subMesh))
             {
+                using var interaction = Undo.BeginUserInteraction();
+                using var scope = Undo.BeginChange("Drop Material");
                 foreach (var lod in subMesh.LODs)
+                {
+                    Undo.Track(lod);
                     lod.Material = material;
+                }
                 return true;
             }
 
@@ -266,6 +271,7 @@ public static partial class EditorImGuiUI
         var renderer = meshHit.Mesh.CurrentLODRenderer ?? meshHit.Mesh.LODs.First?.Value.Renderer;
         if (renderer is not null)
         {
+            using var _ = Undo.TrackChange("Drop Material", renderer);
             renderer.Material = material;
             return true;
         }

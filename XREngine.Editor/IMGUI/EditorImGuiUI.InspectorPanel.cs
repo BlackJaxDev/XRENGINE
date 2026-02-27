@@ -49,6 +49,7 @@ public static partial class EditorImGuiUI
 
             string newName = ExtractStringFromComponentRenameBuffer();
             newName = newName.Trim();
+            using var _ = Undo.TrackChange("Rename Component", _componentPendingRename);
             _componentPendingRename.Name = string.IsNullOrWhiteSpace(newName) ? null : newName;
             CancelComponentRename();
         }
@@ -195,10 +196,14 @@ public static partial class EditorImGuiUI
                 if (requestedComponent is not null)
                 {
                     var failedNodes = new List<SceneNode>();
+                    var addedComponents = new List<(SceneNode node, XRComponent comp)>();
+
                     foreach (var node in targetNodes)
                     {
-                        if (!node.TryAddComponent(requestedComponent, out _))
+                        if (!node.TryAddComponent(requestedComponent, out var comp) || comp is null)
                             failedNodes.Add(node);
+                        else
+                            addedComponents.Add((node, comp));
                     }
 
                     if (failedNodes.Count == 0)
@@ -210,6 +215,31 @@ public static partial class EditorImGuiUI
                     {
                         string failureList = string.Join(", ", failedNodes.Select(n => n.Name ?? SceneNode.DefaultName));
                         _componentPickerError = $"Unable to add component '{requestedComponent.Name}' to: {failureList}.";
+                    }
+
+                    // Record undo for successfully added components
+                    if (addedComponents.Count > 0)
+                    {
+                        string compName = requestedComponent.Name;
+                        // Capture for closure
+                        var capturedPairs = addedComponents.ToArray();
+
+                        using var interaction = Undo.BeginUserInteraction();
+                        using var scope = Undo.BeginChange($"Add {compName}");
+                        foreach (var (n, c) in capturedPairs)
+                            Undo.Track(c);
+
+                        Undo.RecordStructuralChange($"Add {compName}",
+                            undoAction: () =>
+                            {
+                                foreach (var (n, c) in capturedPairs)
+                                    n.DetachComponent(c);
+                            },
+                            redoAction: () =>
+                            {
+                                foreach (var (n, c) in capturedPairs)
+                                    n.ReattachComponent(c);
+                            });
                     }
                 }
 
@@ -382,7 +412,10 @@ public static partial class EditorImGuiUI
                     string trimmed = name.Trim();
                     string newName = string.IsNullOrWhiteSpace(trimmed) ? SceneNode.DefaultName : trimmed;
                     foreach (var node in nodes)
+                    {
+                        ImGuiUndoHelper.TrackDragUndo("Rename Node", node);
                         node.Name = newName;
+                    }
                 }
             });
 
@@ -399,8 +432,13 @@ public static partial class EditorImGuiUI
                     ImGui.PopStyleVar();
                 if (toggled)
                 {
+                    using var interaction = Undo.BeginUserInteraction();
+                    using var scope = Undo.BeginChange("Toggle Active Self");
                     foreach (var node in nodes)
+                    {
+                        Undo.Track(node);
                         node.IsActiveSelf = active;
+                    }
                 }
             });
 
@@ -417,8 +455,13 @@ public static partial class EditorImGuiUI
                     ImGui.PopStyleVar();
                 if (toggled)
                 {
+                    using var interaction = Undo.BeginUserInteraction();
+                    using var scope = Undo.BeginChange("Toggle Active In Hierarchy");
                     foreach (var node in nodes)
+                    {
+                        Undo.Track(node);
                         node.IsActiveInHierarchy = active;
+                    }
                 }
             });
 
@@ -636,7 +679,10 @@ public static partial class EditorImGuiUI
                 {
                     string trimmed = name.Trim();
                     if (!string.Equals(trimmed, node.Name, StringComparison.Ordinal))
+                    {
+                        ImGuiUndoHelper.TrackDragUndo("Rename Node", node);
                         node.Name = string.IsNullOrWhiteSpace(trimmed) ? SceneNode.DefaultName : trimmed;
+                    }
                 }
             });
 
@@ -644,14 +690,20 @@ public static partial class EditorImGuiUI
             {
                 bool active = node.IsActiveSelf;
                 if (ImGui.Checkbox("##SceneNodeActiveSelf", ref active))
+                {
+                    using var _ = Undo.TrackChange("Toggle Active Self", node);
                     node.IsActiveSelf = active;
+                }
             });
 
             DrawInspectorRow("Active In Hierarchy", () =>
             {
                 bool active = node.IsActiveInHierarchy;
                 if (ImGui.Checkbox("##SceneNodeActiveInHierarchy", ref active))
+                {
+                    using var _ = Undo.TrackChange("Toggle Active In Hierarchy", node);
                     node.IsActiveInHierarchy = active;
+                }
             });
 
             DrawInspectorRow("ID", () => ImGui.TextUnformatted(node.ID.ToString()));
@@ -932,7 +984,10 @@ public static partial class EditorImGuiUI
                     {
                         bool active = component.IsActive;
                         if (ImGui.Checkbox("##ComponentActive", ref active))
+                        {
+                            using var _ = Undo.TrackChange("Toggle Component Active", component);
                             component.IsActive = active;
+                        }
                         if (ImGui.IsItemHovered())
                             ImGui.SetTooltip("Toggle component active state");
                     }
@@ -1032,12 +1087,29 @@ public static partial class EditorImGuiUI
                         continue;
 
                     var componentCapture = component;
+                    var ownerNode = node;
+                    string compName = componentCapture.GetType().Name;
+
                     EnqueueSceneEdit(() =>
                     {
                         try
                         {
                             if (componentCapture is not null && !componentCapture.IsDestroyed)
-                                componentCapture.Destroy();
+                            {
+                                ownerNode.DetachComponent(componentCapture);
+
+                                using var interaction = Undo.BeginUserInteraction();
+                                using var scope = Undo.BeginChange($"Remove {compName}");
+                                Undo.RecordStructuralChange($"Remove {compName}",
+                                    undoAction: () =>
+                                    {
+                                        ownerNode.ReattachComponent(componentCapture);
+                                    },
+                                    redoAction: () =>
+                                    {
+                                        ownerNode.DetachComponent(componentCapture);
+                                    });
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -1165,8 +1237,13 @@ public static partial class EditorImGuiUI
                     ImGui.PopStyleVar();
                 if (toggled)
                 {
+                    using var interaction = Undo.BeginUserInteraction();
+                    using var scope = Undo.BeginChange("Toggle Component Active");
                     foreach (var component in componentList)
+                    {
+                        Undo.Track(component);
                         component.IsActive = active;
+                    }
                 }
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip("Toggle component active state");
@@ -1187,12 +1264,29 @@ public static partial class EditorImGuiUI
                 foreach (var component in componentList)
                 {
                     var componentCapture = component;
+                    var ownerNode = componentCapture.SceneNode;
+                    string compName = componentCapture.GetType().Name;
+
                     EnqueueSceneEdit(() =>
                     {
                         try
                         {
-                            if (!componentCapture.IsDestroyed)
-                                componentCapture.Destroy();
+                            if (!componentCapture.IsDestroyed && ownerNode is not null)
+                            {
+                                ownerNode.DetachComponent(componentCapture);
+
+                                using var interaction = Undo.BeginUserInteraction();
+                                using var scope = Undo.BeginChange($"Remove {compName}");
+                                Undo.RecordStructuralChange($"Remove {compName}",
+                                    undoAction: () =>
+                                    {
+                                        ownerNode.ReattachComponent(componentCapture);
+                                    },
+                                    redoAction: () =>
+                                    {
+                                        ownerNode.DetachComponent(componentCapture);
+                                    });
+                            }
                         }
                         catch (Exception ex)
                         {

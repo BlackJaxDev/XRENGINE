@@ -32,7 +32,7 @@ namespace XREngine.Timers
             public float DeltaSmoothingSpeed
             {
                 get => _deltaSmoothingSpeed;
-                set => _deltaSmoothingSpeed = value.Clamp(0.0f, 1.0f);
+                set => SetField(ref _deltaSmoothingSpeed, value.Clamp(0.0f, 1.0f));
             }
 
             private float _delta = 0.016f;

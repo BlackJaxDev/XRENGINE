@@ -225,7 +225,7 @@ namespace XREngine.Components
         public AudioSourceComponent? AudioSource
         {
             get => _audioSource ??= GetSiblingComponent<AudioSourceComponent>(false);
-            set => _audioSource = value;
+            set => SetField(ref _audioSource, value);
         }
 
         #endregion

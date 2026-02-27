@@ -622,6 +622,99 @@ namespace XREngine
         }
     }
 
+    /// <summary>
+    /// Controls the GPU buffer layout for instanced debug primitives (points, lines, triangles).
+    /// </summary>
+    public enum EDebugPrimitiveBufferFormat
+    {
+        /// <summary>
+        /// Full-precision layout with separate float4 color and padded positions.
+        /// Point = 32 B, Line = 48 B, Triangle = 64 B.
+        /// </summary>
+        Expanded,
+
+        /// <summary>
+        /// Compact layout that packs RGBA color into a single uint (RGBA8) and removes position padding.
+        /// Point = 16 B (−50 %), Line = 28 B (−42 %), Triangle = 40 B (−37.5 %).
+        /// GPU shaders unpack color via <c>unpackUnorm4x8</c>.
+        /// </summary>
+        Compressed,
+    }
+
+    /// <summary>
+    /// Controls how the physics/instanced debug visualizer populates its buffers each frame.
+    /// </summary>
+    public enum EDebugVisualizerPopulationMode
+    {
+        /// <summary>
+        /// Legacy path: Task.Run wrapping Parallel.For per primitive type + Task.WaitAll.
+        /// Double-parallelism — highest throughput for very large primitive counts, but double scheduling overhead.
+        /// </summary>
+        TasksWithParallelFor,
+
+        /// <summary>
+        /// Task.Run per primitive type with a sequential inner loop + Task.WaitAll.
+        /// Good balance: 3-way concurrency with minimal per-element overhead. Default.
+        /// </summary>
+        Tasks,
+
+        /// <summary>
+        /// Parallel.For per primitive type, run sequentially type-by-type.
+        /// Each type gets full thread-pool bandwidth internally, but types don't overlap.
+        /// </summary>
+        ParallelFor,
+
+        /// <summary>
+        /// Schedules population on the engine's persistent JobManager worker threads.
+        /// Avoids thread-pool scheduling; workers are pre-warmed.
+        /// </summary>
+        JobSystem,
+
+        /// <summary>
+        /// Populates all primitives sequentially on the calling thread.
+        /// Zero dispatch overhead — best when primitive counts are very small.
+        /// </summary>
+        Sequential,
+
+        /// <summary>
+        /// Bypasses per-element delegate invocations entirely.
+        /// Callers provide a single bulk-write delegate per primitive type that receives
+        /// the raw destination pointer and count, enabling tight unsafe loops with no
+        /// delegate dispatch, tuple allocation, or intermediate struct copies.
+        /// </summary>
+        DirectMemory,
+    }
+
+    /// <summary>
+    /// Controls how debug shape data (points/lines/triangles) is populated each frame.
+    /// </summary>
+    public enum EDebugShapePopulationMode
+    {
+        /// <summary>
+        /// Populates points, lines, and triangles on separate thread-pool tasks in parallel (Task.Run + Task.WaitAll).
+        /// Best throughput for thousands of debug primitives. Default.
+        /// </summary>
+        Tasks,
+
+        /// <summary>
+        /// Uses Parallel.Invoke to populate all three shape types concurrently.
+        /// Slightly simpler than Tasks but carries TPL scheduling overhead per frame.
+        /// </summary>
+        ParallelInvoke,
+
+        /// <summary>
+        /// Populates points, lines, and triangles sequentially on the calling thread.
+        /// Lowest overhead when debug primitive counts are small.
+        /// </summary>
+        Sequential,
+
+        /// <summary>
+        /// Schedules population on the engine's persistent worker threads via the JobManager.
+        /// Avoids thread-pool scheduling overhead; workers are pre-warmed and use lock-free queues.
+        /// </summary>
+        JobSystem,
+    }
+
     [Serializable]
     [MemoryPackable]
     public partial class EditorDebugOptions : XRBase
@@ -649,6 +742,9 @@ namespace XREngine
         private bool _enableRenderStatisticsTracking = true;
         private bool _enableUILayoutDebugLogging = false;
         private bool _enableProfilerUdpSending = false;
+        private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.Tasks;
+        private EDebugVisualizerPopulationMode _debugVisualizerPopulationMode = EDebugVisualizerPopulationMode.Tasks;
+        private EDebugPrimitiveBufferFormat _debugPrimitiveBufferFormat = EDebugPrimitiveBufferFormat.Expanded;
 
         [Category("Debug")]
         [DisplayName("Render 3D Mesh Bounds")]
@@ -860,6 +956,44 @@ namespace XREngine
             }
         }
 
+        /// <summary>
+        /// Controls how debug shape data (points, lines, triangles) is populated each frame in the SwapBuffers path.
+        /// </summary>
+        [Category("Debug")]
+        [DisplayName("Debug Shape Population Mode")]
+        [Description("Controls how debug shape data is populated each frame. 'Tasks' uses thread-pool tasks (best for thousands of primitives). 'ParallelInvoke' uses Parallel.Invoke. 'Sequential' runs on the calling thread (lowest overhead for few primitives).")]
+        public EDebugShapePopulationMode DebugShapePopulationMode
+        {
+            get => _debugShapePopulationMode;
+            set => SetField(ref _debugShapePopulationMode, value);
+        }
+
+        /// <summary>
+        /// Controls how the instanced debug visualizer (physics debug rendering) populates its buffers each frame.
+        /// </summary>
+        [Category("Debug")]
+        [DisplayName("Debug Visualizer Population Mode")]
+        [Description("Controls how the instanced debug visualizer populates buffers. 'Tasks' dispatches one thread-pool task per primitive type. 'TasksWithParallelFor' is the legacy dual-parallel path. 'ParallelFor' uses Parallel.For per type sequentially. 'JobSystem' uses engine workers. 'Sequential' runs on the calling thread.")]
+        public EDebugVisualizerPopulationMode DebugVisualizerPopulationMode
+        {
+            get => _debugVisualizerPopulationMode;
+            set => SetField(ref _debugVisualizerPopulationMode, value);
+        }
+
+        /// <summary>
+        /// Controls the GPU buffer layout for instanced debug primitives.
+        /// Compressed packs RGBA color into a single uint and removes position padding,
+        /// reducing GPU transfer bandwidth by 37–50 %.
+        /// </summary>
+        [Category("Debug")]
+        [DisplayName("Debug Primitive Buffer Format")]
+        [Description("Controls the GPU buffer layout for debug primitives. 'Expanded' uses full vec4 color + padded positions (32/48/64 B). 'Compressed' packs color into a uint and drops padding (16/28/40 B).")]
+        public EDebugPrimitiveBufferFormat DebugPrimitiveBufferFormat
+        {
+            get => _debugPrimitiveBufferFormat;
+            set => SetField(ref _debugPrimitiveBufferFormat, value);
+        }
+
         [Category("Profiling")]
         [DisplayName("Enable Profiler UDP Sending")]
         [Description("When enabled, sends profiler telemetry over UDP to an external XREngine.Profiler instance on localhost. When disabled, zero overhead (no thread, no socket).")]
@@ -911,6 +1045,9 @@ namespace XREngine
             EnableRenderStatisticsTracking = source.EnableRenderStatisticsTracking;
             EnableUILayoutDebugLogging = source.EnableUILayoutDebugLogging;
             EnableProfilerUdpSending = source.EnableProfilerUdpSending;
+            DebugShapePopulationMode = source.DebugShapePopulationMode;
+            DebugVisualizerPopulationMode = source.DebugVisualizerPopulationMode;
+            DebugPrimitiveBufferFormat = source.DebugPrimitiveBufferFormat;
         }
 
         public void ApplyOverrides(EditorDebugOverrides overrides)
@@ -964,6 +1101,12 @@ namespace XREngine
                 EnableUILayoutDebugLogging = uiLayoutDebug.Value;
             if (overrides.EnableProfilerUdpSendingOverride is { HasOverride: true } profilerUdp)
                 EnableProfilerUdpSending = profilerUdp.Value;
+            if (overrides.DebugShapePopulationModeOverride is { HasOverride: true } shapePop)
+                DebugShapePopulationMode = shapePop.Value;
+            if (overrides.DebugVisualizerPopulationModeOverride is { HasOverride: true } vizPop)
+                DebugVisualizerPopulationMode = vizPop.Value;
+            if (overrides.DebugPrimitiveBufferFormatOverride is { HasOverride: true } bufFmt)
+                DebugPrimitiveBufferFormat = bufFmt.Value;
         }
     }
 }

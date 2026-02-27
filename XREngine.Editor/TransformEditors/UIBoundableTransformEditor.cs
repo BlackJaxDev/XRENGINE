@@ -52,7 +52,7 @@ public sealed class UIBoundableTransformEditor : IXRTransformEditor
         ImGui.SameLine();
         ImGui.SetNextItemWidth(-1f);
         bool pivotEdited = ImGui.DragFloat2("##PivotNormalized", ref pivot, 0.005f, 0f, 1f);
-        ImGuiUndoHelper.UpdateScope($"Set Pivot {transformLabel}", ui);
+        ImGuiUndoHelper.TrackDragUndo($"Set Pivot {transformLabel}", ui);
         if (pivotEdited)
         {
             pivot = new Vector2(Math.Clamp(pivot.X, 0f, 1f), Math.Clamp(pivot.Y, 0f, 1f));
@@ -75,7 +75,7 @@ public sealed class UIBoundableTransformEditor : IXRTransformEditor
         ImGui.SameLine();
         ImGui.SetNextItemWidth(-1f);
         bool minEdited = ImGui.DragFloat2("##MinAnchor", ref minAnchor, 0.005f, 0f, 1f);
-        ImGuiUndoHelper.UpdateScope($"Set Min Anchor {transformLabel}", ui);
+        ImGuiUndoHelper.TrackDragUndo($"Set Min Anchor {transformLabel}", ui);
         if (minEdited)
         {
             minAnchor = new Vector2(Math.Clamp(minAnchor.X, 0f, 1f), Math.Clamp(minAnchor.Y, 0f, 1f));
@@ -90,7 +90,7 @@ public sealed class UIBoundableTransformEditor : IXRTransformEditor
         ImGui.SameLine();
         ImGui.SetNextItemWidth(-1f);
         bool maxEdited = ImGui.DragFloat2("##MaxAnchor", ref maxAnchor, 0.005f, 0f, 1f);
-        ImGuiUndoHelper.UpdateScope($"Set Max Anchor {transformLabel}", ui);
+        ImGuiUndoHelper.TrackDragUndo($"Set Max Anchor {transformLabel}", ui);
         if (maxEdited)
         {
             maxAnchor = new Vector2(Math.Clamp(maxAnchor.X, 0f, 1f), Math.Clamp(maxAnchor.Y, 0f, 1f));
@@ -113,7 +113,7 @@ public sealed class UIBoundableTransformEditor : IXRTransformEditor
         ImGui.SameLine();
         ImGui.SetNextItemWidth(-1f);
         bool marginsEdited = ImGui.DragFloat4("##Margins", ref margins, LayoutDragSpeed);
-        ImGuiUndoHelper.UpdateScope($"Set Margins {transformLabel}", ui);
+        ImGuiUndoHelper.TrackDragUndo($"Set Margins {transformLabel}", ui);
         if (marginsEdited)
         {
             ui.Margins = margins;
@@ -127,7 +127,7 @@ public sealed class UIBoundableTransformEditor : IXRTransformEditor
         ImGui.SameLine();
         ImGui.SetNextItemWidth(-1f);
         bool paddingEdited = ImGui.DragFloat4("##Padding", ref padding, LayoutDragSpeed);
-        ImGuiUndoHelper.UpdateScope($"Set Padding {transformLabel}", ui);
+        ImGuiUndoHelper.TrackDragUndo($"Set Padding {transformLabel}", ui);
         if (paddingEdited)
         {
             ui.Padding = padding;
@@ -163,7 +163,7 @@ public sealed class UIBoundableTransformEditor : IXRTransformEditor
         bool enabled = value.HasValue;
         if (ImGui.Checkbox("##Enabled", ref enabled))
         {
-            ImGuiUndoHelper.UpdateScope(undoLabel, target);
+            ImGuiUndoHelper.TrackDragUndo(undoLabel, target);
             float? next = enabled ? 0f : null;
             setValue(next);
             var queued = next;
@@ -171,7 +171,7 @@ public sealed class UIBoundableTransformEditor : IXRTransformEditor
         }
         else
         {
-            ImGuiUndoHelper.UpdateScope(undoLabel, target);
+            ImGuiUndoHelper.TrackDragUndo(undoLabel, target);
         }
 
         ImGui.SameLine();
@@ -185,7 +185,7 @@ public sealed class UIBoundableTransformEditor : IXRTransformEditor
         {
             ImGui.SetNextItemWidth(-1f);
             bool edited = ImGui.DragFloat("##Value", ref v, LayoutDragSpeed);
-            ImGuiUndoHelper.UpdateScope(undoLabel, target);
+            ImGuiUndoHelper.TrackDragUndo(undoLabel, target);
             if (edited)
             {
                 float? next = enabled ? v : null;

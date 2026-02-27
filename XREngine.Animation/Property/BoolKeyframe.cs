@@ -17,12 +17,12 @@
         public new BoolKeyframe? Next
         {
             get => _next as BoolKeyframe;
-            set => _next = value;
+            set => SetField(ref _next, value);
         }
         public new BoolKeyframe? Prev
         {
             get => _prev as BoolKeyframe;
-            set => _prev = value;
+            set => SetField(ref _prev, value);
         }
 
         public override void ReadFromString(string str)
