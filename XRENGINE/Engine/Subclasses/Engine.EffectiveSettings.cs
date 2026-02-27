@@ -473,6 +473,50 @@ namespace XREngine
 
             #endregion
 
+            #region Audio Settings
+
+            /// <summary>
+            /// Gets the effective audio transport backend.
+            /// Cascade: Editor Prefs Override > Game Override > User Preference
+            /// </summary>
+            public static EAudioTransport AudioTransport
+                => OverrideableSettingExtensions.ResolveCascade(
+                    UserSettings?.AudioTransport ?? EAudioTransport.OpenAL,
+                    GameSettings?.AudioTransportOverride,
+                    EditorPreferencesOverrides?.AudioTransportOverride);
+
+            /// <summary>
+            /// Gets the effective audio effects processor.
+            /// Cascade: Editor Prefs Override > Game Override > User Preference
+            /// </summary>
+            public static EAudioEffects AudioEffects
+                => OverrideableSettingExtensions.ResolveCascade(
+                    UserSettings?.AudioEffects ?? EAudioEffects.OpenAL_EFX,
+                    GameSettings?.AudioEffectsOverride,
+                    EditorPreferencesOverrides?.AudioEffectsOverride);
+
+            /// <summary>
+            /// Gets the effective V2 audio architecture toggle.
+            /// Cascade: Editor Prefs Override > Game Override > User Preference
+            /// </summary>
+            public static bool AudioArchitectureV2
+                => OverrideableSettingExtensions.ResolveCascade(
+                    UserSettings?.AudioArchitectureV2 ?? false,
+                    GameSettings?.AudioArchitectureV2Override,
+                    EditorPreferencesOverrides?.AudioArchitectureV2Override);
+
+            /// <summary>
+            /// Gets the effective audio sample rate.
+            /// Cascade: Editor Prefs Override > Game Override > User Preference
+            /// </summary>
+            public static int AudioSampleRate
+                => OverrideableSettingExtensions.ResolveCascade(
+                    UserSettings?.AudioSampleRate ?? 44100,
+                    GameSettings?.AudioSampleRateOverride,
+                    EditorPreferencesOverrides?.AudioSampleRateOverride);
+
+            #endregion
+
             #region Helper Methods
 
             /// <summary>

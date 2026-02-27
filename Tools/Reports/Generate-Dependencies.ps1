@@ -1,9 +1,14 @@
+param(
+    [switch]$PromptForUnknownLicenses,
+    [switch]$NoPromptForUnknownLicenses
+)
+
 $ErrorActionPreference = 'Stop'
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $outPath = Join-Path $root 'docs\DEPENDENCIES.md'
-$auditOutPath = Join-Path $root 'docs\work\audit\DEPENDENCIES.md'
 $licensesDir = Join-Path $root 'docs\licenses'
+$licenseOverridesPath = Join-Path $root 'docs\dependency-license-overrides.json'
 
 $nugetRoot = if ($env:NUGET_PACKAGES) {
     $env:NUGET_PACKAGES
@@ -119,6 +124,121 @@ function Ensure-Directory([string]$path) {
     }
 }
 
+function Test-IsInteractiveHost {
+    if (-not [Environment]::UserInteractive) { return $false }
+    try {
+        if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) { return $false }
+    } catch {
+    }
+    return $true
+}
+
+function Is-LicenseUnknown([string]$licenseText) {
+    if (-not $licenseText) { return $true }
+    return $licenseText.Trim().ToLowerInvariant().StartsWith('(unknown')
+}
+
+function Load-LicenseOverrides([string]$path) {
+    if (-not $path -or -not (Test-Path -LiteralPath $path)) {
+        return [ordered]@{ schemaVersion = 1; entries = @{} }
+    }
+
+    try {
+        $json = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
+        $entries = @{}
+        if ($json -and $json.entries) {
+            foreach ($prop in $json.entries.PSObject.Properties) {
+                $entries[$prop.Name] = [ordered]@{
+                    license     = $prop.Value.license
+                    owner       = $prop.Value.owner
+                    licenseLink = $prop.Value.licenseLink
+                    notes       = $prop.Value.notes
+                }
+            }
+        }
+
+        return [ordered]@{
+            schemaVersion = if ($json.schemaVersion) { [int]$json.schemaVersion } else { 1 }
+            entries       = $entries
+        }
+    } catch {
+        Write-Warning "Unable to parse $path. Starting with an empty override map."
+        return [ordered]@{ schemaVersion = 1; entries = @{} }
+    }
+}
+
+function Save-LicenseOverrides([string]$path, $data) {
+    if (-not $path -or -not $data) { return }
+    Ensure-Directory -path (Split-Path -Parent $path)
+
+    $entriesObject = [ordered]@{}
+    foreach ($key in ($data.entries.Keys | Sort-Object)) {
+        $entry = $data.entries[$key]
+        $entriesObject[$key] = [ordered]@{
+            license     = $entry.license
+            owner       = $entry.owner
+            licenseLink = $entry.licenseLink
+            notes       = $entry.notes
+        }
+    }
+
+    $outObj = [ordered]@{
+        schemaVersion = if ($data.schemaVersion) { [int]$data.schemaVersion } else { 1 }
+        entries       = $entriesObject
+    }
+
+    $outObj | ConvertTo-Json -Depth 8 | Out-File -LiteralPath $path -Encoding utf8
+}
+
+function Resolve-LicenseInfo(
+    [string]$entityKey,
+    [string]$entityDisplay,
+    [string]$licenseText,
+    [string]$owner,
+    [string]$licenseLink,
+    [string]$context,
+    [bool]$allowPrompt,
+    $overrideStore,
+    [ref]$storeChanged
+) {
+    if ($overrideStore -and $overrideStore.entries.ContainsKey($entityKey)) {
+        $ov = $overrideStore.entries[$entityKey]
+        if ($ov.license) { $licenseText = $ov.license }
+        if ($ov.owner) { $owner = $ov.owner }
+        if ($ov.licenseLink) { $licenseLink = $ov.licenseLink }
+    }
+
+    if ($allowPrompt -and (Is-LicenseUnknown -licenseText $licenseText)) {
+        Write-Host ""
+        Write-Host ("[Dependency license] Unknown license for {0}" -f $entityDisplay) -ForegroundColor Yellow
+        if ($context) { Write-Host $context }
+        $newLicense = Read-Host 'Enter license identifier (SPDX/name), or press Enter to keep unknown'
+        if ($newLicense) {
+            $newOwner = Read-Host 'Owner override (optional, press Enter to keep current)'
+            $newLink = Read-Host 'License link/path override (optional, press Enter to keep auto-generated)'
+            $newNotes = Read-Host 'Notes (optional)'
+
+            $licenseText = $newLicense
+            if ($newOwner) { $owner = $newOwner }
+            if ($newLink) { $licenseLink = $newLink }
+
+            $overrideStore.entries[$entityKey] = [ordered]@{
+                license     = $newLicense
+                owner       = if ($newOwner) { $newOwner } else { $owner }
+                licenseLink = if ($newLink) { $newLink } else { $licenseLink }
+                notes       = $newNotes
+            }
+            $storeChanged.Value = $true
+        }
+    }
+
+    return [pscustomobject]@{
+        License = $licenseText
+        Owner = $owner
+        LicenseLink = $licenseLink
+    }
+}
+
 function To-SafeFileName([string]$name) {
     if (-not $name) { return 'unknown' }
     $invalid = [System.IO.Path]::GetInvalidFileNameChars()
@@ -129,6 +249,20 @@ function To-SafeFileName([string]$name) {
     $s = $sb.ToString().Trim().TrimEnd('.')
     if (-not $s) { return 'unknown' }
     return $s
+}
+
+function Redact-UserPath([string]$text) {
+    if (-not $text) { return $text }
+
+    $redacted = $text
+
+    # Windows profile path: C:\Users\<name>\...
+    $redacted = [regex]::Replace($redacted, '(?i)([A-Z]:\\Users\\)([^\\]+)', '$1<user>')
+
+    # Unix/macOS-style profile path: /Users/<name>/...
+    $redacted = [regex]::Replace($redacted, '(?i)(/Users/)([^/]+)', '$1<user>')
+
+    return $redacted
 }
 
 function Write-LicenseTextFile([string]$relativePathFromDocsLicenses, [string]$text) {
@@ -629,6 +763,18 @@ $packages = @{} # id -> object
 $refs = New-Object System.Collections.Generic.List[object]
 $binaries = New-Object System.Collections.Generic.List[object]
 
+$interactiveHost = Test-IsInteractiveHost
+$promptUnknown = if ($NoPromptForUnknownLicenses) {
+    $false
+} elseif ($PromptForUnknownLicenses) {
+    $true
+} else {
+    $interactiveHost
+}
+
+$licenseOverrides = Load-LicenseOverrides -path $licenseOverridesPath
+$licenseOverridesChanged = $false
+
 function Get-BinaryOwner([string]$fileOrPath) {
     if (-not $fileOrPath) { return '(unknown)' }
     $name = [System.IO.Path]::GetFileName($fileOrPath)
@@ -956,6 +1102,8 @@ $lines.Add('Notes:')
 $lines.Add('- `Owner` is derived from a GitHub repository URL when available, otherwise from the NuGet nuspec `authors` field (best-effort).')
 $lines.Add('- This lists direct `PackageReference`s from solution projects, not all transitive dependencies.')
 $lines.Add('- NVIDIA proprietary SDK binaries (DLSS/NGX, Reflex, Streamline) are **not redistributed** and are expected to be provided by end users via `ThirdParty/NVIDIA/SDK/win-x64/`.')
+$lines.Add('- Manual unknown-license resolutions are loaded from `docs/dependency-license-overrides.json`.')
+$lines.Add(("- Prompt mode for unknown licenses: `{0}` (use `-PromptForUnknownLicenses` or `-NoPromptForUnknownLicenses` to override)." -f $promptUnknown))
 $lines.Add('')
 
 $lines.Add('## Git submodules / vendored submodules')
@@ -965,6 +1113,11 @@ foreach ($s in $submodules) {
     $owner = if ($s.Owner) { $s.Owner } else { '(unknown)' }
     $licText = if ($s.License) { $s.License } else { '(unknown)' }
     $licLink = $null
+
+    $resolved = Resolve-LicenseInfo -entityKey ("submodule|{0}" -f $s.Path) -entityDisplay ("submodule '{0}'" -f $s.Name) -licenseText $licText -owner $owner -licenseLink $licLink -context ("Path: {0}`nURL: {1}" -f $s.Path, $s.Url) -allowPrompt $promptUnknown -overrideStore $licenseOverrides -storeChanged ([ref]$licenseOverridesChanged)
+    $owner = $resolved.Owner
+    $licText = $resolved.License
+    $licLink = $resolved.LicenseLink
 
     if ($s.PSObject.Properties.Match('LicenseSourcePath').Count -gt 0 -and $s.LicenseSourcePath) {
         $ext = [System.IO.Path]::GetExtension($s.LicenseSourcePath)
@@ -998,6 +1151,12 @@ if ($nested.Count -gt 0) {
         $owner = if ($n.Owner) { $n.Owner } else { '(unknown)' }
         $licText = if ($n.License) { $n.License } else { '(unknown)' }
         $licLink = $null
+
+        $resolved = Resolve-LicenseInfo -entityKey ("nested|{0}|{1}" -f $n.Name, $n.UsedBy) -entityDisplay ("nested dependency '{0}'" -f $n.Name) -licenseText $licText -owner $owner -licenseLink $licLink -context ("UsedBy: {0}`nURL: {1}" -f $n.UsedBy, $n.Url) -allowPrompt $promptUnknown -overrideStore $licenseOverrides -storeChanged ([ref]$licenseOverridesChanged)
+        $owner = $resolved.Owner
+        $licText = $resolved.License
+        $licLink = $resolved.LicenseLink
+
         if ($n.Url) {
             $t = Get-GitHubLicenseTextFromRepoUrl -url $n.Url
             if ($t) {
@@ -1026,6 +1185,14 @@ foreach ($pkg in ($packages.Values | Sort-Object Id)) {
     $licLink = $null
     $verForFile = (($pkg.Versions | Sort-Object | Select-Object -First 1))
     $pkgSafe = To-SafeFileName $pkg.Id
+    $licSafe = To-SafeFileName $licText
+    $repoUrlForPrompt = if ($pkg.Meta) { $pkg.Meta.RepositoryUrl } else { '' }
+    $projectUrlForPrompt = if ($pkg.Meta) { $pkg.Meta.ProjectUrl } else { '' }
+
+    $resolved = Resolve-LicenseInfo -entityKey ("nuget|{0}|{1}" -f $pkg.Id, $verForFile) -entityDisplay ("NuGet package '{0}' ({1})" -f $pkg.Id, $verForFile) -licenseText $licText -owner $owner -licenseLink $licLink -context ("RepositoryUrl: {0}`nProjectUrl: {1}" -f $repoUrlForPrompt, $projectUrlForPrompt) -allowPrompt $promptUnknown -overrideStore $licenseOverrides -storeChanged ([ref]$licenseOverridesChanged)
+    $owner = $resolved.Owner
+    $licText = $resolved.License
+    $licLink = $resolved.LicenseLink
     $licSafe = To-SafeFileName $licText
 
     if ($pkg.PSObject.Properties.Match('LicenseText').Count -gt 0 -and $pkg.LicenseText) {
@@ -1062,11 +1229,12 @@ $lines.Add('| Project | Reference | Owner (best-effort) | License (best-effort) 
 $lines.Add('|---|---|---|---|---|')
 foreach ($r in ($refs | Sort-Object Project, Reference, HintPath)) {
     $refText = if ($null -ne $r.Reference) { $r.Reference } else { '' }
-    $hintText = if ($null -ne $r.HintPath) { $r.HintPath } else { '' }
-    $ownerText = Get-ReferenceOwner -referenceName $refText -hintPath $hintText
+    $hintTextRaw = if ($null -ne $r.HintPath) { $r.HintPath } else { '' }
+    $hintText = Redact-UserPath -text $hintTextRaw
+    $ownerText = Get-ReferenceOwner -referenceName $refText -hintPath $hintTextRaw
     $licText = '(unknown)'
     $licLink = $null
-    if ($hintText -match '\\Build\\Submodules\\(?<sub>[^\\/]+)\\') {
+    if ($hintTextRaw -match '\\Build\\Submodules\\(?<sub>[^\\/]+)\\') {
         $sub = $Matches.sub
         $subPath = Join-Path (Join-Path $root 'Build\Submodules') $sub
         $li = Get-SubmoduleLicenseInfo -fullPath $subPath
@@ -1080,6 +1248,11 @@ foreach ($r in ($refs | Sort-Object Project, Reference, HintPath)) {
             }
         }
     }
+
+    $resolved = Resolve-LicenseInfo -entityKey ("reference|{0}|{1}|{2}" -f $r.Project, $refText, $hintText) -entityDisplay ("assembly reference '{0}' in {1}" -f $refText, $r.Project) -licenseText $licText -owner $ownerText -licenseLink $licLink -context ("HintPath: {0}" -f $hintText) -allowPrompt $promptUnknown -overrideStore $licenseOverrides -storeChanged ([ref]$licenseOverridesChanged)
+    $ownerText = $resolved.Owner
+    $licText = $resolved.License
+    $licLink = $resolved.LicenseLink
 
     if (-not $licLink) {
         $dstRel = ('unknown/reference-{0}-{1}.txt' -f (To-SafeFileName $r.Project), (To-SafeFileName $refText))
@@ -1097,15 +1270,22 @@ $lines.Add('|---|---|---|---|---|---|')
 foreach ($b in ($binaries | Sort-Object Project, Path)) {
     $linkText = if ($null -ne $b.Link) { $b.Link } else { '' }
     $copyText = if ($null -ne $b.CopyToOutputDirectory) { $b.CopyToOutputDirectory } else { '' }
+    $pathText = Redact-UserPath -text $b.Path
     $ownerText = Get-BinaryOwner -fileOrPath $b.Path
     $licText = Get-BinaryLicense -fileOrPath $b.Path
     $licLink = Get-BinaryLicenseLink -fileOrPath $b.Path
+
+    $resolved = Resolve-LicenseInfo -entityKey ("binary-item|{0}|{1}" -f $b.Project, $pathText) -entityDisplay ("binary item '{0}' in {1}" -f $pathText, $b.Project) -licenseText $licText -owner $ownerText -licenseLink $licLink -context ("Project: {0}`nPath: {1}" -f $b.Project, $pathText) -allowPrompt $promptUnknown -overrideStore $licenseOverrides -storeChanged ([ref]$licenseOverridesChanged)
+    $ownerText = $resolved.Owner
+    $licText = $resolved.License
+    $licLink = $resolved.LicenseLink
+
     if (-not $licLink) {
-        $dstRel = ('unknown/binary-item-{0}-{1}.txt' -f (To-SafeFileName $b.Project), (To-SafeFileName $b.Path))
-        $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text ("License file not detected for referenced binary item.`r`n`r`nProject: {0}`r`nPath: {1}`r`n" -f $b.Project, $b.Path)
+        $dstRel = ('unknown/binary-item-{0}-{1}.txt' -f (To-SafeFileName $b.Project), (To-SafeFileName $pathText))
+        $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text ("License file not detected for referenced binary item.`r`n`r`nProject: {0}`r`nPath: {1}`r`n" -f $b.Project, $pathText)
     }
     $lic = Format-LicenseCell -licenseText $licText -licenseLink $licLink
-    $lines.Add(("| {0} | {1} | {2} | {3} | {4} | {5} |" -f $b.Project, $b.Path, $ownerText, $lic, $linkText, $copyText))
+    $lines.Add(("| {0} | {1} | {2} | {3} | {4} | {5} |" -f $b.Project, $pathText, $ownerText, $lic, $linkText, $copyText))
 }
 $lines.Add('')
 
@@ -1116,6 +1296,12 @@ foreach ($f in $checkedBinaries) {
     $owner = Get-BinaryOwner -fileOrPath $f.File
     $licText = Get-BinaryLicense -fileOrPath $f.File
     $licLink = Get-BinaryLicenseLink -fileOrPath $f.File
+
+    $resolved = Resolve-LicenseInfo -entityKey ("checked-binary|{0}" -f $f.Path) -entityDisplay ("checked-in binary '{0}'" -f $f.Path) -licenseText $licText -owner $owner -licenseLink $licLink -context ("Path: {0}`nFile: {1}" -f $f.Path, $f.File) -allowPrompt $promptUnknown -overrideStore $licenseOverrides -storeChanged ([ref]$licenseOverridesChanged)
+    $owner = $resolved.Owner
+    $licText = $resolved.License
+    $licLink = $resolved.LicenseLink
+
     if (-not $licLink) {
         $dstRel = ('unknown/checked-binary-{0}.txt' -f (To-SafeFileName $f.File))
         $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text ("License file not detected for checked-in binary.`r`n`r`nPath: {0}`r`nFile: {1}`r`n" -f $f.Path, $f.File)
@@ -1125,8 +1311,8 @@ foreach ($f in $checkedBinaries) {
 }
 
 $lines | Out-File -LiteralPath $outPath -Encoding utf8
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $auditOutPath) | Out-Null
-$auditLines = $lines | ForEach-Object { $_ -replace '\(licenses/', '(../../licenses/' }
-$auditLines | Out-File -LiteralPath $auditOutPath -Encoding utf8
+if ($licenseOverridesChanged) {
+    Save-LicenseOverrides -path $licenseOverridesPath -data $licenseOverrides
+    Write-Output "Wrote overrides: $licenseOverridesPath"
+}
 Write-Output "Wrote: $outPath"
-Write-Output "Wrote: $auditOutPath"

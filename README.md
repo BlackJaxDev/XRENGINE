@@ -22,7 +22,7 @@ Jitter 2 work is planned for lightweight usage such as for VTubing.
 - `XREngine.Data`, `XREngine.Input`, `XREngine.Modeling` – data structures, input handling, and 3D modeling utilities.
 - `XREngine.Server`, `XREngine.VRClient` – networking server and standalone VR client.
 - `XREngine.UnitTests` – automated tests for engine subsystems.
-- `Build/Submodules` – third-party dependencies (OpenVR.NET, MagicPhysX, CoACD, Flyleaf, OscCore, rive-sharp).
+- `Build/Submodules` – third-party dependencies (OpenVR.NET, MagicPhysX, CoACD, OscCore, rive-sharp).
 
 ## Prerequisites
 - .NET 10 SDK
@@ -198,7 +198,15 @@ For a quick networking test:
 
 	This requires Visual Studio (or Build Tools) with the **Desktop development with C++** workload. The script will fetch `premake5` automatically if missing.
 
-- Video/streaming codecs – the repo ships FFmpeg-family native DLLs (`avcodec`, `avformat`, etc.) under `XRENGINE/runtimes/win-x64/native` and copies them to output as needed (used by the Flyleaf integration).
+- Video/streaming codecs – the repo ships FFmpeg-family native DLLs (`avcodec`, `avformat`, etc.) under `XRENGINE/runtimes/win-x64/native` and copies them to output as needed. Optional HLS helper DLLs can be staged in `Build/Dependencies/FFmpeg/Seed/win-x64` and are copied into `Build/Dependencies/FFmpeg/HlsReference/win-x64` during build when missing.
+
+	To retrieve FFmpeg seed DLLs from Flyleaf's GitHub repository, run:
+
+	```powershell
+	./Tools/Dependencies/Get-FfmpegFromFlyleaf.ps1
+	```
+
+	Use `-CopyToRuntime` to also copy directly into `Build/Dependencies/FFmpeg/HlsReference/win-x64`.
 
 - YouTube URL extraction (`yt-dlp`) – YouTube links are resolved to a direct playable URL through `yt-dlp` before FFmpeg open. Install `yt-dlp` and keep it on PATH, or place `yt-dlp.exe` next to the Editor/Client/Server executable.
 
@@ -212,7 +220,9 @@ For a quick networking test:
 
 - NVIDIA features (DLSS / Reflex / Streamline) – **NVIDIA proprietary SDK binaries are not redistributed in this repo.** To enable these features locally, obtain the relevant NVIDIA SDK(s) from NVIDIA and drop the required DLLs into `ThirdParty/NVIDIA/SDK/win-x64/`. The build copies them into the output directory when present. See `ThirdParty/NVIDIA/SDK/README.md`.
 
-- `RestirGI.Native.dll` – the optional ReSTIR GI bridge is built from the native project under `Build/RestirGI/` and copied into the managed output as `RestirGI.Native.dll` when present. If it’s missing, build `Build/RestirGI/RestirGINative.sln` for your configuration/platform and then rebuild the C# projects so the copy step can pick it up.
+- `RestirGI.Native.dll` – the optional ReSTIR GI bridge is expected at `ThirdParty/NVIDIA/RTXGI/win-x64/RestirGI.Native.dll`. If you build `Build/RestirGI/RestirGINative.sln`, the managed build now stages the DLL into that folder and copies it to output when present. See `ThirdParty/NVIDIA/RTXGI/README.md`.
+
+- `OVRLipSync.dll` – optional Meta/Oculus LipSync runtime. Place it at `ThirdParty/Meta/OVRLipSync/win-x64/OVRLipSync.dll` to have it copied into app outputs. See `ThirdParty/Meta/OVRLipSync/README.md`.
 
 ## Documentation
 Start with the docs index at `docs/README.md` for a structured map of architecture notes, API guides, and rendering deep dives. Highlights:
@@ -231,6 +241,8 @@ There is no dedicated `CONTRIBUTING.md` in this repo yet. If you want to help ou
 
 For a best-effort list of referenced NuGet packages, submodules, and native/managed DLLs (with best-effort owner attribution), see `docs/DEPENDENCIES.md`.
 
+The inventory generator supports manual resolution for unknown licenses. Run `Tools/Reports/Generate-Dependencies.ps1` and provide responses when prompted (or force behavior via `-PromptForUnknownLicenses` / `-NoPromptForUnknownLicenses`); responses are persisted in `docs/dependency-license-overrides.json` and reused on subsequent generations.
+
 ### License summary (non-authoritative)
 
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPLv3)**. This is only a convenience summary; the full terms are in `LICENSE`.
@@ -242,6 +254,17 @@ This project is licensed under the **GNU Affero General Public License v3.0 (AGP
 - The software is provided **“as is” with no warranty**, and there is a **limitation of liability** to the extent permitted by law.
 
 Note: this repo includes third-party submodules/dependencies that may have their own license terms.
+
+### AGPL + LGPL compliance posture
+
+This project is AGPLv3, and it ships several LGPL-licensed dependencies. This is permitted as long as LGPL conditions remain intact for those components.
+
+- LGPL components are consumed as separate dynamic libraries (DLLs), not statically merged into engine binaries.
+- End users can replace LGPL-covered DLLs in the output directory with compatible builds.
+- License texts for LGPL dependencies and core LGPL license bodies are included under `docs/licenses/` and copied into build/publish output under `licenses/`.
+- Dependency/license inventory is generated in `docs/DEPENDENCIES.md` and should be refreshed when dependencies change.
+
+Current LGPL set includes (see `docs/DEPENDENCIES.md` for authoritative current list): FFmpeg.AutoGen, OpenAL Soft native runtime, FFmpeg runtime binaries, and LAME runtime binaries.
 - Issues: https://github.com/BlackJaxDev/XRENGINE/issues
 - Discussions: https://github.com/BlackJaxDev/XRENGINE/discussions
 

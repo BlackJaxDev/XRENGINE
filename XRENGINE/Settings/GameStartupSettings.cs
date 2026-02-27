@@ -354,6 +354,12 @@ namespace XREngine
         private OverrideableSetting<float> _transformReplicationKeyframeIntervalSecOverride = new();
         private OverrideableSetting<float> _timeBetweenReplicationsOverride = new();
 
+        // Audio overrides (Game > User cascade)
+        private OverrideableSetting<EAudioTransport> _audioTransportOverride = new();
+        private OverrideableSetting<EAudioEffects> _audioEffectsOverride = new();
+        private OverrideableSetting<bool> _audioArchitectureV2Override = new();
+        private OverrideableSetting<int> _audioSampleRateOverride = new();
+
         /// <summary>
         /// Project override for the number of job worker threads.
         /// Takes precedence over engine defaults when HasOverride is true.
@@ -746,6 +752,56 @@ namespace XREngine
         {
             get => _calculateBlendshapesInComputeShaderOverride;
             set => SetField(ref _calculateBlendshapesInComputeShaderOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Game override for audio transport backend.
+        /// When set, the game requires a specific transport regardless of user preference.
+        /// Can be further overridden by editor preferences for dev/testing.
+        /// </summary>
+        [Category("Audio Overrides")]
+        [Description("Game override for audio transport backend (e.g. game requires NAudio).")]
+        public OverrideableSetting<EAudioTransport> AudioTransportOverride
+        {
+            get => _audioTransportOverride;
+            set => SetField(ref _audioTransportOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Game override for audio effects processor.
+        /// When set, the game requires a specific effects pipeline regardless of user preference.
+        /// Can be further overridden by editor preferences for dev/testing.
+        /// </summary>
+        [Category("Audio Overrides")]
+        [Description("Game override for audio effects processor (e.g. game requires SteamAudio).")]
+        public OverrideableSetting<EAudioEffects> AudioEffectsOverride
+        {
+            get => _audioEffectsOverride;
+            set => SetField(ref _audioEffectsOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Game override for the V2 streaming audio architecture.
+        /// When set, overrides the user's preference for V2 architecture.
+        /// </summary>
+        [Category("Audio Overrides")]
+        [Description("Game override for V2 streaming audio architecture.")]
+        public OverrideableSetting<bool> AudioArchitectureV2Override
+        {
+            get => _audioArchitectureV2Override;
+            set => SetField(ref _audioArchitectureV2Override, value ?? new());
+        }
+
+        /// <summary>
+        /// Game override for audio sample rate.
+        /// When set, overrides the user's preferred sample rate (e.g. 48000 for high-fidelity audio games).
+        /// </summary>
+        [Category("Audio Overrides")]
+        [Description("Game override for audio sample rate in Hz.")]
+        public OverrideableSetting<int> AudioSampleRateOverride
+        {
+            get => _audioSampleRateOverride;
+            set => SetField(ref _audioSampleRateOverride, value ?? new());
         }
 
         #endregion

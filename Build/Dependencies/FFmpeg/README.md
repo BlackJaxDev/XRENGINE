@@ -21,10 +21,35 @@ There are two sources in this repo workflow:
    - Path: `Build/Dependencies/FFmpeg/HlsReference/win-x64/`
    - This is the folder actually used at runtime.
 
-2. **Bootstrap source from pinned submodule**
-   - Path: `Build/Submodules/Flyleaf/FFmpeg/`
-   - Submodule commit: `510d509f716627e331813c1cf8e6d4a85408c565` (`v3.10.2`)
+2. **Bootstrap source from local dependency seed folder**
+   - Path: `Build/Dependencies/FFmpeg/Seed/win-x64/`
    - `XREngine.csproj` target `EnsureHlsReferenceFfmpeg` copies these DLLs into the canonical runtime folder only when no `avformat-62.dll` or `avformat-61.dll` exists there.
+
+## Retrieve seed DLLs from Flyleaf GitHub
+
+To pull FFmpeg DLLs from Flyleaf without restoring the submodule:
+
+```powershell
+pwsh Tools/Dependencies/Get-FfmpegFromFlyleaf.ps1
+```
+
+Default behavior:
+- Downloads a Flyleaf repository archive (`SuRGeoNix/Flyleaf`, `master`).
+- Detects the best x64 FFmpeg DLL folder in the archive.
+- Copies detected FFmpeg DLLs into `Build/Dependencies/FFmpeg/Seed/win-x64/`.
+
+Useful options:
+
+```powershell
+# Use a tag or branch
+pwsh Tools/Dependencies/Get-FfmpegFromFlyleaf.ps1 -Ref v3.8.2
+
+# Also copy directly into the canonical runtime folder
+pwsh Tools/Dependencies/Get-FfmpegFromFlyleaf.ps1 -CopyToRuntime
+
+# Force re-download and overwrite staged DLLs
+pwsh Tools/Dependencies/Get-FfmpegFromFlyleaf.ps1 -Force
+```
 
 ## Exact versions in this workspace (captured 2026-02-22)
 
@@ -41,9 +66,9 @@ This workspace currently has the FFmpeg 7 profile loaded:
 - `swresample-5.dll` — FileVersion `5.3.100`, ProductVersion `n7.1.1-6-g48c0f071d4-20250414`
 - `swscale-8.dll` — FileVersion `8.3.100`, ProductVersion `n7.1.1-6-g48c0f071d4-20250414`
 
-### Bootstrap copy source (`Build/Submodules/Flyleaf/FFmpeg`)
+### Bootstrap copy source (`Build/Dependencies/FFmpeg/Seed/win-x64`)
 
-The pinned Flyleaf submodule currently contains FFmpeg 8 profile DLLs:
+This workspace currently stages FFmpeg 8 profile DLLs in the seed folder:
 
 - `avcodec-62.dll` — FileVersion `62.11.100`, ProductVersion `n8.0-16-gd8605a6b55-20250925`
 - `avdevice-62.dll` — FileVersion `62.1.100`, ProductVersion `n8.0-16-gd8605a6b55-20250925`
@@ -57,6 +82,6 @@ The pinned Flyleaf submodule currently contains FFmpeg 8 profile DLLs:
 
 When FFmpeg binaries change, update this README with:
 
-1. Source path and source revision/tag (if from submodule or external package).
+1. Source path and source revision/tag (if from external package).
 2. DLL list with `FileVersion` + `ProductVersion` from Windows file metadata.
 3. Capture date.

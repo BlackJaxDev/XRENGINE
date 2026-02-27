@@ -1,0 +1,172 @@
+﻿{
+  "schemaVersion": 1,
+  "entries": {
+    "binary-item|XREngine.Audio.csproj|runtimes\\win-x64\\native\\phonon.dll": {
+      "license": "Apache-2.0",
+      "owner": "Valve (Steam Audio)",
+      "licenseLink": "https://raw.githubusercontent.com/ValveSoftware/steam-audio/master/LICENSE.md",
+      "notes": "Verified from Steam Audio upstream LICENSE.md (Apache-2.0) and local file metadata (ProductName=Steam Audio, CompanyName=Valve Corporation, FileVersion=4.6.0)."
+    },
+
+    "binary-item|XREngine.csproj|..\\Build\\Dependencies\\FFmpeg\\HlsReference\\win-x64\\*.dll": {
+        "license": "LGPL-2.1-or-later",
+      "owner": "FFmpeg Project",
+        "licenseLink": "https://www.ffmpeg.org/legal.html",
+      "notes": "Assumes these DLLs are standard FFmpeg LGPL binaries staged for HLS playback support."
+    },
+
+    "binary-item|XREngine.csproj|C:\\Users\\<user>\\.nuget\\packages\\naudio.lame\\2.1.0\\build\\libmp3lame.32.dll": {
+      "license": "LGPL-2.0-or-later (LAME)",
+      "owner": "LAME Project (packaged via NAudio.Lame / Corey-M)",
+      "licenseLink": "http://lame.sourceforge.net/license.txt",
+      "notes": "LAME encoder library; NAudio.Lame wrapper is MIT, but the native libmp3lame DLL is under LGPL-2.0-or-later."
+    },
+
+    "binary-item|XREngine.csproj|C:\\Users\\<user>\\.nuget\\packages\\naudio.lame\\2.1.0\\build\\libmp3lame.64.dll": {
+      "license": "LGPL-2.0-or-later (LAME)",
+      "owner": "LAME Project (packaged via NAudio.Lame / Corey-M)",
+      "licenseLink": "http://lame.sourceforge.net/license.txt",
+      "notes": "Same as 32-bit: native LAME encoder library under LGPL-2.0-or-later."
+    },
+
+    "binary-item|XREngine.csproj|ffmpeg.exe": {
+        "license": "LGPL-2.1-or-later",
+      "owner": "FFmpeg Project",
+        "licenseLink": "https://www.ffmpeg.org/legal.html",
+      "notes": "Use LGPL-compatible FFmpeg builds for redistribution. Confirm build configuration with `ffmpeg -L`."
+    },
+
+    "binary-item|XREngine.csproj|ffplay.exe": {
+        "license": "LGPL-2.1-or-later",
+      "owner": "FFmpeg Project",
+        "licenseLink": "https://www.ffmpeg.org/legal.html",
+      "notes": "Same licensing family as ffmpeg.exe."
+    },
+
+    "binary-item|XREngine.csproj|ffprobe.exe": {
+        "license": "LGPL-2.1-or-later",
+      "owner": "FFmpeg Project",
+        "licenseLink": "https://www.ffmpeg.org/legal.html",
+      "notes": "Same licensing family as ffmpeg.exe."
+    },
+
+    "binary-item|XREngine.csproj|runtimes\\win-x64\\native\\postproc.dll": {
+        "license": "LGPL-2.1-or-later",
+      "owner": "FFmpeg Project",
+        "licenseLink": "https://www.ffmpeg.org/legal.html",
+      "notes": "Part of FFmpeg LGPL binary distribution."
+    },
+
+    "binary-item|XREngine.csproj|openvr_api.dll": {
+      "license": "BSD-3-Clause",
+      "owner": "Valve (OpenVR/SteamVR)",
+      "licenseLink": "https://github.com/ValveSoftware/openvr/blob/master/LICENSE",
+      "notes": "Assumes this is the standard OpenVR SDK binary from Valve."
+    },
+
+    "binary-item|XREngine.csproj|OVRLipSync.dll": {
+      "license": "Proprietary (Oculus SDK License Agreement)",
+      "owner": "Meta Platforms, Inc.",
+      "licenseLink": "https://developers.meta.com/horizon/licenses/oculussdk/",
+      "notes": "Redistributable in binary form under the Oculus SDK License. Not open-source and not GPL-compatible, but can be included alongside AGPL-3.0 code as a separate proprietary component."
+    },
+
+    "binary-item|XREngine.csproj|$(MetaOvrLipSyncWinX64Dir)OVRLipSync.dll": {
+      "license": "Proprietary (Oculus SDK License Agreement)",
+      "owner": "Meta Platforms, Inc.",
+      "licenseLink": "https://developers.meta.com/horizon/licenses/oculussdk/",
+      "notes": "Property-based include path for the optional ThirdParty OVR LipSync drop-folder binary."
+    },
+
+    "binary-item|XREngine.csproj|RestirGI.Native.dll": { 
+      "license": "Proprietary (NVIDIA RTXGI SDK License)",
+      "owner": "NVIDIA Corporation",
+      "licenseLink": "https://developer.nvidia.com/rtxgi",
+      "notes": "This DLL is from the NVIDIA RTXGI SDK, which includes ReSTIR GI. RTXGI is not open-source; it is distributed under the NVIDIA RTX SDK License Agreement. Redistribution in binary form is permitted, but the license is proprietary and not GPL-compatible."
+    },
+
+    "binary-item|XREngine.csproj|$(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll": {
+      "license": "Proprietary (NVIDIA RTXGI SDK License)",
+      "owner": "NVIDIA Corporation",
+      "licenseLink": "https://developer.nvidia.com/rtxgi",
+      "notes": "Property-based include path for the optional ThirdParty RTXGI drop-folder binary."
+    },
+
+    "binary-item|XREngine.csproj|runtimes\\win-x64\\native\\libmagicphysx.dll": { 
+      "license": "MIT (MagicPhysX) + NVIDIA PhysX 5 license",
+      "owner": "Cysharp (MagicPhysX) / NVIDIA (PhysX 5)",
+      "licenseLink": "https://github.com/Cysharp/MagicPhysX/blob/main/LICENSE",
+      "notes": "MagicPhysX itself is MIT-licensed. It is a .NET binding over NVIDIA PhysX 5, which is distributed under NVIDIA's PhysX license (BSD-style, but proprietary to NVIDIA). You should ship both the MagicPhysX MIT license and the NVIDIA PhysX license text in your notices."
+    },
+
+    "binary-item|XREngine.csproj|runtimes\\win-x64\\native\\rive.dll": {
+      "license": "MIT",
+      "owner": "Rive",
+      "licenseLink": "https://github.com/rive-app/rive-cpp/blob/master/LICENSE",
+      "notes": "Native rive.dll in this repo is built from the rive-sharp submodule's rive-cpp submodule; local LICENSE file is MIT."
+    },
+
+    "binary-item|XREngine.Editor.csproj|C:\\Program Files (x86)\\Steam\\steamapps\\common\\SteamVR\\bin\\win64\\openxr_loader.dll": {
+      "license": "Apache-2.0",
+      "owner": "Khronos Group (OpenXR loader), distributed via Valve/SteamVR",
+      "licenseLink": "https://github.com/KhronosGroup/OpenXR-SDK-Source/blob/master/LICENSE",
+      "notes": "OpenXR loader is Apache-2.0; confirm version from the SteamVR installation if you need exact text."
+    },
+
+    "binary-item|XREngine.VRClient.csproj|openvr_api.dll": {
+      "license": "BSD-3-Clause",
+      "owner": "Valve (OpenVR/SteamVR)",
+      "licenseLink": "https://github.com/ValveSoftware/openvr/blob/master/LICENSE",
+      "notes": "Same OpenVR SDK binary family as other openvr_api.dll entries."
+    },
+
+    "checked-binary|XRENGINE/openvr_api.dll": {
+      "license": "BSD-3-Clause",
+      "owner": "Valve (OpenVR/SteamVR)",
+      "licenseLink": "https://github.com/ValveSoftware/openvr/blob/master/LICENSE",
+      "notes": "Checked binary; confirm hash matches the official OpenVR SDK build you rely on."
+    },
+    
+    "checked-binary|XRENGINE/OVRLipSync.dll": {
+      "license": "Proprietary (Oculus SDK License Agreement)",
+      "owner": "Meta Platforms, Inc.",
+      "licenseLink": "https://developers.meta.com/horizon/licenses/oculussdk/",
+      "notes": "Binary redistribution permitted under the Oculus SDK License. Must remain separate from AGPL-3.0 code."
+    },
+
+    "checked-binary|XRENGINE/runtimes/win-x64/native/libmagicphysx.dll": { 
+      "license": "MIT (MagicPhysX) + NVIDIA PhysX 5 license",
+      "owner": "Cysharp (MagicPhysX) / NVIDIA (PhysX 5)",
+      "licenseLink": "https://github.com/Cysharp/MagicPhysX/blob/main/LICENSE",
+      "notes": "Same as above; verify this DLL comes from the MagicPhysX NuGet package or its official build. Include both MagicPhysX (MIT) and NVIDIA PhysX license texts."
+    },
+
+    "submodule|Build/Submodules/rive-sharp": {
+      "license": "MIT",
+      "owner": "Rive (rive-app)",
+      "licenseLink": "https://github.com/rive-app/rive-cpp/blob/master/LICENSE",
+      "notes": "All Rive runtimes are MIT-licensed per Rive's published licensing policy. The rive-sharp repo lacks a root LICENSE file, but inherits MIT from its rive-cpp submodule (verified locally and upstream)."
+    },
+
+    "nested|CDT|CoACD": {
+      "license": "MPL-2.0",
+      "owner": "artem-ogre",
+      "licenseLink": "https://github.com/artem-ogre/CDT/blob/main/LICENSE",
+      "notes": "Based on upstream CDT license text; verify if your fetched revision differs."
+    },
+
+    "nuget|StirlingLabs.assimp.native.win-x64|5.2.5.4": {
+      "license": "BSD-3-Clause",
+      "owner": "Stirling Labs / Assimp contributors",
+      "licenseLink": "https://github.com/assimp/assimp/blob/master/LICENSE",
+      "notes": "Verified from NuGet catalog metadata for this exact package version (licenseExpression=BSD-3-Clause)."
+    },
+
+    "reference|XREngine.csproj|RiveSharp|..\\Build\\Submodules\\rive-sharp\\RiveSharp\\bin\\$(Configuration)\\netstandard2.0\\RiveSharp.dll": {
+      "license": "MIT",
+      "owner": "Rive (rive-app)",
+      "licenseLink": "https://github.com/rive-app/rive-cpp/blob/master/LICENSE",
+      "notes": "Locally built from the rive-sharp submodule. All Rive runtimes are MIT-licensed per Rive's published licensing policy."
+    }
+  }
+}

@@ -603,14 +603,14 @@ XRENGINE/Scene/Components/Audio/
 5. Run OpenAL regression checklist after merge.
 6. **Gate: full audio playback without OpenAL dependency, with OpenAL default unaffected.**
 
-### Phase 7 — Polish and editor integration
+### Phase 7 — Polish and editor integration  ✅ COMPLETE
 
-1. Editor UI for transport/effects selection in audio settings.
-2. Editor UI for Steam Audio material assignment.
-3. Editor UI for probe placement and baking.
-4. Runtime transport/effects switching (hot-swap).
-5. Performance profiling and hot-path allocation audit (§11 of AGENTS.md).
-6. Documentation updates.
+1. ✅ Editor UI for transport/effects selection — `AudioSettingsComponent` + `AudioSettingsComponentEditor` (ImGui).
+2. ✅ Editor UI for Steam Audio material assignment — `SteamAudioGeometryComponentEditor` (ImGui preset picker + per-band sliders).
+3. ✅ Editor UI for probe placement and baking — `SteamAudioProbeComponent` + `SteamAudioProbeComponentEditor` (ImGui).
+4. ✅ Runtime transport/effects switching — `AudioManager.RecreateListeners()` + `AudioSettings.ApplyTo()`.
+5. ✅ Performance audit — fixed `GetOrientation` heap alloc → `stackalloc`. All other hot paths verified clean.
+6. ✅ Documentation — `docs/architecture/audio-architecture.md` created, README index updated.
 
 ---
 
@@ -684,42 +684,42 @@ XRENGINE/Scene/Components/Audio/
 
 ### Phase 4 — Scene geometry + direct simulation
 
-- [ ] Implement `SteamAudioScene` (IPLScene create/commit, static + instanced mesh management)
-- [ ] Implement `SteamAudioGeometryComponent` (extract triangles, create IPLStaticMesh)
-- [ ] Handle instanced mesh transform updates
-- [ ] Implement `SteamAudioSimulator` (direct simulation: occlusion, distance atten, air absorption)
-- [ ] Wire simulation into `SteamAudioProcessor` per-source IPLDirectEffect
-- [ ] Define `SteamAudioMaterial` type and mapping
+- [x] Implement `SteamAudioScene` (IPLScene create/commit, static + instanced mesh management)
+- [x] Implement `SteamAudioGeometryComponent` (extract triangles, create IPLStaticMesh)
+- [x] Handle instanced mesh transform updates
+- [x] Implement `SteamAudioSimulator` (direct simulation: occlusion, distance atten, air absorption)
+- [x] Wire simulation into `SteamAudioProcessor` per-source IPLDirectEffect
+- [x] Define `SteamAudioMaterial` type and mapping
 - [ ] Verify: sound is occluded by geometry
 
 ### Phase 5 — Advanced simulation
 
-- [ ] Reflection simulation integration
-- [ ] Path simulation integration
-- [ ] Probe array / probe batch management
-- [ ] Baking workflow (reflections + pathing)
-- [ ] Ambisonics pipeline for environmental audio
+- [x] Reflection simulation integration
+- [x] Path simulation integration
+- [x] Probe array / probe batch management
+- [x] Baking workflow (reflections + pathing)
+- [x] Ambisonics pipeline for environmental audio
 
 ### Phase 6 — NAudio transport (optional)
 
-- [ ] Implement `NAudioTransport` (WaveOutSdl or WasapiOut)
-- [ ] Implement managed multi-source mixer
-- [ ] Validate NAudio + SteamAudio
-- [ ] Validate NAudio + Passthrough
-- [ ] Keep NAudio transport opt-in only (OpenAL remains default)
-- [ ] Re-run OpenAL regression checklist after integration
+- [x] Implement `NAudioTransport` (WaveOutSdl or WasapiOut)
+- [x] Implement managed multi-source mixer
+- [x] Validate NAudio + SteamAudio
+- [x] Validate NAudio + Passthrough
+- [x] Keep NAudio transport opt-in only (OpenAL remains default)
+- [x] Re-run OpenAL regression checklist after integration
 
 ### Phase 7 — Polish
 
-- [ ] Editor UI: transport/effects picker in audio settings
-- [ ] Editor UI: Steam Audio material assignment panel
-- [ ] Editor UI: probe placement tool
-- [ ] Runtime transport/effects hot-swap
-- [ ] Performance audit: zero per-frame allocations in audio tick path
-- [ ] phonon.dll fetch/build script under `Tools/Dependencies/`
-- [ ] License audit: verify Steam Audio license in `docs/DEPENDENCIES.md`
-- [ ] Update `docs/` with audio architecture notes
-- [ ] Update this work doc with final state
+- [x] Editor UI: transport/effects picker in audio settings (`AudioSettingsComponent` + `AudioSettingsComponentEditor`)
+- [x] Editor UI: Steam Audio material assignment panel (`SteamAudioGeometryComponentEditor`)
+- [x] Editor UI: probe placement tool (`SteamAudioProbeComponent` + `SteamAudioProbeComponentEditor`)
+- [x] Runtime transport/effects hot-swap (`AudioManager.RecreateListeners()`, `AudioSettings.ApplyTo()`)
+- [x] Performance audit: zero per-frame allocations in audio tick path (fixed `GetOrientation` stackalloc)
+- [x] phonon.dll fetch/build script under `Tools/Dependencies/` (pre-existing `Get-Phonon.ps1`)
+- [x] License audit: verify Steam Audio license in `docs/DEPENDENCIES.md` (pre-existing Apache-2.0 entry)
+- [x] Update `docs/` with audio architecture notes (`docs/architecture/audio-architecture.md`)
+- [x] Update this work doc with final state
 
 ---
 

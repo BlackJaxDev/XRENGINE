@@ -60,7 +60,7 @@ This document tracks code patterns in this repo that are **incompatible** or **h
 
 ### AOT-003 — `dynamic` COM automation (WScript.Shell)
 
-- Location: `Build/Submodules/Flyleaf/FlyleafLib/Utils/Utils.cs` (method `GetLnkTargetPath`)
+- Location: historical third-party utility path from a removed media submodule (method `GetLnkTargetPath`)
 - Pattern:
   - `dynamic windowsShell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell", true)!)`
   - `dynamic shortcut = windowsShell.CreateShortcut(filepath)`

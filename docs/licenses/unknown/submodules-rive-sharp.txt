@@ -1,4 +1,0 @@
-﻿License file not detected locally for submodule 'rive-sharp'.
-
-URL: https://github.com/rive-app/rive-sharp.git
-

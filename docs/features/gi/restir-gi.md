@@ -16,7 +16,7 @@ ReSTIR GI uses the `GL_NV_ray_tracing` extension to trace rays and resample ligh
 - **GPU**: NVIDIA RTX series (RTX 20xx or newer)
 - **API**: Vulkan rendering mode
 - **Driver**: Recent NVIDIA driver with ray tracing support
-- **Native DLL**: `RestirGI.Native.dll` must be present
+- **Native DLL**: `ThirdParty/NVIDIA/RTXGI/win-x64/RestirGI.Native.dll` must be present
 
 ## Initialization
 
@@ -131,7 +131,7 @@ Performance scales with:
 
 ## Native Bridge
 
-The `RestirGI.Native.dll` provides the OpenGL/Vulkan interop:
+The `RestirGI.Native.dll` (staged under `ThirdParty/NVIDIA/RTXGI/win-x64/`) provides the OpenGL/Vulkan interop:
 
 ```cpp
 // Native functions exposed:
@@ -153,6 +153,12 @@ cmake --build . --config Release
 ```
 
 The CMake project (`CMakeLists.txt`) is provided in the `GI` folder.
+
+After building, copy the produced DLL to:
+
+`ThirdParty/NVIDIA/RTXGI/win-x64/RestirGI.Native.dll`
+
+or run a normal managed build, which will stage it there automatically when `Build/RestirGI/bin/<Configuration>/RestirGINative.dll` exists.
 
 ## Error Handling
 

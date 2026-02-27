@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using XREngine.Audio;
 using XREngine.Data.Core;
 
 namespace XREngine
@@ -286,6 +287,7 @@ namespace XREngine
             Rendering.ApplyNvidiaDlssPreference();
             Rendering.ApplyIntelXessPreference();
             ApplyTimerSettings();
+            ApplyAudioPreferences();
         }
 
         /// <summary>
@@ -342,6 +344,21 @@ namespace XREngine
             {
                 ApplyTimerSettings();
             }
+            else if (propertyName == nameof(UserSettings.AudioTransport)
+                || propertyName == nameof(UserSettings.AudioEffects)
+                || propertyName == nameof(UserSettings.AudioArchitectureV2)
+                || propertyName == nameof(UserSettings.AudioSampleRate)
+                || propertyName == nameof(GameStartupSettings.AudioTransportOverride)
+                || propertyName == nameof(GameStartupSettings.AudioEffectsOverride)
+                || propertyName == nameof(GameStartupSettings.AudioArchitectureV2Override)
+                || propertyName == nameof(GameStartupSettings.AudioSampleRateOverride)
+                || propertyName == nameof(EditorPreferencesOverrides.AudioTransportOverride)
+                || propertyName == nameof(EditorPreferencesOverrides.AudioEffectsOverride)
+                || propertyName == nameof(EditorPreferencesOverrides.AudioArchitectureV2Override)
+                || propertyName == nameof(EditorPreferencesOverrides.AudioSampleRateOverride))
+            {
+                ApplyAudioPreferences();
+            }
         }
 
         /// <summary>
@@ -360,6 +377,41 @@ namespace XREngine
                 fixedUpdateFrequency,
                 vSync);
         }
+
+        /// <summary>
+        /// Applies audio preferences from the cascading settings system to the audio subsystem.
+        /// Maps data-layer enums to audio-layer enums and pushes to AudioSettings/AudioManager.
+        /// Cascade: Editor Prefs Override > Game Override > User Preference.
+        /// </summary>
+        private static void ApplyAudioPreferences()
+        {
+            AudioSettings.AudioArchitectureV2 = EffectiveSettings.AudioArchitectureV2;
+            AudioSettings.DefaultTransport = MapTransport(EffectiveSettings.AudioTransport);
+            AudioSettings.DefaultEffects = MapEffects(EffectiveSettings.AudioEffects);
+            AudioSettings.SampleRate = EffectiveSettings.AudioSampleRate;
+            AudioSettings.ApplyTo(Audio);
+        }
+
+        /// <summary>
+        /// Maps the data-layer <see cref="EAudioTransport"/> to the audio-layer <see cref="AudioTransportType"/>.
+        /// </summary>
+        private static AudioTransportType MapTransport(EAudioTransport transport) => transport switch
+        {
+            EAudioTransport.OpenAL => AudioTransportType.OpenAL,
+            EAudioTransport.NAudio => AudioTransportType.NAudio,
+            _ => AudioTransportType.OpenAL,
+        };
+
+        /// <summary>
+        /// Maps the data-layer <see cref="EAudioEffects"/> to the audio-layer <see cref="AudioEffectsType"/>.
+        /// </summary>
+        private static AudioEffectsType MapEffects(EAudioEffects effects) => effects switch
+        {
+            EAudioEffects.OpenAL_EFX => AudioEffectsType.OpenAL_EFX,
+            EAudioEffects.SteamAudio => AudioEffectsType.SteamAudio,
+            EAudioEffects.Passthrough => AudioEffectsType.Passthrough,
+            _ => AudioEffectsType.OpenAL_EFX,
+        };
 
         #endregion
 
@@ -504,6 +556,7 @@ namespace XREngine
             _editorPreferences.ApplyOverrides(_editorPreferencesOverrides);
 
             Rendering.ApplyEditorPreferencesChange(null);
+            ApplyAudioPreferences();
             EditorPreferencesChanged?.Invoke(_editorPreferences);
         }
 

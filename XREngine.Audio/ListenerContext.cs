@@ -462,9 +462,8 @@ namespace XREngine.Audio
         public unsafe void GetOrientation(out Vector3 forward, out Vector3 up)
         {
             MakeCurrent();
-            float[] orientation = new float[6];
-            fixed (float* pOrientation = orientation)
-                Api.GetListenerProperty(ListenerFloatArray.Orientation, pOrientation);
+            float* orientation = stackalloc float[6];
+            Api.GetListenerProperty(ListenerFloatArray.Orientation, orientation);
             VerifyError();
             forward = new Vector3(orientation[0], orientation[1], orientation[2]);
             up = new Vector3(orientation[3], orientation[4], orientation[5]);
