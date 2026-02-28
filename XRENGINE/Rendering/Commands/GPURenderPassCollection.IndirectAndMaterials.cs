@@ -258,7 +258,7 @@ namespace XREngine.Rendering.Commands
                 dispatchCommands = _indirectDrawBuffer!.ElementCount;
             }
 
-            uint dispatchGroups = Math.Max(1, ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
+            uint dispatchGroups = Math.Max(1, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
             _indirectRenderTaskShader.DispatchCompute(dispatchGroups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
             Dbg($"Indirect dispatch groups={dispatchGroups} visible={VisibleCommandCount}", "Indirect");
@@ -320,7 +320,7 @@ namespace XREngine.Rendering.Commands
             _buildHotCommandsProgram.BindBuffer(_culledSceneToRenderBuffer, 0);
             _buildHotCommandsProgram.BindBuffer(_culledHotCommandBuffer, 1);
 
-            uint groups = Math.Max(1u, ComputeDispatch.ForCommands(inputCount).Item1);
+            uint groups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(inputCount).Item1);
             _buildHotCommandsProgram.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
@@ -376,7 +376,7 @@ namespace XREngine.Rendering.Commands
             _culledCountBuffer.BindTo(_buildKeysComputeShader, GPUBatchingBindings.BuildKeysCulledCount);
             _keyIndexBufferA.BindTo(_buildKeysComputeShader, GPUBatchingBindings.BuildKeysSortKeys);
 
-            uint groups = Math.Max(1, ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
+            uint groups = Math.Max(1, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
             _buildKeysComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
         }
 

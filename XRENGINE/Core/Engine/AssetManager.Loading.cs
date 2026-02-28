@@ -272,7 +272,7 @@ namespace XREngine
 
             var request = new RemoteJobRequest
             {
-                Operation = RemoteJobOperations.AssetLoad,
+                Operation = RemoteJobRequest.Operations.AssetLoad,
                 TransferMode = transferMode,
                 Payload = payload,
                 Metadata = metadata,
@@ -329,7 +329,7 @@ namespace XREngine
 
             var request = new RemoteJobRequest
             {
-                Operation = RemoteJobOperations.AssetLoad,
+                Operation = RemoteJobRequest.Operations.AssetLoad,
                 TransferMode = RemoteJobTransferMode.RequestFromRemote,
                 Metadata = metadata,
             };
@@ -390,7 +390,7 @@ namespace XREngine
 
             var request = new RemoteJobRequest
             {
-                Operation = RemoteJobOperations.AssetLoad,
+                Operation = RemoteJobRequest.Operations.AssetLoad,
                 TransferMode = RemoteJobTransferMode.RequestFromRemote,
                 Metadata = metadata,
             };

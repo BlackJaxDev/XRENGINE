@@ -39,15 +39,15 @@ Audited all 8 files in `XREngine.Editor/Mcp/Actions/`:
 
 | File | Action Count | With Undo | Gaps | Read-Only/Non-Mutating |
 |------|-------------|-----------|------|------------------------|
-| EditorMcpActions.Scene.cs | 21 | 12 | 0 | 9 |
-| EditorMcpActions.Components.cs | 5 | 3 | 0 | 2 |
+| EditorMcpActions.Scene.cs | 21 | 8 | 4 | 9 |
+| EditorMcpActions.Components.cs | 5 | 2 | 1 | 2 |
 | EditorMcpActions.Transform.cs | 2 | 2 | 0 | 0 |
-| EditorMcpActions.World.cs | 10 | 5 | 0 | 5 |
+| EditorMcpActions.World.cs | 10 | 0 | 5 | 5 |
 | EditorMcpActions.Workflow.cs | 11 | 2 | 0 | 9 |
 | EditorMcpActions.Viewport.cs | 1 | 0 | 0 | 1 |
 | EditorMcpActions.Introspection.cs | 16 | 0 | 0 | 16 |
 | EditorMcpActions.Helpers.cs | 0 | 0 | 0 | 0 |
-| **Total** | **66** | **24** | **0** | **42** |
+| **Total** | **66** | **14** | **10** | **42** |
 
 ### Covered (14 actions with proper undo)
 

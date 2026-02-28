@@ -1,7 +1,7 @@
-using Extensions;
 using System.IO;
 using Silk.NET.OpenGL;
 using XREngine.Data.Core;
+using XREngine.Rendering.Shaders;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -59,51 +59,6 @@ namespace XREngine.Rendering.OpenGL
             public EShaderType Mode => Data.Type;
 
             public string? LocalIncludeDirectoryPath { get; set; } = null;
-
-            private static string? GetEngineShaderRoot()
-                => string.IsNullOrWhiteSpace(Engine.Assets?.EngineAssetsPath)
-                    ? null
-                    : Path.Combine(Engine.Assets!.EngineAssetsPath, "Shaders");
-
-            private static string? GetGameShaderRoot()
-                => string.IsNullOrWhiteSpace(Engine.Assets?.GameAssetsPath)
-                    ? null
-                    : Path.Combine(Engine.Assets!.GameAssetsPath, "Shaders");
-
-            private static string? FindIncludeInShaderRoots(string includePath)
-            {
-                if (string.IsNullOrWhiteSpace(includePath))
-                    return null;
-
-                bool hasDirectory = includePath.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) >= 0;
-                string?[] roots = [GetEngineShaderRoot(), GetGameShaderRoot()];
-
-                foreach (string? root in roots)
-                {
-                    if (string.IsNullOrWhiteSpace(root))
-                        continue;
-
-                    if (hasDirectory)
-                    {
-                        string candidate = Path.Combine(root, includePath);
-                        if (File.Exists(candidate))
-                            return candidate;
-                        continue;
-                    }
-
-                    try
-                    {
-                        foreach (string candidate in Directory.EnumerateFiles(root, includePath, SearchOption.AllDirectories))
-                            return candidate;
-                    }
-                    catch
-                    {
-                        // Ignore IO errors; fall through to other roots.
-                    }
-                }
-
-                return null;
-            }
 
             public bool IsCompiled
             {
@@ -223,122 +178,12 @@ namespace XREngine.Rendering.OpenGL
 
             public string? ResolveFullSource()
             {
-                List<string?> resolvedPaths = [];
-                string? src = ResolveIncludesRecursive(SourceText, resolvedPaths) ?? SourceText;
-
-                // Resolve engine snippets (#pragma snippet "name")
-                if (src != null)
-                    src = Shaders.ShaderSnippets.ResolveSnippets(src);
+                string? src = ShaderSourcePreprocessor.ResolveSource(SourceText ?? string.Empty, Data.Source?.FilePath, out List<string> resolvedPaths);
 
                 if (resolvedPaths.Count > 0)
                     Debug.OpenGL($"Resolved {resolvedPaths.Count} includes:{Environment.NewLine}{string.Join(Environment.NewLine, resolvedPaths.Select(x => $" - {x}"))}");
                 
                 return src;
-            }
-
-            /// <summary>
-            /// Searches for '#include' directives in the source text and replaces them with the contents of the included file.
-            /// </summary>
-            /// <param name="sourceText"></param>
-            /// <param name="resolvedPaths"></param>
-            /// <returns></returns>
-            private string? ResolveIncludesRecursive(string? sourceText, List<string?> resolvedPaths)
-            {
-                if (string.IsNullOrEmpty(sourceText))
-                    return null;
-
-                int[] includeLocations = sourceText.FindAllOccurrences(0, "#include");
-                (int Index, int Length, string InsertText)[] insertions = new (int, int, string)[includeLocations.Length];
-                for (int i = 0; i < includeLocations.Length; ++i)
-                {
-                    int loc = includeLocations[i];
-                    int pathIndex = loc + 8;
-                    while (char.IsWhiteSpace(sourceText[pathIndex])) ++pathIndex;
-                    char first = sourceText[pathIndex];
-                    int endIndex;
-                    int startIndex;
-                    if (first == '"')
-                    {
-                        //Quoted path
-                        startIndex = pathIndex + 1;
-                        endIndex = sourceText.FindFirst(pathIndex + 1, '"');
-                    }
-                    else
-                    {
-                        //Unquoted path, use newline to determine end
-                        startIndex = pathIndex;
-                        static bool IsNewline(char x) => x == '\n';
-                        endIndex = sourceText.FindFirst(pathIndex + 1, IsNewline);
-                    }
-                    string fileText;
-                    string includePath = sourceText[startIndex..endIndex];
-                    if (string.IsNullOrWhiteSpace(includePath))
-                        fileText = string.Empty;
-                    else
-                    {
-                        try
-                        {
-                            if (!includePath.IsAbsolutePath())
-                            {
-                                bool valid = false;
-                                string? fullPath = null;
-                                string?[] dirCheckPaths = 
-                                [
-                                    LocalIncludeDirectoryPath,
-                                    GetEngineShaderRoot(),
-                                    GetGameShaderRoot()
-                                ];
-                                foreach (string? dirPath in dirCheckPaths)
-                                {
-                                    if (!string.IsNullOrWhiteSpace(dirPath))
-                                    {
-                                        fullPath = Path.Combine(dirPath, includePath);
-                                        valid = File.Exists(fullPath);
-                                        if (valid)
-                                            break;
-                                    }
-                                }
-                                if (!valid)
-                                {
-                                    fullPath = FindIncludeInShaderRoots(includePath);
-                                    valid = !string.IsNullOrWhiteSpace(fullPath);
-                                }
-
-                                includePath = !valid ? Path.GetFullPath(includePath) : fullPath ?? string.Empty;
-                            }
-                            if (resolvedPaths.Contains(includePath))
-                            {
-                                //Infinite recursion, path already visited
-                                Debug.OpenGL($"Infinite include recursion detected; the path '{includePath}' will not be included again.");
-                                fileText = string.Empty;
-                            }
-                            else
-                            {
-                                fileText = File.ReadAllText(includePath);
-                                resolvedPaths.Add(includePath);
-                                fileText = ResolveIncludesRecursive(fileText, resolvedPaths) ?? string.Empty;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.OpenGL(ex.Message);
-                            fileText = string.Empty;
-                        }
-                    }
-                    insertions[i] = (loc, endIndex + 1 - loc, fileText);
-                }
-
-                int offset = 0;
-                int index;
-                foreach (var (Index, Length, InsertText) in insertions)
-                {
-                    index = Index + offset;
-                    sourceText = sourceText.Remove(index, Length);
-                    sourceText = sourceText.Insert(index, InsertText);
-                    offset += InsertText.Length - Length;
-                }
-
-                return sourceText;
             }
         }
 

@@ -30,6 +30,14 @@ namespace XREngine
         public string? SenderId { get; init; }
         /// <summary>Optional target peer; null means broadcast.</summary>
         public string? TargetId { get; init; }
+
+        /// <summary>
+        /// Well-known operation labels for remote job routing.
+        /// </summary>
+        public static class Operations
+        {
+            public const string AssetLoad = "asset/load";
+        }
     }
 
     /// <summary>
@@ -58,11 +66,4 @@ namespace XREngine
         Task<RemoteJobResponse> SendAsync(RemoteJobRequest request, CancellationToken cancellationToken);
     }
 
-    /// <summary>
-    /// Well-known operation labels for remote job routing.
-    /// </summary>
-    public static class RemoteJobOperations
-    {
-        public const string AssetLoad = "asset/load";
-    }
 }

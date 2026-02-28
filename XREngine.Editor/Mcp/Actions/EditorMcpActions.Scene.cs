@@ -1023,7 +1023,7 @@ namespace XREngine.Editor.Mcp
             if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
-            var prefab = SceneNodePrefabService.CreatePrefabAsset(node, assetName, targetDirectory);
+            var prefab = SceneNodePrefabUtility.CreatePrefabAsset(node, assetName, targetDirectory);
             return Task.FromResult(new McpToolResponse($"Created prefab '{assetName}'.", new { id = prefab.ID, path = prefab.FilePath }));
         }
 

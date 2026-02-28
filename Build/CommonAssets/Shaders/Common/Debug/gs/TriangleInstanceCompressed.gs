@@ -12,12 +12,12 @@ layout(std430, binding = 0) buffer TrianglesBuffer
     float TriData[];
 };
 
-#include "../helper/DebugPerVertex.glsl"
+#include "Common/Debug/helper/DebugPerVertex.glsl"
 
 uniform mat4 InverseViewMatrix;
 uniform mat4 ProjMatrix;
 
-#include "../helper/DebugTriangle.glsl"
+#include "Common/Debug/helper/DebugTriangle.glsl"
 
 void main()
 {

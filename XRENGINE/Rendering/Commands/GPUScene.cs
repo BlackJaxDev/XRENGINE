@@ -2345,7 +2345,7 @@ namespace XREngine.Rendering.Commands
             program.BindBuffer(_commandAabbBuffer, 1);
             program.Uniform("numCommands", commandCount);
 
-            (uint x, uint y, uint z) = ComputeDispatch.ForCommands(Math.Max(commandCount, 1u));
+            (uint x, uint y, uint z) = XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(commandCount, 1u));
             program.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage);
         }
 

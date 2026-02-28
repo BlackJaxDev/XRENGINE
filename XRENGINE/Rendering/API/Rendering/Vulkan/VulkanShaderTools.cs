@@ -1159,9 +1159,6 @@ internal static class VulkanShaderAutoUniforms
 internal static class VulkanShaderCompiler
 {
     private static readonly Shaderc ShadercApi = Shaderc.GetApi();
-    private static readonly Regex IncludeRegex = new(
-        @"^\s*#\s*include\s+[""<](?<path>[^"">]+)["">]\s*$",
-        RegexOptions.Compiled | RegexOptions.Multiline);
     private static readonly Regex OvrMultiviewExtensionRegex = new(
         @"^\s*#\s*extension\s+GL_OVR_multiview2\s*:\s*(?<behavior>\w+)\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
@@ -1201,8 +1198,7 @@ internal static class VulkanShaderCompiler
     {
         entryPoint = "main";
         string source = shader.Source?.Text ?? string.Empty;
-        source = ExpandIncludes(source, shader.Source?.FilePath);
-        source = ShaderSnippets.ResolveSnippets(source);
+        source = ShaderSourcePreprocessor.ResolveSource(source, shader.Source?.FilePath, annotateIncludes: true);
         source = NormalizeLegacyStereoForVulkan(source, shader.Name ?? "UnnamedShader");
         if (string.IsNullOrWhiteSpace(source))
             throw new InvalidOperationException($"Shader '{shader.Name ?? "UnnamedShader"}' does not contain GLSL source code.");
@@ -1311,18 +1307,6 @@ internal static class VulkanShaderCompiler
             _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
         };
 
-    private static string ExpandIncludes(string source, string? sourcePath)
-    {
-        if (string.IsNullOrWhiteSpace(source) || !source.Contains("#include", StringComparison.Ordinal))
-            return source;
-
-        string? sourceDirectory = string.IsNullOrWhiteSpace(sourcePath)
-            ? null
-            : Path.GetDirectoryName(sourcePath);
-
-        return ExpandIncludesRecursive(source, sourceDirectory, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-    }
-
     private static string BuildSourcePreview(string source, int maxLines)
     {
         string[] lines = source.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
@@ -1333,41 +1317,6 @@ internal static class VulkanShaderCompiler
             builder.AppendLine($"{i + 1,4}: {lines[i]}");
 
         return builder.ToString();
-    }
-
-    private static string ExpandIncludesRecursive(string source, string? currentDirectory, HashSet<string> includeStack)
-    {
-        StringBuilder output = new(source.Length + 128);
-        using StringReader reader = new(source);
-
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
-        {
-            Match includeMatch = IncludeRegex.Match(line);
-            if (!includeMatch.Success)
-            {
-                output.AppendLine(line);
-                continue;
-            }
-
-            string includePath = includeMatch.Groups["path"].Value.Trim();
-            string resolvedPath = ResolveIncludePath(currentDirectory, includePath)
-                ?? throw new InvalidOperationException($"Failed to resolve shader include '{includePath}'.");
-
-            string normalizedPath = Path.GetFullPath(resolvedPath);
-            if (!includeStack.Add(normalizedPath))
-                throw new InvalidOperationException($"Recursive shader include detected for '{normalizedPath}'.");
-
-            string includedSource = File.ReadAllText(normalizedPath);
-            string expandedInclude = ExpandIncludesRecursive(includedSource, Path.GetDirectoryName(normalizedPath), includeStack);
-            includeStack.Remove(normalizedPath);
-
-            output.AppendLine($"// begin include {includePath}");
-            output.AppendLine(expandedInclude);
-            output.AppendLine($"// end include {includePath}");
-        }
-
-        return output.ToString();
     }
 
     private static string RewriteLegacyMultiviewExtensionsForVulkan(string source)
@@ -1438,70 +1387,6 @@ internal static class VulkanShaderCompiler
                 $"Shader '{shaderName}' contains NV stereo semantics that cannot be represented in Vulkan GLSL. " +
                 "Use multiview-compatible logic (GL_EXT_multiview / gl_ViewIndex) and avoid NV secondary-position/viewport-mask built-ins.");
         }
-    }
-
-    private static string? ResolveIncludePath(string? currentDirectory, string includePath)
-    {
-        if (Path.IsPathRooted(includePath) && File.Exists(includePath))
-            return includePath;
-
-        if (!string.IsNullOrWhiteSpace(currentDirectory))
-        {
-            string fromCurrentDirectory = Path.Combine(currentDirectory, includePath);
-            if (File.Exists(fromCurrentDirectory))
-                return fromCurrentDirectory;
-        }
-
-        string? fromShaderRoots = FindIncludeInShaderRoots(includePath);
-        if (!string.IsNullOrWhiteSpace(fromShaderRoots))
-            return fromShaderRoots;
-
-        return null;
-    }
-
-    private static string? GetEngineShaderRoot()
-        => string.IsNullOrWhiteSpace(Engine.Assets?.EngineAssetsPath)
-            ? null
-            : Path.Combine(Engine.Assets!.EngineAssetsPath, "Shaders");
-
-    private static string? GetGameShaderRoot()
-        => string.IsNullOrWhiteSpace(Engine.Assets?.GameAssetsPath)
-            ? null
-            : Path.Combine(Engine.Assets!.GameAssetsPath, "Shaders");
-
-    private static string? FindIncludeInShaderRoots(string includePath)
-    {
-        if (string.IsNullOrWhiteSpace(includePath))
-            return null;
-
-        bool hasDirectory = includePath.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) >= 0;
-        string?[] roots = [GetEngineShaderRoot(), GetGameShaderRoot()];
-
-        foreach (string? root in roots)
-        {
-            if (string.IsNullOrWhiteSpace(root))
-                continue;
-
-            if (hasDirectory)
-            {
-                string candidate = Path.Combine(root, includePath);
-                if (File.Exists(candidate))
-                    return candidate;
-                continue;
-            }
-
-            try
-            {
-                foreach (string candidate in Directory.EnumerateFiles(root, includePath, SearchOption.AllDirectories))
-                    return candidate;
-            }
-            catch
-            {
-                // Ignore IO errors and continue trying remaining roots.
-            }
-        }
-
-        return null;
     }
 }
 

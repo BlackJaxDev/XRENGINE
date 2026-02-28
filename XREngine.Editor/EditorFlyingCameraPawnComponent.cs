@@ -13,6 +13,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
+using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -1974,6 +1975,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         input.RegisterKeyEvent(EKey.F5, EButtonInputType.Pressed, SetPickModeFaces);
         input.RegisterKeyEvent(EKey.F6, EButtonInputType.Pressed, SetPickModeLines);
         input.RegisterKeyEvent(EKey.F7, EButtonInputType.Pressed, SetPickModePoints);
+        input.RegisterKeyEvent(EKey.F8, EButtonInputType.Pressed, ToggleRenderUIThroughPipeline);
         
         // Debug camera mode controls
         input.RegisterKeyEvent(EKey.F9, EButtonInputType.Pressed, ToggleDebugCameraMode);
@@ -1990,6 +1992,24 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void SetPickModeFaces() => RaycastMode = ERaycastHitMode.Faces;
     private void SetPickModeLines() => RaycastMode = ERaycastHitMode.Lines;
     private void SetPickModePoints() => RaycastMode = ERaycastHitMode.Points;
+
+    /// <summary>
+    /// F8 emergency toggle: switches screen-space UI between in-pipeline and overlay rendering.
+    /// If the current pipeline lacks a VPRC_RenderScreenSpaceUI command, rendering *over*
+    /// (overlay) ensures the UI remains visible and accessible.
+    /// </summary>
+    private void ToggleRenderUIThroughPipeline()
+    {
+        var player = Controller as LocalPlayerController;
+        if (player is null)
+        {
+            Debug.Out("[F8] No associated player \u2014 cannot toggle UI rendering mode.");
+            return;
+        }
+
+        player.RenderUIThroughPipeline = !player.RenderUIThroughPipeline;
+        Debug.Out($"[F8] RenderUIThroughPipeline = {player.RenderUIThroughPipeline}");
+    }
 
     private void Select()
     {

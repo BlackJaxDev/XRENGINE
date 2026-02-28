@@ -170,7 +170,7 @@ namespace XREngine
 
             return request.Operation switch
             {
-                RemoteJobOperations.AssetLoad => await HandleRemoteAssetLoadAsync(request).ConfigureAwait(false),
+                RemoteJobRequest.Operations.AssetLoad => await HandleRemoteAssetLoadAsync(request).ConfigureAwait(false),
                 _ => RemoteJobResponse.FromError(request.JobId, $"Unsupported remote job operation '{request.Operation}'."),
             };
         }

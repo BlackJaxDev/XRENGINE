@@ -13,7 +13,7 @@ layout(std430, binding = 0) buffer LinesBuffer
     float LineData[];
 };
 
-#include "../helper/DebugPerVertex.glsl"
+#include "Common/Debug/helper/DebugPerVertex.glsl"
 
 uniform mat4 InverseViewMatrix;
 uniform mat4 ProjMatrix;
@@ -23,7 +23,7 @@ uniform int TotalLines;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 
-#include "../helper/DebugLineQuad.glsl"
+#include "Common/Debug/helper/DebugLineQuad.glsl"
 
 void main()
 {

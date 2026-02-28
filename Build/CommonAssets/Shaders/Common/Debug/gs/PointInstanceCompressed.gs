@@ -13,13 +13,13 @@ layout(std430, binding = 0) buffer PointsBuffer
     float PointData[];
 };
 
-#include "../helper/DebugPerVertex.glsl"
+#include "Common/Debug/helper/DebugPerVertex.glsl"
 
 uniform mat4 InverseViewMatrix;
 uniform mat4 ProjMatrix;
 uniform float PointSize = 0.01f;
 
-#include "../helper/DebugPointQuad.glsl"
+#include "Common/Debug/helper/DebugPointQuad.glsl"
 
 void main()
 {

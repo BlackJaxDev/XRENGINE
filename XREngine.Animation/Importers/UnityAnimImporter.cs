@@ -26,17 +26,17 @@ namespace XREngine.Animation.Importers
             /// <summary>
             /// Gets the left (in) tangent mode from the tangentMode bitmask.
             /// </summary>
-            public TangentMode LeftTangentMode => TangentModeHelper.GetLeftTangentMode(CombinedTangentMode);
+            public TangentMode LeftTangentMode => UnityAnimationClip.TangentModeHelper.GetLeftTangentMode(CombinedTangentMode);
 
             /// <summary>
             /// Gets the right (out) tangent mode from the tangentMode bitmask.
             /// </summary>
-            public TangentMode RightTangentMode => TangentModeHelper.GetRightTangentMode(CombinedTangentMode);
+            public TangentMode RightTangentMode => UnityAnimationClip.TangentModeHelper.GetRightTangentMode(CombinedTangentMode);
 
             /// <summary>
             /// Gets whether the tangent is "broken" (left and right can be edited independently).
             /// </summary>
-            public bool IsBroken => TangentModeHelper.IsBroken(CombinedTangentMode);
+            public bool IsBroken => UnityAnimationClip.TangentModeHelper.IsBroken(CombinedTangentMode);
 
             /// <summary>
             /// Gets the interpolation type for the incoming (left) tangent.

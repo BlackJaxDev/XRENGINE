@@ -44,6 +44,18 @@ namespace XREngine
         private int _mcpServerRateLimitWindowSeconds = 60;
         private bool _mcpServerIncludeStatusInPing = true;
 
+        // MCP Assistant (in-editor AI chat window) settings
+        private int _mcpAssistantProviderIndex = 0;
+        private string _mcpAssistantOpenAiApiKey = string.Empty;
+        private string _mcpAssistantAnthropicApiKey = string.Empty;
+        private string _mcpAssistantOpenAiModel = "gpt-5-codex";
+        private string _mcpAssistantOpenAiRealtimeModel = "gpt-4o-realtime-preview";
+        private string _mcpAssistantAnthropicModel = "claude-sonnet-4-5";
+        private int _mcpAssistantMaxTokens = 4096;
+        private bool _mcpAssistantUseRealtimeWebSocket = false;
+        private bool _mcpAssistantAttachMcpServer = true;
+        private bool _mcpAssistantAutoScroll = true;
+
         [Category("Theme")]
         [DisplayName("Theme")]
         [Description("Theme and color customization for editor visuals.")]
@@ -256,6 +268,128 @@ namespace XREngine
             set => SetField(ref _mcpServerIncludeStatusInPing, value);
         }
 
+        // ── MCP Assistant (in-editor AI chat window) ─────────────────────
+
+        /// <summary>
+        /// Selected provider index (0 = Codex / OpenAI, 1 = Claude Code / Anthropic).
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Provider")]
+        [Description("AI provider selection (0 = Codex, 1 = Claude Code).")]
+        public int McpAssistantProviderIndex
+        {
+            get => _mcpAssistantProviderIndex;
+            set => SetField(ref _mcpAssistantProviderIndex, Math.Clamp(value, 0, 1));
+        }
+
+        /// <summary>
+        /// OpenAI API key used by the MCP Assistant window.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("OpenAI API Key")]
+        [Description("API key for OpenAI / Codex provider.")]
+        public string McpAssistantOpenAiApiKey
+        {
+            get => _mcpAssistantOpenAiApiKey;
+            set => SetField(ref _mcpAssistantOpenAiApiKey, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Anthropic API key used by the MCP Assistant window.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Anthropic API Key")]
+        [Description("API key for Anthropic / Claude Code provider.")]
+        public string McpAssistantAnthropicApiKey
+        {
+            get => _mcpAssistantAnthropicApiKey;
+            set => SetField(ref _mcpAssistantAnthropicApiKey, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Model name for OpenAI standard (non-realtime) requests.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("OpenAI Model")]
+        [Description("Model name for OpenAI standard HTTP requests.")]
+        public string McpAssistantOpenAiModel
+        {
+            get => _mcpAssistantOpenAiModel;
+            set => SetField(ref _mcpAssistantOpenAiModel, value ?? "gpt-5-codex");
+        }
+
+        /// <summary>
+        /// Model name for OpenAI Realtime WebSocket requests.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("OpenAI Realtime Model")]
+        [Description("Model name for OpenAI Realtime WebSocket requests.")]
+        public string McpAssistantOpenAiRealtimeModel
+        {
+            get => _mcpAssistantOpenAiRealtimeModel;
+            set => SetField(ref _mcpAssistantOpenAiRealtimeModel, value ?? "gpt-4o-realtime-preview");
+        }
+
+        /// <summary>
+        /// Model name for Anthropic / Claude Code requests.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Anthropic Model")]
+        [Description("Model name for Anthropic Messages API requests.")]
+        public string McpAssistantAnthropicModel
+        {
+            get => _mcpAssistantAnthropicModel;
+            set => SetField(ref _mcpAssistantAnthropicModel, value ?? "claude-sonnet-4-5");
+        }
+
+        /// <summary>
+        /// Maximum token count per AI request.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Max Tokens")]
+        [Description("Maximum token limit for AI provider requests.")]
+        public int McpAssistantMaxTokens
+        {
+            get => _mcpAssistantMaxTokens;
+            set => SetField(ref _mcpAssistantMaxTokens, Math.Clamp(value, 64, 128_000));
+        }
+
+        /// <summary>
+        /// Whether to use the OpenAI Realtime WebSocket API instead of standard HTTP.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Use Realtime WebSocket")]
+        [Description("Send OpenAI prompts via the Realtime WebSocket API instead of standard HTTP.")]
+        public bool McpAssistantUseRealtimeWebSocket
+        {
+            get => _mcpAssistantUseRealtimeWebSocket;
+            set => SetField(ref _mcpAssistantUseRealtimeWebSocket, value);
+        }
+
+        /// <summary>
+        /// Whether to attach the local MCP server to provider requests.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Attach MCP Server")]
+        [Description("Include the local MCP server URL in provider requests so the AI can use editor tools.")]
+        public bool McpAssistantAttachMcpServer
+        {
+            get => _mcpAssistantAttachMcpServer;
+            set => SetField(ref _mcpAssistantAttachMcpServer, value);
+        }
+
+        /// <summary>
+        /// Whether the chat log auto-scrolls during streaming.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Auto-Scroll")]
+        [Description("Automatically scroll the chat log to the bottom during streaming.")]
+        public bool McpAssistantAutoScroll
+        {
+            get => _mcpAssistantAutoScroll;
+            set => SetField(ref _mcpAssistantAutoScroll, value);
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -317,6 +451,18 @@ namespace XREngine
             McpServerRateLimitRequests = source.McpServerRateLimitRequests;
             McpServerRateLimitWindowSeconds = source.McpServerRateLimitWindowSeconds;
             McpServerIncludeStatusInPing = source.McpServerIncludeStatusInPing;
+
+            // MCP Assistant
+            McpAssistantProviderIndex = source.McpAssistantProviderIndex;
+            McpAssistantOpenAiApiKey = source.McpAssistantOpenAiApiKey;
+            McpAssistantAnthropicApiKey = source.McpAssistantAnthropicApiKey;
+            McpAssistantOpenAiModel = source.McpAssistantOpenAiModel;
+            McpAssistantOpenAiRealtimeModel = source.McpAssistantOpenAiRealtimeModel;
+            McpAssistantAnthropicModel = source.McpAssistantAnthropicModel;
+            McpAssistantMaxTokens = source.McpAssistantMaxTokens;
+            McpAssistantUseRealtimeWebSocket = source.McpAssistantUseRealtimeWebSocket;
+            McpAssistantAttachMcpServer = source.McpAssistantAttachMcpServer;
+            McpAssistantAutoScroll = source.McpAssistantAutoScroll;
         }
 
         public void ApplyOverrides(EditorPreferencesOverrides overrides)
@@ -742,9 +888,9 @@ namespace XREngine
         private bool _enableRenderStatisticsTracking = true;
         private bool _enableUILayoutDebugLogging = false;
         private bool _enableProfilerUdpSending = false;
-        private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.Tasks;
-        private EDebugVisualizerPopulationMode _debugVisualizerPopulationMode = EDebugVisualizerPopulationMode.Tasks;
-        private EDebugPrimitiveBufferFormat _debugPrimitiveBufferFormat = EDebugPrimitiveBufferFormat.Expanded;
+        private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.JobSystem;
+        private EDebugVisualizerPopulationMode _debugVisualizerPopulationMode = EDebugVisualizerPopulationMode.DirectMemory;
+        private EDebugPrimitiveBufferFormat _debugPrimitiveBufferFormat = EDebugPrimitiveBufferFormat.Compressed;
 
         [Category("Debug")]
         [DisplayName("Render 3D Mesh Bounds")]

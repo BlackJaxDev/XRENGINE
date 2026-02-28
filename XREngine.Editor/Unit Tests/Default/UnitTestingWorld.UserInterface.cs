@@ -626,6 +626,7 @@ public static partial class EditorUnitTests
                 new ToolbarButton("Take Screenshot", TakeScreenshot),
                 new ToolbarButton("Shader Locking Tool", _ => ShaderLockingWindow.Instance.Open()),
                 new ToolbarButton("Shader Analyzer Tool", _ => ShaderAnalyzerWindow.Instance.Open()),
+                new ToolbarButton("MCP Assistant", _ => McpAssistantWindow.Instance.Open()),
             ]),
             new ToolbarButton("View"),
             new ToolbarButton("Window"),

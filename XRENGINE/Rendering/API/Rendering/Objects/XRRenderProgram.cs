@@ -1463,30 +1463,33 @@ namespace XREngine.Rendering
                 }
             }
         }
-    }
 
-    public static class ComputeDispatch
-    {
-        public static (uint x, uint y, uint z) ForCommands(uint commandCount, uint localSizeX = 256, uint maxGroupsPerDim = 65535)
+        /// <summary>
+        /// Utility for computing GPU compute dispatch group dimensions.
+        /// </summary>
+        public static class ComputeDispatch
         {
-            // Total workgroups needed (ceil)
-            ulong groupsNeeded = (commandCount + (localSizeX - 1)) / localSizeX;
+            public static (uint x, uint y, uint z) ForCommands(uint commandCount, uint localSizeX = 256, uint maxGroupsPerDim = 65535)
+            {
+                // Total workgroups needed (ceil)
+                ulong groupsNeeded = (commandCount + (localSizeX - 1)) / localSizeX;
 
-            // Distribute across X/Y/Z with per-dimension cap, using ceil at each step.
-            ulong gx = Math.Min(groupsNeeded, (ulong)maxGroupsPerDim);
-            ulong remainingAfterX = (groupsNeeded + gx - 1) / gx;
+                // Distribute across X/Y/Z with per-dimension cap, using ceil at each step.
+                ulong gx = Math.Min(groupsNeeded, (ulong)maxGroupsPerDim);
+                ulong remainingAfterX = (groupsNeeded + gx - 1) / gx;
 
-            ulong gy = Math.Min(remainingAfterX, (ulong)maxGroupsPerDim);
-            ulong remainingAfterY = (remainingAfterX + gy - 1) / gy;
+                ulong gy = Math.Min(remainingAfterX, (ulong)maxGroupsPerDim);
+                ulong remainingAfterY = (remainingAfterX + gy - 1) / gy;
 
-            ulong gz = Math.Min(remainingAfterY, (ulong)maxGroupsPerDim);
+                ulong gz = Math.Min(remainingAfterY, (ulong)maxGroupsPerDim);
 
-            // Sanity: if even after packing we still need more than Max in Z, N is astronomically large.
-            if (gx * gy * gz < groupsNeeded)
-                throw new ArgumentOutOfRangeException(nameof(commandCount),
-                    $"Too many commands for single dispatch under per-dimension limit {maxGroupsPerDim}.");
+                // Sanity: if even after packing we still need more than Max in Z, N is astronomically large.
+                if (gx * gy * gz < groupsNeeded)
+                    throw new ArgumentOutOfRangeException(nameof(commandCount),
+                        $"Too many commands for single dispatch under per-dimension limit {maxGroupsPerDim}.");
 
-            return ((uint)gx, (uint)gy, (uint)gz);
+                return ((uint)gx, (uint)gy, (uint)gz);
+            }
         }
     }
 }

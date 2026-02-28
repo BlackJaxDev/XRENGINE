@@ -41,7 +41,9 @@ These are repository-default expectations unless a task explicitly says otherwis
 - `XREngine.UnitTests/` - test project for engine/editor subsystems.
 - `Assets/UnitTestingWorldSettings.json` - startup world toggles used by unit-testing world flows.
 - `.vscode/tasks.json` and `.vscode/launch.json` - source of truth for local run/debug task orchestration.
+- `ExecTool.bat` - interactive launcher for all `Tools/` scripts (see §6).
 - `docs/` - architecture, API guides, rendering notes, backlog/design docs.
+- `docs/features/mcp-server.md` - full MCP server documentation (see §15).
 
 ### Editor UI Paths
 
@@ -85,6 +87,19 @@ When working on editor tooling or features, default to the ImGui path unless the
     - `Start-PoseSourceClient-NoDebug`
     - `Start-PoseReceiverClient-NoDebug`
     - `Start-LocalPoseSync-NoDebug`
+
+### ExecTool (interactive script launcher)
+
+The repository root contains `ExecTool.bat`, which provides an interactive numbered menu for every script under `Tools/`.
+
+```bash
+ExecTool              # interactive menu
+ExecTool 16           # run tool #16 directly (Find-BuildWarnings)
+ExecTool --list       # print all tools and exit
+ExecTool --help       # show usage
+```
+
+Tools are grouped into categories: **Build**, **Editor**, **Repo**, **Docs**, **Reports**, and **Deps** (dependency installers). Each entry shows a one-line description and the script path.
 
 ### Debug profiles
 
@@ -253,6 +268,64 @@ Before handoff:
 - Include any opportunistic unrelated fixes you made (if small).
 - Call out any larger unrelated failures.
 - Update docs for any user-facing workflow/flag/task changes.
+
+## 15) MCP Server (AI / External Tool Integration)
+
+The editor embeds an **MCP (Model Context Protocol) server** that exposes scene hierarchy, component, transform, asset, and editor-state operations over HTTP JSON-RPC 2.0. This lets AI assistants (e.g., GitHub Copilot, Claude) and custom tooling interact with a running editor instance.
+
+Full documentation: `docs/features/mcp-server.md`.
+
+### Enabling / disabling the server
+
+The MCP server can be toggled **at any time** while the editor is running — it is not limited to startup.
+
+**Option A — Editor Preferences (recommended for runtime toggling):**
+Open the **Global Editor Preferences** panel in the ImGui editor and look for the **MCP Server** category. Flip `McpServerEnabled` to `true`. Changes take effect immediately; the server starts (or stops) without restarting the editor. You can also change `McpServerPort` on the fly — the server will restart on the new port.
+
+**Option B — Command-line flags (set-and-persist):**
+```bash
+XREngine.Editor.exe --mcp                   # enable on default port 5467
+XREngine.Editor.exe --mcp --mcp-port 8080   # enable on custom port
+```
+Command-line flags write to the same preferences, so the server stays enabled on subsequent launches unless the preference is toggled back off.
+
+### Connecting VS Code / Copilot
+
+Add the server to `.vscode/mcp.json` (workspace-scoped) or VS Code user settings:
+
+```json
+{
+  "servers": {
+    "xrengine": {
+      "type": "http",
+      "url": "http://localhost:5467/mcp/"
+    }
+  }
+}
+```
+
+Once the editor's MCP server is running, the tools (e.g., `list_worlds`, `list_scene_nodes`, `create_scene_node`, `capture_viewport_screenshot`) appear in the Copilot Chat tools panel.
+
+### Key settings reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `McpServerEnabled` | `false` | Enable/disable at runtime |
+| `McpServerPort` | `5467` | HTTP port |
+| `McpServerRequireAuth` | `false` | Require `Authorization: Bearer` header |
+| `McpServerReadOnly` | `false` | Block mutating tools |
+| `McpServerAllowedTools` / `McpServerDeniedTools` | `""` | Per-tool allow/deny lists |
+| `McpServerRateLimitEnabled` | `false` | Per-client rate limiting |
+
+See `docs/features/mcp-server.md` for the full settings table, protocol details, available commands, and instructions for adding new tools.
+
+### Regenerating MCP docs
+
+After adding or renaming MCP tools, regenerate the tool table in the docs:
+
+```powershell
+pwsh Tools/Reports/generate_mcp_docs.ps1
+```
 
 ---
 

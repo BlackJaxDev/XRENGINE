@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using XREngine.Rendering.Models.Materials.Textures;
 using XREngine.Rendering;
@@ -61,6 +62,160 @@ public unsafe partial class VulkanRenderer
         private bool _mouseSubscribed;
         private bool _disposed;
 
+        // ── Win32 clipboard P/Invoke ─────────────────────────────────────
+
+        private const uint CF_UNICODETEXT = 13;
+        private const uint GMEM_MOVEABLE = 0x0002;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool OpenClipboard(IntPtr hWndNewOwner);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool CloseClipboard();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool EmptyClipboard();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr GetClipboardData(uint uFormat);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalLock(IntPtr hMem);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GlobalUnlock(IntPtr hMem);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GlobalFree(IntPtr hMem);
+
+        // Buffer for GetClipboardText return — must stay valid until the next call.
+        private static IntPtr s_clipboardReturnBuffer;
+
+        /// <summary>
+        /// ImGui callback: reads UTF-8 text from the Win32 clipboard.
+        /// The returned pointer remains valid until the next invocation.
+        /// </summary>
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static byte* GetClipboardTextCallback(void* userData)
+        {
+            if (s_clipboardReturnBuffer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(s_clipboardReturnBuffer);
+                s_clipboardReturnBuffer = IntPtr.Zero;
+            }
+
+            try
+            {
+                if (!OpenClipboard(IntPtr.Zero))
+                    return null;
+
+                try
+                {
+                    IntPtr hData = GetClipboardData(CF_UNICODETEXT);
+                    if (hData == IntPtr.Zero)
+                        return null;
+
+                    IntPtr pData = GlobalLock(hData);
+                    if (pData == IntPtr.Zero)
+                        return null;
+
+                    try
+                    {
+                        string text = Marshal.PtrToStringUni(pData) ?? string.Empty;
+                        byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(text);
+                        s_clipboardReturnBuffer = Marshal.AllocHGlobal(utf8.Length + 1);
+                        Marshal.Copy(utf8, 0, s_clipboardReturnBuffer, utf8.Length);
+                        Marshal.WriteByte(s_clipboardReturnBuffer, utf8.Length, 0);
+                        return (byte*)s_clipboardReturnBuffer;
+                    }
+                    finally
+                    {
+                        GlobalUnlock(hData);
+                    }
+                }
+                finally
+                {
+                    CloseClipboard();
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// ImGui callback: writes UTF-8 text to the Win32 clipboard.
+        /// </summary>
+        [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+        private static void SetClipboardTextCallback(void* userData, byte* text)
+        {
+            try
+            {
+                if (text == null)
+                    return;
+
+                string str = Marshal.PtrToStringUTF8((IntPtr)text) ?? string.Empty;
+
+                if (!OpenClipboard(IntPtr.Zero))
+                    return;
+
+                try
+                {
+                    EmptyClipboard();
+
+                    byte[] unicodeBytes = System.Text.Encoding.Unicode.GetBytes(str);
+                    IntPtr hGlobal = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)(unicodeBytes.Length + 2));
+                    if (hGlobal == IntPtr.Zero)
+                        return;
+
+                    IntPtr pGlobal = GlobalLock(hGlobal);
+                    if (pGlobal == IntPtr.Zero)
+                    {
+                        GlobalFree(hGlobal);
+                        return;
+                    }
+
+                    Marshal.Copy(unicodeBytes, 0, pGlobal, unicodeBytes.Length);
+                    Marshal.WriteInt16(pGlobal, unicodeBytes.Length, 0); // null terminator
+                    GlobalUnlock(hGlobal);
+
+                    SetClipboardData(CF_UNICODETEXT, hGlobal);
+                    // hGlobal ownership transfers to the clipboard — do not free.
+                }
+                finally
+                {
+                    CloseClipboard();
+                }
+            }
+            catch
+            {
+                // Clipboard write failures are non-fatal; silently ignore.
+            }
+        }
+
+        /// <summary>
+        /// Installs Win32 clipboard callbacks on the ImGui IO so Ctrl+C/V/X
+        /// work in all InputText fields under the Vulkan backend.
+        /// </summary>
+        private static void InstallClipboardCallbacks(ImGuiIOPtr io)
+        {
+            if (!OperatingSystem.IsWindows())
+                return;
+
+            io.GetClipboardTextFn = (IntPtr)(delegate* unmanaged[Cdecl]<void*, byte*>)&GetClipboardTextCallback;
+            io.SetClipboardTextFn = (IntPtr)(delegate* unmanaged[Cdecl]<void*, byte*, void>)&SetClipboardTextCallback;
+        }
+
+        // ── End clipboard ────────────────────────────────────────────────
+
         public IntPtr ContextHandle => _context;
 
         public VulkanImGuiBackend(VulkanRenderer renderer)
@@ -81,6 +236,7 @@ public unsafe partial class VulkanRenderer
             }
             io.Fonts.Build();
 
+            InstallClipboardCallbacks(io);
             TryAttachInputHandlers();
         }
 

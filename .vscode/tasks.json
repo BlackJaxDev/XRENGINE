@@ -458,6 +458,27 @@
             "problemMatcher": "$msCompile"
         },
         {
+            "label": "Report-BuildWarnings",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\Reports\\Find-BuildWarnings.ps1",
+                "-Root",
+                "${workspaceFolder}",
+                "-OutFile",
+                "${workspaceFolder}\\docs\\work\\audit\\warnings.md"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "Report-NewAllocations",
             "type": "shell",
             "command": "powershell",
@@ -568,6 +589,7 @@
                 "echo Running all audit reports..."
             ],
             "dependsOn": [
+                "Report-BuildWarnings",
                 "Report-NewAllocations",
                 "Report-StaticClasses",
                 "Report-ThreadTaskRuns",

@@ -72,7 +72,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (Engine.Rendering.Settings.EnableIntelXessFrameGeneration)
             {
-                bool frameGenOk = IntelXessNative.TryDispatchFrameGeneration(
+                bool frameGenOk = IntelXessManager.Native.TryDispatchFrameGeneration(
                     viewport,
                     sourceFbo,
                     motion,
@@ -87,7 +87,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             }
 
-            bool upscaleOk = IntelXessNative.TryDispatchUpscale(
+            bool upscaleOk = IntelXessManager.Native.TryDispatchUpscale(
                 viewport,
                 sourceFbo,
                 destination,
@@ -146,7 +146,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ? ActivePipelineInstance.GetTexture<XRTexture>(MotionTextureName)
                 : null;
 
-            bool ok = StreamlineNative.TryDispatchUpscale(
+            bool ok = NvidiaDlssManager.Native.TryDispatchUpscale(
                 viewport,
                 sourceFbo,
                 destination,

@@ -3,12 +3,14 @@ using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.XeSS
 {
-    /// <summary>
-    /// Thin P/Invoke surface for the Intel XeSS exports so the engine can enqueue native upscaling and frame generation when available.
-    /// The current implementation intentionally keeps the invocation surface conservative to avoid hard dependencies when the runtime is absent.
-    /// </summary>
-    internal static class IntelXessNative
+    public static partial class IntelXessManager
     {
+        /// <summary>
+        /// Thin P/Invoke surface for the Intel XeSS exports so the engine can enqueue native upscaling and frame generation when available.
+        /// The current implementation intentionally keeps the invocation surface conservative to avoid hard dependencies when the runtime is absent.
+        /// </summary>
+        internal static class Native
+        {
         private const string XessLibrary = "xess.dll";
         private const string XessFrameGenLibrary = "libxess_fg.dll";
 
@@ -100,6 +102,7 @@ namespace XREngine.Rendering.XeSS
             // Placeholder: frame generation requires a DirectX 12 swap chain path with tagged resources per the XeSS-FG SDK.
             errorMessage ??= "XeSS frame generation dispatch is not wired to the DirectX 12 swap chain path.";
             return false;
+            }
         }
     }
 }

@@ -3,12 +3,14 @@ using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.DLSS
 {
-    /// <summary>
-    /// Thin P/Invoke surface for the Streamline DLSS exports so the engine can
-    /// enqueue native upscaling when available.
-    /// </summary>
-    internal static class StreamlineNative
+    public static partial class NvidiaDlssManager
     {
+        /// <summary>
+        /// Thin P/Invoke surface for the Streamline DLSS exports so the engine can
+        /// enqueue native upscaling when available.
+        /// </summary>
+        internal static class Native
+        {
         private const string StreamlineLibrary = "sl.interposer.dll";
         private const uint kFeatureDLSS = 0;
 
@@ -173,5 +175,6 @@ namespace XREngine.Rendering.DLSS
                 return false;
             }
         }
+    }
     }
 }

@@ -120,6 +120,38 @@ $results = $results | Sort-Object Scope, Namespace, ClassName, File, Line
 $topLevelResults = @($results | Where-Object { $_.Scope -eq "TopLevel" })
 $nestedResults = @($results | Where-Object { $_.Scope -eq "Nested" })
 
+# De-duplicate partial classes: group by (Namespace, ClassName, Scope) and show primary file + count
+function Group-Partials($items) {
+    $grouped = [ordered]@{}
+    foreach ($item in $items) {
+        $key = "$($item.Namespace)|$($item.ClassName)|$($item.Scope)|$($item.ParentType)"
+        if (-not $grouped.Contains($key)) {
+            $grouped[$key] = New-Object System.Collections.Generic.List[object]
+        }
+        $grouped[$key].Add($item)
+    }
+    $deduped = New-Object System.Collections.Generic.List[object]
+    foreach ($entry in $grouped.Values) {
+        $primary = $entry[0]
+        $partialCount = $entry.Count
+        $deduped.Add([pscustomobject]@{
+            Namespace = $primary.Namespace
+            ClassName = $primary.ClassName
+            File = $primary.File
+            Line = $primary.Line
+            Scope = $primary.Scope
+            ParentType = $primary.ParentType
+            PartialCount = $partialCount
+        })
+    }
+    return $deduped
+}
+
+$topLevelDeduped = @(Group-Partials $topLevelResults)
+$nestedDeduped = @(Group-Partials $nestedResults)
+
+$uniqueTotal = $topLevelDeduped.Count + $nestedDeduped.Count
+
 New-Item -ItemType Directory -Force -Path (Split-Path $OutFile) | Out-Null
 
 $linesOut = New-Object System.Collections.Generic.List[string]
@@ -127,43 +159,46 @@ $linesOut.Add("# Static Classes")
 $linesOut.Add("")
 $linesOut.Add("Generated: $(Get-Date -Format "yyyy-MM-dd")")
 $linesOut.Add("")
-$linesOut.Add("Total: $($results.Count)")
-$linesOut.Add("Top-level: $($topLevelResults.Count)")
-$linesOut.Add("Nested: $($nestedResults.Count)")
+$linesOut.Add("Total rows (before de-dup): $($results.Count)")
+$linesOut.Add("Unique static classes: $uniqueTotal")
+$linesOut.Add("Top-level: $($topLevelDeduped.Count)")
+$linesOut.Add("Nested: $($nestedDeduped.Count)")
 $linesOut.Add("")
 
 $linesOut.Add("## Top-level static classes")
 $linesOut.Add("")
-if ($topLevelResults.Count -eq 0) {
+if ($topLevelDeduped.Count -eq 0) {
     $linesOut.Add("None")
     $linesOut.Add("")
 }
 else {
-    $linesOut.Add("| Namespace | Class | File | Line |")
-    $linesOut.Add("| --- | --- | --- | --- |")
-    foreach ($item in $topLevelResults) {
+    $linesOut.Add("| Namespace | Class | File | Line | Partials |")
+    $linesOut.Add("| --- | --- | --- | --- | --- |")
+    foreach ($item in $topLevelDeduped) {
         $ns = if ($item.Namespace) { $item.Namespace } else { "(none)" }
-        $linesOut.Add("| $ns | $($item.ClassName) | $($item.File) | $($item.Line) |")
+        $partials = if ($item.PartialCount -gt 1) { "$($item.PartialCount)" } else { "" }
+        $linesOut.Add("| $ns | $($item.ClassName) | $($item.File) | $($item.Line) | $partials |")
     }
     $linesOut.Add("")
 }
 
 $linesOut.Add("## Nested static classes")
 $linesOut.Add("")
-if ($nestedResults.Count -eq 0) {
+if ($nestedDeduped.Count -eq 0) {
     $linesOut.Add("None")
     $linesOut.Add("")
 }
 else {
-    $linesOut.Add("| Namespace | Parent Type | Class | File | Line |")
-    $linesOut.Add("| --- | --- | --- | --- | --- |")
-    foreach ($item in $nestedResults) {
+    $linesOut.Add("| Namespace | Parent Type | Class | File | Line | Partials |")
+    $linesOut.Add("| --- | --- | --- | --- | --- | --- |")
+    foreach ($item in $nestedDeduped) {
         $ns = if ($item.Namespace) { $item.Namespace } else { "(none)" }
         $parentType = if ($item.ParentType) { $item.ParentType } else { "(unknown)" }
-        $linesOut.Add("| $ns | $parentType | $($item.ClassName) | $($item.File) | $($item.Line) |")
+        $partials = if ($item.PartialCount -gt 1) { "$($item.PartialCount)" } else { "" }
+        $linesOut.Add("| $ns | $parentType | $($item.ClassName) | $($item.File) | $($item.Line) | $partials |")
     }
 }
 
 Set-Content -Path $OutFile -Value $linesOut -Encoding UTF8
 
-Write-Host "Wrote $($results.Count) static classes to $OutFile"
+Write-Host "Wrote $uniqueTotal unique static classes ($($results.Count) rows before de-dup) to $OutFile"

@@ -169,7 +169,7 @@ namespace XREngine.Rendering
             bool addToWorldRootWhenNoParent = true)
         {
             ArgumentNullException.ThrowIfNull(prefab);
-            var instance = SceneNodePrefabService.Instantiate(prefab, this, parent, maintainWorldTransform);
+            var instance = SceneNodePrefabUtility.Instantiate(prefab, this, parent, maintainWorldTransform);
             FinalizePrefabSpawn(instance, parent, addToWorldRootWhenNoParent);
             return instance;
         }
@@ -215,7 +215,7 @@ namespace XREngine.Rendering
                                             bool addToWorldRootWhenNoParent = true)
         {
             ArgumentNullException.ThrowIfNull(variant);
-            var instance = SceneNodePrefabService.InstantiateVariant(variant, this, parent, maintainWorldTransform);
+            var instance = SceneNodePrefabUtility.InstantiateVariant(variant, this, parent, maintainWorldTransform);
             FinalizePrefabSpawn(instance, parent, addToWorldRootWhenNoParent);
             return instance;
         }
