@@ -131,17 +131,17 @@ namespace System
             long maxSize = offset + length;
             uint maxHigh = (uint)(maxSize >> 32);
             uint maxLow = (uint)maxSize;
-            Win32._FileMapProtect mProtect;
-            Win32._FileMapAccess mAccess;
+            Win32.FileMapProtect mProtect;
+            Win32.FileMapAccess mAccess;
             if (protect == FileMapProtect.ReadWrite)
             {
-                mProtect = Win32._FileMapProtect.ReadWrite;
-                mAccess = Win32._FileMapAccess.Write;
+                mProtect = Win32.FileMapProtect.ReadWrite;
+                mAccess = Win32.FileMapAccess.Write;
             }
             else
             {
-                mProtect = Win32._FileMapProtect.ReadOnly;
-                mAccess = Win32._FileMapAccess.Read;
+                mProtect = Win32.FileMapProtect.ReadOnly;
+                mAccess = Win32.FileMapAccess.Read;
             }
 
             using Win32.SafeHandle h = Win32.CreateFileMapping(hFile, null, mProtect, maxHigh, maxLow, string.Empty);

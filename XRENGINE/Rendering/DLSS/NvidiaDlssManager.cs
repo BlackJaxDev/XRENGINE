@@ -14,7 +14,7 @@ namespace XREngine.Rendering.DLSS
     /// The manager only adjusts internal render resolution and leaves the actual DLSS execution
     /// to the native runtime present in the host environment.
     /// </summary>
-    public static class NvidiaDlssManager
+    public static partial class NvidiaDlssManager
     {
         private const float MinScale = 0.25f;
         private const float MaxScale = 1.0f;

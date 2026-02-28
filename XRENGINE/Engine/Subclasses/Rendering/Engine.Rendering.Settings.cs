@@ -1369,6 +1369,9 @@ namespace XREngine
                 if (applyAll || propertyName == nameof(EditorDebugOptions.RenderTransformDebugInfo))
                     ApplyTransformDebugSetting();
 
+                if (applyAll || propertyName == nameof(EditorDebugOptions.UseDebugOpaquePipeline))
+                    ApplyRenderPipelinePreference();
+
                 if (applyAll || propertyName == nameof(EditorPreferences.ViewportPresentationMode))
                 {
                     foreach (var window in Engine.Windows)

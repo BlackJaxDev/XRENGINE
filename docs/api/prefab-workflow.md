@@ -5,14 +5,14 @@ This document summarizes the current prefab pipeline and the new utilities that 
 ## Creating prefab assets
 
 1. Author or select a scene node hierarchy in the world/editor.
-2. Call `SceneNodePrefabService.CreatePrefabAsset(rootNode, "AssetName", targetDirectory)` to clone the hierarchy, stamp prefab metadata, and write an `XRPrefabSource` asset.
+2. Call `SceneNodePrefabUtility.CreatePrefabAsset(rootNode, "AssetName", targetDirectory)` to clone the hierarchy, stamp prefab metadata, and write an `XRPrefabSource` asset.
 3. The generated prefab asset keeps stable GUIDs per node so overrides can be tracked later.
 
 ## Recording overrides and variants
 
 - While editing an instantiated prefab, use `SceneNodePrefabUtility.RecordPropertyOverride(node, "Transform.Position", newValue)` (or the higher-level tooling being built in the editor) to capture per-node overrides.
-- When you are happy with the changes, run `SceneNodePrefabService.CreateVariantAsset(instanceRoot, basePrefab, "VariantName", targetDirectory)` to create an `XRPrefabVariant`. The service automatically calls `SceneNodePrefabUtility.ExtractOverrides` so the variant only stores deltas.
-- Use `SceneNodePrefabService.CaptureOverrides(instanceRoot)` whenever you need the raw override payload (e.g., to preview differences or sync with source control).
+- When you are happy with the changes, run `SceneNodePrefabUtility.CreateVariantAsset(instanceRoot, basePrefab, "VariantName", targetDirectory)` to create an `XRPrefabVariant`. The utility automatically calls `SceneNodePrefabUtility.ExtractOverrides` so the variant only stores deltas.
+- Use `SceneNodePrefabUtility.CaptureOverrides(instanceRoot)` whenever you need the raw override payload (e.g., to preview differences or sync with source control).
 
 ## Instantiating prefabs at runtime
 
@@ -29,11 +29,11 @@ This document summarizes the current prefab pipeline and the new utilities that 
 
 ## Refreshing or breaking prefab links
 
-- To replay serialized overrides on an existing hierarchy, use `SceneNodePrefabService.ApplyVariantOverrides(instanceRoot, variant)`.
-- To permanently detach an instance from its source asset, call `SceneNodePrefabService.BreakPrefabLink(instanceRoot)`, which clears all prefab metadata.
+- To replay serialized overrides on an existing hierarchy, use `SceneNodePrefabUtility.ApplyVariantOverrides(instanceRoot, variant)`.
+- To permanently detach an instance from its source asset, call `SceneNodePrefabUtility.BreakPrefabLink(instanceRoot)`, which clears all prefab metadata.
 
 ## Where to integrate in the editor
 
-- Menu or toolbar actions can now call into `SceneNodePrefabService.CreatePrefabAsset` / `CreateVariantAsset` to persist authoring changes.
+- Menu or toolbar actions can now call into `SceneNodePrefabUtility.CreatePrefabAsset` / `CreateVariantAsset` to persist authoring changes.
 - Inspector widgets should invoke `SceneNodePrefabUtility.RecordPropertyOverride` when a prefab instance field changes so overrides stay in sync.
 - Scene hierarchy context actions can use the new `XRWorldInstance` helpers to spawn prefabs directly into the active world or parent selection.

@@ -1285,10 +1285,10 @@ namespace XREngine.Data.Geometry
         }
 
         public static bool TryIntersectFrustaAabb(PreparedFrustum frustumA, PreparedFrustum frustumB, out Vector3 aabbMin, out Vector3 aabbMax)
-            => FrustumIntersection.TryIntersectFrustaAabb(frustumA, frustumB, out aabbMin, out aabbMax);
+            => PreparedFrustum.FrustumIntersection.TryIntersectFrustaAabb(frustumA, frustumB, out aabbMin, out aabbMax);
 
         public static bool TryIntersectFrustaAabb(Frustum frustumA, Frustum frustumB, out Vector3 aabbMin, out Vector3 aabbMax)
-            => FrustumIntersection.TryIntersectFrustaAabb(
+            => PreparedFrustum.FrustumIntersection.TryIntersectFrustaAabb(
                 PreparedFrustum.FromFrustum(frustumA),
                 PreparedFrustum.FromFrustum(frustumB),
                 out aabbMin,

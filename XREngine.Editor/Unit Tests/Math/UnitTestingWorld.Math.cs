@@ -290,7 +290,7 @@ public static partial class EditorUnitTests
         PreparedFrustum preparedA = PreparedFrustum.FromFrustum(a);
         PreparedFrustum preparedB = PreparedFrustum.FromFrustum(b);
 
-        if (!FrustumIntersection.TryIntersectFrustaAabb(preparedA, preparedB, out Vector3 min, out Vector3 max))
+        if (!PreparedFrustum.FrustumIntersection.TryIntersectFrustaAabb(preparedA, preparedB, out Vector3 min, out Vector3 max))
             return;
 
         Vector3 center = (min + max) * 0.5f;

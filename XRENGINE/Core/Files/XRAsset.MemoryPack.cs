@@ -1,6 +1,7 @@
 using MemoryPack;
 using System;
 using XREngine.Core;
+using XREngine.Data.Core;
 
 namespace XREngine.Core.Files
 {

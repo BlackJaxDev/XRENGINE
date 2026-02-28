@@ -20,7 +20,7 @@ namespace XREngine
             bool maintainWorldTransform = false)
         {
             ArgumentNullException.ThrowIfNull(prefab);
-            return SceneNodePrefabService.Instantiate(prefab, world, parent, maintainWorldTransform);
+            return SceneNodePrefabUtility.Instantiate(prefab, world, parent, maintainWorldTransform);
         }
 
         public SceneNode? InstantiatePrefab(Guid prefabAssetId,
@@ -71,7 +71,7 @@ namespace XREngine
                                              bool maintainWorldTransform = false)
         {
             ArgumentNullException.ThrowIfNull(variant);
-            return SceneNodePrefabService.InstantiateVariant(variant, world, parent, maintainWorldTransform);
+            return SceneNodePrefabUtility.InstantiateVariant(variant, world, parent, maintainWorldTransform);
         }
 
         [RequiresUnreferencedCode("Prefab override reflection requires runtime metadata.")]

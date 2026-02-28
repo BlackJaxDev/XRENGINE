@@ -107,7 +107,6 @@ namespace XREngine.Data.Geometry
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => D;
         }
-    }
 
     public static class FrustumIntersection
     {
@@ -421,5 +420,6 @@ namespace XREngine.Data.Geometry
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float SignedDistance(Plane plane, Vector3 point)
             => Vector3.Dot(plane.Normal, point) + plane.D;
+    }
     }
 }

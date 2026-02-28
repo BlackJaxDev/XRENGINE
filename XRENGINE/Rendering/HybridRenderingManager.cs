@@ -1256,7 +1256,7 @@ namespace XREngine.Rendering
 
             // Dispatch compute shader
             uint groupSize = 32; // Should match local_size_x in shader
-            (uint groupsX, uint groupsY, uint groupsZ) = ComputeDispatch.ForCommands(dispatchCount, groupSize);
+            (uint groupsX, uint groupsY, uint groupsZ) = XRRenderProgram.ComputeDispatch.ForCommands(dispatchCount, groupSize);
 
             if (logGpu)
                 GpuDebug("Dispatching compute: groups=({0},{1},{2}) groupSize={3}", groupsX, groupsY, groupsZ, groupSize);

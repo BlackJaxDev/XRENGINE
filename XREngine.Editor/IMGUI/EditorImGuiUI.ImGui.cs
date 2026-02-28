@@ -573,6 +573,7 @@ public static partial class EditorImGuiUI
             UI.Tools.ShaderLockingWindow.Instance.RenderDialogs();
             UI.Tools.ShaderAnalyzerWindow.Instance.Render();
             UI.Tools.ShaderCrossCompilerWindow.Instance.Render();
+            UI.Tools.McpAssistantWindow.Instance.Render();
 
             // Background-mode model spawning on drop.
             // We track the dragged asset path from the Asset Explorer and spawn when the mouse is
@@ -1135,6 +1136,9 @@ public static partial class EditorImGuiUI
 
                 if (ImGui.MenuItem("Shader Cross-Compiler"))
                     ShaderCrossCompilerWindow.Instance.Open();
+
+                if (ImGui.MenuItem("MCP Assistant"))
+                    McpAssistantWindow.Instance.Open();
 
                 if (ImGui.MenuItem("Shader Graph Builder"))
                     _showShaderGraphPanel = true;

@@ -35,8 +35,8 @@ namespace XREngine.Core.Tools.Unity
                 var attrib = curve.Attribute;
                 var kfs = curve.Curve?.Curve?.Select(kf =>
                 {
-                    var leftTangentMode = TangentModeHelper.GetLeftTangentMode(kf.CombinedTangentMode);
-                    var rightTangentMode = TangentModeHelper.GetRightTangentMode(kf.CombinedTangentMode);
+                    var leftTangentMode = UnityAnimationClip.TangentModeHelper.GetLeftTangentMode(kf.CombinedTangentMode);
+                    var rightTangentMode = UnityAnimationClip.TangentModeHelper.GetRightTangentMode(kf.CombinedTangentMode);
                     return new FloatKeyframe
                     {
                         Second = kf.Time,

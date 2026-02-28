@@ -2,32 +2,33 @@ using System.Runtime.InteropServices;
 
 namespace XREngine.Data
 {
-    /// <summary>
-    /// P/Invoke interop for NVIDIA nvCOMP GPU-accelerated compression/decompression.
-    /// 
-    /// nvCOMP supports LZ4, Snappy, Deflate, GDeflate, Zstd, and more on CUDA GPUs.
-    /// On Blackwell+ (B200/B300/GB200/GB300), the hardware Decompression Engine (DE)
-    /// handles LZ4/Snappy/Deflate with zero SM usage.  On older GPUs, SM-based
-    /// fallback is used transparently.
-    /// 
-    /// <para><b>Requirements:</b></para>
-    /// <list type="bullet">
-    ///   <item><c>nvcomp.dll</c> / <c>libnvcomp.so</c> — download from
-    ///         <see href="https://developer.nvidia.com/nvcomp-downloads"/>.</item>
-    ///   <item>CUDA runtime (<c>cudart64_*.dll</c>).</item>
-    /// </list>
-    /// 
-    /// <para><b>Wire format:</b> The compressed output is a CPU-LZ4-compatible blob
-    /// (4-byte little-endian uncompressed size prefix followed by raw LZ4 block data),
-    /// identical to <see cref="Compression.CompressLz4"/>. This means archives written
-    /// with the GPU path can always be read back on the CPU path and vice-versa.</para>
-    /// </summary>
-    public static class NvCompInterop
+    public static partial class Compression
     {
+        /// <summary>
+        /// P/Invoke interop for NVIDIA nvCOMP GPU-accelerated compression/decompression.
+        /// 
+        /// nvCOMP supports LZ4, Snappy, Deflate, GDeflate, Zstd, and more on CUDA GPUs.
+        /// On Blackwell+ (B200/B300/GB200/GB300), the hardware Decompression Engine (DE)
+        /// handles LZ4/Snappy/Deflate with zero SM usage.  On older GPUs, SM-based
+        /// fallback is used transparently.
+        /// 
+        /// <para><b>Requirements:</b></para>
+        /// <list type="bullet">
+        ///   <item><c>nvcomp.dll</c> / <c>libnvcomp.so</c> — download from
+        ///         <see href="https://developer.nvidia.com/nvcomp-downloads"/>.</item>
+        ///   <item>CUDA runtime (<c>cudart64_*.dll</c>).</item>
+        /// </list>
+        /// 
+        /// <para><b>Wire format:</b> The compressed output is a CPU-LZ4-compatible blob
+        /// (4-byte little-endian uncompressed size prefix followed by raw LZ4 block data),
+        /// identical to <see cref="Compression.CompressLz4"/>. This means archives written
+        /// with the GPU path can always be read back on the CPU path and vice-versa.</para>
+        /// </summary>
+        public static partial class NvCompInterop
+        {
         // ────────────────────── Native library detection ──────────────────────
 
         private const string NvCompLib = "nvcomp";
-        private const string CudaRtLib = "cudart64_12"; // CUDA 12.x runtime
 
         private static readonly Lazy<bool> _isAvailable = new(ProbeNativeLibrary, LazyThreadSafetyMode.ExecutionAndPublication);
 
@@ -46,23 +47,18 @@ namespace XREngine.Data
                 if (!NativeLibrary.TryLoad(NvCompLib, out nint nvcompHandle))
                     return false;
 
-                if (!NativeLibrary.TryLoad(CudaRtLib, out nint cudartHandle))
+                if (!CudaInterop.TryLoad(out nint cudartHandle))
                 {
                     NativeLibrary.Free(nvcompHandle);
                     return false;
                 }
 
                 // Verify CUDA is functional by attempting to query device count.
-                int deviceCount = 0;
-                unsafe
+                if (!CudaInterop.TryGetDeviceCount(out _))
                 {
-                    int err = cudaGetDeviceCount(&deviceCount);
-                    if (err != 0 || deviceCount <= 0)
-                    {
-                        NativeLibrary.Free(nvcompHandle);
-                        NativeLibrary.Free(cudartHandle);
-                        return false;
-                    }
+                    NativeLibrary.Free(nvcompHandle);
+                    NativeLibrary.Free(cudartHandle);
+                    return false;
                 }
 
                 // Keep both libraries loaded for the process lifetime.
@@ -73,33 +69,6 @@ namespace XREngine.Data
                 return false;
             }
         }
-
-        // ──────────────────── CUDA Runtime P/Invoke ──────────────────────────
-
-        private const int cudaSuccess = 0;
-        private const int cudaMemcpyHostToDevice = 1;
-        private const int cudaMemcpyDeviceToHost = 2;
-
-        [DllImport(CudaRtLib, CallingConvention = CallingConvention.Cdecl)]
-        private static extern unsafe int cudaGetDeviceCount(int* count);
-
-        [DllImport(CudaRtLib, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int cudaMalloc(out nint devPtr, nuint size);
-
-        [DllImport(CudaRtLib, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int cudaFree(nint devPtr);
-
-        [DllImport(CudaRtLib, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int cudaMemcpy(nint dst, nint src, nuint count, int kind);
-
-        [DllImport(CudaRtLib, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int cudaStreamCreate(out nint stream);
-
-        [DllImport(CudaRtLib, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int cudaStreamSynchronize(nint stream);
-
-        [DllImport(CudaRtLib, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int cudaStreamDestroy(nint stream);
 
         // ──────────────────── nvCOMP Batched LZ4 P/Invoke ────────────────────
 
@@ -161,13 +130,6 @@ namespace XREngine.Data
 
         // ──────────────────── Helpers ────────────────────────────────────────
 
-        /// <summary>Throws <see cref="InvalidOperationException"/> on non-zero CUDA error.</summary>
-        private static void CudaCheck(int err, string context)
-        {
-            if (err != cudaSuccess)
-                throw new InvalidOperationException($"CUDA error {err} during {context}.");
-        }
-
         /// <summary>Throws <see cref="InvalidOperationException"/> on non-zero nvCOMP status.</summary>
         private static void NvcompCheck(int status, string context)
         {
@@ -211,91 +173,50 @@ namespace XREngine.Data
                 "CompressGetMaxOutputChunkSize");
 
             // ── 2. Allocate device buffers ───────────────────────────────
-            nint dSrc, dDst, dTemp;
-            CudaCheck(cudaMalloc(out dSrc, srcLen), "cudaMalloc(src)");
+            using var dSrc  = CudaInterop.DeviceBuffer.Allocate(srcLen, "cudaMalloc(src)");
+            using var dDst  = CudaInterop.DeviceBuffer.Allocate(maxOutputChunkBytes, "cudaMalloc(dst)");
+            using var dTemp = CudaInterop.DeviceBuffer.Allocate(tempBytes, "cudaMalloc(temp)");
 
-            try
-            {
-                CudaCheck(cudaMalloc(out dDst, maxOutputChunkBytes), "cudaMalloc(dst)");
-                try
-                {
-                    CudaCheck(cudaMalloc(out dTemp, tempBytes), "cudaMalloc(temp)");
-                    try
-                    {
-                        // ── 3. Create stream + copy host→device ──────────────
-                        nint stream;
-                        CudaCheck(cudaStreamCreate(out stream), "cudaStreamCreate");
-                        try
-                        {
-                            fixed (byte* pSrc = source)
-                            {
-                                CudaCheck(
-                                    cudaMemcpy(dSrc, (nint)pSrc, srcLen, cudaMemcpyHostToDevice),
-                                    "cudaMemcpy H→D");
-                            }
+            // ── 3. Create stream + copy host→device ──────────────────
+            using var stream = CudaInterop.CudaStream.Create();
+            CudaInterop.Upload(source, dSrc.Ptr);
 
-                            // ── 4. Launch batched compress ───────────────────
-                            // Batched API uses arrays of pointers/sizes (batch_size=1 here).
-                            nint srcPtr = dSrc;
-                            nint dstPtr = dDst;
-                            nuint srcSize = srcLen;
-                            nuint compressedSize = 0;
+            // ── 4. Launch batched compress ───────────────────────────
+            // Batched API uses arrays of pointers/sizes (batch_size=1 here).
+            nint srcPtr = dSrc.Ptr;
+            nint dstPtr = dDst.Ptr;
+            nuint srcSize = srcLen;
+            nuint compressedSize = 0;
 
-                            NvcompCheck(
-                                nvcompBatchedLZ4CompressAsync(
-                                    &srcPtr,
-                                    &srcSize,
-                                    srcLen,
-                                    1, // batch_size
-                                    dTemp,
-                                    tempBytes,
-                                    &dstPtr,
-                                    &compressedSize,
-                                    opts,
-                                    stream),
-                                "BatchedLZ4CompressAsync");
+            NvcompCheck(
+                nvcompBatchedLZ4CompressAsync(
+                    &srcPtr,
+                    &srcSize,
+                    srcLen,
+                    1, // batch_size
+                    dTemp.Ptr,
+                    tempBytes,
+                    &dstPtr,
+                    &compressedSize,
+                    opts,
+                    stream.Handle),
+                "BatchedLZ4CompressAsync");
 
-                            CudaCheck(cudaStreamSynchronize(stream), "cudaStreamSynchronize");
+            stream.Synchronize();
 
-                            // ── 5. Copy compressed data device→host ──────────
-                            // Read back the actual compressed size (written by the kernel).
-                            byte[] result = new byte[4 + (int)compressedSize];
+            // ── 5. Copy compressed data device→host ──────────────────
+            byte[] result = new byte[4 + (int)compressedSize];
 
-                            // Write 4-byte LE uncompressed size prefix.
-                            int uncompLen = source.Length;
-                            result[0] = (byte)(uncompLen);
-                            result[1] = (byte)(uncompLen >> 8);
-                            result[2] = (byte)(uncompLen >> 16);
-                            result[3] = (byte)(uncompLen >> 24);
+            // Write 4-byte LE uncompressed size prefix.
+            int uncompLen = source.Length;
+            result[0] = (byte)(uncompLen);
+            result[1] = (byte)(uncompLen >> 8);
+            result[2] = (byte)(uncompLen >> 16);
+            result[3] = (byte)(uncompLen >> 24);
 
-                            fixed (byte* pResult = &result[4])
-                            {
-                                CudaCheck(
-                                    cudaMemcpy((nint)pResult, dDst, compressedSize, cudaMemcpyDeviceToHost),
-                                    "cudaMemcpy D→H");
-                            }
+            CudaInterop.Download(dDst.Ptr, result.AsSpan(4, (int)compressedSize));
 
-                            return result;
-                        }
-                        finally
-                        {
-                            cudaStreamDestroy(stream);
-                        }
-                    }
-                    finally
-                    {
-                        cudaFree(dTemp);
-                    }
-                }
-                finally
-                {
-                    cudaFree(dDst);
-                }
-            }
-            finally
-            {
-                cudaFree(dSrc);
-            }
+            return result;
         }
 
         /// <summary>
@@ -332,83 +253,44 @@ namespace XREngine.Data
                 "DecompressGetTempSize");
 
             // ── 3. Allocate device buffers ───────────────────────────────
-            nint dComp, dDecomp, dTemp;
-            CudaCheck(cudaMalloc(out dComp, compLen), "cudaMalloc(comp)");
+            using var dComp   = CudaInterop.DeviceBuffer.Allocate(compLen, "cudaMalloc(comp)");
+            using var dDecomp = CudaInterop.DeviceBuffer.Allocate(uncompLen, "cudaMalloc(decomp)");
+            using var dTemp   = CudaInterop.DeviceBuffer.Allocate(tempBytes, "cudaMalloc(temp)");
 
-            try
-            {
-                CudaCheck(cudaMalloc(out dDecomp, uncompLen), "cudaMalloc(decomp)");
-                try
-                {
-                    CudaCheck(cudaMalloc(out dTemp, tempBytes), "cudaMalloc(temp)");
-                    try
-                    {
-                        // ── 4. Create stream + copy compressed host→device ───
-                        nint stream;
-                        CudaCheck(cudaStreamCreate(out stream), "cudaStreamCreate");
-                        try
-                        {
-                            fixed (byte* pComp = payload)
-                            {
-                                CudaCheck(
-                                    cudaMemcpy(dComp, (nint)pComp, compLen, cudaMemcpyHostToDevice),
-                                    "cudaMemcpy H→D");
-                            }
+            // ── 4. Create stream + copy compressed host→device ───────
+            using var stream = CudaInterop.CudaStream.Create();
+            CudaInterop.Upload(payload, dComp.Ptr);
 
-                            // ── 5. Launch batched decompress ─────────────────
-                            nint compPtr = dComp;
-                            nint decompPtr = dDecomp;
-                            nuint compSize = compLen;
-                            nuint uncompSize = uncompLen;
-                            nuint actualUncompSize = 0;
-                            int status = 0;
+            // ── 5. Launch batched decompress ─────────────────────────
+            nint compPtr = dComp.Ptr;
+            nint decompPtr = dDecomp.Ptr;
+            nuint compSize = compLen;
+            nuint uncompSize = uncompLen;
+            nuint actualUncompSize = 0;
+            int status = 0;
 
-                            NvcompCheck(
-                                nvcompBatchedLZ4DecompressAsync(
-                                    &compPtr,
-                                    &compSize,
-                                    &uncompSize,
-                                    &actualUncompSize,
-                                    1, // batch_size
-                                    dTemp,
-                                    tempBytes,
-                                    &decompPtr,
-                                    &status,
-                                    stream),
-                                "BatchedLZ4DecompressAsync");
+            NvcompCheck(
+                nvcompBatchedLZ4DecompressAsync(
+                    &compPtr,
+                    &compSize,
+                    &uncompSize,
+                    &actualUncompSize,
+                    1, // batch_size
+                    dTemp.Ptr,
+                    tempBytes,
+                    &decompPtr,
+                    &status,
+                    stream.Handle),
+                "BatchedLZ4DecompressAsync");
 
-                            CudaCheck(cudaStreamSynchronize(stream), "cudaStreamSynchronize");
+            stream.Synchronize();
 
-                            // ── 6. Copy decompressed data device→host ────────
-                            byte[] result = new byte[uncompressedSize];
-                            fixed (byte* pResult = result)
-                            {
-                                CudaCheck(
-                                    cudaMemcpy((nint)pResult, dDecomp, uncompLen, cudaMemcpyDeviceToHost),
-                                    "cudaMemcpy D→H");
-                            }
+            // ── 6. Copy decompressed data device→host ────────────────
+            byte[] result = new byte[uncompressedSize];
+            CudaInterop.Download(dDecomp.Ptr, result);
 
-                            return result;
-                        }
-                        finally
-                        {
-                            cudaStreamDestroy(stream);
-                        }
-                    }
-                    finally
-                    {
-                        cudaFree(dTemp);
-                    }
-                }
-                finally
-                {
-                    cudaFree(dDecomp);
-                }
-            }
-            finally
-            {
-                cudaFree(dComp);
-            }
+            return result;
         }
+    }
     }
 }

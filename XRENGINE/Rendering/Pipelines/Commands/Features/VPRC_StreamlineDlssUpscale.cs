@@ -46,7 +46,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ? ActivePipelineInstance.GetTexture<XRTexture>(MotionTextureName)
                 : null;
 
-            bool ok = StreamlineNative.TryDispatchUpscale(
+            bool ok = NvidiaDlssManager.Native.TryDispatchUpscale(
                 viewport,
                 sourceFbo,
                 destination,

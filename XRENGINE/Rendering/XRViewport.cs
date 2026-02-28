@@ -993,9 +993,7 @@ namespace XREngine.Rendering
             
             //using (Engine.Profiler.Start("XRViewport.Render"))
             {
-                bool forceUiThroughPipeline = Window?.Renderer is VulkanRenderer || AbstractRenderer.Current is VulkanRenderer;
-                bool uiThroughPipeline = forceUiThroughPipeline || (AssociatedPlayer?.RenderUIThroughPipeline ?? true);
-                var screenSpaceUI = uiThroughPipeline ? ResolveScreenSpaceUIForPipeline() : null;
+                bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
 
                 // Visibility-driven compute deformation (skinning/blendshapes).
                 // This runs on the render thread and uses the swapped (rendering) command buffers.
@@ -1048,10 +1046,7 @@ namespace XREngine.Rendering
                 return;
             }
 
-            bool forceUiThroughPipeline = Window?.Renderer is VulkanRenderer || AbstractRenderer.Current is VulkanRenderer;
-            bool uiThroughPipeline = forceUiThroughPipeline || (AssociatedPlayer?.RenderUIThroughPipeline ?? true);
-            var screenSpaceUI = uiThroughPipeline
-                ? ResolveScreenSpaceUIForPipeline() : null;
+            bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
 
             _renderPipeline.Render(
                 world.VisualScene,
@@ -1066,6 +1061,46 @@ namespace XREngine.Rendering
 
             if (!uiThroughPipeline)
                 RenderScreenSpaceUIOverlay(targetFbo);
+        }
+
+        /// <summary>
+        /// Determines whether screen-space UI should be rendered through the pipeline or as an overlay,
+        /// with automatic fallback when the pipeline lacks a <see cref="VPRC_RenderScreenSpaceUI"/> command.
+        /// </summary>
+        /// <param name="screenSpaceUI">The resolved UI canvas to pass into the pipeline, or null if overlay mode.</param>
+        /// <returns>True if UI is being sent through the pipeline; false if overlay fallback is used.</returns>
+        private static int s_pipelineUiFallbackLogCount = 0;
+        private bool ResolveUiThroughPipeline(out UICanvasComponent? screenSpaceUI)
+        {
+            bool forceUiThroughPipeline = Window?.Renderer is VulkanRenderer || AbstractRenderer.Current is VulkanRenderer;
+            bool wantThroughPipeline = forceUiThroughPipeline || (AssociatedPlayer?.RenderUIThroughPipeline ?? true);
+
+            if (!wantThroughPipeline)
+            {
+                screenSpaceUI = null;
+                return false;
+            }
+
+            screenSpaceUI = ResolveScreenSpaceUIForPipeline();
+
+            // Safety: if we resolved a UI canvas but the active pipeline has no command to render it,
+            // fall back to overlay rendering so the UI is never silently lost.
+            if (screenSpaceUI is not null
+                && _renderPipeline.Pipeline?.CommandChain is not null
+                && !XRRenderPipelineInstance.ContainsScreenSpaceUiRenderCommand(_renderPipeline.Pipeline.CommandChain))
+            {
+                if (s_pipelineUiFallbackLogCount < 5)
+                {
+                    Debug.Out(
+                        $"[VP:UIFallback] Pipeline '{_renderPipeline.Pipeline.DebugName ?? _renderPipeline.Pipeline.GetType().Name}' " +
+                        $"lacks VPRC_RenderScreenSpaceUI — falling back to overlay for VP[{Index}].");
+                    s_pipelineUiFallbackLogCount++;
+                }
+                screenSpaceUI = null;
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>

@@ -93,7 +93,7 @@ Engine.Jobs.Schedule(new ActionJob(() => SceneGraph.AddNode(node)),
 // Remote job
 var response = await Engine.Jobs.ScheduleRemote(new RemoteJobRequest
 {
-    Operation = RemoteJobOperations.AssetLoad,
+    Operation = RemoteJobRequest.Operations.AssetLoad,
     Payload = requestBytes,
     Metadata = meta,
 }, JobPriority.Normal, cts.Token);

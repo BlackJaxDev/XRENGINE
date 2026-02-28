@@ -9,7 +9,7 @@ using ZstdSharp;
 
 namespace XREngine.Data
 {
-    public static class Compression
+    public static partial class Compression
     {
         private sealed class GDeflateCodecContext(DStorage api, ComPtr<IDStorageCompressionCodec> codec) : IDisposable
         {

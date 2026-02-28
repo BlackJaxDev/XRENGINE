@@ -9,7 +9,7 @@ namespace XREngine.Rendering.XeSS
     /// The manager only adjusts internal render resolution and leaves the actual XeSS execution
     /// to the native runtime present in the host environment.
     /// </summary>
-    public static class IntelXessManager
+    public static partial class IntelXessManager
     {
         private const float MinScale = 0.25f;
         private const float MaxScale = 1.0f;

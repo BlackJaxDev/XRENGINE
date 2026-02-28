@@ -15,7 +15,7 @@ namespace XREngine.Audio
     /// main thread mutates source/buffer state.
     /// </para>
     /// </summary>
-    internal sealed class NAudioMixer : ISampleProvider
+    internal sealed class NAudioMixer(int sampleRate, int channels) : ISampleProvider
     {
         #region Internal types
 
@@ -90,16 +90,10 @@ namespace XREngine.Audio
         private Vector3 _listenerUp = Vector3.UnitY;
 
         /// <summary>NAudio wave format for the mixer output.</summary>
-        public WaveFormat WaveFormat { get; }
+        public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels);
 
         /// <summary>Number of output channels.</summary>
-        public int OutputChannels { get; }
-
-        public NAudioMixer(int sampleRate, int channels)
-        {
-            OutputChannels = channels;
-            WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels);
-        }
+        public int OutputChannels { get; } = channels;
 
         #region Source management
 

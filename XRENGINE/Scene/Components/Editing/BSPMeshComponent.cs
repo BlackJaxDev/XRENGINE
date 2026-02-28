@@ -96,11 +96,11 @@ namespace XREngine.Scene.Components.Editing
 
                 current = mod.Operation switch
                 {
-                    EIntersectionType.Union => BSPBoolean.Union(a, b),
-                    EIntersectionType.Intersection => BSPBoolean.Intersect(a, b),
-                    EIntersectionType.Subtraction => BSPBoolean.Subtract(a, b),
-                    EIntersectionType.Merge => BSPBoolean.Union(a, b),
-                    _ => BSPBoolean.Union(a, b),
+                    EIntersectionType.Union => BSPShapeExtensions.Union(a, b),
+                    EIntersectionType.Intersection => BSPShapeExtensions.Intersect(a, b),
+                    EIntersectionType.Subtraction => BSPShapeExtensions.Subtract(a, b),
+                    EIntersectionType.Merge => BSPShapeExtensions.Union(a, b),
+                    _ => BSPShapeExtensions.Union(a, b),
                 };
             }
 

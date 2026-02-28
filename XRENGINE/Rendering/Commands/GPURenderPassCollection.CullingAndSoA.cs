@@ -569,7 +569,7 @@ namespace XREngine.Rendering.Commands
             _buildHotCommandsProgram.BindBuffer(scene.AllLoadedCommandsBuffer, 0);
             _buildHotCommandsProgram.BindBuffer(_sourceHotCommandBuffer, 1);
 
-            uint groups = Math.Max(1u, ComputeDispatch.ForCommands(inputCount).Item1);
+            uint groups = Math.Max(1u, XRRenderProgram.ComputeDispatch.ForCommands(inputCount).Item1);
             _buildHotCommandsProgram.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
@@ -742,7 +742,7 @@ namespace XREngine.Rendering.Commands
             BindViewSetBuffers(_cullingComputeShader);
 
             // Dispatch compute shader
-            (uint x, uint y, uint z) = ComputeDispatch.ForCommands(inputCount);
+            (uint x, uint y, uint z) = XRRenderProgram.ComputeDispatch.ForCommands(inputCount);
             {
                 using var cullTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Cull, inputCount);
                 _cullingComputeShader.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
@@ -995,7 +995,7 @@ namespace XREngine.Rendering.Commands
             // BVH has (N+1)/2 leaves for N nodes
             uint nodeCount = bvhProvider.BvhNodeCount;
             uint leafCount = (nodeCount + 1u) / 2u;
-            (uint x, uint y, uint z) = ComputeDispatch.ForCommands(Math.Max(leafCount, 1u));
+            (uint x, uint y, uint z) = XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(leafCount, 1u));
 
             {
                 using var cullTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Cull, inputCount);
@@ -1144,7 +1144,7 @@ namespace XREngine.Rendering.Commands
                 _copyCommandsProgram.BindBuffer(_cullingOverflowFlagBuffer, 4);
             BindViewSetBuffers(_copyCommandsProgram);
 
-            (uint x, uint y, uint z) = ComputeDispatch.ForCommands(copyCount);
+            (uint x, uint y, uint z) = XRRenderProgram.ComputeDispatch.ForCommands(copyCount);
             {
                 using var cullTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Cull, copyCount);
                 _copyCommandsProgram.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);

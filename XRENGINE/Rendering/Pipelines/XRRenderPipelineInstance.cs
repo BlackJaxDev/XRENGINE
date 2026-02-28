@@ -452,7 +452,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             viewport?.Index ?? -1);
     }
 
-    private static bool ContainsScreenSpaceUiRenderCommand(ViewportRenderCommandContainer container)
+    internal static bool ContainsScreenSpaceUiRenderCommand(ViewportRenderCommandContainer container)
     {
         foreach (var cmd in container)
         {

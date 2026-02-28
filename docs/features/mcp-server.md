@@ -114,6 +114,34 @@ Once connected, you can ask Copilot to interact with the engine:
 - *"Move the node with ID xyz to position (10, 5, 0)"*
 - *"Take a screenshot of the current viewport"*
 
+### In-Editor MCP Assistant (ImGui)
+
+The editor includes an **ImGui tool window** named **MCP Assistant** that provides a
+chat-style interface for interacting with AI providers while the editor is running.
+
+**Opening:** **Tools → MCP Assistant** (also available from the unit-testing toolbar).
+
+#### Features
+
+| Feature | Details |
+|---------|---------|
+| **Chat history** | Scrollable conversation log with color-coded user/assistant messages, timestamps, and animated streaming indicators. |
+| **Streaming responses** | Both OpenAI and Anthropic HTTP paths use SSE streaming — tokens appear in the chat log as they arrive. |
+| **OpenAI Realtime WebSocket** | Toggle in provider settings to send prompts over the Realtime WebSocket API instead of standard HTTP. Also streams token-by-token. |
+| **Provider selection** | **Codex (OpenAI)** or **Claude Code (Anthropic)**, each with its own API key and model fields. |
+| **MCP server attachment** | Automatically syncs the local MCP server URL and auth token from Editor Preferences. The endpoint is sent as a tool/server reference in provider requests so the AI can call MCP tools. |
+| **Collapsible settings** | Provider and MCP settings collapse into a header so the chat log gets maximum space. |
+| **Max tokens** | Configurable per-request token limit (default 4 096). |
+| **Edit menu** | Copy last response, copy full history, clear history. |
+| **Auto-scroll** | Toggleable via **Settings** menu; keeps the chat log scrolled to the latest content during streaming. |
+
+#### Environment variables
+
+The **Load Keys from ENV** button reads:
+
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+
 ---
 
 ## Protocol
