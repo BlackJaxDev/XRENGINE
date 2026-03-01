@@ -228,7 +228,12 @@ For detailed documentation of each command including parameters and return value
 | `rotate_transform`           | Apply incremental rotation                     |
 | `list_components`            | List components on a node                      |
 | `add_component_to_node`      | Add a new component to a node                  |
+| `get_component_snapshot`     | Read full component member snapshot            |
 | `set_component_property`     | Set a property value on a component            |
+| `set_component_properties`   | Set multiple properties on a component         |
+| `assign_component_asset_property` | Assign asset refs to component members   |
+| `find_asset`                 | Find assets by ID, path, or name              |
+| `create_material_asset`      | Create and save XRMaterial assets              |
 | `capture_viewport_screenshot`| Capture a screenshot from the viewport         |
 | `undo` / `redo`              | Apply editor undo or redo                      |
 | `clear_selection`            | Clear current node selection                   |
@@ -262,8 +267,10 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | Tool | Description |
 |------|-------------|
 | `add_component_to_node` | Add a component to a scene node by type name. |
+| `assign_component_asset_property` | Assign an asset reference to a component property or field (e.g., Material). |
 | `capture_viewport_screenshot` | Capture a screenshot from a viewport or camera for LLM context. |
 | `clear_selection` | Clear the current scene-node selection. |
+| `create_material_asset` | Create and save a new XRMaterial asset. |
 | `create_prefab_from_node` | Create a prefab asset from a scene node hierarchy. |
 | `create_primitive_shape` | Create a primitive shape node in the active scene. |
 | `create_scene` | Create a new scene in the active world. |
@@ -275,12 +282,14 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `enter_play_mode` | Enter play mode. |
 | `exit_play_mode` | Exit play mode. |
 | `export_scene` | Export a scene asset to a directory. |
+| `find_asset` | Find a project asset by ID, path, or name. |
 | `find_nodes_by_name` | Find scene nodes by name (exact or contains). |
 | `find_nodes_by_type` | Find scene nodes that have a component type. |
 | `focus_node_in_view` | Focus the editor camera on a scene node. |
 | `get_asset_info` | Get detailed info about a loaded asset by ID or path. |
 | `get_component_property` | Get a component property or field value by name. |
 | `get_component_schema` | Get detailed component type schema including properties and fields. |
+| `get_component_snapshot` | Get a component snapshot including readable properties and fields. |
 | `get_engine_state` | Get engine/editor play mode and high-level state flags. |
 | `get_job_manager_state` | Get job manager queues, workers, and queue capacity. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
@@ -322,6 +331,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `select_node` | Select one or more scene nodes in the editor. |
 | `select_node_by_name` | Select scene nodes by display name. |
 | `set_active_scene` | Set a scene as active (first in scene list). |
+| `set_component_properties` | Set multiple component properties/fields in one call. |
 | `set_component_property` | Set a component property or field value by name. |
 | `set_layer` | Set the layer for a scene node. |
 | `set_node_active` | Set whether a scene node is active in the hierarchy. |

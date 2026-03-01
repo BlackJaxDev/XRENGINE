@@ -207,12 +207,23 @@ namespace XREngine.Editor.Mcp
                 {
                     context = await _listener.GetContextAsync();
                 }
-                catch (HttpListenerException ex) when (ex.ErrorCode == 995 || ex.ErrorCode == 64)
+                catch (HttpListenerException)
                 {
+                    // The listener was stopped or the I/O operation was aborted
+                    // (error 995/64/etc.) — exit the loop gracefully.
                     break;
                 }
                 catch (ObjectDisposedException)
                 {
+                    break;
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (InvalidOperationException)
+                {
+                    // Listener was closed between the loop check and GetContextAsync.
                     break;
                 }
 

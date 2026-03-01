@@ -25,12 +25,22 @@ public sealed class McpAssistantWindow
         ClaudeCode
     }
 
+    private sealed class ToolCallEntry
+    {
+        public required string ToolName { get; init; }
+        public string ArgsSummary { get; init; } = string.Empty;
+        public string ResultSummary { get; set; } = string.Empty;
+        public bool IsError { get; set; }
+        public bool IsComplete { get; set; }
+    }
+
     private sealed class ChatMessage
     {
         public required string Role { get; init; }
         public string Content { get; set; } = string.Empty;
         public DateTime Timestamp { get; init; } = DateTime.Now;
         public bool IsStreaming { get; set; }
+        public List<ToolCallEntry> ToolCalls { get; } = [];
     }
 
     private sealed class McpUsageEntry
@@ -59,12 +69,27 @@ public sealed class McpAssistantWindow
     ];
 
     private static readonly Vector4 ColorUser = new(0.40f, 0.72f, 1.00f, 1.00f);
-    private static readonly Vector4 ColorAssistant = new(0.45f, 0.95f, 0.50f, 1.00f);
-    private static readonly Vector4 ColorTimestamp = new(0.50f, 0.50f, 0.50f, 1.00f);
+    private static readonly Vector4 ColorAssistant = new(0.78f, 0.56f, 1.00f, 1.00f);
+    private static readonly Vector4 ColorTimestamp = new(0.50f, 0.50f, 0.55f, 1.00f);
     private static readonly Vector4 ColorReady = new(0.60f, 0.60f, 0.60f, 1.00f);
     private static readonly Vector4 ColorBusy = new(1.00f, 0.85f, 0.20f, 1.00f);
     private static readonly Vector4 ColorDone = new(0.30f, 1.00f, 0.30f, 1.00f);
     private static readonly Vector4 ColorError = new(1.00f, 0.30f, 0.30f, 1.00f);
+
+    // Extended palette for Copilot-style chat rendering.
+    private static readonly Vector4 ColorChatBg = new(0.12f, 0.12f, 0.15f, 1.00f);
+    private static readonly Vector4 ColorUserBubble = new(0.17f, 0.19f, 0.24f, 1.00f);
+    private static readonly Vector4 ColorAssistantBubble = new(0.14f, 0.14f, 0.18f, 1.00f);
+    private static readonly Vector4 ColorCodeFg = new(0.85f, 0.65f, 0.40f, 1.00f);
+    private static readonly Vector4 ColorBold = new(0.95f, 0.95f, 0.95f, 1.00f);
+    private static readonly Vector4 ColorBullet = new(0.50f, 0.65f, 1.00f, 1.00f);
+    private static readonly Vector4 ColorHeader = new(0.55f, 0.75f, 1.00f, 1.00f);
+    private static readonly Vector4 ColorSeparator = new(0.25f, 0.25f, 0.30f, 0.60f);
+    private static readonly Vector4 ColorToolSection = new(0.18f, 0.18f, 0.22f, 1.00f);
+    private static readonly Vector4 ColorToolSectionHover = new(0.22f, 0.22f, 0.28f, 1.00f);
+    private static readonly Vector4 ColorMuted = new(0.55f, 0.55f, 0.60f, 1.00f);
+    private static readonly Vector4 ColorCodeBlockBg = new(0.08f, 0.08f, 0.10f, 1.00f);
+    private static readonly Vector4 ColorPlaceholder = new(0.65f, 0.65f, 0.70f, 1.00f);
 
     // Use infinite timeout on the client; per-request cancellation tokens handle timeouts.
     private static readonly HttpClient SharedHttp = new() { Timeout = Timeout.InfiniteTimeSpan };
@@ -88,6 +113,7 @@ public sealed class McpAssistantWindow
 
     // Chat (ephemeral — not worth persisting)
     private string _prompt = string.Empty;
+    private bool _pendingPromptClear; // Set after send to force-clear the ImGui text buffer next frame.
     private readonly List<ChatMessage> _history = [];
     private bool _isBusy;
     private string _status = "Ready";
@@ -586,53 +612,43 @@ public sealed class McpAssistantWindow
         if (available < 80f)
             available = 80f;
 
-        ImGui.BeginChild("##ChatLog", new Vector2(-1f, available), ImGuiChildFlags.Border, ImGuiWindowFlags.NoScrollbar);
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, ColorChatBg);
+        ImGui.BeginChild("##ChatLog", new Vector2(-1f, available), ImGuiChildFlags.Border);
 
         if (_history.Count == 0)
         {
-            // Centered placeholder hint
-            Vector2 region = ImGui.GetContentRegionAvail();
-            const string hint = "Send a prompt to begin a conversation.";
-            Vector2 textSize = ImGui.CalcTextSize(hint);
-            ImGui.SetCursorPos((region - textSize) * 0.5f);
-            ImGui.TextColored(ColorTimestamp, hint);
+            // Keep the placeholder pinned and high-contrast so it is always visible.
+            ImGui.SetCursorPos(new Vector2(12f, 12f));
+            ImGui.TextColored(ColorPlaceholder, "Send a prompt to begin a conversation.");
         }
         else
         {
+            ImGui.Spacing();
             for (int i = 0; i < _history.Count; i++)
             {
                 ChatMessage msg = _history[i];
                 bool isUser = string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase);
 
-                // Role header with timestamp
-                ImGui.TextColored(isUser ? ColorUser : ColorAssistant, isUser ? "You" : "Assistant");
-                ImGui.SameLine();
-                ImGui.TextColored(ColorTimestamp, $"  {msg.Timestamp:HH:mm:ss}");
+                if (isUser)
+                    DrawUserMessage(msg);
+                else
+                    DrawAssistantMessage(msg, i);
 
-                // Streaming indicator
-                if (!isUser && msg.IsStreaming)
-                {
-                    ImGui.SameLine();
-                    int dots = ((int)(ImGui.GetTime() * 3.0)) % 4;
-                    ImGui.TextColored(ColorBusy, new string('.', dots + 1));
-                }
-
-                // Message body (word-wrapped)
-                ImGui.PushTextWrapPos(0.0f);
-                ImGui.TextUnformatted(msg.Content);
-                ImGui.PopTextWrapPos();
-
-                // Separator between entries
+                // Thin separator between messages.
                 if (i < _history.Count - 1)
                 {
                     ImGui.Spacing();
-                    ImGui.Separator();
+                    var dl = ImGui.GetWindowDrawList();
+                    Vector2 p = ImGui.GetCursorScreenPos();
+                    float w = ImGui.GetContentRegionAvail().X;
+                    dl.AddLine(p, p + new Vector2(w, 0), ImGui.ColorConvertFloat4ToU32(ColorSeparator));
+                    ImGui.Spacing();
                     ImGui.Spacing();
                 }
             }
         }
 
-        // Auto-scroll when streaming or when a new message was just added
+        // Auto-scroll when streaming or when a new message was just added.
         if (_scrollToBottom || (AutoScroll && _isBusy))
         {
             ImGui.SetScrollHereY(1.0f);
@@ -640,6 +656,395 @@ public sealed class McpAssistantWindow
         }
 
         ImGui.EndChild();
+        ImGui.PopStyleColor();
+    }
+
+    // ── Copilot-Style Message Rendering ──────────────────────────────────
+
+    private static void DrawUserMessage(ChatMessage msg)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        drawList.ChannelsSplit(2);
+        drawList.ChannelsSetCurrent(1);
+
+        Vector2 startPos = ImGui.GetCursorScreenPos();
+        float startY = ImGui.GetCursorPosY();
+
+        ImGui.Indent(8f);
+
+        // Header: "You" + timestamp.
+        ImGui.TextColored(ColorUser, "You");
+        ImGui.SameLine();
+        ImGui.TextColored(ColorTimestamp, msg.Timestamp.ToString("HH:mm:ss"));
+
+        ImGui.Spacing();
+
+        // User message body.
+        ImGui.PushTextWrapPos(0.0f);
+        ImGui.TextUnformatted(msg.Content);
+        ImGui.PopTextWrapPos();
+
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
+
+        // Draw subtle background bubble behind the rendered content.
+        float endY = ImGui.GetCursorPosY();
+        float height = endY - startY;
+        float width = ImGui.GetContentRegionAvail().X + 16f;
+        drawList.ChannelsSetCurrent(0);
+        drawList.AddRectFilled(
+            startPos - new Vector2(4f, 2f),
+            startPos + new Vector2(width, height - 2f),
+            ImGui.ColorConvertFloat4ToU32(ColorUserBubble),
+            6f);
+
+        drawList.ChannelsMerge();
+    }
+
+    private void DrawAssistantMessage(ChatMessage msg, int index)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        drawList.ChannelsSplit(2);
+        drawList.ChannelsSetCurrent(1);
+
+        Vector2 startPos = ImGui.GetCursorScreenPos();
+        float startY = ImGui.GetCursorPosY();
+
+        ImGui.Indent(8f);
+
+        // Header: "Assistant" + timestamp + streaming indicator.
+        ImGui.TextColored(ColorAssistant, "Assistant");
+        ImGui.SameLine();
+        ImGui.TextColored(ColorTimestamp, msg.Timestamp.ToString("HH:mm:ss"));
+
+        if (msg.IsStreaming)
+        {
+            ImGui.SameLine();
+            int dots = ((int)(ImGui.GetTime() * 3.0)) % 4;
+            ImGui.TextColored(ColorBusy, "Working" + new string('.', dots + 1));
+        }
+
+        ImGui.Spacing();
+
+        // Tool calls section (collapsible, rendered before main text content).
+        if (msg.ToolCalls.Count > 0)
+            DrawToolCallsSection(msg.ToolCalls, index);
+
+        // Main rich-text content.
+        string displayContent = GetDisplayContent(msg.Content);
+        if (!string.IsNullOrWhiteSpace(displayContent))
+            RenderRichContent(displayContent);
+
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
+
+        // Draw subtle background bubble.
+        float endY = ImGui.GetCursorPosY();
+        float height = endY - startY;
+        float width = ImGui.GetContentRegionAvail().X + 16f;
+        drawList.ChannelsSetCurrent(0);
+        drawList.AddRectFilled(
+            startPos - new Vector2(4f, 2f),
+            startPos + new Vector2(width, height - 2f),
+            ImGui.ColorConvertFloat4ToU32(ColorAssistantBubble),
+            6f);
+
+        drawList.ChannelsMerge();
+    }
+
+    /// <summary>
+    /// Renders the collapsible tool calls section, styled like Copilot Chat's
+    /// expandable "Used N references" / "Working..." blocks.
+    /// </summary>
+    private static void DrawToolCallsSection(List<ToolCallEntry> toolCalls, int messageIndex)
+    {
+        int completed = toolCalls.Count(t => t.IsComplete);
+        int errors = toolCalls.Count(t => t.IsError);
+        bool allDone = completed == toolCalls.Count;
+
+        // Section header with count badge.
+        string headerLabel = allDone
+            ? $"Used {toolCalls.Count} tool call{(toolCalls.Count != 1 ? "s" : "")}"
+            : $"Running {toolCalls.Count - completed} of {toolCalls.Count} tool call{(toolCalls.Count != 1 ? "s" : "")}...";
+
+        if (errors > 0)
+            headerLabel += $" ({errors} failed)";
+
+        ImGui.PushStyleColor(ImGuiCol.Header, ColorToolSection);
+        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, ColorToolSectionHover);
+        ImGui.PushStyleColor(ImGuiCol.HeaderActive, ColorToolSectionHover);
+
+        if (allDone)
+        {
+            ImGui.TextColored(ColorDone, "v");
+            ImGui.SameLine();
+        }
+
+        bool open = ImGui.TreeNodeEx($"{headerLabel}##tools_{messageIndex}",
+            ImGuiTreeNodeFlags.SpanAvailWidth | ImGuiTreeNodeFlags.DefaultOpen);
+
+        ImGui.PopStyleColor(3);
+
+        if (!open)
+            return;
+
+        foreach (ToolCallEntry call in toolCalls)
+        {
+            // Status icon.
+            if (!call.IsComplete)
+            {
+                int dots = ((int)(ImGui.GetTime() * 2.5)) % 3;
+                ImGui.TextColored(ColorBusy, new string('.', dots + 1));
+            }
+            else if (call.IsError)
+                ImGui.TextColored(ColorError, "x");
+            else
+                ImGui.TextColored(ColorDone, "v");
+
+            ImGui.SameLine();
+            ImGui.TextColored(ColorMuted, call.ToolName);
+
+            if (!string.IsNullOrEmpty(call.ArgsSummary))
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(ColorTimestamp, $"({call.ArgsSummary})");
+            }
+
+            if (call.IsComplete && !string.IsNullOrEmpty(call.ResultSummary))
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(ColorTimestamp, "->");
+                ImGui.SameLine();
+                ImGui.TextColored(
+                    call.IsError ? ColorError : new Vector4(0.55f, 0.78f, 0.55f, 1f),
+                    call.ResultSummary);
+            }
+        }
+
+        ImGui.TreePop();
+        ImGui.Spacing();
+    }
+
+    /// <summary>
+    /// Strips the inline "Tool calls:" text section from content since tool calls
+    /// are rendered separately via the structured <see cref="ChatMessage.ToolCalls"/> list.
+    /// Also strips trailing status markers like "[Executing tool calls...]".
+    /// </summary>
+    private static string GetDisplayContent(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return string.Empty;
+
+        // Remove "Tool calls:\n  - ..." section.
+        int toolIdx = content.IndexOf("Tool calls:", StringComparison.Ordinal);
+        string text = toolIdx >= 0 ? content[..toolIdx].TrimEnd() : content;
+
+        // Remove trailing status markers like "[Executing tool calls...]".
+        int bracketIdx = text.LastIndexOf('[');
+        if (bracketIdx >= 0 && text.TrimEnd().EndsWith(']'))
+        {
+            string candidate = text[bracketIdx..];
+            if (candidate.Contains("tool call", StringComparison.OrdinalIgnoreCase)
+                || candidate.Contains("model response", StringComparison.OrdinalIgnoreCase)
+                || candidate.Contains("Calling tool", StringComparison.OrdinalIgnoreCase))
+            {
+                text = text[..bracketIdx].TrimEnd();
+            }
+        }
+
+        return text;
+    }
+
+    // ── Rich Content Renderer (Markdown-lite for ImGui) ──────────────────
+
+    /// <summary>
+    /// Renders text with basic markdown formatting:
+    /// fenced code blocks, headers, bullet points, inline backtick code, and **bold**.
+    /// </summary>
+    private static void RenderRichContent(string content)
+    {
+        string[] lines = content.Split('\n');
+        bool inCodeBlock = false;
+
+        for (int li = 0; li < lines.Length; li++)
+        {
+            string rawLine = lines[li].TrimEnd('\r');
+
+            // Fenced code block toggle.
+            if (rawLine.TrimStart().StartsWith("```"))
+            {
+                inCodeBlock = !inCodeBlock;
+                ImGui.Spacing();
+                continue;
+            }
+
+            if (inCodeBlock)
+            {
+                ImGui.Indent(12f);
+                ImGui.TextColored(ColorCodeFg, rawLine);
+                ImGui.Unindent(12f);
+                continue;
+            }
+
+            // Empty line -> spacing.
+            if (string.IsNullOrWhiteSpace(rawLine))
+            {
+                ImGui.Spacing();
+                continue;
+            }
+
+            string trimmed = rawLine.TrimStart();
+
+            // Headers.
+            if (trimmed.StartsWith("### "))
+            {
+                ImGui.Spacing();
+                ImGui.TextColored(ColorHeader, trimmed[4..]);
+                continue;
+            }
+            if (trimmed.StartsWith("## "))
+            {
+                ImGui.Spacing();
+                ImGui.TextColored(ColorHeader, trimmed[3..]);
+                continue;
+            }
+            if (trimmed.StartsWith("# "))
+            {
+                ImGui.Spacing();
+                ImGui.TextColored(ColorHeader, trimmed[2..]);
+                continue;
+            }
+
+            // Bullet points.
+            if (trimmed.Length > 2 && (trimmed[0] == '-' || trimmed[0] == '*') && trimmed[1] == ' ')
+            {
+                int indentChars = rawLine.Length - trimmed.Length;
+                float indent = indentChars * 4f + 12f;
+                ImGui.Indent(indent);
+                ImGui.TextColored(ColorBullet, "*");
+                ImGui.SameLine();
+                RenderInlineFormatted(trimmed[2..]);
+                ImGui.Unindent(indent);
+                continue;
+            }
+
+            // Regular line with inline formatting.
+            RenderInlineFormatted(rawLine);
+        }
+    }
+
+    /// <summary>
+    /// Renders a single line with inline backtick code and **bold** formatting.
+    /// Falls back to plain word-wrapped text when no formatting markers are found.
+    /// </summary>
+    private static void RenderInlineFormatted(string text)
+    {
+        // Fast path: no inline markers.
+        if (!text.Contains('`') && !text.Contains("**", StringComparison.Ordinal))
+        {
+            ImGui.PushTextWrapPos(0.0f);
+            ImGui.TextUnformatted(text);
+            ImGui.PopTextWrapPos();
+            return;
+        }
+
+        int pos = 0;
+        bool first = true;
+
+        while (pos < text.Length)
+        {
+            int backtick = text.IndexOf('`', pos);
+            int bold = text.IndexOf("**", pos, StringComparison.Ordinal);
+
+            // Find the nearest special marker.
+            int next = -1;
+            bool isBacktick = false;
+
+            if (backtick >= 0 && (bold < 0 || backtick <= bold))
+            {
+                next = backtick;
+                isBacktick = true;
+            }
+            else if (bold >= 0)
+            {
+                next = bold;
+            }
+
+            if (next < 0)
+            {
+                // No more markers -- render the remainder.
+                string rest = text[pos..];
+                if (rest.Length > 0)
+                {
+                    if (!first) ImGui.SameLine(0, 0);
+                    ImGui.TextUnformatted(rest);
+                }
+                break;
+            }
+
+            // Render plain text before the marker.
+            if (next > pos)
+            {
+                string before = text[pos..next];
+                if (!first) ImGui.SameLine(0, 0);
+                ImGui.TextUnformatted(before);
+                first = false;
+                pos = next;
+            }
+
+            if (isBacktick)
+            {
+                int close = text.IndexOf('`', pos + 1);
+                if (close < 0)
+                {
+                    if (!first) ImGui.SameLine(0, 0);
+                    ImGui.TextUnformatted(text[pos..]);
+                    break;
+                }
+
+                string code = text[(pos + 1)..close];
+                if (!first) ImGui.SameLine(0, 0);
+                RenderCodeSpan(code);
+                first = false;
+                pos = close + 1;
+            }
+            else
+            {
+                int close = text.IndexOf("**", pos + 2, StringComparison.Ordinal);
+                if (close < 0)
+                {
+                    if (!first) ImGui.SameLine(0, 0);
+                    ImGui.TextUnformatted(text[pos..]);
+                    break;
+                }
+
+                string boldText = text[(pos + 2)..close];
+                if (!first) ImGui.SameLine(0, 0);
+                ImGui.TextColored(ColorBold, boldText);
+                first = false;
+                pos = close + 2;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Renders an inline code span with a subtle background rectangle.
+    /// </summary>
+    private static void RenderCodeSpan(string code)
+    {
+        Vector2 textSize = ImGui.CalcTextSize(code);
+        Vector2 cursorPos = ImGui.GetCursorScreenPos();
+        var drawList = ImGui.GetWindowDrawList();
+
+        const float padX = 3f;
+        const float padY = 1f;
+        drawList.AddRectFilled(
+            cursorPos - new Vector2(padX, padY),
+            cursorPos + textSize + new Vector2(padX, padY),
+            ImGui.ColorConvertFloat4ToU32(ColorCodeBlockBg),
+            3f);
+
+        ImGui.TextColored(ColorCodeFg, code);
     }
 
     // ── Prompt Bar ───────────────────────────────────────────────────────
@@ -683,18 +1088,44 @@ public sealed class McpAssistantWindow
         // Prompt input (fills width and grows with content)
         float promptInputHeight = GetPromptInputHeight();
 
+        // Force-clear ImGui's internal text buffer after a send.
+        // When the InputTextMultiline widget is active (focused), ImGui maintains
+        // its own internal buffer and ignores external changes to the ref parameter.
+        // To work around this, we render the widget with a temporary ID for one frame.
+        // ImGui sees a brand-new widget and initializes it from the empty _prompt.
+        // Next frame the normal ID is used again and picks up the cleared value.
+        bool clearingThisFrame = _pendingPromptClear;
+        if (clearingThisFrame)
+        {
+            _prompt = string.Empty;
+            _pendingPromptClear = false;
+        }
+
+        // Snapshot the prompt before the widget so we can detect newline insertion.
+        string promptBefore = _prompt;
+
         ImGui.InputTextMultiline(
-            "##McpPromptInput",
+            clearingThisFrame ? "##McpPromptClr" : "##McpPromptInput",
             ref _prompt,
             1024 * 128,
             new Vector2(-1f, promptInputHeight),
             ImGuiInputTextFlags.AllowTabInput);
         ImGuiTextFieldHelper.DrawTextFieldContextMenu("ctx_Prompt", ref _prompt);
 
-        bool enterPressed = ImGui.IsItemActive()
-            && (ImGui.IsKeyPressed(ImGuiKey.Enter) || ImGui.IsKeyPressed(ImGuiKey.KeypadEnter));
-        bool shiftHeld = ImGui.GetIO().KeyShift;
-        bool enterSend = enterPressed && !shiftHeld;
+        // Detect Enter: the multiline widget inserts '\n' for every Enter press.
+        // Compare the prompt before/after to detect a newline was just typed.
+        bool newlineJustInserted = _prompt.Length > promptBefore.Length
+            && _prompt.Length > 0
+            && _prompt[^1] == '\n';
+
+        // Shift detection — try every method since backends vary.
+        var io = ImGui.GetIO();
+        bool shiftHeld = io.KeyShift
+            || ImGui.IsKeyDown(ImGuiKey.ModShift)
+            || ImGui.IsKeyDown(ImGuiKey.LeftShift)
+            || ImGui.IsKeyDown(ImGuiKey.RightShift);
+
+        bool enterSend = newlineJustInserted && !shiftHeld;
 
         if (enterSend)
             StripOneTrailingNewline(ref _prompt);
@@ -805,6 +1236,15 @@ public sealed class McpAssistantWindow
             return;
         }
 
+        // Clear prompt and mark busy immediately — before any await — so the
+        // next UI frame sees the empty prompt box and won't double-send.
+        _history.Add(new ChatMessage { Role = "user", Content = trimmedPrompt });
+        _prompt = string.Empty;
+        _pendingPromptClear = true; // Ensures the ImGui widget picks up the empty string next frame.
+        _scrollToBottom = true;
+        _isBusy = true;
+        SetStatus("Preparing\u2026", ColorBusy);
+
         bool attachRequested = AttachMcpServer;
         if (attachRequested)
             EnsureMcpServerAutoEnabledForAssistantMessage();
@@ -828,20 +1268,15 @@ public sealed class McpAssistantWindow
                 mcpUsage.Result = "MCP Unavailable";
                 mcpUsage.Note = reason;
                 SetStatus($"MCP unavailable: {reason}", ColorError);
+                _isBusy = false;
                 return;
             }
         }
-
-        // Push user message into chat history.
-        _history.Add(new ChatMessage { Role = "user", Content = trimmedPrompt });
-        _prompt = string.Empty;
-        _scrollToBottom = true;
 
         // Placeholder assistant message that will be filled by streaming.
         var assistantMsg = new ChatMessage { Role = "assistant", IsStreaming = true };
         _history.Add(assistantMsg);
 
-        _isBusy = true;
         SetStatus("Streaming\u2026", ColorBusy);
         _cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
 
@@ -1033,6 +1468,9 @@ public sealed class McpAssistantWindow
 
         const int maxToolRounds = 10;
         var sb = new StringBuilder();
+        var toolLog = new StringBuilder(); // Human-readable log of tool calls shown in the response.
+        var seenEventTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int sseLineCount = 0;
 
         for (int round = 0; round < maxToolRounds; round++)
         {
@@ -1099,6 +1537,8 @@ public sealed class McpAssistantWindow
                 if (data is "[DONE]")
                     break;
 
+                sseLineCount++;
+
                 try
                 {
                     using var doc = JsonDocument.Parse(data);
@@ -1106,6 +1546,7 @@ public sealed class McpAssistantWindow
 
                     if (!root.TryGetProperty("type", out var typeEl))
                     {
+                        seenEventTypes.Add("(no-type)");
                         // Legacy shape without "type" — try delta extraction
                         if (TryExtractDelta(root, out string? legacyDelta) && !string.IsNullOrEmpty(legacyDelta))
                         {
@@ -1116,6 +1557,7 @@ public sealed class McpAssistantWindow
                     }
 
                     string eventType = typeEl.GetString() ?? string.Empty;
+                    seenEventTypes.Add(eventType);
 
                     // Track MCP/tool event counts for diagnostics
                     if (eventType.Contains("tool", StringComparison.OrdinalIgnoreCase)
@@ -1130,8 +1572,10 @@ public sealed class McpAssistantWindow
                         responseId = idEl.GetString();
                     }
 
-                    // Text delta
-                    if (TryExtractOpenAiSseText(root, out string? deltaText))
+                    // Text delta — but skip function_call event types whose
+                    // "delta" field contains argument JSON, not user-visible text.
+                    if (!eventType.StartsWith("response.function_call", StringComparison.OrdinalIgnoreCase)
+                        && TryExtractOpenAiSseText(root, out string? deltaText))
                     {
                         sb.Append(deltaText);
                         target.Content = sb.ToString();
@@ -1152,6 +1596,11 @@ public sealed class McpAssistantWindow
                         pendingCalls.Add(pending);
                         if (outputIndex >= 0)
                             callsByIndex[outputIndex] = pending;
+
+                        // Show the user which tools the model is planning to call.
+                        target.Content = sb.Length > 0
+                            ? sb + $"\n\n[Calling tool: {name}...]" 
+                            : $"[Calling tool: {name}...]";
                     }
 
                     // Function call arguments delta
@@ -1177,9 +1626,11 @@ public sealed class McpAssistantWindow
                         }
                     }
 
-                    // Response completed
-                    if (eventType.Contains("completed", StringComparison.OrdinalIgnoreCase)
-                        || eventType.Contains("done", StringComparison.OrdinalIgnoreCase))
+                    // Response completed — use exact event types to avoid
+                    // breaking on per-item events like response.output_item.done
+                    // or response.function_call_arguments.done.
+                    if (string.Equals(eventType, "response.completed", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(eventType, "response.done", StringComparison.OrdinalIgnoreCase))
                     {
                         if (sb.Length == 0)
                             ExtractCompletedResponseText(root, sb);
@@ -1206,13 +1657,30 @@ public sealed class McpAssistantWindow
                 break;
 
             // Execute function calls locally against the MCP server.
-            target.Content = sb + "\n\n[Executing MCP tool calls...]";
+            string toolNames = string.Join(", ", pendingCalls.Select(c => c.Name));
+            target.Content = sb.Length > 0
+                ? sb + $"\n\n[Executing {pendingCalls.Count} tool(s): {toolNames}...]"
+                : $"[Executing {pendingCalls.Count} tool(s): {toolNames}...]";
             usage.ToolEventCount += pendingCalls.Count;
 
             foreach (var call in pendingCalls)
             {
+                var tcEntry = new ToolCallEntry
+                {
+                    ToolName = FormatToolName(call.Name),
+                    ArgsSummary = SummarizeToolArguments(call.Name, call.Arguments.ToString()),
+                };
+                target.ToolCalls.Add(tcEntry);
+
                 string toolResult = await ExecuteMcpToolCallAsync(call.Name, call.Arguments.ToString(), ct);
                 usage.McpEventCount++;
+
+                tcEntry.ResultSummary = SummarizeToolResult(toolResult);
+                tcEntry.IsError = toolResult.StartsWith("[MCP Error]", StringComparison.Ordinal);
+                tcEntry.IsComplete = true;
+
+                AppendToolCallLog(toolLog, call.Name, call.Arguments.ToString(), toolResult);
+                target.Content = BuildAssistantContent(sb, toolLog, "Executing tool calls...");
 
                 // Append the function call and its result to the conversation for the next round.
                 conversationInput.Add(new JsonObject
@@ -1231,13 +1699,18 @@ public sealed class McpAssistantWindow
             }
 
             // Continue the loop — next round will send conversation with tool results.
-            target.Content = sb + "\n\n[Tool calls executed. Waiting for model response...]";
+            target.Content = BuildAssistantContent(sb, toolLog, "Waiting for model response...");
         }
 
-        if (sb.Length > 0)
-            target.Content = sb.ToString();
+        if (sb.Length > 0 || toolLog.Length > 0)
+            target.Content = BuildAssistantContent(sb, toolLog);
         else if (string.IsNullOrWhiteSpace(target.Content))
-            target.Content = "(No response content received from the API.)";
+        {
+            string events = seenEventTypes.Count > 0
+                ? string.Join(", ", seenEventTypes)
+                : "none";
+            target.Content = $"(No response content received from the API. SSE lines: {sseLineCount}, event types seen: {events})";
+        }
     }
 
     /// <summary>
@@ -1384,20 +1857,31 @@ public sealed class McpAssistantWindow
     }
 
     private static string? ExtractOpenAiErrorSummary(string content)
-    {
-        if (TryExtractJsonErrorSummary(content, out string? summary))
-            return summary;
-
-        return null;
-    }
+        => TryExtractJsonErrorSummary(content, out string? summary) ? summary : null;
 
     private static bool TryExtractJsonErrorSummary(string content, out string? summary)
     {
         summary = null;
 
+        // Quick pre-check: valid JSON must start with '{' or '[' (ignoring whitespace).
+        ReadOnlySpan<char> trimmed = content.AsSpan().TrimStart();
+        if (trimmed.Length == 0 || (trimmed[0] != '{' && trimmed[0] != '['))
+            return false;
+
+        // Reject concatenated JSON objects (e.g. "{...}{...}") — find the matching
+        // close brace/bracket and ensure nothing significant follows it.
+        if (!LooksLikeSingleJsonValue(trimmed))
+            return false;
+
+        // Use Utf8JsonReader to probe validity before committing to a full parse.
+        // This avoids first-chance JsonReaderException noise in the debugger.
+        ReadOnlySpan<byte> utf8 = System.Text.Encoding.UTF8.GetBytes(content);
+        var readerCheck = new Utf8JsonReader(utf8);
         try
         {
-            using var doc = JsonDocument.Parse(content);
+            if (!JsonDocument.TryParseValue(ref readerCheck, out var maybeDoc) || maybeDoc is null)
+                return false;
+            using var doc = maybeDoc;
             JsonElement root = doc.RootElement;
 
             if (!root.TryGetProperty("error", out var errEl) || errEl.ValueKind != JsonValueKind.Object)
@@ -1427,6 +1911,42 @@ public sealed class McpAssistantWindow
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Cheap heuristic: counts matched braces/brackets to check that the span
+    /// contains a single JSON value and not concatenated objects like "{...}{...}".
+    /// </summary>
+    private static bool LooksLikeSingleJsonValue(ReadOnlySpan<char> trimmed)
+    {
+        char open = trimmed[0];
+        char close = open == '{' ? '}' : ']';
+        int depth = 0;
+        bool inString = false;
+        bool escaped = false;
+
+        for (int i = 0; i < trimmed.Length; i++)
+        {
+            char c = trimmed[i];
+            if (escaped) { escaped = false; continue; }
+            if (c == '\\' && inString) { escaped = true; continue; }
+            if (c == '"') { inString = !inString; continue; }
+            if (inString) continue;
+
+            if (c == open) depth++;
+            else if (c == close)
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    // Anything non-whitespace after the closing bracket → not single value.
+                    ReadOnlySpan<char> rest = trimmed[(i + 1)..].TrimStart();
+                    return rest.Length == 0;
+                }
+            }
+        }
+
+        return false; // Unbalanced — not valid.
     }
 
     /// <summary>
@@ -1548,6 +2068,9 @@ public sealed class McpAssistantWindow
 
         const int maxToolRounds = 10;
         var sb = new StringBuilder();
+        var toolLog = new StringBuilder(); // Human-readable log of tool calls shown in the response.
+        var seenEventTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int sseLineCount = 0;
 
         for (int round = 0; round < maxToolRounds; round++)
         {
@@ -1602,15 +2125,21 @@ public sealed class McpAssistantWindow
                 if (data is "[DONE]")
                     break;
 
+                sseLineCount++;
+
                 try
                 {
                     using var doc = JsonDocument.Parse(data);
                     JsonElement root = doc.RootElement;
 
                     if (!root.TryGetProperty("type", out var typeEl))
+                    {
+                        seenEventTypes.Add("(no-type)");
                         continue;
+                    }
 
                     string eventType = typeEl.GetString() ?? string.Empty;
+                    seenEventTypes.Add(eventType);
 
                     // Text delta
                     if (string.Equals(eventType, "content_block_delta", StringComparison.OrdinalIgnoreCase)
@@ -1703,7 +2232,7 @@ public sealed class McpAssistantWindow
             }
 
             // Execute tool calls locally and prepare the next conversation turn.
-            target.Content = sb + "\n\n[Executing MCP tool calls...]";
+            target.Content = BuildAssistantContent(sb, toolLog, "Executing tool calls...");
             usage.ToolEventCount += pendingToolUse.Count;
 
             // Build assistant message content (text + tool_use blocks)
@@ -1731,8 +2260,22 @@ public sealed class McpAssistantWindow
                 });
 
                 // Execute the tool call
+                var tcEntry = new ToolCallEntry
+                {
+                    ToolName = FormatToolName(toolName),
+                    ArgsSummary = SummarizeToolArguments(toolName, inputStr),
+                };
+                target.ToolCalls.Add(tcEntry);
+
                 string toolResult = await ExecuteMcpToolCallAsync(toolName, inputStr, ct);
                 usage.McpEventCount++;
+
+                tcEntry.ResultSummary = SummarizeToolResult(toolResult);
+                tcEntry.IsError = toolResult.StartsWith("[MCP Error]", StringComparison.Ordinal);
+                tcEntry.IsComplete = true;
+
+                AppendToolCallLog(toolLog, toolName, inputStr, toolResult);
+                target.Content = BuildAssistantContent(sb, toolLog, "Executing tool calls...");
 
                 // Add tool_result block for user message
                 toolResultContent.Add(new JsonObject
@@ -1747,14 +2290,19 @@ public sealed class McpAssistantWindow
             messages.Add(new JsonObject { ["role"] = "assistant", ["content"] = assistantContent });
             messages.Add(new JsonObject { ["role"] = "user", ["content"] = toolResultContent });
 
-            target.Content = sb + "\n\n[Tool calls executed. Waiting for model response...]";
+            target.Content = BuildAssistantContent(sb, toolLog, "Waiting for model response...");
             sb.Clear(); // Reset text accumulator for next round's text
         }
 
-        if (sb.Length > 0)
-            target.Content = sb.ToString();
+        if (sb.Length > 0 || toolLog.Length > 0)
+            target.Content = BuildAssistantContent(sb, toolLog);
         else if (string.IsNullOrWhiteSpace(target.Content))
-            target.Content = "(No response content received from the API.)";
+        {
+            string events = seenEventTypes.Count > 0
+                ? string.Join(", ", seenEventTypes)
+                : "none";
+            target.Content = $"(No response content received from the API. SSE lines: {sseLineCount}, event types seen: {events})";
+        }
     }
 
     // ── OpenAI Realtime WebSocket — Already Streams ──────────────────────
@@ -2026,6 +2574,144 @@ public sealed class McpAssistantWindow
         return result;
     }
 
+    // ── Tool Call Logging Helpers ─────────────────────────────────────────
+
+    /// <summary>
+    /// Appends a human-readable tool call entry to the log: tool name, key arguments, and a result snippet.
+    /// </summary>
+    private static void AppendToolCallLog(StringBuilder toolLog, string toolName, string argsJson, string result)
+    {
+        // Friendly tool name: replace underscores with spaces and title-case.
+        string friendly = FormatToolName(toolName);
+
+        // Extract a short description of what arguments were passed.
+        string argsSummary = SummarizeToolArguments(toolName, argsJson);
+
+        // Truncate the result for display.
+        string resultSnippet = SummarizeToolResult(result);
+
+        toolLog.Append($"\n  - {friendly}");
+        if (!string.IsNullOrEmpty(argsSummary))
+            toolLog.Append($" ({argsSummary})");
+        if (!string.IsNullOrEmpty(resultSnippet))
+            toolLog.Append($" -> {resultSnippet}");
+    }
+
+    /// <summary>
+    /// Builds the final assistant content string from model text, tool log, and an optional trailing status.
+    /// </summary>
+    private static string BuildAssistantContent(StringBuilder modelText, StringBuilder toolLog, string? statusSuffix = null)
+    {
+        var result = new StringBuilder();
+
+        if (modelText.Length > 0)
+            result.Append(modelText);
+
+        if (toolLog.Length > 0)
+        {
+            if (result.Length > 0)
+                result.Append("\n\n");
+            result.Append("Tool calls:");
+            result.Append(toolLog);
+        }
+
+        if (!string.IsNullOrEmpty(statusSuffix))
+        {
+            if (result.Length > 0)
+                result.Append("\n\n");
+            result.Append($"[{statusSuffix}]");
+        }
+
+        return result.Length > 0 ? result.ToString() : string.Empty;
+    }
+
+    private static string FormatToolName(string toolName)
+    {
+        // "create_scene_node" → "Create scene node"
+        string spaced = toolName.Replace('_', ' ');
+        return spaced.Length > 0
+            ? char.ToUpper(spaced[0]) + spaced[1..]
+            : spaced;
+    }
+
+    private static string SummarizeToolArguments(string toolName, string argsJson)
+    {
+        if (string.IsNullOrWhiteSpace(argsJson) || argsJson is "{}" or "null")
+            return string.Empty;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(argsJson);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return string.Empty;
+
+            // Pick the most meaningful argument to display.
+            // Priority: name > node_name > scene_name > component_type > node_id > first string property
+            string[] priorityKeys = ["name", "node_name", "scene_name", "component_type", "type", "node_id", "path"];
+            foreach (string key in priorityKeys)
+            {
+                if (root.TryGetProperty(key, out var val) && val.ValueKind == JsonValueKind.String)
+                {
+                    string? v = val.GetString();
+                    if (!string.IsNullOrWhiteSpace(v))
+                        return $"{key}: {Truncate(v, 60)}";
+                }
+            }
+
+            // Fallback: show first string property.
+            foreach (var prop in root.EnumerateObject())
+            {
+                if (prop.Value.ValueKind == JsonValueKind.String)
+                {
+                    string? v = prop.Value.GetString();
+                    if (!string.IsNullOrWhiteSpace(v))
+                        return $"{prop.Name}: {Truncate(v, 60)}";
+                }
+            }
+        }
+        catch { }
+
+        return string.Empty;
+    }
+
+    private static string SummarizeToolResult(string result)
+    {
+        if (string.IsNullOrWhiteSpace(result))
+            return string.Empty;
+
+        if (result.StartsWith("[MCP Error]", StringComparison.Ordinal))
+            return Truncate(result, 80);
+
+        // Try to extract a summary message from JSON results.
+        ReadOnlySpan<char> trimmed = result.AsSpan().TrimStart();
+        if (trimmed.Length > 0 && trimmed[0] == '{')
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(result);
+                var root = doc.RootElement;
+                // Many MCP results have a top-level message or text.
+                foreach (string key in new[] { "message", "text", "summary", "status" })
+                {
+                    if (root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String)
+                    {
+                        string? s = v.GetString();
+                        if (!string.IsNullOrWhiteSpace(s))
+                            return Truncate(s, 100);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        // Plain text result — show a short snippet.
+        return Truncate(result, 100);
+    }
+
+    private static string Truncate(string s, int maxLen)
+        => s.Length <= maxLen ? s : s[..(maxLen - 1)] + "\u2026";
+
     /// <summary>
     /// Executes a tool call against the local MCP server's <c>tools/call</c> endpoint.
     /// Returns the result text, or an error message on failure.
@@ -2058,6 +2744,11 @@ public sealed class McpAssistantWindow
 
         try
         {
+            // Apply a 30-second timeout for individual MCP tool calls to prevent indefinite hangs.
+            using var toolTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            toolTimeout.CancelAfter(TimeSpan.FromSeconds(30));
+            var linkedCt = toolTimeout.Token;
+
             using var request = new HttpRequestMessage(HttpMethod.Post, url)
             {
                 Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
@@ -2065,8 +2756,8 @@ public sealed class McpAssistantWindow
             if (!string.IsNullOrWhiteSpace(_mcpAuthToken))
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _mcpAuthToken.Trim());
 
-            using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-            string body = await response.Content.ReadAsStringAsync(ct);
+            using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linkedCt);
+            string body = await response.Content.ReadAsStringAsync(linkedCt);
 
             if (!response.IsSuccessStatusCode)
                 return $"[MCP Error] HTTP {(int)response.StatusCode}: {body}";
@@ -2083,9 +2774,9 @@ public sealed class McpAssistantWindow
             if (root.TryGetProperty("result", out JsonElement resultEl))
             {
                 // Try to extract text from content array: { "content": [ { "type": "text", "text": "..." } ] }
+                var sb = new StringBuilder();
                 if (resultEl.TryGetProperty("content", out JsonElement contentArr) && contentArr.ValueKind == JsonValueKind.Array)
                 {
-                    var sb = new StringBuilder();
                     foreach (JsonElement item in contentArr.EnumerateArray())
                     {
                         if (item.TryGetProperty("text", out JsonElement textEl) && textEl.ValueKind == JsonValueKind.String)
@@ -2094,14 +2785,28 @@ public sealed class McpAssistantWindow
                             sb.Append(textEl.GetString());
                         }
                     }
-                    if (sb.Length > 0) return sb.ToString();
                 }
+
+                // Append structured data (e.g. { id, path }) so the model can
+                // reference created resource IDs in subsequent tool calls.
+                if (resultEl.TryGetProperty("data", out JsonElement dataEl)
+                    && dataEl.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    if (sb.Length > 0) sb.Append('\n');
+                    sb.Append(dataEl.GetRawText());
+                }
+
+                if (sb.Length > 0) return sb.ToString();
 
                 // Fallback: serialize the entire result
                 return resultEl.GetRawText();
             }
 
             return body;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return $"[MCP Error] Tool call '{toolName}' timed out after 30 seconds.";
         }
         catch (Exception ex)
         {
