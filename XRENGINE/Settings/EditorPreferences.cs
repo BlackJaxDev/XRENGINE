@@ -888,8 +888,8 @@ namespace XREngine
         private bool _enableRenderStatisticsTracking = true;
         private bool _enableUILayoutDebugLogging = false;
         private bool _enableProfilerUdpSending = false;
-        private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.JobSystem;
-        private EDebugVisualizerPopulationMode _debugVisualizerPopulationMode = EDebugVisualizerPopulationMode.DirectMemory;
+        private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.Tasks;
+        private EDebugVisualizerPopulationMode _debugVisualizerPopulationMode = EDebugVisualizerPopulationMode.Tasks;
         private EDebugPrimitiveBufferFormat _debugPrimitiveBufferFormat = EDebugPrimitiveBufferFormat.Compressed;
 
         [Category("Debug")]

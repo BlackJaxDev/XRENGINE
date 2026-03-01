@@ -25,10 +25,10 @@
   "RenderTransformCapsules": false,
 
   "Skybox": true,
-  "DirLight": false,
+  "DirLight": true,
   "DirLight2": false,
   "SpotLight": false,
-  "PointLight": true,
+  "PointLight": false,
   "LightProbe": true,
   "LightProbeCaptureMs": 1000.0,
   "StopRealtimeCaptureSec": 5.0,
@@ -90,7 +90,7 @@
   "SoundNode": false,
   "Microphone": false,
   "AttachMicToAnimatedModel": true,
-  "AudioArchitectureV2": false,
+  "AudioArchitectureV2": true,
   "AudioTransport": "OpenAL",
   "AudioEffects": "OpenAL_EFX",
 

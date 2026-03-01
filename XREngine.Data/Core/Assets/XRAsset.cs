@@ -455,7 +455,8 @@ namespace XREngine.Core.Files
         public virtual void SerializeTo(string filePath, ISerializer defaultSerializer)
         {
             EnsureDirectoryExists(filePath);
-            using var writer = new StreamWriter(filePath, append: false, Encoding.UTF8);
+            using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+            using var writer = new StreamWriter(fs, Encoding.UTF8);
             defaultSerializer.Serialize(writer, this, GetType());
         }
 
@@ -473,7 +474,9 @@ namespace XREngine.Core.Files
         {
             EnsureDirectoryExists(filePath);
             string yaml = defaultSerializer.Serialize(this, GetType());
-            await File.WriteAllTextAsync(filePath, yaml, Encoding.UTF8).ConfigureAwait(false);
+            using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+            using var writer = new StreamWriter(fs, Encoding.UTF8);
+            await writer.WriteAsync(yaml).ConfigureAwait(false);
         }
 
         #endregion

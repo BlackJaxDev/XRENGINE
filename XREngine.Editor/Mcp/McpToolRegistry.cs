@@ -224,6 +224,22 @@ namespace XREngine.Editor.Mcp
                 schema["title"] = title;
             if (parameterType.IsEnum)
                 schema["enum"] = Enum.GetNames(parameterType);
+
+            // JSON Schema requires "items" for array types.
+            Type underlying = Nullable.GetUnderlyingType(parameterType) ?? parameterType;
+            if (underlying.IsArray)
+            {
+                Type elementType = underlying.GetElementType()!;
+                schema["items"] = new Dictionary<string, object?> { ["type"] = MapJsonType(elementType) };
+            }
+            else if (underlying != typeof(string) && typeof(System.Collections.IEnumerable).IsAssignableFrom(underlying))
+            {
+                // For generic collections like List<T>, extract T.
+                Type[] genericArgs = underlying.GetGenericArguments();
+                string itemType = genericArgs.Length > 0 ? MapJsonType(genericArgs[0]) : "string";
+                schema["items"] = new Dictionary<string, object?> { ["type"] = itemType };
+            }
+
             return schema;
         }
 
