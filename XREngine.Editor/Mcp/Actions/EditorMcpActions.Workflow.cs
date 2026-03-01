@@ -281,6 +281,7 @@ namespace XREngine.Editor.Mcp
 
         [XRMcp]
         [McpName("save_world")]
+        [McpPermission(McpPermissionLevel.Destructive, Reason = "Writes world data to the file system.")]
         [Description("Save the active world asset to disk.")]
         public static Task<McpToolResponse> SaveWorldAsync(
             McpToolContext context,
@@ -312,6 +313,7 @@ namespace XREngine.Editor.Mcp
 
         [XRMcp]
         [McpName("load_world")]
+        [McpPermission(McpPermissionLevel.Destructive, Reason = "Replaces the active world, discarding unsaved changes.")]
         [Description("Load a world asset and set it as active on the current world instance.")]
         public static Task<McpToolResponse> LoadWorldAsync(
             McpToolContext context,

@@ -224,6 +224,7 @@ namespace XREngine.Editor.Mcp
         /// </summary>
         [XRMcp]
         [McpName("export_scene")]
+        [McpPermission(McpPermissionLevel.Destructive, Reason = "Writes scene data to the file system.")]
         [Description("Export a scene asset to a directory.")]
         public static Task<McpToolResponse> ExportSceneAsync(
             McpToolContext context,
@@ -251,6 +252,7 @@ namespace XREngine.Editor.Mcp
         /// </summary>
         [XRMcp]
         [McpName("import_scene")]
+        [McpPermission(McpPermissionLevel.Destructive, Reason = "Loads external data and modifies the active world.")]
         [Description("Import a scene asset from disk and add it to the active world.")]
         public static Task<McpToolResponse> ImportSceneAsync(
             McpToolContext context,

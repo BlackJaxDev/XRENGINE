@@ -15,6 +15,10 @@ namespace XREngine.Editor.Mcp
     /// <item><description><c>EditorMcpActions.Transform.cs</c> - Transform operations (set, rotate)</description></item>
     /// <item><description><c>EditorMcpActions.World.cs</c> - World operations (list worlds/scenes)</description></item>
     /// <item><description><c>EditorMcpActions.Viewport.cs</c> - Viewport operations (screenshot capture)</description></item>
+    /// <item><description><c>EditorMcpActions.Introspection.cs</c> - Engine state, asset, and debugging introspection</description></item>
+    /// <item><description><c>EditorMcpActions.TypeSystem.cs</c> - .NET type system navigation and reflection queries</description></item>
+    /// <item><description><c>EditorMcpActions.Scripting.cs</c> - Code/script management, compilation, hot-reload, and scaffolding</description></item>
+    /// <item><description><c>EditorMcpActions.GameAssets.cs</c> - Game project asset management (file-system and engine-aware operations)</description></item>
     /// <item><description><c>EditorMcpActions.Helpers.cs</c> - Internal helper methods</description></item>
     /// </list>
     /// <para>

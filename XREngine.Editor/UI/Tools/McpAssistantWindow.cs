@@ -5,7 +5,11 @@ using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Editor.Mcp;
+using XREngine.Rendering;
+using XREngine.Scene;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Editor.UI.Tools;
@@ -2325,6 +2329,9 @@ public sealed class McpAssistantWindow
         await SendWsJsonAsync(socket, BuildRealtimeResponseCreate(), ct);
 
         var sb = new StringBuilder();
+        var toolLog = new StringBuilder();
+        var pendingCallsByOutputIndex = new Dictionary<int, PendingFunctionCall>();
+        var pendingCallsByItemId = new Dictionary<string, PendingFunctionCall>(StringComparer.Ordinal);
 
         while (socket.State == WebSocketState.Open && !ct.IsCancellationRequested)
         {
@@ -2343,7 +2350,110 @@ public sealed class McpAssistantWindow
                 && root.TryGetProperty("delta", out var deltaEl))
             {
                 sb.Append(deltaEl.GetString());
-                target.Content = sb.ToString();
+                target.Content = BuildAssistantContent(sb, toolLog);
+            }
+            else if (string.Equals(eventType, "response.output_item.added", StringComparison.OrdinalIgnoreCase)
+                && root.TryGetProperty("output_index", out var outputIndexEl)
+                && outputIndexEl.TryGetInt32(out int outputIndex)
+                && root.TryGetProperty("item", out var itemEl)
+                && itemEl.TryGetProperty("type", out var itemTypeEl)
+                && string.Equals(itemTypeEl.GetString(), "function_call", StringComparison.OrdinalIgnoreCase))
+            {
+                string itemId = itemEl.TryGetProperty("id", out var itemIdEl) ? itemIdEl.GetString() ?? string.Empty : string.Empty;
+                string callId = itemEl.TryGetProperty("call_id", out var callIdEl) ? callIdEl.GetString() ?? string.Empty : string.Empty;
+                string name = itemEl.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? string.Empty : string.Empty;
+
+                var pending = new PendingFunctionCall
+                {
+                    CallId = callId,
+                    Name = name,
+                };
+
+                pendingCallsByOutputIndex[outputIndex] = pending;
+                if (!string.IsNullOrWhiteSpace(itemId))
+                    pendingCallsByItemId[itemId] = pending;
+
+                target.Content = BuildAssistantContent(sb, toolLog, $"Calling tool: {name}...");
+                usage.ToolEventCount++;
+            }
+            else if (string.Equals(eventType, "response.function_call_arguments.delta", StringComparison.OrdinalIgnoreCase)
+                && root.TryGetProperty("output_index", out var outputIndexDeltaEl)
+                && outputIndexDeltaEl.TryGetInt32(out int outputIndexDelta)
+                && root.TryGetProperty("delta", out var argDeltaEl)
+                && argDeltaEl.ValueKind == JsonValueKind.String
+                && pendingCallsByOutputIndex.TryGetValue(outputIndexDelta, out var pendingDeltaCall))
+            {
+                pendingDeltaCall.Arguments.Append(argDeltaEl.GetString());
+            }
+            else if (string.Equals(eventType, "response.function_call_arguments.done", StringComparison.OrdinalIgnoreCase)
+                && root.TryGetProperty("output_index", out var outputIndexDoneEl)
+                && outputIndexDoneEl.TryGetInt32(out int outputIndexDone)
+                && root.TryGetProperty("arguments", out var argsDoneEl)
+                && argsDoneEl.ValueKind == JsonValueKind.String
+                && pendingCallsByOutputIndex.TryGetValue(outputIndexDone, out var pendingDoneCall))
+            {
+                pendingDoneCall.Arguments.Clear();
+                pendingDoneCall.Arguments.Append(argsDoneEl.GetString());
+            }
+            else if (string.Equals(eventType, "response.output_item.done", StringComparison.OrdinalIgnoreCase)
+                && root.TryGetProperty("item", out var doneItemEl)
+                && doneItemEl.TryGetProperty("type", out var doneItemTypeEl)
+                && string.Equals(doneItemTypeEl.GetString(), "function_call", StringComparison.OrdinalIgnoreCase))
+            {
+                string? doneItemId = doneItemEl.TryGetProperty("id", out var doneItemIdEl) ? doneItemIdEl.GetString() : null;
+                PendingFunctionCall? pendingDone = null;
+
+                if (!string.IsNullOrWhiteSpace(doneItemId)
+                    && pendingCallsByItemId.TryGetValue(doneItemId!, out var callByItem))
+                {
+                    pendingDone = callByItem;
+                    pendingCallsByItemId.Remove(doneItemId!);
+                }
+
+                if (pendingDone is null
+                    && root.TryGetProperty("output_index", out var outputIndexDoneItemEl)
+                    && outputIndexDoneItemEl.TryGetInt32(out int outputIndexDoneItem)
+                    && pendingCallsByOutputIndex.TryGetValue(outputIndexDoneItem, out var callByOutputIndex))
+                {
+                    pendingDone = callByOutputIndex;
+                    pendingCallsByOutputIndex.Remove(outputIndexDoneItem);
+                }
+
+                if (pendingDone is null)
+                    continue;
+
+                if (doneItemEl.TryGetProperty("arguments", out var finalArgsEl) && finalArgsEl.ValueKind == JsonValueKind.String)
+                {
+                    pendingDone.Arguments.Clear();
+                    pendingDone.Arguments.Append(finalArgsEl.GetString());
+                }
+
+                var tcEntry = new ToolCallEntry
+                {
+                    ToolName = FormatToolName(pendingDone.Name),
+                    ArgsSummary = SummarizeToolArguments(pendingDone.Name, pendingDone.Arguments.ToString()),
+                };
+                target.ToolCalls.Add(tcEntry);
+
+                var toolResult = await ExecuteRealtimeFunctionCallAsync(pendingDone, ct);
+                usage.McpEventCount++;
+
+                tcEntry.ResultSummary = SummarizeToolResult(toolResult.FunctionOutput);
+                tcEntry.IsError = toolResult.IsError;
+                tcEntry.IsComplete = true;
+
+                AppendToolCallLog(toolLog, pendingDone.Name, pendingDone.Arguments.ToString(), toolResult.FunctionOutput);
+                target.Content = BuildAssistantContent(sb, toolLog, "Sending tool result...");
+
+                await SendWsJsonAsync(socket, BuildRealtimeFunctionCallOutputItem(pendingDone.CallId, toolResult.FunctionOutput), ct);
+
+                if (!string.IsNullOrWhiteSpace(toolResult.ImageDataUrl))
+                {
+                    await SendWsJsonAsync(socket, BuildRealtimeScreenshotContextMessage(toolResult), ct);
+                }
+
+                await SendWsJsonAsync(socket, BuildRealtimeResponseCreate(), ct);
+                target.Content = BuildAssistantContent(sb, toolLog, "Continuing model response...");
             }
             else if (string.Equals(eventType, "response.completed", StringComparison.OrdinalIgnoreCase))
             {
@@ -2353,10 +2463,13 @@ public sealed class McpAssistantWindow
             else if (string.Equals(eventType, "error", StringComparison.OrdinalIgnoreCase))
             {
                 usage.Result = "Failed";
-                target.Content = json;
+                target.Content = BuildAssistantContent(sb, toolLog, json);
                 break;
             }
         }
+
+        if (sb.Length > 0 || toolLog.Length > 0)
+            target.Content = BuildAssistantContent(sb, toolLog);
 
         if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
             await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
@@ -2394,8 +2507,8 @@ public sealed class McpAssistantWindow
     private JsonObject BuildRealtimeSessionUpdate()
     {
         string instructions = "Answer user requests about XREngine. Be concise and actionable.";
-        if (AttachMcpServer)
-            instructions += " Function tools for scene manipulation are available in the standard API path. The realtime path does not support tool calls.";
+        instructions += " If you need current visual context, call request_view_screenshot while reasoning. "
+            + "You may pass camera_node_id to target a specific camera node, or camera_name to target by scene node name.";
 
         return new JsonObject
         {
@@ -2403,7 +2516,9 @@ public sealed class McpAssistantWindow
             ["session"] = new JsonObject
             {
                 ["instructions"] = instructions,
-                ["modalities"] = new JsonArray("text")
+                ["modalities"] = new JsonArray("text"),
+                ["tool_choice"] = "auto",
+                ["tools"] = BuildRealtimeFunctionTools()
             }
         };
     }
@@ -2427,6 +2542,393 @@ public sealed class McpAssistantWindow
         ["type"] = "response.create",
         ["response"] = new JsonObject { ["modalities"] = new JsonArray("text") }
     };
+
+    private static JsonArray BuildRealtimeFunctionTools() =>
+    [
+        new JsonObject
+        {
+            ["type"] = "function",
+            ["name"] = "request_view_screenshot",
+            ["description"] = "Capture a screenshot from the current editor view or a camera and return it for visual reasoning.",
+            ["parameters"] = new JsonObject
+            {
+                ["type"] = "object",
+                ["properties"] = new JsonObject
+                {
+                    ["camera_node_id"] = new JsonObject
+                    {
+                        ["type"] = "string",
+                        ["description"] = "Optional camera scene node GUID."
+                    },
+                    ["camera_name"] = new JsonObject
+                    {
+                        ["type"] = "string",
+                        ["description"] = "Optional camera scene node name when ID is unknown."
+                    },
+                    ["window_index"] = new JsonObject
+                    {
+                        ["type"] = "integer",
+                        ["description"] = "Optional editor window index. Defaults to 0."
+                    },
+                    ["viewport_index"] = new JsonObject
+                    {
+                        ["type"] = "integer",
+                        ["description"] = "Optional viewport index within the window. Defaults to 0."
+                    },
+                    ["note"] = new JsonObject
+                    {
+                        ["type"] = "string",
+                        ["description"] = "Optional reason for the screenshot request."
+                    }
+                },
+                ["additionalProperties"] = false
+            }
+        }
+    ];
+
+    private static JsonObject BuildRealtimeFunctionCallOutputItem(string callId, string output) => new()
+    {
+        ["type"] = "conversation.item.create",
+        ["item"] = new JsonObject
+        {
+            ["type"] = "function_call_output",
+            ["call_id"] = callId,
+            ["output"] = output
+        }
+    };
+
+    private static JsonObject BuildRealtimeScreenshotContextMessage(RealtimeFunctionResult result)
+    {
+        string text = string.IsNullOrWhiteSpace(result.ContextText)
+            ? "Requested screenshot attached."
+            : result.ContextText;
+
+        return new JsonObject
+        {
+            ["type"] = "conversation.item.create",
+            ["item"] = new JsonObject
+            {
+                ["type"] = "message",
+                ["role"] = "user",
+                ["content"] = new JsonArray
+                {
+                    new JsonObject { ["type"] = "input_text", ["text"] = text },
+                    new JsonObject { ["type"] = "input_image", ["image_url"] = result.ImageDataUrl }
+                }
+            }
+        };
+    }
+
+    private async Task<RealtimeFunctionResult> ExecuteRealtimeFunctionCallAsync(PendingFunctionCall call, CancellationToken ct)
+    {
+        if (!string.Equals(call.Name, "request_view_screenshot", StringComparison.Ordinal))
+        {
+            return new RealtimeFunctionResult
+            {
+                IsError = true,
+                FunctionOutput = JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    error = $"Unsupported realtime function '{call.Name}'."
+                })
+            };
+        }
+
+        try
+        {
+            JsonElement args = default;
+            bool hasArgs = false;
+            string argsRaw = call.Arguments.ToString();
+            if (!string.IsNullOrWhiteSpace(argsRaw))
+            {
+                using var argsDoc = JsonDocument.Parse(argsRaw);
+                args = argsDoc.RootElement.Clone();
+                hasArgs = true;
+            }
+
+            string? cameraNodeId = hasArgs && args.TryGetProperty("camera_node_id", out var cameraNodeIdEl) && cameraNodeIdEl.ValueKind == JsonValueKind.String
+                ? cameraNodeIdEl.GetString()
+                : null;
+
+            string? cameraName = hasArgs && args.TryGetProperty("camera_name", out var cameraNameEl) && cameraNameEl.ValueKind == JsonValueKind.String
+                ? cameraNameEl.GetString()
+                : null;
+
+            int windowIndex = hasArgs && args.TryGetProperty("window_index", out var windowIndexEl) && windowIndexEl.TryGetInt32(out int parsedWindow)
+                ? parsedWindow
+                : 0;
+
+            int viewportIndex = hasArgs && args.TryGetProperty("viewport_index", out var viewportIndexEl) && viewportIndexEl.TryGetInt32(out int parsedViewport)
+                ? parsedViewport
+                : 0;
+
+            string note = hasArgs && args.TryGetProperty("note", out var noteEl) && noteEl.ValueKind == JsonValueKind.String
+                ? noteEl.GetString() ?? string.Empty
+                : string.Empty;
+
+            var capture = await CaptureRealtimeScreenshotAsync(cameraNodeId, cameraName, windowIndex, viewportIndex, ct);
+            byte[] bytes = await File.ReadAllBytesAsync(capture.Path, ct);
+            string dataUrl = "data:image/png;base64," + Convert.ToBase64String(bytes);
+
+            string functionOutput = JsonSerializer.Serialize(new
+            {
+                ok = true,
+                path = capture.Path,
+                camera_node_id = capture.CameraNodeId,
+                camera_name = capture.CameraName,
+                window_index = capture.WindowIndex,
+                viewport_index = capture.ViewportIndex,
+                note
+            });
+
+            string contextText = string.IsNullOrWhiteSpace(capture.CameraName)
+                ? "Requested screenshot from the current viewport."
+                : $"Requested screenshot from camera '{capture.CameraName}'.";
+
+            return new RealtimeFunctionResult
+            {
+                FunctionOutput = functionOutput,
+                ImageDataUrl = dataUrl,
+                ContextText = contextText,
+            };
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return new RealtimeFunctionResult
+            {
+                IsError = true,
+                FunctionOutput = JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    error = "Screenshot request timed out."
+                })
+            };
+        }
+        catch (Exception ex)
+        {
+            return new RealtimeFunctionResult
+            {
+                IsError = true,
+                FunctionOutput = JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    error = ex.Message
+                })
+            };
+        }
+    }
+
+    private static async Task<RealtimeScreenshotCapture> CaptureRealtimeScreenshotAsync(string? cameraNodeId, string? cameraName, int windowIndex, int viewportIndex, CancellationToken ct)
+    {
+        XRWorldInstance? world = McpWorldResolver.TryGetActiveWorldInstance();
+        XRViewport? viewport = ResolveRealtimeViewport(world, cameraNodeId, cameraName, windowIndex, viewportIndex, out SceneNode? cameraNode);
+        if (viewport is null)
+            throw new InvalidOperationException("No viewport found to capture.");
+
+        string folder = Path.Combine(Environment.CurrentDirectory, "McpCaptures");
+        string fileName = $"RealtimeScreenshot_{DateTime.Now:yyyyMMdd_HHmmss_fff}.png";
+        string path = Path.Combine(folder, fileName);
+
+        Directory.CreateDirectory(folder);
+
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Action? deferredHandler = null;
+
+        var window = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+        if (window is null)
+            throw new InvalidOperationException("No window found to capture from.");
+
+        static void BeginCapture(AbstractRenderer renderer, XRViewport viewport, string path, TaskCompletionSource<string> tcs)
+        {
+            renderer.GetScreenshotAsync(viewport.Region, false, (img, _) =>
+            {
+                if (img is null)
+                {
+                    tcs.TrySetException(new InvalidOperationException("Screenshot capture returned null."));
+                    return;
+                }
+
+                try
+                {
+                    img.Flip();
+                    img.Write(path);
+                    tcs.TrySetResult(path);
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
+            });
+        }
+
+        void ScheduleCaptureOnRenderThread()
+        {
+            if (AbstractRenderer.Current is not null)
+            {
+                BeginCapture(AbstractRenderer.Current, viewport, path, tcs);
+                return;
+            }
+
+            int captureStarted = 0;
+            deferredHandler = () =>
+            {
+                var renderer = AbstractRenderer.Current;
+                if (renderer is null)
+                    return;
+
+                if (Interlocked.CompareExchange(ref captureStarted, 1, 0) != 0)
+                    return;
+
+                window.RenderViewportsCallback -= deferredHandler;
+                BeginCapture(renderer, viewport, path, tcs);
+            };
+
+            window.RenderViewportsCallback += deferredHandler;
+        }
+
+        if (Engine.IsRenderThread)
+        {
+            ScheduleCaptureOnRenderThread();
+        }
+        else
+        {
+            Engine.InvokeOnMainThread(ScheduleCaptureOnRenderThread, "Realtime: Capture screenshot", executeNowIfAlreadyMainThread: true);
+        }
+
+        using var reg = ct.Register(() =>
+        {
+            if (deferredHandler is not null)
+            {
+                var cancelWindow = viewport.Window ?? Engine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
+                cancelWindow?.RenderViewportsCallback -= deferredHandler;
+            }
+
+            tcs.TrySetCanceled(ct);
+        });
+
+        string savedPath = await tcs.Task;
+        return new RealtimeScreenshotCapture
+        {
+            Path = savedPath,
+            CameraNodeId = cameraNode?.ID.ToString(),
+            CameraName = cameraNode?.Name,
+            WindowIndex = ResolveWindowIndex(window),
+            ViewportIndex = window.Viewports.IndexOf(viewport)
+        };
+    }
+
+    private static int ResolveWindowIndex(XRWindow window)
+    {
+        int index = 0;
+        foreach (var entry in Engine.Windows)
+        {
+            if (ReferenceEquals(entry, window))
+                return index;
+            index++;
+        }
+
+        return -1;
+    }
+
+    private static XRViewport? ResolveRealtimeViewport(
+        XRWorldInstance? world,
+        string? cameraNodeId,
+        string? cameraName,
+        int windowIndex,
+        int viewportIndex,
+        out SceneNode? cameraNode)
+    {
+        cameraNode = null;
+
+        CameraComponent? camera = null;
+        if (world is not null)
+            camera = ResolveCameraComponent(world, cameraNodeId, cameraName, out cameraNode);
+
+        if (camera is not null)
+        {
+            foreach (var activeViewport in Engine.EnumerateActiveViewports())
+            {
+                if (ReferenceEquals(activeViewport.CameraComponent, camera))
+                    return activeViewport;
+            }
+        }
+
+        if (windowIndex < 0 || windowIndex >= Engine.Windows.Count)
+            return Engine.Windows.FirstOrDefault()?.Viewports.FirstOrDefault();
+
+        var window = Engine.Windows[windowIndex];
+        if (window.Viewports.Count == 0)
+            return null;
+
+        if (viewportIndex < 0 || viewportIndex >= window.Viewports.Count)
+            return window.Viewports.FirstOrDefault();
+
+        return window.Viewports[viewportIndex];
+    }
+
+    private static CameraComponent? ResolveCameraComponent(XRWorldInstance world, string? cameraNodeId, string? cameraName, out SceneNode? cameraNode)
+    {
+        cameraNode = null;
+
+        if (!string.IsNullOrWhiteSpace(cameraNodeId)
+            && Guid.TryParse(cameraNodeId, out var guid)
+            && XRObjectBase.ObjectsCache.TryGetValue(guid, out var obj)
+            && obj is SceneNode idNode
+            && idNode.World == world)
+        {
+            var camera = idNode.GetComponent<CameraComponent>();
+            if (camera is not null)
+            {
+                cameraNode = idNode;
+                return camera;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(cameraName))
+        {
+            foreach (var node in EnumerateWorldNodes(world))
+            {
+                if (!string.Equals(node.Name, cameraName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var camera = node.GetComponent<CameraComponent>();
+                if (camera is not null)
+                {
+                    cameraNode = node;
+                    return camera;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<SceneNode> EnumerateWorldNodes(XRWorldInstance world)
+    {
+        foreach (var root in world.RootNodes)
+        {
+            if (root is null)
+                continue;
+
+            foreach (var node in EnumerateNodeAndDescendants(root))
+                yield return node;
+        }
+    }
+
+    private static IEnumerable<SceneNode> EnumerateNodeAndDescendants(SceneNode root)
+    {
+        yield return root;
+
+        foreach (var childTransform in root.Transform.Children)
+        {
+            var childNode = childTransform.SceneNode;
+            if (childNode is null)
+                continue;
+
+            foreach (var child in EnumerateNodeAndDescendants(childNode))
+                yield return child;
+        }
+    }
 
     private static string BuildOpenAiInstructions(bool requireToolUse, bool attachMcp)
     {
@@ -2822,6 +3324,23 @@ public sealed class McpAssistantWindow
         public string CallId { get; init; } = string.Empty;
         public string Name { get; init; } = string.Empty;
         public StringBuilder Arguments { get; } = new();
+    }
+
+    private sealed class RealtimeFunctionResult
+    {
+        public bool IsError { get; init; }
+        public string FunctionOutput { get; init; } = string.Empty;
+        public string ImageDataUrl { get; init; } = string.Empty;
+        public string ContextText { get; init; } = string.Empty;
+    }
+
+    private sealed class RealtimeScreenshotCapture
+    {
+        public string Path { get; init; } = string.Empty;
+        public string? CameraNodeId { get; init; }
+        public string? CameraName { get; init; }
+        public int WindowIndex { get; init; }
+        public int ViewportIndex { get; init; }
     }
 
     // ── JSON Helpers ─────────────────────────────────────────────────────

@@ -43,6 +43,8 @@ namespace XREngine
         private int _mcpServerRateLimitRequests = 120;
         private int _mcpServerRateLimitWindowSeconds = 60;
         private bool _mcpServerIncludeStatusInPing = true;
+        private McpPermissionPolicy _mcpPermissionPolicy = McpPermissionPolicy.AllowReadOnly;
+        private McpDispatchMode _mcpDispatchMode = McpDispatchMode.Direct;
 
         // MCP Assistant (in-editor AI chat window) settings
         private int _mcpAssistantProviderIndex = 0;
@@ -268,6 +270,32 @@ namespace XREngine
             set => SetField(ref _mcpServerIncludeStatusInPing, value);
         }
 
+        /// <summary>
+        /// Controls which MCP tool permission levels are auto-approved without prompting the user.
+        /// Tools above this threshold show a modal permission dialog.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Permission Policy")]
+        [Description("Auto-approve threshold for MCP tool calls. Tools above this level require explicit user approval.")]
+        public McpPermissionPolicy McpPermissionPolicy
+        {
+            get => _mcpPermissionPolicy;
+            set => SetField(ref _mcpPermissionPolicy, value);
+        }
+
+        /// <summary>
+        /// Controls how MCP tool invocations are dispatched when a tool does not
+        /// declare an explicit <c>[McpThreadAffinity]</c> attribute.
+        /// </summary>
+        [Category("MCP Server")]
+        [DisplayName("MCP Dispatch Mode")]
+        [Description("Default thread dispatch for MCP tools: Direct (threadpool), MainThread (render), or JobWorker.")]
+        public McpDispatchMode McpDispatchMode
+        {
+            get => _mcpDispatchMode;
+            set => SetField(ref _mcpDispatchMode, value);
+        }
+
         // ── MCP Assistant (in-editor AI chat window) ─────────────────────
 
         /// <summary>
@@ -451,6 +479,8 @@ namespace XREngine
             McpServerRateLimitRequests = source.McpServerRateLimitRequests;
             McpServerRateLimitWindowSeconds = source.McpServerRateLimitWindowSeconds;
             McpServerIncludeStatusInPing = source.McpServerIncludeStatusInPing;
+            McpPermissionPolicy = source.McpPermissionPolicy;
+            McpDispatchMode = source.McpDispatchMode;
 
             // MCP Assistant
             McpAssistantProviderIndex = source.McpAssistantProviderIndex;

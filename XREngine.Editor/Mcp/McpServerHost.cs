@@ -721,8 +721,17 @@ namespace XREngine.Editor.Mcp
             if (!string.IsNullOrWhiteSpace(idempotencyKey) && TryGetIdempotentResponse(idempotencyKey!, out var cached))
                 return cached!;
 
+            // Permission gate: check if the tool requires user approval.
+            var permissionPolicy = Engine.EditorPreferences.McpPermissionPolicy;
+            if (!await McpPermissionManager.Instance.RequestPermissionAsync(tool!, permissionPolicy, argsElement, "MCP Server", token))
+                return new McpError(-32602, $"Tool '{name}' was denied by the user.");
+
             var context = new McpToolContext(world);
-            var response = await tool!.Handler(context, argsElement, token);
+
+            // Resolve effective thread affinity: explicit attribute overrides global dispatch mode.
+            var dispatchMode = Engine.EditorPreferences.McpDispatchMode;
+            McpThreadAffinity affinity = tool!.ThreadAffinity ?? ResolveDefaultAffinity(dispatchMode);
+            var response = await DispatchToolAsync(tool, context, argsElement, affinity, token);
 
             var toolResponse = new
             {
@@ -738,6 +747,81 @@ namespace XREngine.Editor.Mcp
                 StoreIdempotentResponse(idempotencyKey!, toolResponse);
 
             return toolResponse;
+        }
+
+        /// <summary>
+        /// Maps the global <see cref="McpDispatchMode"/> preference to a <see cref="McpThreadAffinity"/>.
+        /// </summary>
+        private static McpThreadAffinity ResolveDefaultAffinity(McpDispatchMode mode) => mode switch
+        {
+            McpDispatchMode.MainThread => McpThreadAffinity.Main,
+            McpDispatchMode.JobWorker => McpThreadAffinity.JobWorker,
+            _ => McpThreadAffinity.Caller,
+        };
+
+        /// <summary>
+        /// Dispatches a tool invocation to the correct engine thread based on its affinity,
+        /// then awaits the result back on the calling thread.
+        /// </summary>
+        private static async Task<McpToolResponse> DispatchToolAsync(
+            McpToolDefinition tool,
+            McpToolContext context,
+            JsonElement args,
+            McpThreadAffinity affinity,
+            CancellationToken token)
+        {
+            // Caller affinity: invoke directly on the current (HTTP listener) thread.
+            if (affinity == McpThreadAffinity.Caller)
+                return await tool.Handler(context, args, token);
+
+            // JobWorker affinity: schedule on a CLR threadpool thread.
+            if (affinity == McpThreadAffinity.JobWorker)
+            {
+                return await Task.Run(async () =>
+                {
+                    return await tool.Handler(context, args, token);
+                }, token);
+            }
+
+            // Main / Update / Physics: dispatch via engine task queues and await completion.
+            {
+                var tcs = new System.Threading.Tasks.TaskCompletionSource<McpToolResponse>(
+                    System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+
+                Action dispatch = async () =>
+                {
+                    try
+                    {
+                        var result = await tool.Handler(context, args, token);
+                        tcs.TrySetResult(result);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        tcs.TrySetCanceled(token);
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.TrySetException(ex);
+                    }
+                };
+
+                switch (affinity)
+                {
+                    case McpThreadAffinity.Main:
+                        Engine.EnqueueMainThreadTask(dispatch);
+                        break;
+                    case McpThreadAffinity.Update:
+                        Engine.EnqueueUpdateThreadTask(dispatch);
+                        break;
+                    case McpThreadAffinity.Physics:
+                        Engine.EnqueuePhysicsThreadTask(dispatch);
+                        break;
+                    default:
+                        return await tool.Handler(context, args, token);
+                }
+
+                return await tcs.Task;
+            }
         }
 
         private static bool TryGetParamsObject(JsonElement root, out JsonElement paramsElement, out string? error)
