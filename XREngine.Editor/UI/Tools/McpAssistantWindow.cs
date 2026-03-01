@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using XREngine.Editor.Mcp;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Editor.UI.Tools;
@@ -30,6 +31,23 @@ public sealed class McpAssistantWindow
         public string Content { get; set; } = string.Empty;
         public DateTime Timestamp { get; init; } = DateTime.Now;
         public bool IsStreaming { get; set; }
+    }
+
+    private sealed class McpUsageEntry
+    {
+        public DateTime Timestamp { get; init; } = DateTime.Now;
+        public string Provider { get; init; } = string.Empty;
+        public string PromptPreview { get; init; } = string.Empty;
+        public bool AttachRequested { get; init; }
+        public bool McpPayloadIncluded { get; set; }
+        public string ToolChoice { get; set; } = "none";
+        public bool RequireToolUse { get; set; }
+        public bool McpDiscoveryFailed { get; set; }
+        public bool RetriedWithoutMcp { get; set; }
+        public int McpEventCount { get; set; }
+        public int ToolEventCount { get; set; }
+        public string Result { get; set; } = "Pending";
+        public string Note { get; set; } = string.Empty;
     }
 
     // ── Constants ────────────────────────────────────────────────────────
@@ -76,6 +94,13 @@ public sealed class McpAssistantWindow
     private Vector4 _statusColor = ColorReady;
     private bool _scrollToBottom;
     private CancellationTokenSource? _cts;
+    private readonly object _openAiModelLock = new();
+    private string[] _openAiTextModels = [];
+    private bool _openAiModelsLoading;
+    private string _openAiModelsStatus = "Not loaded";
+    private bool _openAiModelsAutoRequested;
+    private readonly List<McpUsageEntry> _mcpUsageHistory = [];
+    private const int MaxMcpUsageEntries = 80;
 
     // ── Pref-backed accessors ────────────────────────────────────────────
     // These read/write Engine.EditorPreferences so values are persisted.
@@ -167,7 +192,7 @@ public sealed class McpAssistantWindow
 
         ImGui.SetNextWindowSize(new Vector2(780, 620), ImGuiCond.FirstUseEver);
 
-        if (ImGui.Begin("MCP Assistant###McpAssistantWin", ref _isOpen, ImGuiWindowFlags.MenuBar))
+        if (ImGui.Begin("MCP Assistant###McpAssistantWin", ref _isOpen, ImGuiWindowFlags.MenuBar | ImGuiWindowFlags.NoScrollbar))
         {
             DrawMenuBar();
             DrawSettingsSection();
@@ -197,6 +222,9 @@ public sealed class McpAssistantWindow
 
             if (ImGui.MenuItem("Clear History", null, false, _history.Count > 0))
                 _history.Clear();
+
+            if (ImGui.MenuItem("Clear MCP Usage History", null, false, _mcpUsageHistory.Count > 0))
+                _mcpUsageHistory.Clear();
 
             ImGui.EndMenu();
         }
@@ -238,9 +266,17 @@ public sealed class McpAssistantWindow
         {
             case ProviderType.Codex:
             {
+                string previousOpenAiKey = OpenAiApiKey;
                 string oaiKey = OpenAiApiKey;
                 DrawSecretField("API Key##OAI", ref oaiKey, 320f);
                 OpenAiApiKey = oaiKey;
+                if (!string.Equals(previousOpenAiKey, oaiKey, StringComparison.Ordinal))
+                {
+                    _openAiModelsAutoRequested = false;
+                    lock (_openAiModelLock)
+                        _openAiTextModels = [];
+                    _openAiModelsStatus = "Not loaded";
+                }
 
                 string oaiModel = OpenAiModel;
                 ImGui.SetNextItemWidth(220f);
@@ -248,6 +284,8 @@ public sealed class McpAssistantWindow
                     OpenAiModel = oaiModel;
                 if (ImGuiTextFieldHelper.DrawTextFieldContextMenu("ctx_ModelOAI", ref oaiModel))
                     OpenAiModel = oaiModel;
+
+                DrawOpenAiTextModelPicker();
 
                 bool useRt = UseRealtimeWebSocket;
                 if (ImGui.Checkbox("Use Realtime WebSocket", ref useRt))
@@ -320,8 +358,52 @@ public sealed class McpAssistantWindow
                 ImGui.SetTooltip("Optional. Only needed if you enabled\n'Require Auth' in Editor Preferences.\nThis is the bearer token the MCP server\nchecks on incoming requests.");
         }
 
+        DrawMcpUsageHistorySection();
+
         ImGui.Unindent(8f);
         ImGui.Spacing();
+    }
+
+    private void DrawMcpUsageHistorySection()
+    {
+        if (!ImGui.CollapsingHeader("MCP Usage History"))
+            return;
+
+        if (_mcpUsageHistory.Count == 0)
+        {
+            ImGui.TextDisabled("No MCP usage records yet.");
+            return;
+        }
+
+        ImGui.BeginChild("##McpUsageHistory", new Vector2(-1f, 150f), ImGuiChildFlags.Border);
+
+        for (int i = _mcpUsageHistory.Count - 1; i >= 0; i--)
+        {
+            McpUsageEntry entry = _mcpUsageHistory[i];
+
+            Vector4 resultColor = string.Equals(entry.Result, "Done", StringComparison.OrdinalIgnoreCase)
+                ? ColorDone
+                : string.Equals(entry.Result, "Pending", StringComparison.OrdinalIgnoreCase)
+                    ? ColorBusy
+                    : ColorError;
+
+            ImGui.TextColored(ColorTimestamp, $"{entry.Timestamp:HH:mm:ss}");
+            ImGui.SameLine();
+            ImGui.TextUnformatted(entry.Provider);
+            ImGui.SameLine();
+            ImGui.TextColored(resultColor, entry.Result);
+
+            ImGui.TextWrapped($"prompt: {entry.PromptPreview}");
+            ImGui.TextDisabled($"attach:{entry.AttachRequested} payload:{entry.McpPayloadIncluded} choice:{entry.ToolChoice} required:{entry.RequireToolUse} mcpEvents:{entry.McpEventCount} toolEvents:{entry.ToolEventCount} fallback:{entry.RetriedWithoutMcp}");
+
+            if (entry.McpDiscoveryFailed || !string.IsNullOrWhiteSpace(entry.Note))
+                ImGui.TextColored(ColorError, string.IsNullOrWhiteSpace(entry.Note) ? "MCP discovery failed." : entry.Note);
+
+            if (i > 0)
+                ImGui.Separator();
+        }
+
+        ImGui.EndChild();
     }
 
     /// <summary>
@@ -349,17 +431,162 @@ public sealed class McpAssistantWindow
         }
     }
 
+    private void DrawOpenAiTextModelPicker()
+    {
+        string[] models;
+        lock (_openAiModelLock)
+            models = _openAiTextModels;
+
+        if (!_openAiModelsLoading
+            && models.Length == 0
+            && !_openAiModelsAutoRequested
+            && !string.IsNullOrWhiteSpace(OpenAiApiKey))
+        {
+            _openAiModelsAutoRequested = true;
+            _ = RefreshOpenAiTextModelsAsync();
+        }
+
+        if (ImGui.SmallButton("Refresh OpenAI Models"))
+            _ = RefreshOpenAiTextModelsAsync();
+
+        ImGui.SameLine();
+        if (_openAiModelsLoading)
+            ImGui.TextDisabled("Loading…");
+        else
+            ImGui.TextDisabled(_openAiModelsStatus);
+
+        string preview = OpenAiModel;
+        if (string.IsNullOrWhiteSpace(preview))
+            preview = "(manual model)";
+
+        ImGui.SetNextItemWidth(320f);
+        if (ImGui.BeginCombo("Available Models##OpenAi", preview))
+        {
+            if (models.Length == 0)
+            {
+                ImGui.TextDisabled("No models loaded. Click Refresh OpenAI Models.");
+            }
+            else
+            {
+                for (int i = 0; i < models.Length; i++)
+                {
+                    string model = models[i];
+                    bool selected = string.Equals(model, OpenAiModel, StringComparison.OrdinalIgnoreCase);
+                    if (ImGui.Selectable(model, selected))
+                        OpenAiModel = model;
+                    if (selected)
+                        ImGui.SetItemDefaultFocus();
+                }
+            }
+            ImGui.EndCombo();
+        }
+    }
+
+    private async Task RefreshOpenAiTextModelsAsync()
+    {
+        if (_openAiModelsLoading)
+            return;
+
+        string apiKey = OpenAiApiKey.Trim();
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            _openAiModelsStatus = "OpenAI API key required";
+            return;
+        }
+
+        _openAiModelsLoading = true;
+        _openAiModelsStatus = "Loading…";
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.openai.com/v1/models");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+            using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            string body = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _openAiModelsStatus = ExtractOpenAiErrorSummary(body)
+                    ?? $"Load failed ({(int)response.StatusCode})";
+                return;
+            }
+
+            using JsonDocument doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("data", out JsonElement data) || data.ValueKind != JsonValueKind.Array)
+            {
+                _openAiModelsStatus = "No models returned";
+                return;
+            }
+
+            var textModels = new List<string>();
+            var allModels = new List<string>();
+
+            foreach (JsonElement item in data.EnumerateArray())
+            {
+                if (!item.TryGetProperty("id", out JsonElement idEl) || idEl.ValueKind != JsonValueKind.String)
+                    continue;
+
+                string id = idEl.GetString() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(id))
+                    continue;
+
+                allModels.Add(id);
+                if (IsLikelyTextModelId(id))
+                    textModels.Add(id);
+            }
+
+            List<string> chosen = textModels.Count > 0 ? textModels : allModels;
+            chosen.Sort(StringComparer.OrdinalIgnoreCase);
+
+            lock (_openAiModelLock)
+                _openAiTextModels = chosen.ToArray();
+
+            _openAiModelsStatus = $"Loaded {_openAiTextModels.Length} models";
+        }
+        catch (Exception ex)
+        {
+            _openAiModelsStatus = $"Load failed: {ex.Message}";
+        }
+        finally
+        {
+            _openAiModelsLoading = false;
+        }
+    }
+
+    private static bool IsLikelyTextModelId(string modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId))
+            return false;
+
+        string id = modelId.Trim().ToLowerInvariant();
+
+        if (id.Contains("embedding")
+            || id.Contains("moderation")
+            || id.Contains("transcribe")
+            || id.Contains("tts")
+            || id.Contains("realtime")
+            || id.Contains("audio")
+            || id.Contains("image")
+            || id.StartsWith("dall-e", StringComparison.Ordinal)
+            || id.StartsWith("sora", StringComparison.Ordinal)
+            || id.StartsWith("whisper", StringComparison.Ordinal))
+            return false;
+
+        return true;
+    }
+
     // ── Chat Log ─────────────────────────────────────────────────────────
 
     private void DrawChatLog()
     {
         // Reserve space for the prompt bar at the bottom.
-        float promptBarHeight = 82f;
+        float promptBarHeight = GetPromptInputHeight() + 44f;
         float available = ImGui.GetContentRegionAvail().Y - promptBarHeight;
         if (available < 80f)
             available = 80f;
 
-        ImGui.BeginChild("##ChatLog", new Vector2(-1f, available), ImGuiChildFlags.Border);
+        ImGui.BeginChild("##ChatLog", new Vector2(-1f, available), ImGuiChildFlags.Border, ImGuiWindowFlags.NoScrollbar);
 
         if (_history.Count == 0)
         {
@@ -391,7 +618,7 @@ public sealed class McpAssistantWindow
                 }
 
                 // Message body (word-wrapped)
-                ImGui.PushTextWrapPos(ImGui.GetContentRegionAvail().X);
+                ImGui.PushTextWrapPos(0.0f);
                 ImGui.TextUnformatted(msg.Content);
                 ImGui.PopTextWrapPos();
 
@@ -424,7 +651,7 @@ public sealed class McpAssistantWindow
 
         if (!canSend)
             ImGui.BeginDisabled();
-        bool sendClicked = ImGui.Button("Send (Ctrl+Enter)");
+        bool sendClicked = ImGui.Button("Send (Enter)");
         if (!canSend)
             ImGui.EndDisabled();
 
@@ -453,20 +680,73 @@ public sealed class McpAssistantWindow
                 CopyLastResponse();
         }
 
-        // Prompt input (fills width, short height so chat log gets most space)
-        bool ctrlEnter = ImGui.IsKeyPressed(ImGuiKey.Enter) &&
-                         (ImGui.IsKeyDown(ImGuiKey.ModCtrl) || ImGui.IsKeyDown(ImGuiKey.ModSuper));
+        // Prompt input (fills width and grows with content)
+        float promptInputHeight = GetPromptInputHeight();
 
         ImGui.InputTextMultiline(
             "##McpPromptInput",
             ref _prompt,
             1024 * 128,
-            new Vector2(-1f, 48f),
+            new Vector2(-1f, promptInputHeight),
             ImGuiInputTextFlags.AllowTabInput);
         ImGuiTextFieldHelper.DrawTextFieldContextMenu("ctx_Prompt", ref _prompt);
 
-        if ((sendClicked || ctrlEnter) && canSend)
+        bool enterPressed = ImGui.IsItemActive()
+            && (ImGui.IsKeyPressed(ImGuiKey.Enter) || ImGui.IsKeyPressed(ImGuiKey.KeypadEnter));
+        bool shiftHeld = ImGui.GetIO().KeyShift;
+        bool enterSend = enterPressed && !shiftHeld;
+
+        if (enterSend)
+            StripOneTrailingNewline(ref _prompt);
+
+        bool canSendNow = !_isBusy && _prompt.Trim().Length > 0;
+        if ((sendClicked || enterSend) && canSendNow)
             _ = SendPromptAsync();
+    }
+
+    private float GetPromptInputHeight()
+    {
+        float width = Math.Max(120f, ImGui.GetContentRegionAvail().X - 8f);
+        int explicitLines = 1;
+        for (int i = 0; i < _prompt.Length; i++)
+        {
+            if (_prompt[i] == '\n')
+                explicitLines++;
+        }
+
+        int wrappedLines = EstimateWrappedLineCount(_prompt, width);
+        int lines = Math.Clamp(Math.Max(explicitLines, wrappedLines), 2, 12);
+        return lines * ImGui.GetTextLineHeightWithSpacing() + 10f;
+    }
+
+    private static int EstimateWrappedLineCount(string text, float maxWidth)
+    {
+        if (string.IsNullOrEmpty(text))
+            return 1;
+
+        int totalLines = 0;
+        string[] rawLines = text.Split('\n');
+        for (int i = 0; i < rawLines.Length; i++)
+        {
+            string line = rawLines[i];
+            float lineWidth = ImGui.CalcTextSize(string.IsNullOrEmpty(line) ? " " : line).X;
+            int wraps = Math.Max(1, (int)Math.Ceiling(lineWidth / Math.Max(1.0f, maxWidth)));
+            totalLines += wraps;
+        }
+
+        return Math.Max(1, totalLines);
+    }
+
+    private static void StripOneTrailingNewline(ref string text)
+    {
+        if (text.EndsWith("\r\n", StringComparison.Ordinal))
+        {
+            text = text[..^2];
+            return;
+        }
+
+        if (text.EndsWith("\n", StringComparison.Ordinal) || text.EndsWith("\r", StringComparison.Ordinal))
+            text = text[..^1];
     }
 
     // ── Clipboard Helpers ────────────────────────────────────────────────
@@ -525,6 +805,33 @@ public sealed class McpAssistantWindow
             return;
         }
 
+        bool attachRequested = AttachMcpServer;
+        if (attachRequested)
+            EnsureMcpServerAutoEnabledForAssistantMessage();
+
+        var mcpUsage = new McpUsageEntry
+        {
+            Provider = provider.ToString(),
+            PromptPreview = trimmedPrompt.Length > 96 ? trimmedPrompt[..96] + "…" : trimmedPrompt,
+            AttachRequested = attachRequested,
+            Result = "Pending"
+        };
+        AddMcpUsageEntry(mcpUsage);
+
+        if (attachRequested)
+        {
+            SetStatus("Validating MCP connection…", ColorBusy);
+            using var preflightTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            (bool mcpReady, string reason) = await EnsureMcpServerAttachReadyAsync(preflightTimeout.Token);
+            if (!mcpReady)
+            {
+                mcpUsage.Result = "MCP Unavailable";
+                mcpUsage.Note = reason;
+                SetStatus($"MCP unavailable: {reason}", ColorError);
+                return;
+            }
+        }
+
         // Push user message into chat history.
         _history.Add(new ChatMessage { Role = "user", Content = trimmedPrompt });
         _prompt = string.Empty;
@@ -543,13 +850,14 @@ public sealed class McpAssistantWindow
             switch (provider)
             {
                 case ProviderType.Codex when UseRealtimeWebSocket:
-                    await StreamOpenAiRealtimeAsync(trimmedPrompt, assistantMsg, _cts.Token);
+                    mcpUsage.Note = "Realtime mode does not pass MCP tools array; only instructions include endpoint hint.";
+                    await StreamOpenAiRealtimeAsync(trimmedPrompt, assistantMsg, _cts.Token, mcpUsage);
                     break;
                 case ProviderType.Codex:
-                    await StreamOpenAiResponsesAsync(trimmedPrompt, assistantMsg, _cts.Token);
+                    await StreamOpenAiResponsesAsync(trimmedPrompt, assistantMsg, _cts.Token, mcpUsage);
                     break;
                 case ProviderType.ClaudeCode:
-                    await StreamAnthropicAsync(trimmedPrompt, assistantMsg, _cts.Token);
+                    await StreamAnthropicAsync(trimmedPrompt, assistantMsg, _cts.Token, mcpUsage);
                     break;
             }
 
@@ -558,21 +866,30 @@ public sealed class McpAssistantWindow
                 assistantMsg.Content = "(No response content received.)";
 
             if (IsProviderErrorContent(assistantMsg.Content, out string? providerErrorSummary))
+            {
+                mcpUsage.Result = "Failed";
                 SetStatus(providerErrorSummary ?? "Failed.", ColorError);
+            }
             else
+            {
+                mcpUsage.Result = "Done";
                 SetStatus("Done.", ColorDone);
+            }
         }
         catch (OperationCanceledException)
         {
             assistantMsg.IsStreaming = false;
             if (string.IsNullOrWhiteSpace(assistantMsg.Content))
                 assistantMsg.Content = "(Canceled.)";
+            mcpUsage.Result = "Canceled";
             SetStatus("Canceled.", ColorError);
         }
         catch (Exception ex)
         {
             assistantMsg.IsStreaming = false;
             assistantMsg.Content += $"\n\n--- Error ---\n{ex}";
+            mcpUsage.Result = "Error";
+            mcpUsage.Note = ex.Message;
             SetStatus("Failed.", ColorError);
         }
         finally
@@ -583,166 +900,344 @@ public sealed class McpAssistantWindow
         }
     }
 
+    private void AddMcpUsageEntry(McpUsageEntry entry)
+    {
+        _mcpUsageHistory.Add(entry);
+        if (_mcpUsageHistory.Count > MaxMcpUsageEntries)
+            _mcpUsageHistory.RemoveAt(0);
+    }
+
+    private void EnsureMcpServerAutoEnabledForAssistantMessage()
+    {
+        EditorPreferences? prefs = Engine.EditorPreferences;
+        if (prefs is null)
+            return;
+
+        RefreshMcpEndpointFromPreferences();
+
+        if (!prefs.McpServerEnabled)
+            prefs.McpServerEnabled = true;
+
+        try
+        {
+            int port = Math.Clamp(prefs.McpServerPort, 1, 65535);
+            if (!McpServerHost.Instance.IsRunning)
+                McpServerHost.Instance.Start(port);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"Failed auto-starting MCP server for assistant chat: {ex.Message}");
+        }
+    }
+
+    private async Task<(bool ok, string reason)> EnsureMcpServerAttachReadyAsync(CancellationToken ct)
+    {
+        if (!AttachMcpServer)
+            return (true, "MCP attachment disabled.");
+
+        string url = _mcpServerUrl.Trim();
+        if (!Uri.TryCreate(url, UriKind.Absolute, out _))
+            return (false, "Invalid MCP URL.");
+
+        if (!McpServerHost.Instance.IsRunning)
+        {
+            EnsureMcpServerAutoEnabledForAssistantMessage();
+            if (!McpServerHost.Instance.IsRunning)
+                return (false, "MCP server is not running.");
+        }
+
+        var payload = new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = "mcp-preflight-tools-list",
+            ["method"] = "tools/list"
+        };
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
+            };
+
+            if (!string.IsNullOrWhiteSpace(_mcpAuthToken))
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _mcpAuthToken.Trim());
+
+            using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            string body = await response.Content.ReadAsStringAsync(ct);
+
+            if (!response.IsSuccessStatusCode)
+                return (false, $"HTTP {(int)response.StatusCode}");
+
+            using JsonDocument doc = JsonDocument.Parse(body);
+            JsonElement root = doc.RootElement;
+
+            if (root.TryGetProperty("error", out JsonElement err) && err.ValueKind == JsonValueKind.Object)
+            {
+                string msg = TryExtractEventErrorMessage(root) ?? "tools/list failed";
+                return (false, msg);
+            }
+
+            if (!root.TryGetProperty("result", out _))
+                return (false, "MCP server returned no result.");
+
+            return (true, "ok");
+        }
+        catch (OperationCanceledException)
+        {
+            return (false, "MCP preflight timed out.");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
     private void SetStatus(string text, Vector4 color)
     {
         _status = text;
         _statusColor = color;
     }
 
-    // ── OpenAI Responses API — Streaming SSE ─────────────────────────────
+    // ── OpenAI Responses API — Streaming SSE with Local Tool-Use Loop ───
 
-    private async Task StreamOpenAiResponsesAsync(string prompt, ChatMessage target, CancellationToken ct)
+    private async Task StreamOpenAiResponsesAsync(string prompt, ChatMessage target, CancellationToken ct, McpUsageEntry usage)
     {
-        var payload = new JsonObject
+        bool requestLikelyNeedsTools = IsLikelySceneMutationPrompt(prompt);
+        usage.RequireToolUse = requestLikelyNeedsTools;
+
+        // If MCP is enabled, fetch tools from local MCP server and convert to OpenAI function tools.
+        JsonArray? openAiFunctionTools = null;
+        if (AttachMcpServer)
         {
-            ["model"] = string.IsNullOrWhiteSpace(OpenAiModel) ? "gpt-5-codex" : OpenAiModel,
-            ["input"] = prompt,
-            ["stream"] = true
-        };
-
-        if (AttachMcpServer && TryBuildOpenAiMcpTool(out var mcpTool))
-        {
-            payload["tools"] = new JsonArray(mcpTool);
-            payload["tool_choice"] = "auto";
-        }
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses")
-        {
-            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
-        };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", OpenAiApiKey.Trim());
-
-        using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            target.Content = await response.Content.ReadAsStringAsync(ct);
-            return;
-        }
-
-        // If the response isn't SSE (no streaming), read the whole body and extract text.
-        string? contentType = response.Content.Headers.ContentType?.MediaType;
-        if (contentType is not null && !contentType.Contains("event-stream", StringComparison.OrdinalIgnoreCase))
-        {
-            string body = await response.Content.ReadAsStringAsync(ct);
-            target.Content = ExtractOpenAiResponseText(body);
-            return;
-        }
-
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        using var reader = new StreamReader(stream);
-
-        var sb = new StringBuilder();
-        var rawEvents = new StringBuilder();   // Capture raw SSE for diagnostics
-        bool sawMcpListToolsFailure = false;
-        string? mcpFailureMessage = null;
-        string? line;
-
-        while (!ct.IsCancellationRequested && (line = await reader.ReadLineAsync(ct)) is not null)
-        {
-            if (!line.StartsWith("data: ", StringComparison.Ordinal))
-                continue;
-
-            string data = line[6..];
-            if (data is "[DONE]")
-                break;
-
-            rawEvents.AppendLine(data);
-
-            try
+            JsonArray? mcpTools = await FetchMcpToolListAsync(ct);
+            if (mcpTools is null || mcpTools.Count == 0)
             {
-                using var doc = JsonDocument.Parse(data);
-                JsonElement root = doc.RootElement;
+                usage.McpPayloadIncluded = false;
+                usage.McpDiscoveryFailed = true;
+                usage.Result = "MCP Fetch Failed";
+                target.Content = "MCP is enabled but no tools could be fetched from the local MCP server.";
+                return;
+            }
 
-                // Try extracting text from any known event shape.
-                if (TryExtractOpenAiSseText(root, out string? deltaText))
-                {
-                    sb.Append(deltaText);
-                    target.Content = sb.ToString();
+            openAiFunctionTools = ConvertMcpToolsToOpenAiFunctions(mcpTools);
+            usage.McpPayloadIncluded = true;
+            usage.ToolChoice = requestLikelyNeedsTools ? "required" : "auto";
+        }
+
+        // Build the conversation input — starts with just the user prompt, grows with tool call results.
+        var conversationInput = new JsonArray { new JsonObject { ["role"] = "user", ["content"] = prompt } };
+
+        string model = string.IsNullOrWhiteSpace(OpenAiModel) ? "gpt-4o" : OpenAiModel;
+        string instructions = BuildOpenAiInstructions(requestLikelyNeedsTools, attachMcp: AttachMcpServer);
+
+        const int maxToolRounds = 10;
+        var sb = new StringBuilder();
+
+        for (int round = 0; round < maxToolRounds; round++)
+        {
+            var payload = new JsonObject
+            {
+                ["model"] = model,
+                ["input"] = JsonNode.Parse(conversationInput.ToJsonString()),
+                ["stream"] = true,
+                ["instructions"] = instructions
+            };
+
+            if (openAiFunctionTools is { Count: > 0 })
+            {
+                payload["tools"] = JsonNode.Parse(openAiFunctionTools.ToJsonString());
+                // Only require tool_choice on first round when mutation is likely
+                if (round == 0 && requestLikelyNeedsTools)
+                    payload["tool_choice"] = "required";
+            }
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses")
+            {
+                Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", OpenAiApiKey.Trim());
+
+            using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                string errorBody = await response.Content.ReadAsStringAsync(ct);
+                usage.Result = $"HTTP {(int)response.StatusCode}";
+                target.Content = sb.Length > 0
+                    ? sb + $"\n\n--- API Error (round {round + 1}) ---\n{errorBody}"
+                    : errorBody;
+                return;
+            }
+
+            // If the response isn't SSE, read the whole body and extract text.
+            string? contentType = response.Content.Headers.ContentType?.MediaType;
+            if (contentType is not null && !contentType.Contains("event-stream", StringComparison.OrdinalIgnoreCase))
+            {
+                string body = await response.Content.ReadAsStringAsync(ct);
+                string extracted = ExtractOpenAiResponseText(body);
+                sb.Append(extracted);
+                target.Content = sb.ToString();
+                return;
+            }
+
+            // Stream SSE, collecting text deltas and function calls.
+            await using var stream = await response.Content.ReadAsStreamAsync(ct);
+            using var reader = new StreamReader(stream);
+
+            var pendingCalls = new List<PendingFunctionCall>();
+            var callsByIndex = new Dictionary<int, PendingFunctionCall>();
+            string? responseId = null;
+            string? line;
+
+            while (!ct.IsCancellationRequested && (line = await reader.ReadLineAsync(ct)) is not null)
+            {
+                if (!line.StartsWith("data: ", StringComparison.Ordinal))
                     continue;
-                }
 
-                // Check for terminal events.
-                if (root.TryGetProperty("type", out var typeEl))
+                string data = line[6..];
+                if (data is "[DONE]")
+                    break;
+
+                try
                 {
-                    string eventType = typeEl.GetString() ?? string.Empty;
+                    using var doc = JsonDocument.Parse(data);
+                    JsonElement root = doc.RootElement;
 
-                    if (string.Equals(eventType, "response.mcp_list_tools.failed", StringComparison.OrdinalIgnoreCase))
+                    if (!root.TryGetProperty("type", out var typeEl))
                     {
-                        sawMcpListToolsFailure = true;
-                        mcpFailureMessage = TryExtractEventErrorMessage(root);
+                        // Legacy shape without "type" — try delta extraction
+                        if (TryExtractDelta(root, out string? legacyDelta) && !string.IsNullOrEmpty(legacyDelta))
+                        {
+                            sb.Append(legacyDelta);
+                            target.Content = sb.ToString();
+                        }
+                        continue;
                     }
 
+                    string eventType = typeEl.GetString() ?? string.Empty;
+
+                    // Track MCP/tool event counts for diagnostics
+                    if (eventType.Contains("tool", StringComparison.OrdinalIgnoreCase)
+                        || eventType.Contains("function", StringComparison.OrdinalIgnoreCase))
+                        usage.ToolEventCount++;
+
+                    // Extract response ID
+                    if (string.Equals(eventType, "response.created", StringComparison.OrdinalIgnoreCase)
+                        && root.TryGetProperty("response", out var respEl)
+                        && respEl.TryGetProperty("id", out var idEl))
+                    {
+                        responseId = idEl.GetString();
+                    }
+
+                    // Text delta
+                    if (TryExtractOpenAiSseText(root, out string? deltaText))
+                    {
+                        sb.Append(deltaText);
+                        target.Content = sb.ToString();
+                        continue;
+                    }
+
+                    // Function call started
+                    if (string.Equals(eventType, "response.output_item.added", StringComparison.OrdinalIgnoreCase)
+                        && root.TryGetProperty("item", out var itemEl)
+                        && itemEl.TryGetProperty("type", out var itemTypeEl)
+                        && string.Equals(itemTypeEl.GetString(), "function_call", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string callId = itemEl.TryGetProperty("call_id", out var cidEl) ? cidEl.GetString() ?? "" : "";
+                        string name = itemEl.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
+                        int outputIndex = root.TryGetProperty("output_index", out var oiEl) ? oiEl.GetInt32() : -1;
+
+                        var pending = new PendingFunctionCall { CallId = callId, Name = name };
+                        pendingCalls.Add(pending);
+                        if (outputIndex >= 0)
+                            callsByIndex[outputIndex] = pending;
+                    }
+
+                    // Function call arguments delta
+                    if (string.Equals(eventType, "response.function_call_arguments.delta", StringComparison.OrdinalIgnoreCase)
+                        && root.TryGetProperty("delta", out var argDelta)
+                        && argDelta.ValueKind == JsonValueKind.String)
+                    {
+                        int idx = root.TryGetProperty("output_index", out var oIdx) ? oIdx.GetInt32() : -1;
+                        if (callsByIndex.TryGetValue(idx, out var pc))
+                            pc.Arguments.Append(argDelta.GetString());
+                    }
+
+                    // Function call arguments done (complete string)
+                    if (string.Equals(eventType, "response.function_call_arguments.done", StringComparison.OrdinalIgnoreCase)
+                        && root.TryGetProperty("arguments", out var argsDone)
+                        && argsDone.ValueKind == JsonValueKind.String)
+                    {
+                        int idx = root.TryGetProperty("output_index", out var oIdx) ? oIdx.GetInt32() : -1;
+                        if (callsByIndex.TryGetValue(idx, out var pc))
+                        {
+                            pc.Arguments.Clear();
+                            pc.Arguments.Append(argsDone.GetString());
+                        }
+                    }
+
+                    // Response completed
                     if (eventType.Contains("completed", StringComparison.OrdinalIgnoreCase)
-                        || eventType.Contains("failed", StringComparison.OrdinalIgnoreCase)
                         || eventType.Contains("done", StringComparison.OrdinalIgnoreCase))
                     {
-                        // On completed, try to extract output_text from the full response object.
                         if (sb.Length == 0)
                             ExtractCompletedResponseText(root, sb);
                         break;
                     }
+
+                    // Response failed
+                    if (eventType.Contains("failed", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string? errMsg = TryExtractEventErrorMessage(root);
+                        if (!string.IsNullOrWhiteSpace(errMsg))
+                            sb.Append($"\n\n--- API Error ---\n{errMsg}");
+                        break;
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Malformed SSE line — skip.
                 }
             }
-            catch (JsonException)
+
+            // If no function calls were collected, we're done.
+            if (pendingCalls.Count == 0)
+                break;
+
+            // Execute function calls locally against the MCP server.
+            target.Content = sb + "\n\n[Executing MCP tool calls...]";
+            usage.ToolEventCount += pendingCalls.Count;
+
+            foreach (var call in pendingCalls)
             {
-                // Malformed SSE line — skip.
+                string toolResult = await ExecuteMcpToolCallAsync(call.Name, call.Arguments.ToString(), ct);
+                usage.McpEventCount++;
+
+                // Append the function call and its result to the conversation for the next round.
+                conversationInput.Add(new JsonObject
+                {
+                    ["type"] = "function_call",
+                    ["call_id"] = call.CallId,
+                    ["name"] = call.Name,
+                    ["arguments"] = call.Arguments.ToString()
+                });
+                conversationInput.Add(new JsonObject
+                {
+                    ["type"] = "function_call_output",
+                    ["call_id"] = call.CallId,
+                    ["output"] = toolResult
+                });
             }
+
+            // Continue the loop — next round will send conversation with tool results.
+            target.Content = sb + "\n\n[Tool calls executed. Waiting for model response...]";
         }
 
         if (sb.Length > 0)
-        {
             target.Content = sb.ToString();
-        }
-        else if (AttachMcpServer && sawMcpListToolsFailure)
-        {
-            string reason = string.IsNullOrWhiteSpace(mcpFailureMessage)
-                ? "MCP tool discovery failed"
-                : mcpFailureMessage;
-
-            target.Content = $"(MCP attach failed: {reason}. Retrying without MCP tool attachment...)";
-            await FetchOpenAiResponseWithoutMcpAsync(prompt, target, ct);
-        }
-        else
-        {
-            // Nothing extracted from SSE deltas — show the raw events so the user can diagnose.
-            string raw = rawEvents.ToString();
-            target.Content = !string.IsNullOrWhiteSpace(raw)
-                ? $"No text deltas found in response. Raw SSE events:\n\n{raw}"
-                : "(No SSE events received from the API.)";
-        }
-    }
-
-    private async Task FetchOpenAiResponseWithoutMcpAsync(string prompt, ChatMessage target, CancellationToken ct)
-    {
-        var payload = new JsonObject
-        {
-            ["model"] = string.IsNullOrWhiteSpace(OpenAiModel) ? "gpt-5-codex" : OpenAiModel,
-            ["input"] = prompt,
-            ["stream"] = false
-        };
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses")
-        {
-            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
-        };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", OpenAiApiKey.Trim());
-
-        using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        string body = await response.Content.ReadAsStringAsync(ct);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            string summary = ExtractOpenAiErrorSummary(body)
-                ?? $"OpenAI request failed ({(int)response.StatusCode}).";
-            target.Content += $"\n\n--- Retry Failed ({(int)response.StatusCode}) ---\n{summary}\n\n{body}";
-            return;
-        }
-
-        string text = ExtractOpenAiResponseText(body);
-        target.Content = string.IsNullOrWhiteSpace(text)
-            ? target.Content + "\n\n(No response text received from retry request.)"
-            : text;
+        else if (string.IsNullOrWhiteSpace(target.Content))
+            target.Content = "(No response content received from the API.)";
     }
 
     /// <summary>
@@ -1020,110 +1515,251 @@ public sealed class McpAssistantWindow
         return body;
     }
 
-    // ── Anthropic Messages API — Streaming SSE ───────────────────────────
+    // ── Anthropic Messages API — Streaming SSE with Local Tool-Use Loop ─
 
-    private async Task StreamAnthropicAsync(string prompt, ChatMessage target, CancellationToken ct)
+    private async Task StreamAnthropicAsync(string prompt, ChatMessage target, CancellationToken ct, McpUsageEntry usage)
     {
-        var payload = new JsonObject
+        // If MCP is enabled, fetch tools from local MCP server and convert to Anthropic format.
+        JsonArray? anthropicTools = null;
+        if (AttachMcpServer)
         {
-            ["model"] = string.IsNullOrWhiteSpace(AnthropicModel) ? "claude-sonnet-4-5" : AnthropicModel,
-            ["max_tokens"] = MaxTokens,
-            ["stream"] = true,
-            ["messages"] = new JsonArray
+            JsonArray? mcpTools = await FetchMcpToolListAsync(ct);
+            if (mcpTools is null || mcpTools.Count == 0)
             {
-                new JsonObject
-                {
-                    ["role"] = "user",
-                    ["content"] = prompt
-                }
+                usage.McpPayloadIncluded = false;
+                usage.McpDiscoveryFailed = true;
+                usage.Result = "MCP Fetch Failed";
+                target.Content = "MCP is enabled but no tools could be fetched from the local MCP server.";
+                return;
             }
+
+            anthropicTools = ConvertMcpToolsToAnthropicTools(mcpTools);
+            usage.McpPayloadIncluded = true;
+            usage.ToolChoice = "auto";
+        }
+
+        string model = string.IsNullOrWhiteSpace(AnthropicModel) ? "claude-sonnet-4-5" : AnthropicModel;
+
+        // Build conversation messages — starts with user prompt, grows with tool results.
+        var messages = new JsonArray
+        {
+            new JsonObject { ["role"] = "user", ["content"] = prompt }
         };
 
-        if (AttachMcpServer && Uri.TryCreate(_mcpServerUrl.Trim(), UriKind.Absolute, out _))
+        const int maxToolRounds = 10;
+        var sb = new StringBuilder();
+
+        for (int round = 0; round < maxToolRounds; round++)
         {
-            var mcpServer = new JsonObject
+            var payload = new JsonObject
             {
-                ["name"] = "xrengine",
-                ["url"] = _mcpServerUrl.Trim()
+                ["model"] = model,
+                ["max_tokens"] = MaxTokens,
+                ["stream"] = true,
+                ["messages"] = JsonNode.Parse(messages.ToJsonString())
             };
 
-            if (!string.IsNullOrWhiteSpace(_mcpAuthToken))
-                mcpServer["authorization_token"] = _mcpAuthToken.Trim();
+            if (anthropicTools is { Count: > 0 })
+                payload["tools"] = JsonNode.Parse(anthropicTools.ToJsonString());
 
-            payload["mcp_servers"] = new JsonArray(mcpServer);
-        }
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages")
-        {
-            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
-        };
-        request.Headers.Add("x-api-key", AnthropicApiKey.Trim());
-        request.Headers.Add("anthropic-version", "2023-06-01");
-
-        using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            target.Content = await response.Content.ReadAsStringAsync(ct);
-            return;
-        }
-
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        using var reader = new StreamReader(stream);
-
-        var sb = new StringBuilder();
-        string? line;
-
-        while (!ct.IsCancellationRequested && (line = await reader.ReadLineAsync(ct)) is not null)
-        {
-            if (!line.StartsWith("data: ", StringComparison.Ordinal))
-                continue;
-
-            string data = line[6..];
-            if (data is "[DONE]")
-                break;
-
-            try
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages")
             {
-                using var doc = JsonDocument.Parse(data);
-                JsonElement root = doc.RootElement;
+                Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
+            };
+            request.Headers.Add("x-api-key", AnthropicApiKey.Trim());
+            request.Headers.Add("anthropic-version", "2023-06-01");
 
-                if (!root.TryGetProperty("type", out var typeEl))
+            using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                string errorBody = await response.Content.ReadAsStringAsync(ct);
+                usage.Result = $"HTTP {(int)response.StatusCode}";
+                target.Content = sb.Length > 0
+                    ? sb + $"\n\n--- API Error (round {round + 1}) ---\n{errorBody}"
+                    : errorBody;
+                return;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(ct);
+            using var reader = new StreamReader(stream);
+
+            // Track tool_use blocks: index → (id, name, input JSON)
+            var pendingToolUse = new List<(string Id, string Name, StringBuilder InputJson)>();
+            int currentBlockIndex = -1;
+            string? currentToolUseId = null;
+            string? currentToolUseName = null;
+            StringBuilder? currentToolUseInput = null;
+            string? stopReason = null;
+            string? line;
+
+            while (!ct.IsCancellationRequested && (line = await reader.ReadLineAsync(ct)) is not null)
+            {
+                if (!line.StartsWith("data: ", StringComparison.Ordinal))
                     continue;
 
-                string eventType = typeEl.GetString() ?? string.Empty;
+                string data = line[6..];
+                if (data is "[DONE]")
+                    break;
 
-                if (string.Equals(eventType, "content_block_delta", StringComparison.OrdinalIgnoreCase)
-                    && root.TryGetProperty("delta", out var deltaEl)
-                    && deltaEl.TryGetProperty("text", out var textEl))
+                try
                 {
-                    string? text = textEl.GetString();
-                    if (text is not null)
+                    using var doc = JsonDocument.Parse(data);
+                    JsonElement root = doc.RootElement;
+
+                    if (!root.TryGetProperty("type", out var typeEl))
+                        continue;
+
+                    string eventType = typeEl.GetString() ?? string.Empty;
+
+                    // Text delta
+                    if (string.Equals(eventType, "content_block_delta", StringComparison.OrdinalIgnoreCase)
+                        && root.TryGetProperty("delta", out var deltaEl))
                     {
-                        sb.Append(text);
+                        if (deltaEl.TryGetProperty("type", out var dtEl))
+                        {
+                            string deltaType = dtEl.GetString() ?? string.Empty;
+
+                            if (string.Equals(deltaType, "text_delta", StringComparison.OrdinalIgnoreCase)
+                                && deltaEl.TryGetProperty("text", out var textEl))
+                            {
+                                string? text = textEl.GetString();
+                                if (text is not null)
+                                {
+                                    sb.Append(text);
+                                    target.Content = sb.ToString();
+                                }
+                            }
+                            else if (string.Equals(deltaType, "input_json_delta", StringComparison.OrdinalIgnoreCase)
+                                && deltaEl.TryGetProperty("partial_json", out var pjEl))
+                            {
+                                currentToolUseInput?.Append(pjEl.GetString());
+                            }
+                        }
+                        else if (deltaEl.TryGetProperty("text", out var textEl2))
+                        {
+                            // Fallback: delta without explicit type
+                            string? text = textEl2.GetString();
+                            if (text is not null)
+                            {
+                                sb.Append(text);
+                                target.Content = sb.ToString();
+                            }
+                        }
+                    }
+
+                    // Content block start — check if it's a tool_use block
+                    if (string.Equals(eventType, "content_block_start", StringComparison.OrdinalIgnoreCase)
+                        && root.TryGetProperty("content_block", out var blockEl)
+                        && blockEl.TryGetProperty("type", out var blockTypeEl)
+                        && string.Equals(blockTypeEl.GetString(), "tool_use", StringComparison.OrdinalIgnoreCase))
+                    {
+                        currentToolUseId = blockEl.TryGetProperty("id", out var bIdEl) ? bIdEl.GetString() ?? "" : "";
+                        currentToolUseName = blockEl.TryGetProperty("name", out var bNameEl) ? bNameEl.GetString() ?? "" : "";
+                        currentToolUseInput = new StringBuilder();
+                        currentBlockIndex = root.TryGetProperty("index", out var idxEl) ? idxEl.GetInt32() : -1;
+                    }
+
+                    // Content block stop — finalize tool_use if applicable
+                    if (string.Equals(eventType, "content_block_stop", StringComparison.OrdinalIgnoreCase)
+                        && currentToolUseId is not null)
+                    {
+                        pendingToolUse.Add((currentToolUseId, currentToolUseName ?? "", currentToolUseInput ?? new StringBuilder()));
+                        currentToolUseId = null;
+                        currentToolUseName = null;
+                        currentToolUseInput = null;
+                    }
+
+                    // Message delta — check for stop_reason
+                    if (string.Equals(eventType, "message_delta", StringComparison.OrdinalIgnoreCase)
+                        && root.TryGetProperty("delta", out var msgDelta)
+                        && msgDelta.TryGetProperty("stop_reason", out var srEl))
+                    {
+                        stopReason = srEl.GetString();
+                    }
+
+                    if (string.Equals(eventType, "message_stop", StringComparison.OrdinalIgnoreCase))
+                        break;
+
+                    if (string.Equals(eventType, "error", StringComparison.OrdinalIgnoreCase))
+                    {
+                        usage.Result = "Failed";
+                        sb.Append($"\n\n--- SSE Error ---\n{data}");
                         target.Content = sb.ToString();
+                        return;
                     }
                 }
-                else if (string.Equals(eventType, "message_stop", StringComparison.OrdinalIgnoreCase))
+                catch (JsonException)
                 {
-                    break;
-                }
-                else if (string.Equals(eventType, "error", StringComparison.OrdinalIgnoreCase))
-                {
-                    target.Content += $"\n\n--- SSE Error ---\n{data}";
-                    break;
+                    // Malformed SSE line — skip.
                 }
             }
-            catch (JsonException)
+
+            // If the model didn't request any tool calls, we're done.
+            if (pendingToolUse.Count == 0 || !string.Equals(stopReason, "tool_use", StringComparison.OrdinalIgnoreCase))
             {
-                // Malformed SSE line — skip.
+                usage.Result = "Done";
+                break;
             }
+
+            // Execute tool calls locally and prepare the next conversation turn.
+            target.Content = sb + "\n\n[Executing MCP tool calls...]";
+            usage.ToolEventCount += pendingToolUse.Count;
+
+            // Build assistant message content (text + tool_use blocks)
+            var assistantContent = new JsonArray();
+            if (sb.Length > 0)
+                assistantContent.Add(new JsonObject { ["type"] = "text", ["text"] = sb.ToString() });
+
+            var toolResultContent = new JsonArray();
+
+            foreach (var (toolId, toolName, inputJsonSb) in pendingToolUse)
+            {
+                string inputStr = inputJsonSb.ToString();
+
+                // Add tool_use block to assistant message
+                JsonNode? inputNode;
+                try { inputNode = JsonNode.Parse(inputStr); }
+                catch { inputNode = new JsonObject(); }
+
+                assistantContent.Add(new JsonObject
+                {
+                    ["type"] = "tool_use",
+                    ["id"] = toolId,
+                    ["name"] = toolName,
+                    ["input"] = inputNode
+                });
+
+                // Execute the tool call
+                string toolResult = await ExecuteMcpToolCallAsync(toolName, inputStr, ct);
+                usage.McpEventCount++;
+
+                // Add tool_result block for user message
+                toolResultContent.Add(new JsonObject
+                {
+                    ["type"] = "tool_result",
+                    ["tool_use_id"] = toolId,
+                    ["content"] = toolResult
+                });
+            }
+
+            // Add assistant turn and user turn with tool results
+            messages.Add(new JsonObject { ["role"] = "assistant", ["content"] = assistantContent });
+            messages.Add(new JsonObject { ["role"] = "user", ["content"] = toolResultContent });
+
+            target.Content = sb + "\n\n[Tool calls executed. Waiting for model response...]";
+            sb.Clear(); // Reset text accumulator for next round's text
         }
+
+        if (sb.Length > 0)
+            target.Content = sb.ToString();
+        else if (string.IsNullOrWhiteSpace(target.Content))
+            target.Content = "(No response content received from the API.)";
     }
 
     // ── OpenAI Realtime WebSocket — Already Streams ──────────────────────
 
-    private async Task StreamOpenAiRealtimeAsync(string prompt, ChatMessage target, CancellationToken ct)
+    private async Task StreamOpenAiRealtimeAsync(string prompt, ChatMessage target, CancellationToken ct, McpUsageEntry usage)
     {
         using var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("Authorization", $"Bearer {OpenAiApiKey.Trim()}");
@@ -1163,10 +1799,12 @@ public sealed class McpAssistantWindow
             }
             else if (string.Equals(eventType, "response.completed", StringComparison.OrdinalIgnoreCase))
             {
+                usage.Result = "Done";
                 break;
             }
             else if (string.Equals(eventType, "error", StringComparison.OrdinalIgnoreCase))
             {
+                usage.Result = "Failed";
                 target.Content = json;
                 break;
             }
@@ -1208,8 +1846,8 @@ public sealed class McpAssistantWindow
     private JsonObject BuildRealtimeSessionUpdate()
     {
         string instructions = "Answer user requests about XREngine. Be concise and actionable.";
-        if (AttachMcpServer && !string.IsNullOrWhiteSpace(_mcpServerUrl))
-            instructions += $" MCP server endpoint: {_mcpServerUrl.Trim()}";
+        if (AttachMcpServer)
+            instructions += " Function tools for scene manipulation are available in the standard API path. The realtime path does not support tool calls.";
 
         return new JsonObject
         {
@@ -1242,27 +1880,243 @@ public sealed class McpAssistantWindow
         ["response"] = new JsonObject { ["modalities"] = new JsonArray("text") }
     };
 
-    // ── MCP Tool Builder ─────────────────────────────────────────────────
-
-    private bool TryBuildOpenAiMcpTool(out JsonObject mcpTool)
+    private static string BuildOpenAiInstructions(bool requireToolUse, bool attachMcp)
     {
-        mcpTool = new JsonObject();
-        if (!Uri.TryCreate(_mcpServerUrl.Trim(), UriKind.Absolute, out _))
-            return false;
+        string instructions = "You are an assistant for XREngine. Be concise and actionable.";
 
-        mcpTool["type"] = "mcp";
-        mcpTool["server_label"] = "xrengine";
-        mcpTool["server_url"] = _mcpServerUrl.Trim();
-
-        if (!string.IsNullOrWhiteSpace(_mcpAuthToken))
+        if (attachMcp)
         {
-            mcpTool["headers"] = new JsonObject
+            instructions += " You have function tools available that interact with the running XREngine editor scene. These tools allow you to list, create, modify, and delete scene nodes, components, and other editor objects.";
+
+            if (requireToolUse)
             {
-                ["Authorization"] = $"Bearer {_mcpAuthToken.Trim()}"
-            };
+                instructions += " For scene-edit requests, call the appropriate function tools to perform the change first, then report what was changed.";
+            }
+            else
+            {
+                instructions += " Use the function tools when they materially improve correctness.";
+            }
         }
 
-        return true;
+        return instructions;
+    }
+
+    private static bool IsLikelySceneMutationPrompt(string prompt)
+    {
+        if (string.IsNullOrWhiteSpace(prompt))
+            return false;
+
+        string text = prompt.Trim();
+        string[] verbs =
+        [
+            "create", "add", "spawn", "place", "insert", "update", "set", "change", "modify",
+            "move", "rotate", "scale", "reparent", "rename", "delete", "remove", "duplicate",
+            "select", "load", "save", "import", "export"
+        ];
+
+        return verbs.Any(v => text.Contains(v, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // ── MCP Local Proxy Helpers ──────────────────────────────────────────
+
+    /// <summary>
+    /// Calls the local MCP server's <c>tools/list</c> method and returns the tools array.
+    /// Returns null on failure.
+    /// </summary>
+    private async Task<JsonArray?> FetchMcpToolListAsync(CancellationToken ct)
+    {
+        string url = _mcpServerUrl.Trim();
+        var payload = new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = "fetch-tools-list",
+            ["method"] = "tools/list"
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
+        };
+        if (!string.IsNullOrWhiteSpace(_mcpAuthToken))
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _mcpAuthToken.Trim());
+
+        using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        string body = await response.Content.ReadAsStringAsync(ct);
+        using JsonDocument doc = JsonDocument.Parse(body);
+        JsonElement root = doc.RootElement;
+
+        if (!root.TryGetProperty("result", out JsonElement result))
+            return null;
+
+        if (result.TryGetProperty("tools", out JsonElement toolsEl) && toolsEl.ValueKind == JsonValueKind.Array)
+            return JsonSerializer.Deserialize<JsonArray>(toolsEl.GetRawText());
+
+        return null;
+    }
+
+    /// <summary>
+    /// Converts MCP tool definitions to OpenAI function tool format.
+    /// </summary>
+    private static JsonArray ConvertMcpToolsToOpenAiFunctions(JsonArray mcpTools)
+    {
+        var result = new JsonArray();
+        foreach (JsonNode? tool in mcpTools)
+        {
+            if (tool is not JsonObject toolObj)
+                continue;
+
+            string? name = toolObj["name"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var fn = new JsonObject
+            {
+                ["type"] = "function",
+                ["name"] = name
+            };
+
+            if (toolObj["description"] is JsonNode descNode)
+                fn["description"] = descNode.GetValue<string>();
+
+            // MCP uses "inputSchema", OpenAI uses "parameters"
+            if (toolObj["inputSchema"] is JsonObject inputSchema)
+                fn["parameters"] = JsonNode.Parse(inputSchema.ToJsonString());
+            else
+                fn["parameters"] = new JsonObject { ["type"] = "object", ["properties"] = new JsonObject() };
+
+            result.Add(fn);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Converts MCP tool definitions to Anthropic tool format.
+    /// </summary>
+    private static JsonArray ConvertMcpToolsToAnthropicTools(JsonArray mcpTools)
+    {
+        var result = new JsonArray();
+        foreach (JsonNode? tool in mcpTools)
+        {
+            if (tool is not JsonObject toolObj)
+                continue;
+
+            string? name = toolObj["name"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var anthropicTool = new JsonObject
+            {
+                ["name"] = name
+            };
+
+            if (toolObj["description"] is JsonNode descNode)
+                anthropicTool["description"] = descNode.GetValue<string>();
+
+            // MCP uses "inputSchema", Anthropic uses "input_schema"
+            if (toolObj["inputSchema"] is JsonObject inputSchema)
+                anthropicTool["input_schema"] = JsonNode.Parse(inputSchema.ToJsonString());
+            else
+                anthropicTool["input_schema"] = new JsonObject { ["type"] = "object", ["properties"] = new JsonObject() };
+
+            result.Add(anthropicTool);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Executes a tool call against the local MCP server's <c>tools/call</c> endpoint.
+    /// Returns the result text, or an error message on failure.
+    /// </summary>
+    private async Task<string> ExecuteMcpToolCallAsync(string toolName, string argumentsJson, CancellationToken ct)
+    {
+        string url = _mcpServerUrl.Trim();
+
+        JsonNode? argsNode;
+        try
+        {
+            argsNode = JsonNode.Parse(argumentsJson);
+        }
+        catch
+        {
+            argsNode = new JsonObject();
+        }
+
+        var payload = new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = $"tool-call-{Guid.NewGuid():N}",
+            ["method"] = "tools/call",
+            ["params"] = new JsonObject
+            {
+                ["name"] = toolName,
+                ["arguments"] = argsNode
+            }
+        };
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
+            };
+            if (!string.IsNullOrWhiteSpace(_mcpAuthToken))
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _mcpAuthToken.Trim());
+
+            using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            string body = await response.Content.ReadAsStringAsync(ct);
+
+            if (!response.IsSuccessStatusCode)
+                return $"[MCP Error] HTTP {(int)response.StatusCode}: {body}";
+
+            using JsonDocument doc = JsonDocument.Parse(body);
+            JsonElement root = doc.RootElement;
+
+            if (root.TryGetProperty("error", out JsonElement errEl) && errEl.ValueKind == JsonValueKind.Object)
+            {
+                string? errMsg = errEl.TryGetProperty("message", out var m) ? m.GetString() : null;
+                return $"[MCP Error] {errMsg ?? "Unknown error"}";
+            }
+
+            if (root.TryGetProperty("result", out JsonElement resultEl))
+            {
+                // Try to extract text from content array: { "content": [ { "type": "text", "text": "..." } ] }
+                if (resultEl.TryGetProperty("content", out JsonElement contentArr) && contentArr.ValueKind == JsonValueKind.Array)
+                {
+                    var sb = new StringBuilder();
+                    foreach (JsonElement item in contentArr.EnumerateArray())
+                    {
+                        if (item.TryGetProperty("text", out JsonElement textEl) && textEl.ValueKind == JsonValueKind.String)
+                        {
+                            if (sb.Length > 0) sb.Append('\n');
+                            sb.Append(textEl.GetString());
+                        }
+                    }
+                    if (sb.Length > 0) return sb.ToString();
+                }
+
+                // Fallback: serialize the entire result
+                return resultEl.GetRawText();
+            }
+
+            return body;
+        }
+        catch (Exception ex)
+        {
+            return $"[MCP Error] {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Helper record for collecting function calls from SSE events during streaming.
+    /// </summary>
+    private sealed class PendingFunctionCall
+    {
+        public string CallId { get; init; } = string.Empty;
+        public string Name { get; init; } = string.Empty;
+        public StringBuilder Arguments { get; } = new();
     }
 
     // ── JSON Helpers ─────────────────────────────────────────────────────

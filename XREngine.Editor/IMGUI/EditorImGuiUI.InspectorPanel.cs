@@ -15,6 +15,7 @@ using XREngine.Editor.AssetEditors;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.TransformEditors;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -272,6 +273,7 @@ public static partial class EditorImGuiUI
 
             ImGui.SetNextItemWidth(-1f);
             ImGui.InputTextWithHint("##InspectorPropertySearch", "Search properties...", ref _inspectorPropertySearch, 256);
+            ImGuiTextFieldHelper.DrawTextFieldContextMenu("ctx_InspSearch", ref _inspectorPropertySearch);
             ImGui.Spacing();
 
             object? standaloneTarget = _inspectorStandaloneTarget;
@@ -408,6 +410,16 @@ public static partial class EditorImGuiUI
                 ImGui.SetNextItemWidth(-1f);
                 string hint = commonName is null ? "<multiple>" : string.Empty;
                 if (ImGui.InputTextWithHint("##SceneNodeNameMulti", hint, ref name, 256))
+                {
+                    string trimmed = name.Trim();
+                    string newName = string.IsNullOrWhiteSpace(trimmed) ? SceneNode.DefaultName : trimmed;
+                    foreach (var node in nodes)
+                    {
+                        ImGuiUndoHelper.TrackDragUndo("Rename Node", node);
+                        node.Name = newName;
+                    }
+                }
+                if (ImGuiTextFieldHelper.DrawTextFieldContextMenu("ctx_NodeNameMulti", ref name))
                 {
                     string trimmed = name.Trim();
                     string newName = string.IsNullOrWhiteSpace(trimmed) ? SceneNode.DefaultName : trimmed;
@@ -676,6 +688,15 @@ public static partial class EditorImGuiUI
                 string name = node.Name ?? string.Empty;
                 ImGui.SetNextItemWidth(-1f);
                 if (ImGui.InputText("##SceneNodeName", ref name, 256))
+                {
+                    string trimmed = name.Trim();
+                    if (!string.Equals(trimmed, node.Name, StringComparison.Ordinal))
+                    {
+                        ImGuiUndoHelper.TrackDragUndo("Rename Node", node);
+                        node.Name = string.IsNullOrWhiteSpace(trimmed) ? SceneNode.DefaultName : trimmed;
+                    }
+                }
+                if (ImGuiTextFieldHelper.DrawTextFieldContextMenu("ctx_NodeName", ref name))
                 {
                     string trimmed = name.Trim();
                     if (!string.Equals(trimmed, node.Name, StringComparison.Ordinal))

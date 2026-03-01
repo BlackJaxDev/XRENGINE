@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.IO;
 using XREngine.Core.Files;
+using XREngine.Core.Reflection.Attributes;
 using Extensions;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -15,6 +16,7 @@ using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.UI;
 using XREngine.Components;
 using XREngine.Scene;
 
@@ -89,6 +91,7 @@ public static partial class EditorImGuiUI
         }
 
         private static readonly NullabilityInfoContext _nullabilityContext = new();
+        private static readonly Dictionary<MemberInfo, string[]?> _stringOptionsCache = new();
 
         private static bool IsPropertyNullable(PropertyInfo property)
         {
@@ -1259,6 +1262,14 @@ public static partial class EditorImGuiUI
                 {
                     ImGui.SetNextItemWidth(-1f);
                     if (ImGui.InputText("##Value", ref textValue, 512u) && canModifyElements)
+                    {
+                        if (TryAssignDictionaryValue(dictionary, key, textValue, owner))
+                        {
+                            currentValue = textValue;
+                            isCurrentlyNull = false;
+                        }
+                    }
+                    if (ImGuiTextFieldHelper.DrawTextFieldContextMenu("ctx_DictValue", ref textValue) && canModifyElements)
                     {
                         if (TryAssignDictionaryValue(dictionary, key, textValue, owner))
                         {
@@ -2649,6 +2660,14 @@ public static partial class EditorImGuiUI
                             isCurrentlyNull = false;
                         }
                     }
+                    if (ImGuiTextFieldHelper.DrawTextFieldContextMenu("ctx_CollValue", ref textValue) && canModifyElements)
+                    {
+                        if (TryAssignCollectionValue(list, index, textValue))
+                        {
+                            currentValue = textValue;
+                            isCurrentlyNull = false;
+                        }
+                    }
                 }
                 if (undoTarget is not null)
                     ImGuiUndoHelper.TrackDragUndo("Edit Collection Element", undoTarget);
@@ -3115,20 +3134,68 @@ public static partial class EditorImGuiUI
             else if (effectiveType == typeof(string))
             {
                 string textValue = currentValue as string ?? string.Empty;
-                using (new ImGuiDisabledScope(!canWrite))
+                if (TryGetStringOptions(property, out string[] options) && options.Length > 0)
                 {
-                    ImGui.SetNextItemWidth(-1f);
-                    if (ImGui.InputTextWithHint("##Value", hasMixedValues ? "<multiple values>" : string.Empty, ref textValue, 512u, ImGuiInputTextFlags.None) && canWrite)
+                    using (new ImGuiDisabledScope(!canWrite))
                     {
-                        if (TryApplyInspectorValue(targets, property, values, textValue))
-                        {
-                            currentValue = textValue;
-                            isCurrentlyNull = false;
-                            hasMixedValues = false;
-                        }
-                    }
+                        int selectedIndex = Array.FindIndex(options, o => string.Equals(o, textValue, StringComparison.Ordinal));
+                        string preview = hasMixedValues
+                            ? "<multiple values>"
+                            : (selectedIndex >= 0 ? options[selectedIndex] : textValue);
 
-                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                        if (string.IsNullOrWhiteSpace(preview))
+                            preview = "<empty>";
+
+                        ImGui.SetNextItemWidth(-1f);
+                        if (ImGui.BeginCombo("##Value", preview))
+                        {
+                            for (int i = 0; i < options.Length; i++)
+                            {
+                                bool selected = i == selectedIndex && !hasMixedValues;
+                                if (ImGui.Selectable(options[i], selected) && canWrite)
+                                {
+                                    if (TryApplyInspectorValue(targets, property, values, options[i]))
+                                    {
+                                        currentValue = options[i];
+                                        isCurrentlyNull = false;
+                                        hasMixedValues = false;
+                                        selectedIndex = i;
+                                    }
+                                }
+                            }
+
+                            ImGui.EndCombo();
+                        }
+
+                        UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                    }
+                }
+                else
+                {
+                    using (new ImGuiDisabledScope(!canWrite))
+                    {
+                        ImGui.SetNextItemWidth(-1f);
+                        if (ImGui.InputTextWithHint("##Value", hasMixedValues ? "<multiple values>" : string.Empty, ref textValue, 512u, ImGuiInputTextFlags.None) && canWrite)
+                        {
+                            if (TryApplyInspectorValue(targets, property, values, textValue))
+                            {
+                                currentValue = textValue;
+                                isCurrentlyNull = false;
+                                hasMixedValues = false;
+                            }
+                        }
+                        if (ImGuiTextFieldHelper.DrawTextFieldContextMenu("ctx_PropValue", ref textValue) && canWrite)
+                        {
+                            if (TryApplyInspectorValue(targets, property, values, textValue))
+                            {
+                                currentValue = textValue;
+                                isCurrentlyNull = false;
+                                hasMixedValues = false;
+                            }
+                        }
+
+                        UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                    }
                 }
                 handled = true;
             }
@@ -3347,7 +3414,41 @@ public static partial class EditorImGuiUI
                 if (hasMixedValues)
                     ImGui.SetNextItemWidth(-1f);
 
-                handled = DrawInlineValueEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, Apply, "##Value");
+                if (effectiveType == typeof(string)
+                    && TryGetStringOptions(field, out string[] options)
+                    && options.Length > 0)
+                {
+                    string textValue = currentValue as string ?? string.Empty;
+                    int selectedIndex = Array.FindIndex(options, o => string.Equals(o, textValue, StringComparison.Ordinal));
+                    string preview = hasMixedValues
+                        ? "<multiple values>"
+                        : (selectedIndex >= 0 ? options[selectedIndex] : textValue);
+
+                    if (string.IsNullOrWhiteSpace(preview))
+                        preview = "<empty>";
+
+                    ImGui.SetNextItemWidth(-1f);
+                    if (ImGui.BeginCombo("##Value", preview))
+                    {
+                        for (int i = 0; i < options.Length; i++)
+                        {
+                            bool selected = i == selectedIndex && !hasMixedValues;
+                            if (ImGui.Selectable(options[i], selected) && canWrite)
+                            {
+                                if (Apply(options[i]))
+                                    selectedIndex = i;
+                            }
+                        }
+
+                        ImGui.EndCombo();
+                    }
+
+                    handled = true;
+                }
+                else
+                {
+                    handled = DrawInlineValueEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, Apply, "##Value");
+                }
 
                 if (handled)
                     UpdateInspectorUndoScope($"Edit {field.Name}", targets);
@@ -4278,6 +4379,14 @@ public static partial class EditorImGuiUI
                             isCurrentlyNull = false;
                         }
                     }
+                    if (ImGuiTextFieldHelper.DrawTextFieldContextMenu($"ctx_Inline{label}", ref textValue) && canWrite)
+                    {
+                        if (applyValue(textValue))
+                        {
+                            currentValue = textValue;
+                            isCurrentlyNull = false;
+                        }
+                    }
                 }
                 return true;
             }
@@ -4699,6 +4808,77 @@ public static partial class EditorImGuiUI
                 value = localValue;
 
             return changed;
+        }
+
+        private static bool TryGetStringOptions(PropertyInfo property, out string[] options)
+            => TryGetStringOptionsCore(property, property.GetCustomAttribute<StringOptionsProviderAttribute>(), property.DeclaringType, out options);
+
+        private static bool TryGetStringOptions(FieldInfo field, out string[] options)
+            => TryGetStringOptionsCore(field, field.GetCustomAttribute<StringOptionsProviderAttribute>(), field.DeclaringType, out options);
+
+        private static bool TryGetStringOptionsCore(MemberInfo member, StringOptionsProviderAttribute? attr, Type? declaringType, out string[] options)
+        {
+            if (_stringOptionsCache.TryGetValue(member, out var cached))
+            {
+                options = cached ?? [];
+                return options.Length > 0;
+            }
+
+            options = [];
+            if (attr is null)
+            {
+                _stringOptionsCache[member] = null;
+                return false;
+            }
+
+            Type? providerType = attr.ProviderType ?? declaringType;
+            if (providerType is null || string.IsNullOrWhiteSpace(attr.MethodName))
+            {
+                _stringOptionsCache[member] = null;
+                return false;
+            }
+
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+            MethodInfo? provider = providerType.GetMethod(attr.MethodName, Flags, null, Type.EmptyTypes, null);
+
+            if (provider is null)
+            {
+                Debug.LogWarning($"String options provider method '{attr.MethodName}' was not found on '{providerType.Name}' for member '{member.Name}'.");
+                _stringOptionsCache[member] = null;
+                return false;
+            }
+
+            try
+            {
+                object? result = provider.Invoke(null, null);
+                if (result is not IEnumerable<string> values)
+                {
+                    Debug.LogWarning($"String options provider '{providerType.Name}.{provider.Name}' must return IEnumerable<string>.");
+                    _stringOptionsCache[member] = null;
+                    return false;
+                }
+
+                var list = new List<string>();
+                var unique = new HashSet<string>(StringComparer.Ordinal);
+                foreach (string? value in values)
+                {
+                    if (string.IsNullOrWhiteSpace(value))
+                        continue;
+
+                    if (unique.Add(value))
+                        list.Add(value);
+                }
+
+                options = [.. list];
+                _stringOptionsCache[member] = options.Length > 0 ? options : null;
+                return options.Length > 0;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"String options provider '{providerType.Name}.{provider.Name}' failed: {ex.Message}");
+                _stringOptionsCache[member] = null;
+                return false;
+            }
         }
 
         private static bool IsPathUnderDirectory(string candidatePath, string rootDirectory)

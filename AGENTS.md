@@ -95,11 +95,16 @@ The repository root contains `ExecTool.bat`, which provides an interactive numbe
 ```bash
 ExecTool              # interactive menu
 ExecTool 16           # run tool #16 directly (Find-BuildWarnings)
+ExecTool --bootstrap  # full project setup (submodules, deps, build, launch)
 ExecTool --list       # print all tools and exit
 ExecTool --help       # show usage
 ```
 
-Tools are grouped into categories: **Build**, **Editor**, **Repo**, **Docs**, **Reports**, and **Deps** (dependency installers). Each entry shows a one-line description and the script path.
+Tools are grouped into categories: **Setup**, **Build**, **Editor**, **Repo**, **Docs**, **Reports**, and **Deps** (dependency installers). Each entry shows a one-line description and the script path.
+
+The **Setup** category contains a **Bootstrap** entry (also available as `ExecTool --bootstrap`) that performs full first-time project setup: initializes all git submodules, downloads every dependency, builds submodules and the DocFX site, then launches the DocFX server and editor in separate windows.
+
+Each category that supports it (Repo, Docs, Reports, Deps) also has an **Execute ALL** entry that runs every tool in that category sequentially.
 
 ### Debug profiles
 
