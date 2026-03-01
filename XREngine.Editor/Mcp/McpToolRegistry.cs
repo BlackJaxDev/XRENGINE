@@ -212,7 +212,10 @@ namespace XREngine.Editor.Mcp
                 name: toolName,
                 description: toolDescription,
                 inputSchema: inputSchema,
-                handler: (context, args, token) => InvokeToolAsync(method, context, args, token));
+                handler: (context, args, token) => InvokeToolAsync(method, context, args, token),
+                permissionLevel: ResolvePermissionLevel(method, toolName),
+                permissionReason: method.GetCustomAttribute<McpPermissionAttribute>()?.Reason,
+                threadAffinity: method.GetCustomAttribute<McpThreadAffinityAttribute>()?.Affinity);
         }
 
         private static object BuildParameterSchema(Type parameterType, string title, string? description)
@@ -363,6 +366,32 @@ namespace XREngine.Editor.Mcp
                 return returnType.GetGenericArguments()[0] == typeof(McpToolResponse);
 
             return false;
+        }
+
+        /// <summary>
+        /// Resolves the permission level for a tool method.
+        /// Uses the explicit <see cref="McpPermissionAttribute"/> if present,
+        /// otherwise infers from the tool name prefix.
+        /// </summary>
+        private static McpPermissionLevel ResolvePermissionLevel(MethodInfo method, string toolName)
+        {
+            var attr = method.GetCustomAttribute<McpPermissionAttribute>();
+            if (attr is not null)
+                return attr.Level;
+
+            // Heuristic: read-prefixed tools are ReadOnly, delete-prefixed are Destructive, everything else is Mutate.
+            if (toolName.StartsWith("get_", StringComparison.OrdinalIgnoreCase) ||
+                toolName.StartsWith("list_", StringComparison.OrdinalIgnoreCase) ||
+                toolName.StartsWith("find_", StringComparison.OrdinalIgnoreCase) ||
+                toolName.StartsWith("validate_", StringComparison.OrdinalIgnoreCase) ||
+                toolName.StartsWith("search_", StringComparison.OrdinalIgnoreCase) ||
+                toolName.StartsWith("capture_", StringComparison.OrdinalIgnoreCase))
+                return McpPermissionLevel.ReadOnly;
+
+            if (toolName.StartsWith("delete_", StringComparison.OrdinalIgnoreCase))
+                return McpPermissionLevel.Destructive;
+
+            return McpPermissionLevel.Mutate;
         }
     }
 }

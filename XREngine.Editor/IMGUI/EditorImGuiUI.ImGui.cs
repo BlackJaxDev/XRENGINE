@@ -576,6 +576,9 @@ public static partial class EditorImGuiUI
             UI.Tools.ShaderCrossCompilerWindow.Instance.Render();
             UI.Tools.McpAssistantWindow.Instance.Render();
 
+            // MCP permission prompt (modal overlay — must render after all other windows)
+            UI.Tools.McpPermissionPromptUI.Render();
+
             // Background-mode model spawning on drop.
             // We track the dragged asset path from the Asset Explorer and spawn when the mouse is
             // released over the dockspace region (but not while the Assets window is hovered).

@@ -382,6 +382,7 @@ namespace XREngine.Editor.Mcp
         /// </summary>
         [XRMcp]
         [McpName("create_material_asset")]
+        [McpPermission(McpPermissionLevel.Destructive, Reason = "Creates and writes an asset file to disk.")]
         [Description("Create and save a new XRMaterial asset.")]
         public static Task<McpToolResponse> CreateMaterialAssetAsync(
             McpToolContext context,
