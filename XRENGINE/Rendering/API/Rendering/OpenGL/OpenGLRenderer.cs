@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using ImageMagick;
+using ImGuiNET;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ARB;
 using Silk.NET.OpenGL.Extensions.ImGui;
@@ -116,6 +117,13 @@ namespace XREngine.Rendering.OpenGL
 
             controller = new ImGuiController(Api, XRWindow.Window, input);
             ImGuiContextTracker.Register(controller.Context);
+
+            // Enable docking immediately so DockContextInitialize runs on the next
+            // NewFrame() call.  The controller's constructor already called NewFrame()
+            // once (before we could set this flag), so the initial INI load missed the
+            // [Docking][Data] section.  The editor's first render frame will trigger a
+            // one-time INI reload to pick up the saved dock layout.
+            ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.DockingEnable;
 
             ImGuiControllerUtilities.TryUseLatoAsDefaultFont(controller);
 

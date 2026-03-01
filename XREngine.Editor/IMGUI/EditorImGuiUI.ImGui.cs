@@ -71,6 +71,7 @@ public static partial class EditorImGuiUI
 
         private static bool _renameInputFocusRequested;
         private static bool _imguiStyleInitialized;
+        private static bool _dockingIniReloaded;
         private static Vector4? _imguiBaseWindowBg;
         private static Vector4? _imguiBaseChildBg;
         private static Vector4? _imguiBaseDockingEmptyBg;
@@ -1412,6 +1413,20 @@ public static partial class EditorImGuiUI
             _imguiBaseDockingEmptyBg = colors[(int)ImGuiCol.DockingEmptyBg];
 
             _imguiStyleInitialized = true;
+
+            // The ImGuiController's constructor (OpenGL) calls NewFrame() before
+            // DockingEnable is set, so the docking INI handler is not registered
+            // during the initial settings load.  By now, DockingEnable was set at
+            // controller creation and DockContextInitialize ran on the most recent
+            // NewFrame().  Reload the INI so the [Docking][Data] section is parsed
+            // and the saved dock layout is restored.
+            if (!_dockingIniReloaded)
+            {
+                _dockingIniReloaded = true;
+                string iniFilename = io.IniFilename;
+                if (!string.IsNullOrEmpty(iniFilename) && File.Exists(iniFilename))
+                    ImGui.LoadIniSettingsFromDisk(iniFilename);
+            }
         }
 
         private static void ApplyViewportModeImGuiBackgroundAlpha()

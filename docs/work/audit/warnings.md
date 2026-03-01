@@ -1,6 +1,6 @@
 ﻿# XREngine Build Warnings Report
 
-_Generated: 2026-02-27 16:00:24 | Configuration: Debug | Total warnings: 142_
+_Generated: 2026-02-28 12:14:51 | Configuration: Debug | Total warnings: 122_
 
 ---
 
@@ -10,13 +10,12 @@ _Generated: 2026-02-27 16:00:24 | Configuration: Debug | Total warnings: 142_
 |---------|----------|
 | **XREngine** | 97 |
 | **XREngine.Animation** | 1 |
-| **XREngine.Audio** | 3 |
+| **XREngine.Audio** | 1 |
 | **XREngine.Data** | 1 |
 | **XREngine.Editor** | 19 |
 | **XREngine.Input** | 1 |
 | **XREngine.Modeling** | 1 |
 | **XREngine.Server** | 1 |
-| **XREngine.UnitTests** | 18 |
 
 ## Summary by Warning Code
 
@@ -24,27 +23,24 @@ _Generated: 2026-02-27 16:00:24 | Configuration: Debug | Total warnings: 142_
 |------|-------|-------------|
 | [`CS0414`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs0414?view=net-10.0) | 21 | Compiler Warning (level 3) CS0414 |
 | [`CS8602`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8602?view=net-10.0) | 18 | Dereference of a possibly null reference |
-| [`CS8604`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8604?view=net-10.0) | 18 | Possible null reference argument |
-| [`CS8600`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8600?view=net-10.0) | 11 | Converting null literal or possible null value to non-nullable type |
+| [`CS8604`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8604?view=net-10.0) | 13 | Possible null reference argument |
 | [`CS0649`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs0649?view=net-10.0) | 11 | Compiler Warning (level 4) CS0649 |
+| [`CS8600`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8600?view=net-10.0) | 11 | Converting null literal or possible null value to non-nullable type |
 | [`CS0169`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs0169?view=net-10.0) | 9 | Compiler Warning (level 3) CS0169 |
 | [`NU1510`](https://learn.microsoft.com/en-us/nuget/reference/errors-and-warnings/nu1510?view=net-10.0) | 7 | NU1510 warning code |
-| [`CS0219`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs0219?view=net-10.0) | 6 | Compiler Warning (level 3) CS0219 |
-| [`CS0618`](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/compiler-messages/cs0618?view=net-10.0) | 6 | Compiler Warning (level 2) CS0618 |
 | [`CS9193`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs9193?view=net-10.0) | 5 | Argument should be a variable because it is passed to a ref readonly parameter |
 | [`CS8601`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8601?view=net-10.0) | 5 | Possible null reference assignment |
 | [`CS9192`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs9192?view=net-10.0) | 4 | Argument should be passed with ref or in keyword |
 | [`CS8603`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8603?view=net-10.0) | 4 | Possible null reference return |
-| [`CS4014`](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/compiler-messages/async-await-errors?view=net-10.0) | 3 | These compiler errors and warnings indicate errors in the syntax for declaring and implementing `async` methods that use the `await` expression. |
-| [`CS0652`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs0652?view=net-10.0) | 2 | Compiler Warning (level 2) CS0652 |
-| [`CS1717`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs1717?view=net-10.0) | 2 | Learn more about: Compiler Warning (level 3) CS1717 |
 | [`CS9191`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs9191?view=net-10.0) | 2 | The ref modifier for argument corresponding to in parameter is equivalent to in |
-| [`SYSLIB0050`](https://learn.microsoft.com/en-us/dotnet/fundamentals/syslib-diagnostics/syslib0050?view=net-10.0) | 2 | Learn about the obsoletion of formatter-based serialization APIs that generates compile-time warning SYSLIB0050. |
+| [`CS0652`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs0652?view=net-10.0) | 2 | Compiler Warning (level 2) CS0652 |
+| [`CS0618`](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/compiler-messages/cs0618?view=net-10.0) | 2 | Compiler Warning (level 2) CS0618 |
+| [`CS1717`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs1717?view=net-10.0) | 2 | Learn more about: Compiler Warning (level 3) CS1717 |
 | [`CS9113`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs9113?view=net-10.0) | 2 | Parameter is unread |
-| [`CS8625`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8625?view=net-10.0) | 1 | Cannot convert null literal to non-nullable reference type |
-| [`CS0109`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs0109?view=net-10.0) | 1 | Compiler Warning (level 4) CS0109 |
 | [`CS0162`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs0162?view=net-10.0) | 1 | Compiler Warning (level 2) CS0162 |
 | [`CS0067`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs0067?view=net-10.0) | 1 | Compiler Warning (level 3) CS0067 |
+| [`CS8625`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8625?view=net-10.0) | 1 | Cannot convert null literal to non-nullable reference type |
+| [`SYSLIB0050`](https://learn.microsoft.com/en-us/dotnet/fundamentals/syslib-diagnostics/syslib0050?view=net-10.0) | 1 | Learn about the obsoletion of formatter-based serialization APIs that generates compile-time warning SYSLIB0050. |
 
 ---
 
@@ -120,6 +116,14 @@ _Generated: 2026-02-27 16:00:24 | Configuration: Debug | Total warnings: 142_
 - **XREngine/Scene/Physics/Jolt/JoltScene.cs**
   - L656: Possible null reference argument for parameter 'obj' in 'void Action<Body>.Invoke(Body obj)'.
 
+#### [`CS8603`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8603?view=net-10.0) (4) - Possible null reference return
+
+- **XREngine/Core/Tools/Triangle Converter/TriStripper.cs**
+  - L304: Possible null reference return.
+  - L336: Possible null reference return.
+  - L395: Possible null reference return.
+  - L431: Possible null reference return.
+
 #### [`CS8601`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8601?view=net-10.0) (4) - Possible null reference assignment
 
 - **XREngine/Rendering/API/Rendering/Vulkan/Objects/Types/VkRenderProgram.cs**
@@ -129,14 +133,6 @@ _Generated: 2026-02-27 16:00:24 | Configuration: Debug | Total warnings: 142_
   - L95: Possible null reference assignment.
 - **XREngine/Scene/Physics/Jolt/JoltScene.cs**
   - L634: Possible null reference assignment.
-
-#### [`CS8603`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8603?view=net-10.0) (4) - Possible null reference return
-
-- **XREngine/Core/Tools/Triangle Converter/TriStripper.cs**
-  - L304: Possible null reference return.
-  - L336: Possible null reference return.
-  - L395: Possible null reference return.
-  - L431: Possible null reference return.
 
 #### [`CS8625`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8625?view=net-10.0) (1) - Cannot convert null literal to non-nullable reference type
 
@@ -288,15 +284,7 @@ _Generated: 2026-02-27 16:00:24 | Configuration: Debug | Total warnings: 142_
 ---
 
 ## Project: XREngine.Audio
-> 3 warning(s)
-
-### High Priority
-
-#### [`CS8604`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8604?view=net-10.0) (2) - Possible null reference argument
-
-- **XREngine.Audio/Steam/SteamAudioBaker.cs**
-  - L89: Possible null reference argument for parameter 'progressCallback' in 'void Phonon.iplReflectionsBakerBake(IPLContext context, ref IPLReflectionsBakeParams parameters, IPLProgressCallback progressCallback, nint userData)'.
-  - L150: Possible null reference argument for parameter 'progressCallback' in 'void Phonon.iplPathBakerBake(IPLContext context, ref IPLPathBakeParams parameters, IPLProgressCallback progressCallback, nint userData)'.
+> 1 warning(s)
 
 ### Medium Priority
 
@@ -427,61 +415,6 @@ _Generated: 2026-02-27 16:00:24 | Configuration: Debug | Total warnings: 142_
 
 - **XREngine.Server/XREngine.Server.csproj**
   - PackageReference Microsoft.AspNetCore.Http will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.
-
----
-
-## Project: XREngine.UnitTests
-> 18 warning(s)
-
-### High Priority
-
-#### [`CS8604`](https://learn.microsoft.com/dotnet/csharp/language-reference/compiler-messages/cs8604?view=net-10.0) (3) - Possible null reference argument
-
-- **XREngine.UnitTests/Mcp/McpServerHostProtocolTests.cs**
-  - L140: Possible null reference argument for parameter 'actual' in 'void ShouldBeStringTestExtensions.ShouldContain(string actual, string expected, Case caseSensitivity = Case.Insensitive, string? customMessage = null)'.
-- **XREngine.UnitTests/Rendering/NativeInteropSmokeTests.cs**
-  - L18: Possible null reference argument for parameter 'libraryPath' in 'bool NativeLibrary.TryLoad(string libraryPath, out nint handle)'.
-  - L45: Possible null reference argument for parameter 'libraryPath' in 'bool NativeLibrary.TryLoad(string libraryPath, out nint handle)'.
-
-### Medium Priority
-
-#### [`CS0219`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs0219?view=net-10.0) (6) - Compiler Warning (level 3) CS0219
-
-- **XREngine.UnitTests/Rendering/GpuCullingPipelineTests.cs**
-  - L617: The variable 'screenWidth' is assigned but its value is never used
-  - L618: The variable 'screenHeight' is assigned but its value is never used
-- **XREngine.UnitTests/Rendering/GpuIndirectRenderDispatchTests.cs**
-  - L249: The variable 'COMMAND_FLOATS' is assigned but its value is never used
-  - L265: The variable 'submeshIdOffset' is assigned but its value is never used
-  - L269: The variable 'shaderProgramIdOffset' is assigned but its value is never used
-  - L272: The variable 'lodLevelOffset' is assigned but its value is never used
-
-#### [`CS0618`](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/compiler-messages/cs0618?view=net-10.0) (4) - Compiler Warning (level 2) CS0618
-
-- **XREngine.UnitTests/Rendering/IndirectRenderingAdditionalTests.cs**
-  - L84: 'BufferPNameARB.BufferSize' is obsolete: 'Deprecated in favour of "Size"'
-  - L85: 'BufferPNameARB.BufferSize' is obsolete: 'Deprecated in favour of "Size"'
-  - L108: 'BufferPNameARB.BufferSize' is obsolete: 'Deprecated in favour of "Size"'
-  - L109: 'BufferPNameARB.BufferSize' is obsolete: 'Deprecated in favour of "Size"'
-
-#### [`SYSLIB0050`](https://learn.microsoft.com/en-us/dotnet/fundamentals/syslib-diagnostics/syslib0050?view=net-10.0) (1) - Learn about the obsoletion of formatter-based serialization APIs that generates compile-time warning SYSLIB0050.
-
-- **XREngine.UnitTests/Core/XRAssetMemoryPackCoverageTests.cs**
-  - L39: 'FormatterServices' is obsolete: 'Formatter-based serialization is obsolete and should not be used.' (https://aka.ms/dotnet-warnings/SYSLIB0050)
-
-### Low Priority
-
-#### [`CS4014`](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/compiler-messages/async-await-errors?view=net-10.0) (3) - These compiler errors and warnings indicate errors in the syntax for declaring and implementing `async` methods that use the `await` expression.
-
-- **XREngine.UnitTests/Mcp/McpServerHostProtocolTests.cs**
-  - L110: Because this call is not awaited, execution of the current method continues before the call is completed. Consider applying the 'await' operator to the result of the call.
-  - L126: Because this call is not awaited, execution of the current method continues before the call is completed. Consider applying the 'await' operator to the result of the call.
-  - L150: Because this call is not awaited, execution of the current method continues before the call is completed. Consider applying the 'await' operator to the result of the call.
-
-#### [`CS0109`](https://learn.microsoft.com/en-us/dotnet/csharp/misc/cs0109?view=net-10.0) (1) - Compiler Warning (level 4) CS0109
-
-- **XREngine.UnitTests/Rendering/GpuBvhAndIndirectIntegrationTests.cs**
-  - L1608: The member 'GpuBvhAndIndirectIntegrationTests.CreateGLContext()' does not hide an accessible member. The new keyword is not required.
 
 ---
 

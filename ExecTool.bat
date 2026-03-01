@@ -18,6 +18,8 @@ REM Format: TOOL_<N>_CMD=<command>  TOOL_<N>_DESC=<description>
 
 set "TOOL_COUNT=0"
 
+call :AddBootstrap
+call :AddSep
 call :AddTool "Build" "Tools\Build-DocFx.bat" "Build the DocFX API documentation site"
 call :AddTool "Build" "Tools\Build-Submodules.bat" "Compile third-party submodules (Debug by default)"
 call :AddTool "Build" "Tools\Test-CookCommonAssets.ps1" "Cook CommonAssets into a .pak archive (builds editor first)"
@@ -29,9 +31,11 @@ call :AddSep
 call :AddTool "Repo" "Tools\Initialize-Submodules.bat" "Initialize and update all git submodules recursively"
 call :AddTool "Repo" "Tools\Reset-GlobalConfig.bat" "Delete global editor preferences (factory reset)"
 call :AddTool "Repo" "Tools\Reset-SandboxConfig.bat" "Delete sandbox config (engine_settings, user_settings, build_settings)"
+call :AddRunAll "Repo"
 call :AddSep
 call :AddTool "Docs" "Tools\Start-DocFxServer.bat" "Build and serve DocFX docs locally on port 8080"
 call :AddTool "Docs" "Tools\Invoke-GameProject.bat" "Helper for game-project workflows (compile/build/run/publish)"
+call :AddRunAll "Docs"
 call :AddSep
 call :AddTool "Reports" "Tools\Reports\Find-BuildWarnings.ps1" "Build solution and generate categorised warning report (docs\work\audit\warnings.md)"
 call :AddTool "Reports" "Tools\Reports\Find-NewAllocations.ps1" "Scan C# sources for heap allocations (new ...) in engine code"
@@ -40,6 +44,7 @@ call :AddTool "Reports" "Tools\Reports\Find-ThreadTaskRuns.ps1" "Find Thread/Tas
 call :AddTool "Reports" "Tools\Reports\Find-XRBaseDirectFieldAssignments.ps1" "Find direct field assignments in XRBase-derived types"
 call :AddTool "Reports" "Tools\Reports\Generate-Dependencies.ps1" "Regenerate docs\DEPENDENCIES.md and license audit"
 call :AddTool "Reports" "Tools\Reports\generate_mcp_docs.ps1" "Regenerate MCP tool table in docs\features\mcp-server.md"
+call :AddRunAll "Reports"
 call :AddSep
 call :AddTool "Deps" "Tools\Dependencies\Get-CoACD.ps1" "Download CoACD convex decomposition native library"
 call :AddTool "Deps" "Tools\Dependencies\Build-CoACD.ps1" "Build CoACD from source (requires CMake + C++ compiler)"
@@ -48,12 +53,14 @@ call :AddTool "Deps" "Tools\Dependencies\Get-NvComp.ps1" "Download NVIDIA nvCOMP
 call :AddTool "Deps" "Tools\Dependencies\Get-Phonon.ps1" "Download Steam Audio (Phonon) native library"
 call :AddTool "Deps" "Tools\Dependencies\Get-UltralightResources.ps1" "Download Ultralight runtime resources (icudt67l.dat, cacert.pem)"
 call :AddTool "Deps" "Tools\Dependencies\Get-YtDlp.ps1" "Download yt-dlp for YouTube URL extraction"
+call :AddRunAll "Deps"
 
 REM ── Handle arguments ──────────────────────────────────────────────────────
-if "%~1"=="--help" goto :ShowHelp
-if "%~1"=="-h"     goto :ShowHelp
-if "%~1"=="/?"     goto :ShowHelp
-if "%~1"=="--list" goto :ShowList
+if "%~1"=="--help"      goto :ShowHelp
+if "%~1"=="-h"          goto :ShowHelp
+if "%~1"=="/?"          goto :ShowHelp
+if "%~1"=="--list"      goto :ShowList
+if "%~1"=="--bootstrap" goto :RunBootstrap
 
 if not "%~1"=="" (
     set /a "SEL=%~1" 2>nul
@@ -85,7 +92,7 @@ for /L %%i in (1,1,%TOOL_COUNT%) do (
         ) else (
             echo   %%i.  !TOOL_%%i_DESC!
         )
-        echo        !TOOL_%%i_CMD!
+        if not "!TOOL_%%i_CMD!"=="__RUNALL__" if not "!TOOL_%%i_CMD!"=="__BOOTSTRAP__" echo        !TOOL_%%i_CMD!
     )
 )
 
@@ -113,12 +120,16 @@ if "!TOOL_%SEL%_CMD!"=="" (
 )
 
 :RunTool
+set "CMD=!TOOL_%SEL%_CMD!"
+
+REM Check for special entries
+if "!CMD!"=="__RUNALL__" goto :RunAllInCategory
+if "!CMD!"=="__BOOTSTRAP__" goto :RunBootstrap
+
 echo.
-echo  Running: !TOOL_%SEL%_CMD!
+echo  Running: !CMD!
 echo  ============================================================
 echo.
-
-set "CMD=!TOOL_%SEL%_CMD!"
 
 REM Route based on extension
 if /I "!CMD:~-4!"==".ps1" (
@@ -142,6 +153,143 @@ if "%~1"=="" (
 )
 goto :End
 
+:RunAllInCategory
+set "RUN_CAT=!TOOL_%SEL%_RUNALL!"
+echo.
+echo  Running ALL !RUN_CAT! tools...
+echo  ============================================================
+set "ALL_FAIL=0"
+for /L %%i in (1,1,%TOOL_COUNT%) do (
+    if "!TOOL_%%i_CAT!"=="!RUN_CAT!" if not "!TOOL_%%i_CMD!"=="" if not "!TOOL_%%i_CMD!"=="__RUNALL__" (
+        echo.
+        echo  [%%i] !TOOL_%%i_DESC!
+        echo  Running: !TOOL_%%i_CMD!
+        echo  ------------------------------------------------------------
+        if /I "!TOOL_%%i_CMD:~-4!"==".ps1" (
+            powershell -NoProfile -ExecutionPolicy Bypass -File "!TOOL_%%i_CMD!"
+        ) else if /I "!TOOL_%%i_CMD:~-4!"==".bat" (
+            call "!TOOL_%%i_CMD!"
+        )
+        if !ERRORLEVEL! NEQ 0 set "ALL_FAIL=1"
+        echo  Finished with exit code: !ERRORLEVEL!
+    )
+)
+echo.
+echo  ============================================================
+if "!ALL_FAIL!"=="1" (
+    echo  All !RUN_CAT! tools finished. Some tools reported errors.
+) else (
+    echo  All !RUN_CAT! tools finished successfully.
+)
+echo  ============================================================
+
+if "%~1"=="" (
+    echo.
+    pause
+    goto :Menu
+)
+goto :End
+
+REM ── Bootstrap ─────────────────────────────────────────────────────────────
+:RunBootstrap
+echo.
+echo  ============================================================
+echo   XRENGINE Full Bootstrap
+echo  ============================================================
+echo.
+set "BOOT_FAIL=0"
+
+REM Step 1: Initialize submodules
+echo  [1/6] Initializing git submodules...
+echo  ------------------------------------------------------------
+call "Tools\Initialize-Submodules.bat"
+if !ERRORLEVEL! NEQ 0 (
+    echo  WARNING: Submodule init reported errors.
+    set "BOOT_FAIL=1"
+)
+echo.
+
+REM Step 2: Download all dependencies
+echo  [2/6] Downloading all dependencies...
+echo  ------------------------------------------------------------
+for /L %%i in (1,1,%TOOL_COUNT%) do (
+    if "!TOOL_%%i_CAT!"=="Deps" if not "!TOOL_%%i_CMD!"=="" if not "!TOOL_%%i_CMD!"=="__RUNALL__" (
+        echo.
+        echo  ^> !TOOL_%%i_DESC!
+        if /I "!TOOL_%%i_CMD:~-4!"==".ps1" (
+            powershell -NoProfile -ExecutionPolicy Bypass -File "!TOOL_%%i_CMD!"
+        ) else if /I "!TOOL_%%i_CMD:~-4!"==".bat" (
+            call "!TOOL_%%i_CMD!"
+        )
+        if !ERRORLEVEL! NEQ 0 (
+            echo  WARNING: !TOOL_%%i_DESC! reported errors.
+            set "BOOT_FAIL=1"
+        )
+    )
+)
+echo.
+
+REM Step 3: Build submodules
+echo  [3/6] Building submodules...
+echo  ------------------------------------------------------------
+call "Tools\Build-Submodules.bat"
+if !ERRORLEVEL! NEQ 0 (
+    echo  WARNING: Submodule build reported errors.
+    set "BOOT_FAIL=1"
+)
+echo.
+
+REM Step 4: Build DocFX site
+echo  [4/6] Building DocFX documentation site...
+echo  ------------------------------------------------------------
+call "Tools\Build-DocFx.bat"
+if !ERRORLEVEL! NEQ 0 (
+    echo  WARNING: DocFX build reported errors. Docs may be unavailable.
+    set "BOOT_FAIL=1"
+    set "DOCFX_OK=0"
+) else (
+    set "DOCFX_OK=1"
+)
+echo.
+
+REM Step 5: Launch DocFX server in a new window and open browser
+echo  [5/6] Launching DocFX server (new window) and opening docs...
+echo  ------------------------------------------------------------
+if "!DOCFX_OK!"=="1" (
+    start "XRENGINE DocFX Server" cmd /c "cd /d "%~dp0" ^& Tools\Start-DocFxServer.bat"
+    timeout /t 3 /nobreak >nul
+    start http://localhost:8080
+    echo  DocFX server started on http://localhost:8080
+) else (
+    echo  SKIPPED: DocFX build failed earlier; server not launched.
+)
+echo.
+
+REM Step 6: Launch the Editor in a new window
+echo  [6/6] Launching XREngine Editor (new window)...
+echo  ------------------------------------------------------------
+start "XRENGINE Editor" cmd /c "cd /d "%~dp0" ^& Tools\Start-Editor.bat"
+echo  Editor launched.
+echo.
+
+echo  ============================================================
+if "!BOOT_FAIL!"=="1" (
+    echo  Bootstrap completed with warnings. Review output above.
+) else (
+    echo  Bootstrap completed successfully!
+)
+echo  ============================================================
+echo.
+echo  The DocFX server and Editor are running in separate windows.
+echo  Close those windows when you are done.
+echo.
+
+if "%~1"=="" (
+    pause
+    goto :Menu
+)
+goto :End
+
 REM ── Help ──────────────────────────────────────────────────────────────────
 :ShowHelp
 echo.
@@ -150,6 +298,7 @@ echo.
 echo  Usage:
 echo    ExecTool              Launch interactive menu
 echo    ExecTool ^<number^>     Run a specific tool by its menu number
+echo    ExecTool --bootstrap  Full project setup (submodules, deps, build, launch)
 echo    ExecTool --list       Print the tool list and exit
 echo    ExecTool --help       Show this help
 echo.
@@ -180,7 +329,7 @@ for /L %%i in (1,1,%TOOL_COUNT%) do (
         ) else (
             echo   %%i. !TOOL_%%i_DESC!
         )
-        echo       !TOOL_%%i_CMD!
+        if not "!TOOL_%%i_CMD!"=="__RUNALL__" if not "!TOOL_%%i_CMD!"=="__BOOTSTRAP__" echo       !TOOL_%%i_CMD!
     )
 )
 echo.
@@ -199,6 +348,21 @@ set /a "TOOL_COUNT+=1"
 set "TOOL_%TOOL_COUNT%_CAT="
 set "TOOL_%TOOL_COUNT%_CMD="
 set "TOOL_%TOOL_COUNT%_DESC="
+exit /b
+
+:AddRunAll
+set /a "TOOL_COUNT+=1"
+set "TOOL_%TOOL_COUNT%_CAT=%~1"
+set "TOOL_%TOOL_COUNT%_CMD=__RUNALL__"
+set "TOOL_%TOOL_COUNT%_DESC=>>> Execute ALL %~1 tools <<<"
+set "TOOL_%TOOL_COUNT%_RUNALL=%~1"
+exit /b
+
+:AddBootstrap
+set /a "TOOL_COUNT+=1"
+set "TOOL_%TOOL_COUNT%_CAT=Setup"
+set "TOOL_%TOOL_COUNT%_CMD=__BOOTSTRAP__"
+set "TOOL_%TOOL_COUNT%_DESC=*** Full Bootstrap (submodules + deps + build + launch) ***"
 exit /b
 
 :End

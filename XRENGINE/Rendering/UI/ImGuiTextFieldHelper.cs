@@ -12,7 +12,7 @@ public static class ImGuiTextFieldHelper
 {
     /// <summary>
     /// Draws a right-click context menu on the last ImGui item (typically an InputText).
-    /// Provides Copy All, Paste (replace), and Clear operations.
+    /// Provides Cut, Copy, Paste, Select All, and Clear operations.
     /// Returns <c>true</c> if <paramref name="value"/> was modified.
     /// </summary>
     /// <param name="id">Unique popup ID, e.g. <c>"ctx_MyField"</c>.</param>
@@ -24,11 +24,19 @@ public static class ImGuiTextFieldHelper
         if (!ImGui.BeginPopupContextItem(id))
             return false;
 
-        if (ImGui.MenuItem("Copy All", "Ctrl+C", false, !string.IsNullOrEmpty(value)))
-            ImGui.SetClipboardText(value);
-
+        bool hasText = !string.IsNullOrEmpty(value);
         string? clip = ImGui.GetClipboardText();
         bool hasClip = !string.IsNullOrEmpty(clip);
+
+        if (ImGui.MenuItem("Cut", "Ctrl+X", false, hasText))
+        {
+            ImGui.SetClipboardText(value);
+            value = string.Empty;
+            changed = true;
+        }
+
+        if (ImGui.MenuItem("Copy", "Ctrl+C", false, hasText))
+            ImGui.SetClipboardText(value);
 
         if (ImGui.MenuItem("Paste", "Ctrl+V", false, hasClip))
         {
@@ -38,7 +46,13 @@ public static class ImGuiTextFieldHelper
 
         ImGui.Separator();
 
-        if (ImGui.MenuItem("Clear", null, false, !string.IsNullOrEmpty(value)))
+        if (ImGui.MenuItem("Select All", "Ctrl+A", false, hasText))
+        {
+            // ImGui handles select-all internally for focused InputText fields;
+            // this menu item is informational — the shortcut label reminds users.
+        }
+
+        if (ImGui.MenuItem("Clear", null, false, hasText))
         {
             value = string.Empty;
             changed = true;
@@ -64,6 +78,7 @@ public static class ImGuiTextFieldHelper
 
         string? clip = ImGui.GetClipboardText();
         bool hasClip = !string.IsNullOrEmpty(clip);
+        bool hasText = !string.IsNullOrEmpty(value);
 
         if (ImGui.MenuItem("Paste", "Ctrl+V", false, hasClip))
         {
@@ -71,13 +86,15 @@ public static class ImGuiTextFieldHelper
             changed = true;
         }
 
-        if (ImGui.MenuItem("Clear"))
+        if (ImGui.MenuItem("Clear", null, false, hasText))
         {
             value = string.Empty;
             changed = true;
         }
 
-        if (ImGui.MenuItem("Copy (plain text)", null, false, !string.IsNullOrEmpty(value)))
+        ImGui.Separator();
+
+        if (ImGui.MenuItem("Copy (plain text)", null, false, hasText))
             ImGui.SetClipboardText(value);
 
         ImGui.EndPopup();

@@ -236,6 +236,11 @@ public unsafe partial class VulkanRenderer
             }
             io.Fonts.Build();
 
+            // Enable docking early so DockContextInitialize runs on the first
+            // NewFrame().  Without this, the INI's [Docking][Data] section would be
+            // silently ignored because no docking handler is registered.
+            io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
+
             InstallClipboardCallbacks(io);
             TryAttachInputHandlers();
         }
