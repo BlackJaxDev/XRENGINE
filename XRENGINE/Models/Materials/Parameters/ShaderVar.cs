@@ -247,6 +247,67 @@ namespace XREngine.Rendering.Models.Materials
             { EShaderVarType._bvec3,    typeof(BoolVector3) },
             { EShaderVarType._bvec4,    typeof(BoolVector4) },
         };
+
+        /// <summary>
+        /// Creates a new <see cref="ShaderVar"/> instance with a default value for the given GLSL type.
+        /// Returns <c>null</c> for unsupported types (e.g. samplers, mat3).
+        /// </summary>
+        public static ShaderVar? CreateForType(EShaderVarType type, string name) => type switch
+        {
+            EShaderVarType._bool   => new ShaderBool(false, name),
+            EShaderVarType._int    => new ShaderInt(0, name),
+            EShaderVarType._uint   => new ShaderUInt(0u, name),
+            EShaderVarType._float  => new ShaderFloat(0f, name),
+            EShaderVarType._double => new ShaderDouble(0.0, name),
+            EShaderVarType._vec2   => new ShaderVector2(default, name),
+            EShaderVarType._vec3   => new ShaderVector3(default, name),
+            EShaderVarType._vec4   => new ShaderVector4(default, name),
+            EShaderVarType._mat4   => new ShaderMat4(Matrix4x4.Identity, name),
+            EShaderVarType._ivec2  => new ShaderIVector2(default, name),
+            EShaderVarType._ivec3  => new ShaderIVector3(default, name),
+            EShaderVarType._ivec4  => new ShaderIVector4(default, name),
+            EShaderVarType._uvec2  => new ShaderUVector2(default, name),
+            EShaderVarType._uvec3  => new ShaderUVector3(default, name),
+            EShaderVarType._uvec4  => new ShaderUVector4(default, name),
+            EShaderVarType._dvec2  => new ShaderDVector2(default, name),
+            EShaderVarType._dvec3  => new ShaderDVector3(default, name),
+            EShaderVarType._dvec4  => new ShaderDVector4(default, name),
+            EShaderVarType._bvec2  => new ShaderBVector2(default, name),
+            EShaderVarType._bvec3  => new ShaderBVector3(default, name),
+            EShaderVarType._bvec4  => new ShaderBVector4(default, name),
+            _ => null,
+        };
+
+        /// <summary>
+        /// Maps GLSL type names to their corresponding <see cref="EShaderVarType"/>.
+        /// Only non-opaque, non-sampler types are included.
+        /// </summary>
+        public static readonly Dictionary<string, EShaderVarType> GlslTypeMap = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["bool"]   = EShaderVarType._bool,
+            ["bvec2"]  = EShaderVarType._bvec2,
+            ["bvec3"]  = EShaderVarType._bvec3,
+            ["bvec4"]  = EShaderVarType._bvec4,
+            ["int"]    = EShaderVarType._int,
+            ["ivec2"]  = EShaderVarType._ivec2,
+            ["ivec3"]  = EShaderVarType._ivec3,
+            ["ivec4"]  = EShaderVarType._ivec4,
+            ["uint"]   = EShaderVarType._uint,
+            ["uvec2"]  = EShaderVarType._uvec2,
+            ["uvec3"]  = EShaderVarType._uvec3,
+            ["uvec4"]  = EShaderVarType._uvec4,
+            ["float"]  = EShaderVarType._float,
+            ["vec2"]   = EShaderVarType._vec2,
+            ["vec3"]   = EShaderVarType._vec3,
+            ["vec4"]   = EShaderVarType._vec4,
+            ["double"] = EShaderVarType._double,
+            ["dvec2"]  = EShaderVarType._dvec2,
+            ["dvec3"]  = EShaderVarType._dvec3,
+            ["dvec4"]  = EShaderVarType._dvec4,
+            ["mat3"]   = EShaderVarType._mat3,
+            ["mat4"]   = EShaderVarType._mat4,
+        };
+
         public static readonly EShaderVarType[] SignedIntTypes =
         [
             EShaderVarType._int,

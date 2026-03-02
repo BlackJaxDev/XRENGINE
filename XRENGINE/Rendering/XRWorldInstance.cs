@@ -701,9 +701,9 @@ namespace XREngine.Rendering
             using var profilerScope = Engine.Profiler.Start("WorldInstance.PreUpdate");
 
             _pushToRenderWrite.Clear();
-            _invalidTransforms.ForEach(x => x.Value.Clear());
-            Volatile.Write(ref _dirtyMinDepth, int.MaxValue);
-            Volatile.Write(ref _dirtyMaxDepth, int.MinValue);
+            // NOTE: _invalidTransforms is cleared in PostUpdate *after* processing,
+            // not here. Clearing here would discard dirty transforms added
+            // asynchronously (e.g. MCP/HTTP threads) between PostUpdate and PreUpdate.
         }
 
         private void PostUpdate()
@@ -727,9 +727,16 @@ namespace XREngine.Rendering
                 for (int depth = minDepth; depth <= maxDepth; depth++)
                 {
                     if (_invalidTransforms.TryGetValue(depth, out var bag) && bag.Count > 0)
+                    {
                         recalcDepth(bag).Wait();
+                        bag.Clear();
+                    }
                 }
             }
+
+            // Reset dirty depth range after processing.
+            Volatile.Write(ref _dirtyMinDepth, int.MaxValue);
+            Volatile.Write(ref _dirtyMaxDepth, int.MinValue);
 
             //Capture of a snapshot of the queue to be processed in the render thread
             _pushToRenderWrite = Interlocked.Exchange(ref _pushToRenderSnapshot, _pushToRenderWrite);

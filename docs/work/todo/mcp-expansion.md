@@ -1,7 +1,7 @@
 # MCP Server Expansion TODO
 
 Last Updated: 2026-03-01
-Current Status: 112 tools shipped (75 original + 11 Phase 1 + 13 Phase 2 + 13 Phase 3)
+Current Status: 144 tools shipped (75 original + 11 Phase 1 + 13 Phase 2 + 13 Phase 3 + 6 Phase 4 + 8 Phase 5 + 5 Phase 6 + 13 extended workflow tools)
 Primary Objective: Expose enough engine surface through MCP that an AI agent can inspect types, manage game assets, author/compile/hot-reload C# scripts, and perform advanced scene authoring — all without leaving the conversation.
 
 ## Realtime Visual Context (Shipped)
@@ -179,24 +179,24 @@ Tools are grouped into phases by priority. Each phase unlocks a qualitatively ne
 
 ### P4.1 Generic Object Reflection
 
-- [ ] **`get_object_properties`** — Read all property values from any `XRBase`-derived instance by GUID.
+- [x] **`get_object_properties`** — Read all property values from any `XRBase`-derived instance by GUID.
   - Params: `object_id`, `include_non_public` (bool), `max_depth` (for nested objects).
 
-- [ ] **`set_object_property`** — Set a property on any `XRBase` instance by GUID (uses `SetField` pipeline).
+- [x] **`set_object_property`** — Set a property on any `XRBase` instance by GUID (uses `SetField` pipeline).
   - Params: `object_id`, `property_name`, `value`.
 
-- [ ] **`invoke_method`** — Invoke a method on an `XRBase` instance or a static method on any type.
+- [x] **`invoke_method`** — Invoke a method on an `XRBase` instance or a static method on any type.
   - Params: `object_id` (null for static), `type_name` (for static), `method_name`, `arguments` (JSON array).
 
-- [ ] **`evaluate_expression`** — Evaluate a simple property-chain expression on a scene object (e.g., `node.Transform.WorldMatrix.Translation.X`).
-  - Params: `node_id`, `expression`.
+- [x] **`evaluate_expression`** — Evaluate a simple property-chain expression on a scene object (e.g., `node.Transform.WorldMatrix.Translation.X`).
+  - Params: `object_id`, `expression`.
 
 ### P4.2 Event & Change Tracking
 
-- [ ] **`get_component_events`** — List events on a component and their current subscriber count.
+- [x] **`get_component_events`** — List events on a component and their current subscriber count.
   - Params: `node_id`, `component_id`.
 
-- [ ] **`watch_property`** — Subscribe to change notifications for a property, queryable via polling.
+- [x] **`watch_property`** — Subscribe to change notifications for a property, queryable via polling.
   - Params: `object_id`, `property_name`.
 
 ---
@@ -205,39 +205,62 @@ Tools are grouped into phases by priority. Each phase unlocks a qualitatively ne
 
 **Why fifth:** Settings tools are straightforward wiring but unlock the AI's ability to configure the project without manual UI navigation.
 
-- [ ] **`get_game_settings`** — Read the current `GameStartupSettings`.
-- [ ] **`set_game_setting`** — Modify a game startup setting.
-  - Params: `property_name`, `value`.
-- [ ] **`get_editor_preferences`** — Read all editor preferences.
-- [ ] **`set_editor_preference`** — Modify an editor preference.
-  - Params: `property_name`, `value`.
-- [ ] **`get_engine_settings`** — Read engine configuration.
-- [ ] **`list_game_configs`** — List config files in the game project's Config/ directory.
-- [ ] **`read_game_config`** — Read a config file.
-  - Params: `path`.
-- [ ] **`write_game_config`** — Write a config file.
-  - Params: `path`, `content`.
+- [x] **`get_game_settings`** — Read the current `GameStartupSettings`.
+  - Optional `category` filter and `include_build_settings` flag.
+- [x] **`set_game_setting`** — Modify a game startup setting.
+  - Params: `property_name`, `value`. Supports `BuildSettings.` prefix for nested build settings.
+- [x] **`get_editor_preferences`** — Read all editor preferences.
+  - Optional `category` filter and `show_source` flag (global vs. project override).
+- [x] **`set_editor_preference`** — Modify an editor preference.
+  - Params: `property_name`, `value`. Writes to the global default.
+- [x] **`get_engine_settings`** — Read engine configuration.
+  - Optional `section` filter: `user`, `timing`, `project`, `runtime`.
+- [x] **`list_game_configs`** — List config files in the game project's Config/ directory.
+  - Optional `pattern` glob filter.
+- [x] **`read_game_config`** — Read a config file.
+  - Params: `path`. Path-sandboxed to Config/ directory.
+- [x] **`write_game_config`** — Write a config file.
+  - Params: `path`, `content`. `Destructive` permission. Path-sandboxed to Config/ directory.
 
 ---
 
-## Phase 6 — Advanced Scene Authoring Workflows (LOWER PRIORITY)
+## Phase 6 — Advanced Scene Authoring Workflows (SHIPPED)
 
-**Why last:** These are convenience/batch tools that build on all previous phases. Nice-to-have once the foundation is solid.
+**Status:** All 5 tools shipped in `EditorMcpActions.SceneAuthoring.cs`.
 
-- [ ] **`instantiate_prefab`** — Instantiate a prefab into the active scene.
-  - Params: `prefab_id` or `prefab_path`, `parent_id`, `name`, `position`, `rotation`, `scale`.
+- [x] **`instantiate_prefab`** — Instantiate a prefab into the active scene.
+  - Params: `prefab_id` or `prefab_path`, `parent_id`, `name`, position/rotation/scale overrides, `scene_name`.
 
-- [ ] **`create_prefab_from_node`** — Save an existing scene node hierarchy as a new prefab asset.
+- [x] **`create_prefab_from_node`** — Save an existing scene node hierarchy as a new prefab asset.
   - Params: `node_id`, `output_path`, `name`.
 
-- [ ] **`batch_create_nodes`** — Create multiple scene nodes in a single call (reduces round trips).
-  - Params: `nodes` (array of {name, parent_id, components, transform}).
+- [x] **`batch_create_nodes`** — Create multiple scene nodes in a single call (reduces round trips).
+  - Params: `nodes` (JSON array of {name, parent_id, components, transform}), `scene_name`.
 
-- [ ] **`batch_set_properties`** — Set properties across multiple components/nodes in one call.
-  - Params: `operations` (array of {node_id, component_type, property_name, value}).
+- [x] **`batch_set_properties`** — Set properties across multiple components/nodes in one call.
+  - Params: `operations` (JSON array of {node_id, component_type, property_name, value}).
 
-- [ ] **`clone_scene`** — Deep-clone a scene for experimentation.
-  - Params: `source_scene_name`, `new_scene_name`.
+- [x] **`clone_scene`** — Deep-clone a scene for experimentation.
+  - Params: `source_scene_name`, `new_scene_name`, `make_visible`.
+
+---
+
+## Post-Phase Extensions — Advanced Workflow Tools (SHIPPED)
+
+Implemented in `EditorMcpActions.ExtendedWorkflow.cs`.
+
+- [x] **`validate_scene_integrity`** — Deep scene integrity checks (roots, parent links, cycles, world binding, duplicates).
+- [x] **`bulk_reparent_nodes`** — Reparent many nodes atomically with undo support.
+- [x] **`prefab_apply_overrides`** — Push instance overrides back into source prefab asset.
+- [x] **`prefab_revert_overrides`** — Revert instance override values from source prefab template.
+- [x] **`snapshot_world_state`** — Capture an in-memory world snapshot for later restore.
+- [x] **`restore_world_state`** — Restore active world from a stored snapshot.
+- [x] **`run_editor_command`** — Execute allowlisted editor workflow commands via a single MCP action.
+- [x] **`list_asset_import_options`** — Inspect third-party import options for a source file.
+- [x] **`set_asset_import_options`** — Mutate and save import option values; optional reimport.
+- [x] **`diff_scene_nodes`** — Compare node hierarchies and report structural/property differences.
+- [x] **`query_references`** — Unified reference query for assets, nodes, and components.
+- [x] **`transaction_begin`**, **`transaction_commit`**, **`transaction_rollback`** — Snapshot-backed transactional workflow primitives.
 
 ---
 
@@ -262,13 +285,15 @@ All new tools follow the existing pattern in `XREngine.Editor/Mcp/Actions/`:
 | `EditorMcpActions.GameAssets.cs` | Phase 3 — game project file-system operations |
 | `EditorMcpActions.LiveInspection.cs` | Phase 4 — runtime object reflection |
 | `EditorMcpActions.Settings.cs` | Phase 5 — game/editor/engine settings |
+| `EditorMcpActions.SceneAuthoring.cs` | Phase 6 — prefab ops, batch ops, scene cloning |
+| `EditorMcpActions.ExtendedWorkflow.cs` | Post-phase workflow tools: integrity, snapshots, transactions, import options, unified commands/queries |
 
-Phase 6 tools extend existing `EditorMcpActions.Scene.cs` and `EditorMcpActions.Workflow.cs`.
+Phase 6 tools are in `EditorMcpActions.SceneAuthoring.cs` (prefab ops moved from Scene.cs to the dedicated file).
 
 ### Security Considerations
 
-- File-system tools (Phases 2-3) must sandbox paths to `Engine.Assets.GameAssetsPath` — reject path traversal attempts (`..`, absolute paths outside the project).
-- `invoke_method` (Phase 4) should be gated behind `McpServerReadOnly` and possibly an explicit opt-in preference.
+- File-system tools (Phases 2-3, 5) must sandbox paths to `Engine.Assets.GameAssetsPath` or project Config/ — reject path traversal attempts (`..`, absolute paths outside the project).
+- `invoke_method` (Phase 4) is gated with `McpPermissionLevel.Arbitrary` — the highest permission tier, requiring explicit user approval unless `AllowAll` policy is configured.
 - Code compilation tools should respect `McpServerReadOnly` — don't allow writes or compiles in read-only mode.
 
 ### Permission System (Implemented)
@@ -293,16 +318,16 @@ A 4-tier permission gate is now integrated into the MCP server pipeline. Every t
 | `AllowAll` | No prompts (advanced/dangerous) |
 
 **How it works:**
-1. `McpToolRegistry.ResolvePermissionLevel()` reads `[McpPermission]` attributes on tool methods, falling back to a heuristic based on tool name prefixes (`get_`/`list_` → ReadOnly, `delete_` → Destructive, else → Mutate).
+1. `McpToolRegistry.ResolvePermissionLevel()` reads `XRMcp.Permission` on tool methods (when set), falling back to a heuristic based on tool name prefixes (`get_`/`list_` → ReadOnly, `delete_` → Destructive, else → Mutate).
 2. `McpServerHost.HandleToolCallAsync()` calls `McpPermissionManager.RequestPermissionAsync()` before invoking the tool handler.
 3. If the tool's level exceeds the policy threshold, a `TaskCompletionSource<bool>` is enqueued.
 4. `McpPermissionPromptUI` (ImGui modal) renders once per frame, dequeues pending requests, and shows the user: risk badge, tool name, description, arguments, and Allow/Deny buttons with an optional "Remember for this tool" checkbox.
 5. Remembered decisions are stored in a `ConcurrentDictionary` for the session.
 
-**Tagging new tools:** When adding tools from this roadmap, apply `[McpPermission(McpPermissionLevel.X)]` to the method:
+**Tagging new tools:** When adding tools from this roadmap, set permission metadata on `XRMcp`:
 ```csharp
-[McpPermission(McpPermissionLevel.Destructive, Reason = "Deletes files from disk")]
-[XRMcp, McpName("delete_game_asset"), Description("Delete a file from game assets")]
+[XRMcp(Name = "delete_game_asset", Permission = McpPermissionLevel.Destructive, PermissionReason = "Deletes files from disk")]
+[Description("Delete a file from game assets")]
 public static async Task<McpToolResponse> DeleteGameAsset(McpToolContext ctx, ...)
 ```
 
@@ -328,4 +353,5 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | Phase 4 — Live Inspection | 6 | 118 |
 | Phase 5 — Settings | 8 | 126 |
 | Phase 6 — Scene Authoring | 5 | 131 |
-| **Total new** | **56** | **131** |
+| Post-Phase Extensions | 13 | 144 |
+| **Total new** | **69** | **144** |

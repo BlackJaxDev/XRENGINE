@@ -297,6 +297,11 @@ public static partial class EditorImGuiUI
                     bool isOverrideable = typeof(IOverrideableSetting).IsAssignableFrom(p.PropertyType);
                     bool isSimple = isOverrideable || IsSimpleSettingType(p.PropertyType);
 
+                    // Expandable struct types need tree-node treatment with struct-aware writeback,
+                    // so treat them as complex even though IsSimpleSettingType returns true.
+                    if (isSimple && !isOverrideable && IsExpandableStructType(p.PropertyType))
+                        isSimple = false;
+
                     return new SettingPropertyDescriptor
                     {
                         Property = p,
@@ -350,6 +355,10 @@ public static partial class EditorImGuiUI
 
                     bool isSimple = IsSimpleSettingType(f.FieldType);
                     bool canWrite = !f.IsInitOnly;
+
+                    // Expandable struct types need tree-node treatment with struct-aware writeback.
+                    if (isSimple && IsExpandableStructType(f.FieldType))
+                        isSimple = false;
 
                     return new SettingFieldDescriptor
                     {
@@ -636,12 +645,206 @@ public static partial class EditorImGuiUI
                 }
 
                 if (!handledByAssetInspector)
-                    DrawSettingsProperties(new InspectorTargetSet(new[] { value }, value.GetType()), visited);
+                {
+                    // Struct (value type) properties need special handling: edits to sub-properties
+                    // must re-set the entire struct back on the parent so the change propagates.
+                    Type effectiveType = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+                    if (effectiveType.IsValueType && !effectiveType.IsPrimitive && !effectiveType.IsEnum && canWrite)
+                        DrawStructPropertyEditor(owner, property, value);
+                    else
+                        DrawSettingsProperties(new InspectorTargetSet(new[] { value }, value.GetType()), visited);
+                }
 
                 ImGui.TreePop();
             }
             ImGui.PopID();
             visited.Remove(value);
+        }
+
+        /// <summary>
+        /// Draws an editor for the sub-properties of a struct value type that is held by a property on <paramref name="owner"/>.
+        /// When any sub-property is modified, the entire struct is copied, mutated, and re-set on the parent
+        /// property so that value-type semantics are respected and change notifications fire.
+        /// </summary>
+        private static void DrawStructPropertyEditor(object owner, PropertyInfo parentProperty, object currentBoxed)
+        {
+            using var profilerScope = Engine.Profiler.Start("UI.DrawStructPropertyEditor");
+            Type structType = currentBoxed.GetType();
+
+            var subProperties = structType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
+                .Where(p =>
+                {
+                    var browsable = p.GetCustomAttribute<BrowsableAttribute>();
+                    return browsable is null || browsable.Browsable;
+                })
+                .ToList();
+
+            if (subProperties.Count == 0)
+            {
+                ImGui.TextDisabled("No editable properties.");
+                return;
+            }
+
+            string tableId = $"StructProps_{parentProperty.Name}_{owner.GetHashCode():X8}";
+            if (!ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+                return;
+
+            ImGui.TableSetupColumn("Property", ImGuiTableColumnFlags.WidthFixed, 200.0f);
+            ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+
+            foreach (var subProp in subProperties)
+            {
+                bool canWriteSub = subProp.CanWrite && subProp.SetMethod?.IsPublic == true;
+                Type subType = subProp.PropertyType;
+                Type subEffective = Nullable.GetUnderlyingType(subType) ?? subType;
+                if (!IsSimpleSettingType(subEffective))
+                    continue;
+
+                object? subValue;
+                try
+                {
+                    subValue = subProp.GetValue(currentBoxed);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                string displayName = subProp.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName
+                    ?? subProp.Name.SplitCamelCase();
+                string? desc = subProp.GetCustomAttribute<DescriptionAttribute>()?.Description;
+
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted(displayName);
+                if (!string.IsNullOrEmpty(desc) && ImGui.IsItemHovered())
+                    ImGui.SetTooltip(desc);
+                ImGui.TableSetColumnIndex(1);
+                ImGui.PushID(subProp.Name);
+
+                bool isNull = subValue is null;
+                bool handled = DrawInlineValueEditor(subEffective, canWriteSub, ref subValue, ref isNull, newSubValue =>
+                {
+                    // Copy the struct, set the sub-property, then re-set the whole struct on the parent.
+                    object boxedCopy = parentProperty.GetValue(owner)!;
+                    subProp.SetValue(boxedCopy, newSubValue);
+                    parentProperty.SetValue(owner, boxedCopy);
+                    NotifyInspectorValueEdited(owner);
+
+                    // Update our local boxed reference so subsequent sub-properties read fresh values.
+                    currentBoxed = boxedCopy;
+                    return true;
+                }, "##Value");
+
+                if (handled)
+                    ImGuiUndoHelper.TrackDragUndo($"Edit {parentProperty.Name}.{subProp.Name}", owner as XRBase);
+
+                if (!handled)
+                {
+                    if (subValue is null)
+                        ImGui.TextDisabled("<null>");
+                    else
+                        ImGui.TextUnformatted(FormatSettingValue(subValue));
+                }
+
+                ImGui.PopID();
+            }
+
+            ImGui.EndTable();
+        }
+
+        /// <summary>
+        /// Draws an editor for the sub-properties of a struct value type that is held by a field on <paramref name="owner"/>.
+        /// When any sub-property is modified, the entire struct is copied, mutated, and re-set on the parent
+        /// field so that value-type semantics are respected.
+        /// </summary>
+        private static void DrawStructFieldEditor(object owner, FieldInfo parentField, object currentBoxed)
+        {
+            using var profilerScope = Engine.Profiler.Start("UI.DrawStructFieldEditor");
+            Type structType = currentBoxed.GetType();
+
+            var subProperties = structType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
+                .Where(p =>
+                {
+                    var browsable = p.GetCustomAttribute<BrowsableAttribute>();
+                    return browsable is null || browsable.Browsable;
+                })
+                .ToList();
+
+            if (subProperties.Count == 0)
+            {
+                ImGui.TextDisabled("No editable properties.");
+                return;
+            }
+
+            string tableId = $"StructFields_{parentField.Name}_{owner.GetHashCode():X8}";
+            if (!ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+                return;
+
+            ImGui.TableSetupColumn("Property", ImGuiTableColumnFlags.WidthFixed, 200.0f);
+            ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+
+            foreach (var subProp in subProperties)
+            {
+                bool canWriteSub = subProp.CanWrite && subProp.SetMethod?.IsPublic == true;
+                Type subType = subProp.PropertyType;
+                Type subEffective = Nullable.GetUnderlyingType(subType) ?? subType;
+                if (!IsSimpleSettingType(subEffective))
+                    continue;
+
+                object? subValue;
+                try
+                {
+                    subValue = subProp.GetValue(currentBoxed);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                string displayName = subProp.GetCustomAttribute<DisplayNameAttribute>()?.DisplayName
+                    ?? subProp.Name.SplitCamelCase();
+                string? desc = subProp.GetCustomAttribute<DescriptionAttribute>()?.Description;
+
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted(displayName);
+                if (!string.IsNullOrEmpty(desc) && ImGui.IsItemHovered())
+                    ImGui.SetTooltip(desc);
+                ImGui.TableSetColumnIndex(1);
+                ImGui.PushID(subProp.Name);
+
+                bool isNull = subValue is null;
+                bool handled = DrawInlineValueEditor(subEffective, canWriteSub, ref subValue, ref isNull, newSubValue =>
+                {
+                    // Copy the struct, set the sub-property, then re-set the whole struct on the parent.
+                    object boxedCopy = parentField.GetValue(owner)!;
+                    subProp.SetValue(boxedCopy, newSubValue);
+                    parentField.SetValue(owner, boxedCopy);
+                    NotifyInspectorValueEdited(owner);
+
+                    // Update our local boxed reference so subsequent sub-properties read fresh values.
+                    currentBoxed = boxedCopy;
+                    return true;
+                }, "##Value");
+
+                if (handled)
+                    ImGuiUndoHelper.TrackDragUndo($"Edit {parentField.Name}.{subProp.Name}", owner as XRBase);
+
+                if (!handled)
+                {
+                    if (subValue is null)
+                        ImGui.TextDisabled("<null>");
+                    else
+                        ImGui.TextUnformatted(FormatSettingValue(subValue));
+                }
+
+                ImGui.PopID();
+            }
+
+            ImGui.EndTable();
         }
 
         /// <summary>
@@ -3541,7 +3744,16 @@ public static partial class EditorImGuiUI
 
             if (open)
             {
-                DrawSettingsProperties(new InspectorTargetSet(new[] { value }, value.GetType()), visited);
+                // Struct (value type) fields need special handling: edits to sub-properties
+                // must re-set the entire struct back on the parent so the change propagates.
+                Type fieldType = field.FieldType;
+                Type effectiveType = Nullable.GetUnderlyingType(fieldType) ?? fieldType;
+                bool canWrite = !field.IsInitOnly;
+                if (effectiveType.IsValueType && !effectiveType.IsPrimitive && !effectiveType.IsEnum && canWrite)
+                    DrawStructFieldEditor(owner, field, value);
+                else
+                    DrawSettingsProperties(new InspectorTargetSet(new[] { value }, value.GetType()), visited);
+
                 ImGui.TreePop();
             }
 
@@ -5039,6 +5251,29 @@ public static partial class EditorImGuiUI
             if (effectiveType.IsValueType)
                 return true;
             return false;
+        }
+
+        /// <summary>
+        /// Returns true for value types (structs) that do not have a dedicated inline editor
+        /// and should instead be drawn as an expandable tree node with sub-property editors.
+        /// Edits to sub-properties of these types must re-set the entire struct on the parent.
+        /// </summary>
+        private static bool IsExpandableStructType(Type type)
+        {
+            Type effective = Nullable.GetUnderlyingType(type) ?? type;
+            if (!effective.IsValueType || effective.IsPrimitive || effective.IsEnum)
+                return false;
+            // These value types have dedicated inline editors and are NOT expandable.
+            if (effective == typeof(decimal))
+                return false;
+            if (effective == typeof(Vector2) || effective == typeof(Vector3) || effective == typeof(Vector4))
+                return false;
+            if (effective == typeof(ColorF3) || effective == typeof(ColorF4))
+                return false;
+            if (effective == typeof(LayerMask))
+                return false;
+            // Unknown struct — needs expandable editor.
+            return true;
         }
 
         private static string FormatSettingValue(object? value)

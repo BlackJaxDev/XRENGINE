@@ -110,7 +110,7 @@ These walk the cascade in correct priority order and return the effective value.
 - Override editor preferences via `EditorPreferencesOverrides` (theme, debug options, etc.)
 - Define project-specific defaults that all team members share
 
-**User overrides** – Personal preferences stored outside the project. Not checked into source control. Examples: preferred theme, window positions, recently opened files.
+**User overrides** – Personal preferences stored outside the project. Not checked into source control. Examples: preferred theme, ImGui panel visibility/layout preferences, window positions, recently opened files.
 
 ---
 

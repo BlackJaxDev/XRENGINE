@@ -27,6 +27,7 @@ namespace XREngine
                 .EnsureRoundtrip()
                 .WithEmissionPhaseObjectGraphVisitor(args => new PolymorphicTypeGraphVisitor(args.InnerVisitor))
                 .WithEventEmitter(nextEmitter => new DepthTrackingEventEmitter(nextEmitter))
+                .WithTypeInspector(inner => new DelegateSkippingTypeInspector(inner))
                 //.WithTypeConverter(new XRAssetYamlConverter())
                 .IncludeNonPublicProperties()
                 //.WithTagMapping("!Transform", typeof(Transform))

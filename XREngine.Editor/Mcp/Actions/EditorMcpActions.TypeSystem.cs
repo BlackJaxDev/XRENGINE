@@ -18,9 +18,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets full type metadata serialized as JSON for any type in any loaded assembly.
         /// </summary>
-        [XRMcp]
-        [McpName("get_type_info")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_type_info", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Get full type metadata (name, namespace, base type, interfaces, flags) for any loaded type.")]
         public static Task<McpToolResponse> GetTypeInfoAsync(
             McpToolContext context,
@@ -39,9 +37,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets public properties, fields, methods, events, and constructors from any type.
         /// </summary>
-        [XRMcp]
-        [McpName("get_type_members")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_type_members", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Get properties, fields, methods, events, and constructors from any loaded type.")]
         public static Task<McpToolResponse> GetTypeMembersAsync(
             McpToolContext context,
@@ -188,9 +184,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets detailed signature for a specific method, including overload resolution.
         /// </summary>
-        [XRMcp]
-        [McpName("get_method_info")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_method_info", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Get detailed method signature including parameters, return type, generic constraints, and attributes.")]
         public static Task<McpToolResponse> GetMethodInfoAsync(
             McpToolContext context,
@@ -254,9 +248,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Finds all types that derive from a given type across all loaded assemblies.
         /// </summary>
-        [XRMcp]
-        [McpName("get_derived_types")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_derived_types", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Find all types that derive from a given type across all loaded assemblies.")]
         public static Task<McpToolResponse> GetDerivedTypesAsync(
             McpToolContext context,
@@ -308,9 +300,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Walks the inheritance chain upward from a type, including all implemented interfaces.
         /// </summary>
-        [XRMcp]
-        [McpName("get_parent_types")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_parent_types", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Walk the inheritance chain upward from a type, including interfaces.")]
         public static Task<McpToolResponse> GetParentTypesAsync(
             McpToolContext context,
@@ -371,9 +361,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Returns a full inheritance tree rooted at a type as nested JSON.
         /// </summary>
-        [XRMcp]
-        [McpName("get_type_hierarchy_tree")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_type_hierarchy_tree", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Get a full inheritance tree rooted at a type as nested JSON. Supports up/down/both direction.")]
         public static Task<McpToolResponse> GetTypeHierarchyTreeAsync(
             McpToolContext context,
@@ -408,9 +396,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Fuzzy or regex search across all loaded types.
         /// </summary>
-        [XRMcp]
-        [McpName("search_types")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "search_types", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Search across all loaded types by name pattern (contains, regex, or exact match).")]
         public static Task<McpToolResponse> SearchTypesAsync(
             McpToolContext context,
@@ -501,9 +487,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists all loaded assemblies in the current AppDomain.
         /// </summary>
-        [XRMcp]
-        [McpName("list_assemblies")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "list_assemblies", Permission = McpPermissionLevel.ReadOnly)]
         [Description("List all loaded assemblies in the current AppDomain.")]
         public static Task<McpToolResponse> ListAssembliesAsync(McpToolContext context)
         {
@@ -538,9 +522,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists all types in a specific assembly.
         /// </summary>
-        [XRMcp]
-        [McpName("get_assembly_types")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_assembly_types", Permission = McpPermissionLevel.ReadOnly)]
         [Description("List all types in a specific loaded assembly.")]
         public static Task<McpToolResponse> GetAssemblyTypesAsync(
             McpToolContext context,
@@ -604,9 +586,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists enum types with their values from loaded assemblies.
         /// </summary>
-        [XRMcp]
-        [McpName("list_enums")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "list_enums", Permission = McpPermissionLevel.ReadOnly)]
         [Description("List enum types from loaded assemblies, optionally filtered by namespace or assembly.")]
         public static Task<McpToolResponse> ListEnumsAsync(
             McpToolContext context,
@@ -655,9 +635,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets all named values for an enum type.
         /// </summary>
-        [XRMcp]
-        [McpName("get_enum_values")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_enum_values", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Get all named values for an enum type.")]
         public static Task<McpToolResponse> GetEnumValuesAsync(
             McpToolContext context,

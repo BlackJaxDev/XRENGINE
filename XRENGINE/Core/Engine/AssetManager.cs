@@ -607,7 +607,7 @@ namespace XREngine
             // Clear dirty flag since the asset was just loaded from disk - any dirty state
             // was from construction/deserialization, not actual user changes
             file.ClearDirty();
-            foreach (var embedded in file.EmbeddedAssets)
+            foreach (var embedded in file.EmbeddedAssets.ToArray())
                 embedded.ClearDirty();
 
             AssetLoaded?.Invoke(file);

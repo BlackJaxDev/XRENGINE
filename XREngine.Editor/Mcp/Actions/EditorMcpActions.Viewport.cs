@@ -36,8 +36,7 @@ namespace XREngine.Editor.Mcp
         /// If a camera node ID is provided, the viewport associated with that camera is used.
         /// Otherwise, the viewport is selected by window and viewport index.
         /// </remarks>
-        [XRMcp]
-        [McpName("capture_viewport_screenshot")]
+        [XRMcp(Name = "capture_viewport_screenshot")]
         [Description("Capture a screenshot from a viewport or camera for LLM context.")]
         public static async Task<McpToolResponse> CaptureViewportScreenshotAsync(
             McpToolContext context,

@@ -125,7 +125,7 @@ namespace XREngine.Rendering.OpenGL
             // one-time INI reload to pick up the saved dock layout.
             ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.DockingEnable;
 
-            ImGuiControllerUtilities.TryUseLatoAsDefaultFont(controller);
+            ImGuiControllerUtilities.TryUseDefaultEditorFont(controller);
 
             _imguiController = controller;
             _imguiBackend = null;

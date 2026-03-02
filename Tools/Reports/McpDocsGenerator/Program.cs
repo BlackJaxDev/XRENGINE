@@ -25,12 +25,12 @@ if (start < 0 || end < 0 || end <= start)
 string table = BuildToolTableMarkdown();
 int contentStart = start + StartMarker.Length;
 string updated = string.Concat(
-    original.AsSpan(0, contentStart),
+    original.AsSpan(0, contentStart).ToString(),
     Environment.NewLine,
     Environment.NewLine,
     table,
     Environment.NewLine,
-    original.AsSpan(end));
+    original.AsSpan(end).ToString());
 
 if (string.Equals(original, updated, StringComparison.Ordinal))
 {

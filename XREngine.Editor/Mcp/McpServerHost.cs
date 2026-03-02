@@ -3,8 +3,11 @@ using System.IO;
 using System.ComponentModel;
 using System.Linq;
 using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using XREngine;
 using XREngine.Data.Core;
@@ -31,6 +34,10 @@ namespace XREngine.Editor.Mcp
         private const int DefaultMaxRequestBytes = 1024 * 1024;
         private const int DefaultRequestTimeoutMs = 30000;
         private const int MaxIdempotencyEntries = 512;
+        private const string McpSessionHeader = "Mcp-Session-Id";
+        private const string ToolsListChangedNotificationMethod = "notifications/tools/list_changed";
+        private const string ResourcesListChangedNotificationMethod = "notifications/resources/list_changed";
+        private const string PromptsListChangedNotificationMethod = "notifications/prompts/list_changed";
         private static readonly string[] s_supportedMethods =
         [
             "initialize",
@@ -44,6 +51,11 @@ namespace XREngine.Editor.Mcp
         ];
         private static readonly object s_idempotencyLock = new();
         private static readonly Dictionary<string, object> s_idempotencyResults = new(StringComparer.Ordinal);
+        private static readonly object s_sessionsLock = new();
+        private static readonly Dictionary<string, DateTimeOffset> s_sessions = new(StringComparer.Ordinal);
+        private static readonly ConcurrentDictionary<string, SseClientConnection> s_sseClients = new(StringComparer.Ordinal);
+        private static long s_sseClientCounter;
+        private static long s_sseEventCounter;
         private static readonly Dictionary<string, string> s_toolAliases = new(StringComparer.OrdinalIgnoreCase)
         {
             ["get_scene_hierarchy"] = "list_scene_nodes",
@@ -59,6 +71,14 @@ namespace XREngine.Editor.Mcp
             "get_undo_history",
             "list_tools"
         };
+
+        private sealed class SseClientConnection(string id, HttpListenerResponse response)
+        {
+            public string Id { get; } = id;
+            public HttpListenerResponse Response { get; } = response;
+            public Stream OutputStream => Response.OutputStream;
+            public object WriteLock { get; } = new();
+        }
 
         private McpServerHost()
         {
@@ -111,6 +131,12 @@ namespace XREngine.Editor.Mcp
 
         private void OnPreferencesChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
+            bool toolsListChanged = e.PropertyName is nameof(EditorPreferences.McpServerReadOnly)
+                or nameof(EditorPreferences.McpServerAllowedTools)
+                or nameof(EditorPreferences.McpServerDeniedTools);
+            bool resourcesListChanged = e.PropertyName is nameof(EditorPreferences.McpServerEnabled);
+            bool promptsListChanged = e.PropertyName is nameof(EditorPreferences.McpServerEnabled);
+
             if (e.PropertyName is nameof(EditorPreferences.McpServerEnabled)
                 or nameof(EditorPreferences.McpServerPort)
                 or nameof(EditorPreferences.McpServerRequireAuth)
@@ -126,6 +152,15 @@ namespace XREngine.Editor.Mcp
                 or nameof(EditorPreferences.McpServerRateLimitWindowSeconds)
                 or nameof(EditorPreferences.McpServerIncludeStatusInPing))
                 UpdateServerState();
+
+            if (toolsListChanged && IsRunning)
+                _ = BroadcastToolsListChangedAsync(e.PropertyName ?? "policy_change");
+
+            if (resourcesListChanged && IsRunning)
+                _ = BroadcastResourcesListChangedAsync(e.PropertyName ?? "server_state_change");
+
+            if (promptsListChanged && IsRunning)
+                _ = BroadcastPromptsListChangedAsync(e.PropertyName ?? "server_state_change");
         }
 
         private void UpdateServerState()
@@ -176,19 +211,42 @@ namespace XREngine.Editor.Mcp
                 return;
 
             Debug.Out("[MCP] Server stopping...");
-            _cts?.Cancel();
+            CancellationTokenSource? cts = _cts;
+            HttpListener? listener = _listener;
+            string? prefix = Prefix;
+            Task? listenerTask = _listenerTask;
+
+            cts?.Cancel();
+
+            if (!string.IsNullOrWhiteSpace(prefix))
+                TryWakeListener(prefix);
+
+            if (listenerTask is not null)
+            {
+                try
+                {
+                    listenerTask.Wait(TimeSpan.FromMilliseconds(500));
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+
             try
             {
-                _listener?.Stop();
-                _listener?.Close();
+                listener?.Stop();
+                listener?.Close();
             }
             catch
             {
                 // ignored
             }
             _listener = null;
+            _listenerTask = null;
             _cts = null;
             Prefix = null;
+            CloseAllSseClients();
             Debug.Out("[MCP] Server stopped.");
         }
 
@@ -230,7 +288,44 @@ namespace XREngine.Editor.Mcp
                 if (context is null)
                     continue;
 
+                if (token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        context.Response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
+                        context.Response.Close();
+                    }
+                    catch
+                    {
+                        // ignored
+                    }
+                    break;
+                }
+
                 _ = HandleContextAsync(context, token);
+            }
+        }
+
+        private static void TryWakeListener(string prefix)
+        {
+            try
+            {
+                if (!Uri.TryCreate(prefix, UriKind.Absolute, out var uri))
+                    return;
+
+                using var client = new TcpClient();
+                client.ReceiveTimeout = 250;
+                client.SendTimeout = 250;
+                client.Connect(uri.Host, uri.Port);
+
+                using NetworkStream stream = client.GetStream();
+                byte[] requestBytes = Encoding.ASCII.GetBytes($"GET {uri.AbsolutePath} HTTP/1.1\r\nHost: {uri.Host}:{uri.Port}\r\nConnection: close\r\n\r\n");
+                stream.Write(requestBytes, 0, requestBytes.Length);
+                stream.Flush();
+            }
+            catch
+            {
+                // ignored
             }
         }
 
@@ -240,7 +335,6 @@ namespace XREngine.Editor.Mcp
             long requestId = Interlocked.Increment(ref _requestCounter);
             string clientKey = ResolveClientKey(context.Request);
             var response = context.Response;
-            response.ContentType = "application/json";
 
             LogRequest(requestId, "Incoming", context.Request, null, null);
 
@@ -255,9 +349,61 @@ namespace XREngine.Editor.Mcp
             if (string.Equals(context.Request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase)
                 && string.Equals(context.Request.Url?.AbsolutePath, "/mcp/status", StringComparison.OrdinalIgnoreCase))
             {
+                response.ContentType = "application/json";
                 response.StatusCode = (int)HttpStatusCode.OK;
                 await WriteJsonResponseAsync(response, BuildStatusResult(prefs), token);
                 LogRequest(requestId, "Status", context.Request, response.StatusCode, null);
+                return;
+            }
+
+            if (string.Equals(context.Request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(context.Request.Url?.AbsolutePath, "/mcp/", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!AcceptsEventStream(context.Request))
+                {
+                    response.StatusCode = (int)HttpStatusCode.MethodNotAllowed;
+                    LogRequest(requestId, "GetWithoutSseAccept", context.Request, response.StatusCode, null);
+                    response.Close();
+                    return;
+                }
+
+                string? sessionIdHeader = context.Request.Headers[McpSessionHeader];
+                if (!string.IsNullOrWhiteSpace(sessionIdHeader) && !HasSession(sessionIdHeader!))
+                {
+                    response.StatusCode = (int)HttpStatusCode.NotFound;
+                    LogRequest(requestId, "InvalidSession", context.Request, response.StatusCode, null);
+                    response.Close();
+                    return;
+                }
+
+                await HandleSseStreamAsync(context, token);
+                LogRequest(requestId, "SseStreamClosed", context.Request, (int)HttpStatusCode.OK, null);
+                return;
+            }
+
+            if (string.Equals(context.Request.HttpMethod, "DELETE", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(context.Request.Url?.AbsolutePath, "/mcp/", StringComparison.OrdinalIgnoreCase))
+            {
+                string? sessionIdHeader = context.Request.Headers[McpSessionHeader];
+                if (string.IsNullOrWhiteSpace(sessionIdHeader))
+                {
+                    response.StatusCode = (int)HttpStatusCode.BadRequest;
+                    await WriteErrorResponseAsync(response, null, -32600, "Missing Mcp-Session-Id header.", token);
+                    LogRequest(requestId, "MissingSessionHeader", context.Request, response.StatusCode, null);
+                    return;
+                }
+
+                if (!RemoveSession(sessionIdHeader!))
+                {
+                    response.StatusCode = (int)HttpStatusCode.NotFound;
+                    LogRequest(requestId, "DeleteUnknownSession", context.Request, response.StatusCode, null);
+                    response.Close();
+                    return;
+                }
+
+                response.StatusCode = (int)HttpStatusCode.NoContent;
+                LogRequest(requestId, "DeleteSession", context.Request, response.StatusCode, null);
+                response.Close();
                 return;
             }
 
@@ -276,6 +422,8 @@ namespace XREngine.Editor.Mcp
                 response.Close();
                 return;
             }
+
+            response.ContentType = "application/json";
 
             if (!IsAuthorized(context.Request, prefs, out var authError))
             {
@@ -355,10 +503,27 @@ namespace XREngine.Editor.Mcp
                 return;
             }
 
+            bool containsInitialize = ContainsInitializeRequest(document.RootElement);
+            string? sessionIdHeaderForPost = context.Request.Headers[McpSessionHeader];
+            if (!string.IsNullOrWhiteSpace(sessionIdHeaderForPost) && !HasSession(sessionIdHeaderForPost!))
+            {
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                LogRequest(requestId, "InvalidSession", context.Request, response.StatusCode, null);
+                response.Close();
+                return;
+            }
+
+            string? responseSessionId = null;
+            if (containsInitialize && string.IsNullOrWhiteSpace(sessionIdHeaderForPost))
+            {
+                responseSessionId = CreateSession();
+                response.Headers[McpSessionHeader] = responseSessionId;
+            }
+
             object? result;
             try
             {
-                result = await HandleRpcAsync(document.RootElement, requestToken, prefs);
+                result = await HandleRpcMessageAsync(document.RootElement, requestToken, prefs);
             }
             catch (OperationCanceledException)
             {
@@ -370,8 +535,8 @@ namespace XREngine.Editor.Mcp
 
             if (result is null)
             {
-                response.StatusCode = (int)HttpStatusCode.NoContent;
-                LogRequest(requestId, "Notification", context.Request, response.StatusCode, null);
+                response.StatusCode = (int)HttpStatusCode.Accepted;
+                LogRequest(requestId, "Notification", context.Request, response.StatusCode, responseSessionId is null ? null : $"session={responseSessionId}");
                 response.Close();
                 return;
             }
@@ -380,8 +545,253 @@ namespace XREngine.Editor.Mcp
             byte[] bytes = Encoding.UTF8.GetBytes(payload);
             response.ContentLength64 = bytes.Length;
             await response.OutputStream.WriteAsync(bytes, 0, bytes.Length, requestToken);
-            LogRequest(requestId, "Ok", context.Request, (int)HttpStatusCode.OK, $"bytes={bytes.Length}");
+            LogRequest(requestId, "Ok", context.Request, (int)HttpStatusCode.OK, responseSessionId is null ? $"bytes={bytes.Length}" : $"bytes={bytes.Length} session={responseSessionId}");
             response.Close();
+        }
+
+        private static bool AcceptsEventStream(HttpListenerRequest request)
+        {
+            string accept = request.Headers["Accept"] ?? string.Empty;
+            return accept.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool ContainsInitializeRequest(JsonElement root)
+        {
+            if (root.ValueKind == JsonValueKind.Object)
+                return IsInitializeRequestObject(root);
+
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in root.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.Object && IsInitializeRequestObject(item))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsInitializeRequestObject(JsonElement root)
+        {
+            if (!root.TryGetProperty("method", out JsonElement methodElement) || methodElement.ValueKind != JsonValueKind.String)
+                return false;
+
+            return string.Equals(methodElement.GetString(), "initialize", StringComparison.Ordinal);
+        }
+
+        private static string CreateSession()
+        {
+            string sessionId = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
+            lock (s_sessionsLock)
+                s_sessions[sessionId] = DateTimeOffset.UtcNow;
+
+            return sessionId;
+        }
+
+        private static bool HasSession(string sessionId)
+        {
+            lock (s_sessionsLock)
+                return s_sessions.ContainsKey(sessionId);
+        }
+
+        private static bool RemoveSession(string sessionId)
+        {
+            lock (s_sessionsLock)
+                return s_sessions.Remove(sessionId);
+        }
+
+        private static async Task HandleSseStreamAsync(HttpListenerContext context, CancellationToken token)
+        {
+            var response = context.Response;
+            response.StatusCode = (int)HttpStatusCode.OK;
+            response.ContentType = "text/event-stream";
+            response.SendChunked = true;
+            response.KeepAlive = true;
+            response.Headers["Cache-Control"] = "no-cache";
+            response.Headers["Connection"] = "keep-alive";
+
+            string clientId = Interlocked.Increment(ref s_sseClientCounter).ToString();
+            var client = new SseClientConnection(clientId, response);
+            s_sseClients[clientId] = client;
+
+            try
+            {
+                await WriteSseRawAsync(client, ": connected\n\n");
+                while (!token.IsCancellationRequested)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(15), token);
+                    await WriteSseRawAsync(client, ": keepalive\n\n");
+                }
+            }
+            finally
+            {
+                s_sseClients.TryRemove(clientId, out _);
+                try
+                {
+                    response.Close();
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+        }
+
+        private static async Task WriteSseRawAsync(SseClientConnection client, string payload)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(payload);
+            lock (client.WriteLock)
+            {
+                client.OutputStream.Write(bytes, 0, bytes.Length);
+                client.OutputStream.Flush();
+            }
+
+            await Task.CompletedTask;
+        }
+
+        private async Task BroadcastToolsListChangedAsync(string reason)
+            => await BroadcastListChangedAsync(ToolsListChangedNotificationMethod, reason);
+
+        private async Task BroadcastResourcesListChangedAsync(string reason)
+            => await BroadcastListChangedAsync(ResourcesListChangedNotificationMethod, reason);
+
+        private async Task BroadcastPromptsListChangedAsync(string reason)
+            => await BroadcastListChangedAsync(PromptsListChangedNotificationMethod, reason);
+
+        private async Task BroadcastListChangedAsync(string method, string reason)
+        {
+            var notification = new
+            {
+                jsonrpc = "2.0",
+                method,
+                @params = new
+                {
+                    reason
+                }
+            };
+
+            string json = JsonSerializer.Serialize(notification, _serializerOptions);
+            long eventId = Interlocked.Increment(ref s_sseEventCounter);
+            string payload = $"id: {eventId}\\nevent: message\\ndata: {json}\\n\\n";
+            byte[] bytes = Encoding.UTF8.GetBytes(payload);
+
+            var deadClientIds = new List<string>();
+            foreach (var pair in s_sseClients)
+            {
+                var client = pair.Value;
+                try
+                {
+                    lock (client.WriteLock)
+                    {
+                        client.OutputStream.Write(bytes, 0, bytes.Length);
+                        client.OutputStream.Flush();
+                    }
+                }
+                catch
+                {
+                    deadClientIds.Add(client.Id);
+                }
+            }
+
+            foreach (string deadClientId in deadClientIds)
+            {
+                if (s_sseClients.TryRemove(deadClientId, out var deadClient))
+                {
+                    try
+                    {
+                        deadClient.Response.Close();
+                    }
+                    catch
+                    {
+                        // ignored
+                    }
+                }
+            }
+
+            await Task.CompletedTask;
+        }
+
+        private static void CloseAllSseClients()
+        {
+            foreach ((string key, SseClientConnection client) in s_sseClients)
+            {
+                if (s_sseClients.TryRemove(key, out var removed))
+                {
+                    try
+                    {
+                        removed.Response.Close();
+                    }
+                    catch
+                    {
+                        // ignored
+                    }
+                }
+            }
+        }
+
+        private async Task<object?> HandleRpcMessageAsync(JsonElement root, CancellationToken token, EditorPreferences prefs)
+        {
+            return root.ValueKind switch
+            {
+                JsonValueKind.Object => await HandleRpcAsync(root, token, prefs),
+                JsonValueKind.Array => await HandleRpcBatchAsync(root, token, prefs),
+                _ => new
+                {
+                    jsonrpc = "2.0",
+                    id = (object?)null,
+                    error = new
+                    {
+                        code = -32600,
+                        message = "Invalid JSON-RPC request object."
+                    }
+                }
+            };
+        }
+
+        private async Task<object?> HandleRpcBatchAsync(JsonElement batchRoot, CancellationToken token, EditorPreferences prefs)
+        {
+            if (batchRoot.GetArrayLength() == 0)
+            {
+                return new[]
+                {
+                    new
+                    {
+                        jsonrpc = "2.0",
+                        id = (object?)null,
+                        error = new
+                        {
+                            code = -32600,
+                            message = "Invalid request. JSON-RPC batch must not be empty."
+                        }
+                    }
+                };
+            }
+
+            var responses = new List<object>();
+            foreach (JsonElement item in batchRoot.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    responses.Add(new
+                    {
+                        jsonrpc = "2.0",
+                        id = (object?)null,
+                        error = new
+                        {
+                            code = -32600,
+                            message = "Invalid JSON-RPC request object."
+                        }
+                    });
+                    continue;
+                }
+
+                object? response = await HandleRpcAsync(item, token, prefs);
+                if (response is not null)
+                    responses.Add(response);
+            }
+
+            return responses.Count == 0 ? null : responses;
         }
 
         private async Task<object?> HandleRpcAsync(JsonElement root, CancellationToken token, EditorPreferences prefs)
@@ -407,7 +817,7 @@ namespace XREngine.Editor.Mcp
             object? result = method switch
             {
                 "initialize" => BuildInitializeResult(),
-                "tools/list" => BuildToolsListResult(),
+                "tools/list" => BuildToolsListResult(prefs),
                 "tools/call" => await HandleToolCallAsync(root, token),
                 "resources/list" => BuildResourcesListResult(),
                 "resources/read" => await HandleResourcesReadAsync(root, token),
@@ -434,9 +844,9 @@ namespace XREngine.Editor.Mcp
                 serverInfo = new { name = "XREngine.Editor", version = "0.1.0" },
                 capabilities = new
                 {
-                    tools = new { listChanged = false },
-                    resources = new { listChanged = false },
-                    prompts = new { listChanged = false }
+                    tools = new { listChanged = true },
+                    resources = new { listChanged = true },
+                    prompts = new { listChanged = true }
                 }
             };
         }
@@ -484,16 +894,33 @@ namespace XREngine.Editor.Mcp
                 },
                 capabilities = new
                 {
-                    tools = new { listChanged = false },
-                    resources = new { listChanged = false },
-                    prompts = new { listChanged = false }
+                    tools = new { listChanged = true },
+                    resources = new { listChanged = true },
+                    prompts = new { listChanged = true }
+                },
+                sessions = new
+                {
+                    header = McpSessionHeader,
+                    active = GetActiveSessionCount()
+                },
+                streams = new
+                {
+                    sseClients = s_sseClients.Count
                 }
             };
         }
 
-        private object BuildToolsListResult()
+        private static int GetActiveSessionCount()
         {
-            var tools = McpToolRegistry.Tools.Select(tool => new
+            lock (s_sessionsLock)
+                return s_sessions.Count;
+        }
+
+        private object BuildToolsListResult(EditorPreferences prefs)
+        {
+            var tools = McpToolRegistry.Tools
+                .Where(tool => CanInvokeTool(tool.Name, prefs, out _))
+                .Select(tool => new
             {
                 name = tool.Name,
                 description = tool.Description,
@@ -581,7 +1008,7 @@ namespace XREngine.Editor.Mcp
 
             object payload = uri switch
             {
-                "xrengine://tools" => BuildToolsListResult(),
+                "xrengine://tools" => BuildToolsListResult(Engine.EditorPreferences),
                 "xrengine://engine/state" => BuildEngineStateResource(),
                 "xrengine://selection" => BuildSelectionResource(),
                 "xrengine://world/scenes" => BuildWorldScenesResource(),

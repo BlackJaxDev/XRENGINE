@@ -229,12 +229,12 @@ public unsafe partial class VulkanRenderer
             // The GPU texture upload happens later in EnsureImGuiFontResources(),
             // but the CPU-side atlas must be built now so NewFrame() doesn't AV.
             var io = ImGui.GetIO();
-            if (!TryLoadLatoFont(io, 18.0f))
+            if (!ImGuiControllerUtilities.TryUseDefaultEditorFont(io, 18.0f))
             {
                 if (io.Fonts.Fonts.Size == 0)
                     io.Fonts.AddFontDefault();
+                io.Fonts.Build();
             }
-            io.Fonts.Build();
 
             // Enable docking early so DockContextInitialize runs on the first
             // NewFrame().  Without this, the INI's [Docking][Data] section would be
@@ -243,51 +243,6 @@ public unsafe partial class VulkanRenderer
 
             InstallClipboardCallbacks(io);
             TryAttachInputHandlers();
-        }
-
-        /// <summary>
-        /// Attempts to load the Lato font (matching the OpenGL backend appearance)
-        /// without depending on ImGuiController. Returns false if the file isn't found.
-        /// </summary>
-        private static bool TryLoadLatoFont(ImGuiIOPtr io, float sizePixels)
-        {
-            try
-            {
-                string? fontPath = FindLatoFontPath();
-                if (fontPath is null)
-                    return false;
-
-                io.Fonts.Clear();
-                var font = io.Fonts.AddFontFromFileTTF(fontPath, sizePixels);
-                return font.NativePtr != null;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static string? FindLatoFontPath()
-        {
-            const string fontFileName = "Lato-Regular.ttf";
-            string?[] candidates =
-            [
-                Path.Combine(Environment.CurrentDirectory, "..", "Build", "CommonAssets", "Fonts", "Lato", fontFileName),
-                Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "CommonAssets", "Fonts", "Lato", fontFileName),
-                Path.Combine(Environment.CurrentDirectory, "Build", "CommonAssets", "Fonts", "Lato", fontFileName),
-            ];
-
-            foreach (string? candidate in candidates)
-            {
-                try
-                {
-                    if (candidate is not null && File.Exists(Path.GetFullPath(candidate)))
-                        return Path.GetFullPath(candidate);
-                }
-                catch { }
-            }
-
-            return null;
         }
 
         public void MakeCurrent()

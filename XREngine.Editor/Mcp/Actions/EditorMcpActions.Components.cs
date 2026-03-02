@@ -33,8 +33,7 @@ namespace XREngine.Editor.Mcp
         /// <item><description><c>componentType</c> - The full type name of the component</description></item>
         /// </list>
         /// </returns>
-        [XRMcp]
-        [McpName("add_component_to_node")]
+        [XRMcp(Name = "add_component_to_node")]
         [Description("Add a component to a scene node by type name.")]
         public static Task<McpToolResponse> AddComponentToNodeAsync(
             McpToolContext context,
@@ -88,8 +87,7 @@ namespace XREngine.Editor.Mcp
         /// <item><description><c>type</c> - The full type name of the component</description></item>
         /// </list>
         /// </returns>
-        [XRMcp]
-        [McpName("list_components")]
+        [XRMcp(Name = "list_components")]
         [Description("List components on a scene node.")]
         public static Task<McpToolResponse> ListComponentsAsync(
             McpToolContext context,
@@ -124,8 +122,7 @@ namespace XREngine.Editor.Mcp
         /// At least one of <paramref name="componentId"/>, <paramref name="componentName"/>, 
         /// or <paramref name="componentTypeName"/> must be provided to identify the target component.
         /// </remarks>
-        [XRMcp]
-        [McpName("set_component_property")]
+        [XRMcp(Name = "set_component_property")]
         [Description("Set a component property or field value by name.")]
         public static Task<McpToolResponse> SetComponentPropertyAsync(
             McpToolContext context,
@@ -167,8 +164,7 @@ namespace XREngine.Editor.Mcp
         /// At least one of <paramref name="componentId"/>, <paramref name="componentName"/>,
         /// or <paramref name="componentTypeName"/> must be provided to identify the target component.
         /// </remarks>
-        [XRMcp]
-        [McpName("get_component_property")]
+        [XRMcp(Name = "get_component_property")]
         [Description("Get a component property or field value by name.")]
         public static Task<McpToolResponse> GetComponentPropertyAsync(
             McpToolContext context,
@@ -211,8 +207,7 @@ namespace XREngine.Editor.Mcp
         /// Returns a snapshot of a component's readable properties and fields.
         /// Useful for LLM planning before mutating component state.
         /// </summary>
-        [XRMcp]
-        [McpName("get_component_snapshot")]
+        [XRMcp(Name = "get_component_snapshot")]
         [Description("Get a component snapshot including readable properties and fields.")]
         public static Task<McpToolResponse> GetComponentSnapshotAsync(
             McpToolContext context,
@@ -316,8 +311,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Sets multiple component properties/fields in a single call.
         /// </summary>
-        [XRMcp]
-        [McpName("set_component_properties")]
+        [XRMcp(Name = "set_component_properties")]
         [Description("Set multiple component properties/fields in one call.")]
         public static Task<McpToolResponse> SetComponentPropertiesAsync(
             McpToolContext context,
@@ -380,9 +374,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Creates a new XRMaterial asset and saves it into the project assets directory.
         /// </summary>
-        [XRMcp]
-        [McpName("create_material_asset")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Creates and writes an asset file to disk.")]
+        [XRMcp(Name = "create_material_asset", Permission = McpPermissionLevel.Destructive, PermissionReason = "Creates and writes an asset file to disk.")]
         [Description("Create and save a new XRMaterial asset.")]
         public static Task<McpToolResponse> CreateMaterialAssetAsync(
             McpToolContext context,
@@ -455,8 +447,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Finds a loaded asset by id/path/name, optionally loading from disk when a path is provided.
         /// </summary>
-        [XRMcp]
-        [McpName("find_asset")]
+        [XRMcp(Name = "find_asset")]
         [Description("Find a project asset by ID, path, or name.")]
         public static Task<McpToolResponse> FindAssetAsync(
             McpToolContext context,
@@ -547,8 +538,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Assigns an asset reference (for example XRMaterial) to a component property/field.
         /// </summary>
-        [XRMcp]
-        [McpName("assign_component_asset_property")]
+        [XRMcp(Name = "assign_component_asset_property")]
         [Description("Assign an asset reference to a component property or field (e.g., Material).")]
         public static Task<McpToolResponse> AssignComponentAssetPropertyAsync(
             McpToolContext context,
@@ -899,8 +889,7 @@ namespace XREngine.Editor.Mcp
         /// <param name="componentName">Optional: target component by its instance name.</param>
         /// <param name="componentTypeName">Optional: target component by its type name.</param>
         /// <returns>A confirmation message indicating the component was removed.</returns>
-        [XRMcp]
-        [McpName("remove_component")]
+        [XRMcp(Name = "remove_component")]
         [Description("Remove a component from a scene node.")]
         public static Task<McpToolResponse> RemoveComponentAsync(
             McpToolContext context,

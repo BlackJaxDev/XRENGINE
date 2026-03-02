@@ -34,6 +34,14 @@ namespace XREngine.Components.Mesh.Shapes
                         Meshes.Add(new RenderableMesh(new(XRMesh.Shapes.FromVolume(Shape, false), Material), this));
 
                     break;
+
+                case nameof(Material):
+                    // Propagate the new material to every existing LOD renderer
+                    // so the mesh updates immediately without requiring a shape rebuild.
+                    foreach (var mesh in Meshes)
+                        foreach (var lod in mesh.LODs)
+                            lod.Renderer.Material = Material;
+                    break;
             }
         }
     }

@@ -485,6 +485,12 @@ namespace XREngine.Scene
         /// <param name="item">The component that was added.</param>
         private void OnComponentAdded(XRComponent item)
         {
+            // During deserialization (YAML/clone), components are added without going
+            // through XRComponent.New(), so SceneNode is never set. Wire it up here to
+            // avoid a NullReferenceException on any subsequent property access.
+            if (item.SceneNode is null)
+                item.ConstructionSetSceneNode(this);
+
             item.AddedToSceneNode(this);
             ApplyLayerToComponent(item);
             ComponentAdded?.Invoke((this, item));

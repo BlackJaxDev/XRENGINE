@@ -21,9 +21,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists all .cs files in the game scripts directory.
         /// </summary>
-        [XRMcp]
-        [McpName("list_game_scripts")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "list_game_scripts", Permission = McpPermissionLevel.ReadOnly)]
         [Description("List all .cs files in the game project's assets directory.")]
         public static Task<McpToolResponse> ListGameScriptsAsync(
             McpToolContext context,
@@ -59,9 +57,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Reads the contents of a .cs file from game assets.
         /// </summary>
-        [XRMcp]
-        [McpName("read_game_script")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "read_game_script", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Read the contents of a .cs script file from the game project's assets directory.")]
         public static Task<McpToolResponse> ReadGameScriptAsync(
             McpToolContext context,
@@ -96,9 +92,7 @@ namespace XREngine.Editor.Mcp
         /// Writes or creates a .cs script file in the game assets directory.
         /// Triggers CodeManager invalidation so the file watcher picks up the change.
         /// </summary>
-        [XRMcp]
-        [McpName("write_game_script")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Creates or overwrites a .cs file on disk.")]
+        [XRMcp(Name = "write_game_script", Permission = McpPermissionLevel.Destructive, PermissionReason = "Creates or overwrites a .cs file on disk.")]
         [Description("Write or create a .cs script file in the game project's assets directory. Optionally triggers immediate compilation.")]
         public static Task<McpToolResponse> WriteGameScriptAsync(
             McpToolContext context,
@@ -148,9 +142,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Deletes a .cs script file from the game assets directory.
         /// </summary>
-        [XRMcp]
-        [McpName("delete_game_script")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Permanently deletes a .cs file from disk.")]
+        [XRMcp(Name = "delete_game_script", Permission = McpPermissionLevel.Destructive, PermissionReason = "Permanently deletes a .cs file from disk.")]
         [Description("Delete a .cs script file from the game project's assets directory.")]
         public static Task<McpToolResponse> DeleteGameScriptAsync(
             McpToolContext context,
@@ -178,9 +170,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Renames or moves a .cs script file within the game assets directory.
         /// </summary>
-        [XRMcp]
-        [McpName("rename_game_script")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Moves/renames a .cs file on disk.")]
+        [XRMcp(Name = "rename_game_script", Permission = McpPermissionLevel.Destructive, PermissionReason = "Moves/renames a .cs file on disk.")]
         [Description("Rename or move a .cs script file within the game project's assets directory.")]
         public static Task<McpToolResponse> RenameGameScriptAsync(
             McpToolContext context,
@@ -233,9 +223,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Triggers CodeManager.RemakeSolutionAsDLL to regenerate project files, compile, and hot-reload.
         /// </summary>
-        [XRMcp]
-        [McpName("compile_game_scripts")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Compiles game scripts and hot-reloads the DLL into the running editor.")]
+        [XRMcp(Name = "compile_game_scripts", Permission = McpPermissionLevel.Destructive, PermissionReason = "Compiles game scripts and hot-reloads the DLL into the running editor.")]
         [Description("Regenerate game project files, compile, and hot-reload the game DLL. Returns compilation result.")]
         public static Task<McpToolResponse> CompileGameScriptsAsync(
             McpToolContext context,
@@ -279,9 +267,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets the current compilation state of the game scripts.
         /// </summary>
-        [XRMcp]
-        [McpName("get_compile_status")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_compile_status", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Get the current compilation state of the game scripts: whether scripts are dirty, last binary path, compile-on-change status.")]
         public static Task<McpToolResponse> GetCompileStatusAsync(McpToolContext context)
         {
@@ -312,9 +298,7 @@ namespace XREngine.Editor.Mcp
         /// output to the Debug console. We capture errors via the StringLogger by
         /// triggering a build and returning the log output.
         /// </remarks>
-        [XRMcp]
-        [McpName("get_compile_errors")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_compile_errors", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Compile the game scripts and return any errors and warnings as structured data.")]
         public static Task<McpToolResponse> GetCompileErrorsAsync(
             McpToolContext context,
@@ -355,9 +339,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Toggles CodeManager.CompileOnChange which auto-compiles when .cs files change and editor regains focus.
         /// </summary>
-        [XRMcp]
-        [McpName("set_compile_on_change")]
-        [McpPermission(McpPermissionLevel.Mutate)]
+        [XRMcp(Name = "set_compile_on_change", Permission = McpPermissionLevel.Mutate)]
         [Description("Toggle CodeManager.CompileOnChange: when enabled, game scripts auto-compile when .cs files change and editor regains focus.")]
         public static Task<McpToolResponse> SetCompileOnChangeAsync(
             McpToolContext context,
@@ -374,9 +356,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets game project metadata: project name, solution path, binary path, target framework, and loaded state.
         /// </summary>
-        [XRMcp]
-        [McpName("get_game_project_info")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_game_project_info", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Get game project metadata: project name, solution/binary paths, target framework, and loaded assembly state.")]
         public static Task<McpToolResponse> GetGameProjectInfoAsync(McpToolContext context)
         {
@@ -432,9 +412,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists all types currently loaded from the game DLL plugin assemblies.
         /// </summary>
-        [XRMcp]
-        [McpName("get_loaded_game_types")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_loaded_game_types", Permission = McpPermissionLevel.ReadOnly)]
         [Description("List all types loaded from the game DLL plugin: components, menu items, and all exported types grouped by assembly.")]
         public static Task<McpToolResponse> GetLoadedGameTypesAsync(McpToolContext context)
         {
@@ -491,9 +469,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Generates a new XRComponent subclass from a template with proper backing fields, SetField, lifecycle methods.
         /// </summary>
-        [XRMcp]
-        [McpName("scaffold_component")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Creates a new .cs file on disk.")]
+        [XRMcp(Name = "scaffold_component", Permission = McpPermissionLevel.Destructive, PermissionReason = "Creates a new .cs file on disk.")]
         [Description("Generate a new XRComponent subclass from a template. Creates a .cs file with backing fields, SetField pattern, lifecycle hooks, and Description attribute.")]
         public static Task<McpToolResponse> ScaffoldComponentAsync(
             McpToolContext context,
@@ -552,9 +528,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Generates a new game mode class from a template.
         /// </summary>
-        [XRMcp]
-        [McpName("scaffold_game_mode")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Creates a new .cs file on disk.")]
+        [XRMcp(Name = "scaffold_game_mode", Permission = McpPermissionLevel.Destructive, PermissionReason = "Creates a new .cs file on disk.")]
         [Description("Generate a new game mode class from template. Creates a .cs file extending GameMode<T> with standard lifecycle methods.")]
         public static Task<McpToolResponse> ScaffoldGameModeAsync(
             McpToolContext context,

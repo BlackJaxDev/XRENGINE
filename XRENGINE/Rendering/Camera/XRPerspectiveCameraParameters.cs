@@ -78,16 +78,28 @@ namespace XREngine.Rendering
 
         protected override Matrix4x4 CalculateProjectionMatrix()
         {
+            float nearZ = MathF.Max(0.001f, NearZ);
+            float farZ = FarZ;
+            if (farZ <= nearZ)
+                farZ = nearZ + 0.001f;
+
             float fovY = XRMath.DegToRad(VerticalFieldOfView);
-            float yMax = NearZ * (float)MathF.Tan(0.5f * fovY);
+            float yMax = nearZ * (float)MathF.Tan(0.5f * fovY);
             float yMin = -yMax;
             float xMin = yMin * AspectRatio;
             float xMax = yMax * AspectRatio;
-            return Matrix4x4.CreatePerspectiveOffCenter(xMin, xMax, yMin, yMax, NearZ, FarZ);
+            return Matrix4x4.CreatePerspectiveOffCenter(xMin, xMax, yMin, yMax, nearZ, farZ);
         }
 
         protected override Frustum CalculateUntransformedFrustum()
-            => new(VerticalFieldOfView, AspectRatio, NearZ, FarZ, Globals.Forward, Globals.Up, Vector3.Zero);
+        {
+            float nearZ = MathF.Max(0.001f, NearZ);
+            float farZ = FarZ;
+            if (farZ <= nearZ)
+                farZ = nearZ + 0.001f;
+
+            return new Frustum(VerticalFieldOfView, AspectRatio, nearZ, farZ, Globals.Forward, Globals.Up, Vector3.Zero);
+        }
 
         public override void SetUniforms(XRRenderProgram program)
         {
@@ -201,10 +213,20 @@ namespace XREngine.Rendering
             => new XRPerspectiveCameraParameters();
 
         public Frustum GetUntransformedFrustumSlice(float nearZ, float farZ)
-            => new(VerticalFieldOfView, AspectRatio, nearZ, farZ, Globals.Forward, Globals.Up, Vector3.Zero);
+        {
+            nearZ = MathF.Max(0.001f, nearZ);
+            if (farZ <= nearZ)
+                farZ = nearZ + 0.001f;
+
+            return new Frustum(VerticalFieldOfView, AspectRatio, nearZ, farZ, Globals.Forward, Globals.Up, Vector3.Zero);
+        }
 
         public Matrix4x4 GetProjectionSlice(float nearZ, float farZ)
         {
+            nearZ = MathF.Max(0.001f, nearZ);
+            if (farZ <= nearZ)
+                farZ = nearZ + 0.001f;
+
             float fovY = XRMath.DegToRad(VerticalFieldOfView);
             float yMax = nearZ * (float)MathF.Tan(0.5f * fovY);
             float yMin = -yMax;

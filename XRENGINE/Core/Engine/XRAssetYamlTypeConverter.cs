@@ -605,4 +605,30 @@ namespace XREngine
             emitter.Emit(new MappingEnd());
         }
     }
+
+    public sealed class DelegateSkippingTypeInspector(ITypeInspector inner) : ITypeInspector
+    {
+        private readonly ITypeInspector _inner = inner;
+
+        public IEnumerable<IPropertyDescriptor> GetProperties(Type type, object? container)
+        {
+            foreach (var descriptor in _inner.GetProperties(type, container))
+            {
+                Type descriptorType = descriptor.TypeOverride ?? descriptor.Type;
+                if (typeof(Delegate).IsAssignableFrom(descriptorType))
+                    continue;
+
+                yield return descriptor;
+            }
+        }
+
+        public IPropertyDescriptor GetProperty(Type type, object? container, string name, bool ignoreUnmatched, bool caseInsensitivePropertyMatching)
+            => _inner.GetProperty(type, container, name, ignoreUnmatched, caseInsensitivePropertyMatching);
+
+        public string GetEnumName(Type enumType, string name)
+            => _inner.GetEnumName(enumType, name);
+
+        public string GetEnumValue(object value)
+            => _inner.GetEnumValue(value);
+    }
 }

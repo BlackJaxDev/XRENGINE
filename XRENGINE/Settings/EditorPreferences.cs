@@ -54,9 +54,17 @@ namespace XREngine
         private string _mcpAssistantOpenAiRealtimeModel = "gpt-4o-realtime-preview";
         private string _mcpAssistantAnthropicModel = "claude-sonnet-4-5";
         private int _mcpAssistantMaxTokens = 4096;
+        private int _mcpAssistantMaxAutoReprompts = 3;
+        private bool _mcpAssistantAutoSummarizeNearContextLimit = true;
         private bool _mcpAssistantUseRealtimeWebSocket = false;
         private bool _mcpAssistantAttachMcpServer = true;
+        private bool _mcpAssistantAttachViewportScreenshot = false;
         private bool _mcpAssistantAutoScroll = true;
+        private bool _mcpAssistantAutoCameraView = true;
+        private string _mcpAssistantGeminiApiKey = string.Empty;
+        private string _mcpAssistantGeminiModel = "gemini-2.5-pro";
+        private string _mcpAssistantGitHubModelsToken = string.Empty;
+        private string _mcpAssistantGitHubModelsModel = "openai/gpt-4.1";
 
         [Category("Theme")]
         [DisplayName("Theme")]
@@ -299,15 +307,15 @@ namespace XREngine
         // ── MCP Assistant (in-editor AI chat window) ─────────────────────
 
         /// <summary>
-        /// Selected provider index (0 = Codex / OpenAI, 1 = Claude Code / Anthropic).
+        /// Selected provider index (0 = Codex / OpenAI, 1 = Claude Code / Anthropic, 2 = Gemini, 3 = GitHub Models).
         /// </summary>
         [Category("MCP Assistant")]
         [DisplayName("Provider")]
-        [Description("AI provider selection (0 = Codex, 1 = Claude Code).")]
+        [Description("AI provider selection (0 = Codex, 1 = Claude Code, 2 = Gemini, 3 = GitHub Models).")]
         public int McpAssistantProviderIndex
         {
             get => _mcpAssistantProviderIndex;
-            set => SetField(ref _mcpAssistantProviderIndex, Math.Clamp(value, 0, 1));
+            set => SetField(ref _mcpAssistantProviderIndex, Math.Clamp(value, 0, 3));
         }
 
         /// <summary>
@@ -383,6 +391,30 @@ namespace XREngine
         }
 
         /// <summary>
+        /// Maximum number of automatic continuation prompts sent for a single user prompt.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Max Auto Re-prompts")]
+        [Description("Maximum automatic continuation prompts sent when the assistant has not emitted the completion marker.")]
+        public int McpAssistantMaxAutoReprompts
+        {
+            get => _mcpAssistantMaxAutoReprompts;
+            set => SetField(ref _mcpAssistantMaxAutoReprompts, Math.Clamp(value, 0, 20));
+        }
+
+        /// <summary>
+        /// Whether to request an AI-generated context summary when approaching model context limits.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Auto Summarize Near Context Limit")]
+        [Description("Request a compact assistant-generated context summary as prompts approach the selected model's context window.")]
+        public bool McpAssistantAutoSummarizeNearContextLimit
+        {
+            get => _mcpAssistantAutoSummarizeNearContextLimit;
+            set => SetField(ref _mcpAssistantAutoSummarizeNearContextLimit, value);
+        }
+
+        /// <summary>
         /// Whether to use the OpenAI Realtime WebSocket API instead of standard HTTP.
         /// </summary>
         [Category("MCP Assistant")]
@@ -407,6 +439,19 @@ namespace XREngine
         }
 
         /// <summary>
+        /// Whether to capture and attach the current editor viewport screenshot
+        /// as visual context when sending a message to the AI provider.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Attach Viewport Screenshot")]
+        [Description("Capture and include a viewport screenshot as visual context with each message sent to the AI.")]
+        public bool McpAssistantAttachViewportScreenshot
+        {
+            get => _mcpAssistantAttachViewportScreenshot;
+            set => SetField(ref _mcpAssistantAttachViewportScreenshot, value);
+        }
+
+        /// <summary>
         /// Whether the chat log auto-scrolls during streaming.
         /// </summary>
         [Category("MCP Assistant")]
@@ -416,6 +461,68 @@ namespace XREngine
         {
             get => _mcpAssistantAutoScroll;
             set => SetField(ref _mcpAssistantAutoScroll, value);
+        }
+
+        /// <summary>
+        /// Whether MCP Assistant tool calls automatically move the editor camera to relevant scene nodes.
+        /// Uses the same smooth focus interpolation as hierarchy double-click.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Auto Camera View")]
+        [Description("Automatically move the editor camera to relevant scene nodes after assistant scene edits.")]
+        public bool McpAssistantAutoCameraView
+        {
+            get => _mcpAssistantAutoCameraView;
+            set => SetField(ref _mcpAssistantAutoCameraView, value);
+        }
+
+        /// <summary>
+        /// Google Gemini API key used by the MCP Assistant window.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Gemini API Key")]
+        [Description("API key for Google Gemini provider (from Google AI Studio).")]
+        public string McpAssistantGeminiApiKey
+        {
+            get => _mcpAssistantGeminiApiKey;
+            set => SetField(ref _mcpAssistantGeminiApiKey, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Model name for Google Gemini requests.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Gemini Model")]
+        [Description("Model name for Google Gemini API requests.")]
+        public string McpAssistantGeminiModel
+        {
+            get => _mcpAssistantGeminiModel;
+            set => SetField(ref _mcpAssistantGeminiModel, value ?? "gemini-2.5-pro");
+        }
+
+        /// <summary>
+        /// GitHub personal access token (PAT) for GitHub Models inference API.
+        /// Requires models:read scope.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("GitHub Models Token")]
+        [Description("GitHub PAT with models:read scope for GitHub Models inference API.")]
+        public string McpAssistantGitHubModelsToken
+        {
+            get => _mcpAssistantGitHubModelsToken;
+            set => SetField(ref _mcpAssistantGitHubModelsToken, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Model name for GitHub Models inference requests.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("GitHub Models Model")]
+        [Description("Model name for GitHub Models inference API requests (e.g. openai/gpt-4.1).")]
+        public string McpAssistantGitHubModelsModel
+        {
+            get => _mcpAssistantGitHubModelsModel;
+            set => SetField(ref _mcpAssistantGitHubModelsModel, value ?? "openai/gpt-4.1");
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -490,9 +597,16 @@ namespace XREngine
             McpAssistantOpenAiRealtimeModel = source.McpAssistantOpenAiRealtimeModel;
             McpAssistantAnthropicModel = source.McpAssistantAnthropicModel;
             McpAssistantMaxTokens = source.McpAssistantMaxTokens;
+            McpAssistantMaxAutoReprompts = source.McpAssistantMaxAutoReprompts;
+            McpAssistantAutoSummarizeNearContextLimit = source.McpAssistantAutoSummarizeNearContextLimit;
             McpAssistantUseRealtimeWebSocket = source.McpAssistantUseRealtimeWebSocket;
             McpAssistantAttachMcpServer = source.McpAssistantAttachMcpServer;
             McpAssistantAutoScroll = source.McpAssistantAutoScroll;
+            McpAssistantAutoCameraView = source.McpAssistantAutoCameraView;
+            McpAssistantGeminiApiKey = source.McpAssistantGeminiApiKey;
+            McpAssistantGeminiModel = source.McpAssistantGeminiModel;
+            McpAssistantGitHubModelsToken = source.McpAssistantGitHubModelsToken;
+            McpAssistantGitHubModelsModel = source.McpAssistantGitHubModelsModel;
         }
 
         public void ApplyOverrides(EditorPreferencesOverrides overrides)

@@ -75,8 +75,7 @@ namespace XREngine.Components
             object obj = FormatterServices.GetUninitializedObject(t);
 #pragma warning restore SYSLIB0050 // Type or member is obsolete
             Type t2 = obj!.GetType();
-            var method = typeof(XRComponent).GetMethod(nameof(ConstructionSetSceneNode), BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
-            method!.Invoke(obj, [node]);
+            ((XRComponent)obj).ConstructionSetSceneNode(node);
 #pragma warning disable IL2075 // 'this' argument does not satisfy 'DynamicallyAccessedMembersAttribute' in call to target method. The return value of the source method does not have matching annotations.
             t2.GetConstructor(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy, Type.EmptyTypes)?.Invoke(obj, null);
 #pragma warning restore IL2075 // 'this' argument does not satisfy 'DynamicallyAccessedMembersAttribute' in call to target method. The return value of the source method does not have matching annotations.
@@ -119,9 +118,7 @@ namespace XREngine.Components
         public IEnumerable<T> GetSiblingComponents<T>() where T : XRComponent
             => SceneNode.GetComponents<T>().Where(x => x != this);
 
-#pragma warning disable IDE0051 // Remove unused private members
-        private void ConstructionSetSceneNode(SceneNode node)
-#pragma warning restore IDE0051 // Remove unused private members
+        internal void ConstructionSetSceneNode(SceneNode node)
         {
             _sceneNode = node;
             _sceneNode.PropertyChanging += SceneNodePropertyChanging;

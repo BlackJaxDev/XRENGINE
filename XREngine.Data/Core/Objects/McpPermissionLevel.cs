@@ -10,6 +10,11 @@ namespace XREngine.Data.Core
     public enum McpPermissionLevel
     {
         /// <summary>
+        /// No explicit permission override; resolve by naming heuristic.
+        /// </summary>
+        Unspecified = -1,
+
+        /// <summary>
         /// Pure read / query / list operations. No side effects.
         /// Examples: list_scene_nodes, get_type_info, get_engine_state.
         /// </summary>

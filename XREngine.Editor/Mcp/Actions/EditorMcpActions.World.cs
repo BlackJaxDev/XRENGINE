@@ -23,8 +23,7 @@ namespace XREngine.Editor.Mcp
         /// <item><description><c>playState</c> - Current play state (e.g., "Playing", "Stopped")</description></item>
         /// </list>
         /// </returns>
-        [XRMcp]
-        [McpName("list_worlds")]
+        [XRMcp(Name = "list_worlds")]
         [Description("List active world instances and their scenes.")]
         public static Task<McpToolResponse> ListWorldsAsync(
             McpToolContext context)
@@ -44,8 +43,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists all scenes in the active world.
         /// </summary>
-        [XRMcp]
-        [McpName("list_scenes")]
+        [XRMcp(Name = "list_scenes")]
         [Description("List scenes in the active world.")]
         public static Task<McpToolResponse> ListScenesAsync(
             McpToolContext context)
@@ -69,8 +67,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Creates a new scene in the active world.
         /// </summary>
-        [XRMcp]
-        [McpName("create_scene")]
+        [XRMcp(Name = "create_scene")]
         [Description("Create a new scene in the active world.")]
         public static Task<McpToolResponse> CreateSceneAsync(
             McpToolContext context,
@@ -98,8 +95,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Deletes a scene from the active world.
         /// </summary>
-        [XRMcp]
-        [McpName("delete_scene")]
+        [XRMcp(Name = "delete_scene")]
         [Description("Delete a scene from the active world.")]
         public static Task<McpToolResponse> DeleteSceneAsync(
             McpToolContext context,
@@ -139,8 +135,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Toggles scene visibility in the active world.
         /// </summary>
-        [XRMcp]
-        [McpName("toggle_scene_visibility")]
+        [XRMcp(Name = "toggle_scene_visibility")]
         [Description("Toggle scene visibility.")]
         public static Task<McpToolResponse> ToggleSceneVisibilityAsync(
             McpToolContext context,
@@ -164,8 +159,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Sets the active scene by moving it to the front of the scene list and ensuring it is visible.
         /// </summary>
-        [XRMcp]
-        [McpName("set_active_scene")]
+        [XRMcp(Name = "set_active_scene")]
         [Description("Set a scene as active (first in scene list).")]
         public static Task<McpToolResponse> SetActiveSceneAsync(
             McpToolContext context,
@@ -222,9 +216,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Exports a scene asset to a directory.
         /// </summary>
-        [XRMcp]
-        [McpName("export_scene")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Writes scene data to the file system.")]
+        [XRMcp(Name = "export_scene", Permission = McpPermissionLevel.Destructive, PermissionReason = "Writes scene data to the file system.")]
         [Description("Export a scene asset to a directory.")]
         public static Task<McpToolResponse> ExportSceneAsync(
             McpToolContext context,
@@ -250,9 +242,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Imports a scene asset from disk and adds it to the active world.
         /// </summary>
-        [XRMcp]
-        [McpName("import_scene")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Loads external data and modifies the active world.")]
+        [XRMcp(Name = "import_scene", Permission = McpPermissionLevel.Destructive, PermissionReason = "Loads external data and modifies the active world.")]
         [Description("Import a scene asset from disk and add it to the active world.")]
         public static Task<McpToolResponse> ImportSceneAsync(
             McpToolContext context,
@@ -312,8 +302,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Validates a scene for common issues (null roots, missing world references, duplicates).
         /// </summary>
-        [XRMcp]
-        [McpName("validate_scene")]
+        [XRMcp(Name = "validate_scene")]
         [Description("Validate a scene for common hierarchy issues.")]
         public static Task<McpToolResponse> ValidateSceneAsync(
             McpToolContext context,

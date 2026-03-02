@@ -74,13 +74,88 @@ namespace XREngine.Editor.Mcp
 
             if (!string.IsNullOrWhiteSpace(componentTypeName))
             {
+                // 1. Exact match via type cache (includes full names)
                 if (McpToolRegistry.TryResolveComponentType(componentTypeName, out var type))
                     return components.FirstOrDefault(comp => type.IsInstanceOfType(comp));
 
-                return components.FirstOrDefault(comp => string.Equals(comp.GetType().Name, componentTypeName, StringComparison.OrdinalIgnoreCase));
+                // 2. Case-insensitive exact type name match
+                var exact = components.FirstOrDefault(comp => string.Equals(comp.GetType().Name, componentTypeName, StringComparison.OrdinalIgnoreCase));
+                if (exact is not null)
+                    return exact;
+
+                // 3. Suffix-tolerant match: if caller says "BoxMesh", match "BoxMeshComponent"
+                var suffixed = components.FirstOrDefault(comp =>
+                    comp.GetType().Name.StartsWith(componentTypeName!, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(comp.GetType().Name, componentTypeName + "Component", StringComparison.OrdinalIgnoreCase));
+                if (suffixed is not null)
+                    return suffixed;
+
+                // 4. Base-type / interface match: walk the inheritance chain for each component
+                var baseMatch = components.FirstOrDefault(comp =>
+                {
+                    for (var t = comp.GetType(); t is not null && t != typeof(object); t = t.BaseType)
+                    {
+                        if (string.Equals(t.Name, componentTypeName, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(t.Name, componentTypeName + "Component", StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
+                    return false;
+                });
+                if (baseMatch is not null)
+                    return baseMatch;
+
+                // 5. Common alias mapping
+                string? aliasedTypeName = ResolveComponentAlias(componentTypeName!);
+                if (aliasedTypeName is not null)
+                {
+                    var aliased = components.FirstOrDefault(comp =>
+                    {
+                        for (var t = comp.GetType(); t is not null && t != typeof(object); t = t.BaseType)
+                        {
+                            if (string.Equals(t.Name, aliasedTypeName, StringComparison.OrdinalIgnoreCase))
+                                return true;
+                        }
+                        return false;
+                    });
+                    if (aliased is not null)
+                        return aliased;
+                }
+
+                // 6. Substring match as last resort
+                var substring = components.FirstOrDefault(comp =>
+                    comp.GetType().Name.Contains(componentTypeName!, StringComparison.OrdinalIgnoreCase));
+                if (substring is not null)
+                    return substring;
+
+                error = $"No component matching type '{componentTypeName}' found on node '{node.Name}'. "
+                    + $"Available components: [{string.Join(", ", components.Select(c => c.GetType().Name))}].";
+                return null;
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Maps common external/Unity-style names to XREngine component type names.
+        /// </summary>
+        private static string? ResolveComponentAlias(string name)
+        {
+            return name.ToLowerInvariant() switch
+            {
+                "meshrenderer" or "mesh_renderer" or "renderer" => "RenderableComponent",
+                "meshfilter" or "mesh_filter" or "mesh" => "ModelComponent",
+                "model" => "ModelComponent",
+                "boxcollider" or "box_collider" => "BoxMeshComponent",
+                "spherecollider" or "sphere_collider" => "SphereMeshComponent",
+                "light" or "pointlight" or "point_light" => "LightComponent",
+                "directionallight" or "directional_light" => "DirectionalLightComponent",
+                "spotlight" or "spot_light" => "SpotLightComponent",
+                "camera" => "CameraComponent",
+                "rigidbody" or "rigid_body" => "RigidBodyComponent",
+                "transform" => "TransformComponent",
+                "audio" or "audiosource" or "audio_source" => "AudioSourceComponent",
+                _ => null
+            };
         }
 
         private static XRScene? ResolveScene(XRWorldInstance world, string? sceneName)

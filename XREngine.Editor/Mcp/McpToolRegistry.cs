@@ -120,6 +120,16 @@ namespace XREngine.Editor.Mcp
                     return true;
                 }
 
+                // Skip JSON deserialization for types that System.Text.Json cannot handle:
+                // abstract types, interface types, pointer types, and types with no public
+                // parameterless constructor (unless they're value types or have JSON converters).
+                if (IsUnserializableType(targetType))
+                {
+                    converted = null;
+                    error = $"Type '{targetType.Name}' cannot be deserialized from JSON.";
+                    return false;
+                }
+
                 if (value is JsonElement element)
                 {
                     converted = JsonSerializer.Deserialize(element.GetRawText(), targetType, s_jsonOptions);
@@ -138,6 +148,37 @@ namespace XREngine.Editor.Mcp
                 error = ex.Message;
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Returns true if a type is known to be unserializable by System.Text.Json,
+        /// avoiding expensive exception-based fallback paths.
+        /// </summary>
+        private static bool IsUnserializableType(Type type)
+        {
+            // Unwrap arrays/collections to check the element type.
+            Type? elementType = type.IsArray ? type.GetElementType() : null;
+            Type checkType = elementType ?? type;
+
+            // Abstract or interface types can't be directly deserialized.
+            if (checkType.IsAbstract || checkType.IsInterface)
+                return true;
+
+            // Pointer-like types.
+            if (checkType == typeof(IntPtr) || checkType == typeof(UIntPtr)
+                || checkType.IsPointer || checkType.IsByRef || checkType.IsByRefLike)
+                return true;
+
+            // Skip complex engine types that don't have JSON serialization support.
+            // Heuristic: if the type is in an XREngine namespace and is not a simple
+            // value type / enum / string, it's very unlikely to roundtrip through JSON.
+            string? ns = checkType.Namespace;
+            if (ns is not null && ns.StartsWith("XREngine", StringComparison.Ordinal)
+                && !checkType.IsEnum && !checkType.IsValueType
+                && checkType != typeof(string))
+                return true;
+
+            return false;
         }
 
         private static IEnumerable<MethodInfo> GetMcpMethods()
@@ -180,7 +221,8 @@ namespace XREngine.Editor.Mcp
             if (!IsSupportedReturnType(method.ReturnType))
                 return null;
 
-            string toolName = method.GetCustomAttribute<McpNameAttribute>()?.Name ?? method.Name;
+            var mcpAttribute = method.GetCustomAttribute<XRMcpAttribute>();
+            string toolName = mcpAttribute?.Name ?? method.Name;
             string toolDescription = method.GetCustomAttribute<DescriptionAttribute>()?.Description ?? method.Name;
 
             var parameters = method.GetParameters();
@@ -214,7 +256,7 @@ namespace XREngine.Editor.Mcp
                 inputSchema: inputSchema,
                 handler: (context, args, token) => InvokeToolAsync(method, context, args, token),
                 permissionLevel: ResolvePermissionLevel(method, toolName),
-                permissionReason: method.GetCustomAttribute<McpPermissionAttribute>()?.Reason,
+                permissionReason: mcpAttribute?.PermissionReason,
                 threadAffinity: method.GetCustomAttribute<McpThreadAffinityAttribute>()?.Affinity);
         }
 
@@ -370,14 +412,14 @@ namespace XREngine.Editor.Mcp
 
         /// <summary>
         /// Resolves the permission level for a tool method.
-        /// Uses the explicit <see cref="McpPermissionAttribute"/> if present,
+        /// Uses the explicit <see cref="XRMcpAttribute.Permission"/> if present,
         /// otherwise infers from the tool name prefix.
         /// </summary>
         private static McpPermissionLevel ResolvePermissionLevel(MethodInfo method, string toolName)
         {
-            var attr = method.GetCustomAttribute<McpPermissionAttribute>();
-            if (attr is not null)
-                return attr.Level;
+            var attr = method.GetCustomAttribute<XRMcpAttribute>();
+            if (attr is not null && attr.Permission != McpPermissionLevel.Unspecified)
+                return attr.Permission;
 
             // Heuristic: read-prefixed tools are ReadOnly, delete-prefixed are Destructive, everything else is Mutate.
             if (toolName.StartsWith("get_", StringComparison.OrdinalIgnoreCase) ||
