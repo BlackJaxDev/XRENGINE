@@ -398,6 +398,20 @@ namespace XREngine.Rendering
             if (Window is null)
                 return false;
 
+            // IWindow.IsClosing has a setter via explicit interface implementation.
+            // The concrete GlfwWindow type inherits a read-only IsClosing from
+            // ViewImplementationBase, so reflection on the runtime type fails.
+            // Use the interface property directly — Window is already IWindow.
+            try
+            {
+                Window.IsClosing = false;
+                return true;
+            }
+            catch
+            {
+                // ignored — fall through to reflection fallbacks
+            }
+
             var windowType = Window.GetType();
 
             if (TrySetBoolProperty(windowType, Window, "IsClosing", false))

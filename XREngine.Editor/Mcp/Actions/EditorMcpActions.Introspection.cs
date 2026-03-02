@@ -24,8 +24,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists all available component types in the current AppDomain.
         /// </summary>
-        [XRMcp]
-        [McpName("list_component_types")]
+        [XRMcp(Name = "list_component_types")]
         [Description("List available component types and metadata.")]
         public static Task<McpToolResponse> ListComponentTypesAsync(
             McpToolContext context,
@@ -43,8 +42,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets a detailed schema for a specific component type.
         /// </summary>
-        [XRMcp]
-        [McpName("get_component_schema")]
+        [XRMcp(Name = "get_component_schema")]
         [Description("Get detailed component type schema including properties and fields.")]
         public static Task<McpToolResponse> GetComponentSchemaAsync(
             McpToolContext context,
@@ -61,8 +59,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists immediate child transforms for a scene node.
         /// </summary>
-        [XRMcp]
-        [McpName("list_transform_children")]
+        [XRMcp(Name = "list_transform_children")]
         [Description("List immediate child transforms for a scene node.")]
         public static Task<McpToolResponse> ListTransformChildrenAsync(
             McpToolContext context,
@@ -89,8 +86,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets matrix data for a scene node's transform.
         /// </summary>
-        [XRMcp]
-        [McpName("get_transform_matrices")]
+        [XRMcp(Name = "get_transform_matrices")]
         [Description("Get local/world/render matrices for a scene node.")]
         public static Task<McpToolResponse> GetTransformMatricesAsync(
             McpToolContext context,
@@ -117,8 +113,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets decomposed transform state (translation, rotation, scale).
         /// </summary>
-        [XRMcp]
-        [McpName("get_transform_decomposed")]
+        [XRMcp(Name = "get_transform_decomposed")]
         [Description("Get local/world/render translation, rotation, and scale for a scene node.")]
         public static Task<McpToolResponse> GetTransformDecomposedAsync(
             McpToolContext context,
@@ -147,8 +142,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists currently loaded assets.
         /// </summary>
-        [XRMcp]
-        [McpName("list_loaded_assets")]
+        [XRMcp(Name = "list_loaded_assets")]
         [Description("List assets currently loaded by the asset manager.")]
         public static Task<McpToolResponse> ListLoadedAssetsAsync(
             McpToolContext context,
@@ -184,8 +178,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets info for a single asset by ID or path.
         /// </summary>
-        [XRMcp]
-        [McpName("get_asset_info")]
+        [XRMcp(Name = "get_asset_info")]
         [Description("Get detailed info about a loaded asset by ID or path.")]
         public static Task<McpToolResponse> GetAssetInfoAsync(
             McpToolContext context,
@@ -231,8 +224,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists loaded prefab assets (sources and variants).
         /// </summary>
-        [XRMcp]
-        [McpName("list_prefabs")]
+        [XRMcp(Name = "list_prefabs")]
         [Description("List loaded prefab assets.")]
         public static Task<McpToolResponse> ListPrefabsAsync(McpToolContext context)
         {
@@ -253,8 +245,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets the hierarchy structure for a prefab asset.
         /// </summary>
-        [XRMcp]
-        [McpName("get_prefab_structure")]
+        [XRMcp(Name = "get_prefab_structure")]
         [Description("Get the node hierarchy for a prefab source or variant.")]
         public static Task<McpToolResponse> GetPrefabStructureAsync(
             McpToolContext context,
@@ -311,8 +302,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets the current render state snapshot.
         /// </summary>
-        [XRMcp]
-        [McpName("get_render_state")]
+        [XRMcp(Name = "get_render_state")]
         [Description("Get current rendering pipeline and camera state.")]
         public static Task<McpToolResponse> GetRenderStateAsync(McpToolContext context)
         {
@@ -352,8 +342,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets the current editor selection.
         /// </summary>
-        [XRMcp]
-        [McpName("get_selection")]
+        [XRMcp(Name = "get_selection")]
         [Description("Get the currently selected scene nodes.")]
         public static Task<McpToolResponse> GetSelectionAsync(McpToolContext context)
         {
@@ -373,8 +362,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets a snapshot of editor/engine play mode state.
         /// </summary>
-        [XRMcp]
-        [McpName("get_engine_state")]
+        [XRMcp(Name = "get_engine_state")]
         [Description("Get engine/editor play mode and high-level state flags.")]
         public static Task<McpToolResponse> GetEngineStateAsync(McpToolContext context)
         {
@@ -396,8 +384,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets timing information from the engine timer.
         /// </summary>
-        [XRMcp]
-        [McpName("get_time_state")]
+        [XRMcp(Name = "get_time_state")]
         [Description("Get timing, delta, and target frequency information.")]
         public static Task<McpToolResponse> GetTimeStateAsync(McpToolContext context)
         {
@@ -424,8 +411,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets current job manager queue/worker information.
         /// </summary>
-        [XRMcp]
-        [McpName("get_job_manager_state")]
+        [XRMcp(Name = "get_job_manager_state")]
         [Description("Get job manager queues, workers, and queue capacity.")]
         public static Task<McpToolResponse> GetJobManagerStateAsync(McpToolContext context)
         {
@@ -449,8 +435,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists currently active jobs.
         /// </summary>
-        [XRMcp]
-        [McpName("list_active_jobs")]
+        [XRMcp(Name = "list_active_jobs")]
         [Description("List jobs currently executing.")]
         public static Task<McpToolResponse> ListActiveJobsAsync(McpToolContext context)
         {
@@ -476,8 +461,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets the current undo/redo history.
         /// </summary>
-        [XRMcp]
-        [McpName("get_undo_history")]
+        [XRMcp(Name = "get_undo_history")]
         [Description("Get undo/redo history entries.")]
         public static Task<McpToolResponse> GetUndoHistoryAsync(
             McpToolContext context,
@@ -512,8 +496,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists currently connected input devices.
         /// </summary>
-        [XRMcp]
-        [McpName("list_input_devices")]
+        [XRMcp(Name = "list_input_devices")]
         [Description("List available input devices and connection state.")]
         public static Task<McpToolResponse> ListInputDevicesAsync(McpToolContext context)
         {
@@ -539,8 +522,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists local players and their attached input/viewport state.
         /// </summary>
-        [XRMcp]
-        [McpName("list_local_players")]
+        [XRMcp(Name = "list_local_players")]
         [Description("List local player controllers, viewports, and input presence.")]
         public static Task<McpToolResponse> ListLocalPlayersAsync(McpToolContext context)
         {
@@ -570,8 +552,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets summary statistics for a scene or all scenes.
         /// </summary>
-        [XRMcp]
-        [McpName("get_scene_statistics")]
+        [XRMcp(Name = "get_scene_statistics")]
         [Description("Get scene statistics including node and component counts.")]
         public static Task<McpToolResponse> GetSceneStatisticsAsync(
             McpToolContext context,
@@ -605,8 +586,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists available transform types.
         /// </summary>
-        [XRMcp]
-        [McpName("list_transform_types")]
+        [XRMcp(Name = "list_transform_types")]
         [Description("List available transform types.")]
         public static Task<McpToolResponse> ListTransformTypesAsync(McpToolContext context)
         {
@@ -628,8 +608,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets rendering capability flags for the current renderer.
         /// </summary>
-        [XRMcp]
-        [McpName("get_render_capabilities")]
+        [XRMcp(Name = "get_render_capabilities")]
         [Description("Get renderer capability flags (GPU, extensions, ray tracing).")]
         public static Task<McpToolResponse> GetRenderCapabilitiesAsync(McpToolContext context)
         {

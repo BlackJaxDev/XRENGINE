@@ -34,8 +34,7 @@ namespace XREngine.Editor.Mcp
         /// <item><description><c>isActive</c> - Whether the node is active</description></item>
         /// </list>
         /// </returns>
-        [XRMcp]
-        [McpName("list_scene_nodes")]
+        [XRMcp(Name = "list_scene_nodes")]
         [Description("List scene nodes in the active world/scene.")]
         public static Task<McpToolResponse> ListSceneNodesAsync(
             McpToolContext context,
@@ -74,8 +73,7 @@ namespace XREngine.Editor.Mcp
         /// <item><description><c>transform</c> - Translation, rotation (pitch/yaw/roll in degrees), and scale</description></item>
         /// </list>
         /// </returns>
-        [XRMcp]
-        [McpName("get_scene_node_info")]
+        [XRMcp(Name = "get_scene_node_info")]
         [Description("Get detailed info about a scene node, including transform and components.")]
         public static Task<McpToolResponse> GetSceneNodeInfoAsync(
             McpToolContext context,
@@ -121,8 +119,7 @@ namespace XREngine.Editor.Mcp
         /// <param name="nodeId">The GUID of the scene node to update.</param>
         /// <param name="isActive">True to activate the node, false to deactivate.</param>
         /// <returns>A confirmation message indicating the new active state.</returns>
-        [XRMcp]
-        [McpName("set_node_active")]
+        [XRMcp(Name = "set_node_active")]
         [Description("Set whether a scene node is active in the hierarchy.")]
         public static Task<McpToolResponse> SetNodeActiveAsync(
             McpToolContext context,
@@ -145,8 +142,7 @@ namespace XREngine.Editor.Mcp
         /// <param name="newParentId">The GUID of the new parent node. Omit or pass null to move to root.</param>
         /// <param name="preserveWorldTransform">If true, the node's world-space transform is preserved during reparenting.</param>
         /// <returns>A confirmation message indicating the new parent.</returns>
-        [XRMcp]
-        [McpName("reparent_node")]
+        [XRMcp(Name = "reparent_node")]
         [Description("Reparent a scene node to a new parent.")]
         public static Task<McpToolResponse> ReparentNodeAsync(
             McpToolContext context,
@@ -182,8 +178,7 @@ namespace XREngine.Editor.Mcp
         /// <param name="context">The MCP tool execution context.</param>
         /// <param name="nodeId">The GUID of the scene node to delete.</param>
         /// <returns>A confirmation message indicating the node was deleted.</returns>
-        [XRMcp]
-        [McpName("delete_scene_node")]
+        [XRMcp(Name = "delete_scene_node")]
         [Description("Delete a scene node and its hierarchy.")]
         public static Task<McpToolResponse> DeleteSceneNodeAsync(
             McpToolContext context,
@@ -251,8 +246,7 @@ namespace XREngine.Editor.Mcp
         /// <item><description><c>path</c> - The full hierarchy path of the new node</description></item>
         /// </list>
         /// </returns>
-        [XRMcp]
-        [McpName("create_scene_node")]
+        [XRMcp(Name = "create_scene_node")]
         [Description("Create a scene node in the active world/scene.")]
         public static Task<McpToolResponse> CreateSceneNodeAsync(
             McpToolContext context,
@@ -322,8 +316,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Renames a scene node.
         /// </summary>
-        [XRMcp]
-        [McpName("rename_scene_node")]
+        [XRMcp(Name = "rename_scene_node")]
         [Description("Rename a scene node by ID.")]
         public static Task<McpToolResponse> RenameSceneNodeAsync(
             McpToolContext context,
@@ -344,8 +337,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Duplicates a scene node, optionally including children.
         /// </summary>
-        [XRMcp]
-        [McpName("duplicate_scene_node")]
+        [XRMcp(Name = "duplicate_scene_node")]
         [Description("Duplicate a scene node (optionally with children).")]
         public static Task<McpToolResponse> DuplicateSceneNodeAsync(
             McpToolContext context,
@@ -429,8 +421,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Reorders a scene node among its siblings.
         /// </summary>
-        [XRMcp]
-        [McpName("move_node_sibling")]
+        [XRMcp(Name = "move_node_sibling")]
         [Description("Reorder a scene node among siblings.")]
         public static Task<McpToolResponse> MoveNodeSiblingAsync(
             McpToolContext context,
@@ -557,8 +548,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Sets whether a scene node (and optionally its children) is active in the hierarchy.
         /// </summary>
-        [XRMcp]
-        [McpName("set_node_active_recursive")]
+        [XRMcp(Name = "set_node_active_recursive")]
         [Description("Set active state on a node and its children.")]
         public static Task<McpToolResponse> SetNodeActiveRecursiveAsync(
             McpToolContext context,
@@ -580,8 +570,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Finds scene nodes by name in the active world.
         /// </summary>
-        [XRMcp]
-        [McpName("find_nodes_by_name")]
+        [XRMcp(Name = "find_nodes_by_name")]
         [Description("Find scene nodes by name (exact or contains).")]
         public static Task<McpToolResponse> FindNodesByNameAsync(
             McpToolContext context,
@@ -640,8 +629,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Finds scene nodes by component type name.
         /// </summary>
-        [XRMcp]
-        [McpName("find_nodes_by_type")]
+        [XRMcp(Name = "find_nodes_by_type")]
         [Description("Find scene nodes that have a component type.")]
         public static Task<McpToolResponse> FindNodesByTypeAsync(
             McpToolContext context,
@@ -698,8 +686,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Selects one or more scene nodes in the editor.
         /// </summary>
-        [XRMcp]
-        [McpName("select_node")]
+        [XRMcp(Name = "select_node")]
         [Description("Select one or more scene nodes in the editor.")]
         public static Task<McpToolResponse> SelectNodeAsync(
             McpToolContext context,
@@ -744,8 +731,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Focuses the editor camera on a scene node.
         /// </summary>
-        [XRMcp]
-        [McpName("focus_node_in_view")]
+        [XRMcp(Name = "focus_node_in_view")]
         [Description("Focus the editor camera on a scene node.")]
         public static Task<McpToolResponse> FocusNodeInViewAsync(
             McpToolContext context,
@@ -764,10 +750,87 @@ namespace XREngine.Editor.Mcp
         }
 
         /// <summary>
+        /// Moves the editor camera to an explicit view pose using smooth interpolation.
+        /// </summary>
+        [XRMcp(Name = "set_editor_camera_view", Permission = McpPermissionLevel.Mutate, PermissionReason = "Moves and rotates the editor camera view.")]
+        [Description("Set the editor camera view with interpolation using position plus look-at or Euler rotation.")]
+        public static Task<McpToolResponse> SetEditorCameraViewAsync(
+            McpToolContext context,
+            [McpName("position_x"), Description("Optional world position X.")] float? positionX = null,
+            [McpName("position_y"), Description("Optional world position Y.")] float? positionY = null,
+            [McpName("position_z"), Description("Optional world position Z.")] float? positionZ = null,
+            [McpName("look_at_x"), Description("Optional look-at world position X (provide all look_at_* together).")]
+            float? lookAtX = null,
+            [McpName("look_at_y"), Description("Optional look-at world position Y (provide all look_at_* together).")]
+            float? lookAtY = null,
+            [McpName("look_at_z"), Description("Optional look-at world position Z (provide all look_at_* together).")]
+            float? lookAtZ = null,
+            [McpName("pitch"), Description("Optional camera pitch in degrees.")] float? pitch = null,
+            [McpName("yaw"), Description("Optional camera yaw in degrees.")] float? yaw = null,
+            [McpName("roll"), Description("Optional camera roll in degrees.")] float? roll = null,
+            [McpName("duration"), Description("Optional interpolation duration in seconds.")] float durationSeconds = 0.35f)
+        {
+            var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
+            if (player?.ControlledPawn is not EditorFlyingCameraPawnComponent pawn)
+                return Task.FromResult(new McpToolResponse("No editor camera pawn available.", isError: true));
+
+            if (pawn.SceneNode?.Transform is not TransformBase cameraTransform)
+                return Task.FromResult(new McpToolResponse("Editor camera transform is unavailable.", isError: true));
+
+            bool hasLookAt = lookAtX.HasValue || lookAtY.HasValue || lookAtZ.HasValue;
+            if (hasLookAt && !(lookAtX.HasValue && lookAtY.HasValue && lookAtZ.HasValue))
+                return Task.FromResult(new McpToolResponse("Provide all look_at_x, look_at_y, and look_at_z values together.", isError: true));
+
+            Vector3 currentPosition = cameraTransform.WorldTranslation;
+            Quaternion currentRotation = cameraTransform.WorldRotation;
+
+            Vector3 targetPosition = new(
+                positionX ?? currentPosition.X,
+                positionY ?? currentPosition.Y,
+                positionZ ?? currentPosition.Z);
+
+            Quaternion targetRotation;
+            if (hasLookAt)
+            {
+                Vector3 lookAt = new(lookAtX!.Value, lookAtY!.Value, lookAtZ!.Value);
+                Vector3 direction = lookAt - targetPosition;
+                if (direction.LengthSquared() < XRMath.Epsilon)
+                    return Task.FromResult(new McpToolResponse("Look-at target must differ from camera position.", isError: true));
+
+                direction = Vector3.Normalize(direction);
+                Vector3 up = Globals.Up;
+                if (MathF.Abs(Vector3.Dot(direction, up)) > 0.999f)
+                    up = Globals.Right;
+
+                targetRotation = Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateWorld(targetPosition, direction, up));
+            }
+            else if (pitch.HasValue || yaw.HasValue || roll.HasValue)
+            {
+                Rotator currentEuler = Rotator.FromQuaternion(currentRotation);
+                targetRotation = new Rotator(
+                    pitch ?? currentEuler.Pitch,
+                    yaw ?? currentEuler.Yaw,
+                    roll ?? currentEuler.Roll).ToQuaternion();
+            }
+            else
+            {
+                targetRotation = currentRotation;
+            }
+
+            pawn.FocusOnView(targetPosition, targetRotation, durationSeconds);
+
+            return Task.FromResult(new McpToolResponse("Updated editor camera view.", new
+            {
+                targetPosition,
+                targetRotation,
+                durationSeconds
+            }));
+        }
+
+        /// <summary>
         /// Sets a scene node's layer index.
         /// </summary>
-        [XRMcp]
-        [McpName("set_layer")]
+        [XRMcp(Name = "set_layer")]
         [Description("Set the layer for a scene node.")]
         public static Task<McpToolResponse> SetLayerAsync(
             McpToolContext context,
@@ -805,8 +868,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists known layers and those in use by the active world.
         /// </summary>
-        [XRMcp]
-        [McpName("list_layers")]
+        [XRMcp(Name = "list_layers")]
         [Description("List known layers and layers used in the active world.")]
         public static Task<McpToolResponse> ListLayersAsync(
             McpToolContext context)
@@ -838,8 +900,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Assigns or removes a tag on a scene node.
         /// </summary>
-        [XRMcp]
-        [McpName("set_tag")]
+        [XRMcp(Name = "set_tag")]
         [Description("Assign or remove a tag on a scene node.")]
         public static Task<McpToolResponse> SetTagAsync(
             McpToolContext context,
@@ -865,8 +926,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists tags on a node or across the active world.
         /// </summary>
-        [XRMcp]
-        [McpName("list_tags")]
+        [XRMcp(Name = "list_tags")]
         [Description("List tags on a node or across the active world.")]
         public static Task<McpToolResponse> ListTagsAsync(
             McpToolContext context,
@@ -906,8 +966,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Sets a scene node's transform properties (translation, rotation, and/or scale).
         /// </summary>
-        [XRMcp]
-        [McpName("set_node_transform")]
+        [XRMcp(Name = "set_node_transform")]
         [Description("Set a scene node transform (translation, rotation, scale).")]
         public static Task<McpToolResponse> SetNodeTransformAsync(
             McpToolContext context,
@@ -927,8 +986,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Sets a scene node's world transform properties.
         /// </summary>
-        [XRMcp]
-        [McpName("set_node_world_transform")]
+        [XRMcp(Name = "set_node_world_transform")]
         [Description("Set a scene node world transform (translation, rotation, scale).")]
         public static Task<McpToolResponse> SetNodeWorldTransformAsync(
             McpToolContext context,
@@ -986,8 +1044,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Retrieves a scene node's world transform.
         /// </summary>
-        [XRMcp]
-        [McpName("get_node_world_transform")]
+        [XRMcp(Name = "get_node_world_transform")]
         [Description("Get a scene node's world transform (translation, rotation, scale).")]
         public static Task<McpToolResponse> GetNodeWorldTransformAsync(
             McpToolContext context,
@@ -1008,118 +1065,5 @@ namespace XREngine.Editor.Mcp
             return Task.FromResult(new McpToolResponse($"Retrieved world transform for '{nodeId}'.", info));
         }
 
-        /// <summary>
-        /// Creates a prefab asset from a scene node hierarchy.
-        /// </summary>
-        [XRMcp]
-        [McpName("create_prefab_from_node")]
-        [Description("Create a prefab asset from a scene node hierarchy.")]
-        public static Task<McpToolResponse> CreatePrefabFromNodeAsync(
-            McpToolContext context,
-            [McpName("node_id"), Description("Scene node ID to use as prefab root.")] string nodeId,
-            [McpName("asset_name"), Description("Prefab asset name.")] string assetName,
-            [McpName("target_directory"), Description("Target directory for the prefab asset.")] string targetDirectory)
-        {
-            if (!TryGetNodeById(context.WorldInstance, nodeId, out var node, out var error) || node is null)
-                return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
-
-            var prefab = SceneNodePrefabUtility.CreatePrefabAsset(node, assetName, targetDirectory);
-            return Task.FromResult(new McpToolResponse($"Created prefab '{assetName}'.", new { id = prefab.ID, path = prefab.FilePath }));
-        }
-
-        /// <summary>
-        /// Instantiates a prefab into the active scene.
-        /// </summary>
-        [XRMcp]
-        [McpName("instantiate_prefab")]
-        [Description("Instantiate a prefab into the active scene.")]
-        public static Task<McpToolResponse> InstantiatePrefabAsync(
-            McpToolContext context,
-            [McpName("asset_path"), Description("Prefab asset path to load.")] string? assetPath = null,
-            [McpName("asset_id"), Description("Prefab asset ID to load.")] string? assetId = null,
-            [McpName("parent_id"), Description("Optional parent node ID.")] string? parentId = null,
-            [McpName("scene_name"), Description("Optional scene name or ID.")] string? sceneName = null,
-            [McpName("preserve_world_transform"), Description("Preserve world transform when parenting.")] bool preserveWorldTransform = false)
-        {
-            var world = context.WorldInstance;
-            var assets = Engine.Assets;
-            if (assets is null)
-                return Task.FromResult(new McpToolResponse("Asset manager is unavailable.", isError: true));
-
-            SceneNode? parent = null;
-            if (!string.IsNullOrWhiteSpace(parentId))
-            {
-                if (!TryGetNodeById(world, parentId!, out parent, out var parentError) || parent is null)
-                    return Task.FromResult(new McpToolResponse(parentError ?? "Parent node not found.", isError: true));
-            }
-
-            SceneNode? instance = null;
-            if (!string.IsNullOrWhiteSpace(assetPath))
-            {
-                instance = assets.InstantiatePrefab(assetPath!, world, parent, preserveWorldTransform);
-            }
-            else if (!string.IsNullOrWhiteSpace(assetId) && Guid.TryParse(assetId, out var prefabGuid))
-            {
-                instance = assets.InstantiatePrefab(prefabGuid, world, parent, preserveWorldTransform);
-            }
-            else
-            {
-                return Task.FromResult(new McpToolResponse("Provide asset_path or asset_id.", isError: true));
-            }
-
-            if (instance is null)
-                return Task.FromResult(new McpToolResponse("Failed to instantiate prefab.", isError: true));
-
-            if (instance.Parent is null)
-            {
-                var scene = ResolveScene(world, sceneName);
-                if (scene is null)
-                    return Task.FromResult(new McpToolResponse("No active scene found to place the prefab.", isError: true));
-
-                scene.RootNodes.Add(instance);
-                if (scene.IsVisible)
-                    world.RootNodes.Add(instance);
-
-                // Record structural undo for the root-level prefab instance
-                Undo.TrackSceneNode(instance);
-                var sceneCapture = scene;
-                var worldCapture = world;
-                Undo.RecordStructuralChange("MCP Instantiate Prefab",
-                    undoAction: () =>
-                    {
-                        sceneCapture.RootNodes.Remove(instance);
-                        worldCapture.RootNodes.Remove(instance);
-                        instance.IsActiveSelf = false;
-                    },
-                    redoAction: () =>
-                    {
-                        sceneCapture.RootNodes.Add(instance);
-                        if (sceneCapture.IsVisible)
-                            worldCapture.RootNodes.Add(instance);
-                        instance.IsActiveSelf = true;
-                        Undo.TrackSceneNode(instance);
-                    });
-            }
-            else
-            {
-                // Record structural undo for the parented prefab instance
-                Undo.TrackSceneNode(instance);
-                var parentTfm = instance.Transform.Parent;
-                Undo.RecordStructuralChange("MCP Instantiate Prefab",
-                    undoAction: () =>
-                    {
-                        parentTfm?.RemoveChild(instance.Transform, EParentAssignmentMode.Immediate);
-                        instance.IsActiveSelf = false;
-                    },
-                    redoAction: () =>
-                    {
-                        instance.Transform.SetParent(parentTfm, false, EParentAssignmentMode.Immediate);
-                        instance.IsActiveSelf = true;
-                        Undo.TrackSceneNode(instance);
-                    });
-            }
-
-            return Task.FromResult(new McpToolResponse("Instantiated prefab.", new { id = instance.ID, path = BuildNodePath(instance) }));
-        }
     }
 }

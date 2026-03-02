@@ -1681,6 +1681,16 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         BeginCameraFocusLerp(targetPosition, targetRotation, durationSeconds);
     }
 
+    public void FocusOnView(Vector3 targetPosition, Quaternion targetRotation, float durationSeconds = DefaultFocusDurationSeconds)
+    {
+        var tfm = TransformAs<Transform>();
+        if (tfm is null)
+            return;
+
+        CancelCameraFocusLerp();
+        BeginCameraFocusLerp(targetPosition, targetRotation, durationSeconds);
+    }
+
     private void BeginCameraFocusLerp(Vector3 targetPosition, Quaternion targetRotation, float durationSeconds)
     {
         var tfm = TransformAs<Transform>(); if (tfm is null) return;

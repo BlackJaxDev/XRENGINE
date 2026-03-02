@@ -19,9 +19,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists files and folders in the game project's assets directory.
         /// </summary>
-        [XRMcp]
-        [McpName("list_game_assets")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "list_game_assets", Permission = McpPermissionLevel.ReadOnly)]
         [Description("List files and folders in the game project's assets directory with optional filtering.")]
         public static Task<McpToolResponse> ListGameAssetsAsync(
             McpToolContext context,
@@ -97,9 +95,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Reads raw text contents of an asset file (.asset, .json, .xml, .yaml, etc.).
         /// </summary>
-        [XRMcp]
-        [McpName("read_game_asset")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "read_game_asset", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Read the raw text contents of a file from the game project's assets directory (.asset, .json, .xml, .yaml, .cs, etc.).")]
         public static Task<McpToolResponse> ReadGameAssetAsync(
             McpToolContext context,
@@ -131,9 +127,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Writes or overwrites a text asset file in the game assets directory.
         /// </summary>
-        [XRMcp]
-        [McpName("write_game_asset")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Creates or overwrites a file on disk.")]
+        [XRMcp(Name = "write_game_asset", Permission = McpPermissionLevel.Destructive, PermissionReason = "Creates or overwrites a file on disk.")]
         [Description("Write or overwrite a text asset file in the game project's assets directory.")]
         public static Task<McpToolResponse> WriteGameAssetAsync(
             McpToolContext context,
@@ -173,9 +167,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Deletes a file or empty directory from game assets.
         /// </summary>
-        [XRMcp]
-        [McpName("delete_game_asset")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Permanently deletes files or directories from disk.")]
+        [XRMcp(Name = "delete_game_asset", Permission = McpPermissionLevel.Destructive, PermissionReason = "Permanently deletes files or directories from disk.")]
         [Description("Delete a file or directory from the game project's assets directory.")]
         public static Task<McpToolResponse> DeleteGameAssetAsync(
             McpToolContext context,
@@ -219,9 +211,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Renames or moves a file within game assets.
         /// </summary>
-        [XRMcp]
-        [McpName("rename_game_asset")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Moves/renames a file on disk.")]
+        [XRMcp(Name = "rename_game_asset", Permission = McpPermissionLevel.Destructive, PermissionReason = "Moves/renames a file on disk.")]
         [Description("Rename or move a file or directory within the game project's assets directory.")]
         public static Task<McpToolResponse> RenameGameAssetAsync(
             McpToolContext context,
@@ -274,9 +264,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Copies a file within game assets.
         /// </summary>
-        [XRMcp]
-        [McpName("copy_game_asset")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Creates a new file on disk.")]
+        [XRMcp(Name = "copy_game_asset", Permission = McpPermissionLevel.Destructive, PermissionReason = "Creates a new file on disk.")]
         [Description("Copy a file within the game project's assets directory.")]
         public static Task<McpToolResponse> CopyGameAssetAsync(
             McpToolContext context,
@@ -322,9 +310,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Gets the full directory tree as nested JSON.
         /// </summary>
-        [XRMcp]
-        [McpName("get_game_asset_tree")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_game_asset_tree", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Get the full directory tree of the game project's assets directory as nested JSON.")]
         public static Task<McpToolResponse> GetGameAssetTreeAsync(
             McpToolContext context,
@@ -352,9 +338,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Creates a new typed engine asset and saves to game assets.
         /// </summary>
-        [XRMcp]
-        [McpName("create_asset")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Creates a new engine asset file on disk.")]
+        [XRMcp(Name = "create_asset", Permission = McpPermissionLevel.Destructive, PermissionReason = "Creates a new engine asset file on disk.")]
         [Description("Create a new typed engine asset (e.g., material, texture, animation) and save it to the game project's assets directory.")]
         public static Task<McpToolResponse> CreateAssetAsync(
             McpToolContext context,
@@ -459,9 +443,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Imports a third-party file (GLTF, FBX, OBJ, PNG, WAV, etc.) into game assets using the engine's import pipeline.
         /// </summary>
-        [XRMcp]
-        [McpName("import_third_party_asset")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Copies and imports files into the game project.")]
+        [XRMcp(Name = "import_third_party_asset", Permission = McpPermissionLevel.Destructive, PermissionReason = "Copies and imports files into the game project.")]
         [Description("Import a third-party file (GLTF, FBX, OBJ, PNG, WAV, etc.) into game assets using the engine's import pipeline.")]
         public static Task<McpToolResponse> ImportThirdPartyAssetAsync(
             McpToolContext context,
@@ -545,9 +527,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Force-reloads an asset from disk after external edits.
         /// </summary>
-        [XRMcp]
-        [McpName("reload_asset")]
-        [McpPermission(McpPermissionLevel.Mutate)]
+        [XRMcp(Name = "reload_asset", Permission = McpPermissionLevel.Mutate)]
         [Description("Force-reload an asset from disk after external edits. Specify by asset GUID or file path.")]
         public static Task<McpToolResponse> ReloadAssetAsync(
             McpToolContext context,
@@ -619,9 +599,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Lists all assets referenced by a given asset by walking its embedded asset graph.
         /// </summary>
-        [XRMcp]
-        [McpName("get_asset_dependencies")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_asset_dependencies", Permission = McpPermissionLevel.ReadOnly)]
         [Description("List all assets referenced/embedded by a given asset. Specify by asset GUID or file path.")]
         public static Task<McpToolResponse> GetAssetDependenciesAsync(
             McpToolContext context,
@@ -669,9 +647,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Reverse lookup: finds all loaded assets and scene nodes that reference a given asset.
         /// </summary>
-        [XRMcp]
-        [McpName("get_asset_references")]
-        [McpPermission(McpPermissionLevel.ReadOnly)]
+        [XRMcp(Name = "get_asset_references", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Find all loaded assets and scene nodes that reference a given asset. Specify by asset GUID or file path.")]
         public static Task<McpToolResponse> GetAssetReferencesAsync(
             McpToolContext context,
@@ -745,9 +721,7 @@ namespace XREngine.Editor.Mcp
         /// <summary>
         /// Triggers cooking/packaging of an asset for runtime use using the cooked binary serializer.
         /// </summary>
-        [XRMcp]
-        [McpName("cook_asset")]
-        [McpPermission(McpPermissionLevel.Destructive, Reason = "Creates cooked binary output files on disk.")]
+        [XRMcp(Name = "cook_asset", Permission = McpPermissionLevel.Destructive, PermissionReason = "Creates cooked binary output files on disk.")]
         [Description("Cook/package an asset for optimized runtime loading. Creates a cooked binary file at the specified output location.")]
         public static Task<McpToolResponse> CookAssetAsync(
             McpToolContext context,

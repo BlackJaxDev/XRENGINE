@@ -19,6 +19,10 @@ namespace XREngine.Editor.Mcp
     /// <item><description><c>EditorMcpActions.TypeSystem.cs</c> - .NET type system navigation and reflection queries</description></item>
     /// <item><description><c>EditorMcpActions.Scripting.cs</c> - Code/script management, compilation, hot-reload, and scaffolding</description></item>
     /// <item><description><c>EditorMcpActions.GameAssets.cs</c> - Game project asset management (file-system and engine-aware operations)</description></item>
+    /// <item><description><c>EditorMcpActions.LiveInspection.cs</c> - Live instance inspection, property watches, and runtime reflection</description></item>
+    /// <item><description><c>EditorMcpActions.Settings.cs</c> - Project configuration, game/editor/engine settings, and config file operations</description></item>
+    /// <item><description><c>EditorMcpActions.SceneAuthoring.cs</c> - Advanced scene authoring: prefab instantiation, batch operations, scene cloning</description></item>
+    /// <item><description><c>EditorMcpActions.ExtendedWorkflow.cs</c> - Scene integrity, transactions, snapshots, prefab override workflows, and advanced command/query tools</description></item>
     /// <item><description><c>EditorMcpActions.Helpers.cs</c> - Internal helper methods</description></item>
     /// </list>
     /// <para>

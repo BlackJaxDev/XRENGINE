@@ -68,6 +68,7 @@ public static partial class EditorImGuiUI
         private static bool _showInspector = true;
         private static bool _showAssetExplorer = true;
         private static bool _showNetworking;
+        private static UserSettings? _windowVisibilitySettingsSource;
 
         private static bool _renameInputFocusRequested;
         private static bool _imguiStyleInitialized;
@@ -496,6 +497,8 @@ public static partial class EditorImGuiUI
             _assetExplorerWindowHovered = false;
             _assetDragInProgress = false;
 
+            LoadWindowVisibilityFromUserSettingsIfNeeded();
+
             EnsureProfessionalImGuiStyling();
             ApplyViewportModeImGuiBackgroundAlpha();
 
@@ -568,6 +571,8 @@ public static partial class EditorImGuiUI
             DrawAssetExplorerPanel();
             DrawArchiveInspectorPanel();
             DrawClosePromptDialog();
+
+            PersistWindowVisibilityToUserSettingsIfChanged();
 
             // Tool windows
             UI.Tools.ShaderLockingWindow.Instance.Render();
@@ -1482,6 +1487,139 @@ public static partial class EditorImGuiUI
             }
 
             return null;
+        }
+
+        private static void LoadWindowVisibilityFromUserSettingsIfNeeded()
+        {
+            var userSettings = Engine.UserSettings;
+            if (userSettings is null)
+                return;
+
+            if (ReferenceEquals(_windowVisibilitySettingsSource, userSettings))
+                return;
+
+            _windowVisibilitySettingsSource = userSettings;
+
+            _showHierarchy = userSettings.ImGuiShowHierarchy;
+            _showEditorSceneHierarchy = userSettings.ImGuiShowEditorSceneHierarchy;
+            _showInspector = userSettings.ImGuiShowInspector;
+            _showAssetExplorer = userSettings.ImGuiShowAssetExplorer;
+            _showConsole = userSettings.ImGuiShowConsole;
+            _showRenderPipelineGraph = userSettings.ImGuiShowRenderPipelineGraph;
+            _showStatePanel = userSettings.ImGuiShowEngineState;
+            _showProfiler = userSettings.ImGuiShowProfiler;
+            _showOpenGLApiObjects = userSettings.ImGuiShowRenderApiObjects;
+            _showOpenGLErrors = userSettings.ImGuiShowRenderApiErrors;
+            _showRenderApiExtensions = userSettings.ImGuiShowRenderApiExtensions;
+            _showMissingAssets = userSettings.ImGuiShowMissingAssets;
+            _showNetworking = userSettings.ImGuiShowNetworking;
+            _showShaderGraphPanel = userSettings.ImGuiShowShaderGraph;
+            _showArchiveInspector = userSettings.ImGuiShowArchiveInspector;
+        }
+
+        private static void PersistWindowVisibilityToUserSettingsIfChanged()
+        {
+            var userSettings = Engine.UserSettings;
+            if (userSettings is null)
+                return;
+
+            if (!ReferenceEquals(_windowVisibilitySettingsSource, userSettings))
+                LoadWindowVisibilityFromUserSettingsIfNeeded();
+
+            bool changed = false;
+
+            if (userSettings.ImGuiShowHierarchy != _showHierarchy)
+            {
+                userSettings.ImGuiShowHierarchy = _showHierarchy;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowEditorSceneHierarchy != _showEditorSceneHierarchy)
+            {
+                userSettings.ImGuiShowEditorSceneHierarchy = _showEditorSceneHierarchy;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowInspector != _showInspector)
+            {
+                userSettings.ImGuiShowInspector = _showInspector;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowAssetExplorer != _showAssetExplorer)
+            {
+                userSettings.ImGuiShowAssetExplorer = _showAssetExplorer;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowConsole != _showConsole)
+            {
+                userSettings.ImGuiShowConsole = _showConsole;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowRenderPipelineGraph != _showRenderPipelineGraph)
+            {
+                userSettings.ImGuiShowRenderPipelineGraph = _showRenderPipelineGraph;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowEngineState != _showStatePanel)
+            {
+                userSettings.ImGuiShowEngineState = _showStatePanel;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowProfiler != _showProfiler)
+            {
+                userSettings.ImGuiShowProfiler = _showProfiler;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowRenderApiObjects != _showOpenGLApiObjects)
+            {
+                userSettings.ImGuiShowRenderApiObjects = _showOpenGLApiObjects;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowRenderApiErrors != _showOpenGLErrors)
+            {
+                userSettings.ImGuiShowRenderApiErrors = _showOpenGLErrors;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowRenderApiExtensions != _showRenderApiExtensions)
+            {
+                userSettings.ImGuiShowRenderApiExtensions = _showRenderApiExtensions;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowMissingAssets != _showMissingAssets)
+            {
+                userSettings.ImGuiShowMissingAssets = _showMissingAssets;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowNetworking != _showNetworking)
+            {
+                userSettings.ImGuiShowNetworking = _showNetworking;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowShaderGraph != _showShaderGraphPanel)
+            {
+                userSettings.ImGuiShowShaderGraph = _showShaderGraphPanel;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowArchiveInspector != _showArchiveInspector)
+            {
+                userSettings.ImGuiShowArchiveInspector = _showArchiveInspector;
+                changed = true;
+            }
+
+            if (changed)
+                Engine.SaveProjectUserSettings();
         }
 
         private static void OpenSettingsInInspector(object? settingsRoot, string title)

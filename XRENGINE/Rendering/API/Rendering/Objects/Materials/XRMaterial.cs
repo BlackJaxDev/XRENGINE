@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Numerics;
+using System.Text.RegularExpressions;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -218,6 +219,112 @@ namespace XREngine.Rendering
             ShaderPipelineProgram = Engine.Rendering.Settings.AllowShaderPipelines
                 ? new XRRenderProgram(true, true, Shaders.Where(x => x.Type != EShaderType.Vertex))
                 : null;
+
+            SyncParametersToShaderUniforms();
+        }
+
+        /// <summary>
+        /// Regex matching simple uniform declarations (no arrays, no blocks).
+        /// Captures group 1 = GLSL type, group 2 = uniform name.
+        /// Handles optional precision qualifiers (lowp / mediump / highp).
+        /// </summary>
+        private static readonly Regex UniformDeclRegex = new(
+            @"\buniform\s+(?:(?:lowp|mediump|highp)\s+)?(\w+)\s+(\w+)\s*[;=]",
+            RegexOptions.Compiled);
+
+        /// <summary>
+        /// Engine-managed uniform names that should never appear in the material
+        /// <see cref="XRMaterialBase.Parameters"/> array (they are set automatically
+        /// by the render pipeline each frame).
+        /// </summary>
+        private static readonly HashSet<string> EngineUniformNames =
+            new(Enum.GetNames<EEngineUniform>(), StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Parses all shader sources for uniform declarations and synchronizes
+        /// <see cref="XRMaterialBase.Parameters"/> to match.
+        /// <list type="bullet">
+        ///   <item>Existing <see cref="ShaderVar"/>s whose name and type still match a declared uniform are preserved (keeping their current value).</item>
+        ///   <item>New default-valued <see cref="ShaderVar"/>s are created for any previously undiscovered uniforms.</item>
+        ///   <item>Stale entries that no longer correspond to any shader uniform are removed.</item>
+        ///   <item>Engine-managed uniforms (see <see cref="EEngineUniform"/>), samplers, and array uniforms are excluded.</item>
+        /// </list>
+        /// Called automatically from <see cref="ShadersChanged"/>.
+        /// </summary>
+        private void SyncParametersToShaderUniforms()
+        {
+            // Nothing to parse → leave Parameters untouched (empty material, deserialization in progress, etc.)
+            if (Shaders.Count == 0)
+                return;
+
+            Regex uniformRegex = UniformDeclRegex;
+
+            // Track whether ANY shader actually had parseable source text.
+            // If no source text is available yet (async load, deserialization in progress),
+            // we must leave Parameters untouched to avoid wiping out explicitly provided values.
+            bool anySourceParsed = false;
+
+            // Discover uniforms from all shader sources
+            var discoveredUniforms = new Dictionary<string, EShaderVarType>(StringComparer.Ordinal);
+            foreach (var shader in Shaders)
+            {
+                if (shader?.Source?.Text is not { Length: > 0 } source)
+                    continue;
+
+                anySourceParsed = true;
+
+                foreach (Match match in uniformRegex.Matches(source))
+                {
+                    string glslType = match.Groups[1].Value;
+                    string uniformName = match.Groups[2].Value;
+
+                    // Skip engine-managed uniforms
+                    if (EngineUniformNames.Contains(uniformName))
+                        continue;
+
+                    // Skip types we can't represent as ShaderVars (samplers, images, etc.)
+                    if (!ShaderVar.GlslTypeMap.TryGetValue(glslType, out EShaderVarType varType))
+                        continue;
+
+                    // First occurrence wins (same name across shader stages)
+                    discoveredUniforms.TryAdd(uniformName, varType);
+                }
+            }
+
+            // If no shader source text was available, don't touch Parameters.
+            // The sync will run again when the shader source is loaded/reloaded
+            // (via ShaderReloaded → ShadersChanged).
+            if (!anySourceParsed)
+                return;
+
+            // Build lookup of existing parameters for fast merge
+            var existingByName = new Dictionary<string, ShaderVar>(StringComparer.Ordinal);
+            if (Parameters is not null)
+                foreach (var p in Parameters)
+                    if (p is not null && !string.IsNullOrEmpty(p.Name))
+                        existingByName.TryAdd(p.Name, p);
+
+            // Merge: keep matching existing vars (preserving values), create defaults for new, drop stale
+            var merged = new List<ShaderVar>(discoveredUniforms.Count);
+            foreach (var (name, type) in discoveredUniforms)
+            {
+                if (existingByName.TryGetValue(name, out ShaderVar? existing) && existing.TypeName == type)
+                {
+                    merged.Add(existing);
+                }
+                else
+                {
+                    ShaderVar? newVar = ShaderVar.CreateForType(type, name);
+                    if (newVar is not null)
+                        merged.Add(newVar);
+                }
+            }
+
+            // Only reassign if the set actually changed (avoids unnecessary change-notification noise)
+            ShaderVar[] mergedArray = [.. merged];
+            ShaderVar[]? current = Parameters;
+            if (current is null || current.Length != mergedArray.Length || !current.SequenceEqual(mergedArray))
+                Parameters = mergedArray;
         }
 
         public static XRMaterial CreateUnlitAlphaTextureMaterialForward(XRTexture2D texture)

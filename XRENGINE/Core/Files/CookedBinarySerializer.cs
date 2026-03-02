@@ -1902,35 +1902,12 @@ public static class CookedBinarySerializer
 
         try
         {
-            // Prefer a dedicated construction hook if present.
-            // NOTE: XRComponent declares this as a *private* method, so looking it up on the
-            // derived runtime type will not find it. We must query the declaring base type.
-            MethodInfo? method = typeof(XRComponent).GetMethod(
-                "ConstructionSetSceneNode",
-                BindingFlags.Instance | BindingFlags.NonPublic,
-                binder: null,
-                types: new[] { typeof(SceneNode) },
-                modifiers: null);
+            // ConstructionSetSceneNode is internal, so we can call it directly.
+            component.ConstructionSetSceneNode(owner);
 
-            if (method is not null)
-            {
-                method.Invoke(component, new object?[] { owner });
-
-                // SceneNode attachment uses a private construction hook that bypasses the
-                // SceneNode property setter, so we also need to propagate World explicitly.
-                // This will trigger XRComponent's World-change handling to rebind render infos.
-                if (owner.World is not null)
-                    component.World = owner.World;
-                return;
-            }
-
-            // Fall back to setting the private SceneNode property setter.
-            PropertyInfo? prop = component.GetType().GetProperty(
-                nameof(XRComponent.SceneNode),
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            MethodInfo? setter = prop?.GetSetMethod(nonPublic: true);
-            setter?.Invoke(component, new object?[] { owner });
-
+            // SceneNode attachment uses a construction hook that bypasses the
+            // SceneNode property setter, so we also need to propagate World explicitly.
+            // This will trigger XRComponent's World-change handling to rebind render infos.
             if (owner.World is not null)
                 component.World = owner.World;
         }
