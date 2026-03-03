@@ -7,7 +7,7 @@ namespace XREngine.Profiler;
 
 /// <summary>
 /// P/Invoke wrapper for ImGui DockBuilder functions that are not exposed in ImGuiNET.
-/// Copied from XREngine.Editor/IMGUI/ImGuiDockBuilderNative.cs with namespace change.
+/// Synced from XREngine.Editor/IMGUI/ImGuiDockBuilderNative.cs with namespace change.
 /// </summary>
 internal static unsafe class ImGuiDockBuilderNative
 {
@@ -37,6 +37,9 @@ internal static unsafe class ImGuiDockBuilderNative
     [DllImport(CImGuiLib, CallingConvention = CallingConvention.Cdecl)]
     private static extern void igDockBuilderFinish(uint node_id);
 
+    /// <summary>
+    /// Docks a window into a specific dock node.
+    /// </summary>
     public static void DockWindow(string windowName, uint nodeId)
     {
         if (string.IsNullOrEmpty(windowName))
@@ -53,36 +56,63 @@ internal static unsafe class ImGuiDockBuilderNative
         igDockBuilderDockWindow(nameBytes, nodeId);
     }
 
+    /// <summary>
+    /// Gets a dock node by ID.
+    /// </summary>
     public static IntPtr GetNode(uint nodeId)
     {
         return igDockBuilderGetNode(nodeId);
     }
 
+    /// <summary>
+    /// Checks if a dock node exists.
+    /// </summary>
     public static bool NodeExists(uint nodeId)
     {
         return igDockBuilderGetNode(nodeId) != IntPtr.Zero;
     }
 
+    /// <summary>
+    /// Removes a dock node and all its child nodes.
+    /// </summary>
     public static void RemoveNode(uint nodeId)
     {
         igDockBuilderRemoveNode(nodeId);
     }
 
+    /// <summary>
+    /// Adds a new dock node.
+    /// </summary>
     public static uint AddNode(uint nodeId, ImGuiDockNodeFlags flags)
     {
         return igDockBuilderAddNode(nodeId, flags);
     }
 
+    /// <summary>
+    /// Sets the size of a dock node.
+    /// </summary>
     public static void SetNodeSize(uint nodeId, Vector2 size)
     {
         igDockBuilderSetNodeSize(nodeId, size);
     }
 
+    /// <summary>
+    /// Sets the position of a dock node.
+    /// </summary>
     public static void SetNodePos(uint nodeId, Vector2 pos)
     {
         igDockBuilderSetNodePos(nodeId, pos);
     }
 
+    /// <summary>
+    /// Splits a dock node into two nodes.
+    /// </summary>
+    /// <param name="nodeId">The node to split.</param>
+    /// <param name="splitDir">Direction of the split.</param>
+    /// <param name="sizeRatio">Size ratio for the node in the split direction (0.0-1.0).</param>
+    /// <param name="outIdAtDir">Output: ID of the node in the split direction.</param>
+    /// <param name="outIdAtOpposite">Output: ID of the node opposite to the split direction.</param>
+    /// <returns>The ID of the new node.</returns>
     public static uint SplitNode(uint nodeId, ImGuiDir splitDir, float sizeRatio, out uint outIdAtDir, out uint outIdAtOpposite)
     {
         uint atDir = 0;
@@ -93,6 +123,9 @@ internal static unsafe class ImGuiDockBuilderNative
         return result;
     }
 
+    /// <summary>
+    /// Finalizes the dock builder layout.
+    /// </summary>
     public static void Finish(uint nodeId)
     {
         igDockBuilderFinish(nodeId);

@@ -56,41 +56,46 @@ namespace XREngine.Components.Animation
             {
                 case EHumanoidValue.LeftEyeDownUp:
                     {
+                        const float degToRad = MathF.PI / 180.0f;
                         float yaw = Settings.GetValue(EHumanoidValue.LeftEyeInOut);
                         float pitch = Interp.Lerp(Settings.LeftEyeDownUpRange.X, Settings.LeftEyeDownUpRange.Y, t);
                         Settings.SetValue(EHumanoidValue.LeftEyeDownUp, pitch);
 
-                        Quaternion q = Quaternion.CreateFromYawPitchRoll(yaw, pitch, 0.0f);
+                        // LH→RH: negate yaw (Y) and pitch (X) to convert from Unity's left-handed convention.
+                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
                         Left.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
                         break;
                     }
                 case EHumanoidValue.LeftEyeInOut:
                     {
+                        const float degToRad = MathF.PI / 180.0f;
                         float yaw = Interp.Lerp(Settings.LeftEyeInOutRange.X, Settings.LeftEyeInOutRange.Y, t);
                         float pitch = Settings.GetValue(EHumanoidValue.LeftEyeDownUp);
                         Settings.SetValue(EHumanoidValue.LeftEyeInOut, yaw);
 
-                        Quaternion q = Quaternion.CreateFromYawPitchRoll(yaw, pitch, 0.0f);
+                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
                         Left.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
                         break;
                     }
                 case EHumanoidValue.RightEyeDownUp:
                     {
+                        const float degToRad = MathF.PI / 180.0f;
                         float yaw = Settings.GetValue(EHumanoidValue.RightEyeInOut);
                         float pitch = Interp.Lerp(Settings.RightEyeDownUpRange.X, Settings.RightEyeDownUpRange.Y, t);
                         Settings.SetValue(EHumanoidValue.RightEyeDownUp, pitch);
 
-                        Quaternion q = Quaternion.CreateFromYawPitchRoll(yaw, pitch, 0.0f);
+                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
                         Right.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
                         break;
                     }
                 case EHumanoidValue.RightEyeInOut:
                     {
+                        const float degToRad = MathF.PI / 180.0f;
                         float yaw = Interp.Lerp(Settings.RightEyeInOutRange.X, Settings.RightEyeInOutRange.Y, t);
                         float pitch = Settings.GetValue(EHumanoidValue.RightEyeDownUp);
                         Settings.SetValue(EHumanoidValue.RightEyeInOut, yaw);
 
-                        Quaternion q = Quaternion.CreateFromYawPitchRoll(yaw, pitch, 0.0f);
+                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
                         Right.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
                         break;
                     }
@@ -155,6 +160,9 @@ namespace XREngine.Components.Animation
 
             EnsureBoneMapping();
 
+            // Log first-playback diagnostic (once).
+            LogFirstPlaybackDiagnostic();
+
             // Torso
             ApplyBindRelativeEulerDegrees(
                 Spine.Node,
@@ -181,20 +189,20 @@ namespace XREngine.Components.Animation
                     rollDeg: MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(EHumanoidValue.UpperChestLeftRight), Settings.UpperChestLeftRightDegRange));
             }
 
-            // Neck / Head
+            // Neck / Head — Unity default: all ±40°.
             ApplyBindRelativeEulerDegrees(
                 Neck.Node,
-                yawDeg: MapMuscleToDeg(EHumanoidValue.NeckTurnLeftRight, GetMuscleValue(EHumanoidValue.NeckTurnLeftRight), new Vector2(-30.0f, 30.0f)),
+                yawDeg: MapMuscleToDeg(EHumanoidValue.NeckTurnLeftRight, GetMuscleValue(EHumanoidValue.NeckTurnLeftRight), new Vector2(-40.0f, 40.0f)),
                 pitchDeg: MapMuscleToDeg(EHumanoidValue.NeckNodDownUp, GetMuscleValue(EHumanoidValue.NeckNodDownUp), Settings.NeckNodDownUpDegRange),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.NeckTiltLeftRight, GetMuscleValue(EHumanoidValue.NeckTiltLeftRight), new Vector2(-20.0f, 20.0f)));
+                rollDeg: MapMuscleToDeg(EHumanoidValue.NeckTiltLeftRight, GetMuscleValue(EHumanoidValue.NeckTiltLeftRight), new Vector2(-40.0f, 40.0f)));
 
             ApplyBindRelativeEulerDegrees(
                 Head.Node,
-                yawDeg: MapMuscleToDeg(EHumanoidValue.HeadTurnLeftRight, GetMuscleValue(EHumanoidValue.HeadTurnLeftRight), new Vector2(-60.0f, 60.0f)),
+                yawDeg: MapMuscleToDeg(EHumanoidValue.HeadTurnLeftRight, GetMuscleValue(EHumanoidValue.HeadTurnLeftRight), new Vector2(-40.0f, 40.0f)),
                 pitchDeg: MapMuscleToDeg(EHumanoidValue.HeadNodDownUp, GetMuscleValue(EHumanoidValue.HeadNodDownUp), Settings.HeadNodDownUpDegRange),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.HeadTiltLeftRight, GetMuscleValue(EHumanoidValue.HeadTiltLeftRight), new Vector2(-30.0f, 30.0f)));
+                rollDeg: MapMuscleToDeg(EHumanoidValue.HeadTiltLeftRight, GetMuscleValue(EHumanoidValue.HeadTiltLeftRight), new Vector2(-40.0f, 40.0f)));
 
-            // Jaw
+            // Jaw — not shown in Unity default screenshot; keeping reasonable estimates.
             ApplyBindRelativeEulerDegrees(
                 Jaw.Node,
                 yawDeg: MapMuscleToDeg(EHumanoidValue.JawLeftRight, GetMuscleValue(EHumanoidValue.JawLeftRight), new Vector2(-15.0f, 15.0f)),
@@ -259,8 +267,9 @@ namespace XREngine.Components.Animation
             float lowerLegStretchMuscle = -GetMuscleValue(lowerLegStretch);
 
             // Body-space basis from hips bind pose (Unity humanoid muscles are avatar/body-space driven).
+            // Unity forward is LH +Z. In our RH space that corresponds to -Z.
             Vector3 bodyRight = GetBodyAxisWorld(Vector3.UnitX);
-            Vector3 bodyForward = GetBodyAxisWorld(Vector3.UnitZ);
+            Vector3 bodyForward = GetBodyAxisWorld(-Vector3.UnitZ);
 
             // Limb twist axis from bind-pose bone direction (parent -> child).
             Vector3 armTwistAxisWorld = GetBoneToChildAxisWorld(side.Arm, side.Elbow, GetBodyAxisWorld(Vector3.UnitY));
@@ -270,72 +279,73 @@ namespace XREngine.Components.Animation
             Vector3 sideAxisWorld = Vector3.Normalize(bodyForward * sideMirror);
             Vector3 frontBackAxisWorld = bodyRight;
 
-            // Shoulder
+            // Shoulder — Unity default: Down-Up −15..30, Front-Back ±15.
             ApplyBindRelativeSwingTwistWorldAxes(
                 side.Shoulder.Node,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg(shoulderDownUp, GetMuscleValue(shoulderDownUp), new Vector2(-35.0f, 35.0f)),
-                rollDeg: MapMuscleToDeg(shoulderFrontBack, GetMuscleValue(shoulderFrontBack), new Vector2(-25.0f, 25.0f)),
+                pitchDeg: MapMuscleToDeg(shoulderDownUp, GetMuscleValue(shoulderDownUp), new Vector2(-15.0f, 30.0f)),
+                rollDeg: MapMuscleToDeg(shoulderFrontBack, GetMuscleValue(shoulderFrontBack), new Vector2(-15.0f, 15.0f)),
                 twistAxisWorld: armTwistAxisWorld,
                 frontBackAxisWorld: sideAxisWorld,
                 leftRightAxisWorld: frontBackAxisWorld);
 
-            // Upper arm
+            // Upper arm — Unity default: Twist ±90, Down-Up −60..100, Front-Back ±100.
             ApplyBindRelativeSwingTwistWorldAxes(
                 side.Arm.Node,
-                yawDeg: MapMuscleToDeg(armTwist, GetMuscleValue(armTwist), new Vector2(-40.0f, 40.0f)) * sideMirror,
-                pitchDeg: MapMuscleToDeg(armDownUp, GetMuscleValue(armDownUp), new Vector2(-90.0f, 90.0f)),
-                rollDeg: MapMuscleToDeg(armFrontBack, GetMuscleValue(armFrontBack), new Vector2(-60.0f, 60.0f)),
+                yawDeg: MapMuscleToDeg(armTwist, GetMuscleValue(armTwist), new Vector2(-90.0f, 90.0f)) * sideMirror,
+                pitchDeg: MapMuscleToDeg(armDownUp, GetMuscleValue(armDownUp), new Vector2(-60.0f, 100.0f)),
+                rollDeg: MapMuscleToDeg(armFrontBack, GetMuscleValue(armFrontBack), new Vector2(-100.0f, 100.0f)),
                 twistAxisWorld: armTwistAxisWorld,
                 frontBackAxisWorld: sideAxisWorld,
                 leftRightAxisWorld: frontBackAxisWorld);
 
-            // Forearm (elbow) — Forearm Stretch is elbow flexion (pitch), not a bone scale.
+            // Forearm (elbow) — Unity default: Twist ±90, Stretch ±80.
             ApplyBindRelativeEulerDegrees(
                 side.Elbow.Node,
-                yawDeg: MapMuscleToDeg(forearmTwist, GetMuscleValue(forearmTwist), new Vector2(-60.0f, 60.0f)) * sideMirror,
+                yawDeg: MapMuscleToDeg(forearmTwist, GetMuscleValue(forearmTwist), new Vector2(-90.0f, 90.0f)) * sideMirror,
                 pitchDeg: MapMuscleToDeg(forearmStretch, forearmStretchMuscle, Settings.ForearmStretchDegRange),
                 rollDeg: 0.0f,
                 axisMapping: GetBoneAxisMapping(side.Elbow.Node));
 
-            // Wrist
+            // Wrist — Unity default: Down-Up ±80, In-Out ±40.
             ApplyBindRelativeEulerDegrees(
                 side.Wrist.Node,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg(handDownUp, GetMuscleValue(handDownUp), new Vector2(-60.0f, 60.0f)),
-                rollDeg: MapMuscleToDeg(handInOut, GetMuscleValue(handInOut), new Vector2(-45.0f, 45.0f)) * sideMirror,
+                pitchDeg: MapMuscleToDeg(handDownUp, GetMuscleValue(handDownUp), new Vector2(-80.0f, 80.0f)),
+                rollDeg: MapMuscleToDeg(handInOut, GetMuscleValue(handInOut), new Vector2(-40.0f, 40.0f)) * sideMirror,
                 axisMapping: GetBoneAxisMapping(side.Wrist.Node));
 
-            // Upper leg
+            // Upper leg — Unity default: Twist ±60, Front-Back −90..50, In-Out ±60.
             ApplyBindRelativeSwingTwistWorldAxes(
                 side.Leg.Node,
-                yawDeg: MapMuscleToDeg(upperLegTwist, GetMuscleValue(upperLegTwist), new Vector2(-45.0f, 45.0f)) * sideMirror,
-                pitchDeg: MapMuscleToDeg(upperLegFrontBack, GetMuscleValue(upperLegFrontBack), new Vector2(-90.0f, 90.0f)),
-                rollDeg: MapMuscleToDeg(upperLegInOut, GetMuscleValue(upperLegInOut), new Vector2(-35.0f, 35.0f)),
+                yawDeg: MapMuscleToDeg(upperLegTwist, GetMuscleValue(upperLegTwist), new Vector2(-60.0f, 60.0f)) * sideMirror,
+                pitchDeg: MapMuscleToDeg(upperLegFrontBack, GetMuscleValue(upperLegFrontBack), new Vector2(-90.0f, 50.0f)),
+                rollDeg: MapMuscleToDeg(upperLegInOut, GetMuscleValue(upperLegInOut), new Vector2(-60.0f, 60.0f)),
                 twistAxisWorld: legTwistAxisWorld,
                 frontBackAxisWorld: frontBackAxisWorld,
                 leftRightAxisWorld: sideAxisWorld);
 
-            // Lower leg (knee) — Lower Leg Stretch is knee flexion (pitch), not a bone scale.
+            // Lower leg (knee) — Unity default: Twist ±90, Stretch ±80.
             ApplyBindRelativeEulerDegrees(
                 side.Knee.Node,
-                yawDeg: MapMuscleToDeg(lowerLegTwist, GetMuscleValue(lowerLegTwist), new Vector2(-30.0f, 30.0f)) * sideMirror,
+                yawDeg: MapMuscleToDeg(lowerLegTwist, GetMuscleValue(lowerLegTwist), new Vector2(-90.0f, 90.0f)) * sideMirror,
                 pitchDeg: MapMuscleToDeg(lowerLegStretch, lowerLegStretchMuscle, Settings.LowerLegStretchDegRange),
                 rollDeg: 0.0f,
                 axisMapping: GetBoneAxisMapping(side.Knee.Node));
 
-            // Foot / Toes
+            // Foot — Unity default: Twist ±30, Up-Down ±50.
             ApplyBindRelativeEulerDegrees(
                 side.Foot.Node,
                 yawDeg: MapMuscleToDeg(footTwist, GetMuscleValue(footTwist), new Vector2(-30.0f, 30.0f)) * sideMirror,
-                pitchDeg: MapMuscleToDeg(footUpDown, GetMuscleValue(footUpDown), new Vector2(-45.0f, 45.0f)),
+                pitchDeg: MapMuscleToDeg(footUpDown, GetMuscleValue(footUpDown), new Vector2(-50.0f, 50.0f)),
                 rollDeg: 0.0f,
                 axisMapping: GetBoneAxisMapping(side.Foot.Node));
 
+            // Toes — Unity default: Up-Down ±50.
             ApplyBindRelativeEulerDegrees(
                 side.Toes.Node,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg(toesUpDown, GetMuscleValue(toesUpDown), new Vector2(-35.0f, 35.0f)),
+                pitchDeg: MapMuscleToDeg(toesUpDown, GetMuscleValue(toesUpDown), new Vector2(-50.0f, 50.0f)),
                 rollDeg: 0.0f,
                 axisMapping: GetBoneAxisMapping(side.Toes.Node));
         }
@@ -344,59 +354,90 @@ namespace XREngine.Components.Animation
         {
             var side = isLeft ? Left : Right;
 
-            ApplyFinger(isLeft, side.Hand.Index,
-                spread: isLeft ? EHumanoidValue.LeftHandIndexSpread : EHumanoidValue.RightHandIndexSpread,
-                prox: isLeft ? EHumanoidValue.LeftHandIndex1Stretched : EHumanoidValue.RightHandIndex1Stretched,
-                mid: isLeft ? EHumanoidValue.LeftHandIndex2Stretched : EHumanoidValue.RightHandIndex2Stretched,
-                dist: isLeft ? EHumanoidValue.LeftHandIndex3Stretched : EHumanoidValue.RightHandIndex3Stretched);
-
-            ApplyFinger(isLeft, side.Hand.Middle,
-                spread: isLeft ? EHumanoidValue.LeftHandMiddleSpread : EHumanoidValue.RightHandMiddleSpread,
-                prox: isLeft ? EHumanoidValue.LeftHandMiddle1Stretched : EHumanoidValue.RightHandMiddle1Stretched,
-                mid: isLeft ? EHumanoidValue.LeftHandMiddle2Stretched : EHumanoidValue.RightHandMiddle2Stretched,
-                dist: isLeft ? EHumanoidValue.LeftHandMiddle3Stretched : EHumanoidValue.RightHandMiddle3Stretched);
-
-            ApplyFinger(isLeft, side.Hand.Ring,
-                spread: isLeft ? EHumanoidValue.LeftHandRingSpread : EHumanoidValue.RightHandRingSpread,
-                prox: isLeft ? EHumanoidValue.LeftHandRing1Stretched : EHumanoidValue.RightHandRing1Stretched,
-                mid: isLeft ? EHumanoidValue.LeftHandRing2Stretched : EHumanoidValue.RightHandRing2Stretched,
-                dist: isLeft ? EHumanoidValue.LeftHandRing3Stretched : EHumanoidValue.RightHandRing3Stretched);
-
-            ApplyFinger(isLeft, side.Hand.Pinky,
-                spread: isLeft ? EHumanoidValue.LeftHandLittleSpread : EHumanoidValue.RightHandLittleSpread,
-                prox: isLeft ? EHumanoidValue.LeftHandLittle1Stretched : EHumanoidValue.RightHandLittle1Stretched,
-                mid: isLeft ? EHumanoidValue.LeftHandLittle2Stretched : EHumanoidValue.RightHandLittle2Stretched,
-                dist: isLeft ? EHumanoidValue.LeftHandLittle3Stretched : EHumanoidValue.RightHandLittle3Stretched);
+            // Unity default finger ranges (from Per-Muscle Settings):
+            //   Thumb:  1 Stretched −20..20, Spread −25..25, 2 Stretched −40..35, 3 Stretched −40..35
+            //   Index:  1 Stretched −50..50, Spread −20..20, 2 Stretched −45..45, 3 Stretched −45..45
+            //   Middle: 1 Stretched −50..50, Spread −7.5..7.5, 2 Stretched −45..45, 3 Stretched −45..45
+            //   Ring:   1 Stretched −50..50, Spread −7.5..7.5, 2 Stretched −45..45, 3 Stretched −45..45
+            //   Little: 1 Stretched −50..50, Spread −20..20, 2 Stretched −45..45, 3 Stretched −45..45
 
             ApplyFinger(isLeft, side.Hand.Thumb,
                 spread: isLeft ? EHumanoidValue.LeftHandThumbSpread : EHumanoidValue.RightHandThumbSpread,
                 prox: isLeft ? EHumanoidValue.LeftHandThumb1Stretched : EHumanoidValue.RightHandThumb1Stretched,
                 mid: isLeft ? EHumanoidValue.LeftHandThumb2Stretched : EHumanoidValue.RightHandThumb2Stretched,
-                dist: isLeft ? EHumanoidValue.LeftHandThumb3Stretched : EHumanoidValue.RightHandThumb3Stretched);
+                dist: isLeft ? EHumanoidValue.LeftHandThumb3Stretched : EHumanoidValue.RightHandThumb3Stretched,
+                spreadRange: new Vector2(-25.0f, 25.0f),
+                proxRange: new Vector2(-20.0f, 20.0f),
+                midRange: new Vector2(-40.0f, 35.0f),
+                distRange: new Vector2(-40.0f, 35.0f));
+
+            ApplyFinger(isLeft, side.Hand.Index,
+                spread: isLeft ? EHumanoidValue.LeftHandIndexSpread : EHumanoidValue.RightHandIndexSpread,
+                prox: isLeft ? EHumanoidValue.LeftHandIndex1Stretched : EHumanoidValue.RightHandIndex1Stretched,
+                mid: isLeft ? EHumanoidValue.LeftHandIndex2Stretched : EHumanoidValue.RightHandIndex2Stretched,
+                dist: isLeft ? EHumanoidValue.LeftHandIndex3Stretched : EHumanoidValue.RightHandIndex3Stretched,
+                spreadRange: new Vector2(-20.0f, 20.0f),
+                proxRange: new Vector2(-50.0f, 50.0f),
+                midRange: new Vector2(-45.0f, 45.0f),
+                distRange: new Vector2(-45.0f, 45.0f));
+
+            ApplyFinger(isLeft, side.Hand.Middle,
+                spread: isLeft ? EHumanoidValue.LeftHandMiddleSpread : EHumanoidValue.RightHandMiddleSpread,
+                prox: isLeft ? EHumanoidValue.LeftHandMiddle1Stretched : EHumanoidValue.RightHandMiddle1Stretched,
+                mid: isLeft ? EHumanoidValue.LeftHandMiddle2Stretched : EHumanoidValue.RightHandMiddle2Stretched,
+                dist: isLeft ? EHumanoidValue.LeftHandMiddle3Stretched : EHumanoidValue.RightHandMiddle3Stretched,
+                spreadRange: new Vector2(-7.5f, 7.5f),
+                proxRange: new Vector2(-50.0f, 50.0f),
+                midRange: new Vector2(-45.0f, 45.0f),
+                distRange: new Vector2(-45.0f, 45.0f));
+
+            ApplyFinger(isLeft, side.Hand.Ring,
+                spread: isLeft ? EHumanoidValue.LeftHandRingSpread : EHumanoidValue.RightHandRingSpread,
+                prox: isLeft ? EHumanoidValue.LeftHandRing1Stretched : EHumanoidValue.RightHandRing1Stretched,
+                mid: isLeft ? EHumanoidValue.LeftHandRing2Stretched : EHumanoidValue.RightHandRing2Stretched,
+                dist: isLeft ? EHumanoidValue.LeftHandRing3Stretched : EHumanoidValue.RightHandRing3Stretched,
+                spreadRange: new Vector2(-7.5f, 7.5f),
+                proxRange: new Vector2(-50.0f, 50.0f),
+                midRange: new Vector2(-45.0f, 45.0f),
+                distRange: new Vector2(-45.0f, 45.0f));
+
+            ApplyFinger(isLeft, side.Hand.Pinky,
+                spread: isLeft ? EHumanoidValue.LeftHandLittleSpread : EHumanoidValue.RightHandLittleSpread,
+                prox: isLeft ? EHumanoidValue.LeftHandLittle1Stretched : EHumanoidValue.RightHandLittle1Stretched,
+                mid: isLeft ? EHumanoidValue.LeftHandLittle2Stretched : EHumanoidValue.RightHandLittle2Stretched,
+                dist: isLeft ? EHumanoidValue.LeftHandLittle3Stretched : EHumanoidValue.RightHandLittle3Stretched,
+                spreadRange: new Vector2(-20.0f, 20.0f),
+                proxRange: new Vector2(-50.0f, 50.0f),
+                midRange: new Vector2(-45.0f, 45.0f),
+                distRange: new Vector2(-45.0f, 45.0f));
         }
 
-        private void ApplyFinger(bool isLeft, BodySide.Fingers.Finger finger, EHumanoidValue spread, EHumanoidValue prox, EHumanoidValue mid, EHumanoidValue dist)
+        private void ApplyFinger(
+            bool isLeft,
+            BodySide.Fingers.Finger finger,
+            EHumanoidValue spread, EHumanoidValue prox, EHumanoidValue mid, EHumanoidValue dist,
+            Vector2 spreadRange, Vector2 proxRange, Vector2 midRange, Vector2 distRange)
         {
             float sideMirror = isLeft ? 1.0f : -1.0f;
             // Stretched channels map to bending on each phalanx.
             ApplyBindRelativeEulerDegrees(
                 finger.Proximal.Node,
-                yawDeg: MapMuscleToDeg(spread, GetMuscleValue(spread), new Vector2(-15.0f, 15.0f)) * sideMirror,
-                pitchDeg: MapMuscleToDeg(prox, GetMuscleValue(prox), new Vector2(-45.0f, 45.0f)),
+                yawDeg: MapMuscleToDeg(spread, GetMuscleValue(spread), spreadRange) * sideMirror,
+                pitchDeg: MapMuscleToDeg(prox, GetMuscleValue(prox), proxRange),
                 rollDeg: 0.0f,
                 axisMapping: GetBoneAxisMapping(finger.Proximal.Node));
 
             ApplyBindRelativeEulerDegrees(
                 finger.Intermediate.Node,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg(mid, GetMuscleValue(mid), new Vector2(-45.0f, 45.0f)),
+                pitchDeg: MapMuscleToDeg(mid, GetMuscleValue(mid), midRange),
                 rollDeg: 0.0f,
                 axisMapping: GetBoneAxisMapping(finger.Intermediate.Node));
 
             ApplyBindRelativeEulerDegrees(
                 finger.Distal.Node,
                 yawDeg: 0.0f,
-                pitchDeg: MapMuscleToDeg(dist, GetMuscleValue(dist), new Vector2(-45.0f, 45.0f)),
+                pitchDeg: MapMuscleToDeg(dist, GetMuscleValue(dist), distRange),
                 rollDeg: 0.0f,
                 axisMapping: GetBoneAxisMapping(finger.Distal.Node));
         }
@@ -472,28 +513,45 @@ namespace XREngine.Components.Animation
 
             const float degToRad = MathF.PI / 180.0f;
 
+            // LH→RH conversion: Unity uses a left-handed coordinate system (Z = forward).
+            // Our engine uses right-handed OpenGL (Z = toward viewer).
+            // For the Z-flip transform M = diag(1,1,-1), a rotation R(axis, θ) in LH becomes
+            // R((-ax,-ay,az), θ) in RH. This means:
+            //   Rotation around X axis → negate angle
+            //   Rotation around Y axis → negate angle
+            //   Rotation around Z axis → angle stays
+
             Quaternion q;
             if (axisMapping.HasValue)
             {
                 var m = axisMapping.Value;
-                // Build rotation using axis-angle per DOF with proper swing-twist order.
-                // The twist (yawDeg) is applied innermost (first), then the two swing
-                // rotations are applied on top. This matches the swing-twist decomposition
-                // used by Unity's humanoid muscle system.
                 Vector3 twistVec = AxisIndexToVector(m.TwistAxis);
                 Vector3 fbVec = AxisIndexToVector(m.FrontBackAxis);
                 Vector3 lrVec = AxisIndexToVector(m.LeftRightAxis);
 
-                Quaternion twist = Quaternion.CreateFromAxisAngle(twistVec, yawDeg * degToRad);
-                Quaternion frontBack = Quaternion.CreateFromAxisAngle(fbVec, pitchDeg * degToRad);
-                Quaternion leftRight = Quaternion.CreateFromAxisAngle(lrVec, rollDeg * degToRad);
+                // Negate angle for X/Y local axes; keep for Z.
+                float twistHandednessSign = m.TwistAxis == 2 ? 1f : -1f;
+                float fbHandednessSign = m.FrontBackAxis == 2 ? 1f : -1f;
+                float lrHandednessSign = m.LeftRightAxis == 2 ? 1f : -1f;
 
-                // Composition: swing * twist  (twist applied first, swings on top)
-                q = frontBack * leftRight * twist;
+                // Per-bone axis polarity from avatar profiling/manual overrides.
+                // Treat 0 as +1 for backward compatibility with older serialized mappings.
+                float twistAxisSign = NormalizeAxisSign(m.TwistSign);
+                float fbAxisSign = NormalizeAxisSign(m.FrontBackSign);
+                float lrAxisSign = NormalizeAxisSign(m.LeftRightSign);
+
+                Quaternion twist = Quaternion.CreateFromAxisAngle(twistVec, twistHandednessSign * twistAxisSign * yawDeg * degToRad);
+                Quaternion frontBack = Quaternion.CreateFromAxisAngle(fbVec, fbHandednessSign * fbAxisSign * pitchDeg * degToRad);
+                Quaternion leftRight = Quaternion.CreateFromAxisAngle(lrVec, lrHandednessSign * lrAxisSign * rollDeg * degToRad);
+
+                // Unity ZXY Euler order: twist(Z) innermost, front-back(X), left-right(Y) outermost.
+                q = leftRight * frontBack * twist;
             }
             else
             {
-                q = Quaternion.CreateFromYawPitchRoll(yawDeg * degToRad, pitchDeg * degToRad, rollDeg * degToRad);
+                // CreateFromYawPitchRoll: yaw=Y, pitch=X, roll=Z.
+                // Negate yaw (Y) and pitch (X); keep roll (Z).
+                q = Quaternion.CreateFromYawPitchRoll(-yawDeg * degToRad, -pitchDeg * degToRad, rollDeg * degToRad);
             }
 
             node.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
@@ -506,6 +564,9 @@ namespace XREngine.Components.Animation
             2 => Vector3.UnitZ,
             _ => Vector3.UnitY,
         };
+
+        private static float NormalizeAxisSign(int sign)
+            => sign < 0 ? -1f : 1f;
 
         private Vector3 GetBodyAxisWorld(Vector3 localAxis)
         {
@@ -555,11 +616,45 @@ namespace XREngine.Components.Animation
             Vector3 frontBackLocal = TransformWorldAxisToBoneLocal(node, frontBackAxisWorld);
             Vector3 leftRightLocal = TransformWorldAxisToBoneLocal(node, leftRightAxisWorld);
 
+            // Orthogonalize swing axes against the twist axis via Gram-Schmidt.
+            // Body-space axes derived from the hips bind pose aren't guaranteed to be
+            // perpendicular to the limb twist axis (bone→child direction). Without
+            // orthogonalization, swing DOFs couple into twist, producing incorrect rotations.
+            frontBackLocal -= Vector3.Dot(frontBackLocal, twistLocal) * twistLocal;
+            float fbLen = frontBackLocal.LengthSquared();
+            if (fbLen > 1e-8f)
+            {
+                frontBackLocal /= MathF.Sqrt(fbLen);
+                // Recompute left-right as the cross product to guarantee a proper orthogonal frame.
+                leftRightLocal = Vector3.Cross(twistLocal, frontBackLocal);
+            }
+            else
+            {
+                // Degenerate case: front-back was parallel to twist. Rebuild from left-right.
+                leftRightLocal -= Vector3.Dot(leftRightLocal, twistLocal) * twistLocal;
+                float lrLen = leftRightLocal.LengthSquared();
+                if (lrLen > 1e-8f)
+                {
+                    leftRightLocal /= MathF.Sqrt(lrLen);
+                    frontBackLocal = Vector3.Cross(leftRightLocal, twistLocal);
+                }
+                // If both are degenerate, axes remain as-is (fallback).
+            }
+
+            // LH→RH conversion: negate X and Y components of bone-local axes.
+            // Unity muscle angles are defined in LH convention. The bone-local axes are
+            // from the RH skeleton (model import flips Z). To apply LH rotation angles
+            // onto RH axes correctly: R_LH(â,θ) → R_RH((-ax,-ay,az), θ).
+            twistLocal = new(-twistLocal.X, -twistLocal.Y, twistLocal.Z);
+            frontBackLocal = new(-frontBackLocal.X, -frontBackLocal.Y, frontBackLocal.Z);
+            leftRightLocal = new(-leftRightLocal.X, -leftRightLocal.Y, leftRightLocal.Z);
+
             Quaternion twist = Quaternion.CreateFromAxisAngle(twistLocal, yawDeg * degToRad);
             Quaternion frontBack = Quaternion.CreateFromAxisAngle(frontBackLocal, pitchDeg * degToRad);
             Quaternion leftRight = Quaternion.CreateFromAxisAngle(leftRightLocal, rollDeg * degToRad);
 
-            Quaternion q = frontBack * leftRight * twist;
+            // Unity ZXY Euler order: twist(Z) innermost, front-back(X), left-right(Y) outermost.
+            Quaternion q = leftRight * frontBack * twist;
             node.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
         }
 
@@ -1040,7 +1135,7 @@ namespace XREngine.Components.Animation
 
             if (Chest.Node is not null)
                 FindChildrenFor(Chest, [
-                    (UpperChest, ByNameContainsAll("UpperChest", "Upper_Chest")),
+                    (UpperChest, ByNameContainsAny("UpperChest", "Upper_Chest")),
                     (Neck, ByName("Neck")),
                     (Head, ByName("Head")),
                     (Left.Shoulder, ByPosition("Shoulder", x => x.X > 0.0f)),
@@ -1217,10 +1312,18 @@ namespace XREngine.Components.Animation
             // Log diagnostic information about bone mapping results
             LogBoneMappingDiagnostics();
 
-            // Auto-detect per-bone axis mappings from the skeleton geometry.
-            // This determines each bone's twist axis by looking at the direction
-            // to the next bone in the chain in the bone's own local space.
-            ComputeAutoAxisMappings();
+            // ── Build avatar profile (replaces the old ComputeAutoAxisMappings) ──
+            // This derives per-bone axis mappings with confidence scoring,
+            // sets IsIKCalibrated based on overall confidence, and applies
+            // conservative fallback when confidence is low.
+            var profileResult = AvatarHumanoidProfileBuilder.BuildProfile(this);
+            Settings.ProfileSource = "auto-generated";
+
+            string avatarName = SceneNode?.Name ?? "(unknown)";
+            AvatarHumanoidProfileBuilder.LogProfileSummary(profileResult, avatarName);
+
+            // Apply confidence-based fallback
+            ApplyConfidenceFallback(profileResult);
 
             // Log bind-pose snapshot for each mapped bone.
             LogBindPoseSnapshot();
@@ -1369,110 +1472,61 @@ namespace XREngine.Components.Animation
         }
 
         /// <summary>
-        /// Auto-detects per-bone axis mappings from the actual skeleton geometry.
-        /// For each bone pair (parent → child in the humanoid chain), computes
-        /// which local axis the bone primarily extends along (the twist axis),
-        /// and assigns the remaining two axes as front-back and left-right.
-        /// Only overrides when the detected twist axis differs from the default (Y).
-        /// User-configured mappings in Settings.BoneAxisMappings are never overwritten.
+        /// Applies conservative fallback behavior when profile confidence is low.
+        /// - IK goals are disabled (policy set to Ignore).
+        /// - A diagnostic warning is emitted.
+        /// Muscle channels and root motion still play regardless of confidence.
         /// </summary>
-        private void ComputeAutoAxisMappings()
+        private void ApplyConfidenceFallback(AvatarHumanoidProfileBuilder.ProfileResult profileResult)
         {
-            // Spine chain
-            AutoMapBoneAxis(Hips, Spine);
-            AutoMapBoneAxis(Spine, Chest);
-            AutoMapBoneAxis(Chest, UpperChest.Node is not null ? UpperChest : Neck);
-            if (UpperChest.Node is not null)
-                AutoMapBoneAxis(UpperChest, Neck);
-            AutoMapBoneAxis(Neck, Head);
+            const float lowConfidenceThreshold = 0.6f;
+            if (profileResult.OverallConfidence >= lowConfidenceThreshold)
+                return;
 
-            // Left side
-            AutoMapBoneAxis(Left.Shoulder, Left.Arm);
-            AutoMapBoneAxis(Left.Arm, Left.Elbow);
-            AutoMapBoneAxis(Left.Elbow, Left.Wrist);
-            AutoMapBoneAxis(Left.Leg, Left.Knee);
-            AutoMapBoneAxis(Left.Knee, Left.Foot);
-            AutoMapBoneAxis(Left.Foot, Left.Toes);
+            // Force conservative IK behavior when confidence is low
+            if (Settings.IKGoalPolicy != EHumanoidIKGoalPolicy.Ignore)
+            {
+                Debug.Animation(
+                    $"[HumanoidComponent] Low profile confidence ({profileResult.OverallConfidence:P0}) — " +
+                    $"overriding IK goal policy to Ignore for safety. " +
+                    $"Set IKGoalPolicy = AlwaysApply to override.");
+                Settings.IKGoalPolicy = EHumanoidIKGoalPolicy.Ignore;
+            }
 
-            // Right side
-            AutoMapBoneAxis(Right.Shoulder, Right.Arm);
-            AutoMapBoneAxis(Right.Arm, Right.Elbow);
-            AutoMapBoneAxis(Right.Elbow, Right.Wrist);
-            AutoMapBoneAxis(Right.Leg, Right.Knee);
-            AutoMapBoneAxis(Right.Knee, Right.Foot);
-            AutoMapBoneAxis(Right.Foot, Right.Toes);
+            // Emit compact diagnostic with suggestions
+            Debug.Animation(
+                $"[HumanoidComponent] Low confidence avatar profile ({profileResult.OverallConfidence:P0}). " +
+                $"Muscle channels and root motion will still play normally. " +
+                $"{profileResult.FallbackBoneCount}/{profileResult.ProfiledBoneCount} bones used default/inherited axis mappings. " +
+                $"Suggestions: (1) Check that the model has a proper T-pose bind pose. " +
+                $"(2) Verify bone naming matches standard humanoid conventions. " +
+                $"(3) Manually override axis mappings via Settings.BoneAxisMappings for problem bones.");
         }
 
+        private bool _firstPlaybackLogged;
+
         /// <summary>
-        /// Computes the bone axis mapping for <paramref name="bone"/> based on
-        /// the direction toward <paramref name="childBone"/> in the bone's local space.
-        /// The dominant axis becomes the twist axis; the remaining two axes are assigned
-        /// to front-back and left-right in their natural index order.
+        /// Logs a one-time compact diagnostic on first playback of a humanoid clip.
+        /// Called from <see cref="ApplyMusclePose"/> on the first frame where muscle data exists.
         /// </summary>
-        private void AutoMapBoneAxis(BoneDef bone, BoneDef childBone)
+        private void LogFirstPlaybackDiagnostic()
         {
-            if (bone.Node?.Name is null || childBone.Node is null)
+            if (_firstPlaybackLogged)
                 return;
+            _firstPlaybackLogged = true;
 
-            // Don't override user-configured mappings.
-            if (Settings.TryGetBoneAxisMapping(bone.Node.Name, out _))
-                return;
-
-            // Compute direction from this bone to its child using world-space bind poses.
-            // Using world positions is more robust than local translations when there are
-            // intermediate nodes between the humanoid bones in the scene graph.
-            Vector3 boneWorldPos = bone.WorldBindPose.Translation;
-            Vector3 childWorldPos = childBone.WorldBindPose.Translation;
-            Vector3 dirWorld = childWorldPos - boneWorldPos;
-
-            if (dirWorld.LengthSquared() < 1e-8f)
-                return;
-
-            dirWorld = Vector3.Normalize(dirWorld);
-
-            // Transform direction into the bone's local (post-bind) coordinate frame.
-            if (!Matrix4x4.Invert(bone.WorldBindPose, out Matrix4x4 invBind))
-                return;
-
-            Vector3 dirLocal = Vector3.Normalize(Vector3.TransformNormal(dirWorld, invBind));
-
-            float ax = MathF.Abs(dirLocal.X);
-            float ay = MathF.Abs(dirLocal.Y);
-            float az = MathF.Abs(dirLocal.Z);
-
-            int twistAxis, frontBackAxis, leftRightAxis;
-
-            if (ay >= ax && ay >= az)
-            {
-                // Y dominant — matches the default mapping, no override needed.
-                return;
-            }
-            else if (ax >= ay && ax >= az)
-            {
-                // X dominant: twist = X, remaining = Y, Z.
-                twistAxis = 0;
-                frontBackAxis = 1;
-                leftRightAxis = 2;
-            }
-            else
-            {
-                // Z dominant: twist = Z, remaining = X, Y.
-                twistAxis = 2;
-                frontBackAxis = 0;
-                leftRightAxis = 1;
-            }
-
-            Settings.BoneAxisMappings[bone.Node.Name] = new BoneAxisMapping
-            {
-                TwistAxis = twistAxis,
-                FrontBackAxis = frontBackAxis,
-                LeftRightAxis = leftRightAxis,
-            };
+            string avatarName = SceneNode?.Name ?? "(unknown)";
+            string source = Settings.ProfileSource ?? "unknown";
+            float conf = Settings.ProfileConfidence;
+            string ikPolicy = Settings.IKGoalPolicy.ToString();
+            bool ikCalibrated = Settings.IsIKCalibrated;
+            int axisCount = Settings.BoneAxisMappings.Count;
 
             Debug.Animation(
-                $"[AutoAxisMap] '{bone.Node.Name}': " +
-                $"twist={twistAxis} fb={frontBackAxis} lr={leftRightAxis} " +
-                $"(local dir to child: ({dirLocal.X:F3},{dirLocal.Y:F3},{dirLocal.Z:F3}))");
+                $"[HumanoidComponent] First playback on '{avatarName}': " +
+                $"profile={source} confidence={conf:P0} " +
+                $"axisMappings={axisCount} " +
+                $"IK={ikPolicy} calibrated={ikCalibrated}");
         }
 
         private static BoneIKConstraints KneeConstraints()
@@ -1573,6 +1627,58 @@ namespace XREngine.Components.Animation
                 RightHandTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position));
         }
 
+        // ── Animation-driven IK goal gateways ──────────────────────────
+        // Called by the Unity animation importer's reflection tree instead of the
+        // direct Set*Position/Set*Rotation methods. These check the IK goal policy
+        // so that uncalibrated avatar-space targets don't produce broken IK solves.
+
+        private bool _ikGoalWarningLogged;
+
+        private bool ShouldApplyAnimatedIKGoal()
+        {
+            switch (Settings.IKGoalPolicy)
+            {
+                case EHumanoidIKGoalPolicy.AlwaysApply:
+                    return true;
+                case EHumanoidIKGoalPolicy.ApplyIfCalibrated:
+                    if (Settings.IsIKCalibrated)
+                        return true;
+                    if (!_ikGoalWarningLogged)
+                    {
+                        _ikGoalWarningLogged = true;
+                        Debug.Animation("[HumanoidComponent] IK goal channels present but avatar is not calibrated — skipping. " +
+                            "Set Settings.IsIKCalibrated = true or change IKGoalPolicy to AlwaysApply to enable.");
+                    }
+                    return false;
+                default: // Ignore
+                    return false;
+            }
+        }
+
+        public void SetAnimatedFootPosition(Vector3 position, bool leftFoot)
+        {
+            if (ShouldApplyAnimatedIKGoal())
+                SetFootPosition(position, leftFoot);
+        }
+
+        public void SetAnimatedFootRotation(Quaternion rotation, bool leftFoot)
+        {
+            if (ShouldApplyAnimatedIKGoal())
+                SetFootRotation(rotation, leftFoot);
+        }
+
+        public void SetAnimatedHandPosition(Vector3 position, bool leftHand)
+        {
+            if (ShouldApplyAnimatedIKGoal())
+                SetHandPosition(position, leftHand);
+        }
+
+        public void SetAnimatedHandRotation(Quaternion rotation, bool leftHand)
+        {
+            if (ShouldApplyAnimatedIKGoal())
+                SetHandRotation(rotation, leftHand);
+        }
+
         /// <summary>
         /// Applies root motion position as a bind-relative offset on the Hips bone.
         /// In Unity humanoid clips, RootT represents the body center (hips) position —
@@ -1614,13 +1720,13 @@ namespace XREngine.Components.Animation
             none.All(name => !(node.Name?.Contains(name, StringComparison.InvariantCultureIgnoreCase) ?? false));
 
         private static Func<SceneNode, bool> ByNameContainsAll(params string[] names)
-            => node => names.Any(name => node.Name?.Contains(name, StringComparison.InvariantCultureIgnoreCase) ?? false);
+            => node => names.All(name => node.Name?.Contains(name, StringComparison.InvariantCultureIgnoreCase) ?? false);
 
         private static Func<SceneNode, bool> ByNameContainsAny(StringComparison comp, params string[] names)
             => node => names.Any(name => node.Name?.Contains(name, comp) ?? false);
 
         private static Func<SceneNode, bool> ByNameContainsAll(StringComparison comp, params string[] names)
-            => node => names.Any(name => node.Name?.Contains(name, comp) ?? false);
+            => node => names.All(name => node.Name?.Contains(name, comp) ?? false);
         
         private static Func<SceneNode, bool> ByPosition(string nameContains, Func<Vector3, bool> posMatch, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
             => node => (nameContains is null || (node.Name?.Contains(nameContains, comp) ?? false)) && posMatch(node.Transform.LocalTranslation);

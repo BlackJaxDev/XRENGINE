@@ -306,53 +306,91 @@ internal sealed class ProfilerImGuiApp : IDisposable
 
     // ─────────────────── Theme ───────────────────
 
+    /// <summary>
+    /// Applies the same professional styling used by the in-editor profiler
+    /// (<c>EnsureProfessionalImGuiStyling</c>) so both profiler UIs look identical.
+    /// </summary>
     private static void ApplyDarkTheme()
     {
         var style = ImGui.GetStyle();
-        style.WindowRounding = 6.0f;
-        style.FrameRounding = 4.0f;
-        style.GrabRounding = 4.0f;
-        style.TabRounding = 4.0f;
-        style.ScrollbarRounding = 6.0f;
+        style.WindowRounding = 8.0f;
+        style.FrameRounding = 6.0f;
+        style.GrabRounding = 6.0f;
+        style.TabRounding = 6.0f;
+        style.ScrollbarRounding = 8.0f;
         style.WindowBorderSize = 1.0f;
-        style.FrameBorderSize = 0.0f;
-        style.PopupBorderSize = 1.0f;
-        style.WindowPadding = new Vector2(8, 8);
-        style.FramePadding = new Vector2(6, 4);
-        style.ItemSpacing = new Vector2(8, 6);
+        style.FrameBorderSize = 1.0f;
+        style.TabBorderSize = 1.0f;
+        style.WindowPadding = new Vector2(14.0f, 10.0f);
+        style.FramePadding = new Vector2(10.0f, 6.0f);
+        style.ItemSpacing = new Vector2(10.0f, 8.0f);
+        style.ItemInnerSpacing = new Vector2(6.0f, 4.0f);
+        style.ScrollbarSize = 16.0f;
+        style.GrabMinSize = 12.0f;
 
         var colors = style.Colors;
-        colors[(int)ImGuiCol.WindowBg] = new Vector4(0.12f, 0.12f, 0.14f, 1.00f);
-        colors[(int)ImGuiCol.ChildBg] = new Vector4(0.12f, 0.12f, 0.14f, 1.00f);
-        colors[(int)ImGuiCol.PopupBg] = new Vector4(0.14f, 0.14f, 0.16f, 0.96f);
-        colors[(int)ImGuiCol.Border] = new Vector4(0.30f, 0.30f, 0.35f, 0.50f);
-        colors[(int)ImGuiCol.FrameBg] = new Vector4(0.18f, 0.18f, 0.22f, 1.00f);
-        colors[(int)ImGuiCol.FrameBgHovered] = new Vector4(0.24f, 0.24f, 0.30f, 1.00f);
-        colors[(int)ImGuiCol.FrameBgActive] = new Vector4(0.28f, 0.28f, 0.36f, 1.00f);
-        colors[(int)ImGuiCol.TitleBg] = new Vector4(0.10f, 0.10f, 0.12f, 1.00f);
-        colors[(int)ImGuiCol.TitleBgActive] = new Vector4(0.14f, 0.14f, 0.18f, 1.00f);
-        colors[(int)ImGuiCol.MenuBarBg] = new Vector4(0.14f, 0.14f, 0.16f, 1.00f);
-        colors[(int)ImGuiCol.Header] = new Vector4(0.22f, 0.22f, 0.28f, 1.00f);
-        colors[(int)ImGuiCol.HeaderHovered] = new Vector4(0.28f, 0.28f, 0.36f, 1.00f);
-        colors[(int)ImGuiCol.HeaderActive] = new Vector4(0.32f, 0.32f, 0.42f, 1.00f);
-        colors[(int)ImGuiCol.Tab] = new Vector4(0.16f, 0.16f, 0.20f, 1.00f);
-        colors[(int)ImGuiCol.TabHovered] = new Vector4(0.28f, 0.28f, 0.36f, 1.00f);
-        colors[(int)ImGuiCol.TabActive] = new Vector4(0.22f, 0.22f, 0.30f, 1.00f);
-        colors[(int)ImGuiCol.Button] = new Vector4(0.20f, 0.20f, 0.26f, 1.00f);
-        colors[(int)ImGuiCol.ButtonHovered] = new Vector4(0.28f, 0.28f, 0.36f, 1.00f);
-        colors[(int)ImGuiCol.ButtonActive] = new Vector4(0.32f, 0.32f, 0.42f, 1.00f);
-        colors[(int)ImGuiCol.ScrollbarBg] = new Vector4(0.10f, 0.10f, 0.12f, 1.00f);
-        colors[(int)ImGuiCol.ScrollbarGrab] = new Vector4(0.24f, 0.24f, 0.30f, 1.00f);
-        colors[(int)ImGuiCol.ScrollbarGrabHovered] = new Vector4(0.30f, 0.30f, 0.38f, 1.00f);
-        colors[(int)ImGuiCol.ScrollbarGrabActive] = new Vector4(0.36f, 0.36f, 0.46f, 1.00f);
-        colors[(int)ImGuiCol.TableHeaderBg] = new Vector4(0.16f, 0.16f, 0.20f, 1.00f);
-        colors[(int)ImGuiCol.TableBorderStrong] = new Vector4(0.24f, 0.24f, 0.30f, 1.00f);
-        colors[(int)ImGuiCol.TableBorderLight] = new Vector4(0.20f, 0.20f, 0.26f, 1.00f);
-        colors[(int)ImGuiCol.TableRowBg] = new Vector4(0.00f, 0.00f, 0.00f, 0.00f);
-        colors[(int)ImGuiCol.TableRowBgAlt] = new Vector4(1.00f, 1.00f, 1.00f, 0.03f);
-        colors[(int)ImGuiCol.TextSelectedBg] = new Vector4(0.26f, 0.59f, 0.98f, 0.35f);
-        colors[(int)ImGuiCol.DockingPreview] = new Vector4(0.26f, 0.59f, 0.98f, 0.70f);
-        colors[(int)ImGuiCol.DockingEmptyBg] = new Vector4(0.12f, 0.12f, 0.14f, 1.00f);
-        colors[(int)ImGuiCol.Separator] = new Vector4(0.28f, 0.28f, 0.32f, 0.50f);
+        Vector4 darkBg = new(0.12f, 0.13f, 0.15f, 1.00f);
+        Vector4 midBg = new(0.18f, 0.19f, 0.22f, 1.00f);
+        Vector4 hoverBg = new(0.24f, 0.26f, 0.30f, 1.00f);
+        Vector4 activeBg = new(0.32f, 0.35f, 0.40f, 1.00f);
+        Vector4 accent = new(0.15f, 0.55f, 0.95f, 1.00f);
+        Vector4 accentHover = new(0.25f, 0.65f, 1.00f, 1.00f);
+        Vector4 accentActive = new(0.10f, 0.45f, 0.85f, 1.00f);
+        Vector4 textPrimary = new(0.92f, 0.94f, 0.97f, 1.00f);
+        Vector4 textMuted = new(0.62f, 0.66f, 0.72f, 1.00f);
+
+        colors[(int)ImGuiCol.Text] = textPrimary;
+        colors[(int)ImGuiCol.TextDisabled] = textMuted;
+        colors[(int)ImGuiCol.WindowBg] = darkBg;
+        colors[(int)ImGuiCol.ChildBg] = new Vector4(darkBg.X, darkBg.Y, darkBg.Z, 0.75f);
+        colors[(int)ImGuiCol.PopupBg] = new Vector4(0.10f, 0.11f, 0.13f, 0.98f);
+        colors[(int)ImGuiCol.Border] = new Vector4(0.20f, 0.22f, 0.27f, 1.00f);
+        colors[(int)ImGuiCol.BorderShadow] = new Vector4(0f, 0f, 0f, 0f);
+        colors[(int)ImGuiCol.FrameBg] = midBg;
+        colors[(int)ImGuiCol.FrameBgHovered] = hoverBg;
+        colors[(int)ImGuiCol.FrameBgActive] = activeBg;
+        colors[(int)ImGuiCol.TitleBg] = midBg;
+        colors[(int)ImGuiCol.TitleBgActive] = hoverBg;
+        colors[(int)ImGuiCol.TitleBgCollapsed] = new Vector4(midBg.X, midBg.Y, midBg.Z, 0.60f);
+        colors[(int)ImGuiCol.MenuBarBg] = midBg;
+        colors[(int)ImGuiCol.ScrollbarBg] = new Vector4(darkBg.X, darkBg.Y, darkBg.Z, 1.00f);
+        colors[(int)ImGuiCol.ScrollbarGrab] = hoverBg;
+        colors[(int)ImGuiCol.ScrollbarGrabHovered] = activeBg;
+        colors[(int)ImGuiCol.ScrollbarGrabActive] = accentActive;
+        colors[(int)ImGuiCol.CheckMark] = accent;
+        colors[(int)ImGuiCol.SliderGrab] = accent;
+        colors[(int)ImGuiCol.SliderGrabActive] = accentActive;
+        colors[(int)ImGuiCol.Button] = midBg;
+        colors[(int)ImGuiCol.ButtonHovered] = accentHover;
+        colors[(int)ImGuiCol.ButtonActive] = accentActive;
+        colors[(int)ImGuiCol.Header] = midBg;
+        colors[(int)ImGuiCol.HeaderHovered] = hoverBg;
+        colors[(int)ImGuiCol.HeaderActive] = activeBg;
+        colors[(int)ImGuiCol.Separator] = new Vector4(0.28f, 0.30f, 0.34f, 1.00f);
+        colors[(int)ImGuiCol.SeparatorHovered] = accentHover;
+        colors[(int)ImGuiCol.SeparatorActive] = accent;
+        colors[(int)ImGuiCol.ResizeGrip] = hoverBg;
+        colors[(int)ImGuiCol.ResizeGripHovered] = accentHover;
+        colors[(int)ImGuiCol.ResizeGripActive] = accentActive;
+        colors[(int)ImGuiCol.Tab] = midBg;
+        colors[(int)ImGuiCol.TabHovered] = hoverBg;
+        colors[(int)ImGuiCol.TabActive] = activeBg;
+        colors[(int)ImGuiCol.TabUnfocused] = new Vector4(midBg.X, midBg.Y, midBg.Z, 0.90f);
+        colors[(int)ImGuiCol.TabUnfocusedActive] = hoverBg;
+        colors[(int)ImGuiCol.DockingPreview] = new Vector4(accent.X, accent.Y, accent.Z, 0.35f);
+        colors[(int)ImGuiCol.DockingEmptyBg] = new Vector4(0.08f, 0.08f, 0.09f, 1.00f);
+        colors[(int)ImGuiCol.PlotLines] = accent;
+        colors[(int)ImGuiCol.PlotLinesHovered] = accentHover;
+        colors[(int)ImGuiCol.PlotHistogram] = new Vector4(accent.X, accent.Y, accent.Z, 0.70f);
+        colors[(int)ImGuiCol.PlotHistogramHovered] = accentHover;
+        colors[(int)ImGuiCol.TableHeaderBg] = midBg;
+        colors[(int)ImGuiCol.TableBorderStrong] = new Vector4(0.20f, 0.22f, 0.27f, 1.00f);
+        colors[(int)ImGuiCol.TableBorderLight] = new Vector4(0.16f, 0.18f, 0.21f, 1.00f);
+        colors[(int)ImGuiCol.TextSelectedBg] = new Vector4(accent.X, accent.Y, accent.Z, 0.35f);
+        colors[(int)ImGuiCol.DragDropTarget] = new Vector4(accent.X, accent.Y, accent.Z, 0.90f);
+        colors[(int)ImGuiCol.NavHighlight] = accent;
+        colors[(int)ImGuiCol.NavWindowingHighlight] = new Vector4(accent.X, accent.Y, accent.Z, 0.70f);
+        colors[(int)ImGuiCol.NavWindowingDimBg] = new Vector4(0.05f, 0.05f, 0.05f, 0.60f);
+        colors[(int)ImGuiCol.ModalWindowDimBg] = new Vector4(0.05f, 0.05f, 0.05f, 0.45f);
     }
 }

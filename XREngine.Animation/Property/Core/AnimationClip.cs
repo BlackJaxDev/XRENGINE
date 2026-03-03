@@ -74,6 +74,47 @@ namespace XREngine.Animation
             set => SetField(ref _looped, value);
         }
 
+        private EAnimationClipKind _clipKind = EAnimationClipKind.Unknown;
+        /// <summary>
+        /// Classification of the animation data format (e.g. humanoid muscle vs generic transform).
+        /// Set during import to enable automatic pipeline selection.
+        /// </summary>
+        public EAnimationClipKind ClipKind
+        {
+            get => _clipKind;
+            set => SetField(ref _clipKind, value);
+        }
+
+        private bool _hasMuscleChannels;
+        /// <summary>
+        /// Whether this clip contains Unity humanoid muscle channels.
+        /// </summary>
+        public bool HasMuscleChannels
+        {
+            get => _hasMuscleChannels;
+            set => SetField(ref _hasMuscleChannels, value);
+        }
+
+        private bool _hasRootMotion;
+        /// <summary>
+        /// Whether this clip contains root motion channels (RootT/RootQ).
+        /// </summary>
+        public bool HasRootMotion
+        {
+            get => _hasRootMotion;
+            set => SetField(ref _hasRootMotion, value);
+        }
+
+        private bool _hasIKGoals;
+        /// <summary>
+        /// Whether this clip contains IK goal channels (LeftFootT/Q, RightHandT/Q, etc.).
+        /// </summary>
+        public bool HasIKGoals
+        {
+            get => _hasIKGoals;
+            set => SetField(ref _hasIKGoals, value);
+        }
+
         private int _totalAnimCount = 0;
         public int TotalAnimCount
         {
