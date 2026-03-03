@@ -63,8 +63,9 @@ namespace XREngine.Rendering.Info
             get => _cullingMatrix;
             set
             {
-                //if (!XRMath.MatrixEquals(_cullingMatrix, value))
-                    SetField(ref _cullingMatrix, value);
+                if (_cullingMatrix == value)
+                    return;
+                SetField(ref _cullingMatrix, value);
             }
         }
 

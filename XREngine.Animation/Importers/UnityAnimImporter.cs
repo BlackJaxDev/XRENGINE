@@ -9,6 +9,32 @@ namespace XREngine.Animation.Importers
 {
     public static class AnimYamlImporter
     {
+        // ── Unity LH → Engine RH coordinate conversion ──────────────────
+        // Unity uses left-handed Y-up (Z-forward); the engine uses right-handed
+        // Y-up (Z-backward, OpenGL convention).
+        //
+        // Assimp's ZAxisRotation=180 applies a global root rotation — it does NOT
+        // mirror per-bone local transforms. Since the .anim quaternions are in the
+        // same local bone space as the FBX, they should be passed through as-is.
+        // Only root-motion translation needs Z-negation (world-space path).
+
+        private static Vector3 ConvertPosition(Vector3 v)
+            => new(v.X, v.Y, -v.Z);
+
+        private static Quaternion ConvertRotation(Quaternion q)
+            => q;
+
+        // Unity humanoid IK goal curves (LeftFootT/Q, RightHandT/Q, etc.) are authored
+        // in avatar/humanoid space, not direct world-space targets. Until we have proper
+        // space conversion and calibration, keep these disabled to avoid incorrect poses
+        // and expensive full-body IK solves against bad targets.
+        private static bool ImportHumanoidIKGoalCurves => false;
+
+        // RootT/RootQ in Unity humanoid clips are Mecanim root-motion channels and are
+        // not necessarily direct hips-local transforms in this runtime.
+        // Disable by default until a dedicated root-motion extraction path exists.
+        private static bool ImportHumanoidRootMotionCurves => false;
+
         private sealed record ScalarCurve(
             string? Path,
             string Attribute,
@@ -194,6 +220,9 @@ namespace XREngine.Animation.Importers
                     foreach (float t in UnionKeyTimes(cx, cy, cz))
                     {
                         var v = new Vector3(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t));
+                        // Convert translation from Unity LH to engine RH; scale is unaffected
+                        if (group.Kind == "translation")
+                            v = ConvertPosition(v);
                         vecAnim.Keyframes.Add(new Vector3Keyframe(t, v, Vector3.Zero, EVectorInterpType.Smooth));
                     }
 
@@ -223,10 +252,7 @@ namespace XREngine.Animation.Importers
                     foreach (float t in UnionKeyTimes(cx, cy, cz, cw))
                     {
                         var q = new Quaternion(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t), wAnim.GetValue(t));
-                        if (q.LengthSquared() > 0)
-                            q = Quaternion.Normalize(q);
-                        else
-                            q = Quaternion.Identity;
+                        q = ConvertRotation(q);
 
                         quatAnim.Keyframes.Add(new QuaternionKeyframe(t, q, Quaternion.Identity, Quaternion.Identity, ERadialInterpType.Linear));
                     }
@@ -236,6 +262,7 @@ namespace XREngine.Animation.Importers
             }
 
             // Build root motion animation (RootT/RootQ → hips bind-relative offsets).
+            if (ImportHumanoidRootMotionCurves)
             {
                 PropAnimVector3? rootPosAnim = null;
                 PropAnimQuaternion? rootRotAnim = null;
@@ -256,7 +283,7 @@ namespace XREngine.Animation.Importers
                         BakedFramesPerSecond = sampleRate,
                     };
                     foreach (float t in UnionKeyTimes(rpx, rpy, rpz))
-                        rootPosAnim.Keyframes.Add(new Vector3Keyframe(t, new Vector3(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t)), Vector3.Zero, EVectorInterpType.Smooth));
+                        rootPosAnim.Keyframes.Add(new Vector3Keyframe(t, ConvertPosition(new Vector3(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t))), Vector3.Zero, EVectorInterpType.Smooth));
                 }
 
                 if (rootMotionGroups.TryGetValue("rotation", out var rootRotGroup) &&
@@ -279,10 +306,7 @@ namespace XREngine.Animation.Importers
                     foreach (float t in UnionKeyTimes(rrx, rry, rrz, rrw))
                     {
                         var q = new Quaternion(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t), wAnim.GetValue(t));
-                        if (q.LengthSquared() > 0)
-                            q = Quaternion.Normalize(q);
-                        else
-                            q = Quaternion.Identity;
+                        q = ConvertRotation(q);
                         rootRotAnim.Keyframes.Add(new QuaternionKeyframe(t, q, Quaternion.Identity, Quaternion.Identity, ERadialInterpType.Linear));
                     }
                 }
@@ -291,80 +315,80 @@ namespace XREngine.Animation.Importers
                     builder.AddRootMotionAnimation(rootPosAnim, rootRotAnim);
             }
 
-            // Build IK goal animations (LeftFootT/Q, RightFootT/Q, LeftHandT/Q, RightHandT/Q).
-            // Group position + rotation per goal, then route through HumanoidComponent.
-            var ikGoalsByName = new Dictionary<(string nodePath, string goalName), (TransformCurveGroup? pos, TransformCurveGroup? rot)>();
-            foreach (var kv in ikGoalGroups)
+            if (ImportHumanoidIKGoalCurves)
             {
-                var key = (kv.Key.nodePath, kv.Key.goalName);
-                if (!ikGoalsByName.TryGetValue(key, out var pair))
-                    pair = (null, null);
-
-                if (kv.Value.Kind == "translation")
-                    pair = (kv.Value, pair.rot);
-                else if (kv.Value.Kind == "rotation")
-                    pair = (pair.pos, kv.Value);
-
-                ikGoalsByName[key] = pair;
-            }
-
-            foreach (var kv in ikGoalsByName)
-            {
-                string goalName = kv.Key.goalName;
-                var (posGroup, rotGroup) = kv.Value;
-
-                // Build position animation
-                PropAnimVector3? posAnim = null;
-                if (posGroup is not null &&
-                    posGroup.Components.TryGetValue('x', out var px) &&
-                    posGroup.Components.TryGetValue('y', out var py) &&
-                    posGroup.Components.TryGetValue('z', out var pz))
+                // Build IK goal animations (LeftFootT/Q, RightFootT/Q, LeftHandT/Q, RightHandT/Q).
+                // Group position + rotation per goal, then route through HumanoidComponent.
+                var ikGoalsByName = new Dictionary<(string nodePath, string goalName), (TransformCurveGroup? pos, TransformCurveGroup? rot)>();
+                foreach (var kv in ikGoalGroups)
                 {
-                    var xAnim = BuildFloatAnim(px, length, looped, sampleRate, valueScale: 1.0f);
-                    var yAnim = BuildFloatAnim(py, length, looped, sampleRate, valueScale: 1.0f);
-                    var zAnim = BuildFloatAnim(pz, length, looped, sampleRate, valueScale: 1.0f);
+                    var key = (kv.Key.nodePath, kv.Key.goalName);
+                    if (!ikGoalsByName.TryGetValue(key, out var pair))
+                        pair = (null, null);
 
-                    posAnim = new PropAnimVector3
-                    {
-                        LengthInSeconds = length,
-                        Looped = looped,
-                        BakedFramesPerSecond = sampleRate,
-                    };
-                    foreach (float t in UnionKeyTimes(px, py, pz))
-                        posAnim.Keyframes.Add(new Vector3Keyframe(t, new Vector3(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t)), Vector3.Zero, EVectorInterpType.Smooth));
+                    if (kv.Value.Kind == "translation")
+                        pair = (kv.Value, pair.rot);
+                    else if (kv.Value.Kind == "rotation")
+                        pair = (pair.pos, kv.Value);
+
+                    ikGoalsByName[key] = pair;
                 }
 
-                // Build rotation animation
-                PropAnimQuaternion? rotAnim = null;
-                if (rotGroup is not null &&
-                    rotGroup.Components.TryGetValue('x', out var rx) &&
-                    rotGroup.Components.TryGetValue('y', out var ry) &&
-                    rotGroup.Components.TryGetValue('z', out var rz) &&
-                    rotGroup.Components.TryGetValue('w', out var rw))
+                foreach (var kv in ikGoalsByName)
                 {
-                    var xAnim = BuildFloatAnim(rx, length, looped, sampleRate, valueScale: 1.0f);
-                    var yAnim = BuildFloatAnim(ry, length, looped, sampleRate, valueScale: 1.0f);
-                    var zAnim = BuildFloatAnim(rz, length, looped, sampleRate, valueScale: 1.0f);
-                    var wAnim = BuildFloatAnim(rw, length, looped, sampleRate, valueScale: 1.0f);
+                    string goalName = kv.Key.goalName;
+                    var (posGroup, rotGroup) = kv.Value;
 
-                    rotAnim = new PropAnimQuaternion
+                    // Build position animation
+                    PropAnimVector3? posAnim = null;
+                    if (posGroup is not null &&
+                        posGroup.Components.TryGetValue('x', out var px) &&
+                        posGroup.Components.TryGetValue('y', out var py) &&
+                        posGroup.Components.TryGetValue('z', out var pz))
                     {
-                        LengthInSeconds = length,
-                        Looped = looped,
-                        BakedFramesPerSecond = sampleRate,
-                    };
-                    foreach (float t in UnionKeyTimes(rx, ry, rz, rw))
-                    {
-                        var q = new Quaternion(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t), wAnim.GetValue(t));
-                        if (q.LengthSquared() > 0)
-                            q = Quaternion.Normalize(q);
-                        else
-                            q = Quaternion.Identity;
-                        rotAnim.Keyframes.Add(new QuaternionKeyframe(t, q, Quaternion.Identity, Quaternion.Identity, ERadialInterpType.Linear));
+                        var xAnim = BuildFloatAnim(px, length, looped, sampleRate, valueScale: 1.0f);
+                        var yAnim = BuildFloatAnim(py, length, looped, sampleRate, valueScale: 1.0f);
+                        var zAnim = BuildFloatAnim(pz, length, looped, sampleRate, valueScale: 1.0f);
+
+                        posAnim = new PropAnimVector3
+                        {
+                            LengthInSeconds = length,
+                            Looped = looped,
+                            BakedFramesPerSecond = sampleRate,
+                        };
+                        foreach (float t in UnionKeyTimes(px, py, pz))
+                            posAnim.Keyframes.Add(new Vector3Keyframe(t, ConvertPosition(new Vector3(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t))), Vector3.Zero, EVectorInterpType.Smooth));
                     }
-                }
 
-                builder.AddIKGoalAnimation(goalName, posAnim, rotAnim);
+                    // Build rotation animation
+                    PropAnimQuaternion? rotAnim = null;
+                    if (rotGroup is not null &&
+                        rotGroup.Components.TryGetValue('x', out var rx) &&
+                        rotGroup.Components.TryGetValue('y', out var ry) &&
+                        rotGroup.Components.TryGetValue('z', out var rz) &&
+                        rotGroup.Components.TryGetValue('w', out var rw))
+                    {
+                        var xAnim = BuildFloatAnim(rx, length, looped, sampleRate, valueScale: 1.0f);
+                        var yAnim = BuildFloatAnim(ry, length, looped, sampleRate, valueScale: 1.0f);
+                        var zAnim = BuildFloatAnim(rz, length, looped, sampleRate, valueScale: 1.0f);
+                        var wAnim = BuildFloatAnim(rw, length, looped, sampleRate, valueScale: 1.0f);
+
+                        rotAnim = new PropAnimQuaternion
+                        {
+                            LengthInSeconds = length,
+                            Looped = looped,
+                            BakedFramesPerSecond = sampleRate,
+                        };
+                        foreach (float t in UnionKeyTimes(rx, ry, rz, rw))
+                        {
+                            var q = new Quaternion(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t), wAnim.GetValue(t));
+                            q = ConvertRotation(q);
+                            rotAnim.Keyframes.Add(new QuaternionKeyframe(t, q, Quaternion.Identity, Quaternion.Identity, ERadialInterpType.Linear));
+                        }
+                    }
+
+                    builder.AddIKGoalAnimation(goalName, posAnim, rotAnim);
+                }
             }
 
             // Build blendshape animations and remaining scalar animations.
@@ -441,6 +465,8 @@ namespace XREngine.Animation.Importers
                         foreach (float t in UnionKeyTimes(xKeys, yKeys, zKeys))
                         {
                             var v = new Vector3(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t));
+                            if (kind == "translation")
+                                v = ConvertPosition(v);
                             vecAnim.Keyframes.Add(new Vector3Keyframe(t, v, Vector3.Zero, EVectorInterpType.Smooth));
                         }
                         string propName = kind == "translation" ? "Translation" : "Scale";
@@ -468,10 +494,7 @@ namespace XREngine.Animation.Importers
                         foreach (float t in UnionKeyTimes(xKeys, yKeys, zKeys, wKeys))
                         {
                             var q = new Quaternion(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t), wAnim.GetValue(t));
-                            if (q.LengthSquared() > 0)
-                                q = Quaternion.Normalize(q);
-                            else
-                                q = Quaternion.Identity;
+                            q = ConvertRotation(q);
                             quatAnim.Keyframes.Add(new QuaternionKeyframe(t, q, Quaternion.Identity, Quaternion.Identity, ERadialInterpType.Linear));
                         }
                         builder.AddTransformPropertyAnimation(nodePath, "Rotation", quatAnim);
