@@ -21,19 +21,25 @@ namespace XREngine.Animation.Importers
         private static Vector3 ConvertPosition(Vector3 v)
             => new(v.X, v.Y, -v.Z);
 
+        /// <summary>
+        /// Converts a quaternion from Unity's left-handed coordinate system (Z = forward)
+        /// to the engine's right-handed OpenGL coordinate system (Z = toward viewer).
+        /// The Z-flip transform M = diag(1,1,-1) converts quaternion (x,y,z,w) → (-x,-y,z,w).
+        /// </summary>
         private static Quaternion ConvertRotation(Quaternion q)
-            => q;
+            => new(-q.X, -q.Y, q.Z, q.W);
 
         // Unity humanoid IK goal curves (LeftFootT/Q, RightHandT/Q, etc.) are authored
-        // in avatar/humanoid space, not direct world-space targets. Until we have proper
-        // space conversion and calibration, keep these disabled to avoid incorrect poses
-        // and expensive full-body IK solves against bad targets.
-        private static bool ImportHumanoidIKGoalCurves => false;
+        // in avatar/humanoid space. They are always imported so the data is available,
+        // but runtime application is gated by HumanoidSettings.IKGoalPolicy — which
+        // defaults to ApplyIfCalibrated (i.e. skipped until avatar calibration exists).
+        private static bool ImportHumanoidIKGoalCurves => true;
 
-        // RootT/RootQ in Unity humanoid clips are Mecanim root-motion channels and are
-        // not necessarily direct hips-local transforms in this runtime.
-        // Disable by default until a dedicated root-motion extraction path exists.
-        private static bool ImportHumanoidRootMotionCurves => false;
+        // RootT/RootQ in Unity humanoid clips represent the body center (hips) position
+        // and orientation. Applied as bind-relative offsets on the Hips bone via
+        // HumanoidComponent.SetRootPosition/SetRootRotation. This produces hip sway/bob
+        // without overriding the model's scene-graph placement.
+        private static bool ImportHumanoidRootMotionCurves => true;
 
         private sealed record ScalarCurve(
             string? Path,
@@ -391,6 +397,9 @@ namespace XREngine.Animation.Importers
                 }
             }
 
+            // Track humanoid muscle curve count for clip classification.
+            int humanoidMuscleCount = 0;
+
             // Build blendshape animations and remaining scalar animations.
             foreach (var c in curves)
             {
@@ -418,6 +427,7 @@ namespace XREngine.Animation.Importers
 
                     var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f);
                     builder.AddHumanoidValueAnimation(humanoidValue, anim);
+                    humanoidMuscleCount++;
                     continue;
                 }
 
@@ -502,6 +512,14 @@ namespace XREngine.Animation.Importers
                 }
             }
 
+            // ── Clip classification ──────────────────────────────────────────
+            clip.HasMuscleChannels = humanoidMuscleCount > 0;
+            clip.HasRootMotion = rootMotionGroups.Count > 0;
+            clip.HasIKGoals = ikGoalGroups.Count > 0;
+            clip.ClipKind = humanoidMuscleCount > 0
+                ? EAnimationClipKind.UnityHumanoidMuscle
+                : EAnimationClipKind.GenericTransform;
+
             return clip;
         }
 
@@ -580,29 +598,27 @@ namespace XREngine.Animation.Importers
 
                 string methodName = isFoot ? "SetFootPositionAndRotation" : "SetHandPositionAndRotation";
 
+                // Route through the animated-IK gateway methods so HumanoidComponent can
+                // gate application via IKGoalPolicy (e.g. skip when uncalibrated).
                 if (posAnim is not null && rotAnim is not null)
                 {
-                    // Combined position+rotation. Build a single call with both animated.
-                    // SetFootPositionAndRotation(Vector3 position, Quaternion rotation, bool leftFoot)
-                    // We animate positions via arg index 0 and rotations via arg index 1.
-                    // Since animation system only supports one animated arg per method, we use separate calls.
-                    var posMethod = GetOrAddMethod(getComp, isFoot ? "SetFootPosition" : "SetHandPosition",
+                    var posMethod = GetOrAddMethod(getComp, isFoot ? "SetAnimatedFootPosition" : "SetAnimatedHandPosition",
                         [Vector3.Zero, isLeft], animatedArgIndex: 0, cacheReturnValue: false);
                     posMethod.Animation = posAnim;
 
-                    var rotMethod = GetOrAddMethod(getComp, isFoot ? "SetFootRotation" : "SetHandRotation",
+                    var rotMethod = GetOrAddMethod(getComp, isFoot ? "SetAnimatedFootRotation" : "SetAnimatedHandRotation",
                         [Quaternion.Identity, isLeft], animatedArgIndex: 0, cacheReturnValue: false);
                     rotMethod.Animation = rotAnim;
                 }
                 else if (posAnim is not null)
                 {
-                    var posMethod = GetOrAddMethod(getComp, isFoot ? "SetFootPosition" : "SetHandPosition",
+                    var posMethod = GetOrAddMethod(getComp, isFoot ? "SetAnimatedFootPosition" : "SetAnimatedHandPosition",
                         [Vector3.Zero, isLeft], animatedArgIndex: 0, cacheReturnValue: false);
                     posMethod.Animation = posAnim;
                 }
                 else if (rotAnim is not null)
                 {
-                    var rotMethod = GetOrAddMethod(getComp, isFoot ? "SetFootRotation" : "SetHandRotation",
+                    var rotMethod = GetOrAddMethod(getComp, isFoot ? "SetAnimatedFootRotation" : "SetAnimatedHandRotation",
                         [Quaternion.Identity, isLeft], animatedArgIndex: 0, cacheReturnValue: false);
                     rotMethod.Animation = rotAnim;
                 }

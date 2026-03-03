@@ -41,6 +41,8 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         DrawTargetSection(humanoid);
         ImGui.SeparatorText("Bone Mapping");
         DrawBoneMappingSection(humanoid);
+        ImGui.SeparatorText("Per-Muscle Settings");
+        DrawPerMuscleSettingsSection(humanoid);
         ImGui.SeparatorText("Muscle Values");
         DrawMuscleValuesSection(humanoid);
 
@@ -237,6 +239,179 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
         DrawBodySide("Left Side", humanoid.Left);
         DrawBodySide("Right Side", humanoid.Right);
+    }
+
+    // ── Per-Muscle Settings (degree ranges) ─────────────────────────
+
+    private static void DrawPerMuscleSettingsSection(HumanoidComponent humanoid)
+    {
+        var s = humanoid.Settings;
+
+        // Global scale
+        float scale = s.MuscleInputScale;
+        ImGui.SetNextItemWidth(120f);
+        if (ImGui.DragFloat("Muscle Input Scale", ref scale, 0.01f, 0.01f, 5.0f, "%.2f"))
+        {
+            using var _ = Undo.TrackChange("Muscle Input Scale", s);
+            s.MuscleInputScale = scale;
+        }
+        ImGui.Spacing();
+
+        // Profile info (read-only)
+        ImGui.TextDisabled($"Profile: {s.ProfileSource ?? "none"}  Confidence: {s.ProfileConfidence:P0}");
+        ImGui.Spacing();
+
+        if (ImGui.TreeNodeEx("Body", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            DrawMuscleRange("Spine Front-Back", s, () => s.SpineFrontBackDegRange, v => s.SpineFrontBackDegRange = v);
+            DrawMuscleRange("Spine Left-Right", s, () => s.SpineLeftRightDegRange, v => s.SpineLeftRightDegRange = v);
+            DrawMuscleRange("Spine Twist Left-Right", s, () => s.SpineTwistLeftRightDegRange, v => s.SpineTwistLeftRightDegRange = v);
+            DrawMuscleRange("Chest Front-Back", s, () => s.ChestFrontBackDegRange, v => s.ChestFrontBackDegRange = v);
+            DrawMuscleRange("Chest Left-Right", s, () => s.ChestLeftRightDegRange, v => s.ChestLeftRightDegRange = v);
+            DrawMuscleRange("Chest Twist Left-Right", s, () => s.ChestTwistLeftRightDegRange, v => s.ChestTwistLeftRightDegRange = v);
+            DrawMuscleRange("Upper Chest Front-Back", s, () => s.UpperChestFrontBackDegRange, v => s.UpperChestFrontBackDegRange = v);
+            DrawMuscleRange("Upper Chest Left-Right", s, () => s.UpperChestLeftRightDegRange, v => s.UpperChestLeftRightDegRange = v);
+            DrawMuscleRange("Upper Chest Twist Left-Right", s, () => s.UpperChestTwistLeftRightDegRange, v => s.UpperChestTwistLeftRightDegRange = v);
+            ImGui.TreePop();
+        }
+
+        if (ImGui.TreeNodeEx("Head", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            DrawMuscleRange("Neck Nod Down-Up", s, () => s.NeckNodDownUpDegRange, v => s.NeckNodDownUpDegRange = v);
+            DrawMuscleRange("Head Nod Down-Up", s, () => s.HeadNodDownUpDegRange, v => s.HeadNodDownUpDegRange = v);
+            ImGui.TreePop();
+        }
+
+        if (ImGui.TreeNode("Eyes"))
+        {
+            DrawMuscleRange("Left Eye Down-Up", s, () => s.LeftEyeDownUpRange, v => s.LeftEyeDownUpRange = v, -10f, 10f);
+            DrawMuscleRange("Left Eye In-Out", s, () => s.LeftEyeInOutRange, v => s.LeftEyeInOutRange = v, -10f, 10f);
+            DrawMuscleRange("Right Eye Down-Up", s, () => s.RightEyeDownUpRange, v => s.RightEyeDownUpRange = v, -10f, 10f);
+            DrawMuscleRange("Right Eye In-Out", s, () => s.RightEyeInOutRange, v => s.RightEyeInOutRange = v, -10f, 10f);
+            ImGui.TreePop();
+        }
+
+        if (ImGui.TreeNode("Arm"))
+        {
+            DrawMuscleRange("Forearm Stretch", s, () => s.ForearmStretchDegRange, v => s.ForearmStretchDegRange = v);
+            ImGui.TreePop();
+        }
+
+        if (ImGui.TreeNode("Leg"))
+        {
+            DrawMuscleRange("Lower Leg Stretch", s, () => s.LowerLegStretchDegRange, v => s.LowerLegStretchDegRange = v);
+            ImGui.TreePop();
+        }
+
+        // IK Goal Policy
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var policyNames = Enum.GetNames<EHumanoidIKGoalPolicy>();
+        int policyIndex = (int)s.IKGoalPolicy;
+        ImGui.SetNextItemWidth(180f);
+        if (ImGui.Combo("IK Goal Policy", ref policyIndex, policyNames, policyNames.Length))
+        {
+            using var _ = Undo.TrackChange("IK Goal Policy", s);
+            s.IKGoalPolicy = (EHumanoidIKGoalPolicy)policyIndex;
+        }
+
+        bool isIKCalibrated = s.IsIKCalibrated;
+        if (ImGui.Checkbox("IK Calibrated", ref isIKCalibrated))
+        {
+            using var _ = Undo.TrackChange("Toggle IK Calibrated", s);
+            s.IsIKCalibrated = isIKCalibrated;
+        }
+
+        // Per-channel overrides
+        ImGui.Spacing();
+        if (ImGui.TreeNode("Per-Channel Overrides"))
+        {
+            ImGui.TextDisabled("Per-channel degree range overrides (takes priority over defaults above).");
+            ImGui.TextDisabled($"{s.MuscleRotationDegRanges.Count} override(s) active.");
+
+            if (s.MuscleRotationDegRanges.Count > 0)
+            {
+                if (!ImGui.BeginTable("MuscleOverrides", 3,
+                    ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+                {
+                    ImGui.TreePop();
+                }
+                else
+                {
+                    ImGui.TableSetupColumn("Channel", ImGuiTableColumnFlags.WidthStretch, 0.5f);
+                    ImGui.TableSetupColumn("Range", ImGuiTableColumnFlags.WidthStretch, 0.35f);
+                    ImGui.TableSetupColumn("##Del", ImGuiTableColumnFlags.WidthFixed, 40f);
+                    ImGui.TableHeadersRow();
+
+                    EHumanoidValue? toRemove = null;
+                    foreach (var (channel, range) in s.MuscleRotationDegRanges)
+                    {
+                        ImGui.PushID((int)channel);
+                        ImGui.TableNextRow();
+                        ImGui.TableSetColumnIndex(0);
+                        ImGui.TextUnformatted(channel.ToString());
+
+                        ImGui.TableSetColumnIndex(1);
+                        var r = range;
+                        ImGui.SetNextItemWidth(-1f);
+                        if (ImGui.DragFloat2("##Range", ref r, 0.5f, -180f, 180f, "%.1f"))
+                        {
+                            using var _ = Undo.TrackChange($"Override {channel}", s);
+                            s.SetMuscleRotationDegRange(channel, r);
+                        }
+                        ImGuiUndoHelper.TrackDragUndo($"Override {channel}", s);
+
+                        ImGui.TableSetColumnIndex(2);
+                        if (ImGui.SmallButton("X"))
+                            toRemove = channel;
+
+                        ImGui.PopID();
+                    }
+
+                    ImGui.EndTable();
+
+                    if (toRemove is { } key)
+                    {
+                        using var _ = Undo.TrackChange($"Remove override {key}", s);
+                        s.MuscleRotationDegRanges.Remove(key);
+                    }
+                }
+            }
+
+            ImGui.TreePop();
+        }
+    }
+
+    /// <summary>
+    /// Draws a labeled min/max degree range editor for a single muscle channel.
+    /// </summary>
+    private static void DrawMuscleRange(
+        string label,
+        HumanoidSettings settings,
+        Func<Vector2> getter,
+        Action<Vector2> setter,
+        float sliderMin = -180f,
+        float sliderMax = 180f)
+    {
+        ImGui.PushID(label);
+        var range = getter();
+
+        // Two-column layout: label + drag fields
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted(label);
+        ImGui.SameLine(ImGui.GetContentRegionAvail().X * 0.55f);
+
+        ImGui.SetNextItemWidth(-1f);
+        if (ImGui.DragFloat2("##Range", ref range, 0.5f, sliderMin, sliderMax, "%.1f"))
+        {
+            using var _ = Undo.TrackChange(label, settings);
+            setter(range);
+        }
+        ImGuiUndoHelper.TrackDragUndo(label, settings);
+
+        ImGui.PopID();
     }
 
     private static void DrawMuscleValuesSection(HumanoidComponent humanoid)

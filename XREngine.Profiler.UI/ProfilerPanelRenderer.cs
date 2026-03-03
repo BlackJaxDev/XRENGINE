@@ -412,6 +412,14 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"Multi-Draw Calls: {stats.MultiDrawCalls:N0}");
         ImGui.Text($"Triangles Rendered: {stats.TrianglesRendered:N0}");
 
+        if (stats.GpuCpuFallbackEvents > 0 || stats.GpuCpuFallbackRecoveredCommands > 0)
+        {
+            ImGui.Separator();
+            ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.2f, 1.0f), "GPU/CPU Fallback:");
+            ImGui.Text($"  Fallback Events: {stats.GpuCpuFallbackEvents:N0}");
+            ImGui.Text($"  Recovered Commands: {stats.GpuCpuFallbackRecoveredCommands:N0}");
+        }
+
         ImGui.Separator();
         ImGui.Text("Vulkan Bind/Cache Churn:");
         ImGui.Text($"  Pipeline Binds: {stats.VulkanPipelineBinds:N0} (skipped {stats.VulkanPipelineBindSkips:N0})");
