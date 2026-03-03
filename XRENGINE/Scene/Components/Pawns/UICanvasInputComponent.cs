@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using System.Collections;
 using System.ComponentModel;
 using System.Linq;
@@ -415,7 +415,7 @@ namespace XREngine.Components
                         Segment localSegment = worldVP.GetWorldSegment(normCoord).TransformedBy(canvasTransform.InverseWorldMatrix);
 
                         // Check if the segment intersects the canvas' plane
-                        if (GeoUtil.SegmentIntersectsPlane(
+                        if (GeoUtil.Intersect.SegmentWithPlane(
                             localSegment.Start,
                             localSegment.End,
                             XRMath.GetPlaneDistance(Vector3.Zero, Globals.Backward),

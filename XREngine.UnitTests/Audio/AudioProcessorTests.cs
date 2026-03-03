@@ -106,30 +106,30 @@ namespace XREngine.UnitTests.Audio
         public void ValidateCombo_OpenAL_EFX_IsValid()
         {
             var (transport, effects) = AudioManager.ValidateCombo(
-                AudioTransportType.OpenAL, AudioEffectsType.OpenAL_EFX);
+                EAudioTransport.OpenAL, EAudioEffects.OpenAL_EFX);
 
-            transport.ShouldBe(AudioTransportType.OpenAL);
-            effects.ShouldBe(AudioEffectsType.OpenAL_EFX);
+            transport.ShouldBe(EAudioTransport.OpenAL);
+            effects.ShouldBe(EAudioEffects.OpenAL_EFX);
         }
 
         [Test]
         public void ValidateCombo_OpenAL_Passthrough_IsValid()
         {
             var (transport, effects) = AudioManager.ValidateCombo(
-                AudioTransportType.OpenAL, AudioEffectsType.Passthrough);
+                EAudioTransport.OpenAL, EAudioEffects.Passthrough);
 
-            transport.ShouldBe(AudioTransportType.OpenAL);
-            effects.ShouldBe(AudioEffectsType.Passthrough);
+            transport.ShouldBe(EAudioTransport.OpenAL);
+            effects.ShouldBe(EAudioEffects.Passthrough);
         }
 
         [Test]
         public void ValidateCombo_OpenAL_SteamAudio_IsValid()
         {
             var (transport, effects) = AudioManager.ValidateCombo(
-                AudioTransportType.OpenAL, AudioEffectsType.SteamAudio);
+                EAudioTransport.OpenAL, EAudioEffects.SteamAudio);
 
-            transport.ShouldBe(AudioTransportType.OpenAL);
-            effects.ShouldBe(AudioEffectsType.SteamAudio);
+            transport.ShouldBe(EAudioTransport.OpenAL);
+            effects.ShouldBe(EAudioEffects.SteamAudio);
         }
 
         [Test]
@@ -137,10 +137,10 @@ namespace XREngine.UnitTests.Audio
         {
             // NAudio + EFX is invalid (EFX requires OpenAL context).
             var (transport, effects) = AudioManager.ValidateCombo(
-                AudioTransportType.NAudio, AudioEffectsType.OpenAL_EFX);
+                EAudioTransport.NAudio, EAudioEffects.OpenAL_EFX);
 
-            transport.ShouldBe(AudioTransportType.NAudio);
-            effects.ShouldBe(AudioEffectsType.Passthrough,
+            transport.ShouldBe(EAudioTransport.NAudio);
+            effects.ShouldBe(EAudioEffects.Passthrough,
                 "EFX requires OpenAL transport — combo validation should auto-correct to Passthrough.");
         }
 
@@ -148,20 +148,20 @@ namespace XREngine.UnitTests.Audio
         public void ValidateCombo_NAudio_Passthrough_IsValid()
         {
             var (transport, effects) = AudioManager.ValidateCombo(
-                AudioTransportType.NAudio, AudioEffectsType.Passthrough);
+                EAudioTransport.NAudio, EAudioEffects.Passthrough);
 
-            transport.ShouldBe(AudioTransportType.NAudio);
-            effects.ShouldBe(AudioEffectsType.Passthrough);
+            transport.ShouldBe(EAudioTransport.NAudio);
+            effects.ShouldBe(EAudioEffects.Passthrough);
         }
 
         [Test]
         public void ValidateCombo_NAudio_SteamAudio_IsValid()
         {
             var (transport, effects) = AudioManager.ValidateCombo(
-                AudioTransportType.NAudio, AudioEffectsType.SteamAudio);
+                EAudioTransport.NAudio, EAudioEffects.SteamAudio);
 
-            transport.ShouldBe(AudioTransportType.NAudio);
-            effects.ShouldBe(AudioEffectsType.SteamAudio);
+            transport.ShouldBe(EAudioTransport.NAudio);
+            effects.ShouldBe(EAudioEffects.SteamAudio);
         }
 
         #endregion
@@ -177,8 +177,8 @@ namespace XREngine.UnitTests.Audio
                 AudioSettings.AudioArchitectureV2 = true;
                 var manager = new AudioManager
                 {
-                    DefaultTransport = AudioTransportType.OpenAL,
-                    DefaultEffects = AudioEffectsType.Passthrough,
+                    DefaultTransport = EAudioTransport.OpenAL,
+                    DefaultEffects = EAudioEffects.Passthrough,
                 };
 
                 using var listener = manager.NewListener("test-passthrough");
@@ -204,8 +204,8 @@ namespace XREngine.UnitTests.Audio
                 AudioSettings.AudioArchitectureV2 = true;
                 var manager = new AudioManager
                 {
-                    DefaultTransport = AudioTransportType.OpenAL,
-                    DefaultEffects = AudioEffectsType.OpenAL_EFX,
+                    DefaultTransport = EAudioTransport.OpenAL,
+                    DefaultEffects = EAudioEffects.OpenAL_EFX,
                 };
 
                 using var listener = manager.NewListener("test-efx");
@@ -235,8 +235,8 @@ namespace XREngine.UnitTests.Audio
                 AudioSettings.AudioArchitectureV2 = true;
                 var manager = new AudioManager
                 {
-                    DefaultTransport = AudioTransportType.OpenAL,
-                    DefaultEffects = AudioEffectsType.SteamAudio,
+                    DefaultTransport = EAudioTransport.OpenAL,
+                    DefaultEffects = EAudioEffects.SteamAudio,
                 };
 
                 using var listener = manager.NewListener("test-steamaudio-fallback");

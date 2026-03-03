@@ -701,10 +701,7 @@ namespace XREngine.Rendering.OpenGL
             public bool Link(bool force = false)
             {
                 if (IsLinked)
-                {
-                    Api.GetProgram(BindingId, GLEnum.LinkStatus, out int s);
-                    return s != 0;
-                }
+                    return true;
 
                 if (!LinkReady && !force)
                     return false;

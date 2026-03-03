@@ -21,9 +21,12 @@ namespace XREngine.Data.Geometry
             set
             {
                 Center = value.Start;
-                Height = value.Length;
+                Height = value.End.Y - value.Start.Y;
             }
         }
+
+        private readonly Cone AsCone
+            => new(Center, Vector3.UnitY, Height, Radius);
 
         /// <summary>
         /// At t1, radius is 0 (the tip)
@@ -35,62 +38,36 @@ namespace XREngine.Data.Geometry
             => Interp.Lerp(Radius, 0.0f, t);
 
         public readonly float GetRadiusAlongAxisAtHeight(float height)
-            => GetRadiusAlongAxisNormalized(height / Height);
+            => Height == 0.0f ? 0.0f : GetRadiusAlongAxisNormalized(height / Height);
 
         public readonly Vector3 ClosestPoint(Vector3 point, bool clampToEdge)
-        {
-            Vector3 dir = point - Center;
-            float dot = Vector3.Dot(dir, Vector3.UnitY);
-            if (dot < 0.0f)
-                return Center;
-            if (dot > Height)
-                return Center + Vector3.UnitY * Height;
-            return Center + Vector3.UnitY * dot + (dir - Vector3.UnitY * dot).Normalized() * Radius;
-        }
+            => AsCone.ClosestPoint(point, clampToEdge);
 
         public EContainment ContainsAABB(AABB box, float tolerance = float.Epsilon)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCone.ContainsAABB(box, tolerance);
 
         public EContainment ContainsSphere(Sphere sphere)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCone.ContainsSphere(sphere);
 
         public EContainment ContainsCone(Cone cone)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCone.ContainsCone(cone);
 
         public EContainment ContainsCapsule(Capsule shape)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCone.ContainsCapsule(shape);
 
         public bool ContainsPoint(Vector3 point, float tolerance = float.Epsilon)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCone.ContainsPoint(point, tolerance);
 
         public AABB GetAABB(bool transformed)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCone.GetAABB(transformed);
 
         public bool IntersectsSegment(Segment segment, out Vector3[] points)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCone.IntersectsSegment(segment, out points);
 
         public bool IntersectsSegment(Segment segment)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCone.IntersectsSegment(segment);
 
         public EContainment ContainsBox(Box box)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCone.ContainsBox(box);
     }
 }

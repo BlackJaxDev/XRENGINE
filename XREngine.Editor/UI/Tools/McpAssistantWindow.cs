@@ -72,6 +72,7 @@ public sealed class McpAssistantWindow
     private sealed class ContentSegment
     {
         public enum SegmentKind { Text, ToolCallGroup }
+        public int UiId { get; init; }
         public SegmentKind Kind { get; init; }
         /// <summary>Text content (for Text segments).</summary>
         public string Text { get; set; } = string.Empty;
@@ -124,6 +125,7 @@ public sealed class McpAssistantWindow
     ];
 
     private const string AssistantDoneMarker = "[[XRENGINE_ASSISTANT_DONE]]";
+    private const string AssistantContinueMarker = "[[XRENGINE_ASSISTANT_CONTINUE]]";
     private const string ContextSummaryStartMarker = "[[XRENGINE_CONTEXT_SUMMARY]]";
     private const string ContextSummaryEndMarker = "[[/XRENGINE_CONTEXT_SUMMARY]]";
     private const float ContextSummaryTriggerRatio = 0.80f;
@@ -309,6 +311,7 @@ public sealed class McpAssistantWindow
     private bool _lastAttachMcpForContinue;
     private bool _canContinueAfterRepromptLimit;
     private const int MaxMcpUsageEntries = 80;
+    private static int s_nextContentSegmentUiId;
 
     // ── Pref-backed accessors ────────────────────────────────────────────
     // These read/write Engine.EditorPreferences so values are persisted.
@@ -382,7 +385,7 @@ public sealed class McpAssistantWindow
 
     private int MaxAutoReprompts
     {
-        get => Prefs?.McpAssistantMaxAutoReprompts ?? 3;
+        get => Prefs?.McpAssistantMaxAutoReprompts ?? 25;
         set { if (Prefs is { } p) p.McpAssistantMaxAutoReprompts = value; }
     }
 
@@ -427,6 +430,12 @@ public sealed class McpAssistantWindow
     {
         get => Prefs?.McpAssistantAutoCameraView ?? true;
         set { if (Prefs is { } p) p.McpAssistantAutoCameraView = value; }
+    }
+
+    private bool VerboseAiLogging
+    {
+        get => Prefs?.McpAssistantVerboseAiLogging ?? true;
+        set { if (Prefs is { } p) p.McpAssistantVerboseAiLogging = value; }
     }
 
     // ── Public API ───────────────────────────────────────────────────────
@@ -486,7 +495,7 @@ public sealed class McpAssistantWindow
 
             if (ImGui.MenuItem("Clear History", null, false, _history.Count > 0))
             {
-                _history.Clear();
+                ClearHistoryPreservingSentAssistantMessages();
                 _conversationSummary = string.Empty;
             }
 
@@ -635,10 +644,10 @@ public sealed class McpAssistantWindow
 
         int maxAutoReprompts = MaxAutoReprompts;
         ImGui.SetNextItemWidth(140f);
-        if (ImGui.InputInt("Max Auto Re-prompts", ref maxAutoReprompts, 1, 2))
-            MaxAutoReprompts = Math.Clamp(maxAutoReprompts, 0, 20);
+        if (ImGui.InputInt("Max Auto Re-prompts", ref maxAutoReprompts, 1, 5))
+            MaxAutoReprompts = Math.Clamp(maxAutoReprompts, 0, 50);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Maximum automatic continue prompts sent for one user prompt when the assistant does not emit the done marker.");
+            ImGui.SetTooltip("Maximum automatic continue prompts sent for one user prompt when the assistant emits the continue marker or does not emit the done marker.");
 
         bool autoSummarizeNearLimit = AutoSummarizeNearContextLimit;
         if (ImGui.Checkbox("Auto summarize near context limit", ref autoSummarizeNearLimit))
@@ -651,6 +660,12 @@ public sealed class McpAssistantWindow
             AutoCameraView = autoCameraView;
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("When enabled, the editor camera smoothly focuses relevant scene nodes after assistant scene-edit tool calls.");
+
+        bool verboseAiLogging = VerboseAiLogging;
+        if (ImGui.Checkbox("Verbose AI Logging", ref verboseAiLogging))
+            VerboseAiLogging = verboseAiLogging;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When enabled, logs full prompt envelopes, full model responses, and full MCP tool call payloads/results to the AI log category.");
 
         if (ImGui.Button("Load Keys from ENV"))
         {
@@ -1186,7 +1201,6 @@ public sealed class McpAssistantWindow
         ContentSegment[] segments = SnapshotSegments(msg);
         if (segments.Length > 0)
         {
-            int toolGroupIndex = 0;
             for (int s = 0; s < segments.Length; s++)
             {
                 var seg = segments[s];
@@ -1208,8 +1222,8 @@ public sealed class McpAssistantWindow
 
                     if (groupCalls.Length > 0)
                     {
-                        DrawToolCallsSection(groupCalls, index * 100 + toolGroupIndex);
-                        toolGroupIndex++;
+                        int groupUiId = seg.UiId != 0 ? seg.UiId : (index * 100 + s);
+                        DrawToolCallsSection(groupCalls, groupUiId);
                         ImGui.Spacing();
                     }
                 }
@@ -1502,7 +1516,11 @@ public sealed class McpAssistantWindow
             if (message.Segments.Count > 0 && message.Segments[^1].Kind == ContentSegment.SegmentKind.Text)
                 return message.Segments[^1];
 
-            var seg = new ContentSegment { Kind = ContentSegment.SegmentKind.Text };
+            var seg = new ContentSegment
+            {
+                UiId = Interlocked.Increment(ref s_nextContentSegmentUiId),
+                Kind = ContentSegment.SegmentKind.Text
+            };
             message.Segments.Add(seg);
             return seg;
         }
@@ -1519,7 +1537,11 @@ public sealed class McpAssistantWindow
             if (message.Segments.Count > 0 && message.Segments[^1].Kind == ContentSegment.SegmentKind.ToolCallGroup)
                 return message.Segments[^1];
 
-            var seg = new ContentSegment { Kind = ContentSegment.SegmentKind.ToolCallGroup };
+            var seg = new ContentSegment
+            {
+                UiId = Interlocked.Increment(ref s_nextContentSegmentUiId),
+                Kind = ContentSegment.SegmentKind.ToolCallGroup
+            };
             message.Segments.Add(seg);
             return seg;
         }
@@ -1573,8 +1595,9 @@ public sealed class McpAssistantWindow
 
         string text = content;
 
-        // Strip the done marker so it never shows in the UI.
+        // Strip protocol markers so they never show in the UI.
         text = text.Replace(AssistantDoneMarker, string.Empty, StringComparison.Ordinal);
+        text = text.Replace(AssistantContinueMarker, string.Empty, StringComparison.Ordinal);
 
         // Remove trailing status markers like "[Executing tool calls...]".
         int bracketIdx = text.LastIndexOf('[');
@@ -2309,8 +2332,9 @@ public sealed class McpAssistantWindow
         // Placeholder assistant message that will be filled by streaming.
         var assistantMsg = new ChatMessage { Role = "assistant", IsStreaming = true };
         _history.Add(assistantMsg);
+        bool mutationLikelyRequired = AttachMcpServer && IsLikelySceneMutationPrompt(trimmedPrompt);
 
-        int maxAutoReprompts = Math.Clamp(MaxAutoReprompts, 0, 20);
+        int maxAutoReprompts = Math.Clamp(MaxAutoReprompts, 0, 50);
         bool finishedByMarker = false;
         bool reachedRepromptLimit = false;
 
@@ -2324,6 +2348,7 @@ public sealed class McpAssistantWindow
                 bool requestSelfSummary = ShouldRequestSelfSummary(provider, trimmedPrompt, assistantMsg);
                 string promptForAttempt = BuildProviderPromptEnvelope(trimmedPrompt, assistantMsg, attempt, requestSelfSummary);
                 string priorContent = assistantMsg.Content;
+                LogAiPromptAttempt(provider, attempt, maxAutoReprompts, promptForAttempt, isContinueFlow: false, requestSelfSummary);
 
                 if (attempt == 0)
                     SetStatus("Streaming\u2026", ColorBusy);
@@ -2368,10 +2393,27 @@ public sealed class McpAssistantWindow
                     assistantMsg.Content = $"{priorContent}\n\n{assistantMsg.Content}";
                 }
 
+                LogAiResponseAttempt(provider, attempt, maxAutoReprompts, assistantMsg.Content, isContinueFlow: false);
+
                 CaptureContextSummary(assistantMsg);
+
+                // Check for explicit continue marker — model is requesting auto-reprompt.
+                if (TryStripContinueMarker(assistantMsg))
+                {
+                    if (attempt >= maxAutoReprompts)
+                    {
+                        reachedRepromptLimit = true;
+                        break;
+                    }
+
+                    SetStatus($"Model requested continuation; auto re-prompt {attempt + 1}/{maxAutoReprompts}\u2026", ColorBusy);
+                    continue;
+                }
+
                 if (TryStripDoneMarker(assistantMsg))
                 {
-                    if (IndicatesRemainingWork(assistantMsg.Content))
+                    bool missingRequiredMutation = mutationLikelyRequired && !HasSuccessfulMutationToolCall(assistantMsg);
+                    if (IndicatesRemainingWork(assistantMsg.Content) || missingRequiredMutation)
                     {
                         if (attempt >= maxAutoReprompts)
                         {
@@ -2379,7 +2421,10 @@ public sealed class McpAssistantWindow
                             break;
                         }
 
-                        SetStatus($"Model signaled done but response appears incomplete; auto re-prompting {attempt + 1}/{maxAutoReprompts}…", ColorBusy);
+                        if (missingRequiredMutation)
+                            SetStatus($"Model signaled done without any successful mutating tool calls; auto re-prompting {attempt + 1}/{maxAutoReprompts}…", ColorBusy);
+                        else
+                            SetStatus($"Model signaled done but response appears incomplete; auto re-prompting {attempt + 1}/{maxAutoReprompts}…", ColorBusy);
                         continue;
                     }
 
@@ -2532,9 +2577,10 @@ public sealed class McpAssistantWindow
             }
         }
 
-        int maxAutoReprompts = Math.Clamp(MaxAutoReprompts, 0, 20);
+        int maxAutoReprompts = Math.Clamp(MaxAutoReprompts, 0, 50);
         bool finishedByMarker = false;
         bool reachedRepromptLimit = false;
+        bool mutationLikelyRequired = AttachMcpServer && IsLikelySceneMutationPrompt(trimmedPrompt);
 
         SetStatus("Continuing\u2026", ColorBusy);
         _cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
@@ -2546,6 +2592,7 @@ public sealed class McpAssistantWindow
                 bool requestSelfSummary = ShouldRequestSelfSummary(provider, trimmedPrompt, assistantMsg);
                 string promptForAttempt = BuildProviderPromptEnvelope(trimmedPrompt, assistantMsg, attempt, requestSelfSummary);
                 string priorContent = assistantMsg.Content;
+                LogAiPromptAttempt(provider, attempt, maxAutoReprompts, promptForAttempt, isContinueFlow: true, requestSelfSummary);
 
                 if (attempt == 0)
                     SetStatus("Continuing\u2026", ColorBusy);
@@ -2588,9 +2635,41 @@ public sealed class McpAssistantWindow
                     assistantMsg.Content = $"{priorContent}\n\n{assistantMsg.Content}";
                 }
 
+                LogAiResponseAttempt(provider, attempt, maxAutoReprompts, assistantMsg.Content, isContinueFlow: true);
+
                 CaptureContextSummary(assistantMsg);
+
+                // Check for explicit continue marker — model is requesting auto-reprompt.
+                if (TryStripContinueMarker(assistantMsg))
+                {
+                    if (attempt >= maxAutoReprompts)
+                    {
+                        reachedRepromptLimit = true;
+                        break;
+                    }
+
+                    SetStatus($"Model requested continuation; auto re-prompt {attempt + 1}/{maxAutoReprompts}\u2026", ColorBusy);
+                    continue;
+                }
+
                 if (TryStripDoneMarker(assistantMsg))
                 {
+                    bool missingRequiredMutation = mutationLikelyRequired && !HasSuccessfulMutationToolCall(assistantMsg);
+                    if (IndicatesRemainingWork(assistantMsg.Content) || missingRequiredMutation)
+                    {
+                        if (attempt >= maxAutoReprompts)
+                        {
+                            reachedRepromptLimit = true;
+                            break;
+                        }
+
+                        if (missingRequiredMutation)
+                            SetStatus($"Model signaled done without any successful mutating tool calls; auto re-prompting {attempt + 1}/{maxAutoReprompts}…", ColorBusy);
+                        else
+                            SetStatus($"Model signaled done but response appears incomplete; auto re-prompting {attempt + 1}/{maxAutoReprompts}…", ColorBusy);
+                        continue;
+                    }
+
                     finishedByMarker = true;
                     break;
                 }
@@ -2720,8 +2799,8 @@ public sealed class McpAssistantWindow
     {
         int contextWindowTokens = ResolveContextWindowTokens((ProviderType)ProviderIndex);
         int contextCharsBudget = contextWindowTokens > 0
-            ? Math.Clamp((int)(contextWindowTokens * 0.45f) * 4, 8_000, 48_000)
-            : 12_000;
+            ? Math.Clamp((int)(contextWindowTokens * 0.70f) * 4, 16_000, 220_000)
+            : 24_000;
 
         string contextBlock = BuildConversationContextBlock(assistantMsg, contextCharsBudget);
         var sb = new StringBuilder();
@@ -2733,8 +2812,10 @@ public sealed class McpAssistantWindow
         sb.AppendLine("- Do NOT claim missing/denied editor or tool access unless a tool call in this conversation explicitly returned an access/permission error.");
         sb.AppendLine("- During tool use, include brief progress text; do not output only raw tool activity.");
         sb.AppendLine("- Avoid repeated read-only probes that return the same data. If no new information appears, stop probing and complete with best-effort results plus explicit blockers.");
-        sb.AppendLine($"- Only when ALL requested work is done, output a completion footer with 'Completed Work' (summary of what was done) and 'Suggested Follow-ups' (optional ideas for the user — NOT remaining tasks from this request), then {AssistantDoneMarker} on the very last line.");
-        sb.AppendLine("- If any work remains from the original request, do NOT output the footer or done marker — keep working.");
+        sb.AppendLine($"- When ALL work is done: output 'Completed Work' summary, 'Suggested Follow-ups' (optional), then {AssistantDoneMarker} on the very last line.");
+        sb.AppendLine($"- When you have more steps remaining but your current response is long or you've hit a tool-call limit: output a brief progress summary of what was done and what remains, then {AssistantContinueMarker} on the last line. This triggers an automatic re-prompt so you can continue.");
+        sb.AppendLine($"- If any work remains, do NOT output the done marker — either keep working or emit the continue marker.");
+        sb.AppendLine($"- Never emit both {AssistantDoneMarker} and {AssistantContinueMarker} in the same response.");
         sb.AppendLine("- Keep continuity with prior tool calls/results and avoid restarting work.");
 
         if (requestSelfSummary)
@@ -2773,25 +2854,70 @@ public sealed class McpAssistantWindow
         var chunks = new List<string>();
         int usedChars = 0;
 
+        static bool TryAddChunk(List<string> list, ref int used, int budget, string chunk)
+        {
+            if (string.IsNullOrWhiteSpace(chunk))
+                return true;
+
+            if (used + chunk.Length > budget)
+                return false;
+
+            list.Add(chunk);
+            used += chunk.Length;
+            return true;
+        }
+
         if (!string.IsNullOrWhiteSpace(_conversationSummary))
         {
             string summaryChunk = $"SUMMARY:\n{_conversationSummary.Trim()}";
-            chunks.Add(summaryChunk);
-            usedChars += summaryChunk.Length;
+            TryAddChunk(chunks, ref usedChars, maxChars, summaryChunk);
         }
 
+        if (_mcpUsageHistory.Count > 0)
+        {
+            var usageLines = new List<string>(_mcpUsageHistory.Count + 1)
+            {
+                "MCP USAGE LEDGER:"
+            };
+
+            for (int i = Math.Max(0, _mcpUsageHistory.Count - 120); i < _mcpUsageHistory.Count; i++)
+            {
+                McpUsageEntry u = _mcpUsageHistory[i];
+                string line = $"- {u.Timestamp:HH:mm:ss} provider={u.Provider} attach={u.AttachRequested} requireToolUse={u.RequireToolUse} result={u.Result} mcpCalls={u.McpEventCount} toolCalls={u.ToolEventCount}";
+
+                if (!string.IsNullOrWhiteSpace(u.PromptPreview))
+                    line += $" prompt='{Truncate(u.PromptPreview, 240)}'";
+                if (!string.IsNullOrWhiteSpace(u.Note))
+                    line += $" note='{Truncate(u.Note.Replace('\n', ' '), 400)}'";
+
+                usageLines.Add(line);
+            }
+
+            TryAddChunk(chunks, ref usedChars, maxChars, string.Join("\n", usageLines));
+        }
+
+        // Build message lines from oldest->newest, then keep the tail that fits budget.
+        // This preserves chronological append behavior while prioritizing recent context.
+        var messageLines = new List<string>(_history.Count);
         for (int i = _history.Count - 1; i >= 0; i--)
         {
             ChatMessage msg = _history[i];
-            if (ReferenceEquals(msg, activeAssistantMessage) && string.IsNullOrWhiteSpace(msg.Content))
-                continue;
-
             string cleaned = StripProtocolMarkers(msg.Content);
-            if (string.IsNullOrWhiteSpace(cleaned))
-                continue;
-
-            string line = $"{msg.Role.ToUpperInvariant()}: {Truncate(cleaned.Replace('\n', ' '), 2200)}";
             ToolCallEntry[] toolCalls = SnapshotToolCalls(msg);
+
+            if (ReferenceEquals(msg, activeAssistantMessage)
+                && string.IsNullOrWhiteSpace(cleaned)
+                && toolCalls.Length == 0)
+            {
+                continue;
+            }
+
+            string line = $"{msg.Role.ToUpperInvariant()} [{msg.Timestamp:HH:mm:ss}]: ";
+            if (!string.IsNullOrWhiteSpace(cleaned))
+                line += Truncate(cleaned.Replace('\n', ' '), 8000);
+            else
+                line += "(tool-only response)";
+
             if (toolCalls.Length > 0)
             {
                 // Include tool names, arguments, and result summaries so the model
@@ -2806,23 +2932,48 @@ public sealed class McpAssistantWindow
                         part += $" -> {tc.ContextResultSummary}";
                     else if (!string.IsNullOrEmpty(tc.ResultSummary))
                         part += $" -> {tc.ResultSummary}";
+                    if (!string.IsNullOrEmpty(tc.ResultFilePath))
+                        part += $" [file:{tc.ResultFilePath}]";
                     if (tc.IsError)
                         part += " [ERROR]";
                     toolParts.Add(part);
                 }
                 string toolSummary = string.Join("; ", toolParts);
                 if (!string.IsNullOrWhiteSpace(toolSummary))
-                    line += $" | tools: {Truncate(toolSummary, 1200)}";
+                    line += $" | tools: {Truncate(toolSummary, 8000)}";
             }
 
-            if (usedChars + line.Length > maxChars)
-                break;
-
-            chunks.Add(line);
-            usedChars += line.Length;
+            messageLines.Add(line);
         }
 
-        chunks.Reverse();
+        messageLines.Reverse();
+
+        // Append recent message lines first (newest->oldest), then restore chronological order.
+        // This preserves high-value recent turns while keeping summary/usage chunks intact.
+        var selectedMessageLines = new Stack<string>();
+        for (int i = messageLines.Count - 1; i >= 0; i--)
+        {
+            string line = messageLines[i];
+            if (usedChars + line.Length <= maxChars)
+            {
+                selectedMessageLines.Push(line);
+                usedChars += line.Length;
+                continue;
+            }
+
+            if (selectedMessageLines.Count == 0 && usedChars < maxChars)
+            {
+                string truncated = Truncate(line, Math.Max(512, maxChars - usedChars));
+                selectedMessageLines.Push(truncated);
+                usedChars += truncated.Length;
+            }
+
+            break;
+        }
+
+        while (selectedMessageLines.Count > 0)
+            chunks.Add(selectedMessageLines.Pop());
+
         return string.Join("\n", chunks);
     }
 
@@ -2856,6 +3007,22 @@ public sealed class McpAssistantWindow
         return true;
     }
 
+    /// <summary>
+    /// Checks for and strips the <see cref="AssistantContinueMarker"/> from the assistant message.
+    /// Returns <c>true</c> if the marker was present, indicating the model is explicitly requesting
+    /// another turn to continue working on the current task.
+    /// </summary>
+    private static bool TryStripContinueMarker(ChatMessage assistantMsg)
+    {
+        int markerIndex = assistantMsg.Content.IndexOf(AssistantContinueMarker, StringComparison.Ordinal);
+        if (markerIndex < 0)
+            return false;
+
+        assistantMsg.Content = (assistantMsg.Content[..markerIndex]
+            + assistantMsg.Content[(markerIndex + AssistantContinueMarker.Length)..]).Trim();
+        return true;
+    }
+
     private static bool IndicatesRemainingWork(string content)
     {
         if (string.IsNullOrWhiteSpace(content))
@@ -2878,6 +3045,20 @@ public sealed class McpAssistantWindow
             "i can now finish it by",
             "i can finish it by",
             "i still need to",
+            "task not executed",
+            "not executed",
+            "requires a fresh attempt",
+            "requires fresh attempt",
+            "requires retry",
+            "needs retry",
+            "retry the full workflow",
+            "re-run the",
+            "recommend retrying",
+            "no scene alterations were made",
+            "no changes were made",
+            "unable to complete",
+            "couldn't complete",
+            "incomplete",
         ];
 
         for (int i = 0; i < unfinishedSignals.Length; i++)
@@ -2903,6 +3084,7 @@ public sealed class McpAssistantWindow
             return string.Empty;
 
         string cleaned = content.Replace(AssistantDoneMarker, string.Empty, StringComparison.Ordinal);
+        cleaned = cleaned.Replace(AssistantContinueMarker, string.Empty, StringComparison.Ordinal);
         cleaned = cleaned.Replace(ContextSummaryStartMarker, string.Empty, StringComparison.Ordinal);
         cleaned = cleaned.Replace(ContextSummaryEndMarker, string.Empty, StringComparison.Ordinal);
         return cleaned.Trim();
@@ -5075,32 +5257,75 @@ public sealed class McpAssistantWindow
         bool keepCameraOnWorkingArea,
         bool isRealtimeSession = false)
     {
-        var sb = new StringBuilder(512);
+        var sb = new StringBuilder(4096);
 
         // ── Identity & tone ──────────────────────────────────────────────
-        sb.Append("You are an assistant embedded in the XREngine editor, a Windows-first C# XR engine. ");
-        sb.Append("Be concise, actionable, and accurate. ");
-        sb.Append("When describing scene changes, state what was done rather than how to do it.");
-        sb.Append(' ');
+        sb.Append("You are an expert scene-authoring assistant embedded in the XREngine editor — a Windows-first C# XR engine built on .NET 10, rendering via OpenGL 4.6 with a deferred PBR pipeline. ");
+        sb.Append("You have deep knowledge of the engine's scene graph, component system, material/shader pipeline, and every MCP tool available. ");
+        sb.Append("You can do anything the user can do in the editor: build scene hierarchies, create meshes, add/configure components, write shaders, set materials, adjust uniforms, author game assets, write C# game scripts, and visually verify your work via screenshots. ");
+        sb.Append("Be concise, actionable, and accurate. State what was done, not how to do it. ");
         sb.Append(BuildMachineContextInstruction());
 
         // ── Completion protocol ─────────────────────────────────────────
-        sb.Append(" CRITICAL: You must fully complete every part of the user's request before finishing.");
-        sb.Append(" Do NOT stop at intermediate milestones. If you planned multiple steps, execute ALL of them — do not describe remaining work and stop.");
-        sb.Append(" If a tool call fails, retry with corrected parameters or try an alternative approach rather than giving up.");
-        sb.Append(" While using tools, provide short natural-language progress updates; avoid long stretches of tool-only output.");
-        sb.Append(" Do not repeatedly call the same read-only tools with unchanged arguments unless the previous result indicates state changed.");
-        sb.Append(" When a tool returns IDs (node_id, component_id, asset_id), use those IDs immediately in subsequent mutation calls — do not re-query for the same information.");
-        sb.Append(" For property edits, use schema-first behavior: discover writable members with get_component_schema/get_component_snapshot/get_component_property first, then mutate using exact discovered member names.");
-        sb.Append(" Do not guess shader parameter semantics or material member names from intuition alone.");
-        sb.Append(" Every mutation must be followed by verification read-back (get_component_property, get_component_snapshot, or screenshot for visual tasks) before claiming success.");
-        sb.Append(" If additional tool calls are no longer adding new information, stop tool-calling and produce the best possible completion with explicit blockers.");
-        sb.Append($" Only when ALL requested work is done, end your message with a brief completion footer: 'Completed Work' summarizing what was done, then 'Issues' listing any tool call failures, errors, or problems encountered during execution (include the tool name and a one-line description of each issue; omit this section if there were none), then 'Suggested Follow-ups' with optional ideas the user might explore next — these are NOT remaining tasks from the current request. End with {AssistantDoneMarker} on the very last line.");
-        sb.Append(" If ANY work from the original request remains, do NOT output the completion footer or done marker — keep working.");
+        sb.AppendLine();
+        sb.AppendLine();
+        sb.Append("COMPLETION PROTOCOL — Two control markers govern the auto-reprompt loop: ");
+        sb.AppendLine();
+        sb.AppendLine();
+        sb.AppendLine($"  DONE marker: {AssistantDoneMarker}");
+        sb.AppendLine($"  CONTINUE marker: {AssistantContinueMarker}");
+        sb.AppendLine();
+        sb.Append("Rules: ");
+        sb.Append("You must fully complete every part of the user's request. Do NOT stop at intermediate milestones. Execute ALL planned steps. ");
+        sb.Append("If a tool call fails, retry with corrected parameters or try an alternative approach. ");
+        sb.Append("Provide short progress updates between tool calls. ");
+        sb.Append("When tools return IDs (node_id, component_id, asset_id), cache and reuse them — do not re-query. ");
+        sb.Append("If tool calls stop yielding new information, produce a completion with explicit blockers. ");
+        sb.AppendLine();
+        sb.AppendLine();
+        sb.AppendLine("When to use each marker:");
+        sb.AppendLine($"  • When ALL work is FULLY complete → end with: 'Completed Work' summary, 'Issues' (tool failures, omit if none), 'Suggested Follow-ups' (optional ideas, NOT remaining work). Final line: {AssistantDoneMarker}");
+        sb.AppendLine($"  • When you have MORE STEPS remaining and your current response is getting long, or you've reached the tool-call limit for this turn, or you need another turn to finish → output a brief progress summary of what was done so far and what remains, then: {AssistantContinueMarker}");
+        sb.AppendLine($"    The CONTINUE marker triggers an automatic re-prompt so you can pick up exactly where you left off. Use it freely for multi-step tasks.");
+        sb.AppendLine($"  • If ANY original work remains, do NOT output the DONE marker — either keep working or emit CONTINUE.");
+        sb.AppendLine($"  • Never emit both markers in the same response. Use exactly one: DONE when finished, CONTINUE when you need another turn.");
+        sb.AppendLine($"  • Both markers are stripped from the UI — the user never sees them.");
+
+        // ── Context-first execution workflow ────────────────────────────
+        sb.AppendLine();
+        sb.AppendLine();
+        sb.AppendLine("CONTEXT-FIRST EXECUTION WORKFLOW — Follow this three-phase pattern for every non-trivial request:");
+        sb.AppendLine();
+        sb.AppendLine("Phase 1 — GATHER CONTEXT (do this FIRST, before any mutations):");
+        sb.AppendLine("  • Read the user's request fully and identify what information you need.");
+        sb.AppendLine("  • Use read-only tools to survey the current scene state: list_worlds, list_scene_nodes, list_components, get_component_schema, get_component_snapshot, get_scene_statistics, get_render_state, capture_viewport_screenshot.");
+        sb.AppendLine("  • If you need to understand engine types, APIs, or component capabilities, use the introspection tools: search_types, get_type_info, get_type_members, get_derived_types, get_method_info, get_enum_values, list_component_types.");
+        sb.AppendLine("  • If you need deeper engine documentation beyond what the introspection tools and this prompt provide, you can fetch pages from the DocFX API reference site. The site is generated from source-code XML doc comments and covers every public type, method, property, and event in the engine. It is served locally at http://localhost:8080/ when the DocFX server is running (started via Tools/Start-DocFxServer.bat). Key URL patterns:");
+        sb.AppendLine("    - API index: http://localhost:8080/apiref/");
+        sb.AppendLine("    - Type page: http://localhost:8080/apiref/XREngine.Scene.SceneNode.html (namespace-qualified type name)");
+        sb.AppendLine("    - Architecture docs: http://localhost:8080/architecture/");
+        sb.AppendLine("    - Feature docs: http://localhost:8080/features/");
+        sb.AppendLine("    Use web search or page fetching tools (when available) to read these pages for authoritative details on method signatures, property types, class hierarchies, and usage examples.");
+        sb.AppendLine("  • If the user's request involves existing scene nodes, inspect them: get_scene_node_info, list_components, get_component_snapshot for each relevant node.");
+        sb.AppendLine("  • Collect ALL context you need before proceeding. Do not start mutating the scene while still discovering what's there.");
+        sb.AppendLine();
+        sb.AppendLine("Phase 2 — PLAN (assemble a concrete action list from gathered context):");
+        sb.AppendLine("  • Based on the context collected, create a numbered step-by-step plan.");
+        sb.AppendLine("  • State the plan to the user in a brief summary: what you found, what you will do, in what order.");
+        sb.AppendLine("  • Identify dependencies between steps (e.g., 'create parent node before children', 'create material before assigning').");
+        sb.AppendLine("  • If anything is ambiguous or impossible given the current state, state assumptions or ask the user before proceeding.");
+        sb.AppendLine();
+        sb.AppendLine("Phase 3 — EXECUTE (carry out the plan, verify each step):");
+        sb.AppendLine("  • Execute the plan step by step, using mutation tools.");
+        sb.AppendLine("  • After each significant mutation, verify with a read-back (get_component_property, get_component_snapshot) or screenshot.");
+        sb.AppendLine("  • If a step fails, adapt the plan — retry with corrected parameters or take an alternative approach.");
+        sb.AppendLine("  • After all steps complete, do a final capture_viewport_screenshot for visual tasks and report completion.");
+        sb.AppendLine();
+        sb.AppendLine("IMPORTANT: Do NOT skip Phase 1. Gathering context first prevents wasted mutations, avoids guessing property names, and ensures you understand the current scene before changing it. The cost of a few extra read-only calls is far less than undoing incorrect mutations.");
 
         // ── Built-in hosted tools (OpenAI Responses API only) ────────────
         if (provider == ProviderType.Codex && !isRealtimeSession)
-            sb.Append(" You have access to web search. Use it when the user's question benefits from up-to-date information.");
+            sb.Append(" You have access to web search. Use it when the user's question benefits from up-to-date information, or to fetch DocFX API reference pages for engine type documentation.");
 
         // ── Realtime-specific visual context hint ────────────────────────
         if (isRealtimeSession)
@@ -5112,28 +5337,248 @@ public sealed class McpAssistantWindow
         // ── MCP scene tools ──────────────────────────────────────────────
         if (attachMcp)
         {
-            sb.Append(" You have function tools that interact with the running XREngine editor.");
-            sb.Append(" These tools let you list, create, modify, and delete scene nodes, components, transforms, and other editor objects.");
-
-            // ── Key tool workflow recipes ────────────────────────────────
-            // These give the model concrete tool chains instead of leaving it to guess.
             sb.AppendLine();
-            sb.Append(" TOOL WORKFLOW CHEAT SHEET — use these exact tool chains:");
-            sb.Append(" [Create a colored shape] create_primitive_shape(shape_type, name, color, size, parent_id) — this creates a node with mesh+material in one call.");
-            sb.Append(" [Change an existing node's color] 1) list_components(node_id), 2) get_component_schema(component_type) + get_component_snapshot(node_id, component_id=...) to discover writable members and material references, 3) mutate using set_component_property/set_component_properties with discovered member names OR assign_component_asset_property(node_id, 'Material', ...) after create_material_asset(...), 4) verify with get_component_property/get_component_snapshot and then capture_viewport_screenshot().");
-            sb.Append(" [Move/scale/rotate a node] set_transform(node_id, translation_x/y/z, scale_x/y/z) or rotate_transform(node_id, axis_x/y/z, angle_degrees).");
-            sb.Append(" [Add a light] create a new scene node via batch_create_nodes or create_primitive_shape, then add_component_to_node(node_id, 'PointLightComponent' or 'DirectionalLightComponent' or 'SpotLightComponent'), then set_component_property to configure it.");
-            sb.Append(" [Verify visual result] capture_viewport_screenshot() — ALWAYS do this after visual changes.");
-            sb.Append(" [Frame camera on work] focus_node_in_view(node_id) or set_editor_camera_view(...).");
+            sb.AppendLine();
 
-            // ── Scene completeness guidance ──────────────────────────────
-            sb.Append(" IMPORTANT scene rules: Mesh/shape components MUST have a Material assigned to be visible.");
-            sb.Append(" create_primitive_shape auto-assigns a default lit material, but if you add mesh components manually via add_component, you must also assign a material via assign_component_asset_property or set_object_property.");
-            sb.Append(" When creating materials, use create_material_asset with a material_kind (lit_color, unlit_color_forward, deferred_color) and color.");
-            sb.Append(" CRITICAL: After creating a material with create_material_asset, you MUST assign it to the target mesh component using assign_component_asset_property(node_id, 'Material', asset_id=<the material ID returned by create_material_asset>, component_type=<the mesh component type, e.g. 'BoxMeshComponent' or 'ShapeMeshComponent'>). A material that is created but not assigned to a component has NO visual effect.");
-            sb.Append(" For shader/material edits, prefer changing strongly-typed material/component members discovered via schema; avoid assuming universal names like 'Color' unless confirmed by read tools.");
-            sb.Append(" After completing any visual/scene work, ALWAYS call capture_viewport_screenshot to verify the result is actually visible and correct. Do NOT assume success from tool return values alone — visually confirm.");
-            sb.Append(" If the screenshot shows objects are not visible, diagnose (missing material, wrong position, camera not aimed at objects) and fix before completing.");
+            // ─────────────────────────────────────────────────────────────
+            // § ENGINE ARCHITECTURE KNOWLEDGE
+            // ─────────────────────────────────────────────────────────────
+            sb.AppendLine("ENGINE ARCHITECTURE:");
+            sb.AppendLine();
+
+            // Scene graph
+            sb.AppendLine("Scene Graph — The world contains one or more Scenes. Each Scene has a tree of SceneNodes. Each SceneNode owns a TransformBase (default: Transform with Translation/Rotation/Scale in local space) and a list of XRComponents. Transforms form a parent-child hierarchy; world transform = local * parent's world. The coordinate system is Y-up, right-handed.");
+            sb.AppendLine();
+
+            // Components
+            sb.AppendLine("Component System — SceneNodes are extended via XRComponents attached at runtime. Common types:");
+            sb.AppendLine("  Rendering: ModelComponent (renders XRModel with submeshes), BoxMeshComponent, SphereMeshComponent, ConeMeshComponent (shape primitives with Material property), GaussianSplatComponent, OctahedralBillboardComponent, DeferredDecalComponent, SkyboxComponent, ParticleEmitterComponent");
+            sb.AppendLine("  Lighting: PointLightComponent (Radius, Brightness, Color, DiffuseIntensity, CastsShadows), DirectionalLightComponent (Scale, CascadeCount), SpotLightComponent (Distance, Brightness, OuterCutoffAngleDegrees, InnerCutoffAngleDegrees, Exponent)");
+            sb.AppendLine("  Camera: CameraComponent (perspective/orthographic, SetPerspective(fov,near,far), SetOrthographic(w,h,near,far))");
+            sb.AppendLine("  Audio: AudioSourceComponent, AudioListenerComponent, MicrophoneComponent");
+            sb.AppendLine("  Physics: PhysicsActorComponent, TriggerVolumeComponent, PhysicsJointComponent");
+            sb.AppendLine("  Animation: AnimStateMachineComponent, AnimationClipComponent, HumanoidComponent, IK solvers");
+            sb.AppendLine("  UI: UIComponent, UICanvasComponent, UICanvasInputComponent");
+            sb.AppendLine("  Networking: WebSocketClientComponent, TcpServerComponent, TcpClientComponent, RestApiComponent, UdpSocketComponent, OscSenderComponent, OscReceiverComponent");
+            sb.AppendLine("  Interaction: InteractorComponent, InteractableComponent");
+            sb.AppendLine("  VR: VRTrackerCollectionComponent, VRPlayerCharacterComponent, VRHeadsetComponent");
+            sb.AppendLine("  Debug: DebugVisualize3DComponent, DebugDrawComponent");
+            sb.AppendLine("  Use list_component_types for the full runtime list. Use get_component_schema(component_type) to discover all writable properties/fields before mutation.");
+            sb.AppendLine();
+
+            // Transforms
+            sb.AppendLine("Transform System — Default Transform has Translation (Vector3), Rotation (Quaternion), Scale (Vector3), and Rotator (Pitch/Yaw/Roll degrees). Other types: RigidBodyTransform, OrbitTransform, BoomTransform, BillboardTransform, LookatTransform, RectTransform, Spline3DTransform, SmoothedTransform, VR transforms (VRHeadsetTransform, VRControllerTransform, VRTrackerTransform). Use list_transform_types for the full list.");
+            sb.AppendLine();
+
+            // Material system
+            sb.AppendLine("Material & Shader System — XRMaterial holds ShaderVar[] parameters (GPU uniforms), XRTexture[] textures, and categorized XRShader lists (vertex, fragment, geometry, compute, etc.).");
+            sb.AppendLine("  ShaderVar is the uniform system. Each ShaderVar has a Name (GLSL uniform name) and typed Value. Concrete types: ShaderFloat, ShaderVector2, ShaderVector3, ShaderVector4, ShaderInt, ShaderBool, ShaderMat4, ShaderDouble. Corresponding GLSL types: float, vec2, vec3, vec4, int, bool, mat4, double.");
+            sb.AppendLine("  Factory materials: CreateLitColorMaterial(color, deferred) creates a PBR material with uniforms: BaseColor(vec3), Opacity(float), Specular(float,1), Roughness(float,1), Metallic(float,0), IndexOfRefraction(float,1). CreateUnlitColorMaterialForward(color) creates an unlit material with uniform: MatColor(vec4). CreateColorMaterialDeferred(color) has BaseColor(vec3) and Opacity(float).");
+            sb.AppendLine("  create_material_asset tool accepts material_kind: 'lit_color' (PBR deferred, default), 'unlit_color_forward' (unlit), 'deferred_color' (simple deferred). Always specify a color parameter (#RRGGBB hex or {R,G,B,A} object).");
+            sb.AppendLine("  READING material uniforms: get_material_uniforms(material_id) OR get_material_uniforms(node_id, component_type) — lists all uniform names, types, and current values on a material.");
+            sb.AppendLine("  SETTING material uniforms: set_material_uniform(uniform_name, value, material_id) OR set_material_uniform(uniform_name, value, node_id, component_type) — sets a single uniform by name.");
+            sb.AppendLine("  SETTING multiple uniforms at once: set_material_uniforms(uniforms:{BaseColor:{X:1,Y:0,Z:0}, Roughness:0.5}, material_id) — batch-set multiple uniforms in one call.");
+            sb.AppendLine("  BaseColor is a vec3 uniform: pass {X:r, Y:g, Z:b} or [r,g,b] (0.0-1.0 linear float range). Also accepts {R:r, G:g, B:b}.");
+            sb.AppendLine("  IMPORTANT: set_component_property CANNOT set material uniforms — it only sets flat properties on the component itself (e.g. 'CastsShadows'). To change BaseColor, Roughness, Metallic, etc., you MUST use set_material_uniform or set_material_uniforms.");
+            sb.AppendLine("  Typical workflow to recolor a mesh: 1) get_material_uniforms(node_id, component_type:'BoxMeshComponent') to see current values, 2) set_material_uniform('BaseColor', {X:1,Y:0,Z:0}, node_id, component_type:'BoxMeshComponent') to set red.");
+            sb.AppendLine();
+
+            // Shaders
+            sb.AppendLine("Shader Authoring — XRShader wraps GLSL source. Engine shaders live in Build/CommonAssets/Shaders/. Key shader categories:");
+            sb.AppendLine("  Common/: ColoredDeferred.fs, TexturedDeferred.fs, LitColoredForward.fs, UnlitColoredForward.fs, DepthOutput.fs, Text.vs/fs");
+            sb.AppendLine("  Scene3D/: DeferredLightingDir.fs, DeferredLightingPoint.fs, DeferredLightingSpot.fs, BRDF.fs, BloomBlur.fs, FXAA.fs, SSAOGen.fs, PostProcess.fs, DepthOfField.fs, IrradianceConvolution.fs, Prefilter.fs, SkyboxCubemap.fs, SkyboxEquirect.fs, MotionVectors.fs, FullscreenTri.vs");
+            sb.AppendLine("  Snippets/: Reusable includes — ForwardLighting.glsl, PBRFunctions.glsl, NormalMapping.glsl, ParallaxMapping.glsl, ShadowSampling.glsl, ToneMapping.glsl, ProceduralNoise.glsl");
+            sb.AppendLine("  Uber/: UberShader.frag/vert with modules (pbr, emission, dissolve, glitter, parallax, outlines, matcap, subsurface)");
+            sb.AppendLine("  To write custom shaders: use write_game_asset to create .fs/.vs/.glsl files in the game assets, then create an XRMaterial via create_asset with shader references, or use write_game_script to create a component that programmatically builds the material.");
+            sb.AppendLine();
+
+            // Mesh / model
+            sb.AppendLine("Mesh & Model System — ShapeMeshComponent (abstract) is the base for primitive meshes. It has Shape (IShape) and Material (XRMaterial) properties. When Shape or Material changes, renderers rebuild automatically. ModelComponent renders multi-submesh XRModel assets. bake_shape_components_to_model performs boolean CSG operations (union/intersect/difference/xor) on shape nodes into a single ModelComponent.");
+            sb.AppendLine();
+
+            // Prefabs
+            sb.AppendLine("Prefab System — create_prefab_from_node saves a node hierarchy as XRPrefabSource. instantiate_prefab creates instances with transform overrides. prefab_apply_overrides pushes instance changes back to the source. prefab_revert_overrides restores source values.");
+            sb.AppendLine();
+
+            // Game scripting
+            sb.AppendLine("Game Scripting — write_game_script creates C# files in the game project. scaffold_component generates XRComponent subclasses with backing fields, SetField pattern, and lifecycle hooks. scaffold_game_mode generates GameMode<T> subclasses. compile_game_scripts builds and hot-reloads the game DLL. Use get_compile_errors to diagnose build failures.");
+            sb.AppendLine();
+
+            // DocFx research
+            sb.AppendLine("API Documentation Research — The engine has a DocFX-generated API reference site built from source XML doc comments. When running (http://localhost:8080/), it provides:");
+            sb.AppendLine("  • Full class/struct/enum documentation for every public type in the engine");
+            sb.AppendLine("  • Method signatures with parameter descriptions and return types");
+            sb.AppendLine("  • Property/field documentation with types and default values");
+            sb.AppendLine("  • Inheritance hierarchies and interface implementations");
+            sb.AppendLine("  • Architecture guides at /architecture/ and feature docs at /features/");
+            sb.AppendLine("  URL pattern: http://localhost:8080/apiref/{Namespace}.{TypeName}.html (e.g., XREngine.Scene.SceneNode, XREngine.Rendering.Models.Materials.XRMaterial)");
+            sb.AppendLine("  When introspection tools (get_type_info, get_type_members, get_component_schema) are insufficient — for example, you need to understand method behavior, parameter semantics, or architectural patterns — fetch the relevant DocFX page for authoritative documentation.");
+            sb.AppendLine();
+
+            // ─────────────────────────────────────────────────────────────
+            // § CORE WORKING PRINCIPLES
+            // ─────────────────────────────────────────────────────────────
+            sb.AppendLine("CORE WORKING PRINCIPLES:");
+            sb.AppendLine();
+
+            sb.AppendLine("1. SCHEMA-FIRST MUTATION: Before setting any property, ALWAYS discover writable members with get_component_schema or get_component_snapshot. Use exact discovered member names. Never guess property names or shader uniform names.");
+            sb.AppendLine("2. VERIFY EVERY MUTATION: After changing a property, confirm with get_component_property or get_component_snapshot. After any visual change, ALWAYS call capture_viewport_screenshot and examine the result before claiming success.");
+            sb.AppendLine("3. MATERIALS MUST BE ASSIGNED: A created material has NO visual effect until assigned to a mesh component via assign_component_asset_property. create_primitive_shape auto-assigns materials, but manual add_component_to_node does NOT.");
+            sb.AppendLine("4. CAMERA AWARENESS: After creating/moving objects, use focus_node_in_view or set_editor_camera_view to ensure the camera can see your work. If a screenshot shows nothing, diagnose: wrong camera position? missing material? node inactive? wrong scale?");
+            sb.AppendLine("5. USE BATCH OPERATIONS: For multiple nodes, prefer batch_create_nodes (supports intra-batch parent refs). For multiple property changes, prefer set_component_properties or batch_set_properties. This is faster and more atomic.");
+            sb.AppendLine("6. TRANSACTIONS FOR COMPLEX WORK: For multi-step scene edits that should be atomic, use transaction_begin before starting, transaction_commit on success, or transaction_rollback on failure. This enables clean undo of complex operations.");
+            sb.AppendLine("7. ID CACHING: When tools return node_id, component_id, or asset_id values, store and reuse them. Do not re-query for IDs you already have.");
+            sb.AppendLine("8. TYPE DISCOVERY: When unsure about component types, use list_component_types, search_types, or get_derived_types. For enum values, use get_enum_values. For method signatures, use get_method_info.");
+            sb.AppendLine();
+
+            // ─────────────────────────────────────────────────────────────
+            // § TOOL WORKFLOW RECIPES
+            // ─────────────────────────────────────────────────────────────
+            sb.AppendLine("TOOL WORKFLOW RECIPES:");
+            sb.AppendLine();
+
+            // Create a shape
+            sb.AppendLine("[Create a primitive shape]");
+            sb.AppendLine("  create_primitive_shape(shape_type='cube'|'sphere'|'cone', name, color='#RRGGBB', size=1.0, parent_id?)");
+            sb.AppendLine("  → Returns node_id with mesh component + lit deferred material already assigned. Ready to render.");
+            sb.AppendLine();
+
+            // Build a scene hierarchy
+            sb.AppendLine("[Build a scene hierarchy]");
+            sb.AppendLine("  batch_create_nodes(nodes=[{name:'Root'}, {name:'Child1', parent_id:'<Root node_id from batch>', components:['PointLightComponent'], transform:{x:0,y:5,z:0}}])");
+            sb.AppendLine("  → Create multiple nodes efficiently. Supports intra-batch parent references. Attach components and set transforms inline.");
+            sb.AppendLine();
+
+            // Add a component with properties
+            sb.AppendLine("[Add and configure a component]");
+            sb.AppendLine("  1. add_component_to_node(node_id, component_type='SpotLightComponent')");
+            sb.AppendLine("  2. get_component_schema(component_type='SpotLightComponent') → discover property names and types");
+            sb.AppendLine("  3. set_component_properties(node_id, component_type='SpotLightComponent', properties={OuterCutoffAngleDegrees:45, Brightness:2.0, Color:'#FFE0B0'})");
+            sb.AppendLine("  4. get_component_snapshot(node_id, component_type='SpotLightComponent') → verify values took effect");
+            sb.AppendLine();
+
+            // Change material / color
+            sb.AppendLine("[Change a node's material or color]");
+            sb.AppendLine("  1. list_components(node_id) → find the mesh component (e.g. BoxMeshComponent)");
+            sb.AppendLine("  2. create_material_asset(material_kind='lit_color', color='#FF0000', asset_name='RedMaterial')");
+            sb.AppendLine("  3. assign_component_asset_property(node_id, property_name='Material', asset_id=<returned asset_id>, component_type='BoxMeshComponent')");
+            sb.AppendLine("  4. capture_viewport_screenshot() → visually confirm the color change");
+            sb.AppendLine();
+
+            // Modify shader uniforms on existing material
+            sb.AppendLine("[Modify shader uniforms on an existing material]");
+            sb.AppendLine("  1. get_material_uniforms(node_id, component_type='BoxMeshComponent') → lists all uniform names, types, current values on the material");
+            sb.AppendLine("  2. set_material_uniform(uniform_name='BaseColor', value={X:1,Y:0,Z:0}, node_id, component_type='BoxMeshComponent') → set a single uniform");
+            sb.AppendLine("  3. OR set_material_uniforms(uniforms={BaseColor:{X:1,Y:0,Z:0}, Roughness:0.5, Metallic:1.0}, node_id, component_type='BoxMeshComponent') → batch-set");
+            sb.AppendLine("  4. capture_viewport_screenshot() → verify");
+            sb.AppendLine("  You can also target by material_id directly: set_material_uniform(uniform_name='BaseColor', value=[1,0,0], material_id='<guid>')");
+            sb.AppendLine("  NOTE: set_component_property CANNOT reach material uniforms. Always use set_material_uniform/set_material_uniforms for BaseColor, Roughness, Metallic, etc.");
+            sb.AppendLine();
+
+            // Create custom shader material
+            sb.AppendLine("[Create a custom shader material]");
+            sb.AppendLine("  1. write_game_asset(path='Shaders/MyCustom.fs', content='<GLSL fragment shader source>') — write the .fs shader");
+            sb.AppendLine("  2. write_game_asset(path='Shaders/MyCustom.vs', content='<GLSL vertex shader source>') — write the .vs shader");
+            sb.AppendLine("  3. write_game_script to create a C# component that builds an XRMaterial from those shaders with ShaderVar uniforms, OR use create_asset(asset_type='XRMaterial', properties=...) if supported");
+            sb.AppendLine("  4. compile_game_scripts if writing C# code, then instantiate the component on a node");
+            sb.AppendLine();
+
+            // Lighting setup
+            sb.AppendLine("[Set up lighting]");
+            sb.AppendLine("  Directional: create_scene_node('Sun') → add_component_to_node(node_id, 'DirectionalLightComponent') → set_component_properties(node_id, component_type='DirectionalLightComponent', properties={Color:'#FFFAF0', DiffuseIntensity:1.2, CastsShadows:true}) → rotate_transform(node_id, pitch:-45, yaw:30, roll:0)");
+            sb.AppendLine("  Point: create_scene_node('Lamp') → add_component_to_node(node_id, 'PointLightComponent') → set_component_properties(..., properties={Radius:50, Brightness:2.0, Color:'#FFD700'}) → set_transform(node_id, translation_y:5)");
+            sb.AppendLine("  Spot: similar pattern with SpotLightComponent, key props: Distance, Brightness, OuterCutoffAngleDegrees, InnerCutoffAngleDegrees, Exponent");
+            sb.AppendLine();
+
+            // Camera positioning
+            sb.AppendLine("[Position the editor camera]");
+            sb.AppendLine("  focus_node_in_view(node_id, duration=0.35) → smoothly orbit camera to focus on a node");
+            sb.AppendLine("  set_editor_camera_view(position_x,position_y,position_z, look_at_x,look_at_y,look_at_z, duration=0.35) → explicit position + look-at target");
+            sb.AppendLine("  set_editor_camera_view(position_x,position_y,position_z, pitch,yaw,roll, duration=0.35) → explicit position + Euler rotation");
+            sb.AppendLine("  Strategy: After building objects, calculate a good viewpoint. For a cluster of objects at origin with ~5 unit extent, try position (8,6,8) looking at (0,1,0). For tall objects, increase Y. For wide scenes, pull back further.");
+            sb.AppendLine();
+
+            // Screenshot verification
+            sb.AppendLine("[Visual verification]");
+            sb.AppendLine("  capture_viewport_screenshot() → captures the current viewport as PNG");
+            sb.AppendLine("  ALWAYS screenshot after visual changes. If objects are invisible: check Material assigned? Node active? Camera aimed at objects? Scale too small/large? Object behind camera?");
+            sb.AppendLine("  If you cannot see your work, try: focus_node_in_view on the target node, then screenshot again.");
+            sb.AppendLine();
+
+            // Transforms
+            sb.AppendLine("[Transform operations]");
+            sb.AppendLine("  set_transform(node_id, translation_x/y/z, pitch/yaw/roll, scale_x/y/z, space='local'|'world') — set absolute transform");
+            sb.AppendLine("  set_node_world_transform(node_id, ...) — set in world space explicitly");
+            sb.AppendLine("  rotate_transform(node_id, pitch, yaw, roll) — apply incremental rotation (degrees)");
+            sb.AppendLine("  get_transform_decomposed(node_id) — read local/world/render TRS decomposition");
+            sb.AppendLine("  Coordinate system: Y=up, right-handed. Pitch=rotation around X, Yaw=rotation around Y, Roll=rotation around Z.");
+            sb.AppendLine();
+
+            // Game assets
+            sb.AppendLine("[Game asset management]");
+            sb.AppendLine("  list_game_assets / read_game_asset / write_game_asset / delete_game_asset / rename_game_asset / copy_game_asset — CRUD for files in the game project's assets directory");
+            sb.AppendLine("  get_game_asset_tree — full nested directory tree as JSON");
+            sb.AppendLine("  import_third_party_asset — import GLTF/FBX/OBJ/PNG/WAV/etc. via engine import pipeline");
+            sb.AppendLine("  create_asset(asset_type, name, properties) — create typed engine assets (XRMaterial, XRTexture2D, etc.)");
+            sb.AppendLine("  reload_asset — force-reload from disk after external edits");
+            sb.AppendLine();
+
+            // Game scripting
+            sb.AppendLine("[Game script workflow]");
+            sb.AppendLine("  scaffold_component(class_name, namespace, properties=[{name:'Speed',type:'float',default:'5.0f'}]) → generates .cs with SetField pattern + lifecycle hooks");
+            sb.AppendLine("  scaffold_game_mode(class_name, namespace) → generates GameMode<T> subclass");
+            sb.AppendLine("  write_game_script(path, content, compile_now=true) → create/edit and compile");
+            sb.AppendLine("  compile_game_scripts → rebuild + hot-reload game DLL");
+            sb.AppendLine("  get_compile_errors → structured diagnostics (error/warning/code/file/line)");
+            sb.AppendLine("  get_loaded_game_types → verify your types loaded: components, menu items, all exports");
+            sb.AppendLine();
+
+            // Type introspection
+            sb.AppendLine("[Type & reflection introspection]");
+            sb.AppendLine("  search_types(pattern, match_mode='contains'|'regex'|'exact') — find types across all assemblies");
+            sb.AppendLine("  get_type_info(type_name) / get_type_members(type_name) — detailed type metadata");
+            sb.AppendLine("  get_derived_types(type_name) — find subclasses");
+            sb.AppendLine("  get_enum_values(type_name) — list enum members");
+            sb.AppendLine("  invoke_method(method_name, object_id, arguments) — call any method on any XRBase instance");
+            sb.AppendLine("  evaluate_expression(object_id, expression) — dot-chain property navigation (e.g. 'Transform.WorldMatrix.Translation.X')");
+            sb.AppendLine();
+
+            // Undo / transactions
+            sb.AppendLine("[Undo & transactions]");
+            sb.AppendLine("  undo / redo — single-step undo/redo");
+            sb.AppendLine("  transaction_begin(name?) → get transaction_id → make changes → transaction_commit(transaction_id) OR transaction_rollback(transaction_id)");
+            sb.AppendLine("  snapshot_world_state / restore_world_state — manual world state snapshots independent of undo");
+            sb.AppendLine();
+
+            // Property value formats
+            sb.AppendLine("VALUE FORMAT REFERENCE:");
+            sb.AppendLine("  Colors: '#FF0000' (hex) or {R:1.0, G:0.0, B:0.0, A:1.0} (ColorF4 object)");
+            sb.AppendLine("  Vectors: {X:1, Y:2, Z:3} for Vector3, {X:1, Y:2} for Vector2, {X:1, Y:2, Z:3, W:4} for Vector4");
+            sb.AppendLine("  Enums: string name, e.g. 'Cube', 'Sphere', 'Cone'");
+            sb.AppendLine("  GUIDs: string format 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'");
+            sb.AppendLine("  Booleans: true / false");
+            sb.AppendLine("  Numbers: literal values (1.5, 42, -3.14)");
+
+            sb.AppendLine();
+            sb.AppendLine("PROPERTY TOOL PAYLOAD SHAPES (STRICT):");
+            sb.AppendLine("  set_component_property requires a REQUIRED argument named 'value'.");
+            sb.AppendLine("  Correct shape:");
+            sb.AppendLine("    { node_id:'<guid>', component_type:'PointLightComponent', property_name:'Brightness', value:2.5 }");
+            sb.AppendLine("  set_component_properties requires 'properties' to be a JSON OBJECT MAP (dictionary), not an array/list.");
+            sb.AppendLine("  Correct shape:");
+            sb.AppendLine("    { node_id:'<guid>', component_type:'PointLightComponent', properties:{ Brightness:2.5, Radius:40, Color:'#FFD08A', CastsShadows:true } }");
+            sb.AppendLine("  Incorrect shape (DO NOT USE): properties:[{name:'Brightness',value:2.5}]  // invalid for this tool.");
+            sb.AppendLine("  If a property set fails, immediately call get_component_schema + get_component_snapshot and retry with exact writable member names/types.");
+
+            // ── Scene completeness hard rules ────────────────────────────
+            sb.AppendLine();
+            sb.AppendLine("HARD RULES:");
+            sb.AppendLine("• Mesh/shape components MUST have a Material assigned to be visible.");
+            sb.AppendLine("• create_primitive_shape auto-assigns a lit deferred material. Manual add_component_to_node does NOT — you must also assign_component_asset_property.");
+            sb.AppendLine("• After create_material_asset, ALWAYS assign it via assign_component_asset_property(node_id, 'Material', asset_id=<returned id>, component_type=<mesh type>).");
+            sb.AppendLine("• After ANY visual change, call capture_viewport_screenshot to confirm. Do NOT trust tool return values alone for visual correctness.");
+            sb.AppendLine("• If screenshot shows nothing: check camera position (focus_node_in_view), material assignment, node active state, scale, and object position.");
+            sb.AppendLine("• Do not guess property or uniform names — always discover via schema/snapshot first.");
 
             if (requireToolUse)
                 sb.Append(" For scene-edit requests, call the appropriate tools to perform the change first, then briefly report what was changed.");
@@ -5142,16 +5587,14 @@ public sealed class McpAssistantWindow
 
             if (keepCameraOnWorkingArea)
             {
-                sb.Append(" Auto Camera View is enabled for this user.");
-                sb.Append(" Keep the editor camera on your current working area while performing scene edits by calling camera view tools when context shifts (for example focus_node_in_view or set_editor_camera_view).");
+                sb.AppendLine();
+                sb.Append("AUTO CAMERA VIEW is enabled. Keep the editor camera on your current working area during scene edits. Call focus_node_in_view or set_editor_camera_view when your work shifts to a different part of the scene.");
             }
         }
 
         // ── Provider-specific notes ──────────────────────────────────────
         if (provider == ProviderType.ClaudeCode)
         {
-            // Anthropic returns tool results inside tool_use content blocks;
-            // remind the model to keep tool-result summaries brief.
             sb.Append(" After receiving tool results, summarize them concisely for the user rather than echoing raw JSON.");
         }
 
@@ -5315,7 +5758,57 @@ public sealed class McpAssistantWindow
             "select", "load", "save", "import", "export"
         ];
 
-        return verbs.Any(v => text.Contains(v, StringComparison.OrdinalIgnoreCase));
+        string[] sceneNouns =
+        [
+            "scene", "node", "hierarchy", "component", "transform", "material", "shader", "uniform",
+            "mesh", "model", "prefab", "world", "light", "camera", "screenshot", "asset", "cornell box"
+        ];
+
+        bool hasVerb = verbs.Any(v => text.Contains(v, StringComparison.OrdinalIgnoreCase));
+        bool hasSceneNoun = sceneNouns.Any(n => text.Contains(n, StringComparison.OrdinalIgnoreCase));
+        if (hasVerb && hasSceneNoun)
+            return true;
+
+        string[] explicitMutationTools =
+        [
+            "create_scene_node", "set_component_property", "set_component_properties", "add_component_to_node",
+            "assign_component_asset_property", "create_primitive_shape", "set_transform", "set_node_transform",
+            "set_node_world_transform", "rotate_transform", "batch_create_nodes", "batch_set_properties",
+            "create_material_asset", "instantiate_prefab", "write_game_asset", "write_game_script",
+            "set_material_uniform", "set_material_uniforms"
+        ];
+
+        if (explicitMutationTools.Any(t => text.Contains(t, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        return false;
+    }
+
+    private static bool HasSuccessfulMutationToolCall(ChatMessage message)
+    {
+        ToolCallEntry[] calls = SnapshotToolCalls(message);
+        for (int i = 0; i < calls.Length; i++)
+        {
+            ToolCallEntry call = calls[i];
+            if (!call.IsComplete || call.IsError)
+                continue;
+
+            if (IsLikelySceneMutationTool(call.ToolName))
+                return true;
+        }
+
+        return false;
+    }
+
+    private void ClearHistoryPreservingSentAssistantMessages()
+    {
+        // Preserve assistant messages that have already been sent/contentful.
+        // Remove user messages and empty transient assistant placeholders.
+        _history.RemoveAll(static m =>
+            string.Equals(m.Role, "user", StringComparison.OrdinalIgnoreCase)
+            || (string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(m.Content)
+                && m.ToolCalls.Count == 0));
     }
 
     // ── MCP Local Proxy Helpers ──────────────────────────────────────────
@@ -5750,17 +6243,139 @@ public sealed class McpAssistantWindow
         return s[..(maxLen - 3)] + "...";
     }
 
+    private string ResolveProviderModelName(ProviderType provider)
+        => provider switch
+        {
+            ProviderType.Codex when UseRealtimeWebSocket => string.IsNullOrWhiteSpace(OpenAiRealtimeModel) ? "gpt-4o-realtime-preview" : OpenAiRealtimeModel.Trim(),
+            ProviderType.Codex => string.IsNullOrWhiteSpace(OpenAiModel) ? "gpt-5-codex" : OpenAiModel.Trim(),
+            ProviderType.ClaudeCode => string.IsNullOrWhiteSpace(AnthropicModel) ? "claude-sonnet-4-20250514" : AnthropicModel.Trim(),
+            ProviderType.Gemini => string.IsNullOrWhiteSpace(GeminiModel) ? "gemini-2.5-pro" : GeminiModel.Trim(),
+            ProviderType.GitHubModels => string.IsNullOrWhiteSpace(GitHubModelsModel) ? "openai/gpt-4.1" : GitHubModelsModel.Trim(),
+            _ => "unknown"
+        };
+
+    private void LogAiTrace(string message)
+    {
+        if (!VerboseAiLogging)
+            return;
+
+        Debug.Log(ELogCategory.AI, message);
+    }
+
+    private void LogAiPromptAttempt(
+        ProviderType provider,
+        int attempt,
+        int maxAutoReprompts,
+        string prompt,
+        bool isContinueFlow,
+        bool requestSelfSummary)
+    {
+        try
+        {
+            string model = ResolveProviderModelName(provider);
+            int contextWindowTokens = ResolveContextWindowTokens(provider);
+            string flow = isContinueFlow ? "ContinuePromptAsync" : "SendPromptAsync";
+
+            LogAiTrace(
+                $"""
+[MCP Assistant Prompt]
+flow={flow}
+provider={provider}
+model={model}
+attempt={attempt}/{maxAutoReprompts}
+contextWindowTokens={contextWindowTokens}
+requestSelfSummary={requestSelfSummary}
+promptLength={prompt.Length}
+promptStart
+{prompt}
+promptEnd
+""");
+        }
+        catch (Exception ex)
+        {
+            LogAiTrace($"[MCP Assistant Prompt Log Error] {ex}");
+        }
+    }
+
+    private void LogAiResponseAttempt(
+        ProviderType provider,
+        int attempt,
+        int maxAutoReprompts,
+        string response,
+        bool isContinueFlow)
+    {
+        try
+        {
+            string flow = isContinueFlow ? "ContinuePromptAsync" : "SendPromptAsync";
+            bool hasDoneMarker = response?.Contains(AssistantDoneMarker, StringComparison.Ordinal) ?? false;
+            bool hasContinueMarker = response?.Contains(AssistantContinueMarker, StringComparison.Ordinal) ?? false;
+            string safeResponse = response ?? string.Empty;
+
+            LogAiTrace(
+                $"""
+[MCP Assistant Response]
+flow={flow}
+provider={provider}
+attempt={attempt}/{maxAutoReprompts}
+responseLength={safeResponse.Length}
+hasDoneMarker={hasDoneMarker}
+hasContinueMarker={hasContinueMarker}
+responseStart
+{safeResponse}
+responseEnd
+""");
+        }
+        catch (Exception ex)
+        {
+            LogAiTrace($"[MCP Assistant Response Log Error] {ex}");
+        }
+    }
+
     /// <summary>
     /// Executes a tool call against the local MCP server's <c>tools/call</c> endpoint.
     /// Returns the result text, or an error message on failure.
     /// </summary>
     private async Task<ToolCallResult> ExecuteMcpToolCallAsync(string toolName, string argumentsJson, CancellationToken ct)
     {
+        LogAiTrace(
+            $"""
+[MCP Assistant Tool Call Request]
+tool={toolName}
+argumentsLength={argumentsJson?.Length ?? 0}
+argumentsStart
+{argumentsJson}
+argumentsEnd
+""");
+
         if (string.Equals(toolName, "file_search", StringComparison.OrdinalIgnoreCase))
-            return new ToolCallResult(await ExecuteLocalFileSearchToolAsync(argumentsJson, ct));
+        {
+            string localResult = await ExecuteLocalFileSearchToolAsync(argumentsJson, ct);
+            LogAiTrace(
+                $"""
+[MCP Assistant Tool Call Local Result]
+tool={toolName}
+resultLength={localResult.Length}
+resultStart
+{localResult}
+resultEnd
+""");
+            return new ToolCallResult(localResult);
+        }
 
         if (string.Equals(toolName, "apply_patch", StringComparison.OrdinalIgnoreCase))
-            return new ToolCallResult(await ExecuteLocalApplyPatchToolAsync(argumentsJson, ct));
+        {
+            string localResult = await ExecuteLocalApplyPatchToolAsync(argumentsJson, ct);
+            LogAiTrace(
+                $"""
+[MCP Assistant Tool Call Local Result]
+tool={toolName}
+resultLength={localResult.Length}
+resultStart
+{localResult}
+resultEnd
+""");
+            return new ToolCallResult(localResult);
+        }
 
         ToolCallResult FinalizeToolResult(string resultText, string? imagePath = null)
         {
@@ -5809,6 +6424,17 @@ public sealed class McpAssistantWindow
             }
         };
 
+        string payloadJson = payload.ToJsonString();
+        LogAiTrace(
+            $"""
+[MCP Assistant Tool Call Payload]
+tool={toolName}
+payloadLength={payloadJson.Length}
+payloadStart
+{payloadJson}
+payloadEnd
+""");
+
         try
         {
             // Apply a 30-second timeout for individual MCP tool calls to prevent indefinite hangs.
@@ -5826,8 +6452,24 @@ public sealed class McpAssistantWindow
             using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linkedCt);
             string body = await response.Content.ReadAsStringAsync(linkedCt);
 
+            LogAiTrace(
+                $"""
+[MCP Assistant Tool Call HTTP Response]
+tool={toolName}
+status={(int)response.StatusCode}
+isSuccess={response.IsSuccessStatusCode}
+bodyLength={body.Length}
+bodyStart
+{body}
+bodyEnd
+""");
+
             if (!response.IsSuccessStatusCode)
-                return new ToolCallResult($"[MCP Error] HTTP {(int)response.StatusCode}: {body}");
+            {
+                string errorText = $"[MCP Error] HTTP {(int)response.StatusCode}: {body}";
+                LogAiTrace($"[MCP Assistant Tool Call Final Result] tool={toolName} isError=true text={errorText}");
+                return new ToolCallResult(errorText);
+            }
 
             using JsonDocument doc = JsonDocument.Parse(body);
             JsonElement root = doc.RootElement;
@@ -5835,7 +6477,9 @@ public sealed class McpAssistantWindow
             if (root.TryGetProperty("error", out JsonElement errEl) && errEl.ValueKind == JsonValueKind.Object)
             {
                 string? errMsg = errEl.TryGetProperty("message", out var m) ? m.GetString() : null;
-                return new ToolCallResult($"[MCP Error] {errMsg ?? "Unknown error"}");
+                string errorText = $"[MCP Error] {errMsg ?? "Unknown error"}";
+                LogAiTrace($"[MCP Assistant Tool Call Final Result] tool={toolName} isError=true text={errorText}");
+                return new ToolCallResult(errorText);
             }
 
             if (root.TryGetProperty("result", out JsonElement resultEl))
@@ -5875,20 +6519,66 @@ public sealed class McpAssistantWindow
                 }
 
                 if (sb.Length > 0)
-                    return FinalizeToolResult(sb.ToString(), dataImagePath);
+                {
+                    ToolCallResult finalResult = FinalizeToolResult(sb.ToString(), dataImagePath);
+                    LogAiTrace(
+                        $"""
+[MCP Assistant Tool Call Final Result]
+tool={toolName}
+isError={finalResult.IsError}
+hasImage={finalResult.HasImage}
+resultLength={finalResult.Text.Length}
+resultStart
+{finalResult.Text}
+resultEnd
+""");
+                    return finalResult;
+                }
 
                 // Fallback: serialize the entire result
-                return FinalizeToolResult(resultEl.GetRawText(), dataImagePath);
+                ToolCallResult fallbackResult = FinalizeToolResult(resultEl.GetRawText(), dataImagePath);
+                LogAiTrace(
+                    $"""
+[MCP Assistant Tool Call Final Result]
+tool={toolName}
+isError={fallbackResult.IsError}
+hasImage={fallbackResult.HasImage}
+resultLength={fallbackResult.Text.Length}
+resultStart
+{fallbackResult.Text}
+resultEnd
+""");
+                return fallbackResult;
             }
 
-            return FinalizeToolResult(body);
+            ToolCallResult rawBodyResult = FinalizeToolResult(body);
+            LogAiTrace(
+                $"""
+[MCP Assistant Tool Call Final Result]
+tool={toolName}
+isError={rawBodyResult.IsError}
+hasImage={rawBodyResult.HasImage}
+resultLength={rawBodyResult.Text.Length}
+resultStart
+{rawBodyResult.Text}
+resultEnd
+""");
+            return rawBodyResult;
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return new ToolCallResult($"[MCP Error] Tool call '{toolName}' timed out after 30 seconds.");
+            string timeoutMessage = $"[MCP Error] Tool call '{toolName}' timed out after 30 seconds.";
+            LogAiTrace($"[MCP Assistant Tool Call Timeout] tool={toolName} message={timeoutMessage}");
+            return new ToolCallResult(timeoutMessage);
         }
         catch (Exception ex)
         {
+            LogAiTrace(
+                $"""
+[MCP Assistant Tool Call Exception]
+tool={toolName}
+exception={ex}
+""");
             return new ToolCallResult($"[MCP Error] {ex.Message}");
         }
     }
@@ -5962,8 +6652,9 @@ public sealed class McpAssistantWindow
         if (candidateNodeIds.Count == 0)
             return;
 
-        static SceneNode? ResolveCandidateNode(HashSet<Guid> ids)
+        static List<SceneNode> ResolveCandidateNodes(HashSet<Guid> ids)
         {
+            List<SceneNode> nodes = [];
             XRWorldInstance? activeWorld = McpWorldResolver.TryGetActiveWorldInstance();
             foreach (Guid id in ids)
             {
@@ -5973,22 +6664,22 @@ public sealed class McpAssistantWindow
                 if (activeWorld is not null && node.World != activeWorld)
                     continue;
 
-                return node;
+                nodes.Add(node);
             }
 
-            return null;
+            return nodes;
         }
 
         void FocusCamera()
         {
-            SceneNode? targetNode = ResolveCandidateNode(candidateNodeIds);
-            if (targetNode is null)
+            List<SceneNode> targetNodes = ResolveCandidateNodes(candidateNodeIds);
+            if (targetNodes.Count == 0)
                 return;
 
             if (Engine.State.MainPlayer.ControlledPawn is not EditorFlyingCameraPawnComponent pawn)
                 return;
 
-            pawn.FocusOnNode(targetNode, AutoCameraViewFocusDurationSeconds);
+            pawn.FocusOnNodes(targetNodes, AutoCameraViewFocusDurationSeconds);
         }
 
         Engine.InvokeOnMainThread(FocusCamera, "MCP Assistant: Auto camera view", executeNowIfAlreadyMainThread: true);

@@ -1,12 +1,17 @@
 using System.Collections.Generic;
 using MemoryPack;
+using MemoryPack.Formatters;
 
 namespace System.Collections.Generic
 {
     // MemoryPack formatter to serialize EventList<T> without emitting its event wiring.
     public partial class EventList<T> : IMemoryPackable<EventList<T>>
     {
-        static void IMemoryPackFormatterRegister.RegisterFormatter() { }
+        static void IMemoryPackFormatterRegister.RegisterFormatter()
+        {
+            if (!MemoryPackFormatterProvider.IsRegistered<EventList<T>>())
+                MemoryPackFormatterProvider.Register(new MemoryPackableFormatter<EventList<T>>());
+        }
 
         static void IMemoryPackable<EventList<T>>.Serialize<TBufferWriter>(ref MemoryPackWriter<TBufferWriter> writer, scoped ref EventList<T>? value)
         {

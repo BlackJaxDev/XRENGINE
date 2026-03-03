@@ -56,6 +56,14 @@ namespace XREngine.Audio
         void Play(AudioSourceHandle source);
         void Stop(AudioSourceHandle source);
         void Pause(AudioSourceHandle source);
+
+        /// <summary>
+        /// Rewinds a source to the beginning, returning it to INITIAL state.
+        /// All queued buffers remain attached but their processed status is reset.
+        /// This is distinct from <see cref="Stop"/> which leaves the source in STOPPED state
+        /// (on OpenAL, buffers queued onto a STOPPED source are immediately marked as processed).
+        /// </summary>
+        void Rewind(AudioSourceHandle source);
         void SetSourceBuffer(AudioSourceHandle source, AudioBufferHandle buffer);
         void QueueBuffers(AudioSourceHandle source, ReadOnlySpan<AudioBufferHandle> buffers);
 
@@ -63,6 +71,18 @@ namespace XREngine.Audio
         /// Unqueue processed buffers from a source. Returns how many were unqueued.
         /// </summary>
         int UnqueueProcessedBuffers(AudioSourceHandle source, Span<AudioBufferHandle> output);
+
+        /// <summary>
+        /// Returns the number of buffers that have been processed (played through)
+        /// on the given source and are ready to be unqueued.
+        /// </summary>
+        int GetBuffersProcessed(AudioSourceHandle source);
+
+        /// <summary>
+        /// Returns the number of buffers currently queued on the given source
+        /// (including any currently playing buffer).
+        /// </summary>
+        int GetBuffersQueued(AudioSourceHandle source);
 
         // --- Source properties ---
 
@@ -72,6 +92,12 @@ namespace XREngine.Audio
         void SetSourcePitch(AudioSourceHandle source, float pitch);
         void SetSourceLooping(AudioSourceHandle source, bool loop);
         bool IsSourcePlaying(AudioSourceHandle source);
+
+        /// <summary>
+        /// Returns the playback position in sample frames within the current buffer.
+        /// Used for sub-buffer clock precision in streaming scenarios.
+        /// </summary>
+        int GetSampleOffset(AudioSourceHandle source);
 
         // --- Capture (optional) ---
 

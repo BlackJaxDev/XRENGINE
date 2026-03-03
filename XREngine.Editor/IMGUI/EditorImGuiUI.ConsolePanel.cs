@@ -62,6 +62,7 @@ public static partial class EditorImGuiUI
                 DrawConsoleTab("Physics", ELogCategory.Physics);
                 DrawConsoleTab("Animation", ELogCategory.Animation);
                 DrawConsoleTab("UI", ELogCategory.UI);
+                DrawConsoleTab("AI", ELogCategory.AI);
                 ImGui.EndTabBar();
             }
         }
@@ -187,6 +188,7 @@ public static partial class EditorImGuiUI
                     ELogCategory.Physics => new Vector4(1.0f, 0.8f, 0.4f, 1.0f),
                     ELogCategory.Animation => new Vector4(1.0f, 0.6f, 0.8f, 1.0f),
                     ELogCategory.UI => new Vector4(0.8f, 0.6f, 1.0f, 1.0f),
+                    ELogCategory.AI => new Vector4(0.55f, 0.95f, 0.85f, 1.0f),
                     _ => new Vector4(0.9f, 0.9f, 0.9f, 1.0f),
                 };
             }
@@ -199,6 +201,7 @@ public static partial class EditorImGuiUI
                 ELogCategory.Physics => theme.ConsolePhysicsColor,
                 ELogCategory.Animation => theme.ConsoleAnimationColor,
                 ELogCategory.UI => theme.ConsoleUIColor,
+                ELogCategory.AI => theme.ConsoleGeneralColor,
                 _ => theme.ConsoleGeneralColor,
             };
             return new Vector4(color.R, color.G, color.B, color.A);
@@ -214,6 +217,7 @@ public static partial class EditorImGuiUI
                 ELogCategory.Physics => "[Physics]",
                 ELogCategory.Animation => "[Anim]",
                 ELogCategory.UI => "[UI]",
+                ELogCategory.AI => "[AI]",
                 _ => "[Unknown]",
             };
         }

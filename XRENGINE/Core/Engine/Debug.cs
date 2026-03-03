@@ -28,6 +28,7 @@ namespace XREngine
         Networking,
         VR,
         Scripting,
+        AI,
     }
 
     /// <summary>
@@ -81,6 +82,7 @@ namespace XREngine
             [ELogCategory.Networking] = null,
             [ELogCategory.VR] = null,
             [ELogCategory.Scripting] = null,
+            [ELogCategory.AI] = null,
         };
 
         /// <summary>
@@ -336,6 +338,12 @@ namespace XREngine
         public static void Scripting(string message, params object[] args)
             => Log(ELogCategory.Scripting, EOutputVerbosity.Normal, false, message, args);
 
+        /// <summary>
+        /// Convenience helper that routes output through the AI log.
+        /// </summary>
+        public static void AI(string message, params object[] args)
+            => Log(ELogCategory.AI, EOutputVerbosity.Normal, false, message, args);
+
         #region Category-Specific Warnings
 
         /// <summary>
@@ -397,6 +405,12 @@ namespace XREngine
         /// </summary>
         public static void ScriptingWarning(string message, params object[] args)
             => LogWarning(ELogCategory.Scripting, message, args);
+
+        /// <summary>
+        /// Logs a warning message to the AI log with stack trace.
+        /// </summary>
+        public static void AIWarning(string message, params object[] args)
+            => LogWarning(ELogCategory.AI, message, args);
 
         /// <summary>
         /// Logs a warning message under an explicit category with stack trace.
@@ -476,6 +490,12 @@ namespace XREngine
             => LogException(ELogCategory.Scripting, ex, message);
 
         /// <summary>
+        /// Logs an exception to the AI log.
+        /// </summary>
+        public static void AIException(Exception ex, string? message = null)
+            => LogException(ELogCategory.AI, ex, message);
+
+        /// <summary>
         /// Logs an exception under an explicit category.
         /// </summary>
         public static void LogException(ELogCategory category, Exception ex, string? message = null)
@@ -551,6 +571,12 @@ namespace XREngine
         /// </summary>
         public static void ScriptingError(string message, params object[] args)
             => LogError(ELogCategory.Scripting, message, args);
+
+        /// <summary>
+        /// Logs an error message to the AI log with stack trace.
+        /// </summary>
+        public static void AIError(string message, params object[] args)
+            => LogError(ELogCategory.AI, message, args);
 
         /// <summary>
         /// Logs an error message under an explicit category with stack trace.

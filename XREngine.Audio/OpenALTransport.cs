@@ -293,6 +293,13 @@ namespace XREngine.Audio
             VerifyError();
         }
 
+        public void Rewind(AudioSourceHandle source)
+        {
+            MakeCurrent();
+            Api.SourceRewind(source.Id);
+            VerifyError();
+        }
+
         public void SetSourceBuffer(AudioSourceHandle source, AudioBufferHandle buffer)
         {
             MakeCurrent();
@@ -326,6 +333,18 @@ namespace XREngine.Audio
                 output[i] = new AudioBufferHandle(handles[i]);
 
             return count;
+        }
+
+        public int GetBuffersProcessed(AudioSourceHandle source)
+        {
+            MakeCurrent();
+            return GetSourcePropertyInt(source.Id, GetSourceInteger.BuffersProcessed);
+        }
+
+        public int GetBuffersQueued(AudioSourceHandle source)
+        {
+            MakeCurrent();
+            return GetSourcePropertyInt(source.Id, GetSourceInteger.BuffersQueued);
         }
 
         // --- IAudioTransport: Source properties ---
@@ -371,6 +390,12 @@ namespace XREngine.Audio
             int state = GetSourcePropertyInt(source.Id, GetSourceInteger.SourceState);
             VerifyError();
             return (SourceState)state == SourceState.Playing;
+        }
+
+        public int GetSampleOffset(AudioSourceHandle source)
+        {
+            MakeCurrent();
+            return GetSourcePropertyInt(source.Id, GetSourceInteger.SampleOffset);
         }
 
         // --- IAudioTransport: Capture ---

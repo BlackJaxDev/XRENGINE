@@ -140,6 +140,7 @@ chat-style interface for interacting with AI providers while the editor is runni
 | **OpenAI context window awareness** | The assistant queries OpenAI model metadata and displays the selected model context window when available. |
 | **Auto summarize near limit** | Optional context-pressure behavior that asks the model to emit a compact self-summary block before continuing, improving long-session continuity. |
 | **Auto Camera View prompt guidance** | When enabled in MCP Assistant settings, system instructions nudge the model to keep camera framing on its active work area using camera-view MCP tools as scene-edit context shifts. |
+| **Auto Camera focus pitch controls** | Editor Preferences expose **Focus Preferred Down Pitch** and **Focus Max Down Pitch** to tune auto-focus end pitch. Defaults are 20° preferred and 45° max downward tilt (never upward, never near straight-down). |
 | **Schema-first mutation guidance** | System instructions bias the model to discover writable members with `get_component_schema`/`get_component_snapshot` before mutation, instead of guessing property names. |
 | **Mutation read-back verification** | System instructions require read-back verification (`get_component_property`/`get_component_snapshot`) and screenshot verification for visual edits before reporting success. |
 | **Edit menu** | Copy last response, copy full history, clear history. |

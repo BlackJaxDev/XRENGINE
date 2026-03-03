@@ -59,7 +59,22 @@ public partial class UIEditorComponent : UIComponent
     protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
+        DeactivateChildSubtrees();
         SceneNode.Transform.Clear();
+    }
+
+    /// <summary>
+    /// Deactivates all child scene nodes before they are removed from the tree.
+    /// <see cref="TransformBase.Clear"/> only detaches child transforms — it does NOT
+    /// call <see cref="XRComponent.OnComponentDeactivated"/> on their components.
+    /// Without this, streaming pipelines, audio sources, and other lifecycle-tied
+    /// resources survive as orphans and continue playing into the mixer.
+    /// </summary>
+    private void DeactivateChildSubtrees()
+    {
+        foreach (var child in SceneNode.Transform.Children.ToArray())
+            if (child.SceneNode is { IsActiveSelf: true } sn)
+                sn.IsActiveSelf = false;
     }
 
     private InspectorPanel? _inspector;
@@ -68,6 +83,7 @@ public partial class UIEditorComponent : UIComponent
     public void RemakeChildren()
     {
         using var sample = Engine.Profiler.Start("UIEditorComponent.RemakeChildren");
+        DeactivateChildSubtrees();
         SceneNode.Transform.Clear();
 
         var splitChild = SceneNode.NewChildWithTransform(out UIDualSplitTransform splitTfm, "EditorRoot");

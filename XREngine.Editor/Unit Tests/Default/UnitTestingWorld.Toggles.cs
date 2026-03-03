@@ -145,8 +145,8 @@ public static partial class EditorUnitTests
         public bool Microphone = false; //Adds a microphone to the scene for testing audio capture.
         public bool AttachMicToAnimatedModel = true; //If true, the microphone output will be attached to the animated model instead of the flying camera.
         public bool AudioArchitectureV2 { get; set; } = AudioSettings.AudioArchitectureV2;
-        public AudioTransportType AudioTransport { get; set; } = AudioTransportType.OpenAL;
-        public AudioEffectsType AudioEffects { get; set; } = AudioEffectsType.OpenAL_EFX;
+        public EAudioTransport AudioTransport { get; set; } = EAudioTransport.OpenAL;
+        public EAudioEffects AudioEffects { get; set; } = EAudioEffects.OpenAL_EFX;
 
         //Face and lip sync
         public bool VMC = false; //Adds a VMC capture component to the avatar for testing.

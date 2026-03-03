@@ -120,11 +120,40 @@ namespace XREngine.Animation.Importers
             }
 
             // Group transform component curves into Translation/Rotation/Scale
+            // (IK goal curves like LeftFootT/Q and root motion RootT/Q are handled separately below)
             var transformGroups = new Dictionary<(string nodePath, string kind), TransformCurveGroup>();
+            var ikGoalGroups = new Dictionary<(string nodePath, string goalName, string kind), TransformCurveGroup>();
+            var rootMotionGroups = new Dictionary<string, TransformCurveGroup>();
             foreach (var kvp in scalarByTarget)
             {
                 string nodePath = kvp.Key.nodePath;
                 string attr = kvp.Key.attribute;
+
+                // Check for IK goal curves first (LeftFootT.x, RightHandQ.w, etc.)
+                if (TryMapIKGoalComponent(attr, out string goalName, out string ikKind, out char ikComponent))
+                {
+                    var ikGroupKey = (nodePath, goalName, ikKind);
+                    if (!ikGoalGroups.TryGetValue(ikGroupKey, out var ikGroup))
+                    {
+                        ikGroup = new TransformCurveGroup(ikKind);
+                        ikGoalGroups[ikGroupKey] = ikGroup;
+                    }
+                    ikGroup.Components[ikComponent] = kvp.Value;
+                    continue;
+                }
+
+                // Check for root motion curves (RootT.x, RootQ.w, etc.) — route to hips bind-relative.
+                if (TryMapRootMotionComponent(attr, out string rootKind, out char rootComponent))
+                {
+                    if (!rootMotionGroups.TryGetValue(rootKind, out var rootGroup))
+                    {
+                        rootGroup = new TransformCurveGroup(rootKind);
+                        rootMotionGroups[rootKind] = rootGroup;
+                    }
+                    rootGroup.Components[rootComponent] = kvp.Value;
+                    continue;
+                }
+
                 if (!TryMapTransformComponent(attr, out string kind, out char component))
                     continue;
 
@@ -206,11 +235,151 @@ namespace XREngine.Animation.Importers
                 }
             }
 
+            // Build root motion animation (RootT/RootQ → hips bind-relative offsets).
+            {
+                PropAnimVector3? rootPosAnim = null;
+                PropAnimQuaternion? rootRotAnim = null;
+
+                if (rootMotionGroups.TryGetValue("translation", out var rootPosGroup) &&
+                    rootPosGroup.Components.TryGetValue('x', out var rpx) &&
+                    rootPosGroup.Components.TryGetValue('y', out var rpy) &&
+                    rootPosGroup.Components.TryGetValue('z', out var rpz))
+                {
+                    var xAnim = BuildFloatAnim(rpx, length, looped, sampleRate, valueScale: 1.0f);
+                    var yAnim = BuildFloatAnim(rpy, length, looped, sampleRate, valueScale: 1.0f);
+                    var zAnim = BuildFloatAnim(rpz, length, looped, sampleRate, valueScale: 1.0f);
+
+                    rootPosAnim = new PropAnimVector3
+                    {
+                        LengthInSeconds = length,
+                        Looped = looped,
+                        BakedFramesPerSecond = sampleRate,
+                    };
+                    foreach (float t in UnionKeyTimes(rpx, rpy, rpz))
+                        rootPosAnim.Keyframes.Add(new Vector3Keyframe(t, new Vector3(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t)), Vector3.Zero, EVectorInterpType.Smooth));
+                }
+
+                if (rootMotionGroups.TryGetValue("rotation", out var rootRotGroup) &&
+                    rootRotGroup.Components.TryGetValue('x', out var rrx) &&
+                    rootRotGroup.Components.TryGetValue('y', out var rry) &&
+                    rootRotGroup.Components.TryGetValue('z', out var rrz) &&
+                    rootRotGroup.Components.TryGetValue('w', out var rrw))
+                {
+                    var xAnim = BuildFloatAnim(rrx, length, looped, sampleRate, valueScale: 1.0f);
+                    var yAnim = BuildFloatAnim(rry, length, looped, sampleRate, valueScale: 1.0f);
+                    var zAnim = BuildFloatAnim(rrz, length, looped, sampleRate, valueScale: 1.0f);
+                    var wAnim = BuildFloatAnim(rrw, length, looped, sampleRate, valueScale: 1.0f);
+
+                    rootRotAnim = new PropAnimQuaternion
+                    {
+                        LengthInSeconds = length,
+                        Looped = looped,
+                        BakedFramesPerSecond = sampleRate,
+                    };
+                    foreach (float t in UnionKeyTimes(rrx, rry, rrz, rrw))
+                    {
+                        var q = new Quaternion(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t), wAnim.GetValue(t));
+                        if (q.LengthSquared() > 0)
+                            q = Quaternion.Normalize(q);
+                        else
+                            q = Quaternion.Identity;
+                        rootRotAnim.Keyframes.Add(new QuaternionKeyframe(t, q, Quaternion.Identity, Quaternion.Identity, ERadialInterpType.Linear));
+                    }
+                }
+
+                if (rootPosAnim is not null || rootRotAnim is not null)
+                    builder.AddRootMotionAnimation(rootPosAnim, rootRotAnim);
+            }
+
+            // Build IK goal animations (LeftFootT/Q, RightFootT/Q, LeftHandT/Q, RightHandT/Q).
+            // Group position + rotation per goal, then route through HumanoidComponent.
+            var ikGoalsByName = new Dictionary<(string nodePath, string goalName), (TransformCurveGroup? pos, TransformCurveGroup? rot)>();
+            foreach (var kv in ikGoalGroups)
+            {
+                var key = (kv.Key.nodePath, kv.Key.goalName);
+                if (!ikGoalsByName.TryGetValue(key, out var pair))
+                    pair = (null, null);
+
+                if (kv.Value.Kind == "translation")
+                    pair = (kv.Value, pair.rot);
+                else if (kv.Value.Kind == "rotation")
+                    pair = (pair.pos, kv.Value);
+
+                ikGoalsByName[key] = pair;
+            }
+
+            foreach (var kv in ikGoalsByName)
+            {
+                string goalName = kv.Key.goalName;
+                var (posGroup, rotGroup) = kv.Value;
+
+                // Build position animation
+                PropAnimVector3? posAnim = null;
+                if (posGroup is not null &&
+                    posGroup.Components.TryGetValue('x', out var px) &&
+                    posGroup.Components.TryGetValue('y', out var py) &&
+                    posGroup.Components.TryGetValue('z', out var pz))
+                {
+                    var xAnim = BuildFloatAnim(px, length, looped, sampleRate, valueScale: 1.0f);
+                    var yAnim = BuildFloatAnim(py, length, looped, sampleRate, valueScale: 1.0f);
+                    var zAnim = BuildFloatAnim(pz, length, looped, sampleRate, valueScale: 1.0f);
+
+                    posAnim = new PropAnimVector3
+                    {
+                        LengthInSeconds = length,
+                        Looped = looped,
+                        BakedFramesPerSecond = sampleRate,
+                    };
+                    foreach (float t in UnionKeyTimes(px, py, pz))
+                        posAnim.Keyframes.Add(new Vector3Keyframe(t, new Vector3(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t)), Vector3.Zero, EVectorInterpType.Smooth));
+                }
+
+                // Build rotation animation
+                PropAnimQuaternion? rotAnim = null;
+                if (rotGroup is not null &&
+                    rotGroup.Components.TryGetValue('x', out var rx) &&
+                    rotGroup.Components.TryGetValue('y', out var ry) &&
+                    rotGroup.Components.TryGetValue('z', out var rz) &&
+                    rotGroup.Components.TryGetValue('w', out var rw))
+                {
+                    var xAnim = BuildFloatAnim(rx, length, looped, sampleRate, valueScale: 1.0f);
+                    var yAnim = BuildFloatAnim(ry, length, looped, sampleRate, valueScale: 1.0f);
+                    var zAnim = BuildFloatAnim(rz, length, looped, sampleRate, valueScale: 1.0f);
+                    var wAnim = BuildFloatAnim(rw, length, looped, sampleRate, valueScale: 1.0f);
+
+                    rotAnim = new PropAnimQuaternion
+                    {
+                        LengthInSeconds = length,
+                        Looped = looped,
+                        BakedFramesPerSecond = sampleRate,
+                    };
+                    foreach (float t in UnionKeyTimes(rx, ry, rz, rw))
+                    {
+                        var q = new Quaternion(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t), wAnim.GetValue(t));
+                        if (q.LengthSquared() > 0)
+                            q = Quaternion.Normalize(q);
+                        else
+                            q = Quaternion.Identity;
+                        rotAnim.Keyframes.Add(new QuaternionKeyframe(t, q, Quaternion.Identity, Quaternion.Identity, ERadialInterpType.Linear));
+                    }
+                }
+
+                builder.AddIKGoalAnimation(goalName, posAnim, rotAnim);
+            }
+
             // Build blendshape animations and remaining scalar animations.
             foreach (var c in curves)
             {
                 // Skip ones consumed by transform grouping.
                 if (TryMapTransformComponent(c.Attribute, out _, out _))
+                    continue;
+
+                // Skip ones consumed by IK goal grouping.
+                if (TryMapIKGoalComponent(c.Attribute, out _, out _, out _))
+                    continue;
+
+                // Skip ones consumed by root motion grouping.
+                if (TryMapRootMotionComponent(c.Attribute, out _, out _))
                     continue;
 
                 string nodePath = NormalizePath(c.Path);
@@ -362,6 +531,79 @@ namespace XREngine.Animation.Importers
                 var getComp = GetOrAddMethod(_sceneNode, "GetComponentInHierarchy", ["HumanoidComponent"], animatedArgIndex: -1, cacheReturnValue: true);
                 var method = GetOrAddMethod(getComp, "SetValue", [humanoidValue, 0.0f], animatedArgIndex: 1, cacheReturnValue: false);
                 method.Animation = anim;
+            }
+
+            /// <summary>
+            /// Routes IK goal curves (LeftFootT/Q, RightHandT/Q, etc.) to
+            /// HumanoidComponent.SetFootPositionAndRotation / SetHandPositionAndRotation.
+            /// Each scalar component (x/y/z for position, x/y/z/w for rotation) is driven individually
+            /// via Set*Position[X/Y/Z] and Set*Rotation.
+            /// </summary>
+            public void AddIKGoalAnimation(string goalName, PropAnimVector3? posAnim, PropAnimQuaternion? rotAnim)
+            {
+                var getComp = GetOrAddMethod(_sceneNode, "GetComponentInHierarchy", ["HumanoidComponent"], animatedArgIndex: -1, cacheReturnValue: true);
+
+                // Determine which limb and the boolean "isLeft" parameter.
+                bool isLeft;
+                bool isFoot;
+                switch (goalName)
+                {
+                    case "LeftFoot":  isLeft = true;  isFoot = true;  break;
+                    case "RightFoot": isLeft = false; isFoot = true;  break;
+                    case "LeftHand":  isLeft = true;  isFoot = false; break;
+                    case "RightHand": isLeft = false; isFoot = false; break;
+                    default: return; // Unknown goal, skip.
+                }
+
+                string methodName = isFoot ? "SetFootPositionAndRotation" : "SetHandPositionAndRotation";
+
+                if (posAnim is not null && rotAnim is not null)
+                {
+                    // Combined position+rotation. Build a single call with both animated.
+                    // SetFootPositionAndRotation(Vector3 position, Quaternion rotation, bool leftFoot)
+                    // We animate positions via arg index 0 and rotations via arg index 1.
+                    // Since animation system only supports one animated arg per method, we use separate calls.
+                    var posMethod = GetOrAddMethod(getComp, isFoot ? "SetFootPosition" : "SetHandPosition",
+                        [Vector3.Zero, isLeft], animatedArgIndex: 0, cacheReturnValue: false);
+                    posMethod.Animation = posAnim;
+
+                    var rotMethod = GetOrAddMethod(getComp, isFoot ? "SetFootRotation" : "SetHandRotation",
+                        [Quaternion.Identity, isLeft], animatedArgIndex: 0, cacheReturnValue: false);
+                    rotMethod.Animation = rotAnim;
+                }
+                else if (posAnim is not null)
+                {
+                    var posMethod = GetOrAddMethod(getComp, isFoot ? "SetFootPosition" : "SetHandPosition",
+                        [Vector3.Zero, isLeft], animatedArgIndex: 0, cacheReturnValue: false);
+                    posMethod.Animation = posAnim;
+                }
+                else if (rotAnim is not null)
+                {
+                    var rotMethod = GetOrAddMethod(getComp, isFoot ? "SetFootRotation" : "SetHandRotation",
+                        [Quaternion.Identity, isLeft], animatedArgIndex: 0, cacheReturnValue: false);
+                    rotMethod.Animation = rotAnim;
+                }
+            }
+
+            /// <summary>
+            /// Routes RootT/RootQ to the Hips bone as bind-relative offsets instead of overwriting
+            /// the SceneNode's absolute transform.
+            /// </summary>
+            public void AddRootMotionAnimation(PropAnimVector3? posAnim, PropAnimQuaternion? rotAnim)
+            {
+                var getComp = GetOrAddMethod(_sceneNode, "GetComponentInHierarchy", ["HumanoidComponent"], animatedArgIndex: -1, cacheReturnValue: true);
+
+                if (posAnim is not null)
+                {
+                    var posMethod = GetOrAddMethod(getComp, "SetRootPosition", [Vector3.Zero], animatedArgIndex: 0, cacheReturnValue: false);
+                    posMethod.Animation = posAnim;
+                }
+
+                if (rotAnim is not null)
+                {
+                    var rotMethod = GetOrAddMethod(getComp, "SetRootRotation", [Quaternion.Identity], animatedArgIndex: 0, cacheReturnValue: false);
+                    rotMethod.Animation = rotAnim;
+                }
             }
 
             private AnimationMember GetSceneNodeByPath(string nodePath)
@@ -566,11 +808,15 @@ namespace XREngine.Animation.Importers
             if (c.ClassId is not 95)
                 return false;
 
-            // Avoid treating blendShape.* or RootT/RootQ as humanoid.
+            // Avoid treating blendShape.* or RootT/RootQ or IK goals as humanoid.
             if (c.Attribute.StartsWith("blendShape.", StringComparison.Ordinal))
                 return false;
 
             if (c.Attribute.StartsWith("RootT.", StringComparison.Ordinal) || c.Attribute.StartsWith("RootQ.", StringComparison.Ordinal))
+                return false;
+
+            // IK goal curves (LeftFootT, RightFootQ, LeftHandT, etc.) are handled separately.
+            if (TryMapIKGoalComponent(c.Attribute, out _, out _, out _))
                 return false;
 
             // Use explicit mapping instead of a name heuristic so dot-only muscle names (e.g. LeftHand.Index.Spread)
@@ -762,17 +1008,9 @@ namespace XREngine.Animation.Importers
             kind = string.Empty;
             component = '\0';
 
-            // Root motion curves (common in many .anim clips)
-            if (TrySplitComponent(attribute, "RootT", out component))
-            {
-                kind = "translation";
-                return component is 'x' or 'y' or 'z';
-            }
-            if (TrySplitComponent(attribute, "RootQ", out component))
-            {
-                kind = "rotation";
-                return component is 'x' or 'y' or 'z' or 'w';
-            }
+            // NOTE: RootT/RootQ are intentionally NOT handled here.
+            // They represent humanoid body-center (hips) motion, not a scene-node transform override.
+            // They are handled separately via TryMapRootMotionComponent → AddRootMotionAnimation.
 
             // Transform curves from other exporters
             if (TrySplitComponent(attribute, "m_LocalPosition", out component) || TrySplitComponent(attribute, "localPosition", out component))
@@ -794,12 +1032,59 @@ namespace XREngine.Animation.Importers
             return false;
         }
 
+        /// <summary>
+        /// Maps IK goal curve attributes like "LeftFootT.x", "RightHandQ.w" to a goal name, kind, and component.
+        /// </summary>
+        private static bool TryMapIKGoalComponent(string attribute, out string goalName, out string kind, out char component)
+        {
+            goalName = string.Empty;
+            kind = string.Empty;
+            component = '\0';
+
+            // IK goal position curves: LeftFootT, RightFootT, LeftHandT, RightHandT
+            if (TrySplitComponent(attribute, "LeftFootT", out component)) { goalName = "LeftFoot"; kind = "translation"; return component is 'x' or 'y' or 'z'; }
+            if (TrySplitComponent(attribute, "RightFootT", out component)) { goalName = "RightFoot"; kind = "translation"; return component is 'x' or 'y' or 'z'; }
+            if (TrySplitComponent(attribute, "LeftHandT", out component)) { goalName = "LeftHand"; kind = "translation"; return component is 'x' or 'y' or 'z'; }
+            if (TrySplitComponent(attribute, "RightHandT", out component)) { goalName = "RightHand"; kind = "translation"; return component is 'x' or 'y' or 'z'; }
+
+            // IK goal rotation curves: LeftFootQ, RightFootQ, LeftHandQ, RightHandQ
+            if (TrySplitComponent(attribute, "LeftFootQ", out component)) { goalName = "LeftFoot"; kind = "rotation"; return component is 'x' or 'y' or 'z' or 'w'; }
+            if (TrySplitComponent(attribute, "RightFootQ", out component)) { goalName = "RightFoot"; kind = "rotation"; return component is 'x' or 'y' or 'z' or 'w'; }
+            if (TrySplitComponent(attribute, "LeftHandQ", out component)) { goalName = "LeftHand"; kind = "rotation"; return component is 'x' or 'y' or 'z' or 'w'; }
+            if (TrySplitComponent(attribute, "RightHandQ", out component)) { goalName = "RightHand"; kind = "rotation"; return component is 'x' or 'y' or 'z' or 'w'; }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Maps root motion attributes (RootT.x, RootQ.w, etc.) to kind + component.
+        /// </summary>
+        private static bool TryMapRootMotionComponent(string attribute, out string kind, out char component)
+        {
+            kind = string.Empty;
+            component = '\0';
+
+            if (TrySplitComponent(attribute, "RootT", out component))
+            {
+                kind = "translation";
+                return component is 'x' or 'y' or 'z';
+            }
+            if (TrySplitComponent(attribute, "RootQ", out component))
+            {
+                kind = "rotation";
+                return component is 'x' or 'y' or 'z' or 'w';
+            }
+
+            return false;
+        }
+
         private static bool TryMapVectorAttribute(string attribute, out string kind, out int componentCount)
         {
             kind = string.Empty;
             componentCount = 0;
 
-            if (attribute.Equals("RootT", StringComparison.Ordinal) || attribute.Equals("m_LocalPosition", StringComparison.Ordinal) || attribute.Equals("localPosition", StringComparison.Ordinal))
+            // NOTE: RootT/RootQ are intentionally excluded — handled as root motion via HumanoidComponent.
+            if (attribute.Equals("m_LocalPosition", StringComparison.Ordinal) || attribute.Equals("localPosition", StringComparison.Ordinal))
             {
                 kind = "translation";
                 componentCount = 3;
@@ -811,7 +1096,7 @@ namespace XREngine.Animation.Importers
                 componentCount = 3;
                 return true;
             }
-            if (attribute.Equals("RootQ", StringComparison.Ordinal) || attribute.Equals("m_LocalRotation", StringComparison.Ordinal) || attribute.Equals("localRotation", StringComparison.Ordinal))
+            if (attribute.Equals("m_LocalRotation", StringComparison.Ordinal) || attribute.Equals("localRotation", StringComparison.Ordinal))
             {
                 kind = "rotation";
                 componentCount = 4;

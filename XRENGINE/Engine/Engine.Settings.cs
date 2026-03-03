@@ -380,38 +380,28 @@ namespace XREngine
 
         /// <summary>
         /// Applies audio preferences from the cascading settings system to the audio subsystem.
-        /// Maps data-layer enums to audio-layer enums and pushes to AudioSettings/AudioManager.
         /// Cascade: Editor Prefs Override > Game Override > User Preference.
+        /// Skips the apply if all values are already current (avoids redundant log spam on startup).
         /// </summary>
         private static void ApplyAudioPreferences()
         {
-            AudioSettings.AudioArchitectureV2 = EffectiveSettings.AudioArchitectureV2;
-            AudioSettings.DefaultTransport = MapTransport(EffectiveSettings.AudioTransport);
-            AudioSettings.DefaultEffects = MapEffects(EffectiveSettings.AudioEffects);
-            AudioSettings.SampleRate = EffectiveSettings.AudioSampleRate;
+            bool v2 = EffectiveSettings.AudioArchitectureV2;
+            var transport = EffectiveSettings.AudioTransport;
+            var effects = EffectiveSettings.AudioEffects;
+            int sampleRate = EffectiveSettings.AudioSampleRate;
+
+            if (AudioSettings.AudioArchitectureV2 == v2
+                && AudioSettings.DefaultTransport == transport
+                && AudioSettings.DefaultEffects == effects
+                && AudioSettings.SampleRate == sampleRate)
+                return; // Nothing changed.
+
+            AudioSettings.AudioArchitectureV2 = v2;
+            AudioSettings.DefaultTransport = transport;
+            AudioSettings.DefaultEffects = effects;
+            AudioSettings.SampleRate = sampleRate;
             AudioSettings.ApplyTo(Audio);
         }
-
-        /// <summary>
-        /// Maps the data-layer <see cref="EAudioTransport"/> to the audio-layer <see cref="AudioTransportType"/>.
-        /// </summary>
-        private static AudioTransportType MapTransport(EAudioTransport transport) => transport switch
-        {
-            EAudioTransport.OpenAL => AudioTransportType.OpenAL,
-            EAudioTransport.NAudio => AudioTransportType.NAudio,
-            _ => AudioTransportType.OpenAL,
-        };
-
-        /// <summary>
-        /// Maps the data-layer <see cref="EAudioEffects"/> to the audio-layer <see cref="AudioEffectsType"/>.
-        /// </summary>
-        private static AudioEffectsType MapEffects(EAudioEffects effects) => effects switch
-        {
-            EAudioEffects.OpenAL_EFX => AudioEffectsType.OpenAL_EFX,
-            EAudioEffects.SteamAudio => AudioEffectsType.SteamAudio,
-            EAudioEffects.Passthrough => AudioEffectsType.Passthrough,
-            _ => AudioEffectsType.OpenAL_EFX,
-        };
 
         #endregion
 

@@ -187,6 +187,9 @@ namespace XREngine.Audio
         public void Pause(AudioSourceHandle source) => _mixer.Pause(source.Id);
 
         /// <inheritdoc />
+        public void Rewind(AudioSourceHandle source) => _mixer.Rewind(source.Id);
+
+        /// <inheritdoc />
         public void SetSourceBuffer(AudioSourceHandle source, AudioBufferHandle buffer)
             => _mixer.SetSourceBuffer(source.Id, buffer.Id);
 
@@ -208,6 +211,14 @@ namespace XREngine.Audio
                 output[i] = new AudioBufferHandle(ids[i]);
             return count;
         }
+
+        /// <inheritdoc />
+        public int GetBuffersProcessed(AudioSourceHandle source)
+            => _mixer.GetBuffersProcessed(source.Id);
+
+        /// <inheritdoc />
+        public int GetBuffersQueued(AudioSourceHandle source)
+            => _mixer.GetBuffersQueued(source.Id);
 
         // --- IAudioTransport: Source properties ---
 
@@ -233,6 +244,10 @@ namespace XREngine.Audio
 
         /// <inheritdoc />
         public bool IsSourcePlaying(AudioSourceHandle source) => _mixer.IsPlaying(source.Id);
+
+        /// <inheritdoc />
+        public int GetSampleOffset(AudioSourceHandle source)
+            => source.IsValid ? _mixer.GetSampleOffset(source.Id) : 0;
 
         // --- IAudioTransport: Capture ---
 

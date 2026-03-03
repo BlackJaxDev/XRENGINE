@@ -500,6 +500,9 @@ internal class Program
             TargetFramesPerSecond = renderHz,
             FixedFramesPerSecond = fixedHz,
             NetworkingType = GameStartupSettings.ENetworkingType.Client,
+            AudioArchitectureV2Override = EditorUnitTests.Toggles.AudioArchitectureV2,
+            AudioTransportOverride = EditorUnitTests.Toggles.AudioTransport,
+            AudioEffectsOverride = EditorUnitTests.Toggles.AudioEffects,
         };
 
         // Allow overriding the window title for multi-instance local testing.

@@ -3,27 +3,14 @@ using XREngine.Data.Core;
 
 namespace XREngine.Audio
 {
-    public enum AudioTransportType
-    {
-        OpenAL,
-        NAudio,
-    }
-
-    public enum AudioEffectsType
-    {
-        OpenAL_EFX,
-        SteamAudio,
-        Passthrough,
-    }
-
     public class AudioManager : XRBase
     {
         private readonly EventList<ListenerContext> _listeners = [];
         private int _sampleRate = 44100;
         private bool _enabled = true;
         private float _gainScale = 1.0f;
-        private AudioTransportType _defaultTransport = AudioTransportType.OpenAL;
-        private AudioEffectsType _defaultEffects = AudioEffectsType.OpenAL_EFX;
+        private EAudioTransport _defaultTransport = EAudioTransport.OpenAL;
+        private EAudioEffects _defaultEffects = EAudioEffects.OpenAL_EFX;
 
         public IEventListReadOnly<ListenerContext> Listeners => _listeners;
 
@@ -44,13 +31,13 @@ namespace XREngine.Audio
             set => SetField(ref _gainScale, value);
         }
 
-        public AudioTransportType DefaultTransport
+        public EAudioTransport DefaultTransport
         {
             get => _defaultTransport;
             set => SetField(ref _defaultTransport, value);
         }
 
-        public AudioEffectsType DefaultEffects
+        public EAudioEffects DefaultEffects
         {
             get => _defaultEffects;
             set => SetField(ref _defaultEffects, value);
@@ -99,8 +86,8 @@ namespace XREngine.Audio
 
                 IAudioTransport transport = transportType switch
                 {
-                    AudioTransportType.OpenAL => new OpenALTransport(),
-                    AudioTransportType.NAudio => CreateNAudioTransport(),
+                    EAudioTransport.OpenAL => new OpenALTransport(),
+                    EAudioTransport.NAudio => CreateNAudioTransport(),
                     _ => CreateFallbackOpenAlTransport($"Unknown audio transport '{transportType}'. Falling back to OpenAL."),
                 };
 
@@ -123,28 +110,28 @@ namespace XREngine.Audio
         /// <summary>
         /// Validates a transport/effects combination and auto-corrects invalid pairings.
         /// </summary>
-        public static (AudioTransportType Transport, AudioEffectsType Effects) ValidateCombo(
-            AudioTransportType transport,
-            AudioEffectsType effects)
+        public static (EAudioTransport Transport, EAudioEffects Effects) ValidateCombo(
+            EAudioTransport transport,
+            EAudioEffects effects)
         {
             // OpenAL_EFX requires OpenAL transport — EFX needs an active OpenAL context.
-            if (effects == AudioEffectsType.OpenAL_EFX && transport != AudioTransportType.OpenAL)
+            if (effects == EAudioEffects.OpenAL_EFX && transport != EAudioTransport.OpenAL)
             {
                 Debug.WriteLine($"[AudioManager] {effects} requires OpenAL transport, but '{transport}' was selected. Auto-correcting to Passthrough.");
-                effects = AudioEffectsType.Passthrough;
+                effects = EAudioEffects.Passthrough;
             }
 
             return (transport, effects);
         }
 
-        private static IAudioEffectsProcessor CreateEffectsProcessor(AudioEffectsType effectsType, IAudioTransport transport)
+        private static IAudioEffectsProcessor CreateEffectsProcessor(EAudioEffects effectsType, IAudioTransport transport)
         {
             return effectsType switch
             {
-                AudioEffectsType.OpenAL_EFX when transport is OpenALTransport openAl => new OpenALEfxProcessor(openAl),
-                AudioEffectsType.OpenAL_EFX => CreatePassthroughFallback("OpenAL_EFX requires OpenALTransport but transport is incompatible. Falling back to Passthrough."),
-                AudioEffectsType.Passthrough => new PassthroughProcessor(),
-                AudioEffectsType.SteamAudio => CreateSteamAudioProcessor(transport),
+                EAudioEffects.OpenAL_EFX when transport is OpenALTransport openAl => new OpenALEfxProcessor(openAl),
+                EAudioEffects.OpenAL_EFX => CreatePassthroughFallback("OpenAL_EFX requires OpenALTransport but transport is incompatible. Falling back to Passthrough."),
+                EAudioEffects.Passthrough => new PassthroughProcessor(),
+                EAudioEffects.SteamAudio => CreateSteamAudioProcessor(transport),
                 _ => CreatePassthroughFallback($"Unknown audio effects '{effectsType}'. Falling back to Passthrough."),
             };
         }

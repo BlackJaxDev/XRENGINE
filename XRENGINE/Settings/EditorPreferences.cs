@@ -54,13 +54,16 @@ namespace XREngine
         private string _mcpAssistantOpenAiRealtimeModel = "gpt-4o-realtime-preview";
         private string _mcpAssistantAnthropicModel = "claude-sonnet-4-5";
         private int _mcpAssistantMaxTokens = 4096;
-        private int _mcpAssistantMaxAutoReprompts = 3;
+        private int _mcpAssistantMaxAutoReprompts = 25;
         private bool _mcpAssistantAutoSummarizeNearContextLimit = true;
         private bool _mcpAssistantUseRealtimeWebSocket = false;
         private bool _mcpAssistantAttachMcpServer = true;
         private bool _mcpAssistantAttachViewportScreenshot = false;
         private bool _mcpAssistantAutoScroll = true;
         private bool _mcpAssistantAutoCameraView = true;
+        private bool _mcpAssistantVerboseAiLogging = true;
+        private float _focusPreferredDownPitchDegrees = 20.0f;
+        private float _focusMaximumDownPitchDegrees = 45.0f;
         private string _mcpAssistantGeminiApiKey = string.Empty;
         private string _mcpAssistantGeminiModel = "gemini-2.5-pro";
         private string _mcpAssistantGitHubModelsToken = string.Empty;
@@ -395,11 +398,11 @@ namespace XREngine
         /// </summary>
         [Category("MCP Assistant")]
         [DisplayName("Max Auto Re-prompts")]
-        [Description("Maximum automatic continuation prompts sent when the assistant has not emitted the completion marker.")]
+        [Description("Maximum automatic continuation prompts sent when the assistant emits the continue marker or has not emitted the done marker.")]
         public int McpAssistantMaxAutoReprompts
         {
             get => _mcpAssistantMaxAutoReprompts;
-            set => SetField(ref _mcpAssistantMaxAutoReprompts, Math.Clamp(value, 0, 20));
+            set => SetField(ref _mcpAssistantMaxAutoReprompts, Math.Clamp(value, 0, 50));
         }
 
         /// <summary>
@@ -474,6 +477,42 @@ namespace XREngine
         {
             get => _mcpAssistantAutoCameraView;
             set => SetField(ref _mcpAssistantAutoCameraView, value);
+        }
+
+        /// <summary>
+        /// Whether MCP Assistant writes comprehensive AI request/response/tool traces.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Verbose AI Logging")]
+        [Description("Write full MCP Assistant prompts, responses, and tool call args/results to the AI log category.")]
+        public bool McpAssistantVerboseAiLogging
+        {
+            get => _mcpAssistantVerboseAiLogging;
+            set => SetField(ref _mcpAssistantVerboseAiLogging, value);
+        }
+
+        /// <summary>
+        /// Preferred downward pitch for editor auto-focus camera framing.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Focus Preferred Down Pitch")]
+        [Description("Preferred downward pitch angle (degrees) for editor camera auto-focus framing.")]
+        public float FocusPreferredDownPitchDegrees
+        {
+            get => _focusPreferredDownPitchDegrees;
+            set => SetField(ref _focusPreferredDownPitchDegrees, float.Clamp(value, 0.0f, 80.0f));
+        }
+
+        /// <summary>
+        /// Maximum allowed downward pitch for editor auto-focus camera framing.
+        /// </summary>
+        [Category("MCP Assistant")]
+        [DisplayName("Focus Max Down Pitch")]
+        [Description("Maximum downward pitch angle (degrees) for editor camera auto-focus framing.")]
+        public float FocusMaximumDownPitchDegrees
+        {
+            get => _focusMaximumDownPitchDegrees;
+            set => SetField(ref _focusMaximumDownPitchDegrees, float.Clamp(value, 1.0f, 89.0f));
         }
 
         /// <summary>
@@ -603,6 +642,9 @@ namespace XREngine
             McpAssistantAttachMcpServer = source.McpAssistantAttachMcpServer;
             McpAssistantAutoScroll = source.McpAssistantAutoScroll;
             McpAssistantAutoCameraView = source.McpAssistantAutoCameraView;
+            McpAssistantVerboseAiLogging = source.McpAssistantVerboseAiLogging;
+            FocusPreferredDownPitchDegrees = source.FocusPreferredDownPitchDegrees;
+            FocusMaximumDownPitchDegrees = source.FocusMaximumDownPitchDegrees;
             McpAssistantGeminiApiKey = source.McpAssistantGeminiApiKey;
             McpAssistantGeminiModel = source.McpAssistantGeminiModel;
             McpAssistantGitHubModelsToken = source.McpAssistantGitHubModelsToken;

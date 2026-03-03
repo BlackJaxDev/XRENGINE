@@ -212,7 +212,7 @@ public static partial class EditorUnitTests
             Vector3 segA = new(4.0f, 1.0f + MathF.Sin(t * 0.7f) * 1.2f, -6.0f);
             Vector3 segB = new(12.0f, 2.0f + MathF.Cos(t * 0.8f) * 1.0f, 2.0f);
 
-            bool hit = GeoUtil.SegmentIntersectsAABB(segA, segB, aabbMin, aabbMax, out Vector3 pEnter, out Vector3 pExit);
+            bool hit = GeoUtil.Intersect.SegmentWithAABB(segA, segB, aabbMin, aabbMax, out Vector3 pEnter, out Vector3 pExit);
 
             debug.ClearShapes();
             debug.AddBox(aabbHalf, aabbCenter, hit ? ColorF4.LightGreen : ColorF4.Gray, false);
@@ -244,7 +244,7 @@ public static partial class EditorUnitTests
             Vector3 dir = Vector3.Normalize(new Vector3(1.0f, MathF.Sin(t * 0.35f) * 0.15f, 0.85f));
             const float length = 30.0f;
 
-            bool hit = GeoUtil.RayIntersectsTriangle(origin, dir, a, b, c, out float dist);
+            bool hit = GeoUtil.Intersect.RayWithTriangle(origin, dir, a, b, c, out float dist);
             Vector3 end = origin + dir * length;
 
             debug.ClearShapes();

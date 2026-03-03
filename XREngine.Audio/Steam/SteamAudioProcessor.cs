@@ -23,7 +23,7 @@ namespace XREngine.Audio.Steam
     /// This processor is designed to be composed with an <see cref="IAudioTransport"/>
     /// (typically <see cref="OpenALTransport"/>) via <see cref="ListenerContext"/>.
     /// Select it by setting <see cref="AudioManager.DefaultEffects"/> to
-    /// <see cref="AudioEffectsType.SteamAudio"/> with <c>AudioArchitectureV2</c> enabled.
+    /// <see cref="EAudioEffects.SteamAudio"/> with <c>AudioArchitectureV2</c> enabled.
     /// </para>
     /// </summary>
     public sealed class SteamAudioProcessor : IAudioEffectsProcessor

@@ -167,6 +167,15 @@ namespace XREngine.Audio
                 {
                     source.State = PlaybackState.Stopped;
                     source.PlaybackPosition = 0;
+
+                    // Match OpenAL alSourceStop semantics: all buffers remaining
+                    // in the queue become processed so they can be unqueued by
+                    // the caller.  Without this, FlushAudioQueue's
+                    // Stop → UnqueueConsumedBuffers → Rewind sequence leaves
+                    // old buffers in QueuedBuffers, causing them to replay on
+                    // the next Play() and producing compounding echo.
+                    while (source.QueuedBuffers.Count > 0)
+                        source.ProcessedBuffers.Enqueue(source.QueuedBuffers.Dequeue());
                 }
             }
         }
@@ -177,6 +186,27 @@ namespace XREngine.Audio
             {
                 if (_sources.TryGetValue(sourceId, out var source))
                     source.State = PlaybackState.Paused;
+            }
+        }
+
+        /// <summary>
+        /// Rewinds a source to the beginning (INITIAL-equivalent state).
+        /// Resets playback position and clears processed buffers so they
+        /// remain in the queued state, matching OpenAL's alSourceRewind behavior.
+        /// </summary>
+        public void Rewind(uint sourceId)
+        {
+            lock (_lock)
+            {
+                if (_sources.TryGetValue(sourceId, out var source))
+                {
+                    source.State = PlaybackState.Stopped;
+                    source.PlaybackPosition = 0;
+                    // Processed buffers are intentionally left intact.
+                    // The managed AudioSource drains them via UnqueueConsumedBuffers;
+                    // clearing them here would orphan entries in
+                    // AudioSource._currentStreamingBuffers (phantom buffer IDs).
+                }
             }
         }
 
@@ -229,6 +259,24 @@ namespace XREngine.Audio
                     output[i] = source.ProcessedBuffers.Dequeue();
                 return count;
             }
+        }
+
+        public int GetBuffersProcessed(uint sourceId)
+        {
+            lock (_lock)
+                return _sources.TryGetValue(sourceId, out var source) ? source.ProcessedBuffers.Count : 0;
+        }
+
+        public int GetBuffersQueued(uint sourceId)
+        {
+            lock (_lock)
+                return _sources.TryGetValue(sourceId, out var source) ? source.QueuedBuffers.Count : 0;
+        }
+
+        public int GetSampleOffset(uint sourceId)
+        {
+            lock (_lock)
+                return _sources.TryGetValue(sourceId, out var source) ? (int)source.PlaybackPosition : 0;
         }
 
         #endregion

@@ -70,7 +70,7 @@ namespace XREngine
                 StartingUp = true;
                 RenderThreadId = Environment.CurrentManagedThreadId;
                 GameSettings = startupSettings;
-                UserSettings = GameSettings.DefaultUserSettings;
+                UserSettings = GameSettings.DefaultUserSettings?.DeepClone() ?? new UserSettings();
 
                 if (CurrentProject is null)
                     LoadSandboxSettings();

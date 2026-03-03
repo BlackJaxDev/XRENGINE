@@ -144,6 +144,7 @@ namespace XREngine.Core.Files
         /// Embedded assets share the same file path as their source asset.
         /// </remarks>
         [YamlIgnore]
+        [MemoryPackIgnore]
         public EventList<XRAsset> EmbeddedAssets
         {
             get => _embeddedAssets;
@@ -165,6 +166,7 @@ namespace XREngine.Core.Files
         /// </remarks>
         [YamlIgnore]
         [Browsable(false)]
+        [MemoryPackIgnore]
         public XRAsset SourceAsset
         {
             get => _sourceAsset ?? this;

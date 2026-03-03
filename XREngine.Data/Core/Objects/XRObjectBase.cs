@@ -61,12 +61,14 @@ namespace XREngine.Data.Core
         /// Event that is called when the object is destroyed.
         /// </summary>
         [YamlIgnore]
+        [MemoryPackIgnore]
         public XREvent<XRObjectBase>? Destroyed;
         /// <summary>
         /// Event that is called when the object has been requested to be destroyed.
         /// All listeners must return true for the object to be destroyed.
         /// </summary>
         [YamlIgnore]
+        [MemoryPackIgnore]
         public XRBoolEvent<XRObjectBase>? Destroying;
 
         private string? _name;

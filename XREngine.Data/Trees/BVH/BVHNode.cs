@@ -1,4 +1,4 @@
-﻿// Copyright(C) David W. Jeske, 2014, and released to the public domain. 
+// Copyright(C) David W. Jeske, 2014, and released to the public domain. 
 //
 // Dynamic BVH (Bounding Volume Hierarchy) using incremental refit and tree-rotations
 //
@@ -720,7 +720,7 @@ namespace SimpleScene.Util.ssBVH
         internal void FindOverlappingLeaves(ISSBVHNodeAdaptor<GO> nAda, Vector3 origin, float radius, List<BVHNode<GO>> overlapList)
         {
             var box = ToAABB();
-            if (!GeoUtil.AABBIntersectsSphere(box.Min, box.Max, origin, radius))
+            if (!GeoUtil.Intersect.AABBWithSphere(box.Min, box.Max, origin, radius))
                 return;
             
             if (gobjects != null)
@@ -735,7 +735,7 @@ namespace SimpleScene.Util.ssBVH
         internal void FindOverlappingLeaves(ISSBVHNodeAdaptor<GO> nAda, AABB aabb, List<BVHNode<GO>> overlapList)
         {
             var box = ToAABB();
-            if (!GeoUtil.AABBIntersectsAABB(box, aabb))
+            if (!GeoUtil.Intersect.AABBWithAABB(box, aabb))
                 return;
             
             if (gobjects != null)
