@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using System.Numerics;
 using System.Text.Json.Serialization;
 using XREngine.Data.Core;
@@ -13,6 +13,59 @@ namespace XREngine.Data.Geometry
     {
         private Vector3 _min;
         private Vector3 _max;
+
+        private static float DistanceSquaredToAabb(Vector3 point, Vector3 min, Vector3 max)
+        {
+            Vector3 clamped = Vector3.Clamp(point, min, max);
+            Vector3 delta = point - clamped;
+            return Vector3.Dot(delta, delta);
+        }
+
+        private static bool SegmentIntersectsAabb(Vector3 segmentStart, Vector3 segmentEnd, Vector3 boxMin, Vector3 boxMax, out Vector3 enterPoint, out Vector3 exitPoint)
+        {
+            Vector3 direction = segmentEnd - segmentStart;
+            float tMin = 0.0f;
+            float tMax = 1.0f;
+
+            for (int axis = 0; axis < 3; axis++)
+            {
+                float start = segmentStart[axis];
+                float delta = direction[axis];
+                float min = boxMin[axis];
+                float max = boxMax[axis];
+
+                if (MathF.Abs(delta) <= 1e-12f)
+                {
+                    if (start < min || start > max)
+                    {
+                        enterPoint = Vector3.Zero;
+                        exitPoint = Vector3.Zero;
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                float invDelta = 1.0f / delta;
+                float t1 = (min - start) * invDelta;
+                float t2 = (max - start) * invDelta;
+                if (t1 > t2)
+                    (t1, t2) = (t2, t1);
+
+                tMin = MathF.Max(tMin, t1);
+                tMax = MathF.Min(tMax, t2);
+                if (tMin > tMax)
+                {
+                    enterPoint = Vector3.Zero;
+                    exitPoint = Vector3.Zero;
+                    return false;
+                }
+            }
+
+            enterPoint = segmentStart + direction * tMin;
+            exitPoint = segmentStart + direction * tMax;
+            return true;
+        }
 
         public AABB(Vector3 min, Vector3 max)
         {
@@ -413,7 +466,74 @@ namespace XREngine.Data.Geometry
 
         public EContainment ContainsCone(Cone cone)
         {
-            throw new NotImplementedException();
+            float height = System.MathF.Max(0.0f, cone.Height);
+            float radius = System.MathF.Max(0.0f, cone.Radius);
+
+            Vector3 up = cone.Up;
+            float upLengthSquared = up.LengthSquared();
+            Vector3 axisDir = upLengthSquared > 1e-12f
+                ? up / System.MathF.Sqrt(upLengthSquared)
+                : Vector3.UnitY;
+
+            Vector3 baseCenter = cone.Center;
+            Vector3 tip = baseCenter + axisDir * height;
+
+            static float GetRadialExtent(float axisComponent, float radius)
+            {
+                float orthogonalSquared = 1.0f - axisComponent * axisComponent;
+                if (orthogonalSquared < 0.0f)
+                    orthogonalSquared = 0.0f;
+                return radius * System.MathF.Sqrt(orthogonalSquared);
+            }
+
+            float radialX = GetRadialExtent(axisDir.X, radius);
+            float radialY = GetRadialExtent(axisDir.Y, radius);
+            float radialZ = GetRadialExtent(axisDir.Z, radius);
+
+            float coneMinX = System.MathF.Min(tip.X, baseCenter.X - radialX);
+            float coneMaxX = System.MathF.Max(tip.X, baseCenter.X + radialX);
+            float coneMinY = System.MathF.Min(tip.Y, baseCenter.Y - radialY);
+            float coneMaxY = System.MathF.Max(tip.Y, baseCenter.Y + radialY);
+            float coneMinZ = System.MathF.Min(tip.Z, baseCenter.Z - radialZ);
+            float coneMaxZ = System.MathF.Max(tip.Z, baseCenter.Z + radialZ);
+
+            if (coneMaxX < Min.X || coneMinX > Max.X ||
+                coneMaxY < Min.Y || coneMinY > Max.Y ||
+                coneMaxZ < Min.Z || coneMinZ > Max.Z)
+                return EContainment.Disjoint;
+
+            if (coneMinX >= Min.X && coneMaxX <= Max.X &&
+                coneMinY >= Min.Y && coneMaxY <= Max.Y &&
+                coneMinZ >= Min.Z && coneMaxZ <= Max.Z)
+                return EContainment.Contains;
+
+            if (ContainsPoint(baseCenter) || ContainsPoint(tip) ||
+                cone.ContainsPoint(new(Min.X, Min.Y, Min.Z)) ||
+                cone.ContainsPoint(new(Max.X, Min.Y, Min.Z)) ||
+                cone.ContainsPoint(new(Min.X, Max.Y, Min.Z)) ||
+                cone.ContainsPoint(new(Max.X, Max.Y, Min.Z)) ||
+                cone.ContainsPoint(new(Min.X, Min.Y, Max.Z)) ||
+                cone.ContainsPoint(new(Max.X, Min.Y, Max.Z)) ||
+                cone.ContainsPoint(new(Min.X, Max.Y, Max.Z)) ||
+                cone.ContainsPoint(new(Max.X, Max.Y, Max.Z)))
+                return EContainment.Intersects;
+
+            Segment axis = new(baseCenter, tip);
+            if (SegmentIntersectsAabb(axis.Start, axis.End, Min, Max, out _, out _))
+                return EContainment.Intersects;
+
+            const int samples = 24;
+            for (int i = 0; i <= samples; i++)
+            {
+                float t = i / (float)samples;
+                Vector3 axisPoint = baseCenter + (tip - baseCenter) * t;
+                float coneRadiusAtT = radius * (1.0f - t);
+                float distToBoxSquared = DistanceSquaredToAabb(axisPoint, Min, Max);
+                if (distToBoxSquared <= coneRadiusAtT * coneRadiusAtT)
+                    return EContainment.Intersects;
+            }
+
+            return EContainment.Disjoint;
         }
 
         public readonly EContainment ContainsCapsule(Capsule shape)
@@ -486,14 +606,16 @@ namespace XREngine.Data.Geometry
 
         public readonly bool IntersectsSegment(Segment segment, out Vector3[] points)
         {
-            List<Vector3> intersections = [];
-            GetPlanes(out var up, out var down, out var right, out var left, out var back, out var front);
-            Plane[] planes = { up, down, right, left, back, front };
-            foreach (Plane plane in planes)
-                if (GeoUtil.RayIntersectsPlane(segment.Start, (segment.End - segment.Start).Normalized(), XRMath.GetPlanePoint(plane), plane.Normal, out Vector3 point) && ContainsPoint(point))
-                    intersections.Add(point);
-            points = [.. intersections];
-            return points.Length > 0;
+            if (!SegmentIntersectsAabb(segment.Start, segment.End, Min, Max, out Vector3 enter, out Vector3 exit))
+            {
+                points = [];
+                return false;
+            }
+
+            points = Vector3.DistanceSquared(enter, exit) <= 1e-12f
+                ? [enter]
+                : [enter, exit];
+            return true;
         }
 
         public readonly bool IntersectsSegment(Segment segment)

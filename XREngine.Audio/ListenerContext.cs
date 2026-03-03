@@ -61,6 +61,11 @@ namespace XREngine.Audio
         public EventDictionary<uint, AudioSource> Sources { get; } = [];
         public EventDictionary<uint, AudioBuffer> Buffers { get; } = [];
 
+        private Vector3 _position = Vector3.Zero;
+        private Vector3 _velocity = Vector3.Zero;
+        private Vector3 _forward = -Vector3.UnitZ;
+        private Vector3 _up = Vector3.UnitY;
+
         /// <summary>
         /// V2 constructor: composes a transport and effects processor.
         /// Used when <see cref="AudioSettings.AudioArchitectureV2"/> is enabled.
@@ -96,6 +101,10 @@ namespace XREngine.Audio
                     efxProc.SetListenerContext(this);
                     Effects = efxProc.EffectContext;
                 }
+
+                _position = oalTransport.GetListenerPosition();
+                _velocity = oalTransport.GetListenerVelocity();
+                oalTransport.GetListenerOrientation(out _forward, out _up);
             }
             else
             {
@@ -173,6 +182,9 @@ namespace XREngine.Audio
                 return;
             }
 
+            if (IsV2)
+                return;
+
             if (CurrentContext == this)
                 return;
 
@@ -187,6 +199,9 @@ namespace XREngine.Audio
                 oalTransport.VerifyError();
                 return;
             }
+
+            if (IsV2)
+                return;
 
             if (CurrentContext != this)
                 return;
@@ -205,14 +220,16 @@ namespace XREngine.Audio
         public AudioSource TakeSource()
         {
             var source = SourcePool.Take();
-            Sources.Add(source.Handle, source);
+            if (source.Handle != 0)
+                Sources.Add(source.Handle, source);
             VerifyError();
             return source;
         }
         public AudioBuffer TakeBuffer()
         {
             var buffer = BufferPool.Take();
-            Buffers.Add(buffer.Handle, buffer);
+            if (buffer.Handle != 0)
+                Buffers.Add(buffer.Handle, buffer);
             VerifyError();
             return buffer;
         }
@@ -221,7 +238,8 @@ namespace XREngine.Audio
         {
             if (source is null)
                 return;
-            Sources.Remove(source.Handle);
+            if (source.Handle != 0)
+                Sources.Remove(source.Handle);
             SourcePool.Release(source);
             VerifyError();
         }
@@ -229,7 +247,8 @@ namespace XREngine.Audio
         {
             if (buffer is null)
                 return;
-            Buffers.Remove(buffer.Handle);
+            if (buffer.Handle != 0)
+                Buffers.Remove(buffer.Handle);
             BufferPool.Release(buffer);
             VerifyError();
         }
@@ -245,44 +264,86 @@ namespace XREngine.Audio
             => Buffers.TryGetValue(handle, out AudioBuffer? buffer) ? buffer : null;
 
         public bool IsExtensionPresent(string extension)
-            => Api.IsExtensionPresent(extension);
+        {
+            if (IsV2 && Transport is not OpenALTransport)
+                return false;
+            return Api.IsExtensionPresent(extension);
+        }
 
         public bool HasDopplerFactorSet()
-            => Api.GetStateProperty(StateBoolean.HasDopplerFactor);
+            => IsV2 && Transport is not OpenALTransport
+                ? true
+                : Api.GetStateProperty(StateBoolean.HasDopplerFactor);
         public bool HasDopplerVelocitySet()
-            => Api.GetStateProperty(StateBoolean.HasDopplerVelocity);
+            => IsV2 && Transport is not OpenALTransport
+                ? true
+                : Api.GetStateProperty(StateBoolean.HasDopplerVelocity);
         public bool HasSpeedOfSoundSet()
-            => Api.GetStateProperty(StateBoolean.HasSpeedOfSound);
+            => IsV2 && Transport is not OpenALTransport
+                ? true
+                : Api.GetStateProperty(StateBoolean.HasSpeedOfSound);
         public bool IsDistanceModelInverseDistanceClamped()
-            => Api.GetStateProperty(StateBoolean.IsDistanceModelInverseDistanceClamped);
+            => IsV2 && Transport is not OpenALTransport
+                ? DistanceModel == EDistanceModel.InverseDistanceClamped
+                : Api.GetStateProperty(StateBoolean.IsDistanceModelInverseDistanceClamped);
 
         public string GetVendor()
-            => Api.GetStateProperty(StateString.Vendor);
+            => IsV2 && Transport is not OpenALTransport
+                ? Transport?.GetType().Name ?? "UnknownTransport"
+                : Api.GetStateProperty(StateString.Vendor);
         public string GetRenderer()
-            => Api.GetStateProperty(StateString.Renderer);
+            => IsV2 && Transport is not OpenALTransport
+                ? Transport?.GetType().Name ?? "UnknownTransport"
+                : Api.GetStateProperty(StateString.Renderer);
         public string GetVersion()
-            => Api.GetStateProperty(StateString.Version);
+            => IsV2 && Transport is not OpenALTransport
+                ? "V2"
+                : Api.GetStateProperty(StateString.Version);
         public string[] GetExtensions()
-            => Api.GetStateProperty(StateString.Extensions).Split(' ');
+            => IsV2 && Transport is not OpenALTransport
+                ? []
+                : Api.GetStateProperty(StateString.Extensions).Split(' ');
+
+        private float _dopplerFactor = 1.0f;
+        private float _speedOfSound = 343.3f;
+        private EDistanceModel _distanceModel = EDistanceModel.InverseDistanceClamped;
 
         public float DopplerFactor
         {
-            get => IsV2 && Transport is OpenALTransport oal ? oal.GetDopplerFactor() : GetDopplerFactor();
+            get
+            {
+                if (IsV2 && Transport is OpenALTransport oal)
+                    return _dopplerFactor = oal.GetDopplerFactor();
+                if (IsV2)
+                    return _dopplerFactor;
+                return GetDopplerFactor();
+            }
             set
             {
                 if (IsV2 && Transport is OpenALTransport oal)
                     oal.SetDopplerFactor(value);
+                else if (IsV2)
+                    _dopplerFactor = value;
                 else
                     SetDopplerFactor(value);
             }
         }
         public float SpeedOfSound
         {
-            get => IsV2 && Transport is OpenALTransport oal ? oal.GetSpeedOfSound() : GetSpeedOfSound();
+            get
+            {
+                if (IsV2 && Transport is OpenALTransport oal)
+                    return _speedOfSound = oal.GetSpeedOfSound();
+                if (IsV2)
+                    return _speedOfSound;
+                return GetSpeedOfSound();
+            }
             set
             {
                 if (IsV2 && Transport is OpenALTransport oal)
                     oal.SetSpeedOfSound(value);
+                else if (IsV2)
+                    _speedOfSound = value;
                 else
                     SetSpeedOfSound(value);
             }
@@ -301,9 +362,17 @@ namespace XREngine.Audio
 
         public Vector3 Position
         {
-            get => IsV2 ? ((OpenALTransport)Transport!).GetListenerPosition() : GetPosition();
+            get
+            {
+                if (IsV2 && Transport is OpenALTransport oal)
+                    return _position = oal.GetListenerPosition();
+                if (IsV2)
+                    return _position;
+                return GetPosition();
+            }
             set
             {
+                _position = value;
                 if (IsV2)
                     Transport!.SetListenerPosition(value);
                 else
@@ -312,9 +381,17 @@ namespace XREngine.Audio
         }
         public Vector3 Velocity
         {
-            get => IsV2 ? ((OpenALTransport)Transport!).GetListenerVelocity() : GetVelocity();
+            get
+            {
+                if (IsV2 && Transport is OpenALTransport oal)
+                    return _velocity = oal.GetListenerVelocity();
+                if (IsV2)
+                    return _velocity;
+                return GetVelocity();
+            }
             set
             {
+                _velocity = value;
                 if (IsV2)
                     Transport!.SetListenerVelocity(value);
                 else
@@ -329,8 +406,11 @@ namespace XREngine.Audio
                 if (IsV2 && Transport is OpenALTransport oal)
                 {
                     oal.GetListenerOrientation(out _, out Vector3 up);
+                    _up = up;
                     return up;
                 }
+                if (IsV2)
+                    return _up;
                 GetOrientation(out _, out Vector3 upLegacy);
                 return upLegacy;
             }
@@ -344,8 +424,11 @@ namespace XREngine.Audio
                 if (IsV2 && Transport is OpenALTransport oal)
                 {
                     oal.GetListenerOrientation(out Vector3 forward, out _);
+                    _forward = forward;
                     return forward;
                 }
+                if (IsV2)
+                    return _forward;
                 GetOrientation(out Vector3 forwardLegacy, out _);
                 return forwardLegacy;
             }
@@ -442,6 +525,8 @@ namespace XREngine.Audio
         {
             if (IsV2)
             {
+                _forward = forward;
+                _up = up;
                 Transport!.SetListenerOrientation(forward, up);
                 EffectsProcessor?.SetListenerPose(Position, forward, up);
                 return;
@@ -461,6 +546,21 @@ namespace XREngine.Audio
         /// <param name="up"></param>
         public unsafe void GetOrientation(out Vector3 forward, out Vector3 up)
         {
+            if (IsV2)
+            {
+                if (Transport is OpenALTransport oal)
+                {
+                    oal.GetListenerOrientation(out forward, out up);
+                    _forward = forward;
+                    _up = up;
+                    return;
+                }
+
+                forward = _forward;
+                up = _up;
+                return;
+            }
+
             MakeCurrent();
             float* orientation = stackalloc float[6];
             Api.GetListenerProperty(ListenerFloatArray.Orientation, orientation);
@@ -539,12 +639,13 @@ namespace XREngine.Audio
         private EDistanceModel GetDistanceModelV2()
         {
             if (Transport is OpenALTransport oal)
-                return (EDistanceModel)(int)oal.GetDistanceModel();
-            return EDistanceModel.InverseDistanceClamped;
+                return _distanceModel = (EDistanceModel)(int)oal.GetDistanceModel();
+            return _distanceModel;
         }
 
         private void SetDistanceModelV2(EDistanceModel model)
         {
+            _distanceModel = model;
             if (Transport is OpenALTransport oal)
                 oal.SetDistanceModel((DistanceModel)(int)model);
 

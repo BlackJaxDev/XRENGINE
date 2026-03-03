@@ -32,54 +32,37 @@ namespace XREngine.Data.Geometry
             HalfHeight = halfHeight;
         }
 
+        private readonly Capsule AsCapsule
+            => new(Center, Vector3.UnitZ, Radius, HalfHeight);
+
         public EContainment ContainsAABB(AABB box, float tolerance = float.Epsilon)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCapsule.ContainsAABB(box, tolerance);
 
         public EContainment ContainsSphere(Sphere sphere)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCapsule.ContainsSphere(sphere);
 
         public EContainment ContainsCone(Cone cone)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCapsule.ContainsCone(cone);
 
         public EContainment ContainsCapsule(Capsule shape)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCapsule.ContainsCapsule(shape);
 
         public Vector3 ClosestPoint(Vector3 point, bool clampToEdge)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCapsule.ClosestPoint(point, clampToEdge);
 
         public bool ContainsPoint(Vector3 point, float tolerance = float.Epsilon)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCapsule.ContainsPoint(point, tolerance);
 
         public AABB GetAABB(bool transformed)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCapsule.GetAABB(transformed);
 
         public bool IntersectsSegment(Segment segment, out Vector3[] points)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCapsule.IntersectsSegment(segment, out points);
 
         public bool IntersectsSegment(Segment segment)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCapsule.IntersectsSegment(segment);
 
         public EContainment ContainsBox(Box box)
-        {
-            throw new NotImplementedException();
-        }
+            => AsCapsule.ContainsBox(box);
     }
 }

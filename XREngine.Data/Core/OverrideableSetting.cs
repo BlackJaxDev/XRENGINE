@@ -1,4 +1,5 @@
 using MemoryPack;
+using MemoryPack.Formatters;
 using System.ComponentModel;
 
 namespace XREngine.Data.Core
@@ -10,7 +11,7 @@ namespace XREngine.Data.Core
     /// <typeparam name="T">The type of the setting value.</typeparam>
     [Serializable]
     [MemoryPackable(GenerateType.NoGenerate)]
-    public partial class OverrideableSetting<T> : XRBase, IMemoryPackable<OverrideableSetting<T>>, IOverrideableSetting
+    public partial class OverrideableSetting<T> : XRBase, IMemoryPackable<OverrideableSetting<T>>, IOverrideableSetting, ICloneable
     {
         private bool _hasOverride = false;
         private T? _value;
@@ -118,12 +119,22 @@ namespace XREngine.Data.Core
         public static implicit operator T?(OverrideableSetting<T>? setting)
             => setting is not null && setting.HasOverride ? setting.Value : default;
 
+        /// <summary>
+        /// Creates a shallow copy of this setting.
+        /// Since T is a value type or simple type, field copy is a full deep clone.
+        /// </summary>
+        public object Clone() => new OverrideableSetting<T>(_value, _hasOverride);
+
         public override string ToString()
             => HasOverride ? $"Override: {_value}" : "No Override";
 
         #region MemoryPack Serialization
 
-        static void IMemoryPackFormatterRegister.RegisterFormatter() { }
+        static void IMemoryPackFormatterRegister.RegisterFormatter()
+        {
+            if (!MemoryPackFormatterProvider.IsRegistered<OverrideableSetting<T>>())
+                MemoryPackFormatterProvider.Register(new MemoryPackableFormatter<OverrideableSetting<T>>());
+        }
 
         static void IMemoryPackable<OverrideableSetting<T>>.Serialize<TBufferWriter>(
             ref MemoryPackWriter<TBufferWriter> writer,

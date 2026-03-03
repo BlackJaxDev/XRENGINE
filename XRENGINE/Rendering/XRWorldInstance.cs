@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -1418,7 +1418,7 @@ namespace XREngine.Rendering
 
             Vector3 segmentSpaceDir = segmentSpaceDiff / segmentSpaceLength;
 
-            var matches = bvh.Traverse(node => GeoUtil.SegmentIntersectsAABB(segmentSpaceStart, segmentSpaceEnd, node.Min, node.Max, out _, out _));
+            var matches = bvh.Traverse(node => GeoUtil.Intersect.SegmentWithAABB(segmentSpaceStart, segmentSpaceEnd, node.Min, node.Max, out _, out _));
             if (matches is null)
                 return false;
 
@@ -1432,7 +1432,7 @@ namespace XREngine.Rendering
 
                 foreach (var tri in node.gobjects)
                 {
-                    if (!GeoUtil.RayIntersectsTriangle(segmentSpaceStart, segmentSpaceDir, tri.A, tri.B, tri.C, out float hitDistance))
+                    if (!GeoUtil.Intersect.RayWithTriangle(segmentSpaceStart, segmentSpaceDir, tri.A, tri.B, tri.C, out float hitDistance))
                         continue;
 
                     if (hitDistance < 0.0f || hitDistance > segmentSpaceLength)

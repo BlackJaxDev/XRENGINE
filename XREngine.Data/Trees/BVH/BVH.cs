@@ -1,4 +1,4 @@
-﻿// Copyright(C) David W. Jeske, 2014, and released to the public domain. 
+// Copyright(C) David W. Jeske, 2014, and released to the public domain. 
 //
 // Dynamic BVH (Bounding Volume Hierarchy) using incremental refit and tree-rotations
 //
@@ -73,17 +73,17 @@ namespace SimpleScene.Util.ssBVH
         public List<BVHNode<GO>> TraverseRay(Ray ray)
         {
             float tnear = 0f, tfar = 0f;
-            return Traverse(box => GeoUtil.RayIntersectsAABBDistance(ray, box, out tnear, out tfar));
+            return Traverse(box => GeoUtil.Intersect.RayWithAABBDistance(ray, box, out tnear, out tfar));
         }
 
         public List<BVHNode<GO>> Traverse(Ray ray)
         {
             float tnear = 0f, tfar = 0f;
-            return Traverse(box => GeoUtil.RayIntersectsAABBDistance(ray, box, out tnear, out tfar));
+            return Traverse(box => GeoUtil.Intersect.RayWithAABBDistance(ray, box, out tnear, out tfar));
         }
 
         public List<BVHNode<GO>> Traverse(AABB volume)
-            => Traverse(box => GeoUtil.AABBIntersectsAABB(box, volume));
+            => Traverse(box => GeoUtil.Intersect.AABBWithAABB(box, volume));
 
         /// <summary>
         /// Call this to batch-optimize any object-changes notified through 

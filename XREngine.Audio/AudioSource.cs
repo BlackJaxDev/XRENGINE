@@ -9,12 +9,19 @@ namespace XREngine.Audio
 {
     public sealed class AudioSource : IDisposable, IPoolable
     {
+        private bool IsV2 => ParentListener.IsV2 && ParentListener.Transport is not null;
+
         internal AudioSource(ListenerContext parentListener)
         {
             ParentListener = parentListener;
             Api = parentListener.Api;
-            Handle = Api.GenSource();
-            ParentListener.VerifyError();
+            if (IsV2)
+                Handle = ParentListener.Transport!.CreateSource().Id;
+            else
+            {
+                Handle = Api.GenSource();
+                ParentListener.VerifyError();
+            }
         }
 
         public ListenerContext ParentListener { get; }
@@ -26,8 +33,13 @@ namespace XREngine.Audio
             if (Handle == 0u)
                 return;
 
-            Api.SourceStop(Handle);
-            Api.DeleteSource(Handle);
+            if (IsV2)
+                ParentListener.Transport!.DestroySource(new AudioSourceHandle(Handle));
+            else
+            {
+                Api.SourceStop(Handle);
+                Api.DeleteSource(Handle);
+            }
             Handle = 0u;
 
             GC.SuppressFinalize(this);
@@ -38,7 +50,9 @@ namespace XREngine.Audio
         /// The number of buffers queued on this source.
         /// </summary>
         public int BuffersQueued
-            => GetBuffersQueued();
+            => IsV2
+                ? (_currentStreamingBuffers.Count > 0 ? _currentStreamingBuffers.Count : (_bufferHandle != 0 ? 1 : 0))
+                : GetBuffersQueued();
         /// <summary>
         /// The number of buffers in the queue that have been processed.
         /// </summary>
@@ -49,7 +63,7 @@ namespace XREngine.Audio
         /// </summary>
         public AudioBuffer? Buffer
         {
-            get => ParentListener.GetBufferByHandle(GetBufferHandle());
+            get => ParentListener.GetBufferByHandle(IsV2 ? _bufferHandle : GetBufferHandle());
             set
             {
                 if (value is not null)
@@ -74,7 +88,8 @@ namespace XREngine.Audio
 
         public unsafe bool QueueBuffers(int maxbuffers, params AudioBuffer[] buffers)
         {
-            ParentListener.MakeCurrent();
+            if (!IsV2)
+                ParentListener.MakeCurrent();
             int buffersProcessed = BuffersProcessed;
             if (buffersProcessed > 0)
                 UnqueueConsumedBuffers(buffersProcessed);
@@ -96,15 +111,24 @@ namespace XREngine.Audio
                 BufferQueued?.Invoke(buf);
                 handles[i] = buf.Handle;
             }
-            //Trace.WriteLineIf(handles.Length > 0, $"Queuing {handles.Length} buffers.");
-            Api.SourceQueueBuffers(Handle, buffers.Length, handles);
-            ParentListener.VerifyError();
+            if (IsV2)
+            {
+                Span<AudioBufferHandle> queueHandles = stackalloc AudioBufferHandle[buffers.Length];
+                for (int i = 0; i < buffers.Length; i++)
+                    queueHandles[i] = new AudioBufferHandle(handles[i]);
+                ParentListener.Transport!.QueueBuffers(new AudioSourceHandle(Handle), queueHandles);
+                _sourceType = ESourceType.Streaming;
+            }
+            else
+            {
+                Api.SourceQueueBuffers(Handle, buffers.Length, handles);
+                ParentListener.VerifyError();
+            }
             AudioDiagnostics.RecordBuffersQueued(Handle, buffers.Length, BuffersQueued);
 
             if (AutoPlayOnQueue && !IsPlaying)
             {
-                Api.SourcePlay(Handle);
-                ParentListener.VerifyError();
+                Play();
             }
             return true;
         }
@@ -118,7 +142,8 @@ namespace XREngine.Audio
         //}
         public unsafe void UnqueueConsumedBuffers(int requestedCount = 0)
         {
-            ParentListener.MakeCurrent();
+            if (!IsV2)
+                ParentListener.MakeCurrent();
             bool looping = GetLooping();
             if (looping)
                 Debug.WriteLine("Warning: UnqueueConsumedBuffers called on a looping source.");
@@ -134,12 +159,19 @@ namespace XREngine.Audio
             }
 
             uint* handles = stackalloc uint[count];
-            // OpenAL fills 'handles' with the buffer IDs that were actually
-            // unqueued. We must NOT pre-populate this array with our expected
-            // IDs; doing so can desync source/buffer state and cause
-            // AL_INVALID_VALUE during long-running streaming playback.
-            Api.SourceUnqueueBuffers(Handle, count, handles);
-            ParentListener.VerifyError();
+            if (IsV2)
+            {
+                Span<AudioBufferHandle> unqueued = stackalloc AudioBufferHandle[count];
+                int returned = ParentListener.Transport!.UnqueueProcessedBuffers(new AudioSourceHandle(Handle), unqueued);
+                count = Math.Min(count, returned);
+                for (int i = 0; i < count; i++)
+                    handles[i] = unqueued[i].Id;
+            }
+            else
+            {
+                Api.SourceUnqueueBuffers(Handle, count, handles);
+                ParentListener.VerifyError();
+            }
 
             // Keep our managed queue in sync with OpenAL's processed queue.
             for (int i = 0; i < count; i++)
@@ -237,14 +269,22 @@ namespace XREngine.Audio
             Undetermined,
         }
 
-        private static ESourceState ConvSourceState(SourceState state)
-            => state switch
+        private static ESourceState ConvSourceState(int rawState)
+            => rawState switch
             {
-                Silk.NET.OpenAL.SourceState.Initial => ESourceState.Initial,
-                Silk.NET.OpenAL.SourceState.Playing => ESourceState.Playing,
-                Silk.NET.OpenAL.SourceState.Paused => ESourceState.Paused,
-                Silk.NET.OpenAL.SourceState.Stopped => ESourceState.Stopped,
-                _ => throw new ArgumentOutOfRangeException(nameof(state), state, null),
+                // OpenAL enum values
+                (int)Silk.NET.OpenAL.SourceState.Initial => ESourceState.Initial,
+                (int)Silk.NET.OpenAL.SourceState.Playing => ESourceState.Playing,
+                (int)Silk.NET.OpenAL.SourceState.Paused => ESourceState.Paused,
+                (int)Silk.NET.OpenAL.SourceState.Stopped => ESourceState.Stopped,
+
+                // NAudio PlaybackState values (Stopped=0, Playing=1, Paused=2)
+                0 => ESourceState.Stopped,
+                1 => ESourceState.Playing,
+                2 => ESourceState.Paused,
+
+                // Common fallback for unknown/invalid values
+                _ => ESourceState.Stopped,
             };
 
         public static SourceState ConvSourceState(ESourceState state)
@@ -288,15 +328,32 @@ namespace XREngine.Audio
         /// The state of the source (Stopped, Playing, etc).
         /// </summary>
         public ESourceState SourceState
-            => ConvSourceState((SourceState)GetSourceState());
+        {
+            get
+            {
+                if (IsV2)
+                {
+                    // Poll transport so we detect auto-stop (e.g. all buffers consumed).
+                    GetSourceState();
+                    return _sourceState;
+                }
+                return ConvSourceState(GetSourceState());
+            }
+        }
         /// <summary>
         /// Plays the source.
         /// </summary>
         public void Play()
         {
             var prev = SourceState;
-            Api.SourcePlay(Handle);
-            ParentListener.VerifyError();
+            if (IsV2)
+                ParentListener.Transport!.Play(new AudioSourceHandle(Handle));
+            else
+            {
+                Api.SourcePlay(Handle);
+                ParentListener.VerifyError();
+            }
+            _sourceState = ESourceState.Playing;
             AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Playing));
         }
         /// <summary>
@@ -305,8 +362,14 @@ namespace XREngine.Audio
         public void Stop()
         {
             var prev = SourceState;
-            Api.SourceStop(Handle);
-            ParentListener.VerifyError();
+            if (IsV2)
+                ParentListener.Transport!.Stop(new AudioSourceHandle(Handle));
+            else
+            {
+                Api.SourceStop(Handle);
+                ParentListener.VerifyError();
+            }
+            _sourceState = ESourceState.Stopped;
             AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Stopped));
         }
         /// <summary>
@@ -315,8 +378,14 @@ namespace XREngine.Audio
         public void Pause()
         {
             var prev = SourceState;
-            Api.SourcePause(Handle);
-            ParentListener.VerifyError();
+            if (IsV2)
+                ParentListener.Transport!.Pause(new AudioSourceHandle(Handle));
+            else
+            {
+                Api.SourcePause(Handle);
+                ParentListener.VerifyError();
+            }
+            _sourceState = ESourceState.Paused;
             AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Paused));
         }
         /// <summary>
@@ -325,8 +394,19 @@ namespace XREngine.Audio
         public void Rewind()
         {
             var prev = SourceState;
-            Api.SourceRewind(Handle);
-            ParentListener.VerifyError();
+            if (!IsV2)
+            {
+                Api.SourceRewind(Handle);
+                ParentListener.VerifyError();
+            }
+            else
+            {
+                ParentListener.Transport!.Rewind(new AudioSourceHandle(Handle));
+                _secondsOffset = 0.0f;
+                _byteOffset = 0;
+                _sampleOffset = 0;
+            }
+            _sourceState = ESourceState.Initial;
             AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Initial));
         }
         #endregion
@@ -339,7 +419,7 @@ namespace XREngine.Audio
         /// </summary>
         public ESourceType SourceType
         {
-            get => ConvSourceType((SourceType)GetSourceType());
+            get => IsV2 ? _sourceType : ConvSourceType((SourceType)GetSourceType());
             //set => SetSourceType((int)ConvSourceType(value));
         }
         /// <summary>
@@ -490,8 +570,32 @@ namespace XREngine.Audio
         #endregion
 
         #region Get / Set Methods
+        private ESourceState _sourceState = ESourceState.Initial;
+        private ESourceType _sourceType = ESourceType.Undetermined;
+        private uint _bufferHandle;
+        private bool _sourceRelative;
+        private bool _looping;
+        private int _byteOffset;
+        private int _sampleOffset;
+        private float _secondsOffset;
+        private Vector3 _position;
+        private Vector3 _velocity;
+        private Vector3 _direction;
+        private float _referenceDistance = 1.0f;
+        private float _maxDistance = float.PositiveInfinity;
+        private float _rolloffFactor = 1.0f;
+        private float _pitch = 1.0f;
+        private float _minGain;
+        private float _maxGain = 1.0f;
+        private float _gain = 1.0f;
+        private float _coneInnerAngle = 360.0f;
+        private float _coneOuterAngle = 360.0f;
+        private float _coneOuterGain;
+
         private bool GetSourceRelative()
         {
+            if (IsV2)
+                return _sourceRelative;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceBoolean.SourceRelative, out bool value);
             ParentListener.VerifyError();
@@ -499,6 +603,8 @@ namespace XREngine.Audio
         }
         private bool GetLooping()
         {
+            if (IsV2)
+                return _looping;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceBoolean.Looping, out bool value);
             ParentListener.VerifyError();
@@ -506,12 +612,21 @@ namespace XREngine.Audio
         }
         private void SetSourceRelative(bool relative)
         {
+            _sourceRelative = relative;
+            if (IsV2)
+                return;
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceBoolean.SourceRelative, relative);
             ParentListener.VerifyError();
         }
         private void SetLooping(bool loop)
         {
+            _looping = loop;
+            if (IsV2)
+            {
+                ParentListener.Transport!.SetSourceLooping(new AudioSourceHandle(Handle), loop);
+                return;
+            }
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceBoolean.Looping, loop);
             ParentListener.VerifyError();
@@ -519,6 +634,8 @@ namespace XREngine.Audio
 
         private int GetByteOffset()
         {
+            if (IsV2)
+                return _byteOffset;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, GetSourceInteger.ByteOffset, out int value);
             ParentListener.VerifyError();
@@ -526,6 +643,8 @@ namespace XREngine.Audio
         }
         private int GetSampleOffset()
         {
+            if (IsV2)
+                return ParentListener.Transport!.GetSampleOffset(new AudioSourceHandle(Handle));
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, GetSourceInteger.SampleOffset, out int value);
             ParentListener.VerifyError();
@@ -533,6 +652,8 @@ namespace XREngine.Audio
         }
         private unsafe uint GetBufferHandle()
         {
+            if (IsV2)
+                return _bufferHandle;
             ParentListener.MakeCurrent();
             uint buffer;
             Api.GetSourceProperty(Handle, GetSourceInteger.Buffer, (int*)&buffer);
@@ -548,6 +669,17 @@ namespace XREngine.Audio
         }
         private int GetSourceState()
         {
+            if (IsV2)
+            {
+                // Query the transport for the real source state so we detect when
+                // OpenAL (or NAudio) stops the source after all buffers are consumed.
+                bool playing = ParentListener.Transport!.IsSourcePlaying(new AudioSourceHandle(Handle));
+                if (playing)
+                    _sourceState = ESourceState.Playing;
+                else if (_sourceState == ESourceState.Playing)
+                    _sourceState = ESourceState.Stopped; // source ran out of buffers
+                return (int)_sourceState;
+            }
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, GetSourceInteger.SourceState, out int value);
             ParentListener.VerifyError();
@@ -555,6 +687,8 @@ namespace XREngine.Audio
         }
         private unsafe int GetBuffersQueued()
         {
+            if (IsV2)
+                return _currentStreamingBuffers.Count;
             ParentListener.MakeCurrent();
             int value;
             Api.GetSourceProperty(Handle, GetSourceInteger.BuffersQueued, &value);
@@ -563,6 +697,8 @@ namespace XREngine.Audio
         }
         private unsafe int GetBuffersProcessed()
         {
+            if (IsV2)
+                return ParentListener.Transport!.GetBuffersProcessed(new AudioSourceHandle(Handle));
             ParentListener.MakeCurrent();
             int value;
             Api.GetSourceProperty(Handle, GetSourceInteger.BuffersProcessed, &value);
@@ -572,18 +708,31 @@ namespace XREngine.Audio
 
         private void SetByteOffset(int offset)
         {
+            _byteOffset = offset;
+            if (IsV2)
+                return;
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceInteger.ByteOffset, offset);
             ParentListener.VerifyError();
         }
         private void SetSampleOffset(int offset)
         {
+            _sampleOffset = offset;
+            if (IsV2)
+                return;
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceInteger.SampleOffset, offset);
             ParentListener.VerifyError();
         }
         private void SetBufferHandle(uint buffer)
         {
+            _bufferHandle = buffer;
+            if (IsV2)
+            {
+                ParentListener.Transport!.SetSourceBuffer(new AudioSourceHandle(Handle), new AudioBufferHandle(buffer));
+                _sourceType = buffer == 0 ? ESourceType.Undetermined : ESourceType.Static;
+                return;
+            }
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceInteger.Buffer, buffer);
             ParentListener.VerifyError();
@@ -598,6 +747,8 @@ namespace XREngine.Audio
 
         private Vector3 GetPosition()
         {
+            if (IsV2)
+                return _position;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceVector3.Position, out Vector3 value);
             ParentListener.VerifyError();
@@ -605,6 +756,8 @@ namespace XREngine.Audio
         }
         private Vector3 GetVelocity()
         {
+            if (IsV2)
+                return _velocity;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceVector3.Velocity, out Vector3 value);
             ParentListener.VerifyError();
@@ -612,6 +765,8 @@ namespace XREngine.Audio
         }
         private Vector3 GetDirection()
         {
+            if (IsV2)
+                return _direction;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceVector3.Direction, out Vector3 value);
             ParentListener.VerifyError();
@@ -620,18 +775,33 @@ namespace XREngine.Audio
 
         private void SetPosition(Vector3 position)
         {
+            _position = position;
+            if (IsV2)
+            {
+                ParentListener.Transport!.SetSourcePosition(new AudioSourceHandle(Handle), position);
+                return;
+            }
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceVector3.Position, position);
             ParentListener.VerifyError();
         }
         private void SetVelocity(Vector3 velocity)
         {
+            _velocity = velocity;
+            if (IsV2)
+            {
+                ParentListener.Transport!.SetSourceVelocity(new AudioSourceHandle(Handle), velocity);
+                return;
+            }
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceVector3.Velocity, velocity);
             ParentListener.VerifyError();
         }
         private void SetDirection(Vector3 direction)
         {
+            _direction = direction;
+            if (IsV2)
+                return;
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceVector3.Direction, direction);
             ParentListener.VerifyError();
@@ -639,6 +809,8 @@ namespace XREngine.Audio
 
         private float GetReferenceDistance()
         {
+            if (IsV2)
+                return _referenceDistance;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceFloat.ReferenceDistance, out float value);
             ParentListener.VerifyError();
@@ -646,6 +818,8 @@ namespace XREngine.Audio
         }
         private float GetMaxDistance()
         {
+            if (IsV2)
+                return _maxDistance;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceFloat.MaxDistance, out float value);
             ParentListener.VerifyError();
@@ -653,6 +827,8 @@ namespace XREngine.Audio
         }
         private float GetRolloffFactor()
         {
+            if (IsV2)
+                return _rolloffFactor;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceFloat.RolloffFactor, out float value);
             ParentListener.VerifyError();
@@ -660,6 +836,8 @@ namespace XREngine.Audio
         }
         private float GetPitch()
         {
+            if (IsV2)
+                return _pitch;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceFloat.Pitch, out float value);
             ParentListener.VerifyError();
@@ -667,6 +845,8 @@ namespace XREngine.Audio
         }
         private float GetMinGain()
         {
+            if (IsV2)
+                return _minGain;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceFloat.MinGain, out float value);
             ParentListener.VerifyError();
@@ -674,6 +854,8 @@ namespace XREngine.Audio
         }
         private float GetMaxGain()
         {
+            if (IsV2)
+                return _maxGain;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceFloat.MaxGain, out float value);
             ParentListener.VerifyError();
@@ -681,6 +863,8 @@ namespace XREngine.Audio
         }
         private float GetGain()
         {
+            if (IsV2)
+                return _gain;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceFloat.Gain, out float value);
             ParentListener.VerifyError();
@@ -688,6 +872,8 @@ namespace XREngine.Audio
         }
         private float GetConeInnerAngle()
         {
+            if (IsV2)
+                return _coneInnerAngle;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceFloat.ConeInnerAngle, out float value);
             ParentListener.VerifyError();
@@ -695,6 +881,8 @@ namespace XREngine.Audio
         }
         private float GetConeOuterAngle()
         {
+            if (IsV2)
+                return _coneOuterAngle;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceFloat.ConeOuterAngle, out float value);
             ParentListener.VerifyError();
@@ -702,6 +890,8 @@ namespace XREngine.Audio
         }
         private float GetConeOuterGain()
         {
+            if (IsV2)
+                return _coneOuterGain;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceFloat.ConeOuterGain, out float value);
             ParentListener.VerifyError();
@@ -709,6 +899,8 @@ namespace XREngine.Audio
         }
         private float GetSecOffset()
         {
+            if (IsV2)
+                return _secondsOffset;
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, SourceFloat.SecOffset, out float value);
             ParentListener.VerifyError();
@@ -717,65 +909,104 @@ namespace XREngine.Audio
 
         private void SetReferenceDistance(float distance)
         {
+            _referenceDistance = distance;
+            if (IsV2)
+                return;
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceFloat.ReferenceDistance, distance);
             ParentListener.VerifyError();
         }
         private void SetMaxDistance(float distance)
         {
+            _maxDistance = distance;
+            if (IsV2)
+                return;
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceFloat.MaxDistance, distance);
             ParentListener.VerifyError();
         }
         private void SetRolloffFactor(float factor)
         {
+            _rolloffFactor = factor;
+            if (IsV2)
+                return;
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceFloat.RolloffFactor, factor);
             ParentListener.VerifyError();
         }
         private void SetPitch(float pitch)
         {
+            _pitch = pitch;
+            if (IsV2)
+            {
+                ParentListener.Transport!.SetSourcePitch(new AudioSourceHandle(Handle), pitch);
+                return;
+            }
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceFloat.Pitch, pitch);
             ParentListener.VerifyError();
         }
         private void SetMinGain(float gain)
         {
+            _minGain = gain;
+            if (IsV2)
+                return;
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceFloat.MinGain, gain);
             ParentListener.VerifyError();
         }
         private void SetMaxGain(float gain)
         {
+            _maxGain = gain;
+            if (IsV2)
+                return;
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceFloat.MaxGain, gain);
             ParentListener.VerifyError();
         }
         private void SetGain(float gain)
         {
+            _gain = gain;
+            if (IsV2)
+            {
+                ParentListener.Transport!.SetSourceGain(new AudioSourceHandle(Handle), gain);
+                return;
+            }
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceFloat.Gain, gain);
             ParentListener.VerifyError();
         }
         private void SetConeInnerAngle(float angle)
         {
+            _coneInnerAngle = angle;
+            if (IsV2)
+                return;
             Api.SetSourceProperty(Handle, SourceFloat.ConeInnerAngle, angle);
             ParentListener.VerifyError();
         }
         private void SetConeOuterAngle(float angle)
         {
+            _coneOuterAngle = angle;
+            if (IsV2)
+                return;
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceFloat.ConeOuterAngle, angle);
             ParentListener.VerifyError();
         }
         private void SetConeOuterGain(float gain)
         {
+            _coneOuterGain = gain;
+            if (IsV2)
+                return;
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceFloat.ConeOuterGain, gain);
             ParentListener.VerifyError();
         }
         private void SetSecOffset(float offset)
         {
+            _secondsOffset = offset;
+            if (IsV2)
+                return;
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceFloat.SecOffset, offset);
             ParentListener.VerifyError();
@@ -971,17 +1202,34 @@ namespace XREngine.Audio
         void IPoolable.OnPoolableReset()
         {
             _currentStreamingBuffers.Clear();
-            Handle = Api.GenSource();
-            ParentListener.VerifyError();
+            _bufferHandle = 0;
+            _sourceState = ESourceState.Initial;
+            _sourceType = ESourceType.Undetermined;
+
+            if (IsV2)
+                Handle = ParentListener.Transport!.CreateSource().Id;
+            else
+            {
+                Handle = Api.GenSource();
+                ParentListener.VerifyError();
+            }
         }
 
         void IPoolable.OnPoolableReleased()
         {
             ReleaseAllTrackedStreamingBuffers();
-            Api.SourceStop(Handle);
-            Api.DeleteSource(Handle);
+            if (Handle != 0u)
+            {
+                if (IsV2)
+                    ParentListener.Transport!.DestroySource(new AudioSourceHandle(Handle));
+                else
+                {
+                    Api.SourceStop(Handle);
+                    Api.DeleteSource(Handle);
+                    ParentListener.VerifyError();
+                }
+            }
             Handle = 0u;
-            ParentListener.VerifyError();
         }
 
         void IPoolable.OnPoolableDestroyed()

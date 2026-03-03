@@ -17,6 +17,7 @@ public sealed class AssetCacheTests
     {
         using var sandbox = new AssetCacheSandbox();
         var manager = new AssetManager();
+        manager.MonitorGameAssetsForChanges = false; // prevent FileSystemWatcher auto-imports from corrupting LoadCount
         try
         {
             manager.GameAssetsPath = sandbox.AssetsPath;

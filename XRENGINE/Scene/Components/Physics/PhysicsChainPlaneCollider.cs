@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -44,7 +44,7 @@ public class PhysicsChainPlaneCollider : PhysicsChainColliderBase, IRenderable
 
     public override bool Collide(ref Vector3 particlePosition, float particleRadius)
     {
-        float d = GeoUtil.DistancePlanePoint(_plane, particlePosition);
+        float d = GeoUtil.DistanceFrom.PlaneToPoint(_plane, particlePosition);
 
         if (_bound == EBound.Outside)
         {

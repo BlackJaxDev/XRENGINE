@@ -774,8 +774,8 @@ namespace XREngine.UnitTests.Audio
                 AudioSettings.AudioArchitectureV2 = true;
                 var manager = new AudioManager
                 {
-                    DefaultTransport = AudioTransportType.NAudio,
-                    DefaultEffects = AudioEffectsType.Passthrough,
+                    DefaultTransport = EAudioTransport.NAudio,
+                    DefaultEffects = EAudioEffects.Passthrough,
                 };
 
                 using var listener = manager.NewListener("test-naudio-passthrough");
@@ -801,8 +801,8 @@ namespace XREngine.UnitTests.Audio
                 AudioSettings.AudioArchitectureV2 = true;
                 var manager = new AudioManager
                 {
-                    DefaultTransport = AudioTransportType.NAudio,
-                    DefaultEffects = AudioEffectsType.SteamAudio,
+                    DefaultTransport = EAudioTransport.NAudio,
+                    DefaultEffects = EAudioEffects.SteamAudio,
                 };
 
                 using var listener = manager.NewListener("test-naudio-steamaudio");
@@ -829,8 +829,8 @@ namespace XREngine.UnitTests.Audio
                 AudioSettings.AudioArchitectureV2 = true;
                 var manager = new AudioManager
                 {
-                    DefaultTransport = AudioTransportType.NAudio,
-                    DefaultEffects = AudioEffectsType.OpenAL_EFX,
+                    DefaultTransport = EAudioTransport.NAudio,
+                    DefaultEffects = EAudioEffects.OpenAL_EFX,
                 };
 
                 using var listener = manager.NewListener("test-naudio-efx-fallback");

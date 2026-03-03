@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -279,7 +279,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
             for (int i = 0; i < lightFrusta.Count; i++)
             {
-                if (GeoUtil.TryIntersectFrustaAabb(cameraFrustum, lightFrusta[i], out Vector3 min, out Vector3 max))
+                if (GeoUtil.Intersect.FrustaAsAABB(cameraFrustum, lightFrusta[i], out Vector3 min, out Vector3 max))
                     _cameraIntersections.Add(new FrustumIntersectionAabb(i, min, max));
             }
         }

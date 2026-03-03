@@ -49,6 +49,58 @@ namespace XREngine.Data.Geometry
         public readonly Vector3 LocalMinimum => _localCenter - LocalHalfExtents;
         public readonly Vector3 LocalMaximum => _localCenter + LocalHalfExtents;
 
+        private static float DistancePlanePoint(Plane plane, Vector3 point)
+            => Vector3.Dot(plane.Normal, point) + plane.D;
+
+        private static bool SegmentIntersectsAabb(Vector3 segmentStart, Vector3 segmentEnd, Vector3 boxMin, Vector3 boxMax)
+            => SegmentIntersectsAabb(segmentStart, segmentEnd, boxMin, boxMax, out _, out _);
+
+        private static bool SegmentIntersectsAabb(Vector3 segmentStart, Vector3 segmentEnd, Vector3 boxMin, Vector3 boxMax, out Vector3 enterPoint, out Vector3 exitPoint)
+        {
+            Vector3 direction = segmentEnd - segmentStart;
+            float tMin = 0.0f;
+            float tMax = 1.0f;
+
+            for (int axis = 0; axis < 3; axis++)
+            {
+                float start = segmentStart[axis];
+                float delta = direction[axis];
+                float min = boxMin[axis];
+                float max = boxMax[axis];
+
+                if (MathF.Abs(delta) <= 1e-12f)
+                {
+                    if (start < min || start > max)
+                    {
+                        enterPoint = Vector3.Zero;
+                        exitPoint = Vector3.Zero;
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                float invDelta = 1.0f / delta;
+                float t1 = (min - start) * invDelta;
+                float t2 = (max - start) * invDelta;
+                if (t1 > t2)
+                    (t1, t2) = (t2, t1);
+
+                tMin = MathF.Max(tMin, t1);
+                tMax = MathF.Min(tMax, t2);
+                if (tMin > tMax)
+                {
+                    enterPoint = Vector3.Zero;
+                    exitPoint = Vector3.Zero;
+                    return false;
+                }
+            }
+
+            enterPoint = segmentStart + direction * tMin;
+            exitPoint = segmentStart + direction * tMax;
+            return true;
+        }
+
         private void UpdateLocalCache()
         {
             var min = LocalMinimum;
@@ -194,7 +246,7 @@ namespace XREngine.Data.Geometry
         public readonly bool Intersects(Segment segment)
         {
             var localSegment = segment.TransformedBy(_transform.Inverted());
-            return GeoUtil.SegmentIntersectsAABB(localSegment.Start, localSegment.End, LocalMinimum, LocalMaximum, out _, out _);
+            return SegmentIntersectsAabb(localSegment.Start, localSegment.End, LocalMinimum, LocalMaximum);
         }
 
         public bool Intersects(Box box)
@@ -206,7 +258,7 @@ namespace XREngine.Data.Geometry
                 var plane = planes[i];
                 for (int j = 0; j < 8; j++)
                 {
-                    if (GeoUtil.DistancePlanePoint(plane, corners[j]) > 0)
+                    if (DistancePlanePoint(plane, corners[j]) > 0)
                         break;
                     if (j == 7)
                         return false;
@@ -229,32 +281,139 @@ namespace XREngine.Data.Geometry
 
         public bool ContainedWithin(AABB boundingBox)
         {
-            throw new NotImplementedException();
+            var corners = WorldCorners;
+            foreach (var corner in corners)
+                if (!boundingBox.ContainsPoint(corner))
+                    return false;
+            return true;
         }
 
         public EContainment ContainsAABB(AABB box, float tolerance = float.Epsilon)
         {
-            throw new NotImplementedException();
+            Vector3[] corners = box.GetCorners();
+            bool allInside = true;
+            bool anyInside = false;
+            for (int i = 0; i < corners.Length; i++)
+            {
+                bool inside = ContainsPoint(corners[i], tolerance);
+                allInside &= inside;
+                anyInside |= inside;
+            }
+
+            if (allInside)
+                return EContainment.Contains;
+            if (anyInside)
+                return EContainment.Intersects;
+
+            if (GetAABB(true).Intersects(box))
+                return EContainment.Intersects;
+
+            return EContainment.Disjoint;
         }
 
         public EContainment ContainsSphere(Sphere sphere)
         {
-            throw new NotImplementedException();
+            Vector3 localCenter = PointToLocalSpace(sphere.Center);
+            Vector3 min = LocalMinimum;
+            Vector3 max = LocalMaximum;
+
+            Vector3 closest = Vector3.Clamp(localCenter, min, max);
+            Vector3 delta = localCenter - closest;
+            float radius = MathF.Max(0.0f, sphere.Radius);
+            float radiusSquared = radius * radius;
+            if (Vector3.Dot(delta, delta) > radiusSquared)
+                return EContainment.Disjoint;
+
+            bool fullyInside =
+                localCenter.X - radius >= min.X && localCenter.X + radius <= max.X &&
+                localCenter.Y - radius >= min.Y && localCenter.Y + radius <= max.Y &&
+                localCenter.Z - radius >= min.Z && localCenter.Z + radius <= max.Z;
+
+            return fullyInside ? EContainment.Contains : EContainment.Intersects;
         }
 
         public EContainment ContainsCone(Cone cone)
         {
-            throw new NotImplementedException();
+            Vector3 localCenter = PointToLocalSpace(cone.Center);
+            Vector3 localUp = NormalToLocalSpace(cone.Up);
+            float localUpLengthSquared = localUp.LengthSquared();
+            if (localUpLengthSquared > 1e-12f)
+                localUp /= MathF.Sqrt(localUpLengthSquared);
+            else
+                localUp = Vector3.UnitY;
+
+            Cone localCone = new(localCenter, localUp, cone.Height, cone.Radius);
+            AABB localAabb = new(LocalMinimum, LocalMaximum);
+            return localAabb.ContainsCone(localCone);
         }
 
         public EContainment ContainsCapsule(Capsule shape)
         {
-            throw new NotImplementedException();
+            Vector3 localCenter = PointToLocalSpace(shape.Center);
+            Vector3 localUp = NormalToLocalSpace(shape.UpAxis);
+            float localUpLengthSquared = localUp.LengthSquared();
+            if (localUpLengthSquared > 1e-12f)
+                localUp /= MathF.Sqrt(localUpLengthSquared);
+            else
+                localUp = Vector3.UnitY;
+
+            Capsule localCapsule = new(localCenter, localUp, shape.Radius, shape.HalfHeight);
+            AABB localAabb = new(LocalMinimum, LocalMaximum);
+            return localAabb.ContainsCapsule(localCapsule);
         }
 
         public Vector3 ClosestPoint(Vector3 point, bool clampToEdge)
         {
-            throw new NotImplementedException();
+            Vector3 localPoint = PointToLocalSpace(point);
+            Vector3 localClosest = Vector3.Clamp(localPoint, LocalMinimum, LocalMaximum);
+
+            if (clampToEdge)
+            {
+                float minDistX = MathF.Abs(localPoint.X - LocalMinimum.X);
+                float maxDistX = MathF.Abs(LocalMaximum.X - localPoint.X);
+                float minDistY = MathF.Abs(localPoint.Y - LocalMinimum.Y);
+                float maxDistY = MathF.Abs(LocalMaximum.Y - localPoint.Y);
+                float minDistZ = MathF.Abs(localPoint.Z - LocalMinimum.Z);
+                float maxDistZ = MathF.Abs(LocalMaximum.Z - localPoint.Z);
+
+                float bestDist = minDistX;
+                int bestAxis = 0;
+                bool useMax = false;
+
+                if (maxDistX < bestDist)
+                {
+                    bestDist = maxDistX;
+                    bestAxis = 0;
+                    useMax = true;
+                }
+                if (minDistY < bestDist)
+                {
+                    bestDist = minDistY;
+                    bestAxis = 1;
+                    useMax = false;
+                }
+                if (maxDistY < bestDist)
+                {
+                    bestDist = maxDistY;
+                    bestAxis = 1;
+                    useMax = true;
+                }
+                if (minDistZ < bestDist)
+                {
+                    bestDist = minDistZ;
+                    bestAxis = 2;
+                    useMax = false;
+                }
+                if (maxDistZ < bestDist)
+                {
+                    bestAxis = 2;
+                    useMax = true;
+                }
+
+                localClosest[bestAxis] = useMax ? LocalMaximum[bestAxis] : LocalMinimum[bestAxis];
+            }
+
+            return PointToWorldSpace(localClosest);
         }
 
         public readonly AABB GetAABB(bool transformed)
@@ -265,7 +424,7 @@ namespace XREngine.Data.Geometry
         public readonly bool IntersectsSegment(Segment segment, out Vector3[] points)
         {
             segment = segment.TransformedBy(_transform.Inverted());
-            bool intersects = GeoUtil.SegmentIntersectsAABB(segment.Start, segment.End, LocalMinimum, LocalMaximum, out Vector3 enter, out Vector3 exit);
+            bool intersects = SegmentIntersectsAabb(segment.Start, segment.End, LocalMinimum, LocalMaximum, out Vector3 enter, out Vector3 exit);
             points = intersects ? [PointToWorldSpace(enter), PointToWorldSpace(exit)] : [];
             return intersects;
         }
@@ -273,7 +432,7 @@ namespace XREngine.Data.Geometry
         public readonly bool IntersectsSegment(Segment segment)
         {
             segment = segment.TransformedBy(_transform.Inverted());
-            return GeoUtil.SegmentIntersectsAABB(segment.Start, segment.End, LocalMinimum, LocalMaximum, out _, out _);
+            return SegmentIntersectsAabb(segment.Start, segment.End, LocalMinimum, LocalMaximum);
         }
 
         public EContainment ContainsBox(Box box)
@@ -285,7 +444,7 @@ namespace XREngine.Data.Geometry
                 var plane = planes[i];
                 for (int j = 0; j < 8; j++)
                 {
-                    if (GeoUtil.DistancePlanePoint(plane, corners[j]) > 0)
+                    if (DistancePlanePoint(plane, corners[j]) > 0)
                         break;
                     if (j == 7)
                         return EContainment.Disjoint;

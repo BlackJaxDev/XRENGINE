@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using MagicPhysX;
 using System.Numerics;
 using XREngine.Components;
@@ -1034,7 +1034,7 @@ namespace XREngine.Scene.Components.Editing
                                 Vector3 perpPoint = Ray.GetClosestColinearPoint(Vector3.Zero, unit, localCamPoint);
                                 _worldDragPlaneNormal = (localCamPoint - perpPoint).Normalized();
 
-                                if (!GeoUtil.RayIntersectsPlane(start, dir, Vector3.Zero, _worldDragPlaneNormal, out localDragPoint))
+                                if (!GeoUtil.Intersect.RayWithPlane(start, dir, Vector3.Zero, _worldDragPlaneNormal, out localDragPoint))
                                     return _lastPointWorld;
 
                                 return Ray.GetClosestColinearPoint(Vector3.Zero, unit, localDragPoint);
@@ -1053,7 +1053,7 @@ namespace XREngine.Scene.Components.Editing
                                 _worldDragPlaneNormal = localCamPoint - perpPoint;
                                 _worldDragPlaneNormal.Normalized();
 
-                                if (!GeoUtil.RayIntersectsPlane(start, dir, Vector3.Zero, _worldDragPlaneNormal, out localDragPoint))
+                                if (!GeoUtil.Intersect.RayWithPlane(start, dir, Vector3.Zero, _worldDragPlaneNormal, out localDragPoint))
                                     return _lastPointWorld;
 
                                 return Ray.GetClosestColinearPoint(Vector3.Zero, unit, localDragPoint);
@@ -1070,14 +1070,14 @@ namespace XREngine.Scene.Components.Editing
                                 unit = Vector3.UnitZ;
                                 Vector3 perpPoint = Ray.GetClosestColinearPoint(Vector3.Zero, unit, localCamPoint);
                                 _worldDragPlaneNormal = (localCamPoint - perpPoint).Normalized();
-                                if (!GeoUtil.RayIntersectsPlane(start, dir, Vector3.Zero, _worldDragPlaneNormal, out localDragPoint))
+                                if (!GeoUtil.Intersect.RayWithPlane(start, dir, Vector3.Zero, _worldDragPlaneNormal, out localDragPoint))
                                     return _lastPointWorld;
 
                                 return Ray.GetClosestColinearPoint(Vector3.Zero, unit, localDragPoint);
                             }
                         }
 
-                        if (GeoUtil.RayIntersectsPlane(start, dir, Vector3.Zero, _worldDragPlaneNormal, out localDragPoint))
+                        if (GeoUtil.Intersect.RayWithPlane(start, dir, Vector3.Zero, _worldDragPlaneNormal, out localDragPoint))
                             return localDragPoint;
                     }
                     break;
@@ -1085,7 +1085,7 @@ namespace XREngine.Scene.Components.Editing
                     {
                         if (_hiCam)
                         {
-                            if (GeoUtil.RayIntersectsPlane(start, dir, Vector3.Zero, _worldDragPlaneNormal = localCamPoint.Normalized(), out localDragPoint))
+                            if (GeoUtil.Intersect.RayWithPlane(start, dir, Vector3.Zero, _worldDragPlaneNormal = localCamPoint.Normalized(), out localDragPoint))
                                 return localDragPoint;
                         }
                         else if (_hiAxis.Any)
@@ -1097,7 +1097,7 @@ namespace XREngine.Scene.Components.Editing
                             else// if (_hiAxis.Z)
                                 unit = Vector3.UnitZ;
 
-                            if (GeoUtil.RayIntersectsPlane(start, dir, Vector3.Zero, _worldDragPlaneNormal = unit.Normalized(), out localDragPoint))
+                            if (GeoUtil.Intersect.RayWithPlane(start, dir, Vector3.Zero, _worldDragPlaneNormal = unit.Normalized(), out localDragPoint))
                                 return localDragPoint;
                         }
                         else if (_hiSphere)
@@ -1105,7 +1105,7 @@ namespace XREngine.Scene.Components.Editing
                             Vector3 worldPoint = -_invDragTfm.Translation;
                             float radius = camera.DistanceScaleOrthographic(worldPoint, _orbRadius);
 
-                            if (GeoUtil.RayIntersectsSphere(start, dir, Vector3.Zero, radius * _circOrbScale, out localDragPoint))
+                            if (GeoUtil.Intersect.RayWithSphere(start, dir, Vector3.Zero, radius * _circOrbScale, out localDragPoint))
                             {
                                 _worldDragPlaneNormal = localDragPoint.Normalized();
                                 return localDragPoint;
@@ -1125,11 +1125,11 @@ namespace XREngine.Scene.Components.Editing
             var start = localRay.Start;
             var dir = (localRay.End - localRay.Start).Normalized();
 
-            if (!GeoUtil.RayIntersectsSphere(start, dir, Vector3.Zero, _circOrbScale, out Vector3 point))
+            if (!GeoUtil.Intersect.RayWithSphere(start, dir, Vector3.Zero, _circOrbScale, out Vector3 point))
             {
                 //If no intersect is found, project the ray through the plane perpendicular to the camera.
                 Vector3 localCameraPos = Vector3.Transform((camera.Transform.WorldTranslation), Transform.FirstChild()!.InverseWorldMatrix);
-                if (GeoUtil.RayIntersectsPlane(start, dir, Vector3.Zero, localCameraPos, out point))
+                if (GeoUtil.Intersect.RayWithPlane(start, dir, Vector3.Zero, localCameraPos, out point))
                 {
                     //Clamp the point to edge of the sphere
                     point = Ray.PointAtLineDistance(Vector3.Zero, point, 1.0f);
@@ -1174,7 +1174,7 @@ namespace XREngine.Scene.Components.Editing
                 unit[normalAxis] = start[normalAxis] < 0.0f ? -1.0f : 1.0f;
 
                 //Get plane intersection point for cursor ray and each drag plane
-                if (GeoUtil.RayIntersectsPlane(start, dir, Vector3.Zero, unit, out Vector3 point))
+                if (GeoUtil.Intersect.RayWithPlane(start, dir, Vector3.Zero, unit, out Vector3 point))
                     intersectionPoints[normalAxis] = point;
             }
 
@@ -1232,7 +1232,7 @@ namespace XREngine.Scene.Components.Editing
                 unit[normalAxis] = start[normalAxis] < 0.0f ? -1.0f : 1.0f;
 
                 //Get plane intersection point for cursor ray and each drag plane
-                if (GeoUtil.RayIntersectsPlane(start, dir, Vector3.Zero, unit, out Vector3 point))
+                if (GeoUtil.Intersect.RayWithPlane(start, dir, Vector3.Zero, unit, out Vector3 point))
                     intersectionPoints[normalAxis] = point;
             }
 

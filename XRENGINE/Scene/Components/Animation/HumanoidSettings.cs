@@ -175,5 +175,71 @@ namespace XREngine.Components.Animation
             get => _headNodDownUpDegRange;
             set => SetField(ref _headNodDownUpDegRange, value);
         }
+
+        // Forearm Stretch maps to elbow pitch (flexion/extension).
+        // Unity range [-1, 1] → approximately [full extension, deep flexion].
+        private Vector2 _forearmStretchDegRange = new(-10.0f, 145.0f);
+        public Vector2 ForearmStretchDegRange
+        {
+            get => _forearmStretchDegRange;
+            set => SetField(ref _forearmStretchDegRange, value);
+        }
+
+        // Lower Leg Stretch maps to knee pitch (flexion/extension).
+        // Unity range [-1, 1] → approximately [full extension, deep flexion].
+        private Vector2 _lowerLegStretchDegRange = new(-10.0f, 130.0f);
+        public Vector2 LowerLegStretchDegRange
+        {
+            get => _lowerLegStretchDegRange;
+            set => SetField(ref _lowerLegStretchDegRange, value);
+        }
+
+        // Per-bone axis mapping for non-standard skeletons.
+        // Key: bone name, Values: which local axis maps to twist (yaw), front-back (pitch), left-right (roll).
+        // Default: Y = twist, X = pitch, Z = roll (standard humanoid convention).
+        private Dictionary<string, BoneAxisMapping> _boneAxisMappings = [];
+        /// <summary>
+        /// Optional per-bone axis remapping for models with non-standard local-axis conventions.
+        /// When empty, the default humanoid convention (Y=twist, X=front-back, Z=left-right) is assumed.
+        /// </summary>
+        public Dictionary<string, BoneAxisMapping> BoneAxisMappings
+        {
+            get => _boneAxisMappings;
+            set => SetField(ref _boneAxisMappings, value);
+        }
+
+        public bool TryGetBoneAxisMapping(string boneName, out BoneAxisMapping mapping)
+            => BoneAxisMappings.TryGetValue(boneName, out mapping);
+    }
+
+    /// <summary>
+    /// Defines how a bone's local axes map to humanoid twist/front-back/left-right rotation axes.
+    /// </summary>
+    public struct BoneAxisMapping
+    {
+        /// <summary>
+        /// Which Euler component to use for twist (yaw). 0=X, 1=Y, 2=Z.
+        /// </summary>
+        public int TwistAxis { get; set; }
+
+        /// <summary>
+        /// Which Euler component to use for front-back (pitch). 0=X, 1=Y, 2=Z.
+        /// </summary>
+        public int FrontBackAxis { get; set; }
+
+        /// <summary>
+        /// Which Euler component to use for left-right (roll). 0=X, 1=Y, 2=Z.
+        /// </summary>
+        public int LeftRightAxis { get; set; }
+
+        /// <summary>
+        /// Default mapping: Yaw=Y(1), Pitch=X(0), Roll=Z(2).
+        /// </summary>
+        public static BoneAxisMapping Default => new()
+        {
+            TwistAxis = 1,
+            FrontBackAxis = 0,
+            LeftRightAxis = 2,
+        };
     }
 }

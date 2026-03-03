@@ -1,4 +1,8 @@
-﻿using System.ComponentModel;
+﻿using MemoryPack;
+using System.Collections.Concurrent;
+using System.ComponentModel;
+using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
@@ -20,6 +24,9 @@ namespace XREngine.Data.Core
     [Serializable]
     public abstract class XRBase : IXRNotifyPropertyChanged, IXRNotifyPropertyChanging
     {
+        private static readonly ConcurrentDictionary<Type, PropertyInfo[]> CloneablePropertiesByType = new();
+        private static readonly ConcurrentDictionary<Type, MethodInfo> CloneWithMemoryPackByType = new();
+
         private static readonly AsyncLocal<int> PropertyNotificationSuppressionDepth = new();
 
         public static bool ArePropertyNotificationsSuppressed => PropertyNotificationSuppressionDepth.Value > 0;
@@ -193,6 +200,56 @@ namespace XREngine.Data.Core
             var args = new XRPropertyChangingEventArgs<T>(propName, field, @new);
             pc(this, args);
             return args.AllowChange;
+        }
+
+        protected static void CopyDeclaredCloneableProperties<T>(T source, T target)
+            where T : XRBase
+        {
+            Type type = typeof(T);
+            PropertyInfo[] properties = CloneablePropertiesByType.GetOrAdd(type, static runtimeType =>
+                [.. runtimeType
+                    .GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+                    .Where(x => x.CanRead && x.CanWrite && x.GetIndexParameters().Length == 0)]);
+
+            foreach (PropertyInfo property in properties)
+            {
+                object? value = property.GetValue(source);
+                object? cloneValue = ClonePropertyValue(value, property.PropertyType);
+                property.SetValue(target, cloneValue);
+            }
+        }
+
+        private static object? ClonePropertyValue(object? value, Type declaredType)
+        {
+            if (value is null)
+                return null;
+
+            if (declaredType.IsValueType || declaredType == typeof(string))
+                return value;
+
+            // Prefer ICloneable — avoids MemoryPack round-trip for types that
+            // know how to copy themselves (e.g. OverrideableSetting<T>).
+            if (value is ICloneable cloneable)
+                return cloneable.Clone();
+
+            Type cloneType = declaredType;
+            if (cloneType == typeof(object) || cloneType.IsInterface || cloneType.IsAbstract)
+                cloneType = value.GetType();
+
+            if (cloneType.IsValueType || cloneType == typeof(string) || cloneType.IsInterface || cloneType.IsAbstract)
+                return value;
+
+            MethodInfo cloneMethod = CloneWithMemoryPackByType.GetOrAdd(cloneType, static type =>
+                typeof(XRBase)
+                    .GetMethod(nameof(CloneWithMemoryPack), BindingFlags.NonPublic | BindingFlags.Static)!
+                    .MakeGenericMethod(type));
+            return cloneMethod.Invoke(null, [value]);
+        }
+
+        private static T? CloneWithMemoryPack<T>(T value)
+        {
+            byte[] bytes = MemoryPackSerializer.Serialize(value);
+            return MemoryPackSerializer.Deserialize<T>(bytes);
         }
     }
 }

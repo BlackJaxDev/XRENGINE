@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using System;
 using System.Numerics;
 using XREngine.Data.Core;
@@ -68,7 +68,7 @@ namespace XREngine.Scene.Transforms
                 Vector3 cameraPos, Vector3 cameraUp, Vector3 cameraRight,
                 out Vector3 resultUp, out Vector3 resultForward)
             {
-                Vector3 posOnConstrainLine = GeoUtil.SegmentClosestColinearPointToPoint(transformPos, Target.WorldTranslation, cameraPos);
+                Vector3 posOnConstrainLine = GeoUtil.Nearest.ColinearPointOnSegment(transformPos, Target.WorldTranslation, cameraPos);
                 resultUp = (Target.WorldTranslation - transformPos).Normalized();
                 resultForward = (cameraPos - posOnConstrainLine).Normalized();
             }
@@ -93,7 +93,7 @@ namespace XREngine.Scene.Transforms
                 out Vector3 resultUp, out Vector3 resultForward)
             {
                 Vector3 worldDir = Vector3.TransformNormal(Direction.Normalized(), Transform.ParentWorldMatrix);
-                Vector3 posOnConstrainLine = GeoUtil.RayClosestColinearPointToPoint(transformPos, worldDir, cameraPos);
+                Vector3 posOnConstrainLine = GeoUtil.Nearest.ColinearPointOnRay(transformPos, worldDir, cameraPos);
 
                 resultUp = worldDir.Normalized();
                 resultForward = (cameraPos - posOnConstrainLine).Normalized();
@@ -247,7 +247,7 @@ namespace XREngine.Scene.Transforms
 
             Vector3 cameraPos = Perspective
                 ? camera.Transform.WorldTranslation
-                : GeoUtil.ClosestPointPlanePoint(camera.GetNearPlane(), pos);
+                : GeoUtil.Nearest.PointOnPlane(camera.GetNearPlane(), pos);
 
             Matrix4x4 worldMtx;
 

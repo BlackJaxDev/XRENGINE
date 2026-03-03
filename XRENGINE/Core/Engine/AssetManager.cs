@@ -490,6 +490,10 @@ namespace XREngine
             {
                 XRAsset UpdateIDDict(Guid existingID, XRAsset existingAsset)
                 {
+                    // Same reference re-registered — no-op, skip the warning.
+                    if (ReferenceEquals(existingAsset, asset))
+                        return existingAsset;
+
                     Debug.Out($"An asset with the ID {existingID} already exists in the asset manager. The new asset will be added to the list of assets with the same ID.");
                     return existingAsset;
                 }

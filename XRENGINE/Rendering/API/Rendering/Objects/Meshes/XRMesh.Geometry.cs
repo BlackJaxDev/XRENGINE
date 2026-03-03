@@ -167,7 +167,7 @@ public partial class XRMesh
         triangle = null;
         if (BVHTree is null) return null;
 
-        var matches = BVHTree.Traverse(x => GeoUtil.SegmentIntersectsAABB(localSegment.Start, localSegment.End, x.Min, x.Max, out _, out _));
+        var matches = BVHTree.Traverse(x => GeoUtil.Intersect.SegmentWithAABB(localSegment.Start, localSegment.End, x.Min, x.Max, out _, out _));
         if (matches is null) return null;
 
         float? minDist = null;
@@ -176,7 +176,7 @@ public partial class XRMesh
             if (node.gobjects is null || node.gobjects.Count == 0)
                 continue;
             var tri = node.gobjects[0];
-            GeoUtil.RayIntersectsTriangle(localSegment.Start, localSegment.End, tri.A, tri.B, tri.C, out float dist);
+            GeoUtil.Intersect.RayWithTriangle(localSegment.Start, localSegment.End, tri.A, tri.B, tri.C, out float dist);
             if (minDist is null || dist < minDist)
             {
                 minDist = dist;

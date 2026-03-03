@@ -678,7 +678,7 @@ namespace XREngine.Rendering
         {
             Vector3 forward = GetWorldForward();
             Vector3 nearPoint = Transform.WorldTranslation + forward * Parameters.NearZ;
-            return GeoUtil.DistancePlanePoint(forward, XRMath.GetPlaneDistance(nearPoint, forward), point);
+            return GeoUtil.DistanceFrom.PlaneToPoint(forward, XRMath.GetPlaneDistance(nearPoint, forward), point);
         }
 
         /// <summary>
@@ -690,7 +690,7 @@ namespace XREngine.Rendering
         {
             Vector3 forward = GetWorldForward();
             Vector3 farPoint = Transform.WorldTranslation + forward * Parameters.FarZ;
-            return GeoUtil.DistancePlanePoint(-forward, XRMath.GetPlaneDistance(farPoint, -forward), point);
+            return GeoUtil.DistanceFrom.PlaneToPoint(-forward, XRMath.GetPlaneDistance(farPoint, -forward), point);
         }
 
         /// <summary>
@@ -702,7 +702,7 @@ namespace XREngine.Rendering
         {
             Vector3 forward = GetWorldForward();
             Vector3 nearPoint = Transform.WorldTranslation + forward * Parameters.NearZ;
-            return GeoUtil.ClosestPlanePointToPoint(forward, XRMath.GetPlaneDistance(nearPoint, forward), point);
+            return GeoUtil.Nearest.PointOnPlane(forward, XRMath.GetPlaneDistance(nearPoint, forward), point);
         }
 
         /// <summary>
@@ -714,7 +714,7 @@ namespace XREngine.Rendering
         {
             Vector3 forward = GetWorldForward();
             Vector3 farPoint = Transform.WorldTranslation + forward * Parameters.FarZ;
-            return GeoUtil.ClosestPlanePointToPoint(-forward, XRMath.GetPlaneDistance(farPoint, -forward), point);
+            return GeoUtil.Nearest.PointOnPlane(-forward, XRMath.GetPlaneDistance(farPoint, -forward), point);
         }
 
         /// <summary>

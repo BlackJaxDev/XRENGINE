@@ -157,11 +157,21 @@ namespace XREngine.Components.Animation
             ApplyBindRelativeEulerDegrees(
                 Chest.Node,
                 yawDeg: MapMuscleToDeg(EHumanoidValue.ChestTwistLeftRight, GetMuscleValue(EHumanoidValue.ChestTwistLeftRight), Settings.ChestTwistLeftRightDegRange)
-                    + MapMuscleToDeg(EHumanoidValue.UpperChestTwistLeftRight, GetMuscleValue(EHumanoidValue.UpperChestTwistLeftRight), Settings.UpperChestTwistLeftRightDegRange),
+                    + (UpperChest.Node is null ? MapMuscleToDeg(EHumanoidValue.UpperChestTwistLeftRight, GetMuscleValue(EHumanoidValue.UpperChestTwistLeftRight), Settings.UpperChestTwistLeftRightDegRange) : 0.0f),
                 pitchDeg: MapMuscleToDeg(EHumanoidValue.ChestFrontBack, GetMuscleValue(EHumanoidValue.ChestFrontBack), Settings.ChestFrontBackDegRange)
-                      + MapMuscleToDeg(EHumanoidValue.UpperChestFrontBack, GetMuscleValue(EHumanoidValue.UpperChestFrontBack), Settings.UpperChestFrontBackDegRange),
+                      + (UpperChest.Node is null ? MapMuscleToDeg(EHumanoidValue.UpperChestFrontBack, GetMuscleValue(EHumanoidValue.UpperChestFrontBack), Settings.UpperChestFrontBackDegRange) : 0.0f),
                 rollDeg: MapMuscleToDeg(EHumanoidValue.ChestLeftRight, GetMuscleValue(EHumanoidValue.ChestLeftRight), Settings.ChestLeftRightDegRange)
-                     + MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(EHumanoidValue.UpperChestLeftRight), Settings.UpperChestLeftRightDegRange));
+                     + (UpperChest.Node is null ? MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(EHumanoidValue.UpperChestLeftRight), Settings.UpperChestLeftRightDegRange) : 0.0f));
+
+            // UpperChest — only applied when a separate UpperChest bone exists.
+            if (UpperChest.Node is not null)
+            {
+                ApplyBindRelativeEulerDegrees(
+                    UpperChest.Node,
+                    yawDeg: MapMuscleToDeg(EHumanoidValue.UpperChestTwistLeftRight, GetMuscleValue(EHumanoidValue.UpperChestTwistLeftRight), Settings.UpperChestTwistLeftRightDegRange),
+                    pitchDeg: MapMuscleToDeg(EHumanoidValue.UpperChestFrontBack, GetMuscleValue(EHumanoidValue.UpperChestFrontBack), Settings.UpperChestFrontBackDegRange),
+                    rollDeg: MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(EHumanoidValue.UpperChestLeftRight), Settings.UpperChestLeftRightDegRange));
+            }
 
             // Neck / Head
             ApplyBindRelativeEulerDegrees(
@@ -244,18 +254,12 @@ namespace XREngine.Components.Animation
                 pitchDeg: MapMuscleToDeg(armDownUp, GetMuscleValue(armDownUp), new Vector2(-90.0f, 90.0f)),
                 rollDeg: MapMuscleToDeg(armFrontBack, GetMuscleValue(armFrontBack), new Vector2(-60.0f, 60.0f)));
 
-            // Forearm (elbow)
+            // Forearm (elbow) — Forearm Stretch is elbow flexion (pitch), not a bone scale.
             ApplyBindRelativeEulerDegrees(
                 side.Elbow.Node,
                 yawDeg: MapMuscleToDeg(forearmTwist, GetMuscleValue(forearmTwist), new Vector2(-60.0f, 60.0f)),
-                pitchDeg: 0.0f,
+                pitchDeg: MapMuscleToDeg(forearmStretch, GetMuscleValue(forearmStretch), Settings.ForearmStretchDegRange),
                 rollDeg: 0.0f);
-
-            ApplyBindRelativeStretchScale(
-                side.Elbow.Node,
-                value: forearmStretch,
-                muscle: GetMuscleValue(forearmStretch),
-                defaultScaleRange: new Vector2(0.97f, 1.03f));
 
             // Wrist
             ApplyBindRelativeEulerDegrees(
@@ -271,18 +275,12 @@ namespace XREngine.Components.Animation
                 pitchDeg: MapMuscleToDeg(upperLegFrontBack, GetMuscleValue(upperLegFrontBack), new Vector2(-90.0f, 90.0f)),
                 rollDeg: MapMuscleToDeg(upperLegInOut, GetMuscleValue(upperLegInOut), new Vector2(-35.0f, 35.0f)));
 
-            // Lower leg (knee)
+            // Lower leg (knee) — Lower Leg Stretch is knee flexion (pitch), not a bone scale.
             ApplyBindRelativeEulerDegrees(
                 side.Knee.Node,
                 yawDeg: MapMuscleToDeg(lowerLegTwist, GetMuscleValue(lowerLegTwist), new Vector2(-30.0f, 30.0f)),
-                pitchDeg: 0.0f,
+                pitchDeg: MapMuscleToDeg(lowerLegStretch, GetMuscleValue(lowerLegStretch), Settings.LowerLegStretchDegRange),
                 rollDeg: 0.0f);
-
-            ApplyBindRelativeStretchScale(
-                side.Knee.Node,
-                value: lowerLegStretch,
-                muscle: GetMuscleValue(lowerLegStretch),
-                defaultScaleRange: new Vector2(0.97f, 1.03f));
 
             // Foot / Toes
             ApplyBindRelativeEulerDegrees(
@@ -372,6 +370,7 @@ namespace XREngine.Components.Animation
             return Interp.Lerp(defaultDegreeRange.X, defaultDegreeRange.Y, t);
         }
 
+        [Obsolete("Stretch muscles are now applied as rotation (pitch) on the joint bone. Retained for potential non-humanoid uses.")]
         private void ApplyBindRelativeStretchScale(SceneNode? node, EHumanoidValue value, float muscle, Vector2 defaultScaleRange)
         {
             if (node?.Transform is null)
@@ -398,11 +397,34 @@ namespace XREngine.Components.Animation
 
         private static void ApplyBindRelativeEulerDegrees(SceneNode? node, float yawDeg, float pitchDeg, float rollDeg)
         {
+            ApplyBindRelativeEulerDegrees(node, yawDeg, pitchDeg, rollDeg, null);
+        }
+
+        private static void ApplyBindRelativeEulerDegrees(SceneNode? node, float yawDeg, float pitchDeg, float rollDeg, BoneAxisMapping? axisMapping)
+        {
             if (node?.Transform is null)
                 return;
 
             const float degToRad = MathF.PI / 180.0f;
-            var q = Quaternion.CreateFromYawPitchRoll(yawDeg * degToRad, pitchDeg * degToRad, rollDeg * degToRad);
+
+            Quaternion q;
+            if (axisMapping.HasValue)
+            {
+                var m = axisMapping.Value;
+                // Build rotation with custom axis mapping.
+                // Axes are swapped: the configured axis index tells us which Euler component
+                // receives each degree value.
+                float[] euler = new float[3];
+                euler[m.TwistAxis] = yawDeg * degToRad;
+                euler[m.FrontBackAxis] = pitchDeg * degToRad;
+                euler[m.LeftRightAxis] = rollDeg * degToRad;
+                q = Quaternion.CreateFromYawPitchRoll(euler[1], euler[0], euler[2]);
+            }
+            else
+            {
+                q = Quaternion.CreateFromYawPitchRoll(yawDeg * degToRad, pitchDeg * degToRad, rollDeg * degToRad);
+            }
+
             node.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
         }
 
@@ -581,6 +603,7 @@ namespace XREngine.Components.Animation
         public BoneDef Hips { get; } = new();
         public BoneDef Spine { get; } = new();
         public BoneDef Chest { get; } = new();
+        public BoneDef UpperChest { get; } = new();
         public BoneDef Neck { get; } = new();
         public BoneDef Head { get; } = new();
         public BoneDef Jaw { get; } = new();
@@ -666,6 +689,7 @@ namespace XREngine.Components.Animation
             Hips.ResetPose();
             Spine.ResetPose();
             Chest.ResetPose();
+            UpperChest.ResetPose();
             Neck.ResetPose();
             Head.ResetPose();
             Jaw.ResetPose();
@@ -732,7 +756,9 @@ namespace XREngine.Components.Animation
             if (!_hipToHeadIKEnabled)
                 return null;
 
-            return _hipToHeadChain ??= Link([Hips, Spine, Chest, Neck, Head]);
+            return _hipToHeadChain ??= UpperChest.Node is not null 
+                ? Link([Hips, Spine, Chest, UpperChest, Neck, Head])
+                : Link([Hips, Spine, Chest, Neck, Head]);
         }
 
         public BoneChainItem[]? GetLeftLegToAnkleChain()
@@ -859,6 +885,16 @@ namespace XREngine.Components.Animation
 
             if (Chest.Node is not null)
                 FindChildrenFor(Chest, [
+                    (UpperChest, ByNameContainsAll("UpperChest", "Upper_Chest")),
+                    (Neck, ByName("Neck")),
+                    (Head, ByName("Head")),
+                    (Left.Shoulder, ByPosition("Shoulder", x => x.X > 0.0f)),
+                    (Right.Shoulder, ByPosition("Shoulder", x => x.X < 0.0f)),
+                ]);
+
+            // If UpperChest was found, shoulders/neck/head may be children of UpperChest rather than Chest.
+            if (UpperChest.Node is not null)
+                FindChildrenFor(UpperChest, [
                     (Neck, ByName("Neck")),
                     (Head, ByName("Head")),
                     (Left.Shoulder, ByPosition("Shoulder", x => x.X > 0.0f)),
@@ -1147,6 +1183,13 @@ namespace XREngine.Components.Animation
             else
                 RightHandTarget = (null, Matrix4x4.CreateTranslation(position));
         }
+        public void SetHandRotation(Quaternion rotation, bool leftHand)
+        {
+            if (leftHand)
+                LeftHandTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(LeftHandTarget.offset.Translation));
+            else
+                RightHandTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(RightHandTarget.offset.Translation));
+        }
         public void SetFootPositionAndRotation(Vector3 position, Quaternion rotation, bool leftFoot)
         {
             if (leftFoot)
@@ -1160,6 +1203,38 @@ namespace XREngine.Components.Animation
                 LeftHandTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position));
             else
                 RightHandTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position));
+        }
+
+        /// <summary>
+        /// Applies root motion position as a bind-relative offset on the Hips bone.
+        /// In Unity humanoid clips, RootT represents the body center (hips) position —
+        /// e.g. RootT.y ≈ 1.0 means hip height above ground, not absolute world Y.
+        /// </summary>
+        public void SetRootPosition(Vector3 position)
+        {
+            var hipsNode = Hips.Node;
+            if (hipsNode is null)
+                return;
+
+            var tfm = hipsNode.GetTransformAs<Transform>(true);
+            if (tfm is null)
+                return;
+
+            // Apply as bind-relative translation: the animation position is relative to the bind pose.
+            tfm.Translation = tfm.BindState.Translation + position;
+        }
+
+        /// <summary>
+        /// Applies root motion rotation as a bind-relative rotation on the Hips bone.
+        /// In Unity humanoid clips, RootQ represents the body center (hips) orientation.
+        /// </summary>
+        public void SetRootRotation(Quaternion rotation)
+        {
+            var hipsNode = Hips.Node;
+            if (hipsNode is null)
+                return;
+
+            hipsNode.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(rotation);
         }
 
         private static Func<SceneNode, bool> ByNameContainsAny(params string[] names)
@@ -1230,6 +1305,7 @@ namespace XREngine.Components.Animation
             Head.ResetPose();
             Jaw.ResetPose();
             Neck.ResetPose();
+            UpperChest.ResetPose();
             Chest.ResetPose();
             Spine.ResetPose();
             Hips.ResetPose();

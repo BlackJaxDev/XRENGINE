@@ -30,13 +30,13 @@ namespace XREngine.Audio
         /// Preferred audio transport backend. Takes effect on the next listener creation
         /// or when <see cref="ApplyTo"/> is called.
         /// </summary>
-        public static AudioTransportType DefaultTransport { get; set; } = AudioTransportType.OpenAL;
+        public static EAudioTransport DefaultTransport { get; set; } = EAudioTransport.OpenAL;
 
         /// <summary>
         /// Preferred audio effects processor. Takes effect on the next listener creation
         /// or when <see cref="ApplyTo"/> is called.
         /// </summary>
-        public static AudioEffectsType DefaultEffects { get; set; } = AudioEffectsType.OpenAL_EFX;
+        public static EAudioEffects DefaultEffects { get; set; } = EAudioEffects.OpenAL_EFX;
 
         /// <summary>
         /// Output sample rate in Hz. Takes effect on the next listener creation.

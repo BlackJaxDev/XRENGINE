@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using MemoryPack;
 using NUnit.Framework;
@@ -35,22 +36,18 @@ namespace XREngine.UnitTests.Core
         [TestCaseSource(nameof(MemoryPackableAssets))]
         public void MemoryPackFormatter_RoundTrips_DefaultInstance(Type assetType)
         {
+            // Ensure the type's static constructor has run so MemoryPack formatter registration occurs.
+            RuntimeHelpers.RunClassConstructor(assetType.TypeHandle);
+
             // Use an uninitialized instance to avoid constructor side effects/cycles.
             var instance = (XRAsset)FormatterServices.GetUninitializedObject(assetType);
 
-            try
-            {
-                byte[] bytes = MemoryPackSerializer.Serialize(assetType, instance)!;
-                bytes.Length.ShouldBeGreaterThan(0);
+            byte[] bytes = MemoryPackSerializer.Serialize(assetType, instance)!;
+            bytes.Length.ShouldBeGreaterThan(0);
 
-                var clone = MemoryPackSerializer.Deserialize(assetType, bytes) as XRAsset;
-                clone.ShouldNotBeNull();
-                clone.ShouldBeOfType(assetType);
-            }
-            catch (MemoryPackSerializationException ex)
-            {
-                Assert.Inconclusive($"MemoryPack formatter unavailable for {assetType.FullName}: {ex.Message}");
-            }
+            var clone = MemoryPackSerializer.Deserialize(assetType, bytes) as XRAsset;
+            clone.ShouldNotBeNull();
+            clone.ShouldBeOfType(assetType);
         }
 
         private static IEnumerable<Assembly> GatherEngineAssemblies()
@@ -95,6 +92,10 @@ namespace XREngine.UnitTests.Core
                && !type.IsGenericTypeDefinition;
 
         private static bool HasMemoryPackableAttribute(Type type)
-            => type.GetCustomAttribute<MemoryPackableAttribute>() is not null;
+        {
+            var attr = type.GetCustomAttribute<MemoryPackableAttribute>();
+            // NoGenerate means the formatter must be supplied manually — no source-generated formatter exists.
+            return attr is not null && attr.GenerateType != GenerateType.NoGenerate;
+        }
     }
 }

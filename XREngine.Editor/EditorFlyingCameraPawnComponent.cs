@@ -9,6 +9,7 @@ using XREngine.Components.Scene.Transforms;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Core;
 using XREngine.Data.Colors;
+using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -1654,28 +1655,38 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     public void TakeScreenshot() => _wantsScreenshot = true;
 
     public void FocusOnNode(SceneNode node, float durationSeconds = DefaultFocusDurationSeconds)
+        => FocusOnNodes([node], durationSeconds);
+
+    public void FocusOnNodes(IEnumerable<SceneNode> nodes, float durationSeconds = DefaultFocusDurationSeconds)
     {
-        if (node?.Transform is null)
+        if (nodes is null)
             return;
-        
-        var tfm = TransformAs<Transform>(); 
+
+        var tfm = TransformAs<Transform>();
         if (tfm is null)
             return;
-        
+
         CancelCameraFocusLerp();
 
-        Vector3 focusPoint = node.Transform.WorldTranslation;
+        if (!TryBuildFocusContext(nodes, out Vector3 focusPoint, out AABB focusBounds, out bool hasBounds, out float fallbackRadius))
+            return;
+
         Vector3 cameraPosition = tfm.WorldTranslation;
         Vector3 direction = focusPoint - cameraPosition;
         if (direction.LengthSquared() < XRMath.Epsilon)
             direction = tfm.WorldForward;
         else
             direction = Vector3.Normalize(direction);
-        float focusDistance = ComputeFocusDistance(node.Transform);
+
+        direction = ConstrainFocusPitch(direction, tfm.WorldForward, ResolveFocusPitchPreferences());
+
+        BuildViewBasis(direction, Globals.Up, out Vector3 right, out Vector3 up);
+
+        float focusDistance = hasBounds
+            ? ComputeFocusDistance(focusBounds, direction, right, up)
+            : ComputeFocusDistance(fallbackRadius);
+
         Vector3 targetPosition = focusPoint - direction * focusDistance;
-        Vector3 up = Globals.Up;
-        if (MathF.Abs(Vector3.Dot(direction, up)) >0.999f)
-            up = Globals.Right;
         Quaternion targetRotation = Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateWorld(targetPosition, direction, up));
 
         BeginCameraFocusLerp(targetPosition, targetRotation, durationSeconds);
@@ -1749,11 +1760,213 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             SyncYawPitchWithRotation(tfm.WorldRotation);
     }
 
-    private float ComputeFocusDistance(TransformBase focusTransform)
+    private bool TryBuildFocusContext(
+        IEnumerable<SceneNode> nodes,
+        out Vector3 focusPoint,
+        out AABB focusBounds,
+        out bool hasBounds,
+        out float fallbackRadius)
     {
-        float radius = EstimateHierarchyRadius(focusTransform);
+        focusPoint = Vector3.Zero;
+        focusBounds = default;
+        fallbackRadius = DefaultFocusRadius;
+        hasBounds = false;
+
+        List<SceneNode> validNodes = [];
+        HashSet<SceneNode> uniqueNodes = [];
+
+        foreach (var node in nodes)
+        {
+            if (node?.Transform is null || !uniqueNodes.Add(node))
+                continue;
+
+            validNodes.Add(node);
+            focusPoint += node.Transform.WorldTranslation;
+        }
+
+        if (validNodes.Count == 0)
+            return false;
+
+        focusPoint /= validNodes.Count;
+
+        hasBounds = TryCollectRenderableBounds(validNodes, out focusBounds);
+        if (hasBounds)
+        {
+            focusPoint = focusBounds.Center;
+            fallbackRadius = focusBounds.HalfExtents.Length();
+            return true;
+        }
+
+        fallbackRadius = EstimateHierarchyRadius(validNodes, focusPoint);
+        return true;
+    }
+
+    private static bool TryCollectRenderableBounds(IReadOnlyList<SceneNode> nodes, out AABB bounds)
+    {
+        bool hasBounds = false;
+        AABB combinedBounds = default;
+
+        foreach (var node in nodes)
+        {
+            node.IterateComponents(component =>
+            {
+                if (component is not IRenderable renderable || renderable.RenderedObjects is null)
+                    return;
+
+                foreach (var renderedObject in renderable.RenderedObjects)
+                {
+                    if (renderedObject is not RenderInfo3D renderInfo3D || renderInfo3D is not IOctreeItem octreeItem)
+                        continue;
+
+                    if (!TryGetWorldBounds(octreeItem, out AABB worldBounds))
+                        continue;
+
+                    combinedBounds = hasBounds ? combinedBounds.ExpandedToInclude(worldBounds) : worldBounds;
+                    hasBounds = true;
+                }
+            }, iterateChildHierarchy: true);
+        }
+
+        bounds = combinedBounds;
+        return hasBounds;
+    }
+
+    private static bool TryGetWorldBounds(IOctreeItem octreeItem, out AABB worldBounds)
+    {
+        worldBounds = default;
+
+        if (octreeItem.WorldCullingVolume is not Box worldBox)
+            return false;
+
+        bool hasCorner = false;
+        Vector3 min = default;
+        Vector3 max = default;
+
+        foreach (var corner in worldBox.WorldCorners)
+        {
+            if (!hasCorner)
+            {
+                min = corner;
+                max = corner;
+                hasCorner = true;
+                continue;
+            }
+
+            min = Vector3.Min(min, corner);
+            max = Vector3.Max(max, corner);
+        }
+
+        if (!hasCorner)
+            return false;
+
+        worldBounds = new AABB(min, max);
+        return true;
+    }
+
+    private static float EstimateHierarchyRadius(IReadOnlyList<SceneNode> nodes, Vector3 center)
+    {
+        float radius = 0.0f;
+        Stack<TransformBase> stack = new();
+
+        foreach (var node in nodes)
+            if (node.Transform is not null)
+                stack.Push(node.Transform);
+
+        while (stack.Count > 0)
+        {
+            var current = stack.Pop();
+            if (current is null)
+                continue;
+
+            float distance = Vector3.Distance(center, current.WorldTranslation);
+            if (distance > radius)
+                radius = distance;
+
+            foreach (var child in current.Children)
+                if (child is not null)
+                    stack.Push(child);
+        }
+
+        return radius;
+    }
+
+    private static void BuildViewBasis(Vector3 forward, Vector3 preferredUp, out Vector3 right, out Vector3 up)
+    {
+        up = preferredUp;
+        if (MathF.Abs(Vector3.Dot(forward, up)) > 0.999f)
+            up = Globals.Right;
+
+        right = Vector3.Cross(up, forward);
+        if (right.LengthSquared() < XRMath.Epsilon)
+            right = Vector3.Cross(Globals.Forward, forward);
+
+        if (right.LengthSquared() < XRMath.Epsilon)
+            right = Globals.Right;
+        else
+            right = Vector3.Normalize(right);
+
+        up = Vector3.Cross(forward, right);
+        if (up.LengthSquared() < XRMath.Epsilon)
+            up = preferredUp;
+        else
+            up = Vector3.Normalize(up);
+    }
+
+    private readonly record struct FocusPitchPreferences(float PreferredDownPitchDegrees, float MaxDownPitchDegrees);
+
+    private static FocusPitchPreferences ResolveFocusPitchPreferences()
+    {
+        const float defaultPreferred = 20.0f;
+        const float defaultMax = 45.0f;
+
+        var prefs = Engine.EditorPreferences;
+        if (prefs is null)
+            return new FocusPitchPreferences(defaultPreferred, defaultMax);
+
+        float maxDownPitch = float.Clamp(prefs.FocusMaximumDownPitchDegrees, 1.0f, 89.0f);
+        float preferredDownPitch = float.Clamp(prefs.FocusPreferredDownPitchDegrees, 0.0f, maxDownPitch);
+        return new FocusPitchPreferences(preferredDownPitch, maxDownPitch);
+    }
+
+    private static Vector3 ConstrainFocusPitch(Vector3 forward, Vector3 fallbackForward, FocusPitchPreferences prefs)
+    {
+        Vector3 up = Globals.Up;
+
+        if (forward.LengthSquared() < XRMath.Epsilon)
+            forward = fallbackForward;
+
+        if (forward.LengthSquared() < XRMath.Epsilon)
+            forward = Globals.Forward;
+
+        forward = Vector3.Normalize(forward);
+
+        Vector3 horizontal = forward - up * Vector3.Dot(forward, up);
+        if (horizontal.LengthSquared() < XRMath.Epsilon)
+            horizontal = fallbackForward - up * Vector3.Dot(fallbackForward, up);
+        if (horizontal.LengthSquared() < XRMath.Epsilon)
+            horizontal = Globals.Forward - up * Vector3.Dot(Globals.Forward, up);
+        if (horizontal.LengthSquared() < XRMath.Epsilon)
+            horizontal = Globals.Right;
+
+        horizontal = Vector3.Normalize(horizontal);
+
+        float vertical = Vector3.Dot(forward, up);
+        float minVertical = -MathF.Sin(XRMath.DegToRad(prefs.MaxDownPitchDegrees));
+
+        if (vertical > 0.0f)
+            vertical = -MathF.Sin(XRMath.DegToRad(prefs.PreferredDownPitchDegrees));
+        else
+            vertical = MathF.Max(vertical, minVertical);
+
+        float horizontalScale = MathF.Sqrt(MathF.Max(0.0f, 1.0f - (vertical * vertical)));
+        return Vector3.Normalize(horizontal * horizontalScale + up * vertical);
+    }
+
+    private float ComputeFocusDistance(float radius)
+    {
         if (!float.IsFinite(radius) || radius < XRMath.Epsilon)
             radius = DefaultFocusRadius;
+
         float distance = radius + FocusRadiusPadding;
         var cameraComponent = GetCamera();
         if (cameraComponent?.Camera.Parameters is XRPerspectiveCameraParameters perspective)
@@ -1763,29 +1976,42 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             float perspectiveDistance = (radius + FocusRadiusPadding) / MathF.Tan(halfFov);
             distance = Math.Max(distance, perspectiveDistance);
         }
+
         return Math.Max(distance, MinimumFocusDistance);
     }
 
-    private static float EstimateHierarchyRadius(TransformBase focusTransform)
+    private float ComputeFocusDistance(AABB focusBounds, Vector3 forward, Vector3 right, Vector3 up)
     {
-        Vector3 center = focusTransform.WorldTranslation;
-        float radius =0.0f;
-        Stack<TransformBase> stack = new(); stack.Push(focusTransform);
-        while (stack.Count >0)
-        {
-            var current = stack.Pop();
-            if (current is null)
-                continue;
-            
-            float distance = Vector3.Distance(center, current.WorldTranslation);
-            if (distance > radius)
-                radius = distance;
+        float distance = ComputeFocusDistance(focusBounds.HalfExtents.Length());
 
-            foreach (var child in current.Children)
-                if (child is not null)
-                    stack.Push(child);
+        var cameraComponent = GetCamera();
+        if (cameraComponent?.Camera.Parameters is not XRPerspectiveCameraParameters perspective)
+            return distance;
+
+        float fovRadians = XRMath.DegToRad(perspective.VerticalFieldOfView);
+        float halfFovY = float.Clamp(fovRadians * 0.5f, 0.1f, XRMath.PIf * 0.45f);
+        float tanHalfFovY = MathF.Tan(halfFovY);
+        if (tanHalfFovY <= XRMath.Epsilon)
+            return distance;
+
+        float aspectRatio = perspective.AspectRatio;
+        if (!float.IsFinite(aspectRatio) || aspectRatio <= XRMath.Epsilon)
+            aspectRatio = 1.0f;
+
+        float tanHalfFovX = MathF.Max(tanHalfFovY * aspectRatio, 0.01f);
+        Vector3 center = focusBounds.Center;
+        foreach (Vector3 corner in focusBounds.GetCorners())
+        {
+            Vector3 offset = corner - center;
+            float depth = Vector3.Dot(offset, forward);
+            float extentX = MathF.Abs(Vector3.Dot(offset, right));
+            float extentY = MathF.Abs(Vector3.Dot(offset, up));
+
+            float requiredDistance = depth + MathF.Max(extentX / tanHalfFovX, extentY / tanHalfFovY) + FocusRadiusPadding;
+            distance = Math.Max(distance, requiredDistance);
         }
-        return radius;
+
+        return Math.Max(distance, MinimumFocusDistance);
     }
 
     private static float EaseInOut(float t)

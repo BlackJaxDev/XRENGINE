@@ -19,7 +19,20 @@ namespace XREngine.Audio
         private string? _deviceName = deviceName;
 
         public ListenerContext Listener { get; private set; } = listener;
-        public AudioCapture<BufferFormat> AudioCapture { get; private set; } = new AudioCapture<BufferFormat>(listener.Capture, deviceName, freq, format, bufferSize);
+
+        /// <summary>
+        /// OpenAL capture wrapper. Null when the listener has no capture context
+        /// (V2 non-OpenAL transports set <see cref="ListenerContext.Capture"/> to null).
+        /// </summary>
+        public AudioCapture<BufferFormat>? AudioCapture { get; private set; }
+            = listener.Capture is not null
+                ? new AudioCapture<BufferFormat>(listener.Capture, deviceName, freq, format, bufferSize)
+                : null;
+
+        // Pre-allocated capture buffers — DataSource.FromArray copies into native memory,
+        // so reusing these across calls is safe and avoids per-capture heap allocations.
+        private byte[]? _byteBuffer;
+        private short[]? _shortBuffer;
 
         public uint SampleRate
         {
@@ -34,7 +47,15 @@ namespace XREngine.Audio
         public int BufferSize
         {
             get => _bufferSize;
-            set => SetField(ref _bufferSize, value);
+            set
+            {
+                if (SetField(ref _bufferSize, value))
+                {
+                    // Invalidate pre-allocated buffers so they resize on next capture.
+                    _byteBuffer = null;
+                    _shortBuffer = null;
+                }
+            }
         }
         public string? DeviceName
         {
@@ -43,14 +64,17 @@ namespace XREngine.Audio
         }
 
         public void StartCapture()
-            => AudioCapture.Start();
+            => AudioCapture?.Start();
 
         public void StopCapture()
-            => AudioCapture.Stop();
+            => AudioCapture?.Stop();
 
         public unsafe bool Capture(ResourcePool<AudioData> dataPool, Queue<AudioData> buffers)
         {
-            int samples = Listener.Capture?.GetAvailableSamples(Listener.DeviceHandle) ?? 0;
+            if (AudioCapture is null || Listener.Capture is null)
+                return false;
+
+            int samples = Listener.Capture.GetAvailableSamples(Listener.DeviceHandle);
             if (samples < BufferSize)
                 return false;
 
@@ -62,13 +86,13 @@ namespace XREngine.Audio
                 case BufferFormat.Stereo8:
                     {
                         bool stereo = Format == BufferFormat.Stereo8;
-                        byte[] data = new byte[BufferSize];
-                        fixed (byte* ptr = data)
+                        _byteBuffer ??= new byte[BufferSize];
+                        fixed (byte* ptr = _byteBuffer)
                         {
-                            Listener.Capture?.CaptureSamples(Listener.DeviceHandle, ptr, samples);
+                            Listener.Capture.CaptureSamples(Listener.DeviceHandle, ptr, BufferSize);
                         }
                         buffer.ChannelCount = stereo ? 2 : 1;
-                        buffer.Data = DataSource.FromArray(data);
+                        buffer.Data = DataSource.FromArray(_byteBuffer);
                         buffer.Frequency = (int)SampleRate;
                         buffer.Type = AudioData.EPCMType.Byte;
                     }
@@ -77,13 +101,13 @@ namespace XREngine.Audio
                 case BufferFormat.Stereo16:
                     {
                         bool stereo = Format == BufferFormat.Stereo16;
-                        short[] data = new short[BufferSize];
-                        fixed (short* ptr = data)
+                        _shortBuffer ??= new short[BufferSize];
+                        fixed (short* ptr = _shortBuffer)
                         {
-                            Listener.Capture?.CaptureSamples(Listener.DeviceHandle, ptr, samples);
+                            Listener.Capture.CaptureSamples(Listener.DeviceHandle, ptr, BufferSize);
                         }
                         buffer.ChannelCount = stereo ? 2 : 1;
-                        buffer.Data = DataSource.FromArray(data);
+                        buffer.Data = DataSource.FromArray(_shortBuffer);
                         buffer.Frequency = (int)SampleRate;
                         buffer.Type = AudioData.EPCMType.Short;
                     }

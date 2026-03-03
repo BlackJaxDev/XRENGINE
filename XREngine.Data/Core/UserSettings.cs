@@ -20,6 +20,18 @@ namespace XREngine
             // Note: base class OverrideableSettingsAssetBase already calls TrackOverrideableSettings()
         }
 
+        public UserSettings DeepClone()
+        {
+            var clone = new UserSettings();
+            clone.UntrackOverrideableSettings();
+            CopyDeclaredCloneableProperties(this, clone);
+            clone.SourceAsset = clone;
+            clone.FilePath = null;
+            clone.TrackOverrideableSettings();
+            clone.ClearDirty();
+            return clone;
+        }
+
         protected override void OnOverrideableSettingChanged(string propertyName, IOverrideableSetting setting, IXRPropertyChangedEventArgs e)
         {
             base.OnOverrideableSettingChanged(propertyName, setting, e);

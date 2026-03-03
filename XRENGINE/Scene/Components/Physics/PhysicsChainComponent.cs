@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using JoltPhysicsSharp;
 using System;
 using System.Numerics;
@@ -769,7 +769,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
             {
                 Vector4 planeNormal = parentPtcl.TransformLocalToWorldMatrix.GetColumn((int)FreezeAxis - 1).Normalized();
                 Plane movePlane = XRMath.CreatePlaneFromPointAndNormal(parentPtcl.Position, planeNormal.XYZ());
-                childPtcl.Position -= movePlane.Normal * GeoUtil.DistancePlanePoint(movePlane, childPtcl.Position);
+                childPtcl.Position -= movePlane.Normal * GeoUtil.DistanceFrom.PlaneToPoint(movePlane, childPtcl.Position);
             }
 
             // keep length

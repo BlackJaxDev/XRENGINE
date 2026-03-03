@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Core;
 
 namespace XREngine.Data.Geometry
@@ -71,6 +72,162 @@ namespace XREngine.Data.Geometry
         public readonly Vector3 GetBottomCenterPoint()
             => Center - UpAxis * HalfHeight;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static Vector3 ClosestPointOnSegment(Vector3 start, Vector3 end, Vector3 point)
+        {
+            Vector3 segment = end - start;
+            float lengthSquared = Vector3.Dot(segment, segment);
+            if (lengthSquared <= 1e-12f)
+                return start;
+
+            float t = Math.Clamp(Vector3.Dot(point - start, segment) / lengthSquared, 0.0f, 1.0f);
+            return start + segment * t;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float SegmentDistanceSquaredToPoint(Vector3 start, Vector3 end, Vector3 point)
+        {
+            Vector3 closest = ClosestPointOnSegment(start, end, point);
+            Vector3 delta = point - closest;
+            return Vector3.Dot(delta, delta);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static ESegmentPart GetSegmentPart(Vector3 start, Vector3 end, Vector3 point)
+        {
+            Vector3 segment = end - start;
+            float projection = Vector3.Dot(point - start, segment);
+            if (projection <= 0.0f)
+                return ESegmentPart.Start;
+
+            float lengthSquared = Vector3.Dot(segment, segment);
+            if (projection >= lengthSquared)
+                return ESegmentPart.End;
+
+            return ESegmentPart.Middle;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float DistanceSquaredToAabb(Vector3 point, Vector3 min, Vector3 max)
+        {
+            Vector3 clamped = Vector3.Clamp(point, min, max);
+            Vector3 delta = point - clamped;
+            return Vector3.Dot(delta, delta);
+        }
+
+        private static bool SegmentIntersectsAabb(Vector3 segmentStart, Vector3 segmentEnd, Vector3 boxMin, Vector3 boxMax)
+        {
+            Vector3 direction = segmentEnd - segmentStart;
+            float tMin = 0.0f;
+            float tMax = 1.0f;
+
+            for (int axis = 0; axis < 3; axis++)
+            {
+                float start = segmentStart[axis];
+                float delta = direction[axis];
+                float min = boxMin[axis];
+                float max = boxMax[axis];
+
+                if (MathF.Abs(delta) <= 1e-12f)
+                {
+                    if (start < min || start > max)
+                        return false;
+                    continue;
+                }
+
+                float invDelta = 1.0f / delta;
+                float t1 = (min - start) * invDelta;
+                float t2 = (max - start) * invDelta;
+                if (t1 > t2)
+                    (t1, t2) = (t2, t1);
+
+                tMin = MathF.Max(tMin, t1);
+                tMax = MathF.Min(tMax, t2);
+                if (tMin > tMax)
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static float SegmentDistanceSquared(Vector3 s1Start, Vector3 s1End, Vector3 s2Start, Vector3 s2End)
+        {
+            const float epsilon = 1e-8f;
+            Vector3 u = s1End - s1Start;
+            Vector3 v = s2End - s2Start;
+            Vector3 w = s1Start - s2Start;
+
+            float a = Vector3.Dot(u, u);
+            float b = Vector3.Dot(u, v);
+            float c = Vector3.Dot(v, v);
+            float d = Vector3.Dot(u, w);
+            float e = Vector3.Dot(v, w);
+            float denominator = a * c - b * b;
+
+            float sN;
+            float sD = denominator;
+            float tN;
+            float tD = denominator;
+
+            if (denominator < epsilon)
+            {
+                sN = 0.0f;
+                sD = 1.0f;
+                tN = e;
+                tD = c;
+            }
+            else
+            {
+                sN = b * e - c * d;
+                tN = a * e - b * d;
+
+                if (sN < 0.0f)
+                {
+                    sN = 0.0f;
+                    tN = e;
+                    tD = c;
+                }
+                else if (sN > sD)
+                {
+                    sN = sD;
+                    tN = e + b;
+                    tD = c;
+                }
+            }
+
+            if (tN < 0.0f)
+            {
+                tN = 0.0f;
+                if (-d < 0.0f)
+                    sN = 0.0f;
+                else if (-d > a)
+                    sN = sD;
+                else
+                {
+                    sN = -d;
+                    sD = a;
+                }
+            }
+            else if (tN > tD)
+            {
+                tN = tD;
+                if (-d + b < 0.0f)
+                    sN = 0.0f;
+                else if (-d + b > a)
+                    sN = sD;
+                else
+                {
+                    sN = -d + b;
+                    sD = a;
+                }
+            }
+
+            float sc = MathF.Abs(sN) < epsilon ? 0.0f : sN / sD;
+            float tc = MathF.Abs(tN) < epsilon ? 0.0f : tN / tD;
+            Vector3 dP = w + sc * u - tc * v;
+            return Vector3.Dot(dP, dP);
+        }
+
         /// <summary>
         /// Returns the closest point on this shape to the given point.
         /// </summary>
@@ -85,8 +242,11 @@ namespace XREngine.Data.Geometry
         /// <param name="clampIfInside">If true, finds closest edge point even if the given point is inside the capsule. Otherwise, just returns the given point if it is inside.</param>
         public readonly Vector3 ClosestPoint(Vector3 point, bool clampIfInside)
         {
-            Vector3 colinearPoint = GeoUtil.SegmentClosestColinearPointToPoint(GetBottomCenterPoint(), GetTopCenterPoint(), point);
-            if (!clampIfInside && Vector3.Distance(colinearPoint, point) < _radius)
+            Vector3 bottom = GetBottomCenterPoint();
+            Vector3 top = GetTopCenterPoint();
+            Vector3 colinearPoint = ClosestPointOnSegment(bottom, top, point);
+            float radiusSquared = _radius * _radius;
+            if (!clampIfInside && Vector3.DistanceSquared(colinearPoint, point) < radiusSquared)
                 return point;
             return Ray.PointAtLineDistance(colinearPoint, point, _radius);
         }
@@ -120,7 +280,13 @@ namespace XREngine.Data.Geometry
         #region Containment
 
         public readonly bool ContainsPoint(Vector3 point, float tolerance = float.Epsilon)
-            => GeoUtil.SegmentShortestDistanceToPoint(GetBottomCenterPoint(), GetTopCenterPoint(), point) <= _radius;
+        {
+            Vector3 bottom = GetBottomCenterPoint();
+            Vector3 top = GetTopCenterPoint();
+            float distanceSquared = SegmentDistanceSquaredToPoint(bottom, top, point);
+            float radius = MathF.Max(0.0f, _radius) + MathF.Max(0.0f, tolerance);
+            return distanceSquared <= radius * radius;
+        }
 
         public enum ESegmentPart
         {
@@ -133,7 +299,7 @@ namespace XREngine.Data.Geometry
         {
             Vector3 startPoint = GetBottomCenterPoint();
             Vector3 endPoint = GetTopCenterPoint();
-            ESegmentPart part = GeoUtil.GetDistancePointToSegmentPart(startPoint, endPoint, point, out _);
+            ESegmentPart part = GetSegmentPart(startPoint, endPoint, point);
             return part switch
             {
                 ESegmentPart.Start => Ray.PointAtLineDistance(startPoint, point, _radius),
@@ -150,43 +316,219 @@ namespace XREngine.Data.Geometry
         {
             Vector3 startPoint = GetBottomCenterPoint();
             Vector3 endPoint = GetTopCenterPoint();
-            float pointToSegment = GeoUtil.SegmentShortestDistanceToPoint(startPoint, endPoint, sphere.Center);
+            float pointToSegmentSquared = SegmentDistanceSquaredToPoint(startPoint, endPoint, sphere.Center);
             float maxDist = sphere.Radius + Radius;
-            if (pointToSegment > maxDist)
+            if (pointToSegmentSquared > maxDist * maxDist)
                 return EContainment.Disjoint;
-            else if (pointToSegment + sphere.Radius < Radius)
+
+            float allowance = Radius - sphere.Radius;
+            if (allowance > 0.0f && pointToSegmentSquared < allowance * allowance)
                 return EContainment.Contains;
-            else
-                return EContainment.Intersects;
+
+            return EContainment.Intersects;
         }
 
         public readonly EContainment ContainsCapsule(Capsule capsule)
         {
-            //TODO
-            return EContainment.Contains;
+            Vector3 thisStart = GetBottomCenterPoint();
+            Vector3 thisEnd = GetTopCenterPoint();
+            Vector3 otherStart = capsule.GetBottomCenterPoint();
+            Vector3 otherEnd = capsule.GetTopCenterPoint();
+
+            float thisRadius = MathF.Max(0.0f, Radius);
+            float otherRadius = MathF.Max(0.0f, capsule.Radius);
+
+            float sumRadii = thisRadius + otherRadius;
+            float segmentDistanceSquared = SegmentDistanceSquared(thisStart, thisEnd, otherStart, otherEnd);
+            if (segmentDistanceSquared > sumRadii * sumRadii)
+                return EContainment.Disjoint;
+
+            if (thisRadius >= otherRadius)
+            {
+                float allowance = thisRadius - otherRadius;
+                float allowanceSquared = allowance * allowance;
+                float startDistSquared = SegmentDistanceSquaredToPoint(thisStart, thisEnd, otherStart);
+                float endDistSquared = SegmentDistanceSquaredToPoint(thisStart, thisEnd, otherEnd);
+                if (startDistSquared <= allowanceSquared && endDistSquared <= allowanceSquared)
+                    return EContainment.Contains;
+            }
+
+            return EContainment.Intersects;
         }
 
         public readonly EContainment ContainsCone(Cone cone)
         {
-            //TODO
-            return EContainment.Contains;
+            Vector3 capStart = GetBottomCenterPoint();
+            Vector3 capEnd = GetTopCenterPoint();
+            float capRadius = MathF.Max(0.0f, Radius);
+
+            Vector3 coneBase = cone.Center;
+            Vector3 coneUp = cone.Up;
+            float coneHeight = MathF.Max(0.0f, cone.Height);
+            float coneRadius = MathF.Max(0.0f, cone.Radius);
+
+            float upLengthSquared = coneUp.LengthSquared();
+            Vector3 coneAxis = upLengthSquared > 1e-12f
+                ? coneUp / MathF.Sqrt(upLengthSquared)
+                : Vector3.UnitY;
+            Vector3 coneTip = coneBase + coneAxis * coneHeight;
+
+            AABB capsuleAabb = GetAABB(true);
+            if (!capsuleAabb.Intersects(cone.GetAABB(true)))
+                return EContainment.Disjoint;
+
+            static Vector3 AnyPerpendicular(Vector3 axis)
+            {
+                Vector3 basis = MathF.Abs(axis.Y) < 0.99f ? Vector3.UnitY : Vector3.UnitX;
+                return Vector3.Normalize(Vector3.Cross(axis, basis));
+            }
+
+            Vector3 tangentA = AnyPerpendicular(coneAxis);
+            Vector3 tangentB = Vector3.Normalize(Vector3.Cross(coneAxis, tangentA));
+
+            Vector3[] coneContainmentSamples =
+            [
+                coneTip,
+                coneBase,
+                coneBase + tangentA * coneRadius,
+                coneBase - tangentA * coneRadius,
+                coneBase + tangentB * coneRadius,
+                coneBase - tangentB * coneRadius,
+            ];
+
+            bool allInside = true;
+            bool anyInside = false;
+            for (int i = 0; i < coneContainmentSamples.Length; i++)
+            {
+                bool inside = ContainsPoint(coneContainmentSamples[i]);
+                allInside &= inside;
+                anyInside |= inside;
+            }
+
+            if (allInside)
+                return EContainment.Contains;
+
+            if (anyInside)
+                return EContainment.Intersects;
+
+            if (cone.ContainsPoint(capStart) || cone.ContainsPoint(capEnd))
+                return EContainment.Intersects;
+
+            const int axisSamples = 24;
+            for (int i = 0; i <= axisSamples; i++)
+            {
+                float t = i / (float)axisSamples;
+                Vector3 axisPoint = coneBase + (coneTip - coneBase) * t;
+                float coneRadiusAtPoint = coneRadius * (1.0f - t);
+                float distanceSquaredToCapsuleAxis = SegmentDistanceSquaredToPoint(capStart, capEnd, axisPoint);
+                float maxDistance = capRadius + coneRadiusAtPoint;
+                if (distanceSquaredToCapsuleAxis <= maxDistance * maxDistance)
+                    return EContainment.Intersects;
+            }
+
+            return EContainment.Disjoint;
         }
 
         public readonly EContainment Contains(Box box)
         {
-            //TODO
-            return EContainment.Contains;
+            Vector3[] corners = box.WorldCorners.ToArray();
+            bool allInside = true;
+            bool anyInside = false;
+            for (int i = 0; i < corners.Length; i++)
+            {
+                bool inside = ContainsPoint(corners[i]);
+                allInside &= inside;
+                anyInside |= inside;
+            }
+
+            if (allInside)
+                return EContainment.Contains;
+            if (anyInside)
+                return EContainment.Intersects;
+
+            AABB capsuleAabb = GetAABB(true);
+            AABB boxAabb = box.GetAABB(true);
+            if (!capsuleAabb.Intersects(boxAabb))
+                return EContainment.Disjoint;
+
+            Vector3 axisStart = GetBottomCenterPoint();
+            Vector3 axisEnd = GetTopCenterPoint();
+            if (box.ContainsPoint(axisStart) || box.ContainsPoint(axisEnd) || box.Intersects(new Segment(axisStart, axisEnd)))
+                return EContainment.Intersects;
+
+            float radius = MathF.Max(0.0f, Radius);
+            const int samples = 24;
+            for (int i = 0; i <= samples; i++)
+            {
+                float t = i / (float)samples;
+                Vector3 axisPoint = axisStart + (axisEnd - axisStart) * t;
+                if (DistanceSquaredToAabb(axisPoint, boxAabb.Min, boxAabb.Max) <= radius * radius)
+                    return EContainment.Intersects;
+            }
+
+            return EContainment.Disjoint;
         }
 
         public readonly EContainment ContainsAABB(AABB box, float tolerance = float.Epsilon)
         {
-            //TODO
-            return EContainment.Contains;
+            Vector3[] corners = box.GetCorners();
+            bool allInside = true;
+            bool anyInside = false;
+            for (int i = 0; i < corners.Length; i++)
+            {
+                bool inside = ContainsPoint(corners[i], tolerance);
+                allInside &= inside;
+                anyInside |= inside;
+            }
+
+            if (allInside)
+                return EContainment.Contains;
+            if (anyInside)
+                return EContainment.Intersects;
+
+            AABB capsuleAabb = GetAABB(true);
+            if (!capsuleAabb.Intersects(box))
+                return EContainment.Disjoint;
+
+            Vector3 axisStart = GetBottomCenterPoint();
+            Vector3 axisEnd = GetTopCenterPoint();
+            if (box.ContainsPoint(axisStart, tolerance) || box.ContainsPoint(axisEnd, tolerance) ||
+                SegmentIntersectsAabb(axisStart, axisEnd, box.Min, box.Max))
+                return EContainment.Intersects;
+
+            float radius = MathF.Max(0.0f, Radius);
+            float maxDistance = radius + tolerance;
+            float maxDistanceSquared = maxDistance * maxDistance;
+            const int samples = 24;
+            for (int i = 0; i <= samples; i++)
+            {
+                float t = i / (float)samples;
+                Vector3 axisPoint = axisStart + (axisEnd - axisStart) * t;
+                if (DistanceSquaredToAabb(axisPoint, box.Min, box.Max) <= maxDistanceSquared)
+                    return EContainment.Intersects;
+            }
+
+            return EContainment.Disjoint;
         }
 
         public bool ContainedWithin(AABB boundingBox)
         {
-            throw new NotImplementedException();
+            float radius = MathF.Max(0.0f, Radius);
+            Vector3 shrunkMin = boundingBox.Min + new Vector3(radius);
+            Vector3 shrunkMax = boundingBox.Max - new Vector3(radius);
+
+            if (shrunkMin.X > shrunkMax.X || shrunkMin.Y > shrunkMax.Y || shrunkMin.Z > shrunkMax.Z)
+                return false;
+
+            Vector3 top = GetTopCenterPoint();
+            Vector3 bottom = GetBottomCenterPoint();
+
+            static bool Inside(Vector3 point, Vector3 min, Vector3 max)
+                => point.X >= min.X && point.X <= max.X &&
+                   point.Y >= min.Y && point.Y <= max.Y &&
+                   point.Z >= min.Z && point.Z <= max.Z;
+
+            return Inside(top, shrunkMin, shrunkMax) && Inside(bottom, shrunkMin, shrunkMax);
         }
 
         public readonly bool IntersectsSegment(Segment segment, out Vector3[] intersectingPoints)
@@ -208,9 +550,10 @@ namespace XREngine.Data.Geometry
             }
 
             // Calculate the minimum distance between the segment and the capsule's axis
-            float distance = GeoUtil.SegmentDistanceToSegment(bot, top, segment.Start, segment.End);
+            float distanceSquared = SegmentDistanceSquared(bot, top, segment.Start, segment.End);
+            float radiusSquared = _radius * _radius;
 
-            if (distance > _radius)
+            if (distanceSquared > radiusSquared)
             {
                 // No intersection if the closest distance exceeds the radius
                 intersectingPoints = [];
@@ -341,15 +684,51 @@ namespace XREngine.Data.Geometry
             Vector3 bot = GetBottomCenterPoint();
 
             // Find minimum distance between capsule axis segment and query segment
-            float distance = GeoUtil.SegmentDistanceToSegment(bot, top, segment.Start, segment.End);
+            float distanceSquared = SegmentDistanceSquared(bot, top, segment.Start, segment.End);
+            float radiusSquared = _radius * _radius;
 
             // If the minimum distance is less than or equal to the radius, they intersect
-            return distance <= _radius;
+            return distanceSquared <= radiusSquared;
         }
 
         public EContainment ContainsBox(Box box)
         {
-            throw new NotImplementedException();
+            Vector3[] corners = box.WorldCorners.ToArray();
+            bool allInside = true;
+            bool anyInside = false;
+            for (int i = 0; i < corners.Length; i++)
+            {
+                bool inside = ContainsPoint(corners[i]);
+                allInside &= inside;
+                anyInside |= inside;
+            }
+
+            if (allInside)
+                return EContainment.Contains;
+            if (anyInside)
+                return EContainment.Intersects;
+
+            AABB capsuleAabb = GetAABB(true);
+            AABB boxAabb = box.GetAABB(true);
+            if (!capsuleAabb.Intersects(boxAabb))
+                return EContainment.Disjoint;
+
+            Vector3 axisStart = GetBottomCenterPoint();
+            Vector3 axisEnd = GetTopCenterPoint();
+            if (box.ContainsPoint(axisStart) || box.ContainsPoint(axisEnd) || box.Intersects(new Segment(axisStart, axisEnd)))
+                return EContainment.Intersects;
+
+            float radius = MathF.Max(0.0f, Radius);
+            const int samples = 24;
+            for (int i = 0; i <= samples; i++)
+            {
+                float t = i / (float)samples;
+                Vector3 axisPoint = axisStart + (axisEnd - axisStart) * t;
+                if (DistanceSquaredToAabb(axisPoint, boxAabb.Min, boxAabb.Max) <= radius * radius)
+                    return EContainment.Intersects;
+            }
+
+            return EContainment.Disjoint;
         }
         #endregion
     }

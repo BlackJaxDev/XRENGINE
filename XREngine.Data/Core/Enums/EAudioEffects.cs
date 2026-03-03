@@ -1,8 +1,7 @@
 namespace XREngine
 {
     /// <summary>
-    /// Audio effects processor selection for the cascading settings system.
-    /// Maps to <c>AudioEffectsType</c> in the audio runtime layer.
+    /// Audio effects processor selection for the cascading settings system and runtime audio layer.
     /// </summary>
     public enum EAudioEffects
     {

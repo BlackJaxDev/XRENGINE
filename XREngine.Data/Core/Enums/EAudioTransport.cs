@@ -1,8 +1,7 @@
 namespace XREngine
 {
     /// <summary>
-    /// Audio transport backend selection for the cascading settings system.
-    /// Maps to <c>AudioTransportType</c> in the audio runtime layer.
+    /// Audio transport backend selection for the cascading settings system and runtime audio layer.
     /// </summary>
     public enum EAudioTransport
     {
