@@ -47,6 +47,14 @@ namespace XREngine.Components.Scene.Mesh
         private Matrix4x4 _skinnedRootRenderMatrix = Matrix4x4.Identity;
         private Matrix4x4 _skinnedRootRenderMatrixInverse = Matrix4x4.Identity;
 
+        /// <summary>
+        /// Minimum interval (in seconds) between expensive skinned bounds recomputations.
+        /// The root bone matrix is updated every frame regardless, so culling remains correct;
+        /// only the local AABB shape is recalculated at this cadence.
+        /// </summary>
+        private const float SkinnedBoundsRefreshInterval = 5.0f;
+        private float _lastSkinnedBoundsRefreshTime = float.NegativeInfinity;
+
         public Matrix4x4 SkinnedBvhLocalToWorldMatrix => _skinnedRootRenderMatrix;
         public Matrix4x4 SkinnedBvhWorldToLocalMatrix => _skinnedRootRenderMatrixInverse;
 
@@ -411,13 +419,56 @@ namespace XREngine.Components.Scene.Mesh
                 if (!_skinnedBoundsDirty && _hasSkinnedBounds)
                     return true;
 
-                bool useGpu = Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
+                // Once initialized, reuse cached skinned local bounds shape and only
+                // update root-bone basis. This avoids repeated expensive recompute
+                // stalls in the animation hot path.
+                if (_hasSkinnedBounds)
+                {
+                    Matrix4x4 basis = RootBone?.RenderMatrix ?? Component.Transform.RenderMatrix;
+                    SetSkinnedRootRenderMatrix(basis);
+                    if (RenderInfo is not null)
+                    {
+                        RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
+                        RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
+                    }
+                    _skinnedBoundsDirty = false;
+                    return true;
+                }
+
+                // If we already have valid bounds from a previous computation, reuse them
+                // with the updated root-bone matrix instead of recomputing every frame.
+                // Full recomputation is throttled to SkinnedBoundsRefreshInterval seconds.
+                if (_hasSkinnedBounds || _skinnedLocalBounds.Max != Vector3.Zero || _skinnedLocalBounds.Min != Vector3.Zero)
+                {
+                    float now = (float)Engine.ElapsedTime;
+                    if (now - _lastSkinnedBoundsRefreshTime < SkinnedBoundsRefreshInterval)
+                    {
+                        // Reuse existing local bounds shape but update the offset matrix
+                        // so culling stays correct as the root bone moves.
+                        Matrix4x4 basis = RootBone?.RenderMatrix ?? Component.Transform.RenderMatrix;
+                        SetSkinnedRootRenderMatrix(basis);
+                        if (RenderInfo is not null)
+                        {
+                            RenderInfo.LocalCullingVolume = _skinnedLocalBounds;
+                            RenderInfo.CullingOffsetMatrix = _skinnedRootRenderMatrix;
+                        }
+                        _skinnedBoundsDirty = false;
+                        _hasSkinnedBounds = true;
+                        return true;
+                    }
+                }
+
+                bool useGpu = Engine.IsRenderThread && Engine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
 
                 // Try GPU path first if enabled
                 if (useGpu && TryComputeSkinnedBoundsOnGpu(out SkinnedMeshBoundsCalculator.Result gpuResult))
+                {
+                    _lastSkinnedBoundsRefreshTime = (float)Engine.ElapsedTime;
                     return ApplySkinnedBoundsResult(gpuResult, markBvhDirty: true);
+                }
 
                 // Fall back to CPU path for debugging or when GPU fails
+                _lastSkinnedBoundsRefreshTime = (float)Engine.ElapsedTime;
                 return TryComputeSkinnedBoundsOnCpuLocked();
             }
         }

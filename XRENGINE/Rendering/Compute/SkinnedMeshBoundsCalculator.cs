@@ -35,34 +35,10 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         if (Engine.IsRenderThread)
             return TryComputeOnRenderThread(mesh, out result);
 
-        using ManualResetEventSlim waitHandle = new(false);
-        bool success = false;
-        Result localResult = default;
-        Exception? captured = null;
-
-        Engine.EnqueueMainThreadTask(() =>
-        {
-            try
-            {
-                success = TryComputeOnRenderThread(mesh, out localResult);
-            }
-            catch (Exception ex)
-            {
-                captured = ex;
-            }
-            finally
-            {
-                waitHandle.Set();
-            }
-        });
-
-        waitHandle.Wait();
-
-        if (captured is not null)
-            throw captured;
-
-        result = localResult;
-        return success;
+        // Never block worker/update threads waiting for render-thread execution.
+        // Callers can fall back to CPU bounds or keep cached bounds for this frame.
+        result = default;
+        return false;
     }
 
     private bool TryComputeOnRenderThread(RenderableMesh mesh, out Result result)

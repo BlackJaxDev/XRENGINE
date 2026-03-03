@@ -96,6 +96,16 @@ namespace XREngine.Components.Animation
             if (maxIterations < 1)
                 maxIterations = 1;
 
+            // Early-out: skip solving when none of the primary targets are assigned.
+            // Solving toward Identity (world origin) produces a broken pose.
+            if (HeadTarget.tfm is null &&
+                HipsTarget.tfm is null &&
+                LeftHandTarget.tfm is null &&
+                RightHandTarget.tfm is null &&
+                LeftFootTarget.tfm is null &&
+                RightFootTarget.tfm is null)
+                return;
+
             //TODO: if a target is missing, use a default transform relative to another instead of using identity
 
             //Transforms we're solving for, offset included (ex; tracker transform to actual hip transform set during calibration)

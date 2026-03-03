@@ -282,7 +282,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 foreach (var rm in _cachedHierarchyList)
                 {
                     if (rm.DisplayRootNodeCount > 0)
-                        DrawAggregatedRootMethodHierarchy(rm);
+                        DrawAggregatedRootMethodHierarchy(rm, nowUtc);
                 }
                 ImGui.EndTable();
             }
@@ -1029,6 +1029,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         foreach (var entry in _rootMethodCache.Values)
         {
             entry.AccumulatedMaxTotalTimeMs = Math.Max(entry.AccumulatedMaxTotalTimeMs, entry.TotalTimeMs);
+            entry.AccumulatedMaxThreadCount = Math.Max(entry.AccumulatedMaxThreadCount, entry.ThreadIds.Count);
+            entry.AccumulatedMaxRootNodeCount = Math.Max(entry.AccumulatedMaxRootNodeCount, entry.RootNodes.Count);
             UpdateAggregatedChildrenMaxRecursive(entry.Children);
         }
 
@@ -1084,10 +1086,14 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         foreach (var entry in _rootMethodCache.Values)
         {
             if (entry.SeenThisUpdate)
+            {
                 entry.DisplayTotalTimeMs = ApplyDisplaySmoothing(entry.DisplayTotalTimeMs, entry.AccumulatedMaxTotalTimeMs);
-            entry.DisplayThreadCount = entry.ThreadIds.Count;
-            entry.DisplayRootNodeCount = entry.RootNodes.Count;
+                entry.DisplayThreadCount = entry.AccumulatedMaxThreadCount;
+                entry.DisplayRootNodeCount = entry.AccumulatedMaxRootNodeCount;
+            }
             entry.AccumulatedMaxTotalTimeMs = 0;
+            entry.AccumulatedMaxThreadCount = 0;
+            entry.AccumulatedMaxRootNodeCount = 0;
             entry.SeenThisUpdate = false;
             UpdateAggregatedChildrenDisplayRecursive(entry.Children);
             UpdateGraphSeries(entry);
@@ -1420,11 +1426,12 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     //  Hierarchy drawing helpers
     // ═══════════════════════════════════════════════════════════════
 
-    private void DrawAggregatedRootMethodHierarchy(ProfilerRootMethodAggregate rm)
+    private void DrawAggregatedRootMethodHierarchy(ProfilerRootMethodAggregate rm, DateTime nowUtc)
     {
         var children = rm.CachedSortedChildren;
         float untracked = rm.CachedUntrackedTime;
         int allCount = rm.Children.Count;
+        bool isStale = !_paused && nowUtc - rm.LastSeen > TimeSpan.FromSeconds(_updateIntervalSeconds);
 
         ImGui.TableNextRow();
         ImGui.TableSetColumnIndex(0);
@@ -1437,17 +1444,22 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (_nodeOpenCache.TryGetValue(key, out bool wasOpen) && wasOpen)
             flags |= ImGuiTreeNodeFlags.DefaultOpen;
 
-        bool nodeOpen = ImGui.TreeNodeEx($"{rm.Name} (aggregated)##{key}", flags);
+        if (isStale) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.65f, 0.65f, 0.70f, 1.0f));
+        string label = isStale ? $"{rm.Name} (aggregated) (inactive)##{key}" : $"{rm.Name} (aggregated)##{key}";
+        bool nodeOpen = ImGui.TreeNodeEx(label, flags);
+        if (isStale) ImGui.PopStyleColor();
         if (ImGui.IsItemToggledOpen())
             _nodeOpenCache[key] = nodeOpen;
 
+        if (isStale) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.65f, 0.65f, 0.70f, 1.0f));
         ImGui.TableSetColumnIndex(1); ImGui.Text($"{rm.DisplayTotalTimeMs:F3}");
         ImGui.TableSetColumnIndex(2); ImGui.Text($"{rm.DisplayRootNodeCount}");
+        if (isStale) ImGui.PopStyleColor();
 
         if (nodeOpen)
         {
             for (int i = 0; i < children.Length; i++)
-                DrawAggregatedChildNode(children[i], key);
+                DrawAggregatedChildNode(children[i], key, nowUtc);
 
             if (untracked >= 0.1f && allCount > 0)
             {
@@ -1462,11 +1474,12 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         }
     }
 
-    private void DrawAggregatedChildNode(AggregatedChildNode node, string idSuffix)
+    private void DrawAggregatedChildNode(AggregatedChildNode node, string idSuffix, DateTime nowUtc)
     {
         var children = node.CachedSortedChildren;
         float untracked = node.CachedUntrackedTime;
         int allCount = node.Children.Count;
+        bool isStale = !_paused && nowUtc - node.LastSeen > TimeSpan.FromSeconds(_updateIntervalSeconds);
 
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.OpenOnDoubleClick | ImGuiTreeNodeFlags.SpanFullWidth;
         if (children.Length == 0 && (untracked < 0.1f || allCount == 0))
@@ -1478,17 +1491,22 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 
         ImGui.TableNextRow();
         ImGui.TableSetColumnIndex(0);
-        bool nodeOpen = ImGui.TreeNodeEx($"{node.Name}##{key}", flags);
+        if (isStale) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.65f, 0.65f, 0.70f, 1.0f));
+        string label = isStale ? $"{node.Name} (inactive)##{key}" : $"{node.Name}##{key}";
+        bool nodeOpen = ImGui.TreeNodeEx(label, flags);
+        if (isStale) ImGui.PopStyleColor();
         if (ImGui.IsItemToggledOpen())
             _nodeOpenCache[key] = nodeOpen;
 
+        if (isStale) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.65f, 0.65f, 0.70f, 1.0f));
         ImGui.TableSetColumnIndex(1); ImGui.Text($"{node.DisplayTotalElapsedMs:F3}");
         ImGui.TableSetColumnIndex(2); ImGui.Text($"{node.DisplayCallCount}");
+        if (isStale) ImGui.PopStyleColor();
 
         if (nodeOpen)
         {
             for (int i = 0; i < children.Length; i++)
-                DrawAggregatedChildNode(children[i], key);
+                DrawAggregatedChildNode(children[i], key, nowUtc);
 
             if (untracked >= 0.1f && allCount > 0)
             {
@@ -1725,6 +1743,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         public float TotalTimeMs { get; set; }
         public bool SeenThisUpdate { get; set; }
         public float AccumulatedMaxTotalTimeMs { get; set; }
+        public int AccumulatedMaxThreadCount { get; set; }
+        public int AccumulatedMaxRootNodeCount { get; set; }
         public float DisplayTotalTimeMs { get; set; }
         public int DisplayThreadCount { get; set; }
         public int DisplayRootNodeCount { get; set; }
