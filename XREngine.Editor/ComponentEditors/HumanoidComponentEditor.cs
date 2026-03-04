@@ -71,12 +71,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
     private static void DrawGeneralSection(HumanoidComponent humanoid)
     {
-        bool solveIk = humanoid.SolveIK;
-        if (ImGui.Checkbox("Solve IK", ref solveIk))
-        {
-            using var _ = Undo.TrackChange("Toggle Solve IK", humanoid);
-            humanoid.SolveIK = solveIk;
-        }
+        ImGui.TextDisabled("Humanoid IK playback now runs through HumanoidIKSolverComponent.");
 
         bool debugVisibility = humanoid.RenderInfo.IsVisible;
         if (ImGui.Checkbox("Show Debug Skeleton", ref debugVisibility))

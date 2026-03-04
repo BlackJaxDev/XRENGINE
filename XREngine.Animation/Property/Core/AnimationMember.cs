@@ -400,8 +400,10 @@ namespace XREngine.Animation
             DefaultValue = AnimatedMethodArgumentIndex >= 0 && AnimatedMethodArgumentIndex < MethodArguments.Length
                 ? MethodArguments[AnimatedMethodArgumentIndex]
                 : null;
-            
-            object? result = Cache(_methodCache?.Invoke(parentObj, MethodArguments));
+
+            object? result = null;
+            if (CacheReturnValue)
+                result = Cache(_methodCache?.Invoke(parentObj, MethodArguments));
             
             // Log if a lookup method (like GetComponent) returns null - this breaks the animation chain
             if (CacheReturnValue && result is null && !MemberNotFound)

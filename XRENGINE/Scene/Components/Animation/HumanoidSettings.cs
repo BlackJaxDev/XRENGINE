@@ -183,8 +183,9 @@ namespace XREngine.Components.Animation
 
         // ── Stretch channels ────────────────────────────────────────────
         // Forearm Stretch maps to elbow pitch (flexion/extension).
-        // Unity default: −80°..80°.
-        private Vector2 _forearmStretchDegRange = new(-80.0f, 80.0f);
+        // Use an asymmetric hinge range so slightly negative values don't over-extend the elbow
+        // while positive values still allow a relaxed bend during walk cycles.
+        private Vector2 _forearmStretchDegRange = new(-10.0f, 70.0f);
         public Vector2 ForearmStretchDegRange
         {
             get => _forearmStretchDegRange;
@@ -192,8 +193,9 @@ namespace XREngine.Components.Animation
         }
 
         // Lower Leg Stretch maps to knee pitch (flexion/extension).
-        // Unity default: −80°..80°.
-        private Vector2 _lowerLegStretchDegRange = new(-80.0f, 80.0f);
+        // Use an asymmetric hinge range so stance legs stay nearly straight while lifted legs
+        // can still bend deeply.
+        private Vector2 _lowerLegStretchDegRange = new(-10.0f, 100.0f);
         public Vector2 LowerLegStretchDegRange
         {
             get => _lowerLegStretchDegRange;

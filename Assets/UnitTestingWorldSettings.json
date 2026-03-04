@@ -67,7 +67,7 @@
     {
       "Enabled": true,
       "Kind": "Animated",
-      "Path": "misc\\jax2026.fbx",
+      "Path": "misc\\Mitsuki.fbx",
       "ImportFlags": "Triangulate, FlipUVs",
       "Scale": 1.0,
       "ZUp": false,
