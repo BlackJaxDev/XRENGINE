@@ -242,7 +242,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
     {
         var s = humanoid.Settings;
 
-        // Global scale
+        // ── Global controls ─────────────────────────────────────────
         float scale = s.MuscleInputScale;
         ImGui.SetNextItemWidth(120f);
         if (ImGui.DragFloat("Muscle Input Scale", ref scale, 0.01f, 0.01f, 5.0f, "%.2f"))
@@ -250,33 +250,53 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
             using var _ = Undo.TrackChange("Muscle Input Scale", s);
             s.MuscleInputScale = scale;
         }
-        ImGui.Spacing();
 
-        // Profile info (read-only)
+        ImGui.SameLine();
+        if (ImGui.Button("Negate All Ranges"))
+        {
+            using var _ = Undo.TrackChange("Negate All Ranges", s);
+            s.NegateAllRanges();
+        }
+
         ImGui.TextDisabled($"Profile: {s.ProfileSource ?? "none"}  Confidence: {s.ProfileConfidence:P0}");
         ImGui.Spacing();
 
+        // ── Body (Spine / Chest / Upper Chest) ──────────────────────
         if (ImGui.TreeNodeEx("Body", ImGuiTreeNodeFlags.DefaultOpen))
         {
             DrawMuscleRange("Spine Front-Back", s, () => s.SpineFrontBackDegRange, v => s.SpineFrontBackDegRange = v);
             DrawMuscleRange("Spine Left-Right", s, () => s.SpineLeftRightDegRange, v => s.SpineLeftRightDegRange = v);
-            DrawMuscleRange("Spine Twist Left-Right", s, () => s.SpineTwistLeftRightDegRange, v => s.SpineTwistLeftRightDegRange = v);
+            DrawMuscleRange("Spine Twist L-R", s, () => s.SpineTwistLeftRightDegRange, v => s.SpineTwistLeftRightDegRange = v);
             DrawMuscleRange("Chest Front-Back", s, () => s.ChestFrontBackDegRange, v => s.ChestFrontBackDegRange = v);
             DrawMuscleRange("Chest Left-Right", s, () => s.ChestLeftRightDegRange, v => s.ChestLeftRightDegRange = v);
-            DrawMuscleRange("Chest Twist Left-Right", s, () => s.ChestTwistLeftRightDegRange, v => s.ChestTwistLeftRightDegRange = v);
-            DrawMuscleRange("Upper Chest Front-Back", s, () => s.UpperChestFrontBackDegRange, v => s.UpperChestFrontBackDegRange = v);
-            DrawMuscleRange("Upper Chest Left-Right", s, () => s.UpperChestLeftRightDegRange, v => s.UpperChestLeftRightDegRange = v);
-            DrawMuscleRange("Upper Chest Twist Left-Right", s, () => s.UpperChestTwistLeftRightDegRange, v => s.UpperChestTwistLeftRightDegRange = v);
+            DrawMuscleRange("Chest Twist L-R", s, () => s.ChestTwistLeftRightDegRange, v => s.ChestTwistLeftRightDegRange = v);
+            DrawMuscleRange("UpperChest Front-Back", s, () => s.UpperChestFrontBackDegRange, v => s.UpperChestFrontBackDegRange = v);
+            DrawMuscleRange("UpperChest Left-Right", s, () => s.UpperChestLeftRightDegRange, v => s.UpperChestLeftRightDegRange = v);
+            DrawMuscleRange("UpperChest Twist L-R", s, () => s.UpperChestTwistLeftRightDegRange, v => s.UpperChestTwistLeftRightDegRange = v);
             ImGui.TreePop();
         }
 
-        if (ImGui.TreeNodeEx("Head", ImGuiTreeNodeFlags.DefaultOpen))
+        // ── Head / Neck ─────────────────────────────────────────────
+        if (ImGui.TreeNodeEx("Head & Neck", ImGuiTreeNodeFlags.DefaultOpen))
         {
             DrawMuscleRange("Neck Nod Down-Up", s, () => s.NeckNodDownUpDegRange, v => s.NeckNodDownUpDegRange = v);
+            DrawMuscleRange("Neck Turn L-R", s, () => s.NeckTurnLeftRightDegRange, v => s.NeckTurnLeftRightDegRange = v);
+            DrawMuscleRange("Neck Tilt L-R", s, () => s.NeckTiltLeftRightDegRange, v => s.NeckTiltLeftRightDegRange = v);
             DrawMuscleRange("Head Nod Down-Up", s, () => s.HeadNodDownUpDegRange, v => s.HeadNodDownUpDegRange = v);
+            DrawMuscleRange("Head Turn L-R", s, () => s.HeadTurnLeftRightDegRange, v => s.HeadTurnLeftRightDegRange = v);
+            DrawMuscleRange("Head Tilt L-R", s, () => s.HeadTiltLeftRightDegRange, v => s.HeadTiltLeftRightDegRange = v);
             ImGui.TreePop();
         }
 
+        // ── Jaw ─────────────────────────────────────────────────────
+        if (ImGui.TreeNode("Jaw"))
+        {
+            DrawMuscleRange("Jaw Left-Right", s, () => s.JawLeftRightDegRange, v => s.JawLeftRightDegRange = v);
+            DrawMuscleRange("Jaw Close", s, () => s.JawCloseDegRange, v => s.JawCloseDegRange = v);
+            ImGui.TreePop();
+        }
+
+        // ── Eyes ────────────────────────────────────────────────────
         if (ImGui.TreeNode("Eyes"))
         {
             DrawMuscleRange("Left Eye Down-Up", s, () => s.LeftEyeDownUpRange, v => s.LeftEyeDownUpRange = v, -10f, 10f);
@@ -286,19 +306,82 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
             ImGui.TreePop();
         }
 
+        // ── Shoulder ────────────────────────────────────────────────
+        if (ImGui.TreeNode("Shoulder"))
+        {
+            DrawMuscleRange("Shoulder Down-Up", s, () => s.ShoulderDownUpDegRange, v => s.ShoulderDownUpDegRange = v);
+            DrawMuscleRange("Shoulder Front-Back", s, () => s.ShoulderFrontBackDegRange, v => s.ShoulderFrontBackDegRange = v);
+            ImGui.TreePop();
+        }
+
+        // ── Arm (Upper Arm + Forearm + Hand) ────────────────────────
         if (ImGui.TreeNode("Arm"))
         {
+            DrawMuscleRange("Arm Twist", s, () => s.ArmTwistDegRange, v => s.ArmTwistDegRange = v);
+            DrawMuscleRange("Arm Down-Up", s, () => s.ArmDownUpDegRange, v => s.ArmDownUpDegRange = v);
+            DrawMuscleRange("Arm Front-Back", s, () => s.ArmFrontBackDegRange, v => s.ArmFrontBackDegRange = v);
+            ImGui.Spacing();
+            DrawMuscleRange("Forearm Twist", s, () => s.ForearmTwistDegRange, v => s.ForearmTwistDegRange = v);
             DrawMuscleRange("Forearm Stretch", s, () => s.ForearmStretchDegRange, v => s.ForearmStretchDegRange = v);
+            ImGui.Spacing();
+            DrawMuscleRange("Hand Down-Up", s, () => s.HandDownUpDegRange, v => s.HandDownUpDegRange = v);
+            DrawMuscleRange("Hand In-Out", s, () => s.HandInOutDegRange, v => s.HandInOutDegRange = v);
             ImGui.TreePop();
         }
 
+        // ── Leg (Upper Leg + Lower Leg + Foot + Toes) ───────────────
         if (ImGui.TreeNode("Leg"))
         {
+            DrawMuscleRange("Upper Leg Twist", s, () => s.UpperLegTwistDegRange, v => s.UpperLegTwistDegRange = v);
+            DrawMuscleRange("Upper Leg Front-Back", s, () => s.UpperLegFrontBackDegRange, v => s.UpperLegFrontBackDegRange = v);
+            DrawMuscleRange("Upper Leg In-Out", s, () => s.UpperLegInOutDegRange, v => s.UpperLegInOutDegRange = v);
+            ImGui.Spacing();
+            DrawMuscleRange("Lower Leg Twist", s, () => s.LowerLegTwistDegRange, v => s.LowerLegTwistDegRange = v);
             DrawMuscleRange("Lower Leg Stretch", s, () => s.LowerLegStretchDegRange, v => s.LowerLegStretchDegRange = v);
+            ImGui.Spacing();
+            DrawMuscleRange("Foot Twist", s, () => s.FootTwistDegRange, v => s.FootTwistDegRange = v);
+            DrawMuscleRange("Foot Up-Down", s, () => s.FootUpDownDegRange, v => s.FootUpDownDegRange = v);
+            DrawMuscleRange("Toes Up-Down", s, () => s.ToesUpDownDegRange, v => s.ToesUpDownDegRange = v);
             ImGui.TreePop();
         }
 
-        // IK Goal Policy
+        // ── Fingers ─────────────────────────────────────────────────
+        if (ImGui.TreeNode("Fingers"))
+        {
+            DrawFingerRanges("Thumb", s,
+                () => s.ThumbSpreadDegRange, v => s.ThumbSpreadDegRange = v,
+                () => s.Thumb1StretchedDegRange, v => s.Thumb1StretchedDegRange = v,
+                () => s.Thumb2StretchedDegRange, v => s.Thumb2StretchedDegRange = v,
+                () => s.Thumb3StretchedDegRange, v => s.Thumb3StretchedDegRange = v);
+
+            DrawFingerRanges("Index", s,
+                () => s.IndexSpreadDegRange, v => s.IndexSpreadDegRange = v,
+                () => s.Index1StretchedDegRange, v => s.Index1StretchedDegRange = v,
+                () => s.Index2StretchedDegRange, v => s.Index2StretchedDegRange = v,
+                () => s.Index3StretchedDegRange, v => s.Index3StretchedDegRange = v);
+
+            DrawFingerRanges("Middle", s,
+                () => s.MiddleSpreadDegRange, v => s.MiddleSpreadDegRange = v,
+                () => s.Middle1StretchedDegRange, v => s.Middle1StretchedDegRange = v,
+                () => s.Middle2StretchedDegRange, v => s.Middle2StretchedDegRange = v,
+                () => s.Middle3StretchedDegRange, v => s.Middle3StretchedDegRange = v);
+
+            DrawFingerRanges("Ring", s,
+                () => s.RingSpreadDegRange, v => s.RingSpreadDegRange = v,
+                () => s.Ring1StretchedDegRange, v => s.Ring1StretchedDegRange = v,
+                () => s.Ring2StretchedDegRange, v => s.Ring2StretchedDegRange = v,
+                () => s.Ring3StretchedDegRange, v => s.Ring3StretchedDegRange = v);
+
+            DrawFingerRanges("Little", s,
+                () => s.LittleSpreadDegRange, v => s.LittleSpreadDegRange = v,
+                () => s.Little1StretchedDegRange, v => s.Little1StretchedDegRange = v,
+                () => s.Little2StretchedDegRange, v => s.Little2StretchedDegRange = v,
+                () => s.Little3StretchedDegRange, v => s.Little3StretchedDegRange = v);
+
+            ImGui.TreePop();
+        }
+
+        // ── IK Goal Policy ──────────────────────────────────────────
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
@@ -319,7 +402,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
             s.IsIKCalibrated = isIKCalibrated;
         }
 
-        // Per-channel overrides
+        // ── Per-Channel Overrides ───────────────────────────────────
         ImGui.Spacing();
         if (ImGui.TreeNode("Per-Channel Overrides"))
         {
@@ -377,6 +460,24 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
             ImGui.TreePop();
         }
+    }
+
+    private static void DrawFingerRanges(
+        string fingerName,
+        HumanoidSettings s,
+        Func<Vector2> getSpread, Action<Vector2> setSpread,
+        Func<Vector2> get1, Action<Vector2> set1,
+        Func<Vector2> get2, Action<Vector2> set2,
+        Func<Vector2> get3, Action<Vector2> set3)
+    {
+        if (!ImGui.TreeNode(fingerName))
+            return;
+
+        DrawMuscleRange($"{fingerName} Spread", s, getSpread, setSpread);
+        DrawMuscleRange($"{fingerName} 1 Stretched", s, get1, set1);
+        DrawMuscleRange($"{fingerName} 2 Stretched", s, get2, set2);
+        DrawMuscleRange($"{fingerName} 3 Stretched", s, get3, set3);
+        ImGui.TreePop();
     }
 
     /// <summary>

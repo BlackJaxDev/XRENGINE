@@ -8,10 +8,16 @@ using Transform = XREngine.Scene.Transforms.Transform;
 namespace XREngine.Components.Animation
 {
     [RequireComponents(typeof(HumanoidComponent))]
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.HumanoidIKSolverComponentEditor")]
     public class HumanoidIKSolverComponent : BaseIKSolverComponent
     {
         private const float FullGoalWeight = 1.0f;
         public HumanoidComponent Humanoid => GetSiblingComponent<HumanoidComponent>(true)!;
+
+        public HumanoidIKSolverComponent()
+        {
+            _spine.IKPositionWeight = 0.0f;
+        }
 
         public IKSolverLimb _leftFoot = new(ELimbEndEffector.LeftFoot) { _bendModifier = ELimbBendModifier.Target };
         public IKSolverLimb _rightFoot = new(ELimbEndEffector.RightFoot) { _bendModifier = ELimbBendModifier.Target };
