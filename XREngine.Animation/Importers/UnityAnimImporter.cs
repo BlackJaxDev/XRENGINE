@@ -11,24 +11,35 @@ namespace XREngine.Animation.Importers
     public static class AnimYamlImporter
     {
         // ── Unity LH → Engine RH coordinate conversion ──────────────────
-        // Unity uses left-handed Y-up (Z-forward); the engine uses right-handed
-        // Y-up (Z-backward, OpenGL convention).
+        // Unity uses left-handed Y-up (+Z forward); the engine uses right-handed
+        // Y-up (-Z forward, OpenGL convention).
         //
-        // Assimp's ZAxisRotation=180 applies a global root rotation — it does NOT
-        // mirror per-bone local transforms. Since the .anim quaternions are in the
-        // same local bone space as the FBX, they should be passed through as-is.
-        // Only root-motion translation needs Z-negation (world-space path).
+        // Assimp's ZAxisRotation=180 applies a global root rotation to the skeleton
+        // that makes the model face the camera (-Z). However, animation data from
+        // .anim files remains in Unity's original coordinate space.
+        //
+        // The conversion is a Z-reflection (LH→RH) followed by a 180° Y rotation
+        // (to match the Assimp-rotated skeleton's facing direction):
+        //
+        //   Z-reflection:  (x, y, z) → (x, y, -z)        positions
+        //                  (x,y,z,w) → (-x,-y,z,w)        quaternions
+        //
+        //   180° Y rotation: (x, y, z) → (-x, y, -z)     positions
+        //                    Ry*q*Ry⁻¹ conjugation        quaternions
+        //
+        //   Combined:  position  (x, y, z) → (-x, y, z)   [negate X]
+        //              quaternion(x,y,z,w) → (x,-y,-z,w)   [negate Y and Z]
 
         private static Vector3 ConvertPosition(Vector3 v)
-            => new(v.X, v.Y, -v.Z);
+            => new(-v.X, v.Y, v.Z);
 
         /// <summary>
-        /// Converts a quaternion from Unity's left-handed coordinate system (Z = forward)
-        /// to the engine's right-handed OpenGL coordinate system (Z = toward viewer).
-        /// The Z-flip transform M = diag(1,1,-1) converts quaternion (x,y,z,w) → (-x,-y,z,w).
+        /// Converts a quaternion from Unity's left-handed coordinate system
+        /// to the engine's right-handed system with the Assimp root rotation accounted for.
+        /// Combined Z-reflection + 180° Y rotation: (x,y,z,w) → (x,-y,-z,w).
         /// </summary>
         private static Quaternion ConvertRotation(Quaternion q)
-            => new(-q.X, -q.Y, q.Z, q.W);
+            => new(q.X, -q.Y, -q.Z, q.W);
 
         // Unity humanoid IK goal curves (LeftFootT/Q, RightHandT/Q, etc.) are authored
         // in avatar/humanoid space. They are always imported so the data is available,

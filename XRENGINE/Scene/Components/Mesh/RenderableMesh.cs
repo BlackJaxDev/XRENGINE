@@ -403,10 +403,13 @@ namespace XREngine.Components.Scene.Mesh
         private void MarkSkinnedDataDirty()
         {
             _skinnedBoundsDirty = true;
-            _skinnedBvhDirty = true;
             _hasSkinnedBounds = false;
             _skinnedBoundsAreWorldSpace = false;
-            Interlocked.Increment(ref _skinnedBvhVersion);
+            // Do NOT set _skinnedBvhDirty or increment _skinnedBvhVersion here.
+            // Bone transform changes happen every frame during animation and the
+            // version mismatch causes every in-flight BVH build to be discarded,
+            // producing an infinite loop of wasted GenerateBvhJob invocations
+            // (severe frame drops). The BVH is built once at setup and reused.
         }
 
         private bool EnsureSkinnedBounds()
@@ -586,19 +589,23 @@ namespace XREngine.Components.Scene.Mesh
 
             lock (_skinnedDataLock)
             {
-                if (_skinnedBoundsDirty && !EnsureSkinnedBounds())
-                    return null;
+                // Try to finalize any pending background build first.
+                if (_skinnedBvhTask is not null && TryFinalizeSkinnedBvhJob(out var readyTree))
+                    return readyTree;
 
-                if (_skinnedBvh is not null && (!_skinnedBvhDirty || !allowRebuild))
+                // Return existing BVH immediately. Skinned BVH is built once at
+                // setup; continuous rebuilds on every bone change during animation
+                // cause severe frame drops (GenerateBvhJob infinite-loop).
+                if (_skinnedBvh is not null)
                     return _skinnedBvh;
 
                 if (!allowRebuild)
-                    return _skinnedBvh;
+                    return null;
 
-                if (TryFinalizeSkinnedBvhJob(out var readyTree))
-                    return readyTree;
+                if (_skinnedBoundsDirty && !EnsureSkinnedBounds())
+                    return null;
 
-                ScheduleSkinnedBvhJobIfNeeded();
+                //ScheduleSkinnedBvhJobIfNeeded();
                 return null;
             }
         }

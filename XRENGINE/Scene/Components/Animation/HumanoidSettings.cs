@@ -174,6 +174,20 @@ namespace XREngine.Components.Animation
             set => SetField(ref _neckNodDownUpDegRange, value);
         }
 
+        private Vector2 _neckTurnLeftRightDegRange = new(-40.0f, 40.0f);
+        public Vector2 NeckTurnLeftRightDegRange
+        {
+            get => _neckTurnLeftRightDegRange;
+            set => SetField(ref _neckTurnLeftRightDegRange, value);
+        }
+
+        private Vector2 _neckTiltLeftRightDegRange = new(-40.0f, 40.0f);
+        public Vector2 NeckTiltLeftRightDegRange
+        {
+            get => _neckTiltLeftRightDegRange;
+            set => SetField(ref _neckTiltLeftRightDegRange, value);
+        }
+
         private Vector2 _headNodDownUpDegRange = new(-40.0f, 40.0f);
         public Vector2 HeadNodDownUpDegRange
         {
@@ -181,10 +195,80 @@ namespace XREngine.Components.Animation
             set => SetField(ref _headNodDownUpDegRange, value);
         }
 
-        // ── Stretch channels ────────────────────────────────────────────
-        // Forearm Stretch maps to elbow pitch (flexion/extension).
-        // Use an asymmetric hinge range so slightly negative values don't over-extend the elbow
-        // while positive values still allow a relaxed bend during walk cycles.
+        private Vector2 _headTurnLeftRightDegRange = new(-40.0f, 40.0f);
+        public Vector2 HeadTurnLeftRightDegRange
+        {
+            get => _headTurnLeftRightDegRange;
+            set => SetField(ref _headTurnLeftRightDegRange, value);
+        }
+
+        private Vector2 _headTiltLeftRightDegRange = new(-40.0f, 40.0f);
+        public Vector2 HeadTiltLeftRightDegRange
+        {
+            get => _headTiltLeftRightDegRange;
+            set => SetField(ref _headTiltLeftRightDegRange, value);
+        }
+
+        // ── Jaw ─────────────────────────────────────────────────────────
+        private Vector2 _jawLeftRightDegRange = new(-15.0f, 15.0f);
+        public Vector2 JawLeftRightDegRange
+        {
+            get => _jawLeftRightDegRange;
+            set => SetField(ref _jawLeftRightDegRange, value);
+        }
+
+        private Vector2 _jawCloseDegRange = new(-5.0f, 25.0f);
+        public Vector2 JawCloseDegRange
+        {
+            get => _jawCloseDegRange;
+            set => SetField(ref _jawCloseDegRange, value);
+        }
+
+        // ── Shoulder ────────────────────────────────────────────────────
+        private Vector2 _shoulderDownUpDegRange = new(-15.0f, 30.0f);
+        public Vector2 ShoulderDownUpDegRange
+        {
+            get => _shoulderDownUpDegRange;
+            set => SetField(ref _shoulderDownUpDegRange, value);
+        }
+
+        private Vector2 _shoulderFrontBackDegRange = new(-15.0f, 15.0f);
+        public Vector2 ShoulderFrontBackDegRange
+        {
+            get => _shoulderFrontBackDegRange;
+            set => SetField(ref _shoulderFrontBackDegRange, value);
+        }
+
+        // ── Upper Arm ───────────────────────────────────────────────────
+        private Vector2 _armTwistDegRange = new(-90.0f, 90.0f);
+        public Vector2 ArmTwistDegRange
+        {
+            get => _armTwistDegRange;
+            set => SetField(ref _armTwistDegRange, value);
+        }
+
+        private Vector2 _armDownUpDegRange = new(-60.0f, 100.0f);
+        public Vector2 ArmDownUpDegRange
+        {
+            get => _armDownUpDegRange;
+            set => SetField(ref _armDownUpDegRange, value);
+        }
+
+        private Vector2 _armFrontBackDegRange = new(-100.0f, 100.0f);
+        public Vector2 ArmFrontBackDegRange
+        {
+            get => _armFrontBackDegRange;
+            set => SetField(ref _armFrontBackDegRange, value);
+        }
+
+        // ── Forearm / Elbow ─────────────────────────────────────────────
+        private Vector2 _forearmTwistDegRange = new(-90.0f, 90.0f);
+        public Vector2 ForearmTwistDegRange
+        {
+            get => _forearmTwistDegRange;
+            set => SetField(ref _forearmTwistDegRange, value);
+        }
+
         private Vector2 _forearmStretchDegRange = new(-10.0f, 70.0f);
         public Vector2 ForearmStretchDegRange
         {
@@ -192,15 +276,190 @@ namespace XREngine.Components.Animation
             set => SetField(ref _forearmStretchDegRange, value);
         }
 
-        // Lower Leg Stretch maps to knee pitch (flexion/extension).
-        // Use an asymmetric hinge range so stance legs stay nearly straight while lifted legs
-        // can still bend deeply.
+        // ── Hand / Wrist ────────────────────────────────────────────────
+        private Vector2 _handDownUpDegRange = new(-80.0f, 80.0f);
+        public Vector2 HandDownUpDegRange
+        {
+            get => _handDownUpDegRange;
+            set => SetField(ref _handDownUpDegRange, value);
+        }
+
+        private Vector2 _handInOutDegRange = new(-40.0f, 40.0f);
+        public Vector2 HandInOutDegRange
+        {
+            get => _handInOutDegRange;
+            set => SetField(ref _handInOutDegRange, value);
+        }
+
+        // ── Upper Leg ───────────────────────────────────────────────────
+        private Vector2 _upperLegTwistDegRange = new(-60.0f, 60.0f);
+        public Vector2 UpperLegTwistDegRange
+        {
+            get => _upperLegTwistDegRange;
+            set => SetField(ref _upperLegTwistDegRange, value);
+        }
+
+        private Vector2 _upperLegFrontBackDegRange = new(-90.0f, 50.0f);
+        public Vector2 UpperLegFrontBackDegRange
+        {
+            get => _upperLegFrontBackDegRange;
+            set => SetField(ref _upperLegFrontBackDegRange, value);
+        }
+
+        private Vector2 _upperLegInOutDegRange = new(-60.0f, 60.0f);
+        public Vector2 UpperLegInOutDegRange
+        {
+            get => _upperLegInOutDegRange;
+            set => SetField(ref _upperLegInOutDegRange, value);
+        }
+
+        // ── Lower Leg / Knee ────────────────────────────────────────────
+        private Vector2 _lowerLegTwistDegRange = new(-90.0f, 90.0f);
+        public Vector2 LowerLegTwistDegRange
+        {
+            get => _lowerLegTwistDegRange;
+            set => SetField(ref _lowerLegTwistDegRange, value);
+        }
+
         private Vector2 _lowerLegStretchDegRange = new(-10.0f, 100.0f);
         public Vector2 LowerLegStretchDegRange
         {
             get => _lowerLegStretchDegRange;
             set => SetField(ref _lowerLegStretchDegRange, value);
         }
+
+        // ── Foot / Toes ─────────────────────────────────────────────────
+        private Vector2 _footTwistDegRange = new(-30.0f, 30.0f);
+        public Vector2 FootTwistDegRange
+        {
+            get => _footTwistDegRange;
+            set => SetField(ref _footTwistDegRange, value);
+        }
+
+        private Vector2 _footUpDownDegRange = new(-50.0f, 50.0f);
+        public Vector2 FootUpDownDegRange
+        {
+            get => _footUpDownDegRange;
+            set => SetField(ref _footUpDownDegRange, value);
+        }
+
+        private Vector2 _toesUpDownDegRange = new(-50.0f, 50.0f);
+        public Vector2 ToesUpDownDegRange
+        {
+            get => _toesUpDownDegRange;
+            set => SetField(ref _toesUpDownDegRange, value);
+        }
+
+        // ── Fingers ─────────────────────────────────────────────────────
+        private Vector2 _thumbSpreadDegRange = new(-25.0f, 25.0f);
+        public Vector2 ThumbSpreadDegRange { get => _thumbSpreadDegRange; set => SetField(ref _thumbSpreadDegRange, value); }
+        private Vector2 _thumb1StretchedDegRange = new(-20.0f, 20.0f);
+        public Vector2 Thumb1StretchedDegRange { get => _thumb1StretchedDegRange; set => SetField(ref _thumb1StretchedDegRange, value); }
+        private Vector2 _thumb2StretchedDegRange = new(-40.0f, 35.0f);
+        public Vector2 Thumb2StretchedDegRange { get => _thumb2StretchedDegRange; set => SetField(ref _thumb2StretchedDegRange, value); }
+        private Vector2 _thumb3StretchedDegRange = new(-40.0f, 35.0f);
+        public Vector2 Thumb3StretchedDegRange { get => _thumb3StretchedDegRange; set => SetField(ref _thumb3StretchedDegRange, value); }
+
+        private Vector2 _indexSpreadDegRange = new(-20.0f, 20.0f);
+        public Vector2 IndexSpreadDegRange { get => _indexSpreadDegRange; set => SetField(ref _indexSpreadDegRange, value); }
+        private Vector2 _index1StretchedDegRange = new(-50.0f, 50.0f);
+        public Vector2 Index1StretchedDegRange { get => _index1StretchedDegRange; set => SetField(ref _index1StretchedDegRange, value); }
+        private Vector2 _index2StretchedDegRange = new(-45.0f, 45.0f);
+        public Vector2 Index2StretchedDegRange { get => _index2StretchedDegRange; set => SetField(ref _index2StretchedDegRange, value); }
+        private Vector2 _index3StretchedDegRange = new(-45.0f, 45.0f);
+        public Vector2 Index3StretchedDegRange { get => _index3StretchedDegRange; set => SetField(ref _index3StretchedDegRange, value); }
+
+        private Vector2 _middleSpreadDegRange = new(-7.5f, 7.5f);
+        public Vector2 MiddleSpreadDegRange { get => _middleSpreadDegRange; set => SetField(ref _middleSpreadDegRange, value); }
+        private Vector2 _middle1StretchedDegRange = new(-50.0f, 50.0f);
+        public Vector2 Middle1StretchedDegRange { get => _middle1StretchedDegRange; set => SetField(ref _middle1StretchedDegRange, value); }
+        private Vector2 _middle2StretchedDegRange = new(-45.0f, 45.0f);
+        public Vector2 Middle2StretchedDegRange { get => _middle2StretchedDegRange; set => SetField(ref _middle2StretchedDegRange, value); }
+        private Vector2 _middle3StretchedDegRange = new(-45.0f, 45.0f);
+        public Vector2 Middle3StretchedDegRange { get => _middle3StretchedDegRange; set => SetField(ref _middle3StretchedDegRange, value); }
+
+        private Vector2 _ringSpreadDegRange = new(-7.5f, 7.5f);
+        public Vector2 RingSpreadDegRange { get => _ringSpreadDegRange; set => SetField(ref _ringSpreadDegRange, value); }
+        private Vector2 _ring1StretchedDegRange = new(-50.0f, 50.0f);
+        public Vector2 Ring1StretchedDegRange { get => _ring1StretchedDegRange; set => SetField(ref _ring1StretchedDegRange, value); }
+        private Vector2 _ring2StretchedDegRange = new(-45.0f, 45.0f);
+        public Vector2 Ring2StretchedDegRange { get => _ring2StretchedDegRange; set => SetField(ref _ring2StretchedDegRange, value); }
+        private Vector2 _ring3StretchedDegRange = new(-45.0f, 45.0f);
+        public Vector2 Ring3StretchedDegRange { get => _ring3StretchedDegRange; set => SetField(ref _ring3StretchedDegRange, value); }
+
+        private Vector2 _littleSpreadDegRange = new(-20.0f, 20.0f);
+        public Vector2 LittleSpreadDegRange { get => _littleSpreadDegRange; set => SetField(ref _littleSpreadDegRange, value); }
+        private Vector2 _little1StretchedDegRange = new(-50.0f, 50.0f);
+        public Vector2 Little1StretchedDegRange { get => _little1StretchedDegRange; set => SetField(ref _little1StretchedDegRange, value); }
+        private Vector2 _little2StretchedDegRange = new(-45.0f, 45.0f);
+        public Vector2 Little2StretchedDegRange { get => _little2StretchedDegRange; set => SetField(ref _little2StretchedDegRange, value); }
+        private Vector2 _little3StretchedDegRange = new(-45.0f, 45.0f);
+        public Vector2 Little3StretchedDegRange { get => _little3StretchedDegRange; set => SetField(ref _little3StretchedDegRange, value); }
+
+        /// <summary>
+        /// Negates all min/max range values (swaps sign on both X and Y components).
+        /// Useful when a skeleton's local axes are mirrored relative to the expected convention.
+        /// </summary>
+        public void NegateAllRanges()
+        {
+            SpineFrontBackDegRange = NegateRange(SpineFrontBackDegRange);
+            SpineLeftRightDegRange = NegateRange(SpineLeftRightDegRange);
+            SpineTwistLeftRightDegRange = NegateRange(SpineTwistLeftRightDegRange);
+            ChestFrontBackDegRange = NegateRange(ChestFrontBackDegRange);
+            ChestLeftRightDegRange = NegateRange(ChestLeftRightDegRange);
+            ChestTwistLeftRightDegRange = NegateRange(ChestTwistLeftRightDegRange);
+            UpperChestFrontBackDegRange = NegateRange(UpperChestFrontBackDegRange);
+            UpperChestLeftRightDegRange = NegateRange(UpperChestLeftRightDegRange);
+            UpperChestTwistLeftRightDegRange = NegateRange(UpperChestTwistLeftRightDegRange);
+            NeckNodDownUpDegRange = NegateRange(NeckNodDownUpDegRange);
+            NeckTurnLeftRightDegRange = NegateRange(NeckTurnLeftRightDegRange);
+            NeckTiltLeftRightDegRange = NegateRange(NeckTiltLeftRightDegRange);
+            HeadNodDownUpDegRange = NegateRange(HeadNodDownUpDegRange);
+            HeadTurnLeftRightDegRange = NegateRange(HeadTurnLeftRightDegRange);
+            HeadTiltLeftRightDegRange = NegateRange(HeadTiltLeftRightDegRange);
+            JawLeftRightDegRange = NegateRange(JawLeftRightDegRange);
+            JawCloseDegRange = NegateRange(JawCloseDegRange);
+            ShoulderDownUpDegRange = NegateRange(ShoulderDownUpDegRange);
+            ShoulderFrontBackDegRange = NegateRange(ShoulderFrontBackDegRange);
+            ArmTwistDegRange = NegateRange(ArmTwistDegRange);
+            ArmDownUpDegRange = NegateRange(ArmDownUpDegRange);
+            ArmFrontBackDegRange = NegateRange(ArmFrontBackDegRange);
+            ForearmTwistDegRange = NegateRange(ForearmTwistDegRange);
+            ForearmStretchDegRange = NegateRange(ForearmStretchDegRange);
+            HandDownUpDegRange = NegateRange(HandDownUpDegRange);
+            HandInOutDegRange = NegateRange(HandInOutDegRange);
+            UpperLegTwistDegRange = NegateRange(UpperLegTwistDegRange);
+            UpperLegFrontBackDegRange = NegateRange(UpperLegFrontBackDegRange);
+            UpperLegInOutDegRange = NegateRange(UpperLegInOutDegRange);
+            LowerLegTwistDegRange = NegateRange(LowerLegTwistDegRange);
+            LowerLegStretchDegRange = NegateRange(LowerLegStretchDegRange);
+            FootTwistDegRange = NegateRange(FootTwistDegRange);
+            FootUpDownDegRange = NegateRange(FootUpDownDegRange);
+            ToesUpDownDegRange = NegateRange(ToesUpDownDegRange);
+            ThumbSpreadDegRange = NegateRange(ThumbSpreadDegRange);
+            Thumb1StretchedDegRange = NegateRange(Thumb1StretchedDegRange);
+            Thumb2StretchedDegRange = NegateRange(Thumb2StretchedDegRange);
+            Thumb3StretchedDegRange = NegateRange(Thumb3StretchedDegRange);
+            IndexSpreadDegRange = NegateRange(IndexSpreadDegRange);
+            Index1StretchedDegRange = NegateRange(Index1StretchedDegRange);
+            Index2StretchedDegRange = NegateRange(Index2StretchedDegRange);
+            Index3StretchedDegRange = NegateRange(Index3StretchedDegRange);
+            MiddleSpreadDegRange = NegateRange(MiddleSpreadDegRange);
+            Middle1StretchedDegRange = NegateRange(Middle1StretchedDegRange);
+            Middle2StretchedDegRange = NegateRange(Middle2StretchedDegRange);
+            Middle3StretchedDegRange = NegateRange(Middle3StretchedDegRange);
+            RingSpreadDegRange = NegateRange(RingSpreadDegRange);
+            Ring1StretchedDegRange = NegateRange(Ring1StretchedDegRange);
+            Ring2StretchedDegRange = NegateRange(Ring2StretchedDegRange);
+            Ring3StretchedDegRange = NegateRange(Ring3StretchedDegRange);
+            LittleSpreadDegRange = NegateRange(LittleSpreadDegRange);
+            Little1StretchedDegRange = NegateRange(Little1StretchedDegRange);
+            Little2StretchedDegRange = NegateRange(Little2StretchedDegRange);
+            Little3StretchedDegRange = NegateRange(Little3StretchedDegRange);
+        }
+
+        private static Vector2 NegateRange(Vector2 range)
+            => new(-range.Y, -range.X);
 
         // Per-bone axis mapping for non-standard skeletons.
         // Key: bone name, Values: which local axis maps to twist (yaw), front-back (pitch), left-right (roll).

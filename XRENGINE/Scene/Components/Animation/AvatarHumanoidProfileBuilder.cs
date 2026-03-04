@@ -237,11 +237,14 @@ namespace XREngine.Components.Animation
         private static int SignForAxis(BoneAxisMapping mapping, int axis)
         {
             if (mapping.TwistAxis == axis)
-                return mapping.TwistSign == 0 ? 1 : mapping.TwistSign;
+                return mapping.TwistSign != 0 ? mapping.TwistSign : 1;
+
             if (mapping.FrontBackAxis == axis)
-                return mapping.FrontBackSign == 0 ? 1 : mapping.FrontBackSign;
+                return mapping.FrontBackSign != 0 ? mapping.FrontBackSign : 1;
+
             if (mapping.LeftRightAxis == axis)
-                return mapping.LeftRightSign == 0 ? 1 : mapping.LeftRightSign;
+                return mapping.LeftRightSign != 0 ? mapping.LeftRightSign : 1;
+
             return 1;
         }
 
