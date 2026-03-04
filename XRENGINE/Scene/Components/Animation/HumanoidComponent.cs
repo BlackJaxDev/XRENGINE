@@ -5,11 +5,13 @@ using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Animation.IK;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
-using static XREngine.Components.Animation.InverseKinematics;
+using BoneChainItem = XREngine.Components.Animation.InverseKinematics.BoneChainItem;
+using BoneIKConstraints = XREngine.Components.Animation.InverseKinematics.BoneIKConstraints;
 
 namespace XREngine.Components.Animation
 {
@@ -25,11 +27,8 @@ namespace XREngine.Components.Animation
         {
             base.OnComponentActivated();
 
-            // Apply muscle-driven pose after animation evaluation (before Late IK solve).
+            // Apply muscle-driven pose after animation evaluation.
             RegisterTick(ETickGroup.Normal, ETickOrder.Scene, ApplyMusclePose);
-
-            if (SolveIK)
-                RegisterTick(ETickGroup.Late, ETickOrder.Scene, SolveFullBodyIK);
         }
 
         protected internal override void OnComponentDeactivated()
@@ -37,9 +36,7 @@ namespace XREngine.Components.Animation
             base.OnComponentDeactivated();
 
             UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, ApplyMusclePose);
-
-            if (SolveIK)
-                UnregisterTick(ETickGroup.Late, ETickOrder.Scene, SolveFullBodyIK);
+            ResetRuntimeAnimationDiagnostics();
         }
 
         private HumanoidSettings _settings = new();
@@ -168,7 +165,8 @@ namespace XREngine.Components.Animation
                 Spine.Node,
                 yawDeg: MapMuscleToDeg(EHumanoidValue.SpineTwistLeftRight, GetMuscleValue(EHumanoidValue.SpineTwistLeftRight), Settings.SpineTwistLeftRightDegRange),
                 pitchDeg: MapMuscleToDeg(EHumanoidValue.SpineFrontBack, GetMuscleValue(EHumanoidValue.SpineFrontBack), Settings.SpineFrontBackDegRange),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.SpineLeftRight, GetMuscleValue(EHumanoidValue.SpineLeftRight), Settings.SpineLeftRightDegRange));
+                rollDeg: MapMuscleToDeg(EHumanoidValue.SpineLeftRight, GetMuscleValue(EHumanoidValue.SpineLeftRight), Settings.SpineLeftRightDegRange),
+                axisMapping: GetBoneAxisMapping(Spine.Node));
 
             ApplyBindRelativeEulerDegrees(
                 Chest.Node,
@@ -177,7 +175,8 @@ namespace XREngine.Components.Animation
                 pitchDeg: MapMuscleToDeg(EHumanoidValue.ChestFrontBack, GetMuscleValue(EHumanoidValue.ChestFrontBack), Settings.ChestFrontBackDegRange)
                       + (UpperChest.Node is null ? MapMuscleToDeg(EHumanoidValue.UpperChestFrontBack, GetMuscleValue(EHumanoidValue.UpperChestFrontBack), Settings.UpperChestFrontBackDegRange) : 0.0f),
                 rollDeg: MapMuscleToDeg(EHumanoidValue.ChestLeftRight, GetMuscleValue(EHumanoidValue.ChestLeftRight), Settings.ChestLeftRightDegRange)
-                     + (UpperChest.Node is null ? MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(EHumanoidValue.UpperChestLeftRight), Settings.UpperChestLeftRightDegRange) : 0.0f));
+                     + (UpperChest.Node is null ? MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(EHumanoidValue.UpperChestLeftRight), Settings.UpperChestLeftRightDegRange) : 0.0f),
+                axisMapping: GetBoneAxisMapping(Chest.Node));
 
             // UpperChest — only applied when a separate UpperChest bone exists.
             if (UpperChest.Node is not null)
@@ -186,21 +185,24 @@ namespace XREngine.Components.Animation
                     UpperChest.Node,
                     yawDeg: MapMuscleToDeg(EHumanoidValue.UpperChestTwistLeftRight, GetMuscleValue(EHumanoidValue.UpperChestTwistLeftRight), Settings.UpperChestTwistLeftRightDegRange),
                     pitchDeg: MapMuscleToDeg(EHumanoidValue.UpperChestFrontBack, GetMuscleValue(EHumanoidValue.UpperChestFrontBack), Settings.UpperChestFrontBackDegRange),
-                    rollDeg: MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(EHumanoidValue.UpperChestLeftRight), Settings.UpperChestLeftRightDegRange));
+                    rollDeg: MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(EHumanoidValue.UpperChestLeftRight), Settings.UpperChestLeftRightDegRange),
+                    axisMapping: GetBoneAxisMapping(UpperChest.Node));
             }
 
             // Neck / Head — Unity default: all ±40°.
             ApplyBindRelativeEulerDegrees(
                 Neck.Node,
                 yawDeg: MapMuscleToDeg(EHumanoidValue.NeckTurnLeftRight, GetMuscleValue(EHumanoidValue.NeckTurnLeftRight), new Vector2(-40.0f, 40.0f)),
-                pitchDeg: MapMuscleToDeg(EHumanoidValue.NeckNodDownUp, GetMuscleValue(EHumanoidValue.NeckNodDownUp), Settings.NeckNodDownUpDegRange),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.NeckTiltLeftRight, GetMuscleValue(EHumanoidValue.NeckTiltLeftRight), new Vector2(-40.0f, 40.0f)));
+                pitchDeg: -MapMuscleToDeg(EHumanoidValue.NeckNodDownUp, GetMuscleValue(EHumanoidValue.NeckNodDownUp), Settings.NeckNodDownUpDegRange),
+                rollDeg: MapMuscleToDeg(EHumanoidValue.NeckTiltLeftRight, GetMuscleValue(EHumanoidValue.NeckTiltLeftRight), new Vector2(-40.0f, 40.0f)),
+                axisMapping: GetBoneAxisMapping(Neck.Node));
 
             ApplyBindRelativeEulerDegrees(
                 Head.Node,
                 yawDeg: MapMuscleToDeg(EHumanoidValue.HeadTurnLeftRight, GetMuscleValue(EHumanoidValue.HeadTurnLeftRight), new Vector2(-40.0f, 40.0f)),
-                pitchDeg: MapMuscleToDeg(EHumanoidValue.HeadNodDownUp, GetMuscleValue(EHumanoidValue.HeadNodDownUp), Settings.HeadNodDownUpDegRange),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.HeadTiltLeftRight, GetMuscleValue(EHumanoidValue.HeadTiltLeftRight), new Vector2(-40.0f, 40.0f)));
+                pitchDeg: -MapMuscleToDeg(EHumanoidValue.HeadNodDownUp, GetMuscleValue(EHumanoidValue.HeadNodDownUp), Settings.HeadNodDownUpDegRange),
+                rollDeg: MapMuscleToDeg(EHumanoidValue.HeadTiltLeftRight, GetMuscleValue(EHumanoidValue.HeadTiltLeftRight), new Vector2(-40.0f, 40.0f)),
+                axisMapping: GetBoneAxisMapping(Head.Node));
 
             // Jaw — not shown in Unity default screenshot; keeping reasonable estimates.
             ApplyBindRelativeEulerDegrees(
@@ -241,6 +243,7 @@ namespace XREngine.Components.Animation
         private void ApplyLimbMuscles(bool isLeft)
         {
             var side = isLeft ? Left : Right;
+            string sideLabel = isLeft ? "L" : "R";
             float sideMirror = isLeft ? 1.0f : -1.0f;
             EHumanoidValue shoulderDownUp = isLeft ? EHumanoidValue.LeftShoulderDownUp : EHumanoidValue.RightShoulderDownUp;
             EHumanoidValue shoulderFrontBack = isLeft ? EHumanoidValue.LeftShoulderFrontBack : EHumanoidValue.RightShoulderFrontBack;
@@ -260,31 +263,71 @@ namespace XREngine.Components.Animation
             EHumanoidValue footUpDown = isLeft ? EHumanoidValue.LeftFootUpDown : EHumanoidValue.RightFootUpDown;
             EHumanoidValue toesUpDown = isLeft ? EHumanoidValue.LeftToesUpDown : EHumanoidValue.RightToesUpDown;
 
-            // Unity "Stretch" channels for forearm/lower-leg are opposite to our prior assumption:
-            // positive values trend toward extension (straighter limb), not deeper flexion.
-            // Invert these two channels before mapping to joint pitch.
-            float forearmStretchMuscle = -GetMuscleValue(forearmStretch);
-            float lowerLegStretchMuscle = -GetMuscleValue(lowerLegStretch);
+            // Stretch channels behave like hinge flexion/extension. Keep the raw clip sign
+            // and rely on asymmetric hinge ranges so slight negative values do not produce
+            // deep extension while strong positive values still allow a bent elbow/knee.
+            float forearmStretchMuscle = GetMuscleValue(forearmStretch);
+            float lowerLegStretchMuscle = GetMuscleValue(lowerLegStretch);
+            float lowerLegPitchDeg = MapMuscleToDeg(lowerLegStretch, lowerLegStretchMuscle, Settings.LowerLegStretchDegRange);
+            lowerLegPitchDeg = ClampKneeFlexionDeg(sideLabel, lowerLegStretchMuscle, lowerLegPitchDeg);
 
-            // Body-space basis from hips bind pose (Unity humanoid muscles are avatar/body-space driven).
-            // Unity forward is LH +Z. In our RH space that corresponds to -Z.
-            Vector3 bodyRight = GetBodyAxisWorld(Vector3.UnitX);
-            Vector3 bodyForward = GetBodyAxisWorld(-Vector3.UnitZ);
+            // Body-space basis derived from skeleton geometry rather than the hips local frame.
+            // The hips bind matrix can have unexpected pre-rotations from the FBX import pipeline
+            // (e.g. Assimp's 180° Y-axis root rotation flips local X and Z), making the local-frame
+            // approach unreliable. Instead we build the basis from the world positions of the hips
+            // and spine, which is stable regardless of how the rig was imported.
+            //
+            //   bodyUp      = direction from hips to spine (anatomically up for any upright rig)
+            //   bodyRight   = world +X projected onto the plane perpendicular to bodyUp
+            //   bodyForward = bodyUp × bodyRight   (right-hand rule → engine -Z for T-pose upright character)
+            Vector3 hipsPos  = Hips.WorldBindPose.Translation;
+            Vector3 spinePos = Spine.Node is not null ? Spine.WorldBindPose.Translation : hipsPos + Vector3.UnitY;
+            Vector3 bindBodyUp = spinePos - hipsPos;
+            float bodyUpLen  = bindBodyUp.Length();
+            bindBodyUp = bodyUpLen > 1e-6f ? bindBodyUp / bodyUpLen : Vector3.UnitY;
+
+            // Project world +X onto the plane perpendicular to bodyUp.
+            Vector3 bindBodyRight = Vector3.UnitX - Vector3.Dot(Vector3.UnitX, bindBodyUp) * bindBodyUp;
+            float bodyRightLen = bindBodyRight.Length();
+            if (bodyRightLen < 1e-6f)
+            {
+                // bodyUp is nearly parallel to world X (character lying on its side) — use -Z as reference instead.
+                bindBodyRight = -Vector3.UnitZ - Vector3.Dot(-Vector3.UnitZ, bindBodyUp) * bindBodyUp;
+                bodyRightLen = bindBodyRight.Length();
+            }
+            bindBodyRight = bodyRightLen > 1e-6f ? bindBodyRight / bodyRightLen : Vector3.UnitX;
+
+            // bodyUp × bodyRight gives engine forward (-Z) for a standard upright T-pose character.
+            Vector3 bindBodyForward = Vector3.Normalize(Vector3.Cross(bindBodyUp, bindBodyRight));
+
+            // Unity humanoid muscles are evaluated relative to the animated body transform,
+            // not a fixed bind-pose torso frame. Rotate the bind-derived body basis by the
+            // current RootQ/body rotation before resolving limb swing axes.
+            Quaternion bodyRotation = _currentBodyRotation;
+            Vector3 bodyUp = RotateWorldDirection(bodyRotation, bindBodyUp);
+            Vector3 bodyRight = RotateWorldDirection(bodyRotation, bindBodyRight);
+            Vector3 bodyForward = RotateWorldDirection(bodyRotation, bindBodyForward);
 
             // Limb twist axis from bind-pose bone direction (parent -> child).
-            Vector3 armTwistAxisWorld = GetBoneToChildAxisWorld(side.Arm, side.Elbow, GetBodyAxisWorld(Vector3.UnitY));
-            Vector3 legTwistAxisWorld = GetBoneToChildAxisWorld(side.Leg, side.Knee, -GetBodyAxisWorld(Vector3.UnitY));
+            Vector3 bindArmTwistAxisWorld = GetBoneToChildAxisWorld(side.Arm, side.Elbow, bindBodyUp);
+            Vector3 bindLegTwistAxisWorld = GetBoneToChildAxisWorld(side.Leg, side.Knee, -bindBodyUp);
+            Vector3 armTwistAxisWorld = RotateWorldDirection(bodyRotation, bindArmTwistAxisWorld);
+            Vector3 legTwistAxisWorld = RotateWorldDirection(bodyRotation, bindLegTwistAxisWorld);
 
             // Swing axes in body space.
             Vector3 sideAxisWorld = Vector3.Normalize(bodyForward * sideMirror);
             Vector3 frontBackAxisWorld = bodyRight;
+
+            // Step 1 diagnostic: log the derived body axes once (left side only).
+            if (isLeft)
+                LogBodyBasisDiagnostic(bodyRight, bodyUp, bodyForward, armTwistAxisWorld, legTwistAxisWorld, sideAxisWorld, frontBackAxisWorld);
 
             // Shoulder — Unity default: Down-Up −15..30, Front-Back ±15.
             ApplyBindRelativeSwingTwistWorldAxes(
                 side.Shoulder.Node,
                 yawDeg: 0.0f,
                 pitchDeg: MapMuscleToDeg(shoulderDownUp, GetMuscleValue(shoulderDownUp), new Vector2(-15.0f, 30.0f)),
-                rollDeg: MapMuscleToDeg(shoulderFrontBack, GetMuscleValue(shoulderFrontBack), new Vector2(-15.0f, 15.0f)),
+                rollDeg: -MapMuscleToDeg(shoulderFrontBack, GetMuscleValue(shoulderFrontBack), new Vector2(-15.0f, 15.0f)),
                 twistAxisWorld: armTwistAxisWorld,
                 frontBackAxisWorld: sideAxisWorld,
                 leftRightAxisWorld: frontBackAxisWorld);
@@ -294,7 +337,7 @@ namespace XREngine.Components.Animation
                 side.Arm.Node,
                 yawDeg: MapMuscleToDeg(armTwist, GetMuscleValue(armTwist), new Vector2(-90.0f, 90.0f)) * sideMirror,
                 pitchDeg: MapMuscleToDeg(armDownUp, GetMuscleValue(armDownUp), new Vector2(-60.0f, 100.0f)),
-                rollDeg: MapMuscleToDeg(armFrontBack, GetMuscleValue(armFrontBack), new Vector2(-100.0f, 100.0f)),
+                rollDeg: -MapMuscleToDeg(armFrontBack, GetMuscleValue(armFrontBack), new Vector2(-100.0f, 100.0f)),
                 twistAxisWorld: armTwistAxisWorld,
                 frontBackAxisWorld: sideAxisWorld,
                 leftRightAxisWorld: frontBackAxisWorld);
@@ -319,7 +362,7 @@ namespace XREngine.Components.Animation
             ApplyBindRelativeSwingTwistWorldAxes(
                 side.Leg.Node,
                 yawDeg: MapMuscleToDeg(upperLegTwist, GetMuscleValue(upperLegTwist), new Vector2(-60.0f, 60.0f)) * sideMirror,
-                pitchDeg: MapMuscleToDeg(upperLegFrontBack, GetMuscleValue(upperLegFrontBack), new Vector2(-90.0f, 50.0f)),
+                pitchDeg: -MapMuscleToDeg(upperLegFrontBack, GetMuscleValue(upperLegFrontBack), new Vector2(-90.0f, 50.0f)),
                 rollDeg: MapMuscleToDeg(upperLegInOut, GetMuscleValue(upperLegInOut), new Vector2(-60.0f, 60.0f)),
                 twistAxisWorld: legTwistAxisWorld,
                 frontBackAxisWorld: frontBackAxisWorld,
@@ -329,7 +372,7 @@ namespace XREngine.Components.Animation
             ApplyBindRelativeEulerDegrees(
                 side.Knee.Node,
                 yawDeg: MapMuscleToDeg(lowerLegTwist, GetMuscleValue(lowerLegTwist), new Vector2(-90.0f, 90.0f)) * sideMirror,
-                pitchDeg: MapMuscleToDeg(lowerLegStretch, lowerLegStretchMuscle, Settings.LowerLegStretchDegRange),
+                pitchDeg: lowerLegPitchDeg,
                 rollDeg: 0.0f,
                 axisMapping: GetBoneAxisMapping(side.Knee.Node));
 
@@ -474,6 +517,31 @@ namespace XREngine.Components.Animation
             return m >= 0.0f
                 ? m * range.Y
                 : -m * range.X;   // range.X is negative, so result is negative
+        }
+
+        private bool _leftKneeClampLogged;
+        private bool _rightKneeClampLogged;
+
+        private float ClampKneeFlexionDeg(string sideLabel, float rawMuscle, float pitchDeg)
+        {
+            if (pitchDeg >= 0.0f)
+                return pitchDeg;
+
+            ref bool logged = ref sideLabel == "L" ? ref _leftKneeClampLogged : ref _rightKneeClampLogged;
+            if (!logged)
+            {
+                logged = true;
+                Debug.Animation($"[KneeClamp] {sideLabel}.Knee negative flexion clamped rawMuscle={rawMuscle:F4} deg={pitchDeg:F2} -> 0.00");
+            }
+
+            return 0.0f;
+        }
+
+        private static Vector3 RotateWorldDirection(Quaternion rotation, Vector3 direction)
+        {
+            Vector3 rotated = Vector3.Transform(direction, rotation);
+            float lenSq = rotated.LengthSquared();
+            return lenSq > 1e-8f ? rotated / MathF.Sqrt(lenSq) : direction;
         }
 
         [Obsolete("Stretch muscles are now applied as rotation (pitch) on the joint bone. Retained for potential non-humanoid uses.")]
@@ -641,14 +709,6 @@ namespace XREngine.Components.Animation
                 // If both are degenerate, axes remain as-is (fallback).
             }
 
-            // LH→RH conversion: negate X and Y components of bone-local axes.
-            // Unity muscle angles are defined in LH convention. The bone-local axes are
-            // from the RH skeleton (model import flips Z). To apply LH rotation angles
-            // onto RH axes correctly: R_LH(â,θ) → R_RH((-ax,-ay,az), θ).
-            twistLocal = new(-twistLocal.X, -twistLocal.Y, twistLocal.Z);
-            frontBackLocal = new(-frontBackLocal.X, -frontBackLocal.Y, frontBackLocal.Z);
-            leftRightLocal = new(-leftRightLocal.X, -leftRightLocal.Y, leftRightLocal.Z);
-
             Quaternion twist = Quaternion.CreateFromAxisAngle(twistLocal, yawDeg * degToRad);
             Quaternion frontBack = Quaternion.CreateFromAxisAngle(frontBackLocal, pitchDeg * degToRad);
             Quaternion leftRight = Quaternion.CreateFromAxisAngle(leftRightLocal, rollDeg * degToRad);
@@ -659,58 +719,7 @@ namespace XREngine.Components.Animation
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
-        {
-            base.OnPropertyChanged(propName, prev, field);
-            switch (propName)
-            {
-                case nameof(SolveIK):
-                    if (IsActive)
-                    {
-                        if (SolveIK)
-                            RegisterTick(ETickGroup.Late, ETickOrder.Scene, SolveFullBodyIK);
-                        else
-                            UnregisterTick(ETickGroup.Late, ETickOrder.Scene, SolveFullBodyIK);
-                    }
-                    break;
-            }
-        }
-
-        private void SolveFullBodyIK()
-        {
-            if (!HasActiveIKTargetOverrides())
-                return;
-
-            InverseKinematics.SolveFullBodyIK(
-                GetHipToHeadChain(),
-                GetLeftLegToAnkleChain(),
-                GetRightLegToAnkleChain(),
-                GetLeftShoulderToWristChain(),
-                GetRightShoulderToWristChain(),
-                HeadTarget,
-                HipsTarget,
-                LeftHandTarget,
-                RightHandTarget,
-                LeftFootTarget,
-                RightFootTarget,
-                10);
-        }
-
-        private bool HasActiveIKTargetOverrides()
-            => IsTargetOverridden(HeadTarget, Head.Node?.Transform)
-            || IsTargetOverridden(HipsTarget, Hips.Node?.Transform)
-            || IsTargetOverridden(LeftHandTarget, Left.Wrist.Node?.Transform)
-            || IsTargetOverridden(RightHandTarget, Right.Wrist.Node?.Transform)
-            || IsTargetOverridden(LeftFootTarget, Left.Foot.Node?.Transform)
-            || IsTargetOverridden(RightFootTarget, Right.Foot.Node?.Transform)
-            || IsTargetOverridden(ChestTarget, Chest.Node?.Transform)
-            || IsTargetOverridden(LeftElbowTarget, Left.Elbow.Node?.Transform)
-            || IsTargetOverridden(RightElbowTarget, Right.Elbow.Node?.Transform)
-            || IsTargetOverridden(LeftKneeTarget, Left.Knee.Node?.Transform)
-            || IsTargetOverridden(RightKneeTarget, Right.Knee.Node?.Transform);
-
-        private static bool IsTargetOverridden((TransformBase? tfm, Matrix4x4 offset) target, TransformBase? defaultTransform)
-            => !ReferenceEquals(target.tfm, defaultTransform)
-            || target.offset != Matrix4x4.Identity;
+            => base.OnPropertyChanged(propName, prev, field);
 
         protected internal override void AddedToSceneNode(SceneNode sceneNode)
         {
@@ -792,13 +801,6 @@ namespace XREngine.Components.Animation
                     if (nextBone is not null)
                         Engine.Rendering.Debug.RenderLine(bone.WorldPosSolve, nextBone.WorldPosSolve, ColorF4.Red);
                 }
-
-            Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(HeadTarget).Translation, ColorF4.Green);
-            Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(HipsTarget).Translation, ColorF4.Green);
-            Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(LeftHandTarget).Translation, ColorF4.Green);
-            Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(RightHandTarget).Translation, ColorF4.Green);
-            Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(LeftFootTarget).Translation, ColorF4.Green);
-            Engine.Rendering.Debug.RenderPoint(GetMatrixForTarget(RightFootTarget).Translation, ColorF4.Green);
         }
 
         public class BoneDef : XRBase
@@ -936,6 +938,7 @@ namespace XREngine.Components.Animation
 
         public void ResetAllTransformsToBindPose()
         {
+            ResetRuntimeAnimationDiagnostics();
             Hips.ResetPose();
             Spine.ResetPose();
             Chest.ResetPose();
@@ -1371,6 +1374,7 @@ namespace XREngine.Components.Animation
         }
 
         private bool _musclePoseLoggedOnce;
+        private bool _limbBasisLogged;
 
         /// <summary>
         /// Logs a one-time snapshot of live muscle values and the resulting degree
@@ -1388,43 +1392,76 @@ namespace XREngine.Components.Animation
                 Debug.Animation($"[MusclePose] {label,-30} muscle={raw,8:F4}  deg={deg,8:F2}  range=({range.X:F1},{range.Y:F1})");
             }
 
-            void LogInvertedMuscle(string label, EHumanoidValue val, Vector2 range)
-            {
-                float raw = GetMuscleValue(val);
-                float effective = -raw;
-                float deg = MapMuscleToDeg(val, effective, range);
-                Debug.Animation($"[MusclePose] {label,-30} raw={raw,8:F4}  effective={effective,8:F4}  deg={deg,8:F2}  range=({range.X:F1},{range.Y:F1})");
-            }
-
             Debug.Animation("[MusclePose] === One-time muscle snapshot ===");
 
             // Spine
             LogMuscle("SpineFrontBack", EHumanoidValue.SpineFrontBack, Settings.SpineFrontBackDegRange);
             LogMuscle("SpineTwist", EHumanoidValue.SpineTwistLeftRight, Settings.SpineTwistLeftRightDegRange);
+            LogMuscle("NeckNod", EHumanoidValue.NeckNodDownUp, Settings.NeckNodDownUpDegRange);
+            LogMuscle("HeadNod", EHumanoidValue.HeadNodDownUp, Settings.HeadNodDownUpDegRange);
 
-            // Left arm
-            LogMuscle("L.ArmDownUp", EHumanoidValue.LeftArmDownUp, new(-90, 90));
-            LogMuscle("L.ArmFrontBack", EHumanoidValue.LeftArmFrontBack, new(-60, 60));
-            LogMuscle("L.ArmTwist", EHumanoidValue.LeftArmTwistInOut, new(-40, 40));
-            LogInvertedMuscle("L.ForearmStretch(inv)", EHumanoidValue.LeftForearmStretch, Settings.ForearmStretchDegRange);
-            LogMuscle("L.ForearmTwist", EHumanoidValue.LeftForearmTwistInOut, new(-60, 60));
+            // Left arm (ranges match ApplyLimbMuscles)
+            LogMuscle("L.ShoulderDownUp", EHumanoidValue.LeftShoulderDownUp, new(-15, 30));
+            LogMuscle("L.ShoulderFrontBack", EHumanoidValue.LeftShoulderFrontBack, new(-15, 15));
+            LogMuscle("L.ArmDownUp", EHumanoidValue.LeftArmDownUp, new(-60, 100));
+            LogMuscle("L.ArmFrontBack", EHumanoidValue.LeftArmFrontBack, new(-100, 100));
+            LogMuscle("L.ArmTwist", EHumanoidValue.LeftArmTwistInOut, new(-90, 90));
+            LogMuscle("L.ForearmStretch", EHumanoidValue.LeftForearmStretch, Settings.ForearmStretchDegRange);
+            LogMuscle("L.ForearmTwist", EHumanoidValue.LeftForearmTwistInOut, new(-90, 90));
 
             // Right arm
-            LogMuscle("R.ArmDownUp", EHumanoidValue.RightArmDownUp, new(-90, 90));
-            LogMuscle("R.ArmFrontBack", EHumanoidValue.RightArmFrontBack, new(-60, 60));
-            LogInvertedMuscle("R.ForearmStretch(inv)", EHumanoidValue.RightForearmStretch, Settings.ForearmStretchDegRange);
+            LogMuscle("R.ShoulderDownUp", EHumanoidValue.RightShoulderDownUp, new(-15, 30));
+            LogMuscle("R.ShoulderFrontBack", EHumanoidValue.RightShoulderFrontBack, new(-15, 15));
+            LogMuscle("R.ArmDownUp", EHumanoidValue.RightArmDownUp, new(-60, 100));
+            LogMuscle("R.ArmFrontBack", EHumanoidValue.RightArmFrontBack, new(-100, 100));
+            LogMuscle("R.ForearmStretch", EHumanoidValue.RightForearmStretch, Settings.ForearmStretchDegRange);
 
-            // Left leg
-            LogMuscle("L.UpperLegFrontBack", EHumanoidValue.LeftUpperLegFrontBack, new(-90, 90));
-            LogMuscle("L.UpperLegInOut", EHumanoidValue.LeftUpperLegInOut, new(-35, 35));
-            LogInvertedMuscle("L.LowerLegStretch(inv)", EHumanoidValue.LeftLowerLegStretch, Settings.LowerLegStretchDegRange);
-            LogMuscle("L.FootUpDown", EHumanoidValue.LeftFootUpDown, new(-45, 45));
+            // Left leg (ranges match ApplyLimbMuscles)
+            LogMuscle("L.UpperLegFrontBack", EHumanoidValue.LeftUpperLegFrontBack, new(-90, 50));
+            LogMuscle("L.UpperLegInOut", EHumanoidValue.LeftUpperLegInOut, new(-60, 60));
+            LogMuscle("L.LowerLegStretch", EHumanoidValue.LeftLowerLegStretch, Settings.LowerLegStretchDegRange);
+            LogMuscle("L.FootUpDown", EHumanoidValue.LeftFootUpDown, new(-50, 50));
 
             // Right leg
-            LogMuscle("R.UpperLegFrontBack", EHumanoidValue.RightUpperLegFrontBack, new(-90, 90));
-            LogInvertedMuscle("R.LowerLegStretch(inv)", EHumanoidValue.RightLowerLegStretch, Settings.LowerLegStretchDegRange);
+            LogMuscle("R.UpperLegFrontBack", EHumanoidValue.RightUpperLegFrontBack, new(-90, 50));
+            LogMuscle("R.LowerLegStretch", EHumanoidValue.RightLowerLegStretch, Settings.LowerLegStretchDegRange);
 
             Debug.Animation("[MusclePose] === End snapshot ===");
+        }
+
+        /// <summary>
+        /// Logs a one-time snapshot of the body-space basis axes derived from the hips bind pose,
+        /// the limb twist axes, and the swing axes passed into ApplyBindRelativeSwingTwistWorldAxes.
+        /// Expected values for a well-formed T-pose import:
+        ///   bodyRight   ≈ ( 1, 0,  0)
+        ///   bodyUp      ≈ ( 0, 1,  0)
+        ///   bodyForward ≈ ( 0, 0, -1)  (engine −Z = forward)
+        ///   armTwist    ≈ (±1, 0,  0)  (arm points sideways in T-pose)
+        ///   legTwist    ≈ ( 0,-1,  0)  (leg points downward)
+        /// </summary>
+        private void LogBodyBasisDiagnostic(
+            Vector3 bodyRight,
+            Vector3 bodyUp,
+            Vector3 bodyForward,
+            Vector3 armTwistAxisWorld,
+            Vector3 legTwistAxisWorld,
+            Vector3 sideAxisWorld,
+            Vector3 frontBackAxisWorld)
+        {
+            if (_limbBasisLogged) return;
+            _limbBasisLogged = true;
+
+            static string V(Vector3 v) => $"({v.X,6:F3},{v.Y,6:F3},{v.Z,6:F3})";
+
+            Debug.Animation("[BodyBasis] === One-time body-basis snapshot ===");
+            Debug.Animation($"[BodyBasis]  bodyRight        {V(bodyRight)}   expected ≈ ( 1, 0, 0)");
+            Debug.Animation($"[BodyBasis]  bodyUp           {V(bodyUp)}   expected ≈ ( 0, 1, 0)");
+            Debug.Animation($"[BodyBasis]  bodyForward      {V(bodyForward)}   expected ≈ ( 0, 0,-1)");
+            Debug.Animation($"[BodyBasis]  armTwistWorld    {V(armTwistAxisWorld)}   expected ≈ (±1, 0, 0)");
+            Debug.Animation($"[BodyBasis]  legTwistWorld    {V(legTwistAxisWorld)}   expected ≈ ( 0,-1, 0)");
+            Debug.Animation($"[BodyBasis]  sideAxis(left)   {V(sideAxisWorld)}   (Down-Up rotation axis for left limbs)");
+            Debug.Animation($"[BodyBasis]  frontBackAxis    {V(frontBackAxisWorld)}   (Front-Back rotation axis for limbs)");
+            Debug.Animation("[BodyBasis] === End body-basis snapshot ===");
         }
 
         private void LogBoneMappingDiagnostics()
@@ -1627,56 +1664,58 @@ namespace XREngine.Components.Animation
                 RightHandTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position));
         }
 
-        // ── Animation-driven IK goal gateways ──────────────────────────
-        // Called by the Unity animation importer's reflection tree instead of the
-        // direct Set*Position/Set*Rotation methods. These check the IK goal policy
-        // so that uncalibrated avatar-space targets don't produce broken IK solves.
-
-        private bool _ikGoalWarningLogged;
-
-        private bool ShouldApplyAnimatedIKGoal()
-        {
-            switch (Settings.IKGoalPolicy)
-            {
-                case EHumanoidIKGoalPolicy.AlwaysApply:
-                    return true;
-                case EHumanoidIKGoalPolicy.ApplyIfCalibrated:
-                    if (Settings.IsIKCalibrated)
-                        return true;
-                    if (!_ikGoalWarningLogged)
-                    {
-                        _ikGoalWarningLogged = true;
-                        Debug.Animation("[HumanoidComponent] IK goal channels present but avatar is not calibrated — skipping. " +
-                            "Set Settings.IsIKCalibrated = true or change IKGoalPolicy to AlwaysApply to enable.");
-                    }
-                    return false;
-                default: // Ignore
-                    return false;
-            }
-        }
+        // Legacy animation-driven IK gateways.
+        // New Unity humanoid imports target HumanoidIKSolverComponent directly, but
+        // these wrappers keep older imported clips functioning by forwarding to it.
 
         public void SetAnimatedFootPosition(Vector3 position, bool leftFoot)
         {
-            if (ShouldApplyAnimatedIKGoal())
-                SetFootPosition(position, leftFoot);
+            EnsureAnimationIKSolver()?.SetAnimatedIKPosition(
+                leftFoot ? ELimbEndEffector.LeftFoot : ELimbEndEffector.RightFoot,
+                position);
         }
 
         public void SetAnimatedFootRotation(Quaternion rotation, bool leftFoot)
         {
-            if (ShouldApplyAnimatedIKGoal())
-                SetFootRotation(rotation, leftFoot);
+            EnsureAnimationIKSolver()?.SetAnimatedIKRotation(
+                leftFoot ? ELimbEndEffector.LeftFoot : ELimbEndEffector.RightFoot,
+                rotation);
         }
 
         public void SetAnimatedHandPosition(Vector3 position, bool leftHand)
         {
-            if (ShouldApplyAnimatedIKGoal())
-                SetHandPosition(position, leftHand);
+            EnsureAnimationIKSolver()?.SetAnimatedIKPosition(
+                leftHand ? ELimbEndEffector.LeftHand : ELimbEndEffector.RightHand,
+                position);
         }
 
         public void SetAnimatedHandRotation(Quaternion rotation, bool leftHand)
         {
-            if (ShouldApplyAnimatedIKGoal())
-                SetHandRotation(rotation, leftHand);
+            EnsureAnimationIKSolver()?.SetAnimatedIKRotation(
+                leftHand ? ELimbEndEffector.LeftHand : ELimbEndEffector.RightHand,
+                rotation);
+        }
+
+        public HumanoidIKSolverComponent? EnsureAnimationIKSolver()
+        {
+            if (TryGetSiblingComponent<VRIKSolverComponent>(out var vrik) && vrik is not null)
+                return null;
+
+            var solver = GetSiblingComponent<HumanoidIKSolverComponent>(true);
+            if (solver is not null &&
+                (solver.GetIKPositionWeight(ELimbEndEffector.LeftHand) < 0.999f ||
+                 solver.GetIKRotationWeight(ELimbEndEffector.LeftHand) < 0.999f ||
+                 solver.GetIKPositionWeight(ELimbEndEffector.RightHand) < 0.999f ||
+                 solver.GetIKRotationWeight(ELimbEndEffector.RightHand) < 0.999f ||
+                 solver.GetIKPositionWeight(ELimbEndEffector.LeftFoot) < 0.999f ||
+                 solver.GetIKRotationWeight(ELimbEndEffector.LeftFoot) < 0.999f ||
+                 solver.GetIKPositionWeight(ELimbEndEffector.RightFoot) < 0.999f ||
+                 solver.GetIKRotationWeight(ELimbEndEffector.RightFoot) < 0.999f))
+            {
+                solver.ConfigureForAnimationDrivenGoals();
+            }
+
+            return solver;
         }
 
         /// <summary>
@@ -1698,6 +1737,10 @@ namespace XREngine.Components.Animation
             tfm.Translation = tfm.BindState.Translation + position;
         }
 
+        private Quaternion? _rootRotationBaseline;
+        private bool _rootRotationBaselineLogged;
+        private Quaternion _currentBodyRotation = Quaternion.Identity;
+
         /// <summary>
         /// Applies root motion rotation as a bind-relative rotation on the Hips bone.
         /// In Unity humanoid clips, RootQ represents the body center (hips) orientation.
@@ -1708,7 +1751,28 @@ namespace XREngine.Components.Animation
             if (hipsNode is null)
                 return;
 
-            hipsNode.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(rotation);
+            Quaternion raw = Quaternion.Normalize(rotation);
+            if (!_rootRotationBaseline.HasValue)
+            {
+                _rootRotationBaseline = raw;
+                if (!_rootRotationBaselineLogged)
+                {
+                    _rootRotationBaselineLogged = true;
+                    Debug.Animation($"[RootMotion] Captured RootQ baseline raw=({raw.X:F4},{raw.Y:F4},{raw.Z:F4},{raw.W:F4})");
+                }
+            }
+
+            Quaternion baseline = _rootRotationBaseline.Value;
+            Quaternion effective = Quaternion.Normalize(Quaternion.Inverse(baseline) * raw);
+            _currentBodyRotation = effective;
+
+            if (_rootRotationBaselineLogged)
+            {
+                Debug.Animation($"[RootMotion] Applying RootQ raw=({raw.X:F4},{raw.Y:F4},{raw.Z:F4},{raw.W:F4}) effective=({effective.X:F4},{effective.Y:F4},{effective.Z:F4},{effective.W:F4})");
+                _rootRotationBaselineLogged = false;
+            }
+
+            hipsNode.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(effective);
         }
 
         private static Func<SceneNode, bool> ByNameContainsAny(params string[] names)
@@ -1776,6 +1840,7 @@ namespace XREngine.Components.Animation
         /// </summary>
         public void ResetPose()
         {
+            ResetRuntimeAnimationDiagnostics();
             Head.ResetPose();
             Jaw.ResetPose();
             Neck.ResetPose();
@@ -1786,6 +1851,15 @@ namespace XREngine.Components.Animation
 
             Left.ResetPose();
             Right.ResetPose();
+        }
+
+        private void ResetRuntimeAnimationDiagnostics()
+        {
+            _rootRotationBaseline = null;
+            _rootRotationBaselineLogged = false;
+            _currentBodyRotation = Quaternion.Identity;
+            _leftKneeClampLogged = false;
+            _rightKneeClampLogged = false;
         }
 
         /// <summary>

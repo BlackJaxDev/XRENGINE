@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Numerics;
 using Unity;
 using XREngine.Animation;
+using XREngine.Animation.IK;
 using XREngine.Components.Animation;
 using YamlDotNet.RepresentationModel;
 
@@ -575,51 +576,43 @@ namespace XREngine.Animation.Importers
             }
 
             /// <summary>
-            /// Routes IK goal curves (LeftFootT/Q, RightHandT/Q, etc.) to
-            /// HumanoidComponent.SetFootPositionAndRotation / SetHandPositionAndRotation.
-            /// Each scalar component (x/y/z for position, x/y/z/w for rotation) is driven individually
-            /// via Set*Position[X/Y/Z] and Set*Rotation.
+            /// Routes IK goal curves (LeftFootT/Q, RightHandT/Q, etc.) to the dedicated
+            /// HumanoidIKSolverComponent instead of the legacy in-HumanoidComponent IK path.
             /// </summary>
             public void AddIKGoalAnimation(string goalName, PropAnimVector3? posAnim, PropAnimQuaternion? rotAnim)
             {
-                var getComp = GetOrAddMethod(_sceneNode, "GetComponentInHierarchy", ["HumanoidComponent"], animatedArgIndex: -1, cacheReturnValue: true);
+                var getComp = GetOrAddMethod(_sceneNode, "GetComponentInHierarchy", ["HumanoidIKSolverComponent"], animatedArgIndex: -1, cacheReturnValue: true);
 
-                // Determine which limb and the boolean "isLeft" parameter.
-                bool isLeft;
-                bool isFoot;
+                ELimbEndEffector goal;
                 switch (goalName)
                 {
-                    case "LeftFoot":  isLeft = true;  isFoot = true;  break;
-                    case "RightFoot": isLeft = false; isFoot = true;  break;
-                    case "LeftHand":  isLeft = true;  isFoot = false; break;
-                    case "RightHand": isLeft = false; isFoot = false; break;
+                    case "LeftFoot": goal = ELimbEndEffector.LeftFoot; break;
+                    case "RightFoot": goal = ELimbEndEffector.RightFoot; break;
+                    case "LeftHand": goal = ELimbEndEffector.LeftHand; break;
+                    case "RightHand": goal = ELimbEndEffector.RightHand; break;
                     default: return; // Unknown goal, skip.
                 }
 
-                string methodName = isFoot ? "SetFootPositionAndRotation" : "SetHandPositionAndRotation";
-
-                // Route through the animated-IK gateway methods so HumanoidComponent can
-                // gate application via IKGoalPolicy (e.g. skip when uncalibrated).
                 if (posAnim is not null && rotAnim is not null)
                 {
-                    var posMethod = GetOrAddMethod(getComp, isFoot ? "SetAnimatedFootPosition" : "SetAnimatedHandPosition",
-                        [Vector3.Zero, isLeft], animatedArgIndex: 0, cacheReturnValue: false);
+                    var posMethod = GetOrAddMethod(getComp, "SetAnimatedIKPosition",
+                        [goal, Vector3.Zero], animatedArgIndex: 1, cacheReturnValue: false);
                     posMethod.Animation = posAnim;
 
-                    var rotMethod = GetOrAddMethod(getComp, isFoot ? "SetAnimatedFootRotation" : "SetAnimatedHandRotation",
-                        [Quaternion.Identity, isLeft], animatedArgIndex: 0, cacheReturnValue: false);
+                    var rotMethod = GetOrAddMethod(getComp, "SetAnimatedIKRotation",
+                        [goal, Quaternion.Identity], animatedArgIndex: 1, cacheReturnValue: false);
                     rotMethod.Animation = rotAnim;
                 }
                 else if (posAnim is not null)
                 {
-                    var posMethod = GetOrAddMethod(getComp, isFoot ? "SetAnimatedFootPosition" : "SetAnimatedHandPosition",
-                        [Vector3.Zero, isLeft], animatedArgIndex: 0, cacheReturnValue: false);
+                    var posMethod = GetOrAddMethod(getComp, "SetAnimatedIKPosition",
+                        [goal, Vector3.Zero], animatedArgIndex: 1, cacheReturnValue: false);
                     posMethod.Animation = posAnim;
                 }
                 else if (rotAnim is not null)
                 {
-                    var rotMethod = GetOrAddMethod(getComp, isFoot ? "SetAnimatedFootRotation" : "SetAnimatedHandRotation",
-                        [Quaternion.Identity, isLeft], animatedArgIndex: 0, cacheReturnValue: false);
+                    var rotMethod = GetOrAddMethod(getComp, "SetAnimatedIKRotation",
+                        [goal, Quaternion.Identity], animatedArgIndex: 1, cacheReturnValue: false);
                     rotMethod.Animation = rotAnim;
                 }
             }

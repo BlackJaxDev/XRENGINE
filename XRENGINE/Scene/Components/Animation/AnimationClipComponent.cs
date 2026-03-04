@@ -88,17 +88,21 @@ namespace XREngine.Components.Animation
                 animator.SetSuspendedByClip(true);
             }
 
+            EnsureHumanoidAnimationIKSolver();
             EnsureInitialized();
 
             // Bind members to this component/SceneNode via the anim state machine.
             // Start the underlying property animations so Tick() advances them.
             StartAllPropertyAnimations(Animation);
+            ApplyAnimatedValues();
 
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
         }
 
         private void Stop()
         {
+            ClearHumanoidAnimationIKSolverGoals();
+
             if (Animation is not null)
                 StopAllPropertyAnimations(Animation);
 
@@ -136,6 +140,32 @@ namespace XREngine.Components.Animation
             _animatedMembers.Clear();
             InitializeMembers(Animation.RootMember, this, _animatedMembers);
             _initialized = true;
+        }
+
+        private HumanoidIKSolverComponent? EnsureHumanoidAnimationIKSolver()
+        {
+            if (Animation?.HasIKGoals != true)
+                return null;
+
+            var humanoid = SceneNode.GetComponentInHierarchy("HumanoidComponent") as HumanoidComponent;
+            if (humanoid is null)
+                return null;
+
+            if (humanoid.SceneNode.GetComponent<VRIKSolverComponent>() is not null)
+                return null;
+
+            var solver = humanoid.SceneNode.GetOrAddComponent<HumanoidIKSolverComponent>(out _);
+            solver?.ConfigureForAnimationDrivenGoals();
+            return solver;
+        }
+
+        private void ClearHumanoidAnimationIKSolverGoals()
+        {
+            if (Animation?.HasIKGoals != true)
+                return;
+
+            var solver = SceneNode.GetComponentInHierarchy("HumanoidIKSolverComponent") as HumanoidIKSolverComponent;
+            solver?.ClearAnimatedIKGoals();
         }
 
         private void Deinitialize()

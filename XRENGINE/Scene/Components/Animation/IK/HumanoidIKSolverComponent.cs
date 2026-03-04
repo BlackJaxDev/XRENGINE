@@ -1,6 +1,8 @@
 ﻿using System.Numerics;
 using XREngine.Animation.IK;
 using XREngine.Core.Attributes;
+using XREngine.Data.Colors;
+using XREngine.Scene;
 using Transform = XREngine.Scene.Transforms.Transform;
 
 namespace XREngine.Components.Animation
@@ -8,6 +10,7 @@ namespace XREngine.Components.Animation
     [RequireComponents(typeof(HumanoidComponent))]
     public class HumanoidIKSolverComponent : BaseIKSolverComponent
     {
+        private const float FullGoalWeight = 1.0f;
         public HumanoidComponent Humanoid => GetSiblingComponent<HumanoidComponent>(true)!;
 
         public IKSolverLimb _leftFoot = new(ELimbEndEffector.LeftFoot) { _bendModifier = ELimbBendModifier.Target };
@@ -18,17 +21,34 @@ namespace XREngine.Components.Animation
         //public IKSolverLookAt lookAt = new IKSolverLookAt();
         //public IKSolverAim aim = new IKSolverAim();
         public TransformConstrainer _hips = new();
+        private SceneNode? _animatedGoalRootNode;
+        private Transform? _animatedLeftFootTarget;
+        private Transform? _animatedRightFootTarget;
+        private Transform? _animatedLeftHandTarget;
+        private Transform? _animatedRightHandTarget;
+        private Vector3 _animatedLeftFootLocalPosition;
+        private Vector3 _animatedRightFootLocalPosition;
+        private Vector3 _animatedLeftHandLocalPosition;
+        private Vector3 _animatedRightHandLocalPosition;
+        private Quaternion _animatedLeftFootLocalRotation = Quaternion.Identity;
+        private Quaternion _animatedRightFootLocalRotation = Quaternion.Identity;
+        private Quaternion _animatedLeftHandLocalRotation = Quaternion.Identity;
+        private Quaternion _animatedRightHandLocalRotation = Quaternion.Identity;
+        private bool _ikGoalWarningLogged;
 
         public override void Visualize()
         {
-            //_hips.Visualize();
-            //_leftFoot.Visualize();
-            //_rightFoot.Visualize();
-            //_leftHand.Visualize();
-            //_rightHand.Visualize();
-            //_spine.Visualize();
-            //lookAt.Visualize();
-            //aim.Visualize();
+            for (int i = 0; i < Limbs.Length; i++)
+            {
+                var limb = Limbs[i];
+                var target = limb.TargetIKTransform;
+                if (target is null)
+                    continue;
+
+                Engine.Rendering.Debug.RenderPoint(target.WorldTranslation, ColorF4.Green);
+                if (limb._bone3._transform is not null)
+                    Engine.Rendering.Debug.RenderLine(limb._bone3._transform.WorldTranslation, target.WorldTranslation, ColorF4.Green);
+            }
         }
 
         private IKSolverLimb[]? _limbs;
@@ -201,6 +221,47 @@ namespace XREngine.Components.Animation
         public void SetSpineWeight(float weight)
             => _spine.IKPositionWeight = weight;
 
+        public void ConfigureForAnimationDrivenGoals()
+        {
+            SetToDefaults();
+
+            SetIKPositionWeight(ELimbEndEffector.LeftHand, FullGoalWeight);
+            SetIKRotationWeight(ELimbEndEffector.LeftHand, FullGoalWeight);
+            SetIKPositionWeight(ELimbEndEffector.RightHand, FullGoalWeight);
+            SetIKRotationWeight(ELimbEndEffector.RightHand, FullGoalWeight);
+            SetIKPositionWeight(ELimbEndEffector.LeftFoot, FullGoalWeight);
+            SetIKRotationWeight(ELimbEndEffector.LeftFoot, FullGoalWeight);
+            SetIKPositionWeight(ELimbEndEffector.RightFoot, FullGoalWeight);
+            SetIKRotationWeight(ELimbEndEffector.RightFoot, FullGoalWeight);
+            SetSpineWeight(0.0f);
+        }
+
+        public void ClearAnimatedIKGoals()
+        {
+            ClearAnimatedIKGoal(ELimbEndEffector.LeftFoot);
+            ClearAnimatedIKGoal(ELimbEndEffector.RightFoot);
+            ClearAnimatedIKGoal(ELimbEndEffector.LeftHand);
+            ClearAnimatedIKGoal(ELimbEndEffector.RightHand);
+        }
+
+        public void SetAnimatedIKPosition(ELimbEndEffector goal, Vector3 position)
+        {
+            if (!ShouldApplyAnimatedIKGoal())
+                return;
+
+            SetAnimatedGoalLocalPosition(goal, position);
+            UpdateAnimatedIKGoal(goal);
+        }
+
+        public void SetAnimatedIKRotation(ELimbEndEffector goal, Quaternion rotation)
+        {
+            if (!ShouldApplyAnimatedIKGoal())
+                return;
+
+            SetAnimatedGoalLocalRotation(goal, rotation);
+            UpdateAnimatedIKGoal(goal);
+        }
+
         public IKSolverLimb? GetGoalIK(ELimbEndEffector goal) => goal switch
         {
             ELimbEndEffector.LeftFoot => _leftFoot,
@@ -281,6 +342,198 @@ namespace XREngine.Components.Animation
 
             for (int i = 0; i < Limbs.Length; i++)
                 Limbs[i].Update();
+        }
+
+        private bool ShouldApplyAnimatedIKGoal()
+        {
+            switch (Humanoid.Settings.IKGoalPolicy)
+            {
+                case EHumanoidIKGoalPolicy.AlwaysApply:
+                    return true;
+                case EHumanoidIKGoalPolicy.ApplyIfCalibrated:
+                    if (Humanoid.Settings.IsIKCalibrated)
+                        return true;
+
+                    if (!_ikGoalWarningLogged)
+                    {
+                        _ikGoalWarningLogged = true;
+                        Debug.Animation("[HumanoidIKSolverComponent] IK goal channels present but avatar is not calibrated; skipping animation-driven IK goals.");
+                    }
+                    return false;
+                default:
+                    return false;
+            }
+        }
+
+        private void ClearAnimatedIKGoal(ELimbEndEffector goal)
+        {
+            var ik = GetGoalIK(goal);
+            if (ik is null)
+                return;
+
+            var target = GetAnimatedGoalTransform(goal);
+            if (ReferenceEquals(ik.TargetIKTransform, target))
+                ik.TargetIKTransform = null;
+
+            ik.RawIKPosition = Vector3.Zero;
+            ik.RawIKRotation = Quaternion.Identity;
+            ik.IKPositionWeight = 0.0f;
+            ik.IKRotationWeight = 0.0f;
+
+            SetAnimatedGoalLocalPosition(goal, Vector3.Zero);
+            SetAnimatedGoalLocalRotation(goal, Quaternion.Identity);
+        }
+
+        private void UpdateAnimatedIKGoal(ELimbEndEffector goal)
+        {
+            var ik = GetGoalIK(goal);
+            if (ik is null)
+                return;
+
+            var target = EnsureAnimatedGoalTransform(goal);
+            ik.TargetIKTransform = target;
+
+            float scale = EstimateAnimatedGoalScale();
+            Vector3 localPosition = GetAnimatedGoalLocalPosition(goal) * scale;
+            Quaternion localRotation = GetAnimatedGoalLocalRotation(goal);
+            Matrix4x4 bodyMatrix = GetAnimatedGoalBodyMatrix();
+            Quaternion bodyRotation = GetAnimatedGoalBodyRotation();
+
+            target.SetWorldTranslation(Vector3.Transform(localPosition, bodyMatrix));
+            target.SetWorldRotation(Quaternion.Normalize(bodyRotation * localRotation));
+        }
+
+        private Matrix4x4 GetAnimatedGoalBodyMatrix()
+            => Humanoid.Hips.Node?.GetTransformAs<Transform>(true)?.WorldMatrix ?? Transform.WorldMatrix;
+
+        private Quaternion GetAnimatedGoalBodyRotation()
+            => Humanoid.Hips.Node?.GetTransformAs<Transform>(true)?.WorldRotation ?? Transform.WorldRotation;
+
+        private float EstimateAnimatedGoalScale()
+        {
+            Vector3 hips = Humanoid.Hips.WorldBindPose.Translation;
+            float total = 0.0f;
+            int count = 0;
+
+            if (Humanoid.Left.Foot.Node is not null)
+            {
+                float left = Vector3.Distance(hips, Humanoid.Left.Foot.WorldBindPose.Translation);
+                if (left > 0.0001f)
+                {
+                    total += left;
+                    count++;
+                }
+            }
+
+            if (Humanoid.Right.Foot.Node is not null)
+            {
+                float right = Vector3.Distance(hips, Humanoid.Right.Foot.WorldBindPose.Translation);
+                if (right > 0.0001f)
+                {
+                    total += right;
+                    count++;
+                }
+            }
+
+            if (count > 0)
+                return total / count;
+
+            float fallback = Transform.LossyWorldScale.Y;
+            return fallback > 0.0001f ? fallback : 1.0f;
+        }
+
+        private Transform EnsureAnimatedGoalTransform(ELimbEndEffector goal)
+        {
+            var target = GetAnimatedGoalTransform(goal);
+            if (target is not null)
+                return target;
+
+            _animatedGoalRootNode ??= SceneNode.NewChild("AnimatedIKTargets");
+            var targetNode = _animatedGoalRootNode.NewChild($"{goal}Target");
+            target = targetNode.GetTransformAs<Transform>(true)!;
+
+            switch (goal)
+            {
+                case ELimbEndEffector.LeftFoot:
+                    _animatedLeftFootTarget = target;
+                    break;
+                case ELimbEndEffector.RightFoot:
+                    _animatedRightFootTarget = target;
+                    break;
+                case ELimbEndEffector.LeftHand:
+                    _animatedLeftHandTarget = target;
+                    break;
+                case ELimbEndEffector.RightHand:
+                    _animatedRightHandTarget = target;
+                    break;
+            }
+
+            return target;
+        }
+
+        private Transform? GetAnimatedGoalTransform(ELimbEndEffector goal) => goal switch
+        {
+            ELimbEndEffector.LeftFoot => _animatedLeftFootTarget,
+            ELimbEndEffector.RightFoot => _animatedRightFootTarget,
+            ELimbEndEffector.LeftHand => _animatedLeftHandTarget,
+            ELimbEndEffector.RightHand => _animatedRightHandTarget,
+            _ => null,
+        };
+
+        private Vector3 GetAnimatedGoalLocalPosition(ELimbEndEffector goal) => goal switch
+        {
+            ELimbEndEffector.LeftFoot => _animatedLeftFootLocalPosition,
+            ELimbEndEffector.RightFoot => _animatedRightFootLocalPosition,
+            ELimbEndEffector.LeftHand => _animatedLeftHandLocalPosition,
+            ELimbEndEffector.RightHand => _animatedRightHandLocalPosition,
+            _ => Vector3.Zero,
+        };
+
+        private Quaternion GetAnimatedGoalLocalRotation(ELimbEndEffector goal) => goal switch
+        {
+            ELimbEndEffector.LeftFoot => _animatedLeftFootLocalRotation,
+            ELimbEndEffector.RightFoot => _animatedRightFootLocalRotation,
+            ELimbEndEffector.LeftHand => _animatedLeftHandLocalRotation,
+            ELimbEndEffector.RightHand => _animatedRightHandLocalRotation,
+            _ => Quaternion.Identity,
+        };
+
+        private void SetAnimatedGoalLocalPosition(ELimbEndEffector goal, Vector3 position)
+        {
+            switch (goal)
+            {
+                case ELimbEndEffector.LeftFoot:
+                    _animatedLeftFootLocalPosition = position;
+                    break;
+                case ELimbEndEffector.RightFoot:
+                    _animatedRightFootLocalPosition = position;
+                    break;
+                case ELimbEndEffector.LeftHand:
+                    _animatedLeftHandLocalPosition = position;
+                    break;
+                case ELimbEndEffector.RightHand:
+                    _animatedRightHandLocalPosition = position;
+                    break;
+            }
+        }
+
+        private void SetAnimatedGoalLocalRotation(ELimbEndEffector goal, Quaternion rotation)
+        {
+            switch (goal)
+            {
+                case ELimbEndEffector.LeftFoot:
+                    _animatedLeftFootLocalRotation = rotation;
+                    break;
+                case ELimbEndEffector.RightFoot:
+                    _animatedRightFootLocalRotation = rotation;
+                    break;
+                case ELimbEndEffector.LeftHand:
+                    _animatedLeftHandLocalRotation = rotation;
+                    break;
+                case ELimbEndEffector.RightHand:
+                    _animatedRightHandLocalRotation = rotation;
+                    break;
+            }
         }
     }
 }
