@@ -913,7 +913,7 @@ namespace XREngine
             _assimp.SetConfig(new BooleanPropertyConfig(AiConfigs.AI_CONFIG_GLOB_MULTITHREADING, multiThread));
             _assimp.Scale = scaleConversion;
             _assimp.XAxisRotation = -rotate;
-            _assimp.ZAxisRotation = 180.0f;
+            //_assimp.ZAxisRotation = 180.0f;
         }
 
         private void ProcessMeshesOnJobThread(Action<float>? reportProgress, CancellationToken cancellationToken)
