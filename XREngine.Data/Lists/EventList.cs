@@ -252,9 +252,16 @@ namespace System.Collections.Generic
 
         public bool Contains(T item)
         {
+            ReaderWriterLockSlim? listLock = _lock;
+            bool lockTaken = false;
             try
             {
-                _lock?.EnterReadLock();
+                if (listLock is not null)
+                {
+                    listLock.EnterReadLock();
+                    lockTaken = true;
+                }
+
                 return _list.Contains(item);
             }
             catch (Exception ex)
@@ -264,7 +271,8 @@ namespace System.Collections.Generic
             }
             finally
             {
-                _lock?.ExitReadLock();
+                if (lockTaken)
+                    listLock!.ExitReadLock();
             }
         }
         public void AddRange(IEnumerable<T> collection) => AddRange(collection, true, true);

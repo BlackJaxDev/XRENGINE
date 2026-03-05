@@ -88,6 +88,9 @@ namespace XREngine.Rendering.OpenGL
 
         private ImGuiController? _imguiController;
         private OpenGLImGuiBackend? _imguiBackend;
+        private int _imguiFontValidationCountdown;
+
+        private const int ImGuiFontValidationIntervalFrames = 120;
 
         protected override bool SupportsImGui => true;
 
@@ -138,7 +141,48 @@ namespace XREngine.Rendering.OpenGL
             if (controller is null)
                 return null;
 
+            EnsureImGuiFontAtlasValid(controller);
+
             return _imguiBackend ??= new OpenGLImGuiBackend(controller);
+        }
+
+        public void ForceRebuildImGuiFontAtlas()
+        {
+            var controller = GetImGuiController();
+            if (controller is null)
+                return;
+
+            _imguiFontValidationCountdown = 0;
+            ImGuiControllerUtilities.TryUseDefaultEditorFont(controller, 18.0f, forceReload: true);
+        }
+
+        private void EnsureImGuiFontAtlasValid(ImGuiController controller)
+        {
+            if (_imguiFontValidationCountdown > 0)
+            {
+                _imguiFontValidationCountdown--;
+                return;
+            }
+
+            _imguiFontValidationCountdown = ImGuiFontValidationIntervalFrames;
+
+            try
+            {
+                controller.MakeCurrent();
+                var io = ImGui.GetIO();
+                nint texIdPtr = io.Fonts.TexID;
+                uint texId = (uint)(nuint)texIdPtr;
+
+                if (texId != 0 && Api.IsTexture(texId))
+                    return;
+
+                Debug.LogWarning($"ImGui font atlas texture became invalid (texId={texId}); rebuilding font device texture.");
+                ImGuiControllerUtilities.TryUseDefaultEditorFont(controller, 18.0f, forceReload: true);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed validating/rebuilding ImGui font atlas texture: {ex.Message}");
+            }
         }
 
         protected override IImGuiRendererBackend? GetImGuiBackend(XRViewport? viewport)
@@ -507,11 +551,13 @@ namespace XREngine.Rendering.OpenGL
             if (_imguiController is { } controller)
             {
                 ImGuiControllerUtilities.DetachInputHandlers(controller);
+                ImGuiControllerUtilities.MarkContextDestroyed(controller.Context);
                 ImGuiContextTracker.Unregister(controller.Context);
                 controller.Dispose();
             }
             _imguiController = null;
             _imguiBackend = null;
+            _imguiFontValidationCountdown = 0;
             ResetImGuiFrameMarker();
 
             // Clean up cached luminance front resources

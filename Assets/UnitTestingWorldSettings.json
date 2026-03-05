@@ -105,7 +105,7 @@
   "IKTest": false,
   "TestAnimation": false,
 
-  "AddCharacterIK": false,
+  "AddCharacterIK": true,
   "CreateUnitBox": false,
   "StartInPlayModeWithoutTransitions": false
 }

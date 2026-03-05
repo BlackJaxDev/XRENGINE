@@ -43,6 +43,8 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         DrawBoneMappingSection(humanoid);
         ImGui.SeparatorText("Per-Muscle Settings");
         DrawPerMuscleSettingsSection(humanoid);
+        ImGui.SeparatorText("Muscle Debug Overrides");
+        DrawMuscleDebugSection(humanoid);
         ImGui.SeparatorText("Muscle Values");
         DrawMuscleValuesSection(humanoid);
 
@@ -660,6 +662,67 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         uint border = ImGui.ColorConvertFloat4ToU32(baseColor);
         drawList.AddRectFilled(min, max, fill, 4.0f);
         drawList.AddRect(min, max, border, 4.0f, ImDrawFlags.None, 1.5f);
+    }
+
+    private static void DrawMuscleDebugSection(HumanoidComponent humanoid)
+    {
+        ImGui.TextDisabled("Per-group sign overrides for rapid axis debugging. Changes are immediate, not serialized.");
+
+        if (ImGui.Button("Reset All Overrides"))
+        {
+            humanoid.DebugShoulderSigns = HumanoidComponent.LimbSignOverrides.Default;
+            humanoid.DebugArmSigns = HumanoidComponent.LimbSignOverrides.Default;
+            humanoid.DebugForearmSigns = HumanoidComponent.LimbSignOverrides.Default;
+            humanoid.DebugWristSigns = HumanoidComponent.LimbSignOverrides.Default;
+            humanoid.DebugUpperLegSigns = HumanoidComponent.LimbSignOverrides.Default;
+            humanoid.DebugKneeSigns = HumanoidComponent.LimbSignOverrides.Default;
+            humanoid.DebugFootSigns = HumanoidComponent.LimbSignOverrides.Default;
+            humanoid.DebugToesSigns = HumanoidComponent.LimbSignOverrides.Default;
+        }
+
+        DrawLimbOverrideGroup("Shoulder", ref humanoid.DebugShoulderSigns);
+        DrawLimbOverrideGroup("Arm (upper)", ref humanoid.DebugArmSigns);
+        DrawLimbOverrideGroup("Forearm", ref humanoid.DebugForearmSigns);
+        DrawLimbOverrideGroup("Wrist", ref humanoid.DebugWristSigns);
+        DrawLimbOverrideGroup("Upper Leg", ref humanoid.DebugUpperLegSigns);
+        DrawLimbOverrideGroup("Knee", ref humanoid.DebugKneeSigns);
+        DrawLimbOverrideGroup("Foot", ref humanoid.DebugFootSigns);
+        DrawLimbOverrideGroup("Toes", ref humanoid.DebugToesSigns);
+    }
+
+    private static void DrawLimbOverrideGroup(string label, ref HumanoidComponent.LimbSignOverrides overrides)
+    {
+        if (!ImGui.TreeNodeEx(label, ImGuiTreeNodeFlags.None))
+            return;
+
+        ImGui.PushID(label);
+
+        // Sign flip buttons: click to toggle between +1 and -1
+        DrawSignFlipButton("Yaw (twist)", ref overrides.YawSign);
+        ImGui.SameLine();
+        DrawSignFlipButton("Pitch (F/B)", ref overrides.PitchSign);
+        ImGui.SameLine();
+        DrawSignFlipButton("Roll (L/R)", ref overrides.RollSign);
+
+        ImGui.Checkbox("Skip blanket negate", ref overrides.SkipBlanketNegate);
+        ImGui.SameLine();
+        ImGui.Checkbox("Swap pitch/roll axes", ref overrides.SwapPitchRollAxes);
+
+        ImGui.PopID();
+        ImGui.TreePop();
+    }
+
+    private static void DrawSignFlipButton(string label, ref float sign)
+    {
+        string text = sign >= 0.0f ? $"+1 {label}" : $"-1 {label}";
+        if (sign < 0.0f)
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.7f, 0.3f, 0.3f, 1.0f));
+
+        if (ImGui.SmallButton(text))
+            sign = -sign;
+
+        if (sign < 0.0f)
+            ImGui.PopStyleColor();
     }
 
     private static void RunSceneEdit(Action edit)

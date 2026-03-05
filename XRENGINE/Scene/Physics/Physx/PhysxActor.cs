@@ -1,5 +1,6 @@
 ﻿using MagicPhysX;
 using System.Collections.Concurrent;
+using System.Threading;
 using XREngine.Data.Geometry;
 using XREngine.Scene;
 
@@ -179,6 +180,8 @@ namespace XREngine.Rendering.Physics.Physx
         public PxActorType ActorType => NativeMethods.PxActor_getType(ActorPtr);
 
         private bool _isReleased = false;
+        private int _releaseRequested;
+        private int _nativeReleaseCompleted;
         public bool IsReleased
         {
             get => _isReleased;
@@ -194,12 +197,33 @@ namespace XREngine.Rendering.Physics.Physx
 
         public virtual void Release()
         {
-            if (IsReleased)
+            if (Interlocked.Exchange(ref _releaseRequested, 1) != 0)
                 return;
+
             IsReleased = true;
+            GC.SuppressFinalize(this);
             RemoveFromCaches();
-            PhysxObjectLog.Released(this, (nint)ActorPtr);
-            ActorPtr->ReleaseMut();
+
+            if (!Engine.IsPhysicsThread && !Engine.ShuttingDown)
+            {
+                Engine.EnqueuePhysicsThreadTask(ReleaseNativeNow);
+                return;
+            }
+
+            ReleaseNativeNow();
+        }
+
+        private void ReleaseNativeNow()
+        {
+            if (Interlocked.Exchange(ref _nativeReleaseCompleted, 1) != 0)
+                return;
+
+            var actorPtr = ActorPtr;
+            if (actorPtr is null)
+                return;
+
+            PhysxObjectLog.Released(this, (nint)actorPtr);
+            actorPtr->ReleaseMut();
         }
 
         public void Destroy(bool wakeOnLostTouch = false)

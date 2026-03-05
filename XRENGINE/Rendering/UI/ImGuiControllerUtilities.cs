@@ -59,7 +59,7 @@ internal static class ImGuiControllerUtilities
     /// Load the editor default font (Roboto with Lato fallback) and optionally merge
     /// a Windows symbol font for broad Unicode coverage. Call once per ImGui context.
     /// </summary>
-    public static unsafe bool TryUseDefaultEditorFont(ImGuiController controller, float sizePixels = 18.0f)
+    public static unsafe bool TryUseDefaultEditorFont(ImGuiController controller, float sizePixels = 18.0f, bool forceReload = false)
     {
         if (controller is null)
             return false;
@@ -72,8 +72,14 @@ internal static class ImGuiControllerUtilities
             if (context == 0)
                 return false;
 
-            if (_fontLoadedContexts.Contains(context))
-                return true;
+            lock (_fontLoadedContexts)
+            {
+                if (forceReload)
+                    _fontLoadedContexts.Remove(context);
+
+                if (_fontLoadedContexts.Contains(context))
+                    return true;
+            }
 
             var io = ImGui.GetIO();
 
@@ -82,7 +88,8 @@ internal static class ImGuiControllerUtilities
 
             TryRecreateFontDeviceTexture(controller);
 
-            _fontLoadedContexts.Add(context);
+            lock (_fontLoadedContexts)
+                _fontLoadedContexts.Add(context);
             Debug.Out($"ImGui font: {Path.GetFileName(loadedFontPath)} loaded @ {sizePixels:0.#}px");
             return true;
         }
@@ -107,6 +114,15 @@ internal static class ImGuiControllerUtilities
     [Obsolete("Use TryUseDefaultEditorFont instead.")]
     public static unsafe bool TryUseLatoAsDefaultFont(ImGuiIOPtr io, float sizePixels = 18.0f)
         => TryUseDefaultEditorFont(io, sizePixels);
+
+    public static void MarkContextDestroyed(nint context)
+    {
+        if (context == 0)
+            return;
+
+        lock (_fontLoadedContexts)
+            _fontLoadedContexts.Remove(context);
+    }
 
     private static unsafe bool TryLoadEditorFont(ImGuiIOPtr io, float sizePixels, out string? loadedFontPath)
     {

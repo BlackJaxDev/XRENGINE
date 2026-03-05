@@ -450,14 +450,29 @@ namespace XREngine.Components.Animation
 
         private Transform EnsureAnimatedGoalTransform(ELimbEndEffector goal)
         {
+            // First check the cached animated target
             var target = GetAnimatedGoalTransform(goal);
             if (target is not null)
                 return target;
 
+            // Reuse an existing TargetIKTransform if one was already assigned
+            // (e.g. by external setup like AddCharacterIK) instead of creating a duplicate.
+            var ik = GetGoalIK(goal);
+            if (ik?.TargetIKTransform is Transform existingTarget)
+            {
+                SetAnimatedGoalTransform(goal, existingTarget);
+                return existingTarget;
+            }
+
             _animatedGoalRootNode ??= SceneNode.NewChild("AnimatedIKTargets");
             var targetNode = _animatedGoalRootNode.NewChild($"{goal}Target");
             target = targetNode.GetTransformAs<Transform>(true)!;
+            SetAnimatedGoalTransform(goal, target);
+            return target;
+        }
 
+        private void SetAnimatedGoalTransform(ELimbEndEffector goal, Transform target)
+        {
             switch (goal)
             {
                 case ELimbEndEffector.LeftFoot:
@@ -473,8 +488,6 @@ namespace XREngine.Components.Animation
                     _animatedRightHandTarget = target;
                     break;
             }
-
-            return target;
         }
 
         private Transform? GetAnimatedGoalTransform(ELimbEndEffector goal) => goal switch

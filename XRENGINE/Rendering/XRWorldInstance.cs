@@ -529,14 +529,18 @@ namespace XREngine.Rendering
         {
             VisualScene.GenericRenderTree.Swap();
 
+            // Snapshot root nodes — OnBeginPlay / OnActivated callbacks may add or remove
+            // root nodes during iteration (e.g. spawning runtime-only nodes).
+            SceneNode[] roots = [.. RootNodes];
+
             //Recalculate all transforms before activating nodes, in case any cross-dependencies exist
-            foreach (SceneNode node in RootNodes)
+            foreach (SceneNode node in roots)
                 await node.Transform.RecalculateMatrixHierarchy(true, true, Engine.Rendering.Settings.RecalcChildMatricesLoopType);
 
-            foreach (SceneNode node in RootNodes)
+            foreach (SceneNode node in roots)
                 node.OnBeginPlay();
 
-            foreach (SceneNode node in RootNodes)
+            foreach (SceneNode node in roots)
                 if (node.IsActiveSelf)
                     node.OnActivated();
         }
@@ -569,10 +573,13 @@ namespace XREngine.Rendering
         {
             VisualScene.GenericRenderTree.Swap();
 
-            foreach (SceneNode node in RootNodes)
+            // Snapshot — OnEndPlay / OnDeactivated may mutate root nodes.
+            SceneNode[] roots = [.. RootNodes];
+
+            foreach (SceneNode node in roots)
                 node.OnEndPlay();
 
-            foreach (SceneNode node in RootNodes)
+            foreach (SceneNode node in roots)
                 if (node.IsActiveSelf)
                     node.OnDeactivated();
         }

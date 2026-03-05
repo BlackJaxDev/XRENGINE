@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using XREngine;
 using XREngine.Core.Files;
+using XREngine.Rendering.OpenGL;
 
 namespace XREngine.Editor;
 
@@ -28,10 +29,31 @@ public static partial class EditorImGuiUI
 
             if (ImGui.Button("Save Global Editor Preferences"))
                 Engine.SaveGlobalEditorPreferences();
+            ImGui.SameLine();
+            if (ImGui.Button("Rebuild ImGui Font Atlas"))
+                RebuildImGuiFontAtlasForOpenGlWindows();
             ImGui.Separator();
 
             DrawSettingsTabContent(Engine.GlobalEditorPreferences, "Global Editor Preferences");
             ImGui.End();
+        }
+
+        private static void RebuildImGuiFontAtlasForOpenGlWindows()
+        {
+            int rebuilt = 0;
+            foreach (var window in Engine.Windows)
+            {
+                if (window?.Renderer is not OpenGLRenderer glRenderer)
+                    continue;
+
+                glRenderer.ForceRebuildImGuiFontAtlas();
+                rebuilt++;
+            }
+
+            if (rebuilt == 0)
+                Debug.LogWarning("No OpenGL renderer windows were available to rebuild ImGui font atlas.");
+            else
+                Debug.Out($"Rebuilt ImGui font atlas for {rebuilt} OpenGL renderer window(s).");
         }
 
         private static void DrawEditorPreferencesOverridesPanel()
