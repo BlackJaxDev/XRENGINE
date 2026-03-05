@@ -154,9 +154,9 @@ namespace XREngine.Components.Animation
             if (humanoid.SceneNode.GetComponent<VRIKSolverComponent>() is not null)
                 return null;
 
-            var solver = humanoid.SceneNode.GetOrAddComponent<HumanoidIKSolverComponent>(out _);
-            solver?.ConfigureForAnimationDrivenGoals();
-            return solver;
+            // Animation clips should only drive IK goals when a humanoid IK solver
+            // was already intentionally added (e.g., via AddCharacterIK setup).
+            return humanoid.SceneNode.GetComponent<HumanoidIKSolverComponent>();
         }
 
         private void ClearHumanoidAnimationIKSolverGoals()

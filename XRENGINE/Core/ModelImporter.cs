@@ -947,8 +947,6 @@ namespace XREngine
                 return;
             }
 
-            // Schedule one job per mesh (each action is one mesh).
-            // This avoids a single long-running job and lets other jobs interleave.
             int total = _meshProcessRoutines.Count;
             if (total <= 0)
             {
@@ -956,40 +954,50 @@ namespace XREngine
                 _onCompleted?.Invoke();
                 return;
             }
+
             Debug.Out($"[ModelImporter] Scheduling {total} mesh jobs asynchronously...");
 
             int remaining = total;
             int faulted = 0;
             int canceled = 0;
-            void TryFinalize()
+            int finalized = 0;
+            int[] retried = new int[total];
+
+            void TryFlushAndComplete()
             {
-                if (Interlocked.Decrement(ref remaining) != 0)
+                if (Interlocked.Exchange(ref finalized, 1) != 0)
                     return;
 
-                if (Volatile.Read(ref faulted) != 0)
-                    return;
-                if (Volatile.Read(ref canceled) != 0)
-                    return;
-
-                // Flush pending model mutations in swap once all mesh jobs are done.
-                //Engine.EnqueueSwapTask(() =>
-                //{
+                Engine.EnqueueSwapTask(() =>
+                {
                     try
                     {
                         foreach (var finalize in _meshFinalizeActions)
                             finalize();
+
+                        if (Volatile.Read(ref faulted) != 0 || Volatile.Read(ref canceled) != 0)
+                            Debug.Out($"[ModelImporter] Mesh processing completed with partial failures. faulted={faulted}, canceled={canceled}");
+
                         _onCompleted?.Invoke();
                     }
                     catch (Exception ex)
                     {
                         Debug.LogException(ex, $"Mesh finalize failed for '{SourceFilePath}'.");
                     }
-                //});
+                });
             }
 
-            for (int i = 0; i < total; i++)
+            void TryFinalize()
             {
-                var routineFactory = _meshProcessRoutines[i];
+                if (Interlocked.Decrement(ref remaining) != 0)
+                    return;
+
+                TryFlushAndComplete();
+            }
+
+            void ScheduleMeshRoutine(int routineIndex)
+            {
+                var routineFactory = _meshProcessRoutines[routineIndex];
 
                 Engine.Jobs.Schedule(
                     routineFactory,
@@ -999,17 +1007,27 @@ namespace XREngine
                     },
                     error: ex =>
                     {
-                        Interlocked.Exchange(ref faulted, 1);
-                        Debug.LogException(ex, $"Mesh processing job failed for '{SourceFilePath}'.");
+                        if (Interlocked.CompareExchange(ref retried[routineIndex], 1, 0) == 0)
+                        {
+                            Debug.Out($"[ModelImporter] Mesh job {routineIndex} faulted; retrying once...");
+                            ScheduleMeshRoutine(routineIndex);
+                            return;
+                        }
+
+                        Interlocked.Increment(ref faulted);
+                        Debug.LogException(ex, $"Mesh processing job failed after retry for '{SourceFilePath}' (routine {routineIndex}).");
                         TryFinalize();
                     },
                     canceled: () =>
                     {
-                        Interlocked.Exchange(ref canceled, 1);
+                        Interlocked.Increment(ref canceled);
                         TryFinalize();
                     },
                     cancellationToken: cancellationToken);
             }
+
+            for (int i = 0; i < total; i++)
+                ScheduleMeshRoutine(i);
         }
 
         private void NormalizeNodeScales(AScene scene, SceneNode rootNode, CancellationToken cancellationToken, bool scheduleOneJobPerMesh)

@@ -611,7 +611,31 @@ namespace XREngine
             // Clear dirty flag since the asset was just loaded from disk - any dirty state
             // was from construction/deserialization, not actual user changes
             file.ClearDirty();
-            foreach (var embedded in file.EmbeddedAssets.ToArray())
+
+            // Build a deterministic snapshot by enabling thread-safe enumeration on the EventList.
+            // This avoids the List.CopyTo race that can occur with LINQ ToArray under concurrent mutation.
+            var embeddedAssets = file.EmbeddedAssets;
+            if (!embeddedAssets.ThreadSafe)
+                embeddedAssets.ThreadSafe = true;
+
+            List<XRAsset> embeddedSnapshot = [];
+            try
+            {
+                foreach (var embedded in embeddedAssets)
+                    if (embedded is not null)
+                        embeddedSnapshot.Add(embedded);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning(
+                    "[AssetManager.PostLoaded] CRITICAL: Failed to snapshot EmbeddedAssets for " +
+                    $"'{filePath}' (Asset='{file.Name}', Type={file.GetType().Name}, ID={file.ID}). " +
+                    "Embedded sub-assets will NOT be ClearDirty()'d for this load pass. " +
+                    "This may cause import/post-load inconsistencies. " +
+                    $"Exception: {ex.GetType().Name}: {ex.Message}");
+            }
+
+            foreach (var embedded in embeddedSnapshot)
                 embedded.ClearDirty();
 
             AssetLoaded?.Invoke(file);

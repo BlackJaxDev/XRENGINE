@@ -303,6 +303,7 @@ public unsafe partial class VulkanRenderer
             if (ImGuiContextTracker.IsAlive(_context))
             {
                 ImGui.SetCurrentContext(_context);
+                ImGuiControllerUtilities.MarkContextDestroyed(_context);
                 ImGuiContextTracker.Unregister(_context);
                 ImGui.DestroyContext(_context);
             }

@@ -4,6 +4,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Numerics;
 using XREngine.Animation.IK;
 using XREngine.Data;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
 
@@ -37,6 +38,12 @@ namespace XREngine.Components.Animation
         /// The bend goal Transform.
         /// </summary>
         public TransformBase? _bendGoal;
+
+        /// <summary>
+        /// When true, renders debug lines for each arm axis direction from bone1.
+        /// Direction vectors are shown as solid lines, Axis vectors as dashed/offset lines.
+        /// </summary>
+        public bool DebugDrawAxisDirections { get; set; }
 
         /// <summary>
         /// Used to record rotation of the last bone for one frame. 
@@ -87,6 +94,18 @@ namespace XREngine.Components.Animation
             if (_bone3.RotationLimit != null)
                 _bone3.RotationLimit.IsActive = false;
 
+            // Limb-specific bend direction orientation:
+            // hands and feet both use forward-solving orientation.
+            _bendDirectionSign = _goal == ELimbEndEffector.LeftHand || _goal == ELimbEndEffector.RightHand ||
+                                 _goal == ELimbEndEffector.LeftFoot || _goal == ELimbEndEffector.RightFoot
+                ? 1.0f
+                : -1.0f;
+
+            // Legs need the yDirection (cross product) negated so knees bend forward.
+            // Arms also need it negated so elbows bend backward (anatomically correct).
+            NegateYDirection = _goal == ELimbEndEffector.LeftFoot || _goal == ELimbEndEffector.RightFoot ||
+                               _goal == ELimbEndEffector.LeftHand || _goal == ELimbEndEffector.RightHand;
+
             _bone3DefaultRotation = _bone3._transform.WorldRotation;
 
             var bone1Position = _bone1._transform.WorldTranslation;
@@ -94,9 +113,34 @@ namespace XREngine.Components.Animation
             var bone3Position = _bone3._transform.WorldTranslation;
 
             // Set bend plane to current (cant use the public SetBendPlaneToCurrent() method here because the solver has not initialized yet)
-            _animationNormal = BendNormal = Vector3.Cross(
+            Vector3 initialNormal = Vector3.Cross(
                 bone2Position - bone1Position,
                 bone3Position - bone2Position).Normalized();
+
+            // A default T-pose arm can be near-colinear, producing a zero cross product.
+            // Build a stable fallback normal orthogonal to the limb direction.
+            // Fallback order: Up → Right → Forward.
+            // Right is tried before Forward so that vertical limbs (legs) get a
+            // bend normal along +X, which via Cross(+X, -Y) = -Z produces a
+            // forward-pointing yDirection in GetBendDirection (knees bend forward).
+            if (initialNormal.LengthSquared() < 1e-8f)
+            {
+                Vector3 limbDirection = (bone2Position - bone1Position).Normalized();
+                Vector3 fallback = Globals.Up - Vector3.Dot(Globals.Up, limbDirection) * limbDirection;
+
+                if (fallback.LengthSquared() < 1e-8f)
+                    fallback = Globals.Right - Vector3.Dot(Globals.Right, limbDirection) * limbDirection;
+
+                if (fallback.LengthSquared() < 1e-8f)
+                    fallback = Globals.Forward - Vector3.Dot(Globals.Forward, limbDirection) * limbDirection;
+
+                initialNormal = fallback.Normalized();
+            }
+
+            if (initialNormal.LengthSquared() < 1e-8f)
+                initialNormal = BendNormal == Vector3.Zero ? Globals.Right : BendNormal;
+
+            _animationNormal = BendNormal = initialNormal;
 
             AssignArmAxisDirs(ref _axisDirectionsLeft);
             AssignArmAxisDirs(ref _axisDirectionsRight);
@@ -151,10 +195,11 @@ namespace XREngine.Components.Animation
         /// <param name="direction"></param>
         /// <param name="axis"></param>
         [Serializable]
-        public class AxisDirection(Vector3 direction, Vector3 axis)
+        public class AxisDirection(string name, Vector3 direction, Vector3 axis)
         {
-            public Vector3 Direction { get; } = direction.Normalized();
-            public Vector3 Axis { get; } = axis.Normalized();
+            public string Name { get; set; } = name;
+            public Vector3 Direction { get; set; } = direction.Normalized();
+            public Vector3 Axis { get; set; } = axis.Normalized();
             public float Dot { get; set; } = 0;
         }
 
@@ -177,35 +222,40 @@ namespace XREngine.Components.Animation
             _previousBendNormal,
             _animationNormal;
 
-        private AxisDirection[] _axisDirectionsLeft = new AxisDirection[4];
-        private AxisDirection[] _axisDirectionsRight = new AxisDirection[4];
+        public List<AxisDirection> _axisDirectionsLeft = [];
+        public List<AxisDirection> _axisDirectionsRight = [];
 
-        private AxisDirection[] ArmAxisDirections
+        private List<AxisDirection> ArmAxisDirections
             => _goal == ELimbEndEffector.LeftHand 
                 ? _axisDirectionsLeft
                 : _axisDirectionsRight;
 
         /// <summary>
         /// Stores the axis directions for the arm bend modifier and are arbitrary based on what looks natural.
+        /// Z-components are negated relative to the original Unity (LH, +Z forward)
+        /// values because this engine uses RH with -Z forward.
         /// </summary>
         /// <param name="axisDirections"></param>
-        private static void AssignArmAxisDirs(ref AxisDirection[] axisDirections)
+        private static void AssignArmAxisDirs(ref List<AxisDirection> axisDirections)
         {
-            axisDirections[0] = new AxisDirection(
-                Vector3.Zero,
-                new Vector3(-1f, 0f, 0f)); // default
+            axisDirections =
+            [
+                new("Default",
+                    Vector3.Zero,
+                    new Vector3(-1f, 0f, 0f)),
 
-            axisDirections[1] = new AxisDirection(
-                new Vector3(0.5f, 0f, -0.2f),
-                new Vector3(-0.5f, 1f, 1f)); // behind head
+                new("Behind Head",
+                    new Vector3(0.5f, 0f, -0.2f),
+                    new Vector3(-0.5f, 1f, 1f)),
 
-            axisDirections[2] = new AxisDirection(
-                new Vector3(-0.5f, -1f, -0.2f),
-                new Vector3(0f, -0.5f, -1f)); // arm twist
+                new("Arm Twist",
+                    new Vector3(-0.5f, -1f, -0.2f),
+                    new Vector3(0f, -0.5f, -1f)),
 
-            axisDirections[3] = new AxisDirection(
-                new Vector3(-0.5f, -0.5f, 1f),
-                new Vector3(-1f, 1f, -1f)); // cross heart
+                new("Cross Heart",
+                    new Vector3(-0.5f, -0.5f, 1f),
+                    new Vector3(-1f, 1f, -1f)),
+            ];
         }
 
         private Vector3 GetModifiedBendNormal()
@@ -276,7 +326,7 @@ namespace XREngine.Components.Animation
 
                         //Calculate dot products for all AxisDirections
                         var armDirs = ArmAxisDirections;
-                        for (int i = 1; i < armDirs.Length; i++)
+                        for (int i = 1; i < armDirs.Count; i++)
                         {
                             var armDir = armDirs[i];
                             float dot = Vector3.Dot(armDir.Direction, direction).Clamp(0.0f, 1.0f);
@@ -285,7 +335,7 @@ namespace XREngine.Components.Animation
 
                         //Sum up the arm bend axis
                         Vector3 sum = armDirs[0].Axis;
-                        for (int i = 1; i < armDirs.Length; i++)
+                        for (int i = 1; i < armDirs.Count; i++)
                             sum = XRMath.Slerp(sum, armDirs[i].Axis, armDirs[i].Dot);
 
                         //Invert sum for left hand
@@ -294,6 +344,42 @@ namespace XREngine.Components.Animation
                         
                         //Convert sum back to parent space
                         Vector3 armBendNormal = Vector3.Transform(sum, localToParentRot);
+
+                        // Debug visualization of axis directions
+                        if (DebugDrawAxisDirections && _bone1._transform != null && _bone2._transform != null)
+                        {
+                            Vector3 origin = _bone1._transform.WorldTranslation;
+                            float lineLen = MathF.Sqrt(_bone1._lengthSquared);
+                            ColorF4[] dirColors = [ColorF4.Yellow, ColorF4.Cyan, ColorF4.Magenta, ColorF4.Orange];
+                            ColorF4[] axisColors = [ColorF4.LightGreen, ColorF4.LightBlue, ColorF4.LightRed, ColorF4.White];
+
+                            for (int i = 0; i < armDirs.Count; i++)
+                            {
+                                var ad = armDirs[i];
+                                var dirColor = i < dirColors.Length ? dirColors[i] : ColorF4.Gray;
+                                var axColor = i < axisColors.Length ? axisColors[i] : ColorF4.Gray;
+
+                                // Direction vectors: transform from default space back to world
+                                if (ad.Direction.LengthSquared() > 1e-8f)
+                                {
+                                    Vector3 worldDir = Vector3.Transform(
+                                        _goal == ELimbEndEffector.LeftHand ? new(-ad.Direction.X, ad.Direction.Y, ad.Direction.Z) : ad.Direction,
+                                        localToParentRot);
+                                    Engine.Rendering.Debug.RenderLine(origin, origin + worldDir * lineLen, dirColor);
+                                    Engine.Rendering.Debug.RenderPoint(origin + worldDir * lineLen, dirColor);
+                                }
+
+                                // Axis vectors: the bend axis that would be used at this direction
+                                Vector3 axisWorld = _goal == ELimbEndEffector.LeftHand ? -ad.Axis : ad.Axis;
+                                axisWorld = Vector3.Transform(axisWorld, localToParentRot);
+                                Vector3 axisOrigin = origin + Vector3.UnitY * 0.02f * (i + 1);
+                                Engine.Rendering.Debug.RenderLine(axisOrigin, axisOrigin + axisWorld * lineLen * 0.7f, axColor);
+                            }
+
+                            // Also show the final blended bend normal
+                            Engine.Rendering.Debug.RenderLine(origin, origin + armBendNormal * lineLen * 1.2f, ColorF4.Red);
+                            Engine.Rendering.Debug.RenderPoint(origin + armBendNormal * lineLen * 1.2f, ColorF4.Red);
+                        }
 
                         if (weight.AlmostEqual(1.0f))
                             return armBendNormal;

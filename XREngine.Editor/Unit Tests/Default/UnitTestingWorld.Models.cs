@@ -343,18 +343,55 @@ public static partial class EditorUnitTests
 
                     humanik.SetSpineWeight(0.0f);
 
-                    SceneNode ikTargetNode = rootNode.NewChild("IKTargetNode");
-                    var handTfm = humanComp.Left.Foot.Node!.GetTransformAs<Transform>(true)!;
-                    ikTargetNode.GetTransformAs<Transform>(true)!.SetFrameState(new TransformState()
+                    SceneNode leftFootIkTargetNode = rootNode.NewChild("LeftFootIKTargetNode");
+                    var leftFootTfm = humanComp.Left.Foot.Node!.GetTransformAs<Transform>(true)!;
+                    leftFootIkTargetNode.GetTransformAs<Transform>(true)!.SetFrameState(new TransformState()
                     {
                         Order = ETransformOrder.TRS,
-                        Rotation = handTfm.WorldRotation,
+                        Rotation = leftFootTfm.WorldRotation,
                         Scale = new Vector3(1.0f),
-                        Translation = handTfm.WorldTranslation
+                        Translation = leftFootTfm.WorldTranslation
                     });
-                    humanik.GetGoalIK(ELimbEndEffector.LeftFoot)!.TargetIKTransform = ikTargetNode.Transform;
-                    UserInterface.EnableTransformToolForNode(ikTargetNode);
-                    Selection.SceneNode = ikTargetNode;
+
+                    SceneNode rightFootIkTargetNode = rootNode.NewChild("RightFootIKTargetNode");
+                    var rightFootTfm = humanComp.Right.Foot.Node!.GetTransformAs<Transform>(true)!;
+                    rightFootIkTargetNode.GetTransformAs<Transform>(true)!.SetFrameState(new TransformState()
+                    {
+                        Order = ETransformOrder.TRS,
+                        Rotation = rightFootTfm.WorldRotation,
+                        Scale = new Vector3(1.0f),
+                        Translation = rightFootTfm.WorldTranslation
+                    });
+
+                    SceneNode leftHandIkTargetNode = rootNode.NewChild("LeftHandIKTargetNode");
+                    var leftHandTfm = humanComp.Left.Wrist.Node!.GetTransformAs<Transform>(true)!;
+                    leftHandIkTargetNode.GetTransformAs<Transform>(true)!.SetFrameState(new TransformState()
+                    {
+                        Order = ETransformOrder.TRS,
+                        Rotation = leftHandTfm.WorldRotation,
+                        Scale = new Vector3(1.0f),
+                        Translation = leftHandTfm.WorldTranslation
+                    });
+
+                    SceneNode rightHandIkTargetNode = rootNode.NewChild("RightHandIKTargetNode");
+                    var rightHandTfm = humanComp.Right.Wrist.Node!.GetTransformAs<Transform>(true)!;
+                    rightHandIkTargetNode.GetTransformAs<Transform>(true)!.SetFrameState(new TransformState()
+                    {
+                        Order = ETransformOrder.TRS,
+                        Rotation = rightHandTfm.WorldRotation,
+                        Scale = new Vector3(1.0f),
+                        Translation = rightHandTfm.WorldTranslation
+                    });
+
+                    humanik.GetGoalIK(ELimbEndEffector.LeftFoot)!.TargetIKTransform = leftFootIkTargetNode.Transform;
+                    humanik.GetGoalIK(ELimbEndEffector.RightFoot)!.TargetIKTransform = rightFootIkTargetNode.Transform;
+                    humanik.GetGoalIK(ELimbEndEffector.LeftHand)!.TargetIKTransform = leftHandIkTargetNode.Transform;
+                    humanik.GetGoalIK(ELimbEndEffector.RightHand)!.TargetIKTransform = rightHandIkTargetNode.Transform;
+                    UserInterface.EnableTransformToolForNode(leftFootIkTargetNode);
+                    UserInterface.EnableTransformToolForNode(rightFootIkTargetNode);
+                    UserInterface.EnableTransformToolForNode(leftHandIkTargetNode);
+                    UserInterface.EnableTransformToolForNode(rightHandIkTargetNode);
+                    Selection.SceneNode = leftFootIkTargetNode;
                 }
                 else
                 {

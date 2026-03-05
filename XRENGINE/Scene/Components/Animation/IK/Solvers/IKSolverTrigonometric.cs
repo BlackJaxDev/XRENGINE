@@ -44,7 +44,16 @@ namespace XREngine.Components.Animation
         }
 
         protected Quaternion GetUnweightedWorldIKRotation()
-            => TargetIKTransform?.WorldRotation ?? _root?.TransformRotation(_rawIKRotation) ?? _rawIKRotation;
+            => TargetIKTransform?.WorldRotation
+            ?? RelativeIKSpaceTransform?.TransformRotation(_rawIKRotation)
+            ?? _root?.TransformRotation(_rawIKRotation)
+            ?? _rawIKRotation;
+
+        protected new Vector3 GetWorldIKPositionUnweighted()
+            => TargetIKTransform?.WorldTranslation
+            ?? RelativeIKSpaceTransform?.TransformPoint(_rawIKPosition)
+            ?? _root?.TransformPoint(_rawIKPosition)
+            ?? _rawIKPosition;
 
         private Vector3 _bendNormal = Globals.Right;
         public Vector3 BendNormal
@@ -52,6 +61,43 @@ namespace XREngine.Components.Animation
             get => _bendNormal;
             set => SetField(ref _bendNormal, value);
         }
+
+        // Sign applied to analytic bend direction. Different limb types can override
+        // this to maintain expected anatomical bend orientation.
+        protected float _bendDirectionSign = -1.0f;
+
+        /// <summary>
+        /// Runtime-tweakable bend direction sign for debug tuning.
+        /// </summary>
+        public float BendDirectionSign
+        {
+            get => _bendDirectionSign;
+            set => _bendDirectionSign = value;
+        }
+
+        /// <summary>
+        /// When true, the bend normal is negated before computing bend direction.
+        /// Debug toggle for diagnosing backward bending.
+        /// </summary>
+        public bool NegateBendNormal { get; set; }
+
+        /// <summary>
+        /// When true, the yDirection (cross product result in GetBendDirection) is negated.
+        /// Debug toggle for diagnosing backward bending.
+        /// </summary>
+        public bool NegateYDirection { get; set; }
+
+        /// <summary>
+        /// When true, the y component in the analytic solve is negated.
+        /// Debug toggle for diagnosing backward bending.
+        /// </summary>
+        public bool NegateAnalyticY { get; set; }
+
+        /// <summary>
+        /// If non-zero, overrides the computed bend normal for this solver.
+        /// Debug tool for diagnosing backward bending.
+        /// </summary>
+        public Vector3 BendNormalOverride { get; set; }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
@@ -239,8 +285,15 @@ namespace XREngine.Components.Animation
 
             PreInitialize();
 
-            RawIKPosition = _bone3._transform.WorldTranslation;
-            RawIKRotation = _bone3._transform.WorldRotation;
+            var ikSpace = RelativeIKSpaceTransform ?? _root;
+
+            RawIKPosition = ikSpace is null
+                ? _bone3._transform.WorldTranslation
+                : ikSpace.InverseTransformPoint(_bone3._transform.WorldTranslation);
+
+            RawIKRotation = ikSpace is null
+                ? _bone3._transform.WorldRotation
+                : ikSpace.InverseTransformRotation(_bone3._transform.WorldRotation);
 
             InitializeBones();
 
@@ -323,14 +376,17 @@ namespace XREngine.Components.Animation
                 var weightedWorldPos = GetWorldIKPosition();
 
                 // Interpolating bend normal
-                Vector3 currentBendNormal = Vector3.Lerp(_bone1.GetBendNormalFromCurrentRotation(), BendNormal, posWeight);
+                Vector3 effectiveBendNormal = BendNormalOverride.LengthSquared() > 1e-8f ? BendNormalOverride : BendNormal;
+                if (NegateBendNormal)
+                    effectiveBendNormal = -effectiveBendNormal;
+                Vector3 currentBendNormal = Vector3.Lerp(_bone1.GetBendNormalFromCurrentRotation(), effectiveBendNormal, posWeight);
 
                 Vector3 bone1ToBone2 = bone2WorldPos - bone1WorldPos;
 
                 // Calculating and interpolating bend direction
                 Vector3 bendDirection = Vector3.Lerp(
                     bone1ToBone2,
-                    -GetBendDirection(weightedWorldPos, currentBendNormal),
+                    _bendDirectionSign * GetBendDirection(weightedWorldPos, currentBendNormal),
                     posWeight);
 
                 if (bendDirection == Vector3.Zero)
@@ -394,6 +450,10 @@ namespace XREngine.Components.Animation
             float y = (float)Math.Sqrt((_bone1._lengthSquared - x * x).ClampMin(0));
 
             Vector3 yDirection = Vector3.Cross(bendNormal, direction / directionMagnitude);
+            if (NegateYDirection)
+                yDirection = -yDirection;
+            if (NegateAnalyticY)
+                y = -y;
             Quaternion lookRot = XRMath.LookRotation(direction, yDirection);
             return Vector3.Transform(new Vector3(0.0f, y, x), lookRot);
         }

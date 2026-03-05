@@ -327,68 +327,84 @@ namespace XREngine.Components.Animation
                 LogBodyBasisDiagnostic(bodyRight, bodyUp, bodyForward, armTwistAxisWorld, legTwistAxisWorld, sideAxisWorld, frontBackAxisWorld);
 
             // Shoulder
-            ApplyBindRelativeEulerDegrees(
-                side.Shoulder.Node,
+            ApplyWithDebugOverrides(
+                side.Shoulder.Node, DebugShoulderSigns,
                 yawDeg: 0.0f,
                 pitchDeg: MapMuscleToDeg(shoulderDownUp, GetMuscleValue(shoulderDownUp), Settings.ShoulderDownUpDegRange),
                 rollDeg: MapMuscleToDeg(shoulderFrontBack, GetMuscleValue(shoulderFrontBack), Settings.ShoulderFrontBackDegRange),
-                axisMapping: GetBoneAxisMapping(side.Shoulder.Node));
+                twistAxisWorld: armTwistAxisWorld,
+                frontBackAxisWorld: bodyForward,
+                leftRightAxisWorld: bodyUp);
 
             // Upper arm
-            ApplyBindRelativeEulerDegrees(
-                side.Arm.Node,
+            ApplyWithDebugOverrides(
+                side.Arm.Node, DebugArmSigns,
                 yawDeg: MapMuscleToDeg(armTwist, GetMuscleValue(armTwist), Settings.ArmTwistDegRange) * sideMirror,
                 pitchDeg: MapMuscleToDeg(armDownUp, GetMuscleValue(armDownUp), Settings.ArmDownUpDegRange),
                 rollDeg: MapMuscleToDeg(armFrontBack, GetMuscleValue(armFrontBack), Settings.ArmFrontBackDegRange),
-                axisMapping: GetBoneAxisMapping(side.Arm.Node));
+                twistAxisWorld: armTwistAxisWorld,
+                frontBackAxisWorld: bodyForward,
+                leftRightAxisWorld: bodyUp);
 
             // Forearm (elbow)
-            ApplyBindRelativeEulerDegrees(
-                side.Elbow.Node,
+            ApplyWithDebugOverrides(
+                side.Elbow.Node, DebugForearmSigns,
                 yawDeg: MapMuscleToDeg(forearmTwist, GetMuscleValue(forearmTwist), Settings.ForearmTwistDegRange) * sideMirror,
                 pitchDeg: MapMuscleToDeg(forearmStretch, forearmStretchMuscle, Settings.ForearmStretchDegRange),
                 rollDeg: 0.0f,
-                axisMapping: GetBoneAxisMapping(side.Elbow.Node));
+                twistAxisWorld: armTwistAxisWorld,
+                frontBackAxisWorld: bodyForward,
+                leftRightAxisWorld: bodyUp);
 
             // Wrist
-            ApplyBindRelativeEulerDegrees(
-                side.Wrist.Node,
+            ApplyWithDebugOverrides(
+                side.Wrist.Node, DebugWristSigns,
                 yawDeg: 0.0f,
                 pitchDeg: MapMuscleToDeg(handDownUp, GetMuscleValue(handDownUp), Settings.HandDownUpDegRange),
                 rollDeg: MapMuscleToDeg(handInOut, GetMuscleValue(handInOut), Settings.HandInOutDegRange) * sideMirror,
-                axisMapping: GetBoneAxisMapping(side.Wrist.Node));
+                twistAxisWorld: armTwistAxisWorld,
+                frontBackAxisWorld: bodyForward,
+                leftRightAxisWorld: bodyUp);
 
             // Upper leg
-            ApplyBindRelativeEulerDegrees(
-                side.Leg.Node,
+            ApplyWithDebugOverrides(
+                side.Leg.Node, DebugUpperLegSigns,
                 yawDeg: MapMuscleToDeg(upperLegTwist, GetMuscleValue(upperLegTwist), Settings.UpperLegTwistDegRange) * sideMirror,
                 pitchDeg: MapMuscleToDeg(upperLegFrontBack, GetMuscleValue(upperLegFrontBack), Settings.UpperLegFrontBackDegRange),
                 rollDeg: MapMuscleToDeg(upperLegInOut, GetMuscleValue(upperLegInOut), Settings.UpperLegInOutDegRange),
-                axisMapping: GetBoneAxisMapping(side.Leg.Node));
+                twistAxisWorld: legTwistAxisWorld,
+                frontBackAxisWorld: bodyRight,
+                leftRightAxisWorld: bodyForward);
 
             // Lower leg (knee)
-            ApplyBindRelativeEulerDegrees(
-                side.Knee.Node,
+            ApplyWithDebugOverrides(
+                side.Knee.Node, DebugKneeSigns,
                 yawDeg: MapMuscleToDeg(lowerLegTwist, GetMuscleValue(lowerLegTwist), Settings.LowerLegTwistDegRange) * sideMirror,
                 pitchDeg: lowerLegPitchDeg,
                 rollDeg: 0.0f,
-                axisMapping: GetBoneAxisMapping(side.Knee.Node));
+                twistAxisWorld: legTwistAxisWorld,
+                frontBackAxisWorld: bodyRight,
+                leftRightAxisWorld: bodyForward);
 
             // Foot
-            ApplyBindRelativeEulerDegrees(
-                side.Foot.Node,
+            ApplyWithDebugOverrides(
+                side.Foot.Node, DebugFootSigns,
                 yawDeg: MapMuscleToDeg(footTwist, GetMuscleValue(footTwist), Settings.FootTwistDegRange) * sideMirror,
                 pitchDeg: MapMuscleToDeg(footUpDown, GetMuscleValue(footUpDown), Settings.FootUpDownDegRange),
                 rollDeg: 0.0f,
-                axisMapping: GetBoneAxisMapping(side.Foot.Node));
+                twistAxisWorld: legTwistAxisWorld,
+                frontBackAxisWorld: bodyRight,
+                leftRightAxisWorld: bodyForward);
 
             // Toes
-            ApplyBindRelativeEulerDegrees(
-                side.Toes.Node,
+            ApplyWithDebugOverrides(
+                side.Toes.Node, DebugToesSigns,
                 yawDeg: 0.0f,
                 pitchDeg: MapMuscleToDeg(toesUpDown, GetMuscleValue(toesUpDown), Settings.ToesUpDownDegRange),
                 rollDeg: 0.0f,
-                axisMapping: GetBoneAxisMapping(side.Toes.Node));
+                twistAxisWorld: legTwistAxisWorld,
+                frontBackAxisWorld: bodyRight,
+                leftRightAxisWorld: bodyForward);
         }
 
         private void ApplyFingerMuscles(bool isLeft)
@@ -657,6 +673,28 @@ namespace XREngine.Components.Animation
             return lenSq > 1e-8f ? local / MathF.Sqrt(lenSq) : worldAxis;
         }
 
+        /// <summary>
+        /// Helper that applies debug sign overrides before delegating to the world-axis rotation function.
+        /// </summary>
+        private static void ApplyWithDebugOverrides(
+            SceneNode? node,
+            LimbSignOverrides overrides,
+            float yawDeg, float pitchDeg, float rollDeg,
+            Vector3 twistAxisWorld, Vector3 frontBackAxisWorld, Vector3 leftRightAxisWorld)
+        {
+            yawDeg *= overrides.YawSign;
+            pitchDeg *= overrides.PitchSign;
+            rollDeg *= overrides.RollSign;
+
+            if (overrides.SwapPitchRollAxes)
+                (frontBackAxisWorld, leftRightAxisWorld) = (leftRightAxisWorld, frontBackAxisWorld);
+
+            ApplyBindRelativeSwingTwistWorldAxes(
+                node, yawDeg, pitchDeg, rollDeg,
+                twistAxisWorld, frontBackAxisWorld, leftRightAxisWorld,
+                overrides.SkipBlanketNegate);
+        }
+
         private static void ApplyBindRelativeSwingTwistWorldAxes(
             SceneNode? node,
             float yawDeg,
@@ -664,7 +702,8 @@ namespace XREngine.Components.Animation
             float rollDeg,
             Vector3 twistAxisWorld,
             Vector3 frontBackAxisWorld,
-            Vector3 leftRightAxisWorld)
+            Vector3 leftRightAxisWorld,
+            bool skipBlanketNegate = false)
         {
             if (node?.Transform is null)
                 return;
@@ -676,20 +715,15 @@ namespace XREngine.Components.Animation
             Vector3 leftRightLocal = TransformWorldAxisToBoneLocal(node, leftRightAxisWorld);
 
             // Orthogonalize swing axes against the twist axis via Gram-Schmidt.
-            // Body-space axes derived from the hips bind pose aren't guaranteed to be
-            // perpendicular to the limb twist axis (bone→child direction). Without
-            // orthogonalization, swing DOFs couple into twist, producing incorrect rotations.
             frontBackLocal -= Vector3.Dot(frontBackLocal, twistLocal) * twistLocal;
             float fbLen = frontBackLocal.LengthSquared();
             if (fbLen > 1e-8f)
             {
                 frontBackLocal /= MathF.Sqrt(fbLen);
-                // Recompute left-right as the cross product to guarantee a proper orthogonal frame.
                 leftRightLocal = Vector3.Cross(twistLocal, frontBackLocal);
             }
             else
             {
-                // Degenerate case: front-back was parallel to twist. Rebuild from left-right.
                 leftRightLocal -= Vector3.Dot(leftRightLocal, twistLocal) * twistLocal;
                 float lrLen = leftRightLocal.LengthSquared();
                 if (lrLen > 1e-8f)
@@ -697,16 +731,13 @@ namespace XREngine.Components.Animation
                     leftRightLocal /= MathF.Sqrt(lrLen);
                     frontBackLocal = Vector3.Cross(leftRightLocal, twistLocal);
                 }
-                // If both are degenerate, axes remain as-is (fallback).
             }
 
-            // LH→RH conversion: world-derived bone-local axes from TransformWorldAxisToBoneLocal
-            // are the Z-flip of Unity's bone-local axes. For the Z-flip transform M=diag(1,1,-1),
-            // M * R(axis, θ) * M = R((-ax,-ay,az), θ) = R((ax,ay,az), -θ) when (ax,ay,az) is
-            // already in our RH bone-local frame. So all three muscle angles must be negated.
-            Quaternion twist = Quaternion.CreateFromAxisAngle(twistLocal, -yawDeg * degToRad);
-            Quaternion frontBack = Quaternion.CreateFromAxisAngle(frontBackLocal, -pitchDeg * degToRad);
-            Quaternion leftRight = Quaternion.CreateFromAxisAngle(leftRightLocal, -rollDeg * degToRad);
+            // LH→RH conversion: negate all three muscle angles unless overridden.
+            float blanketSign = skipBlanketNegate ? 1.0f : -1.0f;
+            Quaternion twist = Quaternion.CreateFromAxisAngle(twistLocal, blanketSign * yawDeg * degToRad);
+            Quaternion frontBack = Quaternion.CreateFromAxisAngle(frontBackLocal, blanketSign * pitchDeg * degToRad);
+            Quaternion leftRight = Quaternion.CreateFromAxisAngle(leftRightLocal, blanketSign * rollDeg * degToRad);
 
             // Unity ZXY Euler order: twist(Z) innermost, front-back(X), left-right(Y) outermost.
             Quaternion q = leftRight * frontBack * twist;
@@ -1696,7 +1727,8 @@ namespace XREngine.Components.Animation
             if (TryGetSiblingComponent<VRIKSolverComponent>(out var vrik) && vrik is not null)
                 return null;
 
-            var solver = GetSiblingComponent<HumanoidIKSolverComponent>(true);
+            // Only return an existing solver — never auto-create one.
+            var solver = GetSiblingComponent<HumanoidIKSolverComponent>(false);
             if (solver is not null &&
                 (solver.GetIKPositionWeight(ELimbEndEffector.LeftHand) < 0.999f ||
                  solver.GetIKRotationWeight(ELimbEndEffector.LeftHand) < 0.999f ||
@@ -1736,6 +1768,46 @@ namespace XREngine.Components.Animation
         private Quaternion? _rootRotationBaseline;
         private bool _rootRotationBaselineLogged;
         private Quaternion _currentBodyRotation = Quaternion.Identity;
+
+        // ── Runtime debug overrides for muscle→rotation sign tuning ─────────
+        // These are NOT serialized. They let you flip axis signs at runtime
+        // from the editor UI to quickly diagnose and fix retargeting issues.
+
+        /// <summary>
+        /// Per-bone-group sign overrides for the three rotation channels
+        /// (yaw/twist, pitch/frontBack, roll/leftRight). 
+        /// Multiply into the degree values before passing to ApplyBindRelativeSwingTwistWorldAxes.
+        /// </summary>
+        public struct LimbSignOverrides
+        {
+            public float YawSign;
+            public float PitchSign;
+            public float RollSign;
+            /// <summary>When true, negate the blanket LH→RH angle negation for this group.</summary>
+            public bool SkipBlanketNegate;
+            /// <summary>When true, swap the frontBack and leftRight world axes.</summary>
+            public bool SwapPitchRollAxes;
+
+            public static LimbSignOverrides Default => new()
+            {
+                YawSign = 1.0f,
+                PitchSign = 1.0f,
+                RollSign = 1.0f,
+                SkipBlanketNegate = false,
+                SwapPitchRollAxes = false,
+            };
+        }
+
+        public LimbSignOverrides DebugArmSigns = LimbSignOverrides.Default;
+        public LimbSignOverrides DebugForearmSigns = LimbSignOverrides.Default;
+        public LimbSignOverrides DebugWristSigns = LimbSignOverrides.Default;
+        public LimbSignOverrides DebugUpperLegSigns = LimbSignOverrides.Default;
+        public LimbSignOverrides DebugKneeSigns = LimbSignOverrides.Default;
+        public LimbSignOverrides DebugFootSigns = LimbSignOverrides.Default;
+        public LimbSignOverrides DebugToesSigns = LimbSignOverrides.Default;
+        public LimbSignOverrides DebugShoulderSigns = LimbSignOverrides.Default;
+
+        // ── End debug overrides ─────────────────────────────────────────────
 
         /// <summary>
         /// Applies root motion rotation as a bind-relative rotation on the Hips bone.

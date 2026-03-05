@@ -4,6 +4,7 @@ using System.Numerics;
 using ImGuiNET;
 using XREngine.Components;
 using XREngine.Components.Animation;
+using XREngine.Animation.IK;
 using XREngine.Editor;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -212,6 +213,103 @@ public sealed class HumanoidIKSolverComponentEditor : IXRComponentEditor
             ImGui.TreePop();
         }
 
+        // ── Debug Bend Diagnostics ─────────────────────────────────
+        if (ImGui.TreeNodeEx("Bend Debug", ImGuiTreeNodeFlags.None))
+        {
+            ImGui.TextColored(WarningColor, "Toggles take effect immediately — no reinit needed.");
+
+            // Bend direction sign
+            float bendSign = limb.BendDirectionSign;
+            ImGui.SetNextItemWidth(160f);
+            if (ImGui.DragFloat("Bend Direction Sign", ref bendSign, 0.1f, -2f, 2f, "%.2f"))
+                limb.BendDirectionSign = bendSign;
+
+            // Negate bend normal
+            bool negateBN = limb.NegateBendNormal;
+            if (ImGui.Checkbox("Negate Bend Normal", ref negateBN))
+                limb.NegateBendNormal = negateBN;
+
+            // Negate Y direction (cross product result)
+            bool negateYDir = limb.NegateYDirection;
+            if (ImGui.Checkbox("Negate Y Direction (Cross Product)", ref negateYDir))
+                limb.NegateYDirection = negateYDir;
+
+            // Negate analytic Y
+            bool negateY = limb.NegateAnalyticY;
+            if (ImGui.Checkbox("Negate Analytic Y Component", ref negateY))
+                limb.NegateAnalyticY = negateY;
+
+            // Bend normal override
+            Vector3 bnOverride = limb.BendNormalOverride;
+            ImGui.SetNextItemWidth(-1f);
+            if (ImGui.DragFloat3("Bend Normal Override", ref bnOverride, 0.01f))
+                limb.BendNormalOverride = bnOverride;
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Clear##BNO"))
+                limb.BendNormalOverride = Vector3.Zero;
+
+            ImGui.Spacing();
+            ImGui.TextDisabled("Quick-set Bend Normal Override:");
+            if (ImGui.SmallButton("+X##BNO")) limb.BendNormalOverride = Vector3.UnitX;
+            ImGui.SameLine();
+            if (ImGui.SmallButton("-X##BNO")) limb.BendNormalOverride = -Vector3.UnitX;
+            ImGui.SameLine();
+            if (ImGui.SmallButton("+Y##BNO")) limb.BendNormalOverride = Vector3.UnitY;
+            ImGui.SameLine();
+            if (ImGui.SmallButton("-Y##BNO")) limb.BendNormalOverride = -Vector3.UnitY;
+            ImGui.SameLine();
+            if (ImGui.SmallButton("+Z##BNO")) limb.BendNormalOverride = Vector3.UnitZ;
+            ImGui.SameLine();
+            if (ImGui.SmallButton("-Z##BNO")) limb.BendNormalOverride = -Vector3.UnitZ;
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.TextDisabled("Current State (read-only):");
+            ImGui.TextDisabled($"  Bend Normal: {limb.BendNormal:F3}");
+            if (limb._bone1._transform is not null && limb._bone2._transform is not null && limb._bone3._transform is not null)
+            {
+                var b1 = limb._bone1._transform.WorldTranslation;
+                var b2 = limb._bone2._transform.WorldTranslation;
+                var b3 = limb._bone3._transform.WorldTranslation;
+                ImGui.TextDisabled($"  Bone1 Pos: {b1:F3}");
+                ImGui.TextDisabled($"  Bone2 Pos: {b2:F3}");
+                ImGui.TextDisabled($"  Bone3 Pos: {b3:F3}");
+                var limbDir = Vector3.Normalize(b2 - b1);
+                ImGui.TextDisabled($"  Limb Dir (1→2): {limbDir:F3}");
+                var cross = Vector3.Cross(b2 - b1, b3 - b2);
+                ImGui.TextDisabled($"  Cross(1→2, 2→3): {cross:F3}");
+            }
+
+            // Reinitialize button
+            if (ImGui.Button("Reinitialize This Limb"))
+            {
+                EnqueueSceneEdit(() =>
+                {
+                    var humanoid = solver.Humanoid;
+                    if (humanoid is not null)
+                        solver.InitializeChains(humanoid);
+                });
+            }
+
+            ImGui.TreePop();
+        }
+
+        // ── Arm Axis Directions ────────────────────────────────────
+        if (limb._goal == ELimbEndEffector.LeftHand || limb._goal == ELimbEndEffector.RightHand)
+        {
+            bool debugAxes = limb.DebugDrawAxisDirections;
+            if (ImGui.Checkbox("Draw Axis Direction Lines", ref debugAxes))
+                limb.DebugDrawAxisDirections = debugAxes;
+
+            if (ImGui.TreeNodeEx("Arm Axis Directions", ImGuiTreeNodeFlags.None))
+            {
+                DrawAxisDirectionList($"{label} Left", limb._axisDirectionsLeft);
+                ImGui.Spacing();
+                DrawAxisDirectionList($"{label} Right", limb._axisDirectionsRight);
+                ImGui.TreePop();
+            }
+        }
+
         ImGui.PopID();
         ImGui.TreePop();
     }
@@ -350,5 +448,57 @@ public sealed class HumanoidIKSolverComponentEditor : IXRComponentEditor
             euler.Y * degToRad,
             euler.X * degToRad,
             euler.Z * degToRad);
+    }
+
+    private static void DrawAxisDirectionList(string id, List<IKSolverLimb.AxisDirection> dirs)
+    {
+        if (dirs is null)
+            return;
+
+        ImGui.PushID(id);
+        ImGui.Text(id);
+
+        int removeIndex = -1;
+        for (int i = 0; i < dirs.Count; i++)
+        {
+            var ad = dirs[i];
+            if (ad is null)
+                continue;
+
+            string displayName = string.IsNullOrWhiteSpace(ad.Name) ? $"[{i}]" : ad.Name;
+            if (ImGui.TreeNode($"{displayName}##{i}"))
+            {
+                // Editable name
+                string name = ad.Name ?? "";
+                ImGui.SetNextItemWidth(200f);
+                if (ImGui.InputText("Name", ref name, 128))
+                    ad.Name = name;
+
+                Vector3 dir = ad.Direction;
+                ImGui.SetNextItemWidth(-1f);
+                if (ImGui.DragFloat3("Direction", ref dir, 0.01f))
+                    ad.Direction = dir;
+
+                Vector3 axis = ad.Axis;
+                ImGui.SetNextItemWidth(-1f);
+                if (ImGui.DragFloat3("Axis", ref axis, 0.01f))
+                    ad.Axis = axis;
+
+                ImGui.TextDisabled($"Dot: {ad.Dot:F3}");
+
+                if (ImGui.SmallButton($"Remove##{i}"))
+                    removeIndex = i;
+
+                ImGui.TreePop();
+            }
+        }
+
+        if (removeIndex >= 0 && removeIndex < dirs.Count)
+            dirs.RemoveAt(removeIndex);
+
+        if (ImGui.Button($"+ Add Axis Direction##{id}"))
+            dirs.Add(new IKSolverLimb.AxisDirection("New", Vector3.Zero, Vector3.UnitX));
+
+        ImGui.PopID();
     }
 }

@@ -41,9 +41,31 @@ namespace XREngine.Animation.Importers
         private static Quaternion ConvertRotation(Quaternion q)
             => new(q.X, -q.Y, -q.Z, q.W);
 
+        /// <summary>
+        /// Converts an IK goal position from Unity humanoid avatar space to runtime body-local
+        /// goal space used by <see cref="HumanoidIKSolverComponent"/>.
+        ///
+        /// These channels are already authored in avatar/body space and are consumed through the
+        /// live hips body matrix at runtime; applying additional handedness flips here causes
+        /// forward/back inversion (effectively 180° yaw target placement) and over-extended limbs.
+        /// Preserve position as-authored.
+        /// </summary>
+        private static Vector3 ConvertIKGoalPosition(Vector3 v)
+            => v;
+
+        /// <summary>
+        /// Converts an IK goal rotation from Unity humanoid avatar space to runtime body-local
+        /// goal space. As with IK goal positions, preserve as-authored quaternion and let runtime
+        /// body-space composition handle orientation.
+        /// </summary>
+        private static Quaternion ConvertIKGoalRotation(Quaternion q)
+            => q;
+
         // Unity humanoid IK goal curves (LeftFootT/Q, RightHandT/Q, etc.) are authored
-        // in avatar/humanoid space. They are always imported so the data is available,
-        // but runtime application is gated by HumanoidSettings.IKGoalPolicy — which
+        // in avatar/humanoid body-relative space. They use a DIFFERENT coordinate conversion
+        // than bone positions: only the LH→RH Z-reflection is applied (ConvertIKGoalPosition/Rotation),
+        // NOT the full model-space conversion that includes the Assimp root rotation.
+        // Runtime application is gated by HumanoidSettings.IKGoalPolicy — which
         // defaults to ApplyIfCalibrated (i.e. skipped until avatar calibration exists).
         private static bool ImportHumanoidIKGoalCurves => true;
 
@@ -375,7 +397,7 @@ namespace XREngine.Animation.Importers
                             BakedFramesPerSecond = sampleRate,
                         };
                         foreach (float t in UnionKeyTimes(px, py, pz))
-                            posAnim.Keyframes.Add(new Vector3Keyframe(t, ConvertPosition(new Vector3(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t))), Vector3.Zero, EVectorInterpType.Smooth));
+                            posAnim.Keyframes.Add(new Vector3Keyframe(t, ConvertIKGoalPosition(new Vector3(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t))), Vector3.Zero, EVectorInterpType.Smooth));
                     }
 
                     // Build rotation animation
@@ -400,7 +422,7 @@ namespace XREngine.Animation.Importers
                         foreach (float t in UnionKeyTimes(rx, ry, rz, rw))
                         {
                             var q = new Quaternion(xAnim.GetValue(t), yAnim.GetValue(t), zAnim.GetValue(t), wAnim.GetValue(t));
-                            q = ConvertRotation(q);
+                            q = ConvertIKGoalRotation(q);
                             rotAnim.Keyframes.Add(new QuaternionKeyframe(t, q, Quaternion.Identity, Quaternion.Identity, ERadialInterpType.Linear));
                         }
                     }
