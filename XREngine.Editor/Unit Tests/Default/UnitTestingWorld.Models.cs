@@ -507,6 +507,17 @@ public static partial class EditorUnitTests
                         var anim = rootNode.AddComponent<AnimationClipComponent>()!;
                         anim.StartOnActivate = true;
                         anim.Animation = clip;
+
+                        if (rootNode.TryGetComponent<HumanoidIKSolverComponent>(out var humanoidIK) && humanoidIK is not null)
+                        {
+                            foreach (var limb in humanoidIK.Limbs)
+                                limb._bendModifier = ELimbBendModifier.Animation;
+
+                            humanoidIK.SetIKRotationWeight(ELimbEndEffector.LeftHand, 0.0f);
+                            humanoidIK.SetIKRotationWeight(ELimbEndEffector.RightHand, 0.0f);
+                            humanoidIK.SetIKRotationWeight(ELimbEndEffector.LeftFoot, 0.0f);
+                            humanoidIK.SetIKRotationWeight(ELimbEndEffector.RightFoot, 0.0f);
+                        }
                     }
                 }
             }
