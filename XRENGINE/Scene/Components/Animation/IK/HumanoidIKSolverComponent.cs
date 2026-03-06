@@ -519,6 +519,7 @@ namespace XREngine.Components.Animation
                 : Quaternion.Normalize(bodyRotation * localRotation);
 
             target.SetWorldRotation(worldRotation);
+            target.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
         }
 
         private Quaternion EnsureAnimatedGoalRotationOffset(ELimbEndEffector goal, Quaternion bodyRotation, Quaternion localRotation)
@@ -539,10 +540,30 @@ namespace XREngine.Components.Animation
         }
 
         private Matrix4x4 GetAnimatedGoalBodyMatrix()
-            => Humanoid.Hips.Node?.GetTransformAs<Transform>(true)?.WorldMatrix ?? Transform.WorldMatrix;
+        {
+            var body = Humanoid.Hips.Node?.GetTransformAs<Transform>(true);
+            if (body is not null)
+            {
+                body.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+                return body.WorldMatrix;
+            }
+
+            Transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+            return Transform.WorldMatrix;
+        }
 
         private Quaternion GetAnimatedGoalBodyRotation()
-            => Humanoid.Hips.Node?.GetTransformAs<Transform>(true)?.WorldRotation ?? Transform.WorldRotation;
+        {
+            var body = Humanoid.Hips.Node?.GetTransformAs<Transform>(true);
+            if (body is not null)
+            {
+                body.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+                return body.WorldRotation;
+            }
+
+            Transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+            return Transform.WorldRotation;
+        }
 
         private Transform? GetGoalBoneTransform(ELimbEndEffector goal) => goal switch
         {

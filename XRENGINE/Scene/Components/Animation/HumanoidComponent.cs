@@ -29,10 +29,6 @@ namespace XREngine.Components.Animation
 
             // Apply muscle-driven pose after animation evaluation.
             RegisterTick(ETickGroup.Normal, ETickOrder.Scene, ApplyMusclePose);
-
-            // Ensure a HumanoidIKSolverComponent exists so animation-driven IK
-            // goals (foot/hand positions from Unity clips) are applied.
-            EnsureAnimationIKSolver();
         }
 
         protected internal override void OnComponentDeactivated()
@@ -1153,8 +1149,8 @@ namespace XREngine.Components.Animation
             FindChildrenFor(Hips, [
                 (Spine, ByName("Spine")),
                 (Chest, ByName("Chest")),
-                (Left.Leg, ByPosition(LegNameContains, x => x.X > 0.0f)),
-                (Right.Leg, ByPosition(LegNameContains, x => x.X < 0.0f)),
+                (Left.Leg, ByPosition(LegNameContains, x => x.X < 0.0f)),
+                (Right.Leg, ByPosition(LegNameContains, x => x.X > 0.0f)),
             ]);
 
             if (Spine.Node is not null && Chest.Node is null)
@@ -1167,8 +1163,8 @@ namespace XREngine.Components.Animation
                     (UpperChest, ByNameContainsAny("UpperChest", "Upper_Chest")),
                     (Neck, ByName("Neck")),
                     (Head, ByName("Head")),
-                    (Left.Shoulder, ByPosition("Shoulder", x => x.X > 0.0f)),
-                    (Right.Shoulder, ByPosition("Shoulder", x => x.X < 0.0f)),
+                    (Left.Shoulder, ByPosition("Shoulder", x => x.X < 0.0f)),
+                    (Right.Shoulder, ByPosition("Shoulder", x => x.X > 0.0f)),
                 ]);
 
             // If UpperChest was found, shoulders/neck/head may be children of UpperChest rather than Chest.
@@ -1176,8 +1172,8 @@ namespace XREngine.Components.Animation
                 FindChildrenFor(UpperChest, [
                     (Neck, ByName("Neck")),
                     (Head, ByName("Head")),
-                    (Left.Shoulder, ByPosition("Shoulder", x => x.X > 0.0f)),
-                    (Right.Shoulder, ByPosition("Shoulder", x => x.X < 0.0f)),
+                    (Left.Shoulder, ByPosition("Shoulder", x => x.X < 0.0f)),
+                    (Right.Shoulder, ByPosition("Shoulder", x => x.X > 0.0f)),
                 ]);
 
             if (Neck.Node is not null && Head.Node is null)
@@ -1190,8 +1186,8 @@ namespace XREngine.Components.Animation
             {
                 Jaw.Node = Head.Node.FindDescendantByName("Jaw", StringComparison.InvariantCultureIgnoreCase);
                 FindChildrenFor(Head, [
-                    (Left.Eye, ByPosition("Eye", x => x.X > 0.0f)),
-                    (Right.Eye, ByPosition("Eye", x => x.X < 0.0f)),
+                    (Left.Eye, ByPosition("Eye", x => x.X < 0.0f)),
+                    (Right.Eye, ByPosition("Eye", x => x.X > 0.0f)),
                 ]);
             }
 
@@ -1727,23 +1723,9 @@ namespace XREngine.Components.Animation
             if (TryGetSiblingComponent<VRIKSolverComponent>(out var vrik) && vrik is not null)
                 return null;
 
-            // Only return an existing solver — never auto-create one.
-            var solver = GetSiblingComponent<HumanoidIKSolverComponent>(false);
-            if (solver is not null &&
-                (solver.GetIKPositionWeight(ELimbEndEffector.LeftHand) < 0.999f ||
-                 solver.GetIKRotationWeight(ELimbEndEffector.LeftHand) < 0.999f ||
-                 solver.GetIKPositionWeight(ELimbEndEffector.RightHand) < 0.999f ||
-                 solver.GetIKRotationWeight(ELimbEndEffector.RightHand) < 0.999f ||
-                 solver.GetIKPositionWeight(ELimbEndEffector.LeftFoot) < 0.999f ||
-                 solver.GetIKRotationWeight(ELimbEndEffector.LeftFoot) < 0.999f ||
-                 solver.GetIKPositionWeight(ELimbEndEffector.RightFoot) < 0.999f ||
-                 solver.GetIKRotationWeight(ELimbEndEffector.RightFoot) < 0.999f ||
-                 solver._spine.IKPositionWeight > 0.001f))
-            {
-                solver.ConfigureForAnimationDrivenGoals();
-            }
-
-            return solver;
+            // Only return an existing solver — never auto-create or auto-reconfigure one.
+            // Silent reconfiguration here clobbers user-authored IK tuning during playback.
+            return GetSiblingComponent<HumanoidIKSolverComponent>(false);
         }
 
         /// <summary>
