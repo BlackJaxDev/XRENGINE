@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
+using Unity;
 using XREngine.Animation;
 using XREngine.Animation.IK;
 using XREngine.Animation.Importers;
@@ -274,6 +275,66 @@ AnimationClip:
     }
 
     [Test]
+    public void Import_ScalarCurves_PreserveUnityTangentModeMetadata()
+    {
+        int brokenLinearConstant = CombineTangentMode(TangentMode.Linear, TangentMode.Constant, broken: true);
+        int autoClampedAuto = CombineTangentMode(TangentMode.Auto, TangentMode.ClampedAuto, broken: false);
+
+        string yaml = $$"""
+AnimationClip:
+  m_Name: TangentModes
+  m_SampleRate: 60
+  m_AnimationClipSettings:
+    m_StartTime: 0
+    m_StopTime: 1
+    m_LoopTime: 0
+  m_FloatCurves:
+    - path: Hips
+      attribute: m_LocalScale.x
+      classID: 4
+      curve:
+        m_Curve:
+          - time: 0
+            value: 1
+            inSlope: -2
+            outSlope: 3
+            tangentMode: {{brokenLinearConstant}}
+          - time: 1
+            value: 2
+            inSlope: 4
+            outSlope: -5
+            tangentMode: {{autoClampedAuto}}
+""";
+
+        AnimationClip clip = ImportClip(yaml);
+        var hipsTransform = GetTransformMember(GetSceneNodeRoot(clip), "Hips");
+        var scaleAnim = GetChild(hipsTransform, "ScaleX", EAnimationMemberType.Property).Animation.ShouldBeOfType<PropAnimFloat>();
+
+        FloatKeyframe first = scaleAnim.Keyframes[0];
+        first.UnityCombinedTangentMode.ShouldBe(brokenLinearConstant);
+        first.UnityTangentsBroken.ShouldBeTrue();
+        first.UnityLeftTangentMode.ShouldBe(TangentMode.Linear);
+        first.UnityRightTangentMode.ShouldBe(TangentMode.Constant);
+        first.InterpolationTypeIn.ShouldBe(EVectorInterpType.Linear);
+        first.InterpolationTypeOut.ShouldBe(EVectorInterpType.Step);
+
+        var roundTripped = new FloatKeyframe();
+        roundTripped.ReadFromString(first.WriteToString());
+        roundTripped.UnityCombinedTangentMode.ShouldBe(brokenLinearConstant);
+        roundTripped.UnityTangentsBroken.ShouldBeTrue();
+        roundTripped.UnityLeftTangentMode.ShouldBe(TangentMode.Linear);
+        roundTripped.UnityRightTangentMode.ShouldBe(TangentMode.Constant);
+
+        FloatKeyframe second = scaleAnim.Keyframes[1];
+        second.UnityCombinedTangentMode.ShouldBe(autoClampedAuto);
+        second.UnityTangentsBroken.ShouldBeFalse();
+        second.UnityLeftTangentMode.ShouldBe(TangentMode.Auto);
+        second.UnityRightTangentMode.ShouldBe(TangentMode.ClampedAuto);
+        second.InterpolationTypeIn.ShouldBe(EVectorInterpType.Smooth);
+        second.InterpolationTypeOut.ShouldBe(EVectorInterpType.Smooth);
+    }
+
+    [Test]
     public void HumanoidRootMotion_UsesSameAnimatedMotionScaleAsIKGoals()
     {
         var root = new SceneNode("Root", new Transform());
@@ -290,6 +351,7 @@ AnimationClip:
         humanoid.Hips.Node = hips;
         humanoid.Left.Foot.Node = leftFoot;
         humanoid.Right.Foot.Node = rightFoot;
+        var hipsTransform = hips.GetTransformAs<Transform>(true)!;
 
         humanoid.EstimateAnimatedMotionScale().ShouldBe(2.0f, 0.0001f);
 
@@ -302,10 +364,10 @@ AnimationClip:
         ShouldBeApproximately(ikTarget!.WorldTranslation, new Vector3(0.0f, 2.0f, 2.0f));
 
         humanoid.SetRootPosition(new Vector3(0.0f, 1.0f, 0.0f));
-        ShouldBeApproximately(hips.Transform.Translation, new Vector3(0.0f, 1.0f, 0.0f));
+        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 1.0f, 0.0f));
 
         humanoid.SetRootPosition(new Vector3(0.0f, 1.5f, 1.0f));
-        ShouldBeApproximately(hips.Transform.Translation, new Vector3(0.0f, 2.0f, 2.0f));
+        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 2.0f, 2.0f));
     }
 
     [Test]
@@ -325,27 +387,28 @@ AnimationClip:
         humanoid.Hips.Node = hips;
         humanoid.Left.Foot.Node = leftFoot;
         humanoid.Right.Foot.Node = rightFoot;
+        var hipsTransform = hips.GetTransformAs<Transform>(true)!;
 
         humanoid.SetRootPosition(new Vector3(1.0f, 2.0f, 3.0f));
         humanoid.SetRootPosition(new Vector3(1.0f, 2.5f, 4.0f));
-        ShouldBeApproximately(hips.Transform.Translation, new Vector3(0.0f, 2.0f, 2.0f));
+        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 2.0f, 2.0f));
 
         Quaternion ninety = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI * 0.5f);
         Quaternion oneEighty = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI);
 
         humanoid.SetRootRotation(ninety);
-        ShouldBeApproximately(hips.Transform.Rotation, Quaternion.Identity);
+        ShouldBeApproximately(hipsTransform.Rotation, Quaternion.Identity);
 
         humanoid.SetRootRotation(oneEighty);
-        ShouldBeApproximately(hips.Transform.Rotation, ninety);
+        ShouldBeApproximately(hipsTransform.Rotation, ninety);
 
         humanoid.ResetRootMotionBaseline();
 
         humanoid.SetRootPosition(new Vector3(10.0f, 20.0f, 30.0f));
-        ShouldBeApproximately(hips.Transform.Translation, new Vector3(0.0f, 1.0f, 0.0f));
+        ShouldBeApproximately(hipsTransform.Translation, new Vector3(0.0f, 1.0f, 0.0f));
 
         humanoid.SetRootRotation(oneEighty);
-        ShouldBeApproximately(hips.Transform.Rotation, Quaternion.Identity);
+        ShouldBeApproximately(hipsTransform.Rotation, Quaternion.Identity);
     }
 
     private static AnimationClip ImportClip(string yaml)
@@ -365,6 +428,9 @@ AnimationClip:
         root.ShouldNotBeNull();
         return GetChild(root!, "SceneNode", EAnimationMemberType.Property);
     }
+
+    private static int CombineTangentMode(TangentMode left, TangentMode right, bool broken)
+        => (broken ? 1 : 0) | ((int)left << 1) | ((int)right << 5);
 
     private static AnimationMember GetTransformMember(AnimationMember sceneNodeRoot, string nodePath)
     {

@@ -1004,6 +1004,7 @@ namespace XREngine.Animation.Importers
                 SyncInOutTangentDirections = false,
                 SyncInOutTangentMagnitudes = false,
                 Second = key.Time,
+                UnityCombinedTangentMode = key.CombinedTangentMode,
                 InterpolationTypeIn = key.InInterpType,
                 InterpolationTypeOut = key.OutInterpType,
             };

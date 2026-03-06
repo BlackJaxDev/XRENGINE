@@ -39,7 +39,11 @@ namespace XREngine.Core.Tools.Unity
                     var rightTangentMode = UnityAnimationClip.TangentModeHelper.GetRightTangentMode(kf.CombinedTangentMode);
                     return new FloatKeyframe
                     {
+                        SyncInOutValues = false,
+                        SyncInOutTangentDirections = false,
+                        SyncInOutTangentMagnitudes = false,
                         Second = kf.Time,
+                        UnityCombinedTangentMode = kf.CombinedTangentMode,
                         InValue = kf.Value,
                         OutValue = kf.Value,
                         InTangent = kf.InSlope,

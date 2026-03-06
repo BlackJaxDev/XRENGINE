@@ -1,11 +1,14 @@
 ﻿using Extensions;
 using XREngine.Data;
 using XREngine.Data.Animation;
+using Unity;
 
 namespace XREngine.Animation
 {
     public class FloatKeyframe(float second, float inValue, float outValue, float inTangent, float outTangent, EVectorInterpType type) : VectorKeyframe<float>(second, inValue, outValue, inTangent, outTangent, type)
     {
+        private int? _unityCombinedTangentMode;
+
         public FloatKeyframe()
             : this(0.0f, 0.0f, 0.0f, EVectorInterpType.Linear) { }
 
@@ -20,6 +23,24 @@ namespace XREngine.Animation
             : this(second, inoutValue, inoutValue, inoutTangent, inoutTangent, type) { }
         public FloatKeyframe(float second, float inoutValue, float inTangent, float outTangent, EVectorInterpType type)
             : this(second, inoutValue, inoutValue, inTangent, outTangent, type) { }
+
+        /// <summary>
+        /// Stores Unity's original tangentMode bitmask when a keyframe originates from a Unity animation clip.
+        /// </summary>
+        public int? UnityCombinedTangentMode
+        {
+            get => _unityCombinedTangentMode;
+            set => SetField(ref _unityCombinedTangentMode, value);
+        }
+
+        public bool UnityTangentsBroken
+            => UnityCombinedTangentMode is int tangentMode && UnityAnimationClip.TangentModeHelper.IsBroken(tangentMode);
+
+        public TangentMode? UnityLeftTangentMode
+            => UnityCombinedTangentMode is int tangentMode ? UnityAnimationClip.TangentModeHelper.GetLeftTangentMode(tangentMode) : null;
+
+        public TangentMode? UnityRightTangentMode
+            => UnityCombinedTangentMode is int tangentMode ? UnityAnimationClip.TangentModeHelper.GetRightTangentMode(tangentMode) : null;
 
         public override float LerpOut(VectorKeyframe<float>? next, float diff, float span)
         {
@@ -200,7 +221,9 @@ namespace XREngine.Animation
         }
 
         public override string WriteToString()
-            => $"{Second} {InValue} {OutValue} {InTangent} {OutTangent} {InterpolationTypeIn} {InterpolationTypeOut}";
+            => UnityCombinedTangentMode is int tangentMode
+                ? $"{Second} {InValue} {OutValue} {InTangent} {OutTangent} {InterpolationTypeIn} {InterpolationTypeOut} {tangentMode}"
+                : $"{Second} {InValue} {OutValue} {InTangent} {OutTangent} {InterpolationTypeIn} {InterpolationTypeOut}";
 
         public override string ToString()
             => $"[S:{Second}] V:({InValue} {OutValue}) T:([{InTangent} {InterpolationTypeIn}] [{OutTangent} {InterpolationTypeOut}])";
@@ -215,6 +238,7 @@ namespace XREngine.Animation
             OutTangent = float.Parse(parts[4]);
             InterpolationTypeIn = parts[5].AsEnum<EVectorInterpType>();
             InterpolationTypeOut = parts[6].AsEnum<EVectorInterpType>();
+            UnityCombinedTangentMode = parts.Length > 7 ? int.Parse(parts[7]) : null;
         }
 
         public override void MakeOutLinear()
