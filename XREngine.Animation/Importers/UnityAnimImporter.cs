@@ -70,15 +70,15 @@ namespace XREngine.Animation.Importers
             {
                 'x' => 1.0f,
                 'y' => 1.0f,
-                'z' => -1.0f,
+                'z' => 1.0f,
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported position component."),
             };
 
         private static float GetRotationComponentScale(char component)
             => component switch
             {
-                'x' => -1.0f,
-                'y' => -1.0f,
+                'x' => 1.0f,
+                'y' => 1.0f,
                 'z' => 1.0f,
                 'w' => 1.0f,
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported rotation component."),

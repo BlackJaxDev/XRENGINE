@@ -291,33 +291,34 @@ namespace XREngine.Components.Animation
 
             // Find dominant axis
             int twistAxis, frontBackAxis, leftRightAxis;
-            int twistSign, frontBackSign, leftRightSign;
+            int twistSign;
             float dominance;
 
             if (ax >= ay && ax >= az)
             {
                 twistAxis = 0; frontBackAxis = 1; leftRightAxis = 2;
                 twistSign = SignOrOne(dirLocal.X);
-                frontBackSign = SignOrOne(dirLocal.Y);
-                leftRightSign = SignOrOne(dirLocal.Z);
                 dominance = ax;
             }
             else if (az >= ax && az >= ay)
             {
                 twistAxis = 2; frontBackAxis = 0; leftRightAxis = 1;
                 twistSign = SignOrOne(dirLocal.Z);
-                frontBackSign = SignOrOne(dirLocal.X);
-                leftRightSign = SignOrOne(dirLocal.Y);
                 dominance = az;
             }
             else
             {
                 twistAxis = 1; frontBackAxis = 0; leftRightAxis = 2;
                 twistSign = SignOrOne(dirLocal.Y);
-                frontBackSign = SignOrOne(dirLocal.X);
-                leftRightSign = SignOrOne(dirLocal.Z);
                 dominance = ay;
             }
+
+            // Bone→child direction only tells us twist polarity reliably.
+            // The two swing axes are perpendicular to that direction, so inferring their sign from
+            // tiny off-axis bind-pose noise produces unstable left/right mirroring bugs. Reuse the
+            // parent/avatar basis for swing polarity instead.
+            int frontBackSign = ResolveSwingAxisSign(parentBone, settings, frontBackAxis);
+            int leftRightSign = ResolveSwingAxisSign(parentBone, settings, leftRightAxis);
 
             // Compute confidence based on how clearly one axis dominates
             float confidence;
@@ -373,6 +374,20 @@ namespace XREngine.Components.Animation
 
         private static int SignOrOne(float value)
             => value < 0.0f ? -1 : 1;
+
+        private static int ResolveSwingAxisSign(
+            HumanoidComponent.BoneDef? parentBone,
+            HumanoidSettings settings,
+            int axis)
+        {
+            if (parentBone?.Node?.Name is string parentName &&
+                settings.TryGetBoneAxisMapping(parentName, out var parentMapping))
+            {
+                return SignForAxis(parentMapping, axis);
+            }
+
+            return 1;
+        }
 
         /// <summary>
         /// Logs a summary of the profile result to the Animation diagnostic category.

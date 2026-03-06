@@ -12,6 +12,7 @@ namespace XREngine.Components.Animation
     {
         private bool _initialized;
         private readonly List<AnimationMember> _animatedMembers = [];
+        private AnimationMember[] _animatedMembersSnapshot = [];
         private readonly Dictionary<AnimationMember, object?[]> _baselineMethodArguments = [];
 
         private AnimationClip? _animation;
@@ -204,7 +205,8 @@ namespace XREngine.Components.Animation
 
             float delta = Engine.Delta * Speed;
             PlaybackTime = NormalizePlaybackTime(PlaybackTime + delta, Animation, wrapLooped: Animation.Looped);
-            foreach (var member in _animatedMembers)
+            var snapshot = _animatedMembersSnapshot;
+            foreach (var member in snapshot)
                 member.Animation?.Tick(delta);
 
             ApplyAnimatedValues();
@@ -218,7 +220,8 @@ namespace XREngine.Components.Animation
             _animatedMembers.Clear();
             _baselineMethodArguments.Clear();
             InitializeMembers(Animation.RootMember, this, _animatedMembers);
-            foreach (var member in _animatedMembers)
+            _animatedMembersSnapshot = [.. _animatedMembers];
+            foreach (var member in _animatedMembersSnapshot)
             {
                 if (member.MemberType == EAnimationMemberType.Method)
                     _baselineMethodArguments[member] = (object?[])member.MethodArguments.Clone();
@@ -264,6 +267,7 @@ namespace XREngine.Components.Animation
         private void Deinitialize()
         {
             _animatedMembers.Clear();
+            _animatedMembersSnapshot = [];
             _baselineMethodArguments.Clear();
             _initialized = false;
         }
@@ -308,7 +312,8 @@ namespace XREngine.Components.Animation
             if (Animation is null)
                 return;
 
-            foreach (var member in _animatedMembers)
+            var snapshot = _animatedMembersSnapshot;
+            foreach (var member in snapshot)
             {
                 if (member.Animation is null && member.MemberType != EAnimationMemberType.Method)
                 {
