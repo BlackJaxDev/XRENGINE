@@ -34,7 +34,7 @@ namespace XREngine.Animation.Importers
         //              quaternion(x,y,z,w) → (x,-y,-z,w)   [negate Y and Z]
 
         private static Vector3 ConvertPosition(Vector3 v)
-            => new(v.X, v.Y, -v.Z);
+            => new(-v.X, v.Y, v.Z);
 
         /*
 
@@ -44,9 +44,8 @@ namespace XREngine.Animation.Importers
         /// Combined Z-reflection + 180° Y rotation: (x,y,z,w) → (x,-y,-z,w).
         /// </summary>
         */
-        // Unity -> engine quaternion handedness conversion: reflect Z, which negates X/Y quaternion components.
         private static Quaternion ConvertRotation(Quaternion q)
-            => new(-q.X, -q.Y, q.Z, q.W);
+            => new(q.X, -q.Y, -q.Z, q.W);
 
         /*
 
@@ -83,6 +82,25 @@ namespace XREngine.Animation.Importers
                 'z' => 1.0f,
                 'w' => 1.0f,
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported rotation component."),
+            };
+
+        private static float GetHumanoidBodyPositionComponentScale(char component)
+            => component switch
+            {
+                'x' => -1.0f,
+                'y' => 1.0f,
+                'z' => 1.0f,
+                _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported humanoid position component."),
+            };
+
+        private static float GetHumanoidBodyRotationComponentScale(char component)
+            => component switch
+            {
+                'x' => 1.0f,
+                'y' => -1.0f,
+                'z' => -1.0f,
+                'w' => 1.0f,
+                _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported humanoid rotation component."),
             };
 
         /*
@@ -202,6 +220,7 @@ namespace XREngine.Animation.Importers
                 Name = name,
                 LengthInSeconds = length,
                 Looped = looped,
+                SampleRate = sampleRate,
                 RootMember = new AnimationMember("Root", EAnimationMemberType.Group),
             };
 
@@ -303,7 +322,7 @@ namespace XREngine.Animation.Importers
                 {
                     foreach (var component in rootPosGroup.Components.OrderBy(x => x.Key))
                     {
-                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetPositionComponentScale(component.Key));
+                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyPositionComponentScale(component.Key));
                         builder.AddRootMotionComponentAnimation(component.Key, anim);
                     }
                 }
@@ -312,7 +331,7 @@ namespace XREngine.Animation.Importers
                 {
                     foreach (var component in rootRotGroup.Components.OrderBy(x => x.Key))
                     {
-                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetRotationComponentScale(component.Key));
+                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyRotationComponentScale(component.Key));
                         builder.AddRootMotionRotationComponentAnimation(component.Key, anim);
                     }
                 }
@@ -356,7 +375,7 @@ namespace XREngine.Animation.Importers
                     {
                         foreach (var component in posGroup.Components.OrderBy(x => x.Key))
                         {
-                            var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetPositionComponentScale(component.Key));
+                            var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyPositionComponentScale(component.Key));
                             builder.AddIKGoalPositionComponentAnimation(goalName, component.Key, anim);
                         }
                     }
@@ -365,7 +384,7 @@ namespace XREngine.Animation.Importers
                     {
                         foreach (var component in rotGroup.Components.OrderBy(x => x.Key))
                         {
-                            var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetRotationComponentScale(component.Key));
+                            var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyRotationComponentScale(component.Key));
                             builder.AddIKGoalRotationComponentAnimation(goalName, component.Key, anim);
                         }
                     }
@@ -727,114 +746,7 @@ namespace XREngine.Animation.Importers
                 return false;
             }
 
-            // IMPORTANT: These ints must match the underlying values of XREngine.Components.Animation.EHumanoidValue.
-            // Keep the enum stable or update this mapping accordingly.
-            switch (attribute)
-            {
-                case "Left Eye Down-Up": humanoidValue = EHumanoidValue.LeftEyeDownUp; return true;
-                case "Left Eye In-Out": humanoidValue = EHumanoidValue.LeftEyeInOut; return true;
-                case "Right Eye Down-Up": humanoidValue = EHumanoidValue.RightEyeDownUp; return true;
-                case "Right Eye In-Out": humanoidValue = EHumanoidValue.RightEyeInOut; return true;
-
-                case "Spine Front-Back": humanoidValue = EHumanoidValue.SpineFrontBack; return true;
-                case "Spine Left-Right": humanoidValue = EHumanoidValue.SpineLeftRight; return true;
-                case "Spine Twist Left-Right": humanoidValue = EHumanoidValue.SpineTwistLeftRight; return true;
-                case "Chest Front-Back": humanoidValue = EHumanoidValue.ChestFrontBack; return true;
-                case "Chest Left-Right": humanoidValue = EHumanoidValue.ChestLeftRight; return true;
-                case "Chest Twist Left-Right": humanoidValue = EHumanoidValue.ChestTwistLeftRight; return true;
-                case "UpperChest Front-Back": humanoidValue = EHumanoidValue.UpperChestFrontBack; return true;
-                case "UpperChest Left-Right": humanoidValue = EHumanoidValue.UpperChestLeftRight; return true;
-                case "UpperChest Twist Left-Right": humanoidValue = EHumanoidValue.UpperChestTwistLeftRight; return true;
-                case "Neck Nod Down-Up": humanoidValue = EHumanoidValue.NeckNodDownUp; return true;
-                case "Neck Tilt Left-Right": humanoidValue = EHumanoidValue.NeckTiltLeftRight; return true;
-                case "Neck Turn Left-Right": humanoidValue = EHumanoidValue.NeckTurnLeftRight; return true;
-                case "Head Nod Down-Up": humanoidValue = EHumanoidValue.HeadNodDownUp; return true;
-                case "Head Tilt Left-Right": humanoidValue = EHumanoidValue.HeadTiltLeftRight; return true;
-                case "Head Turn Left-Right": humanoidValue = EHumanoidValue.HeadTurnLeftRight; return true;
-                case "Jaw Close": humanoidValue = EHumanoidValue.JawClose; return true;
-                case "Jaw Left-Right": humanoidValue = EHumanoidValue.JawLeftRight; return true;
-
-                case "Left Shoulder Down-Up": humanoidValue = EHumanoidValue.LeftShoulderDownUp; return true;
-                case "Left Shoulder Front-Back": humanoidValue = EHumanoidValue.LeftShoulderFrontBack; return true;
-                case "Left Arm Down-Up": humanoidValue = EHumanoidValue.LeftArmDownUp; return true;
-                case "Left Arm Front-Back": humanoidValue = EHumanoidValue.LeftArmFrontBack; return true;
-                case "Left Arm Twist In-Out": humanoidValue = EHumanoidValue.LeftArmTwistInOut; return true;
-                case "Left Forearm Stretch": humanoidValue = EHumanoidValue.LeftForearmStretch; return true;
-                case "Left Forearm Twist In-Out": humanoidValue = EHumanoidValue.LeftForearmTwistInOut; return true;
-                case "Left Hand Down-Up": humanoidValue = EHumanoidValue.LeftHandDownUp; return true;
-                case "Left Hand In-Out": humanoidValue = EHumanoidValue.LeftHandInOut; return true;
-                case "Left Upper Leg Front-Back": humanoidValue = EHumanoidValue.LeftUpperLegFrontBack; return true;
-                case "Left Upper Leg In-Out": humanoidValue = EHumanoidValue.LeftUpperLegInOut; return true;
-                case "Left Upper Leg Twist In-Out": humanoidValue = EHumanoidValue.LeftUpperLegTwistInOut; return true;
-                case "Left Lower Leg Stretch": humanoidValue = EHumanoidValue.LeftLowerLegStretch; return true;
-                case "Left Lower Leg Twist In-Out": humanoidValue = EHumanoidValue.LeftLowerLegTwistInOut; return true;
-                case "Left Foot Up-Down": humanoidValue = EHumanoidValue.LeftFootUpDown; return true;
-                case "Left Foot Twist In-Out": humanoidValue = EHumanoidValue.LeftFootTwistInOut; return true;
-                case "Left Toes Up-Down": humanoidValue = EHumanoidValue.LeftToesUpDown; return true;
-
-                case "Right Shoulder Down-Up": humanoidValue = EHumanoidValue.RightShoulderDownUp; return true;
-                case "Right Shoulder Front-Back": humanoidValue = EHumanoidValue.RightShoulderFrontBack; return true;
-                case "Right Arm Down-Up": humanoidValue = EHumanoidValue.RightArmDownUp; return true;
-                case "Right Arm Front-Back": humanoidValue = EHumanoidValue.RightArmFrontBack; return true;
-                case "Right Arm Twist In-Out": humanoidValue = EHumanoidValue.RightArmTwistInOut; return true;
-                case "Right Forearm Stretch": humanoidValue = EHumanoidValue.RightForearmStretch; return true;
-                case "Right Forearm Twist In-Out": humanoidValue = EHumanoidValue.RightForearmTwistInOut; return true;
-                case "Right Hand Down-Up": humanoidValue = EHumanoidValue.RightHandDownUp; return true;
-                case "Right Hand In-Out": humanoidValue = EHumanoidValue.RightHandInOut; return true;
-                case "Right Upper Leg Front-Back": humanoidValue = EHumanoidValue.RightUpperLegFrontBack; return true;
-                case "Right Upper Leg In-Out": humanoidValue = EHumanoidValue.RightUpperLegInOut; return true;
-                case "Right Upper Leg Twist In-Out": humanoidValue = EHumanoidValue.RightUpperLegTwistInOut; return true;
-                case "Right Lower Leg Stretch": humanoidValue = EHumanoidValue.RightLowerLegStretch; return true;
-                case "Right Lower Leg Twist In-Out": humanoidValue = EHumanoidValue.RightLowerLegTwistInOut; return true;
-                case "Right Foot Up-Down": humanoidValue = EHumanoidValue.RightFootUpDown; return true;
-                case "Right Foot Twist In-Out": humanoidValue = EHumanoidValue.RightFootTwistInOut; return true;
-                case "Right Toes Up-Down": humanoidValue = EHumanoidValue.RightToesUpDown; return true;
-
-                case "LeftHand.Index.Spread": humanoidValue = EHumanoidValue.LeftHandIndexSpread; return true;
-                case "LeftHand.Index.1 Stretched": humanoidValue = EHumanoidValue.LeftHandIndex1Stretched; return true;
-                case "LeftHand.Index.2 Stretched": humanoidValue = EHumanoidValue.LeftHandIndex2Stretched; return true;
-                case "LeftHand.Index.3 Stretched": humanoidValue = EHumanoidValue.LeftHandIndex3Stretched; return true;
-                case "LeftHand.Middle.Spread": humanoidValue = EHumanoidValue.LeftHandMiddleSpread; return true;
-                case "LeftHand.Middle.1 Stretched": humanoidValue = EHumanoidValue.LeftHandMiddle1Stretched; return true;
-                case "LeftHand.Middle.2 Stretched": humanoidValue = EHumanoidValue.LeftHandMiddle2Stretched; return true;
-                case "LeftHand.Middle.3 Stretched": humanoidValue = EHumanoidValue.LeftHandMiddle3Stretched; return true;
-                case "LeftHand.Ring.Spread": humanoidValue = EHumanoidValue.LeftHandRingSpread; return true;
-                case "LeftHand.Ring.1 Stretched": humanoidValue = EHumanoidValue.LeftHandRing1Stretched; return true;
-                case "LeftHand.Ring.2 Stretched": humanoidValue = EHumanoidValue.LeftHandRing2Stretched; return true;
-                case "LeftHand.Ring.3 Stretched": humanoidValue = EHumanoidValue.LeftHandRing3Stretched; return true;
-                case "LeftHand.Little.Spread": humanoidValue = EHumanoidValue.LeftHandLittleSpread; return true;
-                case "LeftHand.Little.1 Stretched": humanoidValue = EHumanoidValue.LeftHandLittle1Stretched; return true;
-                case "LeftHand.Little.2 Stretched": humanoidValue = EHumanoidValue.LeftHandLittle2Stretched; return true;
-                case "LeftHand.Little.3 Stretched": humanoidValue = EHumanoidValue.LeftHandLittle3Stretched; return true;
-                case "LeftHand.Thumb.Spread": humanoidValue = EHumanoidValue.LeftHandThumbSpread; return true;
-                case "LeftHand.Thumb.1 Stretched": humanoidValue = EHumanoidValue.LeftHandThumb1Stretched; return true;
-                case "LeftHand.Thumb.2 Stretched": humanoidValue = EHumanoidValue.LeftHandThumb2Stretched; return true;
-                case "LeftHand.Thumb.3 Stretched": humanoidValue = EHumanoidValue.LeftHandThumb3Stretched; return true;
-
-                case "RightHand.Index.Spread": humanoidValue = EHumanoidValue.RightHandIndexSpread; return true;
-                case "RightHand.Index.1 Stretched": humanoidValue = EHumanoidValue.RightHandIndex1Stretched; return true;
-                case "RightHand.Index.2 Stretched": humanoidValue = EHumanoidValue.RightHandIndex2Stretched; return true;
-                case "RightHand.Index.3 Stretched": humanoidValue = EHumanoidValue.RightHandIndex3Stretched; return true;
-                case "RightHand.Middle.Spread": humanoidValue = EHumanoidValue.RightHandMiddleSpread; return true;
-                case "RightHand.Middle.1 Stretched": humanoidValue = EHumanoidValue.RightHandMiddle1Stretched; return true;
-                case "RightHand.Middle.2 Stretched": humanoidValue = EHumanoidValue.RightHandMiddle2Stretched; return true;
-                case "RightHand.Middle.3 Stretched": humanoidValue = EHumanoidValue.RightHandMiddle3Stretched; return true;
-                case "RightHand.Ring.Spread": humanoidValue = EHumanoidValue.RightHandRingSpread; return true;
-                case "RightHand.Ring.1 Stretched": humanoidValue = EHumanoidValue.RightHandRing1Stretched; return true;
-                case "RightHand.Ring.2 Stretched": humanoidValue = EHumanoidValue.RightHandRing2Stretched; return true;
-                case "RightHand.Ring.3 Stretched": humanoidValue = EHumanoidValue.RightHandRing3Stretched; return true;
-                case "RightHand.Little.Spread": humanoidValue = EHumanoidValue.RightHandLittleSpread; return true;
-                case "RightHand.Little.1 Stretched": humanoidValue = EHumanoidValue.RightHandLittle1Stretched; return true;
-                case "RightHand.Little.2 Stretched": humanoidValue = EHumanoidValue.RightHandLittle2Stretched; return true;
-                case "RightHand.Little.3 Stretched": humanoidValue = EHumanoidValue.RightHandLittle3Stretched; return true;
-                case "RightHand.Thumb.Spread": humanoidValue = EHumanoidValue.RightHandThumbSpread; return true;
-                case "RightHand.Thumb.1 Stretched": humanoidValue = EHumanoidValue.RightHandThumb1Stretched; return true;
-                case "RightHand.Thumb.2 Stretched": humanoidValue = EHumanoidValue.RightHandThumb2Stretched; return true;
-                case "RightHand.Thumb.3 Stretched": humanoidValue = EHumanoidValue.RightHandThumb3Stretched; return true;
-            }
-
-            humanoidValue = default;
-            return false;
+            return UnityHumanoidMuscleMap.TryGetValue(attribute, out humanoidValue);
         }
 
         private static bool IsHumanoidMuscleCurve(ScalarCurve c)

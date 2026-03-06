@@ -258,14 +258,7 @@ namespace XREngine.Animation
         public override float CurrentTime
         {
             get => base.CurrentTime;
-            set
-            {
-                float newTime = value.RemapToRange(0.0f, _lengthInSeconds);
-                float oldTime = _currentTime;
-                _currentTime = newTime;
-                OnProgressed(newTime - oldTime);
-                OnCurrentTimeChanged();
-            }
+            set => Seek(value, wrapLooped: true);
         }
 
         public override void Tick(float delta)

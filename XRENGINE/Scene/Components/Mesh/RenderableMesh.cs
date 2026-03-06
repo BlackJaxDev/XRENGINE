@@ -43,6 +43,7 @@ namespace XREngine.Components.Scene.Mesh
         private BVH<Triangle>? _skinnedBvh;
         private Task<SkinnedMeshBvhScheduler.Result>? _skinnedBvhTask;
         private int _skinnedBvhVersion;
+        private bool _skinnedBvhScheduledOnce;
         private AABB _bindPoseBounds;
         private Matrix4x4 _skinnedRootRenderMatrix = Matrix4x4.Identity;
         private Matrix4x4 _skinnedRootRenderMatrixInverse = Matrix4x4.Identity;
@@ -605,7 +606,14 @@ namespace XREngine.Components.Scene.Mesh
                 if (_skinnedBoundsDirty && !EnsureSkinnedBounds())
                     return null;
 
-                //ScheduleSkinnedBvhJobIfNeeded();
+                // Schedule BVH build once so raycasting works on skinned meshes.
+                // Continuous rebuilds during animation cause severe frame drops,
+                // so we only do this once and reuse the cached tree.
+                if (!_skinnedBvhScheduledOnce)
+                {
+                    _skinnedBvhScheduledOnce = true;
+                    ScheduleSkinnedBvhJobIfNeeded();
+                }
                 return null;
             }
         }

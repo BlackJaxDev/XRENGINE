@@ -145,6 +145,9 @@ namespace XREngine.Components.Animation
             }
         }
 
+        public void ApplyCurrentMusclePose()
+            => ApplyMusclePose();
+
         private void ApplyMusclePose()
         {
             // Skip when no muscle values have been set — avoids overwriting
@@ -244,7 +247,6 @@ namespace XREngine.Components.Animation
         {
             var side = isLeft ? Left : Right;
             string sideLabel = isLeft ? "L" : "R";
-            float sideMirror = isLeft ? 1.0f : -1.0f;
             EHumanoidValue shoulderDownUp = isLeft ? EHumanoidValue.LeftShoulderDownUp : EHumanoidValue.RightShoulderDownUp;
             EHumanoidValue shoulderFrontBack = isLeft ? EHumanoidValue.LeftShoulderFrontBack : EHumanoidValue.RightShoulderFrontBack;
             EHumanoidValue armTwist = isLeft ? EHumanoidValue.LeftArmTwistInOut : EHumanoidValue.RightArmTwistInOut;
@@ -271,136 +273,56 @@ namespace XREngine.Components.Animation
             float lowerLegPitchDeg = MapMuscleToDeg(lowerLegStretch, lowerLegStretchMuscle, Settings.LowerLegStretchDegRange);
             lowerLegPitchDeg = ClampKneeFlexionDeg(sideLabel, lowerLegStretchMuscle, lowerLegPitchDeg);
 
-            // Body-space basis derived from skeleton geometry rather than the hips local frame.
-            // The hips bind matrix can have unexpected pre-rotations from the FBX import pipeline
-            // (e.g. Assimp's 180° Y-axis root rotation flips local X and Z), making the local-frame
-            // approach unreliable. Instead we build the basis from the world positions of the hips
-            // and spine, which is stable regardless of how the rig was imported.
-            //
-            //   bodyUp      = direction from hips to spine (anatomically up for any upright rig)
-            //   bodyRight   = world +X projected onto the plane perpendicular to bodyUp
-            //   bodyForward = bodyUp × bodyRight   (right-hand rule → engine -Z for T-pose upright character)
-            Vector3 hipsPos  = Hips.WorldBindPose.Translation;
-            Vector3 spinePos = Spine.Node is not null ? Spine.WorldBindPose.Translation : hipsPos + Vector3.UnitY;
-            Vector3 bindBodyUp = spinePos - hipsPos;
-            float bodyUpLen  = bindBodyUp.Length();
-            bindBodyUp = bodyUpLen > 1e-6f ? bindBodyUp / bodyUpLen : Vector3.UnitY;
-
-            // Project world +X onto the plane perpendicular to bodyUp.
-            Vector3 bindBodyRight = Vector3.UnitX - Vector3.Dot(Vector3.UnitX, bindBodyUp) * bindBodyUp;
-            float bodyRightLen = bindBodyRight.Length();
-            if (bodyRightLen < 1e-6f)
-            {
-                // bodyUp is nearly parallel to world X (character lying on its side) — use -Z as reference instead.
-                bindBodyRight = -Vector3.UnitZ - Vector3.Dot(-Vector3.UnitZ, bindBodyUp) * bindBodyUp;
-                bodyRightLen = bindBodyRight.Length();
-            }
-            bindBodyRight = bodyRightLen > 1e-6f ? bindBodyRight / bodyRightLen : Vector3.UnitX;
-
-            // bodyUp × bodyRight gives engine forward (-Z) for a standard upright T-pose character.
-            Vector3 bindBodyForward = Vector3.Normalize(Vector3.Cross(bindBodyUp, bindBodyRight));
-
-            // Unity humanoid muscles are evaluated relative to the animated body transform,
-            // not a fixed bind-pose torso frame. Rotate the bind-derived body basis by the
-            // current RootQ/body rotation before resolving limb swing axes.
-            Quaternion bodyRotation = _currentBodyRotation;
-            Vector3 bodyUp = RotateWorldDirection(bodyRotation, bindBodyUp);
-            Vector3 bodyRight = RotateWorldDirection(bodyRotation, bindBodyRight);
-            Vector3 bodyForward = RotateWorldDirection(bodyRotation, bindBodyForward);
-
-            // Limb twist axis from bind-pose bone direction (parent -> child).
-            Vector3 bindArmTwistAxisWorld = GetBoneToChildAxisWorld(side.Arm, side.Elbow, bindBodyUp);
-            Vector3 bindLegTwistAxisWorld = GetBoneToChildAxisWorld(side.Leg, side.Knee, -bindBodyUp);
-            Vector3 armTwistAxisWorld = RotateWorldDirection(bodyRotation, bindArmTwistAxisWorld);
-            Vector3 legTwistAxisWorld = RotateWorldDirection(bodyRotation, bindLegTwistAxisWorld);
-
-            // Swing axes in body space.
-            Vector3 sideAxisWorld = Vector3.Normalize(bodyForward * sideMirror);
-            Vector3 frontBackAxisWorld = bodyRight;
-
-            // Step 1 diagnostic: log the derived body axes once (left side only).
-            if (isLeft)
-                LogBodyBasisDiagnostic(bodyRight, bodyUp, bodyForward, armTwistAxisWorld, legTwistAxisWorld, sideAxisWorld, frontBackAxisWorld);
-
-            // Shoulder
-            ApplyWithDebugOverrides(
+            // Limbs use the profiled per-bone axis mapping, just like torso and fingers.
+            // This keeps the solve in stable bind-local space instead of reconstructing
+            // transient world axes from the animated body orientation every frame.
+            ApplyLimbMappedRotation(
                 side.Shoulder.Node, DebugShoulderSigns,
                 yawDeg: 0.0f,
                 pitchDeg: MapMuscleToDeg(shoulderDownUp, GetMuscleValue(shoulderDownUp), Settings.ShoulderDownUpDegRange),
-                rollDeg: MapMuscleToDeg(shoulderFrontBack, GetMuscleValue(shoulderFrontBack), Settings.ShoulderFrontBackDegRange),
-                twistAxisWorld: armTwistAxisWorld,
-                frontBackAxisWorld: bodyForward,
-                leftRightAxisWorld: bodyUp);
+                rollDeg: MapMuscleToDeg(shoulderFrontBack, GetMuscleValue(shoulderFrontBack), Settings.ShoulderFrontBackDegRange));
 
-            // Upper arm
-            ApplyWithDebugOverrides(
+            ApplyLimbMappedRotation(
                 side.Arm.Node, DebugArmSigns,
-                yawDeg: MapMuscleToDeg(armTwist, GetMuscleValue(armTwist), Settings.ArmTwistDegRange) * sideMirror,
+                yawDeg: MapMuscleToDeg(armTwist, GetMuscleValue(armTwist), Settings.ArmTwistDegRange),
                 pitchDeg: MapMuscleToDeg(armDownUp, GetMuscleValue(armDownUp), Settings.ArmDownUpDegRange),
-                rollDeg: MapMuscleToDeg(armFrontBack, GetMuscleValue(armFrontBack), Settings.ArmFrontBackDegRange),
-                twistAxisWorld: armTwistAxisWorld,
-                frontBackAxisWorld: bodyForward,
-                leftRightAxisWorld: bodyUp);
+                rollDeg: MapMuscleToDeg(armFrontBack, GetMuscleValue(armFrontBack), Settings.ArmFrontBackDegRange));
 
-            // Forearm (elbow)
-            ApplyWithDebugOverrides(
+            ApplyLimbMappedRotation(
                 side.Elbow.Node, DebugForearmSigns,
-                yawDeg: MapMuscleToDeg(forearmTwist, GetMuscleValue(forearmTwist), Settings.ForearmTwistDegRange) * sideMirror,
+                yawDeg: MapMuscleToDeg(forearmTwist, GetMuscleValue(forearmTwist), Settings.ForearmTwistDegRange),
                 pitchDeg: MapMuscleToDeg(forearmStretch, forearmStretchMuscle, Settings.ForearmStretchDegRange),
-                rollDeg: 0.0f,
-                twistAxisWorld: armTwistAxisWorld,
-                frontBackAxisWorld: bodyForward,
-                leftRightAxisWorld: bodyUp);
+                rollDeg: 0.0f);
 
-            // Wrist
-            ApplyWithDebugOverrides(
+            ApplyLimbMappedRotation(
                 side.Wrist.Node, DebugWristSigns,
                 yawDeg: 0.0f,
                 pitchDeg: MapMuscleToDeg(handDownUp, GetMuscleValue(handDownUp), Settings.HandDownUpDegRange),
-                rollDeg: MapMuscleToDeg(handInOut, GetMuscleValue(handInOut), Settings.HandInOutDegRange) * sideMirror,
-                twistAxisWorld: armTwistAxisWorld,
-                frontBackAxisWorld: bodyForward,
-                leftRightAxisWorld: bodyUp);
+                rollDeg: MapMuscleToDeg(handInOut, GetMuscleValue(handInOut), Settings.HandInOutDegRange));
 
-            // Upper leg
-            ApplyWithDebugOverrides(
+            ApplyLimbMappedRotation(
                 side.Leg.Node, DebugUpperLegSigns,
-                yawDeg: MapMuscleToDeg(upperLegTwist, GetMuscleValue(upperLegTwist), Settings.UpperLegTwistDegRange) * sideMirror,
+                yawDeg: MapMuscleToDeg(upperLegTwist, GetMuscleValue(upperLegTwist), Settings.UpperLegTwistDegRange),
                 pitchDeg: MapMuscleToDeg(upperLegFrontBack, GetMuscleValue(upperLegFrontBack), Settings.UpperLegFrontBackDegRange),
-                rollDeg: MapMuscleToDeg(upperLegInOut, GetMuscleValue(upperLegInOut), Settings.UpperLegInOutDegRange),
-                twistAxisWorld: legTwistAxisWorld,
-                frontBackAxisWorld: bodyRight,
-                leftRightAxisWorld: bodyForward);
+                rollDeg: MapMuscleToDeg(upperLegInOut, GetMuscleValue(upperLegInOut), Settings.UpperLegInOutDegRange));
 
-            // Lower leg (knee)
-            ApplyWithDebugOverrides(
+            ApplyLimbMappedRotation(
                 side.Knee.Node, DebugKneeSigns,
-                yawDeg: MapMuscleToDeg(lowerLegTwist, GetMuscleValue(lowerLegTwist), Settings.LowerLegTwistDegRange) * sideMirror,
+                yawDeg: MapMuscleToDeg(lowerLegTwist, GetMuscleValue(lowerLegTwist), Settings.LowerLegTwistDegRange),
                 pitchDeg: lowerLegPitchDeg,
-                rollDeg: 0.0f,
-                twistAxisWorld: legTwistAxisWorld,
-                frontBackAxisWorld: bodyRight,
-                leftRightAxisWorld: bodyForward);
+                rollDeg: 0.0f);
 
-            // Foot
-            ApplyWithDebugOverrides(
+            ApplyLimbMappedRotation(
                 side.Foot.Node, DebugFootSigns,
-                yawDeg: MapMuscleToDeg(footTwist, GetMuscleValue(footTwist), Settings.FootTwistDegRange) * sideMirror,
+                yawDeg: MapMuscleToDeg(footTwist, GetMuscleValue(footTwist), Settings.FootTwistDegRange),
                 pitchDeg: MapMuscleToDeg(footUpDown, GetMuscleValue(footUpDown), Settings.FootUpDownDegRange),
-                rollDeg: 0.0f,
-                twistAxisWorld: legTwistAxisWorld,
-                frontBackAxisWorld: bodyRight,
-                leftRightAxisWorld: bodyForward);
+                rollDeg: 0.0f);
 
-            // Toes
-            ApplyWithDebugOverrides(
+            ApplyLimbMappedRotation(
                 side.Toes.Node, DebugToesSigns,
                 yawDeg: 0.0f,
                 pitchDeg: MapMuscleToDeg(toesUpDown, GetMuscleValue(toesUpDown), Settings.ToesUpDownDegRange),
-                rollDeg: 0.0f,
-                twistAxisWorld: legTwistAxisWorld,
-                frontBackAxisWorld: bodyRight,
-                leftRightAxisWorld: bodyForward);
+                rollDeg: 0.0f);
         }
 
         private void ApplyFingerMuscles(bool isLeft)
@@ -498,6 +420,25 @@ namespace XREngine.Components.Animation
                 : null;
         }
 
+        private void ApplyLimbMappedRotation(SceneNode? node, LimbSignOverrides overrides, float yawDeg, float pitchDeg, float rollDeg)
+        {
+            yawDeg *= overrides.YawSign;
+            pitchDeg *= overrides.PitchSign;
+            rollDeg *= overrides.RollSign;
+
+            if (overrides.SkipBlanketNegate)
+            {
+                yawDeg = -yawDeg;
+                pitchDeg = -pitchDeg;
+                rollDeg = -rollDeg;
+            }
+
+            if (overrides.SwapPitchRollAxes)
+                (pitchDeg, rollDeg) = (rollDeg, pitchDeg);
+
+            ApplyBindRelativeEulerDegrees(node, yawDeg, pitchDeg, rollDeg, GetBoneAxisMapping(node));
+        }
+
         private float MapMuscleToDeg(EHumanoidValue value, float muscle, Vector2 defaultDegreeRange)
         {
             // Unity humanoid muscle mapping is piecewise-linear through zero:
@@ -545,6 +486,26 @@ namespace XREngine.Components.Animation
             Vector3 rotated = Vector3.Transform(direction, rotation);
             float lenSq = rotated.LengthSquared();
             return lenSq > 1e-8f ? rotated / MathF.Sqrt(lenSq) : direction;
+        }
+
+        private void GetBindBodyBasis(out Vector3 bindBodyUp, out Vector3 bindBodyRight, out Vector3 bindBodyForward)
+        {
+            Vector3 hipsPos = Hips.WorldBindPose.Translation;
+            Vector3 spinePos = Spine.Node is not null ? Spine.WorldBindPose.Translation : hipsPos + Vector3.UnitY;
+            bindBodyUp = spinePos - hipsPos;
+            float bodyUpLen = bindBodyUp.Length();
+            bindBodyUp = bodyUpLen > 1e-6f ? bindBodyUp / bodyUpLen : Vector3.UnitY;
+
+            bindBodyRight = Vector3.UnitX - Vector3.Dot(Vector3.UnitX, bindBodyUp) * bindBodyUp;
+            float bodyRightLen = bindBodyRight.Length();
+            if (bodyRightLen < 1e-6f)
+            {
+                bindBodyRight = -Vector3.UnitZ - Vector3.Dot(-Vector3.UnitZ, bindBodyUp) * bindBodyUp;
+                bodyRightLen = bindBodyRight.Length();
+            }
+            bindBodyRight = bodyRightLen > 1e-6f ? bindBodyRight / bodyRightLen : Vector3.UnitX;
+
+            bindBodyForward = Vector3.Normalize(Vector3.Cross(bindBodyUp, bindBodyRight));
         }
 
         [Obsolete("Stretch muscles are now applied as rotation (pitch) on the joint bone. Retained for potential non-humanoid uses.")]
@@ -1149,8 +1110,8 @@ namespace XREngine.Components.Animation
             FindChildrenFor(Hips, [
                 (Spine, ByName("Spine")),
                 (Chest, ByName("Chest")),
-                (Left.Leg, ByPosition(LegNameContains, x => x.X < 0.0f)),
-                (Right.Leg, ByPosition(LegNameContains, x => x.X > 0.0f)),
+                (Left.Leg, BySideAwarePosition(LegNameContains, isLeft: true, x => x.X < 0.0f)),
+                (Right.Leg, BySideAwarePosition(LegNameContains, isLeft: false, x => x.X > 0.0f)),
             ]);
 
             if (Spine.Node is not null && Chest.Node is null)
@@ -1163,8 +1124,8 @@ namespace XREngine.Components.Animation
                     (UpperChest, ByNameContainsAny("UpperChest", "Upper_Chest")),
                     (Neck, ByName("Neck")),
                     (Head, ByName("Head")),
-                    (Left.Shoulder, ByPosition("Shoulder", x => x.X < 0.0f)),
-                    (Right.Shoulder, ByPosition("Shoulder", x => x.X > 0.0f)),
+                    (Left.Shoulder, BySideAwarePosition("Shoulder", isLeft: true, x => x.X < 0.0f)),
+                    (Right.Shoulder, BySideAwarePosition("Shoulder", isLeft: false, x => x.X > 0.0f)),
                 ]);
 
             // If UpperChest was found, shoulders/neck/head may be children of UpperChest rather than Chest.
@@ -1172,8 +1133,8 @@ namespace XREngine.Components.Animation
                 FindChildrenFor(UpperChest, [
                     (Neck, ByName("Neck")),
                     (Head, ByName("Head")),
-                    (Left.Shoulder, ByPosition("Shoulder", x => x.X < 0.0f)),
-                    (Right.Shoulder, ByPosition("Shoulder", x => x.X > 0.0f)),
+                    (Left.Shoulder, BySideAwarePosition("Shoulder", isLeft: true, x => x.X < 0.0f)),
+                    (Right.Shoulder, BySideAwarePosition("Shoulder", isLeft: false, x => x.X > 0.0f)),
                 ]);
 
             if (Neck.Node is not null && Head.Node is null)
@@ -1186,8 +1147,8 @@ namespace XREngine.Components.Animation
             {
                 Jaw.Node = Head.Node.FindDescendantByName("Jaw", StringComparison.InvariantCultureIgnoreCase);
                 FindChildrenFor(Head, [
-                    (Left.Eye, ByPosition("Eye", x => x.X < 0.0f)),
-                    (Right.Eye, ByPosition("Eye", x => x.X > 0.0f)),
+                    (Left.Eye, BySideAwarePosition("Eye", isLeft: true, x => x.X < 0.0f)),
+                    (Right.Eye, BySideAwarePosition("Eye", isLeft: false, x => x.X > 0.0f)),
                 ]);
             }
 
@@ -1232,42 +1193,10 @@ namespace XREngine.Components.Animation
 
             //Find finger bones
             if (Left.Wrist.Node is not null)
-                FindChildrenFor(Left.Wrist, [
-                    (Left.Hand.Pinky.Proximal, ByNameContainsAll("pinky", "1")),
-                    (Left.Hand.Pinky.Intermediate, ByNameContainsAll("pinky", "2")),
-                    (Left.Hand.Pinky.Distal, ByNameContainsAll("pinky", "3")),
-                    (Left.Hand.Ring.Proximal, ByNameContainsAll("ring", "1")),
-                    (Left.Hand.Ring.Intermediate, ByNameContainsAll("ring", "2")),
-                    (Left.Hand.Ring.Distal, ByNameContainsAll("ring", "3")),
-                    (Left.Hand.Middle.Proximal, ByNameContainsAll("middle", "1")),
-                    (Left.Hand.Middle.Intermediate, ByNameContainsAll("middle", "2")),
-                    (Left.Hand.Middle.Distal, ByNameContainsAll("middle", "3")),
-                    (Left.Hand.Index.Proximal, ByNameContainsAll("index", "1")),
-                    (Left.Hand.Index.Intermediate, ByNameContainsAll("index", "2")),
-                    (Left.Hand.Index.Distal, ByNameContainsAll("index", "3")),
-                    (Left.Hand.Thumb.Proximal, ByNameContainsAll("thumb", "1")),
-                    (Left.Hand.Thumb.Intermediate, ByNameContainsAll("thumb", "2")),
-                    (Left.Hand.Thumb.Distal, ByNameContainsAll("thumb", "3")),
-                ]);
+                FindFingerChainsForWrist(Left.Wrist.Node, Left.Hand);
 
             if (Right.Wrist.Node is not null)
-                FindChildrenFor(Right.Wrist, [
-                    (Right.Hand.Pinky.Proximal, ByNameContainsAll("pinky", "1")),
-                    (Right.Hand.Pinky.Intermediate, ByNameContainsAll("pinky", "2")),
-                    (Right.Hand.Pinky.Distal, ByNameContainsAll("pinky", "3")),
-                    (Right.Hand.Ring.Proximal, ByNameContainsAll("ring", "1")),
-                    (Right.Hand.Ring.Intermediate, ByNameContainsAll("ring", "2")),
-                    (Right.Hand.Ring.Distal, ByNameContainsAll("ring", "3")),
-                    (Right.Hand.Middle.Proximal, ByNameContainsAll("middle", "1")),
-                    (Right.Hand.Middle.Intermediate, ByNameContainsAll("middle", "2")),
-                    (Right.Hand.Middle.Distal, ByNameContainsAll("middle", "3")),
-                    (Right.Hand.Index.Proximal, ByNameContainsAll("index", "1")),
-                    (Right.Hand.Index.Intermediate, ByNameContainsAll("index", "2")),
-                    (Right.Hand.Index.Distal, ByNameContainsAll("index", "3")),
-                    (Right.Hand.Thumb.Proximal, ByNameContainsAll("thumb", "1")),
-                    (Right.Hand.Thumb.Intermediate, ByNameContainsAll("thumb", "2")),
-                    (Right.Hand.Thumb.Distal, ByNameContainsAll("thumb", "3")),
-                ]);
+                FindFingerChainsForWrist(Right.Wrist.Node, Right.Hand);
 
             //Find leg bones
             if (Left.Leg.Node is not null)
@@ -1621,6 +1550,15 @@ namespace XREngine.Components.Animation
         private static readonly string[] TwistBoneMismatch = ["Twist"];
         private static readonly string[] ElbowNameMatches = ["Elbow"];
         private static readonly string[] HandNameMatches = ["Wrist", "Hand"];
+        private static readonly string[] PinkyFingerNameMatches = ["pinky", "pinkie", "little"];
+        private static readonly string[] RingFingerNameMatches = ["ring"];
+        private static readonly string[] MiddleFingerNameMatches = ["middle"];
+        private static readonly string[] IndexFingerNameMatches = ["index"];
+        private static readonly string[] ThumbFingerNameMatches = ["thumb"];
+        private static readonly string[] ProximalFingerSegmentMatches = ["1", "01", "prox", "proximal"];
+        private static readonly string[] IntermediateFingerSegmentMatches = ["2", "02", "inter", "intermediate"];
+        private static readonly string[] DistalFingerSegmentMatches = ["3", "03", "dist", "distal", "tip"];
+        private static readonly string[] FingerBoneMismatch = ["metacarp"];
 
         public void SetFootPositionX(float x, bool leftFoot)
         {
@@ -1725,7 +1663,8 @@ namespace XREngine.Components.Animation
 
             // Only return an existing solver — never auto-create or auto-reconfigure one.
             // Silent reconfiguration here clobbers user-authored IK tuning during playback.
-            return GetSiblingComponent<HumanoidIKSolverComponent>(false);
+            var solver = GetSiblingComponent<HumanoidIKSolverComponent>(false);
+            return solver is { IsActive: true } ? solver : null;
         }
 
         /// <summary>
@@ -1948,8 +1887,101 @@ namespace XREngine.Components.Animation
         private static Func<SceneNode, bool> ByPosition(string nameContains, Func<Vector3, bool> posMatch, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
             => node => (nameContains is null || (node.Name?.Contains(nameContains, comp) ?? false)) && posMatch(node.Transform.LocalTranslation);
 
+        private enum ESideHint
+        {
+            Unknown,
+            Left,
+            Right,
+        }
+
+        private static Func<SceneNode, bool> BySideAwarePosition(string nameContains, bool isLeft, Func<Vector3, bool> posMatch, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
+            => node =>
+            {
+                if (nameContains is not null && !(node.Name?.Contains(nameContains, comp) ?? false))
+                    return false;
+
+                return GetSideHint(node.Name) switch
+                {
+                    ESideHint.Left => isLeft,
+                    ESideHint.Right => !isLeft,
+                    _ => posMatch(node.Transform.LocalTranslation),
+                };
+            };
+
         private static Func<SceneNode, bool> ByName(string name, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
             => node => node.Name?.Equals(name, comp) ?? false;
+
+        private static ESideHint GetSideHint(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return ESideHint.Unknown;
+
+            if (name.Contains("Left", StringComparison.InvariantCultureIgnoreCase))
+                return ESideHint.Left;
+
+            if (name.Contains("Right", StringComparison.InvariantCultureIgnoreCase))
+                return ESideHint.Right;
+
+            if (HasStandaloneSideToken(name, 'L'))
+                return ESideHint.Left;
+
+            if (HasStandaloneSideToken(name, 'R'))
+                return ESideHint.Right;
+
+            return ESideHint.Unknown;
+        }
+
+        private static bool HasStandaloneSideToken(string name, char token)
+        {
+            for (int i = 0; i < name.Length; i++)
+            {
+                if (char.ToUpperInvariant(name[i]) != token)
+                    continue;
+
+                bool startsToken = i == 0 || !char.IsLetterOrDigit(name[i - 1]);
+                bool endsToken = i == name.Length - 1 || !char.IsLetterOrDigit(name[i + 1]);
+                if (startsToken && endsToken)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static void FindFingerChainsForWrist(SceneNode wrist, BodySide.Fingers hand)
+        {
+            FindFingerChain(wrist, hand.Pinky, PinkyFingerNameMatches);
+            FindFingerChain(wrist, hand.Ring, RingFingerNameMatches);
+            FindFingerChain(wrist, hand.Middle, MiddleFingerNameMatches);
+            FindFingerChain(wrist, hand.Index, IndexFingerNameMatches);
+            FindFingerChain(wrist, hand.Thumb, ThumbFingerNameMatches);
+        }
+
+        private static void FindFingerChain(SceneNode wrist, BodySide.Fingers.Finger finger, string[] aliases)
+        {
+            finger.Proximal.Node ??= FindFingerBone(wrist, aliases, ProximalFingerSegmentMatches);
+
+            var intermediateRoot = finger.Proximal.Node ?? wrist;
+            finger.Intermediate.Node ??= FindFingerBone(intermediateRoot, aliases, IntermediateFingerSegmentMatches);
+
+            var distalRoot = finger.Intermediate.Node ?? finger.Proximal.Node ?? wrist;
+            finger.Distal.Node ??= FindFingerBone(distalRoot, aliases, DistalFingerSegmentMatches);
+        }
+
+        private static SceneNode? FindFingerBone(SceneNode searchRoot, string[] aliases, string[] segmentTokens)
+            => searchRoot.FindDescendant(transform =>
+            {
+                var node = transform.SceneNode;
+                if (node is null || ReferenceEquals(node, searchRoot))
+                    return false;
+
+                string? name = node.Name;
+                return NameContainsAny(name, aliases)
+                    && NameContainsAny(name, segmentTokens)
+                    && !NameContainsAny(name, FingerBoneMismatch);
+            });
+
+        private static bool NameContainsAny(string? name, string[] terms, StringComparison comparison = StringComparison.InvariantCultureIgnoreCase)
+            => name is not null && terms.Any(term => name.Contains(term, comparison));
 
         private static void FindChildrenFor(BoneDef def, (BoneDef, Func<SceneNode, bool>)[] childSearch)
         {

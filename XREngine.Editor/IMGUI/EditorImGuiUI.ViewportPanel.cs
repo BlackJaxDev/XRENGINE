@@ -20,6 +20,12 @@ public static partial class EditorImGuiUI
     private static bool _scenePanelPathLogged;
     private static bool _scenePanelVulkanTextureFailedLogged;
 
+    // Material drag-drop preview state
+    private static RenderableMesh? _materialPreviewMesh;
+    private static XRMaterial? _materialPreviewOriginal;
+    private static XRMaterial? _materialPreviewCurrent;
+    private static bool _materialPreviewActive;
+
     private static void DrawScenePanel()
     {
         if (Engine.EditorPreferences.ViewportPresentationMode != EditorPreferences.EViewportPresentationMode.UseViewportPanel)
@@ -209,9 +215,35 @@ public static partial class EditorImGuiUI
 
     private static void HandleScenePanelModelAssetDrop(XRWorldInstance world)
     {
-        if (!ImGui.BeginDragDropTarget())
-            return;
+        // Handle material preview cleanup when drag ends or leaves the target
+        if (_materialPreviewActive && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
+        {
+            RevertMaterialPreview();
+        }
 
+        if (!ImGui.BeginDragDropTarget())
+        {
+            // If we leave the drop target while dragging, revert the preview
+            if (_materialPreviewActive)
+                RevertMaterialPreview();
+            return;
+        }
+
+        // First, peek to handle material hover preview
+        var peekPayload = ImGui.AcceptDragDropPayload(ImGuiAssetUtilities.AssetPayloadType, ImGuiDragDropFlags.AcceptPeekOnly);
+        unsafe
+        {
+            if ((nint)peekPayload.NativePtr != IntPtr.Zero && peekPayload.Data != IntPtr.Zero && peekPayload.DataSize > 0)
+            {
+                string? path = ImGuiAssetUtilities.GetPathFromPayload(peekPayload);
+                if (!string.IsNullOrWhiteSpace(path) && TryLoadMaterialAsset(path, out var material))
+                {
+                    UpdateMaterialPreview(world, material!);
+                }
+            }
+        }
+
+        // Then check for actual drop
         var payload = ImGui.AcceptDragDropPayload(ImGuiAssetUtilities.AssetPayloadType);
         unsafe
         {
@@ -221,7 +253,11 @@ public static partial class EditorImGuiUI
                 if (!string.IsNullOrWhiteSpace(path))
                 {
                     if (TryLoadMaterialAsset(path, out var material))
+                    {
+                        // Clear preview state before permanent apply (don't revert, just clear tracking)
+                        ClearMaterialPreviewState();
                         EnqueueSceneEdit(() => TryApplyMaterialDropToHoveredSubmesh(world, material!));
+                    }
                     else if (TryLoadPrefabAsset(path, out var prefab))
                         EnqueueSceneEdit(() => SpawnPrefabNode(world, parent: null, prefab!));
                     else if (TryLoadModelAsset(path, out var model))
@@ -231,6 +267,77 @@ public static partial class EditorImGuiUI
         }
 
         ImGui.EndDragDropTarget();
+    }
+
+    private static void UpdateMaterialPreview(XRWorldInstance world, XRMaterial material)
+    {
+        _ = world;
+
+        var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
+        if (player?.ControlledPawn is not EditorFlyingCameraPawnComponent pawn)
+            return;
+
+        if (!pawn.TryGetLastMeshHit(out MeshPickResult meshHit))
+        {
+            // No mesh under cursor - revert any existing preview
+            if (_materialPreviewActive)
+                RevertMaterialPreview();
+            return;
+        }
+
+        var targetMesh = meshHit.Mesh;
+        var renderer = targetMesh?.CurrentLODRenderer ?? targetMesh?.LODs.First?.Value.Renderer;
+        if (renderer is null)
+        {
+            if (_materialPreviewActive)
+                RevertMaterialPreview();
+            return;
+        }
+
+        // If we're hovering over a different mesh, revert the previous preview first
+        if (_materialPreviewActive && !ReferenceEquals(_materialPreviewMesh, targetMesh))
+        {
+            RevertMaterialPreview();
+        }
+
+        // If this is a new preview or the material changed, apply the preview
+        if (!_materialPreviewActive || !ReferenceEquals(_materialPreviewCurrent, material))
+        {
+            // Store original material if this is a new preview target
+            if (!_materialPreviewActive || !ReferenceEquals(_materialPreviewMesh, targetMesh))
+            {
+                _materialPreviewOriginal = renderer.Material;
+                _materialPreviewMesh = targetMesh;
+            }
+
+            // Apply preview material
+            renderer.Material = material;
+            _materialPreviewCurrent = material;
+            _materialPreviewActive = true;
+        }
+    }
+
+    private static void RevertMaterialPreview()
+    {
+        if (!_materialPreviewActive)
+            return;
+
+        if (_materialPreviewMesh is not null && _materialPreviewOriginal is not null)
+        {
+            var renderer = _materialPreviewMesh.CurrentLODRenderer ?? _materialPreviewMesh.LODs.First?.Value.Renderer;
+            if (renderer is not null)
+                renderer.Material = _materialPreviewOriginal;
+        }
+
+        ClearMaterialPreviewState();
+    }
+
+    private static void ClearMaterialPreviewState()
+    {
+        _materialPreviewMesh = null;
+        _materialPreviewOriginal = null;
+        _materialPreviewCurrent = null;
+        _materialPreviewActive = false;
     }
 
     private static bool TryApplyMaterialDropToHoveredSubmesh(XRWorldInstance world, XRMaterial material)

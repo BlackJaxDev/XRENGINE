@@ -589,20 +589,35 @@ public static partial class EditorImGuiUI
             // released over the dockspace region (but not while the Assets window is hovered).
             if (Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.FullViewportBehindImGuiUI)
             {
+                Vector2 dockMin = new(viewport.Pos.X, viewport.Pos.Y + totalReservedHeight);
+                Vector2 dockMax = dockMin + new Vector2(viewport.Size.X, viewport.Size.Y - totalReservedHeight);
+                var mousePos = ImGui.GetMousePos();
+                bool mouseInDockRect =
+                    mousePos.X >= dockMin.X && mousePos.Y >= dockMin.Y &&
+                    mousePos.X <= dockMax.X && mousePos.Y <= dockMax.Y;
+
+                // Handle material preview while dragging over the viewport
+                if (!string.IsNullOrWhiteSpace(_assetDragPath) && mouseInDockRect && !_assetExplorerWindowHovered)
+                {
+                    var world = TryGetActiveWorldInstance();
+                    if (world is not null && TryLoadMaterialAsset(_assetDragPath, out var material))
+                    {
+                        UpdateMaterialPreview(world, material!);
+                    }
+                }
+                else if (_materialPreviewActive)
+                {
+                    // Revert preview when not hovering over the dock rect or hovering over asset explorer
+                    RevertMaterialPreview();
+                }
+
                 if (!string.IsNullOrWhiteSpace(_assetDragPath) && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
                 {
                     // Avoid spawning when releasing over the Assets panel.
                     if (!_assetExplorerWindowHovered)
                     {
-                        Vector2 dockMin = new(viewport.Pos.X, viewport.Pos.Y + totalReservedHeight);
-                        Vector2 dockMax = dockMin + new Vector2(viewport.Size.X, viewport.Size.Y - totalReservedHeight);
-
                         // Avoid ImGui.IsMouseHoveringRect(..., clip: true) here: the clip rect is tied
                         // to whatever window happened to render last, which can make this always-false.
-                        var mousePos = ImGui.GetMousePos();
-                        bool mouseInDockRect =
-                            mousePos.X >= dockMin.X && mousePos.Y >= dockMin.Y &&
-                            mousePos.X <= dockMax.X && mousePos.Y <= dockMax.Y;
 
                         if (mouseInDockRect)
                         {
@@ -610,7 +625,13 @@ public static partial class EditorImGuiUI
                             if (world is not null)
                             {
                                 string path = _assetDragPath;
-                                if (TryLoadPrefabAsset(path, out var prefab))
+                                if (TryLoadMaterialAsset(path, out var material))
+                                {
+                                    // Clear preview state before permanent apply
+                                    ClearMaterialPreviewState();
+                                    EnqueueSceneEdit(() => TryApplyMaterialDropToHoveredSubmesh(world, material!));
+                                }
+                                else if (TryLoadPrefabAsset(path, out var prefab))
                                     EnqueueSceneEdit(() => SpawnPrefabNode(world, parent: null, prefab!));
                                 else if (TryLoadModelAsset(path, out var model))
                                     EnqueueSceneEdit(() => SpawnModelNode(world, parent: null, model!, path));
@@ -624,7 +645,11 @@ public static partial class EditorImGuiUI
 
                 // Cleanup: if we're not actively dragging anymore, clear lingering state.
                 if (!_assetDragInProgress && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
+                {
                     _assetDragPath = null;
+                    if (_materialPreviewActive)
+                        RevertMaterialPreview();
+                }
             }
 
             bool uiWantsCapture = io.WantCaptureMouse || captureKeyboard;

@@ -39,7 +39,7 @@ The animation module in XRENGINE mixes traditional timeline playback, data-drive
 ## Runtime Components and Integration
 
 - **AnimStateMachineComponent** (`XRENGINE/Scene/Components/AnimStateMachineComponent.cs`) is the runtime bridge. It instantiates a state machine, wires it into the scene node, registers per-frame ticks, and optionally links to a `HumanoidComponent` for convenience functions like `SetHumanoidValue`. It tracks which variables changed during evaluation, packs them into a bit buffer, and enqueues replication payloads labeled `PARAMS` so remote clients can stay in sync.
-- **AnimationClipComponent** (`Scene/Components/Animation/AnimationClipComponent.cs`) provides a lightweight way to play a single clip on activation. It starts the clip, registers a tick, and forwards stop events when the component is disabled. This component is often used for simple looping ambient motions or testing imported data before wiring it into a state machine.
+- **AnimationClipComponent** (`Scene/Components/Animation/AnimationClipComponent.cs`) provides a lightweight way to play a single clip on activation. It starts the clip, registers a tick, and forwards stop events when the component is disabled. It also exposes exact-time evaluation for diagnostic tooling, which is used by the humanoid pose-audit workflow to sample a clip deterministically without waiting for frame ticks.
 - Other systems hook into these components: `FaceTrackingReceiverComponent` writes incoming blendshape weights straight into state machine parameters, while VR controllers feed IK targets through the humanoid component.
 
 ## Humanoid Rigging and IK
@@ -73,6 +73,7 @@ The animation module in XRENGINE mixes traditional timeline playback, data-drive
 - Extend IK by adding solvers under `Scene/Components/Animation/IK/Solvers` and exposing them through `BaseIKSolverComponent`.
 
 ## Related Documentation
+- [Humanoid Pose Audit](../features/humanoid-pose-audit.md)
 - [Component System](components.md)
 - [Scene System](scene.md)
 - [Rendering System](rendering.md)

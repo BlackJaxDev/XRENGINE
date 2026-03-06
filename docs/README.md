@@ -32,6 +32,9 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [GPU Physics Chain Compatibility](work/design/gpu-physics-chain-compatibility.md)
 - [GPU Physics Chain Engine Verification](work/design/gpu-physics-chain-engine-verification.md)
 
+## Diagnostics
+- [Humanoid Pose Audit](features/humanoid-pose-audit.md)
+
 ## Work Docs (WIP / TODO / Design)
 - [Work Docs Index](work/README.md)
 - Backlog: [Project TODO](work/backlog/todo.md), [Warnings Remediation Checklist](work/backlog/warnings-todo.md), [Vulkan TODO](work/backlog/VULKAN_TODO.md), [Indirect GPU Rendering TODO](work/backlog/IndirectGPURendering-TODO.md)

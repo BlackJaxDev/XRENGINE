@@ -115,6 +115,16 @@ namespace XREngine.Animation
             set => SetField(ref _hasIKGoals, value);
         }
 
+        private int _sampleRate = 30;
+        /// <summary>
+        /// Source clip sample rate when provided by the importer.
+        /// </summary>
+        public int SampleRate
+        {
+            get => _sampleRate;
+            set => SetField(ref _sampleRate, value);
+        }
+
         private int _totalAnimCount = 0;
         public int TotalAnimCount
         {
@@ -264,6 +274,11 @@ namespace XREngine.Animation
                     Name = imported.Name;
                     LengthInSeconds = imported.LengthInSeconds;
                     Looped = imported.Looped;
+                    ClipKind = imported.ClipKind;
+                    HasMuscleChannels = imported.HasMuscleChannels;
+                    HasRootMotion = imported.HasRootMotion;
+                    HasIKGoals = imported.HasIKGoals;
+                    SampleRate = imported.SampleRate;
                     RootMember = imported.RootMember;
                     return true;
             }

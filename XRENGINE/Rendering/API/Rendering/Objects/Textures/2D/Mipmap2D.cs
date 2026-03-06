@@ -167,14 +167,10 @@ namespace XREngine.Rendering
 
         public MagickImage GetImage()
         {
-            //lock (_lock)
-            //{
-                MagickImage image = XRTexture.NewImage(Width, Height, PixelFormat, PixelType);
-                byte[]? bytes = Data?.GetBytes();
-                if (bytes != null)
-                    image.Read(bytes);
-                return image;
-            //}
+            byte[]? bytes = Data?.GetBytes();
+            if (bytes != null)
+                return XRTexture.NewImage(Width, Height, PixelFormat, PixelType, bytes);
+            return XRTexture.NewImage(Width, Height, PixelFormat, PixelType);
         }
 
         private EPixelType _pixelType = EPixelType.UnsignedByte;

@@ -101,11 +101,21 @@ namespace XREngine.Animation
         public virtual float CurrentTime
         {
             get => _currentTime;
-            set
-            {
-                _currentTime = value.RemapToRange(0.0f, _lengthInSeconds);
-                OnCurrentTimeChanged();
-            }
+            set => Seek(value, wrapLooped: true);
+        }
+
+        public virtual void Seek(float timeSeconds, bool wrapLooped)
+        {
+            float oldTime = _currentTime;
+            if (_lengthInSeconds <= 0.0f)
+                _currentTime = 0.0f;
+            else if (wrapLooped)
+                _currentTime = timeSeconds.RemapToRange(0.0f, _lengthInSeconds);
+            else
+                _currentTime = Math.Clamp(timeSeconds, 0.0f, _lengthInSeconds);
+
+            OnProgressed(_currentTime - oldTime);
+            OnCurrentTimeChanged();
         }
 
         [Category(AnimCategory)]
