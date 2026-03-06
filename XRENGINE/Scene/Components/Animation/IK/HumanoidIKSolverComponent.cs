@@ -40,6 +40,17 @@ namespace XREngine.Components.Animation
         private Quaternion _animatedRightFootLocalRotation = Quaternion.Identity;
         private Quaternion _animatedLeftHandLocalRotation = Quaternion.Identity;
         private Quaternion _animatedRightHandLocalRotation = Quaternion.Identity;
+        // Unity humanoid IK rotations are authored in a canonical avatar-goal basis.
+        // Capture a per-avatar offset from that goal basis into the actual wrist/foot
+        // bone basis the first time an animated IK goal is evaluated.
+        private Quaternion _animatedLeftFootGoalRotationOffset = Quaternion.Identity;
+        private Quaternion _animatedRightFootGoalRotationOffset = Quaternion.Identity;
+        private Quaternion _animatedLeftHandGoalRotationOffset = Quaternion.Identity;
+        private Quaternion _animatedRightHandGoalRotationOffset = Quaternion.Identity;
+        private bool _animatedLeftFootGoalRotationOffsetInitialized;
+        private bool _animatedRightFootGoalRotationOffsetInitialized;
+        private bool _animatedLeftHandGoalRotationOffsetInitialized;
+        private bool _animatedRightHandGoalRotationOffsetInitialized;
         private bool _ikGoalWarningLogged;
 
         public override void Visualize()
@@ -259,11 +270,83 @@ namespace XREngine.Components.Animation
             UpdateAnimatedIKGoal(goal);
         }
 
+        public void SetAnimatedIKPositionX(ELimbEndEffector goal, float x)
+        {
+            if (!ShouldApplyAnimatedIKGoal())
+                return;
+
+            Vector3 position = GetAnimatedGoalLocalPosition(goal);
+            position.X = x;
+            SetAnimatedGoalLocalPosition(goal, position);
+        }
+
+        public void SetAnimatedIKPositionY(ELimbEndEffector goal, float y)
+        {
+            if (!ShouldApplyAnimatedIKGoal())
+                return;
+
+            Vector3 position = GetAnimatedGoalLocalPosition(goal);
+            position.Y = y;
+            SetAnimatedGoalLocalPosition(goal, position);
+        }
+
+        public void SetAnimatedIKPositionZ(ELimbEndEffector goal, float z)
+        {
+            if (!ShouldApplyAnimatedIKGoal())
+                return;
+
+            Vector3 position = GetAnimatedGoalLocalPosition(goal);
+            position.Z = z;
+            SetAnimatedGoalLocalPosition(goal, position);
+            UpdateAnimatedIKGoal(goal);
+        }
+
         public void SetAnimatedIKRotation(ELimbEndEffector goal, Quaternion rotation)
         {
             if (!ShouldApplyAnimatedIKGoal())
                 return;
 
+            SetAnimatedGoalLocalRotation(goal, rotation);
+            UpdateAnimatedIKGoal(goal);
+        }
+
+        public void SetAnimatedIKRotationX(ELimbEndEffector goal, float x)
+        {
+            if (!ShouldApplyAnimatedIKGoal())
+                return;
+
+            Quaternion rotation = GetAnimatedGoalLocalRotation(goal);
+            rotation.X = x;
+            SetAnimatedGoalLocalRotation(goal, rotation);
+        }
+
+        public void SetAnimatedIKRotationY(ELimbEndEffector goal, float y)
+        {
+            if (!ShouldApplyAnimatedIKGoal())
+                return;
+
+            Quaternion rotation = GetAnimatedGoalLocalRotation(goal);
+            rotation.Y = y;
+            SetAnimatedGoalLocalRotation(goal, rotation);
+        }
+
+        public void SetAnimatedIKRotationZ(ELimbEndEffector goal, float z)
+        {
+            if (!ShouldApplyAnimatedIKGoal())
+                return;
+
+            Quaternion rotation = GetAnimatedGoalLocalRotation(goal);
+            rotation.Z = z;
+            SetAnimatedGoalLocalRotation(goal, rotation);
+        }
+
+        public void SetAnimatedIKRotationW(ELimbEndEffector goal, float w)
+        {
+            if (!ShouldApplyAnimatedIKGoal())
+                return;
+
+            Quaternion rotation = GetAnimatedGoalLocalRotation(goal);
+            rotation.W = w;
             SetAnimatedGoalLocalRotation(goal, rotation);
             UpdateAnimatedIKGoal(goal);
         }
@@ -315,6 +398,7 @@ namespace XREngine.Components.Animation
         protected override void InitializeSolver()
         {
             InitializeChains(Humanoid);
+            ResetAnimatedGoalRotationOffsets();
 
             var rootTfm = SceneNode.GetTransformAs<Transform>(true)!;
 
@@ -332,6 +416,8 @@ namespace XREngine.Components.Animation
 
         protected override void UpdateSolver()
         {
+            RefreshAnimatedGoalTransforms(captureRotationOffsets: true);
+
             for (int i = 0; i < Limbs.Length; i++)
             {
                 Limbs[i].MaintainBend();
@@ -388,6 +474,7 @@ namespace XREngine.Components.Animation
 
             SetAnimatedGoalLocalPosition(goal, Vector3.Zero);
             SetAnimatedGoalLocalRotation(goal, Quaternion.Identity);
+            ResetAnimatedGoalRotationOffset(goal);
         }
 
         private void UpdateAnimatedIKGoal(ELimbEndEffector goal)
@@ -398,15 +485,57 @@ namespace XREngine.Components.Animation
 
             var target = EnsureAnimatedGoalTransform(goal);
             ik.TargetIKTransform = target;
+            RefreshAnimatedGoalTransform(goal, captureRotationOffset: false);
+        }
 
-            float scale = EstimateAnimatedGoalScale();
+        private void RefreshAnimatedGoalTransforms(bool captureRotationOffsets)
+        {
+            RefreshAnimatedGoalTransform(ELimbEndEffector.LeftFoot, captureRotationOffsets);
+            RefreshAnimatedGoalTransform(ELimbEndEffector.RightFoot, captureRotationOffsets);
+            RefreshAnimatedGoalTransform(ELimbEndEffector.LeftHand, captureRotationOffsets);
+            RefreshAnimatedGoalTransform(ELimbEndEffector.RightHand, captureRotationOffsets);
+        }
+
+        private void RefreshAnimatedGoalTransform(ELimbEndEffector goal, bool captureRotationOffset)
+        {
+            var target = GetAnimatedGoalTransform(goal);
+            if (target is null)
+                return;
+
+            float scale = Humanoid.EstimateAnimatedMotionScale();
             Vector3 localPosition = GetAnimatedGoalLocalPosition(goal) * scale;
             Quaternion localRotation = GetAnimatedGoalLocalRotation(goal);
             Matrix4x4 bodyMatrix = GetAnimatedGoalBodyMatrix();
             Quaternion bodyRotation = GetAnimatedGoalBodyRotation();
 
             target.SetWorldTranslation(Vector3.Transform(localPosition, bodyMatrix));
-            target.SetWorldRotation(Quaternion.Normalize(bodyRotation * localRotation));
+
+            Quaternion goalRotationOffset = captureRotationOffset
+                ? EnsureAnimatedGoalRotationOffset(goal, bodyRotation, localRotation)
+                : GetAnimatedGoalRotationOffset(goal);
+
+            Quaternion worldRotation = HasAnimatedGoalRotationOffset(goal)
+                ? Quaternion.Normalize(bodyRotation * localRotation * goalRotationOffset)
+                : Quaternion.Normalize(bodyRotation * localRotation);
+
+            target.SetWorldRotation(worldRotation);
+        }
+
+        private Quaternion EnsureAnimatedGoalRotationOffset(ELimbEndEffector goal, Quaternion bodyRotation, Quaternion localRotation)
+        {
+            if (HasAnimatedGoalRotationOffset(goal))
+                return GetAnimatedGoalRotationOffset(goal);
+
+            var goalBone = GetGoalBoneTransform(goal);
+            if (goalBone is null)
+                return Quaternion.Identity;
+
+            // Match the imported first-frame goal rotation to the avatar's current
+            // wrist/foot bone orientation, then preserve subsequent delta motion.
+            Quaternion importedWorldRotation = Quaternion.Normalize(bodyRotation * localRotation);
+            Quaternion goalRotationOffset = Quaternion.Normalize(Quaternion.Inverse(importedWorldRotation) * goalBone.WorldRotation);
+            SetAnimatedGoalRotationOffset(goal, goalRotationOffset, initialized: true);
+            return goalRotationOffset;
         }
 
         private Matrix4x4 GetAnimatedGoalBodyMatrix()
@@ -415,38 +544,14 @@ namespace XREngine.Components.Animation
         private Quaternion GetAnimatedGoalBodyRotation()
             => Humanoid.Hips.Node?.GetTransformAs<Transform>(true)?.WorldRotation ?? Transform.WorldRotation;
 
-        private float EstimateAnimatedGoalScale()
+        private Transform? GetGoalBoneTransform(ELimbEndEffector goal) => goal switch
         {
-            Vector3 hips = Humanoid.Hips.WorldBindPose.Translation;
-            float total = 0.0f;
-            int count = 0;
-
-            if (Humanoid.Left.Foot.Node is not null)
-            {
-                float left = Vector3.Distance(hips, Humanoid.Left.Foot.WorldBindPose.Translation);
-                if (left > 0.0001f)
-                {
-                    total += left;
-                    count++;
-                }
-            }
-
-            if (Humanoid.Right.Foot.Node is not null)
-            {
-                float right = Vector3.Distance(hips, Humanoid.Right.Foot.WorldBindPose.Translation);
-                if (right > 0.0001f)
-                {
-                    total += right;
-                    count++;
-                }
-            }
-
-            if (count > 0)
-                return total / count;
-
-            float fallback = Transform.LossyWorldScale.Y;
-            return fallback > 0.0001f ? fallback : 1.0f;
-        }
+            ELimbEndEffector.LeftFoot => Humanoid.Left.Foot.Node?.GetTransformAs<Transform>(true),
+            ELimbEndEffector.RightFoot => Humanoid.Right.Foot.Node?.GetTransformAs<Transform>(true),
+            ELimbEndEffector.LeftHand => Humanoid.Left.Wrist.Node?.GetTransformAs<Transform>(true),
+            ELimbEndEffector.RightHand => Humanoid.Right.Wrist.Node?.GetTransformAs<Transform>(true),
+            _ => null,
+        };
 
         private Transform EnsureAnimatedGoalTransform(ELimbEndEffector goal)
         {
@@ -516,6 +621,58 @@ namespace XREngine.Components.Animation
             ELimbEndEffector.RightHand => _animatedRightHandLocalRotation,
             _ => Quaternion.Identity,
         };
+
+        private Quaternion GetAnimatedGoalRotationOffset(ELimbEndEffector goal) => goal switch
+        {
+            ELimbEndEffector.LeftFoot => _animatedLeftFootGoalRotationOffset,
+            ELimbEndEffector.RightFoot => _animatedRightFootGoalRotationOffset,
+            ELimbEndEffector.LeftHand => _animatedLeftHandGoalRotationOffset,
+            ELimbEndEffector.RightHand => _animatedRightHandGoalRotationOffset,
+            _ => Quaternion.Identity,
+        };
+
+        private bool HasAnimatedGoalRotationOffset(ELimbEndEffector goal) => goal switch
+        {
+            ELimbEndEffector.LeftFoot => _animatedLeftFootGoalRotationOffsetInitialized,
+            ELimbEndEffector.RightFoot => _animatedRightFootGoalRotationOffsetInitialized,
+            ELimbEndEffector.LeftHand => _animatedLeftHandGoalRotationOffsetInitialized,
+            ELimbEndEffector.RightHand => _animatedRightHandGoalRotationOffsetInitialized,
+            _ => false,
+        };
+
+        private void SetAnimatedGoalRotationOffset(ELimbEndEffector goal, Quaternion rotationOffset, bool initialized)
+        {
+            switch (goal)
+            {
+                case ELimbEndEffector.LeftFoot:
+                    _animatedLeftFootGoalRotationOffset = rotationOffset;
+                    _animatedLeftFootGoalRotationOffsetInitialized = initialized;
+                    break;
+                case ELimbEndEffector.RightFoot:
+                    _animatedRightFootGoalRotationOffset = rotationOffset;
+                    _animatedRightFootGoalRotationOffsetInitialized = initialized;
+                    break;
+                case ELimbEndEffector.LeftHand:
+                    _animatedLeftHandGoalRotationOffset = rotationOffset;
+                    _animatedLeftHandGoalRotationOffsetInitialized = initialized;
+                    break;
+                case ELimbEndEffector.RightHand:
+                    _animatedRightHandGoalRotationOffset = rotationOffset;
+                    _animatedRightHandGoalRotationOffsetInitialized = initialized;
+                    break;
+            }
+        }
+
+        private void ResetAnimatedGoalRotationOffsets()
+        {
+            ResetAnimatedGoalRotationOffset(ELimbEndEffector.LeftFoot);
+            ResetAnimatedGoalRotationOffset(ELimbEndEffector.RightFoot);
+            ResetAnimatedGoalRotationOffset(ELimbEndEffector.LeftHand);
+            ResetAnimatedGoalRotationOffset(ELimbEndEffector.RightHand);
+        }
+
+        private void ResetAnimatedGoalRotationOffset(ELimbEndEffector goal)
+            => SetAnimatedGoalRotationOffset(goal, Quaternion.Identity, initialized: false);
 
         private void SetAnimatedGoalLocalPosition(ELimbEndEffector goal, Vector3 position)
         {

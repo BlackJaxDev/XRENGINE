@@ -1747,11 +1747,69 @@ namespace XREngine.Components.Animation
         }
 
         /// <summary>
+        /// Estimates the avatar-space motion scale used by imported Unity humanoid
+        /// root-motion and IK goal curves. This matches the bind-pose leg-length
+        /// heuristic used by the animation-driven IK path.
+        /// </summary>
+        public float EstimateAnimatedMotionScale()
+        {
+            Vector3 hips = Hips.WorldBindPose.Translation;
+            float total = 0.0f;
+            int count = 0;
+
+            if (Left.Foot.Node is not null)
+            {
+                float left = Vector3.Distance(hips, Left.Foot.WorldBindPose.Translation);
+                if (left > 0.0001f)
+                {
+                    total += left;
+                    count++;
+                }
+            }
+
+            if (Right.Foot.Node is not null)
+            {
+                float right = Vector3.Distance(hips, Right.Foot.WorldBindPose.Translation);
+                if (right > 0.0001f)
+                {
+                    total += right;
+                    count++;
+                }
+            }
+
+            if (count > 0)
+                return total / count;
+
+            float fallback = SceneNode.Transform.LossyWorldScale.Y;
+            return fallback > 0.0001f ? fallback : 1.0f;
+        }
+
+        /// <summary>
         /// Applies root motion position as a bind-relative offset on the Hips bone.
-        /// In Unity humanoid clips, RootT represents the body center (hips) position —
-        /// e.g. RootT.y ≈ 1.0 means hip height above ground, not absolute world Y.
+        /// In Unity humanoid clips, RootT represents the body center (hips) position
+        /// in absolute body space (e.g. RootT.y ≈ 1.0 = hip height above ground).
+        /// We capture the first frame as a baseline and apply only the delta so that
+        /// the bind-pose translation isn't double-counted.
         /// </summary>
         public void SetRootPosition(Vector3 position)
+        {
+            _currentRawRootPosition = position;
+            ApplyRootPosition(_currentRawRootPosition);
+        }
+
+        public void SetRootPositionX(float x)
+            => _currentRawRootPosition.X = x;
+
+        public void SetRootPositionY(float y)
+            => _currentRawRootPosition.Y = y;
+
+        public void SetRootPositionZ(float z)
+        {
+            _currentRawRootPosition.Z = z;
+            ApplyRootPosition(_currentRawRootPosition);
+        }
+
+        private void ApplyRootPosition(Vector3 position)
         {
             var hipsNode = Hips.Node;
             if (hipsNode is null)
@@ -1761,13 +1819,37 @@ namespace XREngine.Components.Animation
             if (tfm is null)
                 return;
 
-            // Apply as bind-relative translation: the animation position is relative to the bind pose.
-            tfm.Translation = tfm.BindState.Translation + position;
+            if (!_rootPositionBaseline.HasValue)
+            {
+                _rootPositionBaseline = position;
+                Debug.Animation($"[RootMotion] Captured RootT baseline=({position.X:F4},{position.Y:F4},{position.Z:F4})");
+            }
+
+            Vector3 delta = (position - _rootPositionBaseline.Value) * EstimateAnimatedMotionScale();
+            tfm.Translation = tfm.BindState.Translation + delta;
         }
 
+        /// <summary>
+        /// Resets the root motion baselines so that the next call to
+        /// <see cref="SetRootPosition"/> / <see cref="SetRootRotation"/> recaptures
+        /// a fresh baseline from the new animation clip's first frame.
+        /// </summary>
+        public void ResetRootMotionBaseline()
+        {
+            _rootPositionBaseline = null;
+            _rootRotationBaseline = null;
+            _rootRotationBaselineLogged = false;
+            _currentBodyRotation = Quaternion.Identity;
+            _currentRawRootPosition = Vector3.Zero;
+            _currentRawRootRotation = Quaternion.Identity;
+        }
+
+        private Vector3? _rootPositionBaseline;
         private Quaternion? _rootRotationBaseline;
         private bool _rootRotationBaselineLogged;
         private Quaternion _currentBodyRotation = Quaternion.Identity;
+        private Vector3 _currentRawRootPosition = Vector3.Zero;
+        private Quaternion _currentRawRootRotation = Quaternion.Identity;
 
         // ── Runtime debug overrides for muscle→rotation sign tuning ─────────
         // These are NOT serialized. They let you flip axis signs at runtime
@@ -1814,6 +1896,27 @@ namespace XREngine.Components.Animation
         /// In Unity humanoid clips, RootQ represents the body center (hips) orientation.
         /// </summary>
         public void SetRootRotation(Quaternion rotation)
+        {
+            _currentRawRootRotation = rotation;
+            ApplyRootRotation(_currentRawRootRotation);
+        }
+
+        public void SetRootRotationX(float x)
+            => _currentRawRootRotation.X = x;
+
+        public void SetRootRotationY(float y)
+            => _currentRawRootRotation.Y = y;
+
+        public void SetRootRotationZ(float z)
+            => _currentRawRootRotation.Z = z;
+
+        public void SetRootRotationW(float w)
+        {
+            _currentRawRootRotation.W = w;
+            ApplyRootRotation(_currentRawRootRotation);
+        }
+
+        private void ApplyRootRotation(Quaternion rotation)
         {
             var hipsNode = Hips.Node;
             if (hipsNode is null)
@@ -1923,9 +2026,7 @@ namespace XREngine.Components.Animation
 
         private void ResetRuntimeAnimationDiagnostics()
         {
-            _rootRotationBaseline = null;
-            _rootRotationBaselineLogged = false;
-            _currentBodyRotation = Quaternion.Identity;
+            ResetRootMotionBaseline();
             _leftKneeClampLogged = false;
             _rightKneeClampLogged = false;
         }

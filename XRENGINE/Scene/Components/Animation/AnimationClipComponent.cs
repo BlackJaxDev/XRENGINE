@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 using XREngine.Animation;
+using XREngine.Animation.IK;
 using XREngine.Components;
 using XREngine.Data;
 
@@ -9,6 +10,7 @@ namespace XREngine.Components.Animation
     {
         private bool _initialized;
         private readonly List<AnimationMember> _animatedMembers = [];
+        private readonly Dictionary<AnimationMember, object?[]> _baselineMethodArguments = [];
 
         private AnimationClip? _animation;
         public AnimationClip? Animation
@@ -43,6 +45,48 @@ namespace XREngine.Components.Animation
         {
             get => _suspendSiblingStateMachine;
             set => SetField(ref _suspendSiblingStateMachine, value);
+        }
+
+        private bool _flipMuscleLeftRight;
+        public bool FlipMuscleLeftRight
+        {
+            get => _flipMuscleLeftRight;
+            set => SetField(ref _flipMuscleLeftRight, value);
+        }
+
+        private bool _flipMuscleZ;
+        public bool FlipMuscleZ
+        {
+            get => _flipMuscleZ;
+            set => SetField(ref _flipMuscleZ, value);
+        }
+
+        private bool _flipIKPositionLeftRight;
+        public bool FlipIKPositionLeftRight
+        {
+            get => _flipIKPositionLeftRight;
+            set => SetField(ref _flipIKPositionLeftRight, value);
+        }
+
+        private bool _flipIKPositionZ;
+        public bool FlipIKPositionZ
+        {
+            get => _flipIKPositionZ;
+            set => SetField(ref _flipIKPositionZ, value);
+        }
+
+        private bool _flipIKRotationLeftRight;
+        public bool FlipIKRotationLeftRight
+        {
+            get => _flipIKRotationLeftRight;
+            set => SetField(ref _flipIKRotationLeftRight, value);
+        }
+
+        private bool _flipIKRotationZ;
+        public bool FlipIKRotationZ
+        {
+            get => _flipIKRotationZ;
+            set => SetField(ref _flipIKRotationZ, value);
         }
 
         private AnimStateMachineComponent? _suspendedSiblingAnimator;
@@ -89,6 +133,7 @@ namespace XREngine.Components.Animation
             }
 
             EnsureHumanoidAnimationIKSolver();
+            ResetRootMotionBaselineIfNeeded();
             EnsureInitialized();
 
             // Bind members to this component/SceneNode via the anim state machine.
@@ -138,7 +183,13 @@ namespace XREngine.Components.Animation
                 return;
 
             _animatedMembers.Clear();
+            _baselineMethodArguments.Clear();
             InitializeMembers(Animation.RootMember, this, _animatedMembers);
+            foreach (var member in _animatedMembers)
+            {
+                if (member.MemberType == EAnimationMemberType.Method)
+                    _baselineMethodArguments[member] = (object?[])member.MethodArguments.Clone();
+            }
             _initialized = true;
         }
 
@@ -168,9 +219,19 @@ namespace XREngine.Components.Animation
             solver?.ClearAnimatedIKGoals();
         }
 
+        private void ResetRootMotionBaselineIfNeeded()
+        {
+            if (Animation?.HasRootMotion != true)
+                return;
+
+            var humanoid = SceneNode.GetComponentInHierarchy("HumanoidComponent") as HumanoidComponent;
+            humanoid?.ResetRootMotionBaseline();
+        }
+
         private void Deinitialize()
         {
             _animatedMembers.Clear();
+            _baselineMethodArguments.Clear();
             _initialized = false;
         }
 
@@ -225,9 +286,155 @@ namespace XREngine.Components.Animation
                 object? defaultValue = member.DefaultValue;
                 object? animatedValue = member.GetAnimationValue();
                 object? weightedValue = LerpValue(defaultValue, animatedValue, Weight);
+                ApplyRuntimeClipRemaps(member, ref weightedValue);
                 member.ApplyAnimationValue(weightedValue);
             }
         }
+
+        private void ApplyRuntimeClipRemaps(AnimationMember member, ref object? value)
+        {
+            if (member.MemberType != EAnimationMemberType.Method)
+                return;
+
+            RestoreBaselineMethodArguments(member);
+
+            switch (member.MemberName)
+            {
+                case "SetValue":
+                    RemapHumanoidMuscle(member, ref value);
+                    break;
+                case "SetAnimatedIKPosition":
+                    RemapAnimatedIKPosition(member, ref value);
+                    break;
+                case "SetAnimatedIKRotation":
+                    RemapAnimatedIKRotation(member, ref value);
+                    break;
+            }
+        }
+
+        private void RestoreBaselineMethodArguments(AnimationMember member)
+        {
+            if (!_baselineMethodArguments.TryGetValue(member, out var baseline))
+                return;
+
+            var args = member.MethodArguments;
+            int count = Math.Min(args.Length, baseline.Length);
+            for (int i = 0; i < count; i++)
+            {
+                if (i == member.AnimatedMethodArgumentIndex)
+                    continue;
+                args[i] = baseline[i];
+            }
+        }
+
+        private void RemapHumanoidMuscle(AnimationMember member, ref object? value)
+        {
+            if (member.MethodArguments.Length == 0)
+                return;
+
+            if (value is not float amount)
+                return;
+
+            object? muscleArg = member.MethodArguments[0];
+            if (!TryGetHumanoidValue(muscleArg, out var humanoidValue))
+                return;
+
+            if (FlipMuscleLeftRight)
+                humanoidValue = SwapHumanoidLeftRight(humanoidValue);
+
+            if (FlipMuscleZ)
+                amount = -amount;
+
+            member.MethodArguments[0] = ConvertHumanoidArgumentType(muscleArg, humanoidValue);
+            value = amount;
+        }
+
+        private void RemapAnimatedIKPosition(AnimationMember member, ref object? value)
+        {
+            if (member.MethodArguments.Length == 0)
+                return;
+
+            if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKPositionLeftRight)
+                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
+
+            if (value is Vector3 pos && FlipIKPositionZ)
+                value = new Vector3(pos.X, pos.Y, -pos.Z);
+        }
+
+        private void RemapAnimatedIKRotation(AnimationMember member, ref object? value)
+        {
+            if (member.MethodArguments.Length == 0)
+                return;
+
+            if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKRotationLeftRight)
+                member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
+
+            if (value is Quaternion rot && FlipIKRotationZ)
+                value = new Quaternion(-rot.X, -rot.Y, rot.Z, rot.W);
+        }
+
+        private static bool TryGetHumanoidValue(object? arg, out EHumanoidValue value)
+        {
+            switch (arg)
+            {
+                case EHumanoidValue v:
+                    value = v;
+                    return true;
+                case int i when Enum.IsDefined(typeof(EHumanoidValue), i):
+                    value = (EHumanoidValue)i;
+                    return true;
+                default:
+                    value = default;
+                    return false;
+            }
+        }
+
+        private static object ConvertHumanoidArgumentType(object? originalArg, EHumanoidValue value)
+            => originalArg is int ? (int)value : value;
+
+        private static EHumanoidValue SwapHumanoidLeftRight(EHumanoidValue value)
+        {
+            string name = value.ToString();
+            if (name.StartsWith("Left", StringComparison.Ordinal))
+            {
+                string rightName = "Right" + name[4..];
+                if (Enum.TryParse(rightName, out EHumanoidValue rightValue))
+                    return rightValue;
+            }
+            else if (name.StartsWith("Right", StringComparison.Ordinal))
+            {
+                string leftName = "Left" + name[5..];
+                if (Enum.TryParse(leftName, out EHumanoidValue leftValue))
+                    return leftValue;
+            }
+
+            return value;
+        }
+
+        private static bool TryGetLimbGoal(object? arg, out ELimbEndEffector goal)
+        {
+            if (arg is ELimbEndEffector g)
+            {
+                goal = g;
+                return true;
+            }
+
+            goal = default;
+            return false;
+        }
+
+        private static object SwapLimbGoalArgumentType(object? originalArg, ELimbEndEffector goal)
+            => originalArg is ELimbEndEffector ? goal : originalArg ?? goal;
+
+        private static ELimbEndEffector SwapLimbLeftRight(ELimbEndEffector goal)
+            => goal switch
+            {
+                ELimbEndEffector.LeftHand => ELimbEndEffector.RightHand,
+                ELimbEndEffector.RightHand => ELimbEndEffector.LeftHand,
+                ELimbEndEffector.LeftFoot => ELimbEndEffector.RightFoot,
+                ELimbEndEffector.RightFoot => ELimbEndEffector.LeftFoot,
+                _ => goal,
+            };
 
         private static object? LerpValue(object? defaultValue, object? animatedValue, float weight) => defaultValue switch
         {

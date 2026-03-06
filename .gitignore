@@ -413,3 +413,4 @@ Samples/MonkeyBallVR/Intermediate/
 XREngine.Audio/runtimes/win-x64/native/phonon.dll
 *.zip
 Screenshots/
+.dotnet/

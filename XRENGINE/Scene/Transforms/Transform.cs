@@ -67,6 +67,12 @@ namespace XREngine.Scene.Transforms
             => Translation = new Vector3(Translation.X, y, Translation.Z);
         public void SetZ(float z)
             => Translation = new Vector3(Translation.X, Translation.Y, z);
+        public void SetScaleX(float x)
+            => Scale = new Vector3(x, Scale.Y, Scale.Z);
+        public void SetScaleY(float y)
+            => Scale = new Vector3(Scale.X, y, Scale.Z);
+        public void SetScaleZ(float z)
+            => Scale = new Vector3(Scale.X, Scale.Y, z);
         public void SetPitch(float pitch)
         {
             var r = Rotator;
@@ -129,6 +135,24 @@ namespace XREngine.Scene.Transforms
             set => SetField(ref _frameState.Scale, value);
         }
 
+        public float ScaleX
+        {
+            get => Scale.X;
+            set => SetScaleX(value);
+        }
+
+        public float ScaleY
+        {
+            get => Scale.Y;
+            set => SetScaleY(value);
+        }
+
+        public float ScaleZ
+        {
+            get => Scale.Z;
+            set => SetScaleZ(value);
+        }
+
         /// <summary>
         /// The local translation of this transform relative to its parent.
         /// </summary>
@@ -136,6 +160,24 @@ namespace XREngine.Scene.Transforms
         {
             get => _frameState.Translation;
             set => SetField(ref _frameState.Translation, value);
+        }
+
+        public float TranslationX
+        {
+            get => Translation.X;
+            set => SetX(value);
+        }
+
+        public float TranslationY
+        {
+            get => Translation.Y;
+            set => SetY(value);
+        }
+
+        public float TranslationZ
+        {
+            get => Translation.Z;
+            set => SetZ(value);
         }
 
         /// <summary>
@@ -157,6 +199,30 @@ namespace XREngine.Scene.Transforms
         {
             get => _frameState.Rotation;
             set => SetField(ref _frameState.Rotation, value);
+        }
+
+        public float QuaternionX
+        {
+            get => Rotation.X;
+            set => Rotation = new Quaternion(value, Rotation.Y, Rotation.Z, Rotation.W);
+        }
+
+        public float QuaternionY
+        {
+            get => Rotation.Y;
+            set => Rotation = new Quaternion(Rotation.X, value, Rotation.Z, Rotation.W);
+        }
+
+        public float QuaternionZ
+        {
+            get => Rotation.Z;
+            set => Rotation = new Quaternion(Rotation.X, Rotation.Y, value, Rotation.W);
+        }
+
+        public float QuaternionW
+        {
+            get => Rotation.W;
+            set => Rotation = new Quaternion(Rotation.X, Rotation.Y, Rotation.Z, value);
         }
 
         /// <summary>

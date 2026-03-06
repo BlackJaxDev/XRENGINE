@@ -63,6 +63,16 @@ namespace XREngine.Animation
                 OnDefaultValueChanged();
             }
         }
+        /// <summary>
+        /// If true, the value returned from keyframes will be constrained to a specified frames per second.
+        /// This is done by finding the two keyframes that the current time lies between for the specified frames per second and returning the value of the first keyframe.
+        /// If false, the value will be evaluated normally and can be returned at any time between keyframes.
+        /// </summary>
+        [DisplayName("Constrain Keyframed FPS")]
+        [Description(
+            "If true, the value returned from keyframes will be constrained to a specified frames per second. " +
+            "This is done by finding the two keyframes that the current time lies between for the specified frames per second and returning the value of the first keyframe. " +
+            "If false, the value will be evaluated normally and can be returned at any time between keyframes.")]
         public bool ConstrainKeyframedFPS
         {
             get => _constrainKeyframedFPS;
