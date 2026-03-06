@@ -16,6 +16,27 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
     private static readonly Vector4 MissingColor = new(0.90f, 0.40f, 0.40f, 1.00f);
     private static readonly Vector4 AssignedColor = new(0.60f, 0.85f, 0.60f, 1.00f);
     private static bool _showZeroMuscleValues = false;
+    private static readonly (string Label, EHumanoidValue Left, EHumanoidValue Right)[] ArmOverrideChannels =
+    [
+        ("Arm Twist", EHumanoidValue.LeftArmTwistInOut, EHumanoidValue.RightArmTwistInOut),
+        ("Arm Down-Up", EHumanoidValue.LeftArmDownUp, EHumanoidValue.RightArmDownUp),
+        ("Arm Front-Back", EHumanoidValue.LeftArmFrontBack, EHumanoidValue.RightArmFrontBack),
+        ("Forearm Twist", EHumanoidValue.LeftForearmTwistInOut, EHumanoidValue.RightForearmTwistInOut),
+        ("Forearm Stretch", EHumanoidValue.LeftForearmStretch, EHumanoidValue.RightForearmStretch),
+        ("Hand Down-Up", EHumanoidValue.LeftHandDownUp, EHumanoidValue.RightHandDownUp),
+        ("Hand In-Out", EHumanoidValue.LeftHandInOut, EHumanoidValue.RightHandInOut),
+    ];
+    private static readonly (string Label, EHumanoidValue Left, EHumanoidValue Right)[] LegOverrideChannels =
+    [
+        ("Upper Leg Twist", EHumanoidValue.LeftUpperLegTwistInOut, EHumanoidValue.RightUpperLegTwistInOut),
+        ("Upper Leg Front-Back", EHumanoidValue.LeftUpperLegFrontBack, EHumanoidValue.RightUpperLegFrontBack),
+        ("Upper Leg In-Out", EHumanoidValue.LeftUpperLegInOut, EHumanoidValue.RightUpperLegInOut),
+        ("Lower Leg Twist", EHumanoidValue.LeftLowerLegTwistInOut, EHumanoidValue.RightLowerLegTwistInOut),
+        ("Lower Leg Stretch", EHumanoidValue.LeftLowerLegStretch, EHumanoidValue.RightLowerLegStretch),
+        ("Foot Twist", EHumanoidValue.LeftFootTwistInOut, EHumanoidValue.RightFootTwistInOut),
+        ("Foot Up-Down", EHumanoidValue.LeftFootUpDown, EHumanoidValue.RightFootUpDown),
+        ("Toes Up-Down", EHumanoidValue.LeftToesUpDown, EHumanoidValue.RightToesUpDown),
+    ];
 
     public void DrawInspector(XRComponent component, HashSet<object> visited)
     {
@@ -261,6 +282,8 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         }
 
         ImGui.TextDisabled($"Profile: {s.ProfileSource ?? "none"}  Confidence: {s.ProfileConfidence:P0}");
+        ImGui.TextDisabled("Range format: first value is used when the muscle is negative, second when it is positive.");
+        ImGui.TextDisabled("Debug toggles: S flips both signs. V swaps magnitudes while preserving each slot's current sign.");
         ImGui.Spacing();
 
         // ── Body (Spine / Chest / Upper Chest) ──────────────────────
@@ -328,6 +351,8 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
             ImGui.Spacing();
             DrawMuscleRange("Hand Down-Up", s, () => s.HandDownUpDegRange, v => s.HandDownUpDegRange = v);
             DrawMuscleRange("Hand In-Out", s, () => s.HandInOutDegRange, v => s.HandInOutDegRange = v);
+            ImGui.Spacing();
+            DrawMirroredOverrideTable("Per-Side Overrides", s, ArmOverrideChannels);
             ImGui.TreePop();
         }
 
@@ -344,6 +369,8 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
             DrawMuscleRange("Foot Twist", s, () => s.FootTwistDegRange, v => s.FootTwistDegRange = v);
             DrawMuscleRange("Foot Up-Down", s, () => s.FootUpDownDegRange, v => s.FootUpDownDegRange = v);
             DrawMuscleRange("Toes Up-Down", s, () => s.ToesUpDownDegRange, v => s.ToesUpDownDegRange = v);
+            ImGui.Spacing();
+            DrawMirroredOverrideTable("Per-Side Overrides", s, LegOverrideChannels);
             ImGui.TreePop();
         }
 
@@ -435,13 +462,11 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
                         ImGui.TableSetColumnIndex(1);
                         var r = range;
-                        ImGui.SetNextItemWidth(-1f);
-                        if (ImGui.DragFloat2("##Range", ref r, 0.5f, -180f, 180f, "%.1f"))
-                        {
-                            using var _ = Undo.TrackChange($"Override {channel}", s);
-                            s.SetMuscleRotationDegRange(channel, r);
-                        }
-                        ImGuiUndoHelper.TrackDragUndo($"Override {channel}", s);
+                        DrawRangeInputWithDebugActions(
+                            $"Override {channel}",
+                            s,
+                            ref r,
+                            value => s.SetMuscleRotationDegRange(channel, value));
 
                         ImGui.TableSetColumnIndex(2);
                         if (ImGui.SmallButton("X"))
@@ -498,19 +523,155 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
         // Two-column layout: label + drag fields
         ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted(label);
+        ImGui.TextUnformatted($"{label} [-,+]");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("First value applies when the muscle value is below 0. Second value applies when it is above 0.");
         ImGui.SameLine(ImGui.GetContentRegionAvail().X * 0.55f);
 
-        ImGui.SetNextItemWidth(-1f);
-        if (ImGui.DragFloat2("##Range", ref range, 0.5f, sliderMin, sliderMax, "%.1f"))
-        {
-            using var _ = Undo.TrackChange(label, settings);
-            setter(range);
-        }
-        ImGuiUndoHelper.TrackDragUndo(label, settings);
+        DrawRangeInputWithDebugActions(label, settings, ref range, setter);
 
         ImGui.PopID();
     }
+
+    private static void DrawMirroredOverrideTable(
+        string title,
+        HumanoidSettings settings,
+        IReadOnlyList<(string Label, EHumanoidValue Left, EHumanoidValue Right)> channels,
+        float sliderMin = -180f,
+        float sliderMax = 180f)
+    {
+        if (!ImGui.TreeNode(title))
+            return;
+
+        ImGui.TextDisabled("Enable an override to decouple one side from the shared default above.");
+        ImGui.TextDisabled("Override range format is [-,+] = negative-side limit, positive-side limit.");
+        ImGui.TextDisabled("Debug toggles: S flips both signs. V swaps magnitudes while preserving each slot's current sign.");
+
+        if (!ImGui.BeginTable($"{title}_Overrides", 3,
+            ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
+        {
+            ImGui.TreePop();
+            return;
+        }
+
+        ImGui.TableSetupColumn("Channel", ImGuiTableColumnFlags.WidthStretch, 0.40f);
+        ImGui.TableSetupColumn("Left", ImGuiTableColumnFlags.WidthStretch, 0.30f);
+        ImGui.TableSetupColumn("Right", ImGuiTableColumnFlags.WidthStretch, 0.30f);
+        ImGui.TableHeadersRow();
+
+        foreach (var (label, left, right) in channels)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted(label);
+
+            ImGui.TableSetColumnIndex(1);
+            DrawChannelOverrideCell("L", settings, left, sliderMin, sliderMax);
+
+            ImGui.TableSetColumnIndex(2);
+            DrawChannelOverrideCell("R", settings, right, sliderMin, sliderMax);
+        }
+
+        ImGui.EndTable();
+        ImGui.TreePop();
+    }
+
+    private static void DrawChannelOverrideCell(
+        string sideId,
+        HumanoidSettings settings,
+        EHumanoidValue channel,
+        float sliderMin,
+        float sliderMax)
+    {
+        ImGui.PushID($"{sideId}_{channel}");
+
+        bool hasOverride = settings.TryGetMuscleRotationDegRange(channel, out Vector2 range);
+        if (!hasOverride)
+            range = settings.GetFallbackMuscleRotationDegRange(channel);
+
+        bool overrideEnabled = hasOverride;
+        if (ImGui.Checkbox("##Enabled", ref overrideEnabled))
+        {
+            using var _ = Undo.TrackChange($"{(overrideEnabled ? "Enable" : "Disable")} override {channel}", settings);
+            if (overrideEnabled)
+                settings.SetMuscleRotationDegRange(channel, range);
+            else
+                settings.MuscleRotationDegRanges.Remove(channel);
+        }
+
+        ImGui.SameLine();
+
+        if (!overrideEnabled)
+            ImGui.BeginDisabled();
+
+        DrawRangeInputWithDebugActions(
+            $"Override {channel}",
+            settings,
+            ref range,
+            value => settings.SetMuscleRotationDegRange(channel, value));
+
+        if (!overrideEnabled)
+            ImGui.EndDisabled();
+
+        ImGui.PopID();
+    }
+
+    private static void DrawRangeInputWithDebugActions(
+        string undoLabel,
+        HumanoidSettings settings,
+        ref Vector2 range,
+        Action<Vector2> setter)
+    {
+        float toggleWidth = ImGui.GetFrameHeight() + ImGui.CalcTextSize("V").X + ImGui.GetStyle().ItemInnerSpacing.X;
+        float totalToggleWidth = (toggleWidth * 2.0f) + (ImGui.GetStyle().ItemSpacing.X * 2.0f);
+        float inputWidth = MathF.Max(80.0f, ImGui.GetContentRegionAvail().X - totalToggleWidth);
+
+        ImGui.SetNextItemWidth(inputWidth);
+        if (ImGui.DragFloat2("##Range", ref range, 0.5f, 0.0f, 0.0f, "%.1f"))
+        {
+            using var _ = Undo.TrackChange(undoLabel, settings);
+            setter(range);
+        }
+        ImGuiUndoHelper.TrackDragUndo(undoLabel, settings);
+
+        ImGui.SameLine();
+        if (DrawRangeDebugActionCheckbox("S", "Debug action: negate both signs for this range."))
+            ApplyRangeDebugTransform(undoLabel, settings, ref range, setter, NegateRangeSigns);
+
+        ImGui.SameLine();
+        if (DrawRangeDebugActionCheckbox("V", "Debug action: swap the two magnitudes while preserving each slot's current sign."))
+            ApplyRangeDebugTransform(undoLabel, settings, ref range, setter, SwapRangeValuesPreservingSigns);
+    }
+
+    private static bool DrawRangeDebugActionCheckbox(string label, string tooltip)
+    {
+        bool apply = false;
+        bool clicked = ImGui.Checkbox(label, ref apply) && apply;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(tooltip);
+        return clicked;
+    }
+
+    private static void ApplyRangeDebugTransform(
+        string undoLabel,
+        HumanoidSettings settings,
+        ref Vector2 range,
+        Action<Vector2> setter,
+        Func<Vector2, Vector2> transform)
+    {
+        range = transform(range);
+        using var _ = Undo.TrackChange(undoLabel, settings);
+        setter(range);
+    }
+
+    private static Vector2 NegateRangeSigns(Vector2 range)
+        => new(-range.X, -range.Y);
+
+    private static Vector2 SwapRangeValuesPreservingSigns(Vector2 range)
+        => new(PreserveSlotSign(range.Y, range.X), PreserveSlotSign(range.X, range.Y));
+
+    private static float PreserveSlotSign(float value, float signSource)
+        => signSource < 0.0f ? -MathF.Abs(value) : signSource > 0.0f ? MathF.Abs(value) : 0.0f;
 
     private static void DrawMuscleValuesSection(HumanoidComponent humanoid)
     {
@@ -704,8 +865,12 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         ImGui.SameLine();
         DrawSignFlipButton("Roll (L/R)", ref overrides.RollSign);
 
-        ImGui.Checkbox("Skip blanket negate", ref overrides.SkipBlanketNegate);
+        ImGui.Checkbox("Skip negate yaw", ref overrides.SkipBlanketNegateYaw);
         ImGui.SameLine();
+        ImGui.Checkbox("Skip negate pitch", ref overrides.SkipBlanketNegatePitch);
+        ImGui.SameLine();
+        ImGui.Checkbox("Skip negate roll", ref overrides.SkipBlanketNegateRoll);
+
         ImGui.Checkbox("Swap pitch/roll axes", ref overrides.SwapPitchRollAxes);
 
         ImGui.PopID();

@@ -71,6 +71,86 @@ namespace XREngine.Components.Animation
         public bool TryGetMuscleRotationDegRange(EHumanoidValue value, out Vector2 range)
             => MuscleRotationDegRanges.TryGetValue(value, out range);
 
+        /// <summary>
+        /// Returns the effective rotation range for a muscle channel. Explicit per-muscle overrides win;
+        /// otherwise the runtime falls back to the shared semantic range property for that channel.
+        /// </summary>
+        public Vector2 GetResolvedMuscleRotationDegRange(EHumanoidValue value)
+            => MuscleRotationDegRanges.TryGetValue(value, out Vector2 range)
+                ? range
+                : GetFallbackMuscleRotationDegRange(value);
+
+        /// <summary>
+        /// Returns the shared fallback rotation range for a muscle channel when no explicit per-muscle
+        /// override exists. Left/right mirrored channels intentionally share the same property.
+        /// </summary>
+        public Vector2 GetFallbackMuscleRotationDegRange(EHumanoidValue value)
+            => value switch
+            {
+                EHumanoidValue.LeftEyeDownUp => LeftEyeDownUpRange,
+                EHumanoidValue.LeftEyeInOut => LeftEyeInOutRange,
+                EHumanoidValue.RightEyeDownUp => RightEyeDownUpRange,
+                EHumanoidValue.RightEyeInOut => RightEyeInOutRange,
+
+                EHumanoidValue.SpineFrontBack => SpineFrontBackDegRange,
+                EHumanoidValue.SpineLeftRight => SpineLeftRightDegRange,
+                EHumanoidValue.SpineTwistLeftRight => SpineTwistLeftRightDegRange,
+                EHumanoidValue.ChestFrontBack => ChestFrontBackDegRange,
+                EHumanoidValue.ChestLeftRight => ChestLeftRightDegRange,
+                EHumanoidValue.ChestTwistLeftRight => ChestTwistLeftRightDegRange,
+                EHumanoidValue.UpperChestFrontBack => UpperChestFrontBackDegRange,
+                EHumanoidValue.UpperChestLeftRight => UpperChestLeftRightDegRange,
+                EHumanoidValue.UpperChestTwistLeftRight => UpperChestTwistLeftRightDegRange,
+                EHumanoidValue.NeckNodDownUp => NeckNodDownUpDegRange,
+                EHumanoidValue.NeckTiltLeftRight => NeckTiltLeftRightDegRange,
+                EHumanoidValue.NeckTurnLeftRight => NeckTurnLeftRightDegRange,
+                EHumanoidValue.HeadNodDownUp => HeadNodDownUpDegRange,
+                EHumanoidValue.HeadTiltLeftRight => HeadTiltLeftRightDegRange,
+                EHumanoidValue.HeadTurnLeftRight => HeadTurnLeftRightDegRange,
+                EHumanoidValue.JawClose => JawCloseDegRange,
+                EHumanoidValue.JawLeftRight => JawLeftRightDegRange,
+
+                EHumanoidValue.LeftShoulderDownUp or EHumanoidValue.RightShoulderDownUp => ShoulderDownUpDegRange,
+                EHumanoidValue.LeftShoulderFrontBack or EHumanoidValue.RightShoulderFrontBack => ShoulderFrontBackDegRange,
+                EHumanoidValue.LeftArmDownUp or EHumanoidValue.RightArmDownUp => ArmDownUpDegRange,
+                EHumanoidValue.LeftArmFrontBack or EHumanoidValue.RightArmFrontBack => ArmFrontBackDegRange,
+                EHumanoidValue.LeftArmTwistInOut or EHumanoidValue.RightArmTwistInOut => ArmTwistDegRange,
+                EHumanoidValue.LeftForearmStretch or EHumanoidValue.RightForearmStretch => ForearmStretchDegRange,
+                EHumanoidValue.LeftForearmTwistInOut or EHumanoidValue.RightForearmTwistInOut => ForearmTwistDegRange,
+                EHumanoidValue.LeftHandDownUp or EHumanoidValue.RightHandDownUp => HandDownUpDegRange,
+                EHumanoidValue.LeftHandInOut or EHumanoidValue.RightHandInOut => HandInOutDegRange,
+                EHumanoidValue.LeftUpperLegFrontBack or EHumanoidValue.RightUpperLegFrontBack => UpperLegFrontBackDegRange,
+                EHumanoidValue.LeftUpperLegInOut or EHumanoidValue.RightUpperLegInOut => UpperLegInOutDegRange,
+                EHumanoidValue.LeftUpperLegTwistInOut or EHumanoidValue.RightUpperLegTwistInOut => UpperLegTwistDegRange,
+                EHumanoidValue.LeftLowerLegStretch or EHumanoidValue.RightLowerLegStretch => LowerLegStretchDegRange,
+                EHumanoidValue.LeftLowerLegTwistInOut or EHumanoidValue.RightLowerLegTwistInOut => LowerLegTwistDegRange,
+                EHumanoidValue.LeftFootUpDown or EHumanoidValue.RightFootUpDown => FootUpDownDegRange,
+                EHumanoidValue.LeftFootTwistInOut or EHumanoidValue.RightFootTwistInOut => FootTwistDegRange,
+                EHumanoidValue.LeftToesUpDown or EHumanoidValue.RightToesUpDown => ToesUpDownDegRange,
+
+                EHumanoidValue.LeftHandIndexSpread or EHumanoidValue.RightHandIndexSpread => IndexSpreadDegRange,
+                EHumanoidValue.LeftHandIndex1Stretched or EHumanoidValue.RightHandIndex1Stretched => Index1StretchedDegRange,
+                EHumanoidValue.LeftHandIndex2Stretched or EHumanoidValue.RightHandIndex2Stretched => Index2StretchedDegRange,
+                EHumanoidValue.LeftHandIndex3Stretched or EHumanoidValue.RightHandIndex3Stretched => Index3StretchedDegRange,
+                EHumanoidValue.LeftHandMiddleSpread or EHumanoidValue.RightHandMiddleSpread => MiddleSpreadDegRange,
+                EHumanoidValue.LeftHandMiddle1Stretched or EHumanoidValue.RightHandMiddle1Stretched => Middle1StretchedDegRange,
+                EHumanoidValue.LeftHandMiddle2Stretched or EHumanoidValue.RightHandMiddle2Stretched => Middle2StretchedDegRange,
+                EHumanoidValue.LeftHandMiddle3Stretched or EHumanoidValue.RightHandMiddle3Stretched => Middle3StretchedDegRange,
+                EHumanoidValue.LeftHandRingSpread or EHumanoidValue.RightHandRingSpread => RingSpreadDegRange,
+                EHumanoidValue.LeftHandRing1Stretched or EHumanoidValue.RightHandRing1Stretched => Ring1StretchedDegRange,
+                EHumanoidValue.LeftHandRing2Stretched or EHumanoidValue.RightHandRing2Stretched => Ring2StretchedDegRange,
+                EHumanoidValue.LeftHandRing3Stretched or EHumanoidValue.RightHandRing3Stretched => Ring3StretchedDegRange,
+                EHumanoidValue.LeftHandLittleSpread or EHumanoidValue.RightHandLittleSpread => LittleSpreadDegRange,
+                EHumanoidValue.LeftHandLittle1Stretched or EHumanoidValue.RightHandLittle1Stretched => Little1StretchedDegRange,
+                EHumanoidValue.LeftHandLittle2Stretched or EHumanoidValue.RightHandLittle2Stretched => Little2StretchedDegRange,
+                EHumanoidValue.LeftHandLittle3Stretched or EHumanoidValue.RightHandLittle3Stretched => Little3StretchedDegRange,
+                EHumanoidValue.LeftHandThumbSpread or EHumanoidValue.RightHandThumbSpread => ThumbSpreadDegRange,
+                EHumanoidValue.LeftHandThumb1Stretched or EHumanoidValue.RightHandThumb1Stretched => Thumb1StretchedDegRange,
+                EHumanoidValue.LeftHandThumb2Stretched or EHumanoidValue.RightHandThumb2Stretched => Thumb2StretchedDegRange,
+                EHumanoidValue.LeftHandThumb3Stretched or EHumanoidValue.RightHandThumb3Stretched => Thumb3StretchedDegRange,
+                _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unsupported humanoid muscle channel."),
+            };
+
         public void SetMuscleRotationDegRange(EHumanoidValue value, Vector2 range)
         {
             if (!MuscleRotationDegRanges.TryAdd(value, range))
@@ -456,6 +536,22 @@ namespace XREngine.Components.Animation
             Little1StretchedDegRange = NegateRange(Little1StretchedDegRange);
             Little2StretchedDegRange = NegateRange(Little2StretchedDegRange);
             Little3StretchedDegRange = NegateRange(Little3StretchedDegRange);
+
+            if (MuscleRotationDegRanges.Count > 0)
+            {
+                Dictionary<EHumanoidValue, Vector2> negatedOverrides = new(MuscleRotationDegRanges.Count);
+                foreach (var pair in MuscleRotationDegRanges)
+                    negatedOverrides[pair.Key] = NegateRange(pair.Value);
+                MuscleRotationDegRanges = negatedOverrides;
+            }
+
+            if (MuscleScaleRanges.Count > 0)
+            {
+                Dictionary<EHumanoidValue, Vector2> negatedScaleOverrides = new(MuscleScaleRanges.Count);
+                foreach (var pair in MuscleScaleRanges)
+                    negatedScaleOverrides[pair.Key] = NegateRange(pair.Value);
+                MuscleScaleRanges = negatedScaleOverrides;
+            }
         }
 
         private static Vector2 NegateRange(Vector2 range)

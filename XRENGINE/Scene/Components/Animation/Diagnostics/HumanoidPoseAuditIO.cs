@@ -30,7 +30,10 @@ namespace XREngine.Components.Animation
             if (!string.IsNullOrWhiteSpace(directory))
                 Directory.CreateDirectory(directory);
 
-            File.WriteAllText(fullPath, JsonConvert.SerializeObject(value, Formatting.Indented), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            string json = JsonConvert.SerializeObject(value, Formatting.Indented);
+            byte[] bytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(json);
+            using var fs = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+            fs.Write(bytes);
         }
     }
 }

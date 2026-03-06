@@ -67,7 +67,7 @@
     {
       "Enabled": true,
       "Kind": "Animated",
-      "Path": "misc\\jax2026.fbx",
+      "Path": "misc\\Mitsuki.fbx",
       "ImportFlags": "Triangulate, FlipUVs",
       "Scale": 1.0,
       "ZUp": false,
@@ -99,10 +99,10 @@
   "FaceMotion3D": false,
   "FaceTracking": false,
   "AnimationClipVMD": false,
-  "AnimationClipAnim": false,
+  "AnimationClipAnim": true,
   "AnimClipPath": "Assets\\Walks\\Sexy Walk.anim",
   "AnimLooped": true,
-  "HumanoidPoseAuditEnabled": true,
+  "HumanoidPoseAuditEnabled": false,
   "HumanoidPoseAuditOutputPath": "Build\\Logs\\pose_audit\\xrengine_sexy_walk_pose.json",
   "HumanoidPoseAuditReferencePath": null,
   "HumanoidPoseAuditComparisonOutputPath": null,
@@ -110,7 +110,7 @@
   "IKTest": false,
   "TestAnimation": false,
 
-  "AddCharacterIK": true,
+  "AddCharacterIK": false,
   "CreateUnitBox": false,
   "StartInPlayModeWithoutTransitions": false
 }
