@@ -159,6 +159,11 @@ public static partial class EditorUnitTests
         public bool AnimationClipAnim = false; //Imports a .anim clip for testing.
         public string AnimClipPath { get; set; } = "Assets\\Walks\\Basic Walk.anim";
         public bool AnimLooped { get; set; } = true;
+        public bool HumanoidPoseAuditEnabled = false; //Exports raw humanoid playback samples for Unity/XREngine comparison.
+        public string HumanoidPoseAuditOutputPath { get; set; } = "Build\\Logs\\pose_audit\\xrengine_humanoid_pose.json";
+        public string? HumanoidPoseAuditReferencePath { get; set; } = null;
+        public string? HumanoidPoseAuditComparisonOutputPath { get; set; } = null;
+        public int? HumanoidPoseAuditSampleRateOverride { get; set; } = null;
         public bool IKTest = false; //Adds an simple IK test tree to the scene.
         public bool TestAnimation = false; //Adds test animations to the character pawn.
 

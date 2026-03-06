@@ -58,16 +58,16 @@
   "EmulatedVRPawn": false,
   "SinglePassStereoVR": false,
 
-  "AddPhysics": true,
+  "AddPhysics": false,
   "PhysicsAPI": "Physx",
-  "PhysicsBallCount": 100,
+  "PhysicsBallCount": 0,
   "PhysicsChain": false,
 
   "ModelsToImport": [
     {
       "Enabled": true,
       "Kind": "Animated",
-      "Path": "misc\\test.fbx",
+      "Path": "misc\\jax2026.fbx",
       "ImportFlags": "Triangulate, FlipUVs",
       "Scale": 1.0,
       "ZUp": false,
@@ -99,9 +99,14 @@
   "FaceMotion3D": false,
   "FaceTracking": false,
   "AnimationClipVMD": false,
-  "AnimationClipAnim": true,
+  "AnimationClipAnim": false,
   "AnimClipPath": "Assets\\Walks\\Sexy Walk.anim",
   "AnimLooped": true,
+  "HumanoidPoseAuditEnabled": true,
+  "HumanoidPoseAuditOutputPath": "Build\\Logs\\pose_audit\\xrengine_sexy_walk_pose.json",
+  "HumanoidPoseAuditReferencePath": null,
+  "HumanoidPoseAuditComparisonOutputPath": null,
+  "HumanoidPoseAuditSampleRateOverride": null,
   "IKTest": false,
   "TestAnimation": false,
 

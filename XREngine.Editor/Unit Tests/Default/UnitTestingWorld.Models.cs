@@ -228,6 +228,20 @@ public static partial class EditorUnitTests
             return Path.GetFullPath(candidate);
         }
 
+        private static string ResolveUnitTestArtifactPath(string rawPath)
+        {
+            if (Path.IsPathRooted(rawPath))
+                return rawPath;
+
+            rawPath = rawPath.Replace('/', Path.DirectorySeparatorChar);
+            string cwd = Environment.CurrentDirectory;
+            string baseDir = string.Equals(Path.GetFileName(cwd), "XREngine.Editor", StringComparison.OrdinalIgnoreCase)
+                ? Directory.GetParent(cwd)?.FullName ?? cwd
+                : cwd;
+
+            return Path.GetFullPath(Path.Combine(baseDir, rawPath));
+        }
+
         public static void AddSkybox(SceneNode rootNode, XRTexture2D? skyEquirect)
         {
             var skybox = new SceneNode(rootNode) { Name = "TestSkyboxNode" };
@@ -508,15 +522,30 @@ public static partial class EditorUnitTests
                         anim.StartOnActivate = true;
                         anim.Animation = clip;
 
-                        if (rootNode.TryGetComponent<HumanoidIKSolverComponent>(out var humanoidIK) && humanoidIK is not null)
+                        if (clip.ClipKind == EAnimationClipKind.UnityHumanoidMuscle
+                            && rootNode.TryGetComponent<HumanoidIKSolverComponent>(out var humanoidIK)
+                            && humanoidIK is not null)
                         {
-                            foreach (var limb in humanoidIK.Limbs)
-                                limb._bendModifier = ELimbBendModifier.Animation;
+                            humanoidIK.IsActive = false;
+                            Debug.Out($"[UnitTestingWorld] Disabled HumanoidIKSolverComponent for humanoid clip '{clip.Name}' to inspect raw muscle playback.");
+                        }
 
-                            humanoidIK.SetIKRotationWeight(ELimbEndEffector.LeftHand, 0.0f);
-                            humanoidIK.SetIKRotationWeight(ELimbEndEffector.RightHand, 0.0f);
-                            humanoidIK.SetIKRotationWeight(ELimbEndEffector.LeftFoot, 0.0f);
-                            humanoidIK.SetIKRotationWeight(ELimbEndEffector.RightFoot, 0.0f);
+                        bool runPoseAudit = Toggles.HumanoidPoseAuditEnabled || !string.IsNullOrWhiteSpace(Toggles.HumanoidPoseAuditReferencePath);
+                        if (runPoseAudit)
+                        {
+                            var audit = rootNode.AddComponent<HumanoidPoseAuditComponent>()!;
+                            audit.TargetClipComponent = anim;
+                            audit.TargetHumanoid = humanComp;
+                            audit.OutputPath = ResolveUnitTestArtifactPath(Toggles.HumanoidPoseAuditOutputPath);
+                            audit.ReferencePath = string.IsNullOrWhiteSpace(Toggles.HumanoidPoseAuditReferencePath)
+                                ? null
+                                : ResolveUnitTestAssetPath(desktopDir, Toggles.HumanoidPoseAuditReferencePath);
+                            audit.ComparisonOutputPath = string.IsNullOrWhiteSpace(Toggles.HumanoidPoseAuditComparisonOutputPath)
+                                ? null
+                                : ResolveUnitTestArtifactPath(Toggles.HumanoidPoseAuditComparisonOutputPath);
+                            audit.SampleRateOverride = Toggles.HumanoidPoseAuditSampleRateOverride ?? 0;
+
+                            Debug.Out($"[UnitTestingWorld] Enabled humanoid pose audit export for clip '{clip.Name}' -> '{audit.OutputPath}'.");
                         }
                     }
                 }

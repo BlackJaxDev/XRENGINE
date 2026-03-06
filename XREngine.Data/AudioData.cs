@@ -157,7 +157,8 @@ namespace XREngine.Data
 
         public void LoadWav(string filePath)
         {
-            using WaveFileReader reader = new(filePath);
+            using FileStream fs = new(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using WaveFileReader reader = new(fs);
             byte[] bytes = new byte[reader.Length];
             ReadExactly(reader, bytes);
             switch (reader.WaveFormat.BitsPerSample)

@@ -3,6 +3,8 @@ using XREngine.Animation;
 using XREngine.Animation.IK;
 using XREngine.Components;
 using XREngine.Data;
+using XREngine.Data.Animation;
+using Extensions;
 
 namespace XREngine.Components.Animation
 {
@@ -38,6 +40,13 @@ namespace XREngine.Components.Animation
         {
             get => _speed;
             set => SetField(ref _speed, value);
+        }
+
+        private float _playbackTime;
+        public float PlaybackTime
+        {
+            get => _playbackTime;
+            private set => SetField(ref _playbackTime, value);
         }
 
         private bool _suspendSiblingStateMachine = true;
@@ -139,6 +148,7 @@ namespace XREngine.Components.Animation
             // Bind members to this component/SceneNode via the anim state machine.
             // Start the underlying property animations so Tick() advances them.
             StartAllPropertyAnimations(Animation);
+            PlaybackTime = 0.0f;
             ApplyAnimatedValues();
 
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
@@ -165,12 +175,35 @@ namespace XREngine.Components.Animation
                 Deinitialize();
         }
 
+        public void EvaluateAtTime(float timeSeconds)
+        {
+            if (Animation is null)
+                return;
+
+            EnsureHumanoidAnimationIKSolver();
+            if (!_initialized)
+                ResetRootMotionBaselineIfNeeded();
+            EnsureInitialized();
+
+            float evaluationTime = NormalizePlaybackTime(timeSeconds, Animation, wrapLooped: false);
+            SetAllPropertyAnimationTimes(Animation, evaluationTime, wrapLooped: false);
+            PlaybackTime = evaluationTime;
+            ApplyAnimatedValues();
+
+            if (Animation.HasMuscleChannels)
+            {
+                var humanoid = SceneNode.GetComponentInHierarchy("HumanoidComponent") as HumanoidComponent;
+                humanoid?.ApplyCurrentMusclePose();
+            }
+        }
+
         private void TickAnimation()
         {
             if (Animation is null || !_initialized)
                 return;
 
             float delta = Engine.Delta * Speed;
+            PlaybackTime = NormalizePlaybackTime(PlaybackTime + delta, Animation, wrapLooped: Animation.Looped);
             foreach (var member in _animatedMembers)
                 member.Animation?.Tick(delta);
 
@@ -304,9 +337,16 @@ namespace XREngine.Components.Animation
                     RemapHumanoidMuscle(member, ref value);
                     break;
                 case "SetAnimatedIKPosition":
+                case "SetAnimatedIKPositionX":
+                case "SetAnimatedIKPositionY":
+                case "SetAnimatedIKPositionZ":
                     RemapAnimatedIKPosition(member, ref value);
                     break;
                 case "SetAnimatedIKRotation":
+                case "SetAnimatedIKRotationX":
+                case "SetAnimatedIKRotationY":
+                case "SetAnimatedIKRotationZ":
+                case "SetAnimatedIKRotationW":
                     RemapAnimatedIKRotation(member, ref value);
                     break;
             }
@@ -357,8 +397,17 @@ namespace XREngine.Components.Animation
             if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKPositionLeftRight)
                 member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
 
-            if (value is Vector3 pos && FlipIKPositionZ)
+            if (!FlipIKPositionZ)
+                return;
+
+            if (value is Vector3 pos)
+            {
                 value = new Vector3(pos.X, pos.Y, -pos.Z);
+                return;
+            }
+
+            if (value is float scalar && member.MemberName == "SetAnimatedIKPositionZ")
+                value = -scalar;
         }
 
         private void RemapAnimatedIKRotation(AnimationMember member, ref object? value)
@@ -369,8 +418,17 @@ namespace XREngine.Components.Animation
             if (TryGetLimbGoal(member.MethodArguments[0], out var goal) && FlipIKRotationLeftRight)
                 member.MethodArguments[0] = SwapLimbGoalArgumentType(member.MethodArguments[0], SwapLimbLeftRight(goal));
 
-            if (value is Quaternion rot && FlipIKRotationZ)
+            if (!FlipIKRotationZ)
+                return;
+
+            if (value is Quaternion rot)
+            {
                 value = new Quaternion(-rot.X, -rot.Y, rot.Z, rot.W);
+                return;
+            }
+
+            if (value is float scalar && (member.MemberName == "SetAnimatedIKRotationX" || member.MemberName == "SetAnimatedIKRotationY"))
+                value = -scalar;
         }
 
         private static bool TryGetHumanoidValue(object? arg, out EHumanoidValue value)
@@ -452,9 +510,29 @@ namespace XREngine.Components.Animation
             {
                 anim.Looped = clip.Looped;
                 anim.Start();
-                // Force an initial value evaluation at t=0.
-                anim.CurrentTime = 0.0f;
+                anim.Seek(0.0f, wrapLooped: false);
             }
+        }
+
+        private static void SetAllPropertyAnimationTimes(AnimationClip clip, float timeSeconds, bool wrapLooped)
+        {
+            foreach (var anim in clip.GetAllAnimations().Values)
+            {
+                anim.Looped = clip.Looped;
+                if (anim.State == EAnimationState.Stopped)
+                    anim.Start();
+                anim.Seek(timeSeconds, wrapLooped);
+            }
+        }
+
+        private static float NormalizePlaybackTime(float timeSeconds, AnimationClip clip, bool wrapLooped)
+        {
+            if (clip.LengthInSeconds <= 0.0f)
+                return 0.0f;
+
+            return wrapLooped
+                ? timeSeconds.RemapToRange(0.0f, clip.LengthInSeconds)
+                : Math.Clamp(timeSeconds, 0.0f, clip.LengthInSeconds);
         }
 
         private static void StopAllPropertyAnimations(AnimationClip clip)

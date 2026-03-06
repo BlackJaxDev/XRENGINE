@@ -18,6 +18,26 @@ namespace XREngine.UnitTests.Animation;
 public sealed class UnityAnimImporterTests
 {
     [Test]
+    public void Import_RecordsClipSampleRateMetadata()
+    {
+        const string yaml = """
+AnimationClip:
+  m_Name: SampleRateClip
+  m_SampleRate: 72
+  m_AnimationClipSettings:
+    m_StartTime: 0
+    m_StopTime: 1
+    m_LoopTime: 0
+  m_FloatCurves: []
+""";
+
+        AnimationClip clip = ImportClip(yaml);
+
+        clip.SampleRate.ShouldBe(72);
+        clip.LengthInSeconds.ShouldBe(1.0f);
+    }
+
+    [Test]
     public void Import_ScalarCurves_RoutePerComponent_PreserveTangents_AndConvertAxes()
     {
         const string yaml = """
@@ -65,6 +85,16 @@ AnimationClip:
             outSlope: 1.5
             tangentMode: 1
     - path: ''
+      attribute: RootT.x
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: 0.4
+            inSlope: -0.25
+            outSlope: 0.5
+            tangentMode: 1
+    - path: ''
       attribute: RootT.z
       classID: 95
       curve:
@@ -73,6 +103,16 @@ AnimationClip:
             value: 0.75
             inSlope: -1
             outSlope: 2
+            tangentMode: 1
+    - path: ''
+      attribute: RootQ.y
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: 0.15
+            inSlope: -0.3
+            outSlope: 0.45
             tangentMode: 1
     - path: ''
       attribute: RootQ.x
@@ -85,6 +125,16 @@ AnimationClip:
             outSlope: -0.8
             tangentMode: 1
     - path: ''
+      attribute: LeftFootT.x
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: 0.6
+            inSlope: -0.7
+            outSlope: 0.8
+            tangentMode: 1
+    - path: ''
       attribute: LeftFootT.z
       classID: 95
       curve:
@@ -93,6 +143,16 @@ AnimationClip:
             value: 0.9
             inSlope: -1.1
             outSlope: 1.2
+            tangentMode: 1
+    - path: ''
+      attribute: LeftFootQ.y
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: 0.35
+            inSlope: -0.5
+            outSlope: 0.7
             tangentMode: 1
     - path: ''
       attribute: LeftFootQ.x
@@ -144,17 +204,29 @@ AnimationClip:
             animatedArgIndex: -1,
             methodArgs: ["HumanoidComponent"]);
 
+        var rootPositionX = GetMethod(humanoid, "SetRootPositionX", animatedArgIndex: 0, methodArgs: [0.0f]);
+        var rootPositionXAnim = rootPositionX.Animation.ShouldBeOfType<PropAnimFloat>();
+        rootPositionXAnim.Keyframes[0].InValue.ShouldBe(-0.4f);
+        rootPositionXAnim.Keyframes[0].InTangent.ShouldBe(0.25f);
+        rootPositionXAnim.Keyframes[0].OutTangent.ShouldBe(-0.5f);
+
         var rootPositionZ = GetMethod(humanoid, "SetRootPositionZ", animatedArgIndex: 0, methodArgs: [0.0f]);
         var rootPositionAnim = rootPositionZ.Animation.ShouldBeOfType<PropAnimFloat>();
-        rootPositionAnim.Keyframes[0].InValue.ShouldBe(-0.75f);
-        rootPositionAnim.Keyframes[0].InTangent.ShouldBe(1.0f);
-        rootPositionAnim.Keyframes[0].OutTangent.ShouldBe(-2.0f);
+        rootPositionAnim.Keyframes[0].InValue.ShouldBe(0.75f);
+        rootPositionAnim.Keyframes[0].InTangent.ShouldBe(-1.0f);
+        rootPositionAnim.Keyframes[0].OutTangent.ShouldBe(2.0f);
 
         var rootRotationX = GetMethod(humanoid, "SetRootRotationX", animatedArgIndex: 0, methodArgs: [0.0f]);
         var rootRotationAnim = rootRotationX.Animation.ShouldBeOfType<PropAnimFloat>();
-        rootRotationAnim.Keyframes[0].InValue.ShouldBe(-0.2f);
-        rootRotationAnim.Keyframes[0].InTangent.ShouldBe(-0.4f);
-        rootRotationAnim.Keyframes[0].OutTangent.ShouldBe(0.8f);
+        rootRotationAnim.Keyframes[0].InValue.ShouldBe(0.2f);
+        rootRotationAnim.Keyframes[0].InTangent.ShouldBe(0.4f);
+        rootRotationAnim.Keyframes[0].OutTangent.ShouldBe(-0.8f);
+
+        var rootRotationY = GetMethod(humanoid, "SetRootRotationY", animatedArgIndex: 0, methodArgs: [0.0f]);
+        var rootRotationYAnim = rootRotationY.Animation.ShouldBeOfType<PropAnimFloat>();
+        rootRotationYAnim.Keyframes[0].InValue.ShouldBe(-0.15f);
+        rootRotationYAnim.Keyframes[0].InTangent.ShouldBe(0.3f);
+        rootRotationYAnim.Keyframes[0].OutTangent.ShouldBe(-0.45f);
 
         var ikSolver = GetMethod(
             sceneNode,
@@ -162,15 +234,25 @@ AnimationClip:
             animatedArgIndex: -1,
             methodArgs: ["HumanoidIKSolverComponent"]);
 
+        var leftFootPositionX = GetMethod(
+            ikSolver,
+            "SetAnimatedIKPositionX",
+            animatedArgIndex: 1,
+            methodArgs: [ELimbEndEffector.LeftFoot, 0.0f]);
+        var leftFootPositionXAnim = leftFootPositionX.Animation.ShouldBeOfType<PropAnimFloat>();
+        leftFootPositionXAnim.Keyframes[0].InValue.ShouldBe(-0.6f);
+        leftFootPositionXAnim.Keyframes[0].InTangent.ShouldBe(0.7f);
+        leftFootPositionXAnim.Keyframes[0].OutTangent.ShouldBe(-0.8f);
+
         var leftFootPositionZ = GetMethod(
             ikSolver,
             "SetAnimatedIKPositionZ",
             animatedArgIndex: 1,
             methodArgs: [ELimbEndEffector.LeftFoot, 0.0f]);
         var leftFootPositionAnim = leftFootPositionZ.Animation.ShouldBeOfType<PropAnimFloat>();
-        leftFootPositionAnim.Keyframes[0].InValue.ShouldBe(-0.9f);
-        leftFootPositionAnim.Keyframes[0].InTangent.ShouldBe(1.1f);
-        leftFootPositionAnim.Keyframes[0].OutTangent.ShouldBe(-1.2f);
+        leftFootPositionAnim.Keyframes[0].InValue.ShouldBe(0.9f);
+        leftFootPositionAnim.Keyframes[0].InTangent.ShouldBe(-1.1f);
+        leftFootPositionAnim.Keyframes[0].OutTangent.ShouldBe(1.2f);
 
         var leftFootRotationX = GetMethod(
             ikSolver,
@@ -178,9 +260,19 @@ AnimationClip:
             animatedArgIndex: 1,
             methodArgs: [ELimbEndEffector.LeftFoot, 0.0f]);
         var leftFootRotationAnim = leftFootRotationX.Animation.ShouldBeOfType<PropAnimFloat>();
-        leftFootRotationAnim.Keyframes[0].InValue.ShouldBe(-0.3f);
-        leftFootRotationAnim.Keyframes[0].InTangent.ShouldBe(0.6f);
-        leftFootRotationAnim.Keyframes[0].OutTangent.ShouldBe(-0.9f);
+        leftFootRotationAnim.Keyframes[0].InValue.ShouldBe(0.3f);
+        leftFootRotationAnim.Keyframes[0].InTangent.ShouldBe(-0.6f);
+        leftFootRotationAnim.Keyframes[0].OutTangent.ShouldBe(0.9f);
+
+        var leftFootRotationY = GetMethod(
+            ikSolver,
+            "SetAnimatedIKRotationY",
+            animatedArgIndex: 1,
+            methodArgs: [ELimbEndEffector.LeftFoot, 0.0f]);
+        var leftFootRotationYAnim = leftFootRotationY.Animation.ShouldBeOfType<PropAnimFloat>();
+        leftFootRotationYAnim.Keyframes[0].InValue.ShouldBe(-0.35f);
+        leftFootRotationYAnim.Keyframes[0].InTangent.ShouldBe(0.5f);
+        leftFootRotationYAnim.Keyframes[0].OutTangent.ShouldBe(-0.7f);
     }
 
     [Test]

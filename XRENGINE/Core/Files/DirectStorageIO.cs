@@ -483,10 +483,29 @@ public static class DirectStorageIO
     //  Internal — fallback I/O
     // ────────────────────────────────────────────────────────────────
 
+    private const int FallbackMaxRetries = 5;
+    private static readonly int[] FallbackRetryDelaysMs = [50, 100, 200, 400, 800];
+
+    private static SafeFileHandle OpenHandleWithRetry(string filePath, FileOptions options)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return File.OpenHandle(filePath, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete, options);
+            }
+            catch (IOException) when (attempt < FallbackMaxRetries)
+            {
+                Thread.Sleep(FallbackRetryDelaysMs[attempt]);
+            }
+        }
+    }
+
     internal static byte[] ReadRangeFallback(string filePath, long offset, int length)
     {
         byte[] data = GC.AllocateUninitializedArray<byte>(length);
-        using SafeFileHandle handle = File.OpenHandle(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, FileOptions.RandomAccess);
+        using SafeFileHandle handle = OpenHandleWithRetry(filePath, FileOptions.RandomAccess);
         int totalRead = 0;
         while (totalRead < length)
         {
@@ -503,7 +522,7 @@ public static class DirectStorageIO
     internal static async Task<byte[]> ReadRangeFallbackAsync(string filePath, long offset, int length, CancellationToken cancellationToken)
     {
         byte[] data = GC.AllocateUninitializedArray<byte>(length);
-        using SafeFileHandle handle = File.OpenHandle(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, FileOptions.Asynchronous | FileOptions.RandomAccess);
+        using SafeFileHandle handle = OpenHandleWithRetry(filePath, FileOptions.Asynchronous | FileOptions.RandomAccess);
         int totalRead = 0;
         while (totalRead < length)
         {
@@ -519,7 +538,7 @@ public static class DirectStorageIO
 
     private static unsafe void ReadIntoFallback(string filePath, long offset, int length, void* destination)
     {
-        using SafeFileHandle handle = File.OpenHandle(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, FileOptions.RandomAccess);
+        using SafeFileHandle handle = OpenHandleWithRetry(filePath, FileOptions.RandomAccess);
         int totalRead = 0;
         while (totalRead < length)
         {
