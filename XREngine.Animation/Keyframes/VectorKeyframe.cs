@@ -34,6 +34,7 @@ namespace XREngine.Animation
             OutValue = outValue;
             InTangent = inTangent;
             OutTangent = outTangent;
+            InterpolationTypeIn = type;
             InterpolationTypeOut = type;
         }
 
@@ -192,19 +193,24 @@ namespace XREngine.Animation
                 switch (_interpolationTypeIn)
                 {
                     case EVectorInterpType.Step:
-                        _interpolateIn = StepOut;
-                        _interpolateVelocityIn = StepVelocityOut;
-                        _interpolateAccelerationIn = StepAccelerationOut;
+                        _interpolateIn = StepIn;
+                        _interpolateVelocityIn = StepVelocityIn;
+                        _interpolateAccelerationIn = StepAccelerationIn;
                         break;
                     case EVectorInterpType.Linear:
-                        _interpolateIn = LerpOut;
-                        _interpolateVelocityIn = LerpVelocityOut;
-                        _interpolateAccelerationIn = LerpAccelerationOut;
+                        _interpolateIn = LerpIn;
+                        _interpolateVelocityIn = LerpVelocityIn;
+                        _interpolateAccelerationIn = LerpAccelerationIn;
                         break;
                     case EVectorInterpType.Smooth:
-                        _interpolateIn = CubicBezierOut;
-                        _interpolateVelocityIn = CubicBezierVelocityOut;
-                        _interpolateAccelerationIn = CubicBezierAccelerationOut;
+                        _interpolateIn = CubicBezierIn;
+                        _interpolateVelocityIn = CubicBezierVelocityIn;
+                        _interpolateAccelerationIn = CubicBezierAccelerationIn;
+                        break;
+                    case EVectorInterpType.Hermite:
+                        _interpolateIn = CubicHermiteIn;
+                        _interpolateVelocityIn = CubicHermiteVelocityIn;
+                        _interpolateAccelerationIn = CubicHermiteAccelerationIn;
                         break;
                 }
                 OwningTrack?.OnChanged();
@@ -233,6 +239,11 @@ namespace XREngine.Animation
                         _interpolateVelocityOut = CubicBezierVelocityOut;
                         _interpolateAccelerationOut = CubicBezierAccelerationOut;
                         break;
+                    case EVectorInterpType.Hermite:
+                        _interpolateOut = CubicHermiteOut;
+                        _interpolateVelocityOut = CubicHermiteVelocityOut;
+                        _interpolateAccelerationOut = CubicHermiteAccelerationOut;
+                        break;
                 }
                 OwningTrack?.OnChanged();
             }
@@ -252,7 +263,7 @@ namespace XREngine.Animation
                 span = nextSecond - Second;
                 return Next;
             }
-            else if (OwningTrack?.FirstKey != this)
+            else if (OwningTrack?.LoopsAfterLastKey == true && OwningTrack?.FirstKey != this)
             {
                 VectorKeyframe<T>? next = OwningTrack?.FirstKey as VectorKeyframe<T>;
                 span = TrackLength - Second + (next?.Second ?? 0.0f);
@@ -273,7 +284,7 @@ namespace XREngine.Animation
                 span = Second - prevSecond;
                 return Prev;
             }
-            else if (OwningTrack?.LastKey != this)
+            else if (OwningTrack?.LoopsBeforeFirstKey == true && OwningTrack?.LastKey != this)
             {
                 VectorKeyframe<T>? prev = OwningTrack?.LastKey as VectorKeyframe<T>;
                 span = TrackLength - (prev?.Second ?? 0.0f) + Second;
@@ -293,18 +304,7 @@ namespace XREngine.Animation
         {
             var next = GetNextKeyframe(out float span);
 
-            //If no next, this is the last keyframe in the track
-            if (next is null)
-                return OutValue;
-
-            //If the next keyframe has the same interpolation type as this keyframe, we can just use normal interpolation
-            if (next.InterpolationTypeIn == InterpolationTypeOut)
-                return _interpolateOut(next, span * time, span);
-
-            //If the next keyframe has a different interpolation type, we need to interpolate with both types and then lerp between the results at the given time
-            var outInterp = _interpolateOut(next, span * time, span);
-            var inInterp = next._interpolateIn(this, span * time, span);
-            return LerpValues(outInterp, inInterp, time);
+            return InterpolatePositionSegment(next, span * time, span);
         }
 
         /// <summary>
@@ -313,9 +313,7 @@ namespace XREngine.Animation
         public T InterpolateVelocityNextNormalized(float time)
         {
             var next = GetNextKeyframe(out float span);
-            if (next is null)
-                return OutTangent;
-            return _interpolateVelocityOut(next, span * time, span);
+            return InterpolateVelocitySegment(next, span * time, span);
         }
 
         /// <summary>
@@ -324,9 +322,7 @@ namespace XREngine.Animation
         public T InterpolateAccelerationNextNormalized(float time)
         {
             var next = GetNextKeyframe(out float span);
-            if (next is null)
-                return default;
-            return _interpolateAccelerationOut(next, span * time, span);
+            return InterpolateAccelerationSegment(next, span * time, span);
         }
 
         /// <summary>
@@ -344,7 +340,7 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return OutValue;
 
-            return _interpolateOut(next, span * time, span);
+            return InterpolatePositionSegment(next, span * time, span);
         }
 
         /// <summary>
@@ -362,7 +358,7 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return OutTangent;
 
-            return _interpolateVelocityOut(next, span * time, span);
+            return InterpolateVelocitySegment(next, span * time, span);
         }
 
         /// <summary>
@@ -380,7 +376,7 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return default;
 
-            return _interpolateAccelerationOut(next, span * time, span);
+            return InterpolateAccelerationSegment(next, span * time, span);
         }
 
         public T? Interpolate(float desiredSecond, EVectorValueType type)
@@ -391,7 +387,7 @@ namespace XREngine.Animation
             {
                 if (IsLast || Next!.Second > TrackLength)
                 {
-                    if (OwningTrack?.FirstKey != this)
+                    if (OwningTrack?.LoopsAfterLastKey == true && OwningTrack?.FirstKey != this)
                     {
                         VectorKeyframe<T>? first = OwningTrack?.FirstKey as VectorKeyframe<T>;
                         span = TrackLength - Second + (first?.Second ?? 0.0f);
@@ -420,7 +416,7 @@ namespace XREngine.Animation
 
                 VectorKeyframe<T>? last = OwningTrack?.GetKeyBeforeGeneric(TrackLength) as VectorKeyframe<T>;
 
-                if (last != this && last != null)
+                if (OwningTrack?.LoopsBeforeFirstKey == true && last != this && last != null)
                 {
                     span = TrackLength - last.Second + Second;
                     diff = TrackLength - last.Second + desiredSecond;
@@ -433,9 +429,9 @@ namespace XREngine.Animation
 
             return type switch
             {
-                EVectorValueType.Velocity => key1._interpolateVelocityOut(key2, diff, span),
-                EVectorValueType.Acceleration => key1._interpolateAccelerationOut(key2, diff, span),
-                _ => key1._interpolateOut(key2, diff, span),
+                EVectorValueType.Velocity => key1.InterpolateVelocitySegment(key2, diff, span),
+                EVectorValueType.Acceleration => key1.InterpolateAccelerationSegment(key2, diff, span),
+                _ => key1.InterpolatePositionSegment(key2, diff, span),
             };
         }
         public T Interpolate(
@@ -455,7 +451,7 @@ namespace XREngine.Animation
             {
                 if (IsLast || Next!.Second > TrackLength)
                 {
-                    if (OwningTrack?.FirstKey != this)
+                    if (OwningTrack?.LoopsAfterLastKey == true && OwningTrack?.FirstKey != this)
                     {
                         VectorKeyframe<T>? first = OwningTrack?.FirstKey as VectorKeyframe<T>;
                         span = TrackLength - Second + (first?.Second ?? 0.0f);
@@ -489,7 +485,7 @@ namespace XREngine.Animation
 
                 VectorKeyframe<T>? last = OwningTrack?.GetKeyBeforeGeneric(TrackLength) as VectorKeyframe<T>;
 
-                if (last != this && last != null)
+                if (OwningTrack?.LoopsBeforeFirstKey == true && last != this && last != null)
                 {
                     span = TrackLength - last.Second + Second;
                     diff = TrackLength - last.Second + desiredSecond;
@@ -506,9 +502,9 @@ namespace XREngine.Animation
             normalizedTime = diff / span;
             return type switch
             {
-                EVectorValueType.Velocity => key1._interpolateVelocityOut(key2, diff, span),
-                EVectorValueType.Acceleration => key1._interpolateAccelerationOut(key2, diff, span),
-                _ => key1._interpolateOut(key2, diff, span),
+                EVectorValueType.Velocity => key1.InterpolateVelocitySegment(key2, diff, span),
+                EVectorValueType.Acceleration => key1.InterpolateAccelerationSegment(key2, diff, span),
+                _ => key1.InterpolatePositionSegment(key2, diff, span),
             };
         }
         public void Interpolate(
@@ -530,7 +526,7 @@ namespace XREngine.Animation
             {
                 if (IsLast || Next!.Second > TrackLength)
                 {
-                    if (OwningTrack?.FirstKey != this)
+                    if (OwningTrack?.LoopsAfterLastKey == true && OwningTrack?.FirstKey != this)
                     {
                         VectorKeyframe<T>? first = OwningTrack?.FirstKey as VectorKeyframe<T>;
                         span = TrackLength - Second + (first?.Second ?? 0.0f);
@@ -586,7 +582,7 @@ namespace XREngine.Animation
                 {
                     VectorKeyframe<T>? last = OwningTrack?.GetKeyBeforeGeneric(TrackLength) as VectorKeyframe<T>;
 
-                    if (last != this && last != null)
+                    if (OwningTrack?.LoopsBeforeFirstKey == true && last != this && last != null)
                     {
                         span = TrackLength - last.Second + Second;
                         diff = TrackLength - last.Second + desiredSecond;
@@ -605,9 +601,60 @@ namespace XREngine.Animation
             }
 
             normalizedTime = diff / span;
-            position = key1._interpolateOut(key2, diff, span);
-            velocity = key1._interpolateVelocityOut(key2, diff, span);
-            acceleration = key1._interpolateAccelerationOut(key2, diff, span);
+            position = key1.InterpolatePositionSegment(key2, diff, span);
+            velocity = key1.InterpolateVelocitySegment(key2, diff, span);
+            acceleration = key1.InterpolateAccelerationSegment(key2, diff, span);
+        }
+
+        private T InterpolatePositionSegment(VectorKeyframe<T>? next, float diff, float span)
+            => InterpolateSegment(
+                next,
+                diff,
+                span,
+                OutValue,
+                _interpolateOut,
+                static key => key._interpolateIn,
+                static (key, other) => other);
+
+        private T InterpolateVelocitySegment(VectorKeyframe<T>? next, float diff, float span)
+            => InterpolateSegment(
+                next,
+                diff,
+                span,
+                OutTangent,
+                _interpolateVelocityOut,
+                static key => key._interpolateVelocityIn,
+                static (key, other) => other);
+
+        private T InterpolateAccelerationSegment(VectorKeyframe<T>? next, float diff, float span)
+            => InterpolateSegment(
+                next,
+                diff,
+                span,
+                default,
+                _interpolateAccelerationOut,
+                static key => key._interpolateAccelerationIn,
+                static (key, other) => other);
+
+        private T InterpolateSegment(
+            VectorKeyframe<T>? next,
+            float diff,
+            float span,
+            T fallback,
+            DelInterpolate interpolateOut,
+            Func<VectorKeyframe<T>, DelInterpolate> getIncomingInterpolator,
+            Func<VectorKeyframe<T>, VectorKeyframe<T>, VectorKeyframe<T>?> getIncomingOtherKey)
+        {
+            if (next is null || span.IsZero())
+                return fallback;
+
+            if (next.InterpolationTypeIn == InterpolationTypeOut)
+                return interpolateOut(next, diff, span);
+
+            float normalizedTime = Math.Clamp(diff / span, 0.0f, 1.0f);
+            T outInterp = interpolateOut(next, diff, span);
+            T inInterp = getIncomingInterpolator(next)(getIncomingOtherKey(next, this), diff, span);
+            return LerpValues(outInterp, inInterp, normalizedTime);
         }
 
         public T StepOut(VectorKeyframe<T>? next, float diff, float span)
@@ -625,6 +672,12 @@ namespace XREngine.Animation
         public abstract T CubicBezierOut(VectorKeyframe<T>? next, float diff, float span);
         public abstract T CubicBezierVelocityOut(VectorKeyframe<T>? next, float diff, float span);
         public abstract T CubicBezierAccelerationOut(VectorKeyframe<T>? next, float diff, float span);
+        public virtual T CubicHermiteOut(VectorKeyframe<T>? next, float diff, float span)
+            => CubicBezierOut(next, diff, span);
+        public virtual T CubicHermiteVelocityOut(VectorKeyframe<T>? next, float diff, float span)
+            => CubicBezierVelocityOut(next, diff, span);
+        public virtual T CubicHermiteAccelerationOut(VectorKeyframe<T>? next, float diff, float span)
+            => CubicBezierAccelerationOut(next, diff, span);
 
         public T StepIn(VectorKeyframe<T>? prev, float diff, float span)
             => (diff / span) < 1.0f ? InValue : (prev?.InValue ?? new());
@@ -641,6 +694,12 @@ namespace XREngine.Animation
         public abstract T CubicBezierIn(VectorKeyframe<T>? prev, float diff, float span);
         public abstract T CubicBezierVelocityIn(VectorKeyframe<T>? prev, float diff, float span);
         public abstract T CubicBezierAccelerationIn(VectorKeyframe<T>? prev, float diff, float span);
+        public virtual T CubicHermiteIn(VectorKeyframe<T>? prev, float diff, float span)
+            => CubicBezierIn(prev, diff, span);
+        public virtual T CubicHermiteVelocityIn(VectorKeyframe<T>? prev, float diff, float span)
+            => CubicBezierVelocityIn(prev, diff, span);
+        public virtual T CubicHermiteAccelerationIn(VectorKeyframe<T>? prev, float diff, float span)
+            => CubicBezierAccelerationIn(prev, diff, span);
 
         public abstract T LerpValues(T a, T b, float t);
 

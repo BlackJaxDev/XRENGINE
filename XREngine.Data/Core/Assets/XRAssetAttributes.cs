@@ -88,23 +88,6 @@ public sealed class XRAssetContextMenuAttribute : Attribute
 }
 
 /// <summary>
-/// Provides context information for asset-specific menu handlers.
+/// Context passed to asset-specific context menu handlers.
 /// </summary>
-public readonly struct XRAssetContextMenuContext
-{
-    public XRAssetContextMenuContext(string assetPath, XRAsset? asset)
-    {
-        AssetPath = assetPath ?? string.Empty;
-        Asset = asset;
-    }
-
-    /// <summary>
-    /// Full path to the asset file that triggered the menu.
-    /// </summary>
-    public string AssetPath { get; }
-
-    /// <summary>
-    /// Loaded asset instance when available; otherwise <c>null</c>.
-    /// </summary>
-    public XRAsset? Asset { get; }
-}
+public readonly record struct XRAssetContextMenuContext(string AssetPath, XRAsset? Asset);

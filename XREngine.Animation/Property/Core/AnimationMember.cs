@@ -272,7 +272,7 @@ namespace XREngine.Animation
             }
 
             if (Animation != null)
-                animations.Add(path, Animation);
+                animations.TryAdd(path, Animation);
 
             foreach (AnimationMember member in _children)
                 member.CollectAnimations(path, animations);

@@ -11,8 +11,12 @@
         /// </summary>
         Linear,
         /// <summary>
-        /// Cubic interpolation
+        /// Cubic Bezier interpolation
         /// </summary>
-        Smooth
+        Smooth,
+        /// <summary>
+        /// Cubic Hermite interpolation using endpoint tangents as slopes.
+        /// </summary>
+        Hermite
     }
 }

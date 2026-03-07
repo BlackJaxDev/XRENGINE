@@ -5,6 +5,8 @@ namespace XREngine.Core.Tools.Unity
 {
     public static class UnityConverter
     {
+        private const float TangentLinkTolerance = 0.0001f;
+
         /// <summary>
         /// Converts a Unity TangentMode to an EVectorInterpType.
         /// </summary>
@@ -13,14 +15,15 @@ namespace XREngine.Core.Tools.Unity
             {
                 TangentMode.Constant => EVectorInterpType.Step,
                 TangentMode.Linear => EVectorInterpType.Linear,
-                TangentMode.Free or TangentMode.Auto or TangentMode.ClampedAuto => EVectorInterpType.Smooth,
-                _ => EVectorInterpType.Smooth,
+                TangentMode.Free or TangentMode.Auto or TangentMode.ClampedAuto => EVectorInterpType.Hermite,
+                _ => EVectorInterpType.Hermite,
             };
 
         public static AnimationClip ConvertFloatAnimation(UnityAnimationClip animClip)
         {
             var settings = animClip.AnimationClipSettings;
             float lengthInSeconds = (settings?.StopTime ?? 0) - (settings?.StartTime ?? 0);
+            float startTime = settings?.StartTime ?? 0.0f;
             int fps = animClip.SampleRate;
             var anims = new List<(string? path, string? attrib, BasePropAnim anim)>();
             animClip.FloatCurves?.ForEach(curve =>
@@ -31,26 +34,35 @@ namespace XREngine.Core.Tools.Unity
                     Looped = (settings?.LoopTime ?? 0) != 0,
                     BakedFramesPerSecond = fps
                 };
+                anim.Keyframes.PreInfinityMode = MapInfinityMode(curve.Curve?.PreInfinity ?? 0);
+                anim.Keyframes.PostInfinityMode = MapInfinityMode(curve.Curve?.PostInfinity ?? 0);
                 var path = curve.Path;
                 var attrib = curve.Attribute;
                 var kfs = curve.Curve?.Curve?.Select(kf =>
                 {
                     var leftTangentMode = UnityAnimationClip.TangentModeHelper.GetLeftTangentMode(kf.CombinedTangentMode);
                     var rightTangentMode = UnityAnimationClip.TangentModeHelper.GetRightTangentMode(kf.CombinedTangentMode);
-                    return new FloatKeyframe
+                    var keyframe = new FloatKeyframe
                     {
                         SyncInOutValues = false,
                         SyncInOutTangentDirections = false,
                         SyncInOutTangentMagnitudes = false,
-                        Second = kf.Time,
-                        UnityCombinedTangentMode = kf.CombinedTangentMode,
+                        Second = MathF.Max(0.0f, kf.Time - startTime),
                         InValue = kf.Value,
                         OutValue = kf.Value,
-                        InTangent = kf.InSlope,
-                        OutTangent = kf.OutSlope,
+                        InTangent = ConvertIncomingTangent(kf.InSlope),
+                        OutTangent = ConvertOutgoingTangent(kf.OutSlope),
                         InterpolationTypeIn = ToInterpType(leftTangentMode),
                         InterpolationTypeOut = ToInterpType(rightTangentMode),
                     };
+                    if (!UnityAnimationClip.TangentModeHelper.IsBroken(kf.CombinedTangentMode) &&
+                        CanLinkTangents(keyframe.InTangent, keyframe.OutTangent))
+                    {
+                        keyframe.SyncInOutTangentDirections = true;
+                        keyframe.SyncInOutTangentMagnitudes = true;
+                    }
+
+                    return keyframe;
                 });
                 if (kfs is not null)
                     anim.Keyframes.Add(kfs);
@@ -103,5 +115,19 @@ namespace XREngine.Core.Tools.Unity
             });
             return tree;
         }
+
+        private static float ConvertIncomingTangent(float slope)
+            => -slope;
+
+        private static float ConvertOutgoingTangent(float slope)
+            => slope;
+
+        private static bool CanLinkTangents(float inTangent, float outTangent)
+            => MathF.Abs(inTangent + outTangent) <= TangentLinkTolerance;
+
+        private static EKeyframeInfinityMode MapInfinityMode(int unityInfinity)
+            => unityInfinity == 2
+                ? EKeyframeInfinityMode.Loop
+                : EKeyframeInfinityMode.Clamp;
     }
 }
