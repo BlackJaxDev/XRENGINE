@@ -146,7 +146,7 @@ namespace XREngine.Animation
             {
                 if (IsLast || Next!.Second > TrackLength)
                 {
-                    if (OwningTrack?.FirstKey != this)
+                    if (OwningTrack?.LoopsAfterLastKey == true && OwningTrack?.FirstKey != this)
                     {
                         QuaternionKeyframe? first = OwningTrack?.FirstKey as QuaternionKeyframe;
                         span = TrackLength - Second + (first?.Second ?? 0.0f);
@@ -180,7 +180,7 @@ namespace XREngine.Animation
 
                 QuaternionKeyframe? last = OwningTrack?.GetKeyBeforeGeneric(TrackLength) as QuaternionKeyframe;
 
-                if (last != this && last != null)
+                if (OwningTrack?.LoopsBeforeFirstKey == true && last != this && last != null)
                 {
                     span = TrackLength - last.Second + Second;
                     diff = TrackLength - last.Second + desiredSecond;

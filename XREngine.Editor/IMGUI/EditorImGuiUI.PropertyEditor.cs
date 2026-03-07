@@ -316,6 +316,7 @@ public static partial class EditorImGuiUI
                 })
                 .Where(x => x != null)
                 .Select(x => x!)
+                .DistinctBy(x => x.Property.Name)
                 .ToList();
 
             var fieldInfos = type.GetFields(BindingFlags.Public | BindingFlags.Instance)
@@ -379,7 +380,10 @@ public static partial class EditorImGuiUI
             // Pair overrideable settings with their base property (e.g., VSync + VSyncOverride)
             if (propertyInfos.Count > 0)
             {
-                var propertyMap = propertyInfos.ToDictionary(info => info.Property.Name, info => info, StringComparer.Ordinal);
+                // Use a plain dictionary to handle duplicate property names (e.g., `new` hiding in derived types).
+                var propertyMap = new Dictionary<string, SettingPropertyDescriptor>(propertyInfos.Count, StringComparer.Ordinal);
+                foreach (var info in propertyInfos)
+                    propertyMap.TryAdd(info.Property.Name, info);
 
                 foreach (SettingPropertyDescriptor info in propertyInfos)
                 {

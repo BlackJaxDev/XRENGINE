@@ -4,6 +4,7 @@ using XREngine.Animation.IK;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Animation;
+using XREngine.Scene.Transforms;
 using Extensions;
 
 namespace XREngine.Components.Animation
@@ -14,6 +15,8 @@ namespace XREngine.Components.Animation
         private readonly List<AnimationMember> _animatedMembers = [];
         private AnimationMember[] _animatedMembersSnapshot = [];
         private readonly Dictionary<AnimationMember, object?[]> _baselineMethodArguments = [];
+        private readonly HashSet<Transform> _animatedQuaternionTargets = [];
+        private Transform[] _animatedQuaternionTargetsSnapshot = [];
 
         private AnimationClip? _animation;
         public AnimationClip? Animation
@@ -64,7 +67,7 @@ namespace XREngine.Components.Animation
             set => SetField(ref _flipMuscleLeftRight, value);
         }
 
-        private bool _flipMuscleZ;
+        private bool _flipMuscleZ = false;
         public bool FlipMuscleZ
         {
             get => _flipMuscleZ;
@@ -147,9 +150,10 @@ namespace XREngine.Components.Animation
             EnsureInitialized();
 
             // Bind members to this component/SceneNode via the anim state machine.
-            // Start the underlying property animations so Tick() advances them.
-            StartAllPropertyAnimations(Animation);
-            PlaybackTime = 0.0f;
+            // Seed the underlying property animations to a canonical clip time.
+            float initialTime = GetInitialPlaybackTime(Animation, Speed);
+            StartAllPropertyAnimations(Animation, initialTime);
+            PlaybackTime = initialTime;
             ApplyAnimatedValues();
 
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
@@ -205,10 +209,7 @@ namespace XREngine.Components.Animation
 
             float delta = Engine.Delta * Speed;
             PlaybackTime = NormalizePlaybackTime(PlaybackTime + delta, Animation, wrapLooped: Animation.Looped);
-            var snapshot = _animatedMembersSnapshot;
-            foreach (var member in snapshot)
-                member.Animation?.Tick(delta);
-
+            SetAllPropertyAnimationTimes(Animation, PlaybackTime, wrapLooped: false);
             ApplyAnimatedValues();
         }
 
@@ -219,8 +220,10 @@ namespace XREngine.Components.Animation
 
             _animatedMembers.Clear();
             _baselineMethodArguments.Clear();
-            InitializeMembers(Animation.RootMember, this, _animatedMembers);
+            _animatedQuaternionTargets.Clear();
+            InitializeMembers(Animation.RootMember, this, _animatedMembers, _animatedQuaternionTargets);
             _animatedMembersSnapshot = [.. _animatedMembers];
+            _animatedQuaternionTargetsSnapshot = [.. _animatedQuaternionTargets];
             foreach (var member in _animatedMembersSnapshot)
             {
                 if (member.MemberType == EAnimationMemberType.Method)
@@ -269,15 +272,24 @@ namespace XREngine.Components.Animation
             _animatedMembers.Clear();
             _animatedMembersSnapshot = [];
             _baselineMethodArguments.Clear();
+            _animatedQuaternionTargets.Clear();
+            _animatedQuaternionTargetsSnapshot = [];
             _initialized = false;
         }
 
-        private static void InitializeMembers(AnimationMember member, object? parentObject, List<AnimationMember> animatedMembers)
+        private static void InitializeMembers(
+            AnimationMember member,
+            object? parentObject,
+            List<AnimationMember> animatedMembers,
+            HashSet<Transform> animatedQuaternionTargets)
         {
             object? currentObject = parentObject;
 
             if (member.MemberType != EAnimationMemberType.Group)
             {
+                if (parentObject is Transform transform && IsAnimatedQuaternionComponentMember(member))
+                    animatedQuaternionTargets.Add(transform);
+
                 if (member.Initialize is null)
                 {
                     currentObject = member.MemberType switch
@@ -304,7 +316,7 @@ namespace XREngine.Components.Animation
                 return;
 
             foreach (var child in member.Children)
-                InitializeMembers(child, currentObject, animatedMembers);
+                InitializeMembers(child, currentObject, animatedMembers, animatedQuaternionTargets);
         }
 
         private void ApplyAnimatedValues()
@@ -327,6 +339,8 @@ namespace XREngine.Components.Animation
                 ApplyRuntimeClipRemaps(member, ref weightedValue);
                 member.ApplyAnimationValue(weightedValue);
             }
+
+            NormalizeAnimatedQuaternionTargets();
         }
 
         private void ApplyRuntimeClipRemaps(AnimationMember member, ref object? value)
@@ -509,13 +523,40 @@ namespace XREngine.Components.Animation
             _ => weight > 0.5f ? animatedValue : defaultValue,
         };
 
-        private static void StartAllPropertyAnimations(AnimationClip clip)
+        private void NormalizeAnimatedQuaternionTargets()
+        {
+            var snapshot = _animatedQuaternionTargetsSnapshot;
+            foreach (var transform in snapshot)
+            {
+                Quaternion rotation = transform.Rotation;
+                float lengthSquared = rotation.LengthSquared();
+                if (!float.IsFinite(lengthSquared) || lengthSquared <= float.Epsilon)
+                    continue;
+
+                if (MathF.Abs(1.0f - lengthSquared) <= 0.0001f)
+                    continue;
+
+                transform.Rotation = Quaternion.Normalize(rotation);
+            }
+        }
+
+        private static bool IsAnimatedQuaternionComponentMember(AnimationMember member)
+            => member.MemberType == EAnimationMemberType.Property
+            && (member.MemberName == "QuaternionX"
+            || member.MemberName == "QuaternionY"
+            || member.MemberName == "QuaternionZ"
+            || member.MemberName == "QuaternionW");
+
+        private static float GetInitialPlaybackTime(AnimationClip clip, float speed)
+            => speed < 0.0f ? clip.LengthInSeconds : 0.0f;
+
+        private static void StartAllPropertyAnimations(AnimationClip clip, float initialTime)
         {
             foreach (var anim in clip.GetAllAnimations().Values)
             {
                 anim.Looped = clip.Looped;
                 anim.Start();
-                anim.Seek(0.0f, wrapLooped: false);
+                anim.Seek(initialTime, wrapLooped: false);
             }
         }
 

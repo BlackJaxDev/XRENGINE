@@ -72,7 +72,7 @@ namespace XREngine.Animation
             float span;
             if (next is null)
             {
-                if (OwningTrack != null && OwningTrack.FirstKey != this)
+                if (OwningTrack?.LoopsAfterLastKey == true && OwningTrack.FirstKey != this)
                 {
                     next = OwningTrack.FirstKey as VectorKeyframe<Vector3>;
                     if (next is null)
@@ -93,7 +93,7 @@ namespace XREngine.Animation
             float span;
             if (prev is null)
             {
-                if (OwningTrack != null && OwningTrack.LastKey != this)
+                if (OwningTrack?.LoopsBeforeFirstKey == true && OwningTrack.LastKey != this)
                 {
                     prev = OwningTrack.LastKey as VectorKeyframe<Vector3>;
                     if (prev is null)

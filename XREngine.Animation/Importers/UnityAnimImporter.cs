@@ -10,6 +10,8 @@ namespace XREngine.Animation.Importers
 {
     public static class AnimYamlImporter
     {
+        private const float TangentLinkTolerance = 0.0001f;
+
         public static bool Constrained = false;
         public static bool LerpConstrained = false;
 
@@ -68,7 +70,7 @@ namespace XREngine.Animation.Importers
         private static float GetPositionComponentScale(char component)
             => component switch
             {
-                'x' => 1.0f,
+                'x' => -1.0f,
                 'y' => 1.0f,
                 'z' => 1.0f,
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported position component."),
@@ -78,8 +80,8 @@ namespace XREngine.Animation.Importers
             => component switch
             {
                 'x' => 1.0f,
-                'y' => 1.0f,
-                'z' => 1.0f,
+                'y' => -1.0f,
+                'z' => -1.0f,
                 'w' => 1.0f,
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported rotation component."),
             };
@@ -129,13 +131,17 @@ namespace XREngine.Animation.Importers
             string? Path,
             string Attribute,
             int? ClassId,
-            IReadOnlyList<CurveKey> Keys);
+            IReadOnlyList<CurveKey> Keys,
+            int PreInfinity,
+            int PostInfinity);
 
         private sealed record VectorCurve(
             string? Path,
             string Attribute,
             int? ClassId,
-            IReadOnlyDictionary<char, IReadOnlyList<CurveKey>> ComponentKeys);
+            IReadOnlyDictionary<char, IReadOnlyList<CurveKey>> ComponentKeys,
+            int PreInfinity,
+            int PostInfinity);
 
         private sealed record CurveKey(float Time, float Value, float InSlope, float OutSlope, int CombinedTangentMode)
         {
@@ -172,8 +178,8 @@ namespace XREngine.Animation.Importers
                 {
                     TangentMode.Constant => EVectorInterpType.Step,
                     TangentMode.Linear => EVectorInterpType.Linear,
-                    TangentMode.Free or TangentMode.Auto or TangentMode.ClampedAuto => EVectorInterpType.Smooth,
-                    _ => EVectorInterpType.Smooth,
+                    TangentMode.Free or TangentMode.Auto or TangentMode.ClampedAuto => EVectorInterpType.Hermite,
+                    _ => EVectorInterpType.Hermite,
                 };
         }
 
@@ -293,7 +299,7 @@ namespace XREngine.Animation.Importers
                 {
                     foreach (var component in group.Components.OrderBy(x => x.Key))
                     {
-                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetPositionComponentScale(component.Key));
+                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetPositionComponentScale(component.Key), startTime);
                         builder.AddTransformComponentAnimation(nodePath, group.Kind, component.Key, anim);
                     }
                 }
@@ -301,7 +307,7 @@ namespace XREngine.Animation.Importers
                 {
                     foreach (var component in group.Components.OrderBy(x => x.Key))
                     {
-                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, 1.0f);
+                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, 1.0f, startTime);
                         builder.AddTransformComponentAnimation(nodePath, group.Kind, component.Key, anim);
                     }
                 }
@@ -309,7 +315,7 @@ namespace XREngine.Animation.Importers
                 {
                     foreach (var component in group.Components.OrderBy(x => x.Key))
                     {
-                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetRotationComponentScale(component.Key));
+                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetRotationComponentScale(component.Key), startTime);
                         builder.AddTransformComponentAnimation(nodePath, group.Kind, component.Key, anim);
                     }
                 }
@@ -322,7 +328,7 @@ namespace XREngine.Animation.Importers
                 {
                     foreach (var component in rootPosGroup.Components.OrderBy(x => x.Key))
                     {
-                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyPositionComponentScale(component.Key));
+                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyPositionComponentScale(component.Key), startTime);
                         builder.AddRootMotionComponentAnimation(component.Key, anim);
                     }
                 }
@@ -331,7 +337,7 @@ namespace XREngine.Animation.Importers
                 {
                     foreach (var component in rootRotGroup.Components.OrderBy(x => x.Key))
                     {
-                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyRotationComponentScale(component.Key));
+                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyRotationComponentScale(component.Key), startTime);
                         builder.AddRootMotionRotationComponentAnimation(component.Key, anim);
                     }
                 }
@@ -375,7 +381,7 @@ namespace XREngine.Animation.Importers
                     {
                         foreach (var component in posGroup.Components.OrderBy(x => x.Key))
                         {
-                            var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyPositionComponentScale(component.Key));
+                            var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyPositionComponentScale(component.Key), startTime);
                             builder.AddIKGoalPositionComponentAnimation(goalName, component.Key, anim);
                         }
                     }
@@ -384,7 +390,7 @@ namespace XREngine.Animation.Importers
                     {
                         foreach (var component in rotGroup.Components.OrderBy(x => x.Key))
                         {
-                            var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyRotationComponentScale(component.Key));
+                            var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyRotationComponentScale(component.Key), startTime);
                             builder.AddIKGoalRotationComponentAnimation(goalName, component.Key, anim);
                         }
                     }
@@ -419,7 +425,7 @@ namespace XREngine.Animation.Importers
                     if (!TryMapUnityHumanoidAttributeToValue(c.Attribute, out EHumanoidValue humanoidValue))
                         continue;
 
-                    var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f);
+                    var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f, startTime);
                     builder.AddHumanoidValueAnimation(humanoidValue, anim);
                     humanoidMuscleCount++;
                     continue;
@@ -429,7 +435,7 @@ namespace XREngine.Animation.Importers
                 {
                     string blendshapeName = c.Attribute["blendShape.".Length..];
                     // Blendshape weights are typically 0..100; engine normalized is 0..1.
-                    var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f / 100.0f);
+                    var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f / 100.0f, startTime);
                     builder.AddBlendshapeAnimation(nodePath, blendshapeName, anim);
                     continue;
                 }
@@ -438,7 +444,7 @@ namespace XREngine.Animation.Importers
                 // If attribute matches a known Transform property, map it; otherwise store it as a property name.
                 if (TryMapScalarTransformProperty(c.Attribute, out string transformPropertyName))
                 {
-                    var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f);
+                    var anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f, startTime);
                     builder.AddTransformScalarPropertyAnimation(nodePath, transformPropertyName, anim);
                 }
             }
@@ -460,11 +466,12 @@ namespace XREngine.Animation.Importers
                                 ? GetPositionComponentScale(component.Key)
                                 : 1.0f;
                             var anim = BuildFloatAnim(
-                                new ScalarCurve(vc.Path, $"{vc.Attribute}.{component.Key}", vc.ClassId, component.Value),
+                                new ScalarCurve(vc.Path, $"{vc.Attribute}.{component.Key}", vc.ClassId, component.Value, vc.PreInfinity, vc.PostInfinity),
                                 length,
                                 looped,
                                 sampleRate,
-                                valueScale);
+                                valueScale,
+                                startTime);
                             builder.AddTransformComponentAnimation(nodePath, kind, component.Key, anim);
                         }
                     }
@@ -476,11 +483,12 @@ namespace XREngine.Animation.Importers
                                 continue;
 
                             var anim = BuildFloatAnim(
-                                new ScalarCurve(vc.Path, $"{vc.Attribute}.{component.Key}", vc.ClassId, component.Value),
+                                new ScalarCurve(vc.Path, $"{vc.Attribute}.{component.Key}", vc.ClassId, component.Value, vc.PreInfinity, vc.PostInfinity),
                                 length,
                                 looped,
                                 sampleRate,
-                                GetRotationComponentScale(component.Key));
+                                GetRotationComponentScale(component.Key),
+                                startTime);
                             builder.AddTransformComponentAnimation(nodePath, kind, component.Key, anim);
                         }
                     }
@@ -797,9 +805,9 @@ namespace XREngine.Animation.Importers
                 // Case 1: Float curve item (attribute + curve.m_Curve)
                 if (!string.IsNullOrEmpty(attribute))
                 {
-                    if (TryParseCurveData(item, out var keys))
+                    if (TryParseCurveData(item, out var keys, out int scalarPreInfinity, out int scalarPostInfinity))
                     {
-                        scalarCurves.Add(new ScalarCurve(path, attribute!, classId, keys));
+                        scalarCurves.Add(new ScalarCurve(path, attribute!, classId, keys, scalarPreInfinity, scalarPostInfinity));
                         addedAny = true;
                         continue;
                     }
@@ -807,9 +815,9 @@ namespace XREngine.Animation.Importers
 
                 // Case 2: Vector/quaternion curve item (curve has x/y/z(/w) each containing curve data)
                 // These are not present in your current samples, but this keeps the importer usable for more exporter variants.
-                if (TryParseVectorCurveData(item, out var vecAttribute, out var components))
+                if (TryParseVectorCurveData(item, out var vecAttribute, out var components, out int vectorPreInfinity, out int vectorPostInfinity))
                 {
-                    vectorCurves.Add(new VectorCurve(path, vecAttribute, classId, components));
+                    vectorCurves.Add(new VectorCurve(path, vecAttribute, classId, components, vectorPreInfinity, vectorPostInfinity));
                     addedAny = true;
                 }
             }
@@ -817,15 +825,24 @@ namespace XREngine.Animation.Importers
             return addedAny;
         }
 
-        private static bool TryParseCurveData(YamlMappingNode item, out IReadOnlyList<CurveKey> keys)
+        private static bool TryParseCurveData(
+            YamlMappingNode item,
+            out IReadOnlyList<CurveKey> keys,
+            out int preInfinity,
+            out int postInfinity)
         {
             keys = Array.Empty<CurveKey>();
+            preInfinity = 0;
+            postInfinity = 0;
 
             if (!TryGetMapping(item, "curve", out var curveMap))
                 return false;
 
             if (!TryGetSequence(curveMap, "m_Curve", out var keySeq))
                 return false;
+
+            preInfinity = GetScalarInt(curveMap, "m_PreInfinity") ?? 0;
+            postInfinity = GetScalarInt(curveMap, "m_PostInfinity") ?? 0;
 
             var list = new List<CurveKey>(keySeq.Children.Count);
             foreach (var k in keySeq.Children)
@@ -847,10 +864,14 @@ namespace XREngine.Animation.Importers
         private static bool TryParseVectorCurveData(
             YamlMappingNode item,
             out string attribute,
-            out IReadOnlyDictionary<char, IReadOnlyList<CurveKey>> componentKeys)
+            out IReadOnlyDictionary<char, IReadOnlyList<CurveKey>> componentKeys,
+            out int preInfinity,
+            out int postInfinity)
         {
             attribute = string.Empty;
             componentKeys = new Dictionary<char, IReadOnlyList<CurveKey>>();
+            preInfinity = 0;
+            postInfinity = 0;
 
             if (!TryGetMapping(item, "curve", out var curveMap))
                 return false;
@@ -859,6 +880,9 @@ namespace XREngine.Animation.Importers
             attribute = GetScalarString(item, "attribute") ?? string.Empty;
             if (string.IsNullOrEmpty(attribute))
                 return false;
+
+            preInfinity = GetScalarInt(curveMap, "m_PreInfinity") ?? 0;
+            postInfinity = GetScalarInt(curveMap, "m_PostInfinity") ?? 0;
 
             var comps = new Dictionary<char, IReadOnlyList<CurveKey>>();
             foreach (char c in new[] { 'x', 'y', 'z', 'w' })
@@ -891,7 +915,7 @@ namespace XREngine.Animation.Importers
             return true;
         }
 
-        private static PropAnimFloat BuildFloatAnim(ScalarCurve curve, float length, bool looped, int fps, float valueScale)
+        private static PropAnimFloat BuildFloatAnim(ScalarCurve curve, float length, bool looped, int fps, float valueScale, float timeOffsetSeconds)
         {
             var anim = new PropAnimFloat
             {
@@ -902,30 +926,53 @@ namespace XREngine.Animation.Importers
                 LerpConstrainedFPS = LerpConstrained,
             };
 
+            anim.Keyframes.PreInfinityMode = MapInfinityMode(curve.PreInfinity);
+            anim.Keyframes.PostInfinityMode = MapInfinityMode(curve.PostInfinity);
+
             foreach (var k in curve.Keys)
-                anim.Keyframes.Add(CreateFloatKeyframe(k, valueScale));
+                anim.Keyframes.Add(CreateFloatKeyframe(k, valueScale, timeOffsetSeconds));
 
             return anim;
         }
 
-        private static FloatKeyframe CreateFloatKeyframe(CurveKey key, float valueScale)
+        private static FloatKeyframe CreateFloatKeyframe(CurveKey key, float valueScale, float timeOffsetSeconds)
         {
             var kf = new FloatKeyframe
             {
                 SyncInOutValues = false,
                 SyncInOutTangentDirections = false,
                 SyncInOutTangentMagnitudes = false,
-                Second = key.Time,
-                UnityCombinedTangentMode = key.CombinedTangentMode,
+                Second = MathF.Max(0.0f, key.Time - timeOffsetSeconds),
                 InterpolationTypeIn = key.InInterpType,
                 InterpolationTypeOut = key.OutInterpType,
             };
             kf.InValue = key.Value * valueScale;
             kf.OutValue = key.Value * valueScale;
-            kf.InTangent = key.InSlope * valueScale;
-            kf.OutTangent = key.OutSlope * valueScale;
+            kf.InTangent = ConvertIncomingTangent(key.InSlope, valueScale);
+            kf.OutTangent = ConvertOutgoingTangent(key.OutSlope, valueScale);
+
+            if (!key.IsBroken && CanLinkTangents(kf.InTangent, kf.OutTangent))
+            {
+                kf.SyncInOutTangentDirections = true;
+                kf.SyncInOutTangentMagnitudes = true;
+            }
+
             return kf;
         }
+
+        private static float ConvertIncomingTangent(float slope, float valueScale)
+            => -(slope * valueScale);
+
+        private static float ConvertOutgoingTangent(float slope, float valueScale)
+            => slope * valueScale;
+
+        private static bool CanLinkTangents(float inTangent, float outTangent)
+            => MathF.Abs(inTangent + outTangent) <= TangentLinkTolerance;
+
+        private static EKeyframeInfinityMode MapInfinityMode(int unityInfinity)
+            => unityInfinity == 2
+                ? EKeyframeInfinityMode.Loop
+                : EKeyframeInfinityMode.Clamp;
 
         private static float GetMaxTime(List<ScalarCurve> scalarCurves, List<VectorCurve> vectorCurves)
         {

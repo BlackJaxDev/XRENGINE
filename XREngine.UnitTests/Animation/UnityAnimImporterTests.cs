@@ -9,6 +9,7 @@ using XREngine.Animation;
 using XREngine.Animation.IK;
 using XREngine.Animation.Importers;
 using XREngine.Components.Animation;
+using XREngine.Data;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -178,25 +179,25 @@ AnimationClip:
         scaleAnim.Keyframes.Count.ShouldBe(2);
         scaleAnim.Keyframes[0].InValue.ShouldBe(1.0f);
         scaleAnim.Keyframes[0].OutValue.ShouldBe(1.0f);
-        scaleAnim.Keyframes[0].InTangent.ShouldBe(-2.0f);
+        scaleAnim.Keyframes[0].InTangent.ShouldBe(2.0f);
         scaleAnim.Keyframes[0].OutTangent.ShouldBe(3.0f);
-        scaleAnim.Keyframes[1].InTangent.ShouldBe(4.0f);
+        scaleAnim.Keyframes[1].InTangent.ShouldBe(-4.0f);
         scaleAnim.Keyframes[1].OutTangent.ShouldBe(-5.0f);
 
         var translationZ = GetChild(hipsTransform, "TranslationZ", EAnimationMemberType.Property);
         var translationAnim = translationZ.Animation.ShouldBeOfType<PropAnimFloat>();
         translationAnim.Keyframes.Count.ShouldBe(1);
-        translationAnim.Keyframes[0].InValue.ShouldBe(-0.5f);
-        translationAnim.Keyframes[0].OutValue.ShouldBe(-0.5f);
+        translationAnim.Keyframes[0].InValue.ShouldBe(0.5f);
+        translationAnim.Keyframes[0].OutValue.ShouldBe(0.5f);
         translationAnim.Keyframes[0].InTangent.ShouldBe(-1.25f);
-        translationAnim.Keyframes[0].OutTangent.ShouldBe(2.5f);
+        translationAnim.Keyframes[0].OutTangent.ShouldBe(-2.5f);
 
         var quaternionX = GetChild(hipsTransform, "QuaternionX", EAnimationMemberType.Property);
         var quaternionAnim = quaternionX.Animation.ShouldBeOfType<PropAnimFloat>();
         quaternionAnim.Keyframes.Count.ShouldBe(1);
-        quaternionAnim.Keyframes[0].InValue.ShouldBe(-0.25f);
+        quaternionAnim.Keyframes[0].InValue.ShouldBe(0.25f);
         quaternionAnim.Keyframes[0].InTangent.ShouldBe(0.75f);
-        quaternionAnim.Keyframes[0].OutTangent.ShouldBe(-1.5f);
+        quaternionAnim.Keyframes[0].OutTangent.ShouldBe(1.5f);
 
         var humanoid = GetMethod(
             sceneNode,
@@ -207,25 +208,25 @@ AnimationClip:
         var rootPositionX = GetMethod(humanoid, "SetRootPositionX", animatedArgIndex: 0, methodArgs: [0.0f]);
         var rootPositionXAnim = rootPositionX.Animation.ShouldBeOfType<PropAnimFloat>();
         rootPositionXAnim.Keyframes[0].InValue.ShouldBe(-0.4f);
-        rootPositionXAnim.Keyframes[0].InTangent.ShouldBe(0.25f);
+        rootPositionXAnim.Keyframes[0].InTangent.ShouldBe(-0.25f);
         rootPositionXAnim.Keyframes[0].OutTangent.ShouldBe(-0.5f);
 
         var rootPositionZ = GetMethod(humanoid, "SetRootPositionZ", animatedArgIndex: 0, methodArgs: [0.0f]);
         var rootPositionAnim = rootPositionZ.Animation.ShouldBeOfType<PropAnimFloat>();
         rootPositionAnim.Keyframes[0].InValue.ShouldBe(0.75f);
-        rootPositionAnim.Keyframes[0].InTangent.ShouldBe(-1.0f);
+        rootPositionAnim.Keyframes[0].InTangent.ShouldBe(1.0f);
         rootPositionAnim.Keyframes[0].OutTangent.ShouldBe(2.0f);
 
         var rootRotationX = GetMethod(humanoid, "SetRootRotationX", animatedArgIndex: 0, methodArgs: [0.0f]);
         var rootRotationAnim = rootRotationX.Animation.ShouldBeOfType<PropAnimFloat>();
         rootRotationAnim.Keyframes[0].InValue.ShouldBe(0.2f);
-        rootRotationAnim.Keyframes[0].InTangent.ShouldBe(0.4f);
+        rootRotationAnim.Keyframes[0].InTangent.ShouldBe(-0.4f);
         rootRotationAnim.Keyframes[0].OutTangent.ShouldBe(-0.8f);
 
         var rootRotationY = GetMethod(humanoid, "SetRootRotationY", animatedArgIndex: 0, methodArgs: [0.0f]);
         var rootRotationYAnim = rootRotationY.Animation.ShouldBeOfType<PropAnimFloat>();
         rootRotationYAnim.Keyframes[0].InValue.ShouldBe(-0.15f);
-        rootRotationYAnim.Keyframes[0].InTangent.ShouldBe(0.3f);
+        rootRotationYAnim.Keyframes[0].InTangent.ShouldBe(-0.3f);
         rootRotationYAnim.Keyframes[0].OutTangent.ShouldBe(-0.45f);
 
         var ikSolver = GetMethod(
@@ -241,7 +242,7 @@ AnimationClip:
             methodArgs: [ELimbEndEffector.LeftFoot, 0.0f]);
         var leftFootPositionXAnim = leftFootPositionX.Animation.ShouldBeOfType<PropAnimFloat>();
         leftFootPositionXAnim.Keyframes[0].InValue.ShouldBe(-0.6f);
-        leftFootPositionXAnim.Keyframes[0].InTangent.ShouldBe(0.7f);
+        leftFootPositionXAnim.Keyframes[0].InTangent.ShouldBe(-0.7f);
         leftFootPositionXAnim.Keyframes[0].OutTangent.ShouldBe(-0.8f);
 
         var leftFootPositionZ = GetMethod(
@@ -251,7 +252,7 @@ AnimationClip:
             methodArgs: [ELimbEndEffector.LeftFoot, 0.0f]);
         var leftFootPositionAnim = leftFootPositionZ.Animation.ShouldBeOfType<PropAnimFloat>();
         leftFootPositionAnim.Keyframes[0].InValue.ShouldBe(0.9f);
-        leftFootPositionAnim.Keyframes[0].InTangent.ShouldBe(-1.1f);
+        leftFootPositionAnim.Keyframes[0].InTangent.ShouldBe(1.1f);
         leftFootPositionAnim.Keyframes[0].OutTangent.ShouldBe(1.2f);
 
         var leftFootRotationX = GetMethod(
@@ -261,7 +262,7 @@ AnimationClip:
             methodArgs: [ELimbEndEffector.LeftFoot, 0.0f]);
         var leftFootRotationAnim = leftFootRotationX.Animation.ShouldBeOfType<PropAnimFloat>();
         leftFootRotationAnim.Keyframes[0].InValue.ShouldBe(0.3f);
-        leftFootRotationAnim.Keyframes[0].InTangent.ShouldBe(-0.6f);
+        leftFootRotationAnim.Keyframes[0].InTangent.ShouldBe(0.6f);
         leftFootRotationAnim.Keyframes[0].OutTangent.ShouldBe(0.9f);
 
         var leftFootRotationY = GetMethod(
@@ -271,7 +272,7 @@ AnimationClip:
             methodArgs: [ELimbEndEffector.LeftFoot, 0.0f]);
         var leftFootRotationYAnim = leftFootRotationY.Animation.ShouldBeOfType<PropAnimFloat>();
         leftFootRotationYAnim.Keyframes[0].InValue.ShouldBe(-0.35f);
-        leftFootRotationYAnim.Keyframes[0].InTangent.ShouldBe(0.5f);
+        leftFootRotationYAnim.Keyframes[0].InTangent.ShouldBe(-0.5f);
         leftFootRotationYAnim.Keyframes[0].OutTangent.ShouldBe(-0.7f);
     }
 
@@ -342,22 +343,22 @@ AnimationClip:
         var translationZ = GetChild(hipsTransform, "TranslationZ", EAnimationMemberType.Property);
         var translationAnim = translationZ.Animation.ShouldBeOfType<PropAnimFloat>();
         translationAnim.Keyframes.Count.ShouldBe(2);
-        translationAnim.Keyframes[0].InValue.ShouldBe(-0.75f);
+        translationAnim.Keyframes[0].InValue.ShouldBe(0.75f);
         translationAnim.Keyframes[0].InTangent.ShouldBe(1.0f);
-        translationAnim.Keyframes[0].OutTangent.ShouldBe(-2.0f);
-        translationAnim.Keyframes[1].InValue.ShouldBe(-1.25f);
+        translationAnim.Keyframes[0].OutTangent.ShouldBe(2.0f);
+        translationAnim.Keyframes[1].InValue.ShouldBe(1.25f);
         translationAnim.Keyframes[1].InTangent.ShouldBe(3.0f);
-        translationAnim.Keyframes[1].OutTangent.ShouldBe(-4.0f);
+        translationAnim.Keyframes[1].OutTangent.ShouldBe(4.0f);
 
         var quaternionX = GetChild(hipsTransform, "QuaternionX", EAnimationMemberType.Property);
         var quaternionAnim = quaternionX.Animation.ShouldBeOfType<PropAnimFloat>();
         quaternionAnim.Keyframes.Count.ShouldBe(2);
-        quaternionAnim.Keyframes[0].InValue.ShouldBe(-0.2f);
+        quaternionAnim.Keyframes[0].InValue.ShouldBe(0.2f);
         quaternionAnim.Keyframes[0].InTangent.ShouldBe(-0.4f);
-        quaternionAnim.Keyframes[0].OutTangent.ShouldBe(0.8f);
-        quaternionAnim.Keyframes[1].InValue.ShouldBe(-0.6f);
+        quaternionAnim.Keyframes[0].OutTangent.ShouldBe(-0.8f);
+        quaternionAnim.Keyframes[1].InValue.ShouldBe(0.6f);
         quaternionAnim.Keyframes[1].InTangent.ShouldBe(1.2f);
-        quaternionAnim.Keyframes[1].OutTangent.ShouldBe(-1.6f);
+        quaternionAnim.Keyframes[1].OutTangent.ShouldBe(1.6f);
 
         var quaternionW = GetChild(hipsTransform, "QuaternionW", EAnimationMemberType.Property);
         quaternionW.Animation.ShouldBeOfType<PropAnimFloat>().Keyframes.Count.ShouldBe(1);
@@ -367,7 +368,7 @@ AnimationClip:
     }
 
     [Test]
-    public void Import_ScalarCurves_PreserveUnityTangentModeMetadata()
+    public void Import_ScalarCurves_MapUnityTangentModesToEngineInterpolationAndLinking()
     {
         int brokenLinearConstant = CombineTangentMode(TangentMode.Linear, TangentMode.Constant, broken: true);
         int autoClampedAuto = CombineTangentMode(TangentMode.Auto, TangentMode.ClampedAuto, broken: false);
@@ -394,7 +395,7 @@ AnimationClip:
           - time: 1
             value: 2
             inSlope: 4
-            outSlope: -5
+            outSlope: 4
             tangentMode: {{autoClampedAuto}}
 """;
 
@@ -403,27 +404,132 @@ AnimationClip:
         var scaleAnim = GetChild(hipsTransform, "ScaleX", EAnimationMemberType.Property).Animation.ShouldBeOfType<PropAnimFloat>();
 
         FloatKeyframe first = scaleAnim.Keyframes[0];
-        first.UnityCombinedTangentMode.ShouldBe(brokenLinearConstant);
-        first.UnityTangentsBroken.ShouldBeTrue();
-        first.UnityLeftTangentMode.ShouldBe(TangentMode.Linear);
-        first.UnityRightTangentMode.ShouldBe(TangentMode.Constant);
+        first.SyncInOutTangentDirections.ShouldBeFalse();
+        first.SyncInOutTangentMagnitudes.ShouldBeFalse();
+        first.InTangent.ShouldBe(2.0f);
+        first.OutTangent.ShouldBe(3.0f);
         first.InterpolationTypeIn.ShouldBe(EVectorInterpType.Linear);
         first.InterpolationTypeOut.ShouldBe(EVectorInterpType.Step);
 
         var roundTripped = new FloatKeyframe();
         roundTripped.ReadFromString(first.WriteToString());
-        roundTripped.UnityCombinedTangentMode.ShouldBe(brokenLinearConstant);
-        roundTripped.UnityTangentsBroken.ShouldBeTrue();
-        roundTripped.UnityLeftTangentMode.ShouldBe(TangentMode.Linear);
-        roundTripped.UnityRightTangentMode.ShouldBe(TangentMode.Constant);
+        roundTripped.InTangent.ShouldBe(first.InTangent);
+        roundTripped.OutTangent.ShouldBe(first.OutTangent);
+        roundTripped.InterpolationTypeIn.ShouldBe(first.InterpolationTypeIn);
+        roundTripped.InterpolationTypeOut.ShouldBe(first.InterpolationTypeOut);
 
         FloatKeyframe second = scaleAnim.Keyframes[1];
-        second.UnityCombinedTangentMode.ShouldBe(autoClampedAuto);
-        second.UnityTangentsBroken.ShouldBeFalse();
-        second.UnityLeftTangentMode.ShouldBe(TangentMode.Auto);
-        second.UnityRightTangentMode.ShouldBe(TangentMode.ClampedAuto);
-        second.InterpolationTypeIn.ShouldBe(EVectorInterpType.Smooth);
-        second.InterpolationTypeOut.ShouldBe(EVectorInterpType.Smooth);
+        second.SyncInOutTangentDirections.ShouldBeTrue();
+        second.SyncInOutTangentMagnitudes.ShouldBeTrue();
+        second.InTangent.ShouldBe(-4.0f);
+        second.OutTangent.ShouldBe(4.0f);
+        second.InterpolationTypeIn.ShouldBe(EVectorInterpType.Hermite);
+        second.InterpolationTypeOut.ShouldBe(EVectorInterpType.Hermite);
+    }
+
+    [Test]
+    public void Import_ScalarCurves_EvaluateUnitySmoothTangentsWithHermiteSlopes()
+    {
+        int smooth = CombineTangentMode(TangentMode.Auto, TangentMode.Auto, broken: false);
+
+        string yaml = $$"""
+AnimationClip:
+  m_Name: HermiteTangents
+  m_SampleRate: 60
+  m_AnimationClipSettings:
+    m_StartTime: 0
+    m_StopTime: 1
+    m_LoopTime: 0
+  m_FloatCurves:
+    - path: Hips
+      attribute: m_LocalScale.x
+      classID: 4
+      curve:
+        m_Curve:
+          - time: 0
+            value: 0
+            inSlope: 0
+            outSlope: 0
+            tangentMode: {{smooth}}
+          - time: 1
+            value: 1
+            inSlope: 2
+            outSlope: 0
+            tangentMode: {{smooth}}
+""";
+
+        AnimationClip clip = ImportClip(yaml);
+        var hipsTransform = GetTransformMember(GetSceneNodeRoot(clip), "Hips");
+        var scaleAnim = GetChild(hipsTransform, "ScaleX", EAnimationMemberType.Property).Animation.ShouldBeOfType<PropAnimFloat>();
+        scaleAnim.Keyframes[0].InterpolationTypeOut.ShouldBe(EVectorInterpType.Hermite);
+        scaleAnim.Keyframes[1].InterpolationTypeIn.ShouldBe(EVectorInterpType.Hermite);
+        scaleAnim.Keyframes[1].InTangent.ShouldBe(-2.0f);
+
+        float expectedMidpoint = Interp.CubicHermite(0.0f, 0.0f, 2.0f, 1.0f, 0.5f);
+        scaleAnim.GetValue(0.5f).ShouldBe(expectedMidpoint, 0.0001f);
+        scaleAnim.GetValue(0.5f).ShouldBe(0.25f, 0.0001f);
+    }
+
+    [Test]
+    public void Import_ScalarCurves_OffsetsKeyTimesAndMapsInfinityModes()
+    {
+        const string yaml = """
+AnimationClip:
+  m_Name: OffsetClip
+  m_SampleRate: 60
+  m_AnimationClipSettings:
+    m_StartTime: 1.5
+    m_StopTime: 2.5
+    m_LoopTime: 0
+  m_FloatCurves:
+    - path: Hips
+      attribute: m_LocalScale.x
+      classID: 4
+      curve:
+        m_Curve:
+          - time: 1.5
+            value: 1
+            inSlope: 0
+            outSlope: 2
+            tangentMode: 0
+          - time: 2.5
+            value: 3
+            inSlope: -4
+            outSlope: 0
+            tangentMode: 0
+        m_PreInfinity: 0
+        m_PostInfinity: 2
+""";
+
+        AnimationClip clip = ImportClip(yaml);
+        var hipsTransform = GetTransformMember(GetSceneNodeRoot(clip), "Hips");
+        var scaleAnim = GetChild(hipsTransform, "ScaleX", EAnimationMemberType.Property).Animation.ShouldBeOfType<PropAnimFloat>();
+
+        clip.LengthInSeconds.ShouldBe(1.0f);
+        scaleAnim.Keyframes.PreInfinityMode.ShouldBe(EKeyframeInfinityMode.Clamp);
+        scaleAnim.Keyframes.PostInfinityMode.ShouldBe(EKeyframeInfinityMode.Loop);
+        scaleAnim.Keyframes[0].Second.ShouldBe(0.0f);
+        scaleAnim.Keyframes[1].Second.ShouldBe(1.0f);
+    }
+
+    [Test]
+    public void FloatKeyframe_RuntimeSampling_UsesMixedIncomingAndOutgoingInterpolation()
+    {
+        var anim = new PropAnimFloat
+        {
+            LengthInSeconds = 1.0f,
+            Looped = false,
+        };
+
+        var first = new FloatKeyframe(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, EVectorInterpType.Step);
+        var second = new FloatKeyframe(1.0f, 1.0f, 1.0f, 0.0f, 0.0f, EVectorInterpType.Linear);
+
+        anim.Keyframes.Add(first);
+        anim.Keyframes.Add(second);
+
+        float segmentValue = first.InterpolatePositionNextNormalized(0.5f);
+        segmentValue.ShouldBe(0.25f, 0.0001f);
+        anim.GetValue(0.5f).ShouldBe(segmentValue, 0.0001f);
     }
 
     [Test]

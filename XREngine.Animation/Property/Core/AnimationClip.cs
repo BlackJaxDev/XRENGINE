@@ -1,15 +1,16 @@
 ﻿using System.Numerics;
 using MemoryPack;
 using XREngine.Animation.IK;
+using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.MMD;
 
 namespace XREngine.Animation
 {
-
     /// <summary>
     /// Represents a single animation clip that can be played with an AnimationClipComponent or an AnimStateMachineComponent.
     /// </summary>
+    [XRAssetInspector("XREngine.Editor.AssetEditors.AnimationClipInspector")]
     [XR3rdPartyExtensions(typeof(XREngine.Data.XRDefault3rdPartyImportOptions), "vmd", "anim")]
     [MemoryPackable]
     public partial class AnimationClip : MotionBase
@@ -17,7 +18,7 @@ namespace XREngine.Animation
         public override string ToString()
             => $"AnimationClip: {Name}";
 
-        private EAnimTreeTraversalMethod _traversalMethod = EAnimTreeTraversalMethod.Parallel;
+        private EAnimTreeTraversalMethod _traversalMethod = EAnimTreeTraversalMethod.BreadthFirst;
         public EAnimTreeTraversalMethod TraversalMethod
         {
             get => _traversalMethod;

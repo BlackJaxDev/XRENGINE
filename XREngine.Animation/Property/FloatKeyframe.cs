@@ -1,14 +1,11 @@
 ﻿using Extensions;
 using XREngine.Data;
 using XREngine.Data.Animation;
-using Unity;
 
 namespace XREngine.Animation
 {
     public class FloatKeyframe(float second, float inValue, float outValue, float inTangent, float outTangent, EVectorInterpType type) : VectorKeyframe<float>(second, inValue, outValue, inTangent, outTangent, type)
     {
-        private int? _unityCombinedTangentMode;
-
         public FloatKeyframe()
             : this(0.0f, 0.0f, 0.0f, EVectorInterpType.Linear) { }
 
@@ -23,24 +20,6 @@ namespace XREngine.Animation
             : this(second, inoutValue, inoutValue, inoutTangent, inoutTangent, type) { }
         public FloatKeyframe(float second, float inoutValue, float inTangent, float outTangent, EVectorInterpType type)
             : this(second, inoutValue, inoutValue, inTangent, outTangent, type) { }
-
-        /// <summary>
-        /// Stores Unity's original tangentMode bitmask when a keyframe originates from a Unity animation clip.
-        /// </summary>
-        public int? UnityCombinedTangentMode
-        {
-            get => _unityCombinedTangentMode;
-            set => SetField(ref _unityCombinedTangentMode, value);
-        }
-
-        public bool UnityTangentsBroken
-            => UnityCombinedTangentMode is int tangentMode && UnityAnimationClip.TangentModeHelper.IsBroken(tangentMode);
-
-        public TangentMode? UnityLeftTangentMode
-            => UnityCombinedTangentMode is int tangentMode ? UnityAnimationClip.TangentModeHelper.GetLeftTangentMode(tangentMode) : null;
-
-        public TangentMode? UnityRightTangentMode
-            => UnityCombinedTangentMode is int tangentMode ? UnityAnimationClip.TangentModeHelper.GetRightTangentMode(tangentMode) : null;
 
         public override float LerpOut(VectorKeyframe<float>? next, float diff, float span)
         {
@@ -71,7 +50,7 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return OutValue;
 
-            var t = diff / span;
+            var t = Math.Clamp(diff / span, 0.0f, 1.0f);
             var (p1, p2, p3, p4) = GetBezierPointsWithNext(next, span);
             return Interp.CubicBezier(p1, p2, p3, p4, t);
         }
@@ -88,7 +67,7 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return 0.0f;
 
-            var t = diff / span;
+            var t = Math.Clamp(diff / span, 0.0f, 1.0f);
             var (p1, p2, p3, p4) = GetBezierPointsWithNext(next, span);
             return Interp.CubicBezierVelocity(p1, p2, p3, p4, t) / span;
         }
@@ -105,7 +84,7 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return 0.0f;
 
-            var t = diff / span;
+            var t = Math.Clamp(diff / span, 0.0f, 1.0f);
             var (p1, p2, p3, p4) = GetBezierPointsWithNext(next, span);
             return Interp.CubicBezierAcceleration(p1, p2, p3, p4, t) / (span * span);
         }
@@ -122,7 +101,7 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return 0.0f;
 
-            var t = diff / span;
+            var t = Math.Clamp(diff / span, 0.0f, 1.0f);
             var (p1, p2, p3, p4) = GetBezierPointsWithPrev(prev, span);
             return Interp.CubicBezier(p1, p2, p3, p4, t);
         }
@@ -139,7 +118,7 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return 0.0f;
 
-            var t = diff / span;
+            var t = Math.Clamp(diff / span, 0.0f, 1.0f);
             var (p1, p2, p3, p4) = GetBezierPointsWithPrev(prev, span);
             return Interp.CubicBezierVelocity(p1, p2, p3, p4, t) / span;
         }
@@ -156,9 +135,93 @@ namespace XREngine.Animation
             if (span.IsZero())
                 return 0.0f;
 
-            var t = diff / span;
+            var t = Math.Clamp(diff / span, 0.0f, 1.0f);
             var (p1, p2, p3, p4) = GetBezierPointsWithPrev(prev, span);
             return Interp.CubicBezierAcceleration(p1, p2, p3, p4, t) / (span * span);
+        }
+
+        public override float CubicHermiteOut(VectorKeyframe<float>? next, float diff, float span)
+        {
+            if (span.IsZero())
+                return OutValue;
+
+            var t = Math.Clamp(diff / span, 0.0f, 1.0f);
+            return Interp.CubicHermite(
+                OutValue,
+                OutTangent * span,
+                -(next?.InTangent ?? 0.0f) * span,
+                next?.InValue ?? OutValue,
+                t);
+        }
+
+        public override float CubicHermiteVelocityOut(VectorKeyframe<float>? next, float diff, float span)
+        {
+            if (span.IsZero())
+                return 0.0f;
+
+            var t = Math.Clamp(diff / span, 0.0f, 1.0f);
+            return Interp.CubicHermiteVelocity(
+                OutValue,
+                OutTangent * span,
+                -(next?.InTangent ?? 0.0f) * span,
+                next?.InValue ?? OutValue,
+                t) / span;
+        }
+
+        public override float CubicHermiteAccelerationOut(VectorKeyframe<float>? next, float diff, float span)
+        {
+            if (span.IsZero())
+                return 0.0f;
+
+            var t = Math.Clamp(diff / span, 0.0f, 1.0f);
+            return Interp.CubicHermiteAcceleration(
+                OutValue,
+                OutTangent * span,
+                -(next?.InTangent ?? 0.0f) * span,
+                next?.InValue ?? OutValue,
+                t) / (span * span);
+        }
+
+        public override float CubicHermiteIn(VectorKeyframe<float>? prev, float diff, float span)
+        {
+            if (span.IsZero())
+                return InValue;
+
+            var t = Math.Clamp(diff / span, 0.0f, 1.0f);
+            return Interp.CubicHermite(
+                prev?.OutValue ?? InValue,
+                (prev?.OutTangent ?? 0.0f) * span,
+                -InTangent * span,
+                InValue,
+                t);
+        }
+
+        public override float CubicHermiteVelocityIn(VectorKeyframe<float>? prev, float diff, float span)
+        {
+            if (span.IsZero())
+                return 0.0f;
+
+            var t = Math.Clamp(diff / span, 0.0f, 1.0f);
+            return Interp.CubicHermiteVelocity(
+                prev?.OutValue ?? InValue,
+                (prev?.OutTangent ?? 0.0f) * span,
+                -InTangent * span,
+                InValue,
+                t) / span;
+        }
+
+        public override float CubicHermiteAccelerationIn(VectorKeyframe<float>? prev, float diff, float span)
+        {
+            if (span.IsZero())
+                return 0.0f;
+
+            var t = Math.Clamp(diff / span, 0.0f, 1.0f);
+            return Interp.CubicHermiteAcceleration(
+                prev?.OutValue ?? InValue,
+                (prev?.OutTangent ?? 0.0f) * span,
+                -InTangent * span,
+                InValue,
+                t) / (span * span);
         }
 
         /// <summary>
@@ -208,7 +271,7 @@ namespace XREngine.Animation
         /// The control points are calculated using the standard cubic Bezier formula where:
         /// - The first and last points (p1, p4) represent the actual keyframe values
         /// - The middle points (p2, p3) are calculated using the tangent values scaled by the time span
-        /// This method is used internally by cubic Bezier interpolation functions
+        /// This method is used internally by cubic Bezier interpolation functions.
         private (float p1, float p2, float p3, float p4) GetBezierPointsWithPrev(VectorKeyframe<float>? prev, float span)
         {
             float prevOutValue = prev?.OutValue ?? InValue;
@@ -221,16 +284,14 @@ namespace XREngine.Animation
         }
 
         public override string WriteToString()
-            => UnityCombinedTangentMode is int tangentMode
-                ? $"{Second} {InValue} {OutValue} {InTangent} {OutTangent} {InterpolationTypeIn} {InterpolationTypeOut} {tangentMode}"
-                : $"{Second} {InValue} {OutValue} {InTangent} {OutTangent} {InterpolationTypeIn} {InterpolationTypeOut}";
+            => $"{Second} {InValue} {OutValue} {InTangent} {OutTangent} {InterpolationTypeIn} {InterpolationTypeOut}";
 
         public override string ToString()
             => $"[S:{Second}] V:({InValue} {OutValue}) T:([{InTangent} {InterpolationTypeIn}] [{OutTangent} {InterpolationTypeOut}])";
 
         public override void ReadFromString(string str)
         {
-            string[] parts = str.Split(' ');
+            string[] parts = str.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             Second = float.Parse(parts[0]);
             InValue = float.Parse(parts[1]);
             OutValue = float.Parse(parts[2]);
@@ -238,7 +299,6 @@ namespace XREngine.Animation
             OutTangent = float.Parse(parts[4]);
             InterpolationTypeIn = parts[5].AsEnum<EVectorInterpType>();
             InterpolationTypeOut = parts[6].AsEnum<EVectorInterpType>();
-            UnityCombinedTangentMode = parts.Length > 7 ? int.Parse(parts[7]) : null;
         }
 
         public override void MakeOutLinear()
@@ -247,16 +307,19 @@ namespace XREngine.Animation
             float span;
             if (next is null)
             {
-                if (OwningTrack != null && OwningTrack.FirstKey != this)
+                if (OwningTrack?.LoopsAfterLastKey == true && OwningTrack.FirstKey != this)
                 {
-                    next = OwningTrack?.FirstKey as VectorKeyframe<float>;
-                    span = (OwningTrack?.LengthInSeconds ?? 0.0f) - Second + (next?.Second ?? 0.0f);
+                    next = OwningTrack.FirstKey as VectorKeyframe<float>;
+                    span = OwningTrack.LengthInSeconds - Second + (next?.Second ?? 0.0f);
                 }
                 else
                     return;
             }
             else
                 span = next.Second - Second;
+
+            if (span.IsZero())
+                return;
 
             OutTangent = ((next?.InValue ?? 0.0f) - OutValue) / span;
         }
@@ -266,16 +329,19 @@ namespace XREngine.Animation
             float span;
             if (prev is null)
             {
-                if (OwningTrack != null && OwningTrack.LastKey != this)
+                if (OwningTrack?.LoopsBeforeFirstKey == true && OwningTrack.LastKey != this)
                 {
-                    prev = OwningTrack?.LastKey as VectorKeyframe<float>;
-                    span = (OwningTrack?.LengthInSeconds ?? 0.0f) - (prev?.Second ?? 0.0f) + Second;
+                    prev = OwningTrack.LastKey as VectorKeyframe<float>;
+                    span = OwningTrack.LengthInSeconds - (prev?.Second ?? 0.0f) + Second;
                 }
                 else
                     return;
             }
             else
                 span = Second - (prev?.Second ?? 0.0f);
+
+            if (span.IsZero())
+                return;
 
             InTangent = -(InValue - (prev?.OutValue ?? 0.0f)) / span;
         }
