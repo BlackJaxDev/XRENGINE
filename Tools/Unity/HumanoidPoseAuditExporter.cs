@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 using UnityEngine;
 using UnityEngine.Animations;
 using UnityEngine.Playables;
@@ -11,14 +14,16 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
     [Serializable]
     private sealed class PoseAuditReport
     {
-        public int SchemaVersion = 1;
+        public int SchemaVersion = 3;
         public string Source = "UnityMecanim";
         public string ClipName = string.Empty;
         public string AvatarName = string.Empty;
         public float DurationSeconds;
         public int SampleRate;
         public int SampleCount;
-        public List<PoseAuditSample> Samples = new List<PoseAuditSample>();
+        public List<NamedFloatRange> MuscleDefaultRanges = new();
+        public PoseAuditSample DefaultMusclePose;
+        public List<PoseAuditSample> Samples = new();
     }
 
     [Serializable]
@@ -26,10 +31,11 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
     {
         public int Index;
         public float TimeSeconds;
-        public PoseVector3 BodyPosition = new PoseVector3();
-        public PoseQuaternion BodyRotation = new PoseQuaternion();
-        public List<NamedFloat> Muscles = new List<NamedFloat>();
-        public List<BoneSample> Bones = new List<BoneSample>();
+        public PoseVector3 BodyPosition = new();
+        public PoseQuaternion BodyRotation = new();
+        public List<NamedFloat> Muscles = new();
+        public List<RawCurveSample> RawCurves = new();
+        public List<BoneSample> Bones = new();
     }
 
     [Serializable]
@@ -40,12 +46,30 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
     }
 
     [Serializable]
+    private sealed class NamedFloatRange
+    {
+        public string Name = string.Empty;
+        public float Min;
+        public float Max;
+    }
+
+    [Serializable]
+    private sealed class RawCurveSample
+    {
+        public string Path = string.Empty;
+        public string TypeName = string.Empty;
+        public string PropertyName = string.Empty;
+        public float Value;
+    }
+
+    [Serializable]
     private sealed class BoneSample
     {
         public string Name = string.Empty;
-        public PoseQuaternion LocalRotation = new PoseQuaternion();
-        public PoseVector3 RootSpacePosition = new PoseVector3();
-        public PoseVector3 WorldPosition = new PoseVector3();
+        public PoseQuaternion LocalRotation = new();
+        public PoseQuaternion BindRelativeRotation = new();
+        public PoseVector3 RootSpacePosition = new();
+        public PoseVector3 WorldPosition = new();
     }
 
     [Serializable]
@@ -99,33 +123,41 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
         }
     }
 
+    private sealed class RawCurveBinding
+    {
+        public string Path = string.Empty;
+        public string TypeName = string.Empty;
+        public string PropertyName = string.Empty;
+        public AnimationCurve Curve = new AnimationCurve();
+    }
+
     private static readonly BoneDefinition[] BonesToSample =
     {
-        new BoneDefinition("Hips", HumanBodyBones.Hips),
-        new BoneDefinition("Spine", HumanBodyBones.Spine),
-        new BoneDefinition("Chest", HumanBodyBones.Chest),
-        new BoneDefinition("UpperChest", HumanBodyBones.UpperChest),
-        new BoneDefinition("Neck", HumanBodyBones.Neck),
-        new BoneDefinition("Head", HumanBodyBones.Head),
-        new BoneDefinition("Jaw", HumanBodyBones.Jaw),
-        new BoneDefinition("LeftEye", HumanBodyBones.LeftEye),
-        new BoneDefinition("RightEye", HumanBodyBones.RightEye),
-        new BoneDefinition("LeftShoulder", HumanBodyBones.LeftShoulder),
-        new BoneDefinition("LeftUpperArm", HumanBodyBones.LeftUpperArm),
-        new BoneDefinition("LeftLowerArm", HumanBodyBones.LeftLowerArm),
-        new BoneDefinition("LeftHand", HumanBodyBones.LeftHand),
-        new BoneDefinition("RightShoulder", HumanBodyBones.RightShoulder),
-        new BoneDefinition("RightUpperArm", HumanBodyBones.RightUpperArm),
-        new BoneDefinition("RightLowerArm", HumanBodyBones.RightLowerArm),
-        new BoneDefinition("RightHand", HumanBodyBones.RightHand),
-        new BoneDefinition("LeftUpperLeg", HumanBodyBones.LeftUpperLeg),
-        new BoneDefinition("LeftLowerLeg", HumanBodyBones.LeftLowerLeg),
-        new BoneDefinition("LeftFoot", HumanBodyBones.LeftFoot),
-        new BoneDefinition("LeftToes", HumanBodyBones.LeftToes),
-        new BoneDefinition("RightUpperLeg", HumanBodyBones.RightUpperLeg),
-        new BoneDefinition("RightLowerLeg", HumanBodyBones.RightLowerLeg),
-        new BoneDefinition("RightFoot", HumanBodyBones.RightFoot),
-        new BoneDefinition("RightToes", HumanBodyBones.RightToes),
+        new("Hips", HumanBodyBones.Hips),
+        new("Spine", HumanBodyBones.Spine),
+        new("Chest", HumanBodyBones.Chest),
+        new("UpperChest", HumanBodyBones.UpperChest),
+        new("Neck", HumanBodyBones.Neck),
+        new("Head", HumanBodyBones.Head),
+        new("Jaw", HumanBodyBones.Jaw),
+        new("LeftEye", HumanBodyBones.LeftEye),
+        new("RightEye", HumanBodyBones.RightEye),
+        new("LeftShoulder", HumanBodyBones.LeftShoulder),
+        new("LeftUpperArm", HumanBodyBones.LeftUpperArm),
+        new("LeftLowerArm", HumanBodyBones.LeftLowerArm),
+        new("LeftHand", HumanBodyBones.LeftHand),
+        new("RightShoulder", HumanBodyBones.RightShoulder),
+        new("RightUpperArm", HumanBodyBones.RightUpperArm),
+        new("RightLowerArm", HumanBodyBones.RightLowerArm),
+        new("RightHand", HumanBodyBones.RightHand),
+        new("LeftUpperLeg", HumanBodyBones.LeftUpperLeg),
+        new("LeftLowerLeg", HumanBodyBones.LeftLowerLeg),
+        new("LeftFoot", HumanBodyBones.LeftFoot),
+        new("LeftToes", HumanBodyBones.LeftToes),
+        new("RightUpperLeg", HumanBodyBones.RightUpperLeg),
+        new("RightLowerLeg", HumanBodyBones.RightLowerLeg),
+        new("RightFoot", HumanBodyBones.RightFoot),
+        new("RightToes", HumanBodyBones.RightToes),
     };
 
     public Animator Animator;
@@ -177,6 +209,10 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
             SampleRate = sampleRate,
         };
 
+        PopulateMuscleDefaultRanges(report);
+        List<RawCurveBinding> rawCurveBindings = CollectRawCurveBindings(clip);
+    Dictionary<HumanBodyBones, Quaternion> bindLocalRotations = CaptureBindLocalRotations(animator);
+
         int sampleCount = Mathf.Max(1, Mathf.CeilToInt(clip.length * sampleRate) + 1);
         report.SampleCount = sampleCount;
 
@@ -195,6 +231,7 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
 
             var poseHandler = new HumanPoseHandler(animator.avatar, animator.transform);
             var humanPose = new HumanPose();
+            report.DefaultMusclePose = CaptureDefaultMusclePose(animator, poseHandler, bindLocalRotations);
 
             for (int i = 0; i < sampleCount; i++)
             {
@@ -206,7 +243,7 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
                 graph.Evaluate(0.0f);
                 poseHandler.GetHumanPose(ref humanPose);
 
-                report.Samples.Add(CaptureSample(animator, humanPose, sampleTime, i));
+                report.Samples.Add(CaptureSample(animator, humanPose, sampleTime, i, rawCurveBindings, bindLocalRotations));
             }
         }
         finally
@@ -217,7 +254,46 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
         return report;
     }
 
-    private static PoseAuditSample CaptureSample(Animator animator, HumanPose humanPose, float timeSeconds, int index)
+    private static Dictionary<HumanBodyBones, Quaternion> CaptureBindLocalRotations(Animator animator)
+    {
+        var bindLocalRotations = new Dictionary<HumanBodyBones, Quaternion>();
+        foreach (BoneDefinition bone in BonesToSample)
+        {
+            Transform boneTransform = animator.GetBoneTransform(bone.Bone);
+            if (boneTransform == null)
+                continue;
+
+            bindLocalRotations[bone.Bone] = Quaternion.Normalize(boneTransform.localRotation);
+        }
+
+        return bindLocalRotations;
+    }
+
+    private static PoseAuditSample CaptureDefaultMusclePose(
+        Animator animator,
+        HumanPoseHandler poseHandler,
+        IReadOnlyDictionary<HumanBodyBones, Quaternion> bindLocalRotations)
+    {
+        var defaultPose = new HumanPose
+        {
+            bodyPosition = Vector3.zero,
+            bodyRotation = Quaternion.identity,
+            muscles = new float[HumanTrait.MuscleCount],
+        };
+
+        poseHandler.SetHumanPose(ref defaultPose);
+        animator.Update(0.0f);
+        poseHandler.GetHumanPose(ref defaultPose);
+        return CaptureSample(animator, defaultPose, 0.0f, -1, Array.Empty<RawCurveBinding>(), bindLocalRotations);
+    }
+
+    private static PoseAuditSample CaptureSample(
+        Animator animator,
+        HumanPose humanPose,
+        float timeSeconds,
+        int index,
+        IReadOnlyList<RawCurveBinding> rawCurveBindings,
+        IReadOnlyDictionary<HumanBodyBones, Quaternion> bindLocalRotations)
     {
         var sample = new PoseAuditSample
         {
@@ -238,6 +314,17 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
             });
         }
 
+        foreach (RawCurveBinding rawCurve in rawCurveBindings)
+        {
+            sample.RawCurves.Add(new RawCurveSample
+            {
+                Path = rawCurve.Path,
+                TypeName = rawCurve.TypeName,
+                PropertyName = rawCurve.PropertyName,
+                Value = rawCurve.Curve.Evaluate(timeSeconds),
+            });
+        }
+
         Transform root = animator.transform;
         foreach (BoneDefinition bone in BonesToSample)
         {
@@ -245,16 +332,71 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
             if (boneTransform == null)
                 continue;
 
+            Quaternion bindLocalRotation = bindLocalRotations.TryGetValue(bone.Bone, out Quaternion capturedBindLocal)
+                ? capturedBindLocal
+                : Quaternion.identity;
+
             sample.Bones.Add(new BoneSample
             {
                 Name = bone.Name,
                 LocalRotation = PoseQuaternion.From(boneTransform.localRotation),
+                BindRelativeRotation = PoseQuaternion.From(Quaternion.Inverse(bindLocalRotation) * boneTransform.localRotation),
                 RootSpacePosition = PoseVector3.From(root.InverseTransformPoint(boneTransform.position)),
                 WorldPosition = PoseVector3.From(boneTransform.position),
             });
         }
 
         return sample;
+    }
+
+    private static void PopulateMuscleDefaultRanges(PoseAuditReport report)
+    {
+        string[] muscleNames = HumanTrait.MuscleName;
+        int muscleCount = Mathf.Min(muscleNames.Length, HumanTrait.MuscleCount);
+        for (int i = 0; i < muscleCount; i++)
+        {
+            report.MuscleDefaultRanges.Add(new NamedFloatRange
+            {
+                Name = muscleNames[i],
+                Min = HumanTrait.GetMuscleDefaultMin(i),
+                Max = HumanTrait.GetMuscleDefaultMax(i),
+            });
+        }
+    }
+
+    private static List<RawCurveBinding> CollectRawCurveBindings(AnimationClip clip)
+    {
+        var bindings = new List<RawCurveBinding>();
+#if UNITY_EDITOR
+        foreach (EditorCurveBinding binding in AnimationUtility.GetCurveBindings(clip))
+        {
+            AnimationCurve curve = AnimationUtility.GetEditorCurve(clip, binding);
+            if (curve == null)
+                continue;
+
+            bindings.Add(new RawCurveBinding
+            {
+                Path = binding.path ?? string.Empty,
+                TypeName = binding.type != null ? binding.type.FullName ?? binding.type.Name : string.Empty,
+                PropertyName = binding.propertyName ?? string.Empty,
+                Curve = curve,
+            });
+        }
+
+        bindings.Sort(static (a, b) =>
+        {
+            int path = string.CompareOrdinal(a.Path, b.Path);
+            if (path != 0)
+                return path;
+
+            int typeName = string.CompareOrdinal(a.TypeName, b.TypeName);
+            if (typeName != 0)
+                return typeName;
+
+            return string.CompareOrdinal(a.PropertyName, b.PropertyName);
+        });
+#endif
+        return bindings;
     }
 
     private int ResolveSampleRate(AnimationClip clip)

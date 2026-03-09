@@ -501,6 +501,7 @@ public static partial class EditorImGuiUI
 
             EnsureProfessionalImGuiStyling();
             ApplyViewportModeImGuiBackgroundAlpha();
+            ImGuiExternalPathDrop.BeginFrame();
 
             SuppressUnexpectedImGuiDebugWindows();
 

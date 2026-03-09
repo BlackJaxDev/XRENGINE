@@ -70,7 +70,7 @@ namespace XREngine.Animation.Importers
         private static float GetPositionComponentScale(char component)
             => component switch
             {
-                'x' => -1.0f,
+                'x' => 1.0f,
                 'y' => 1.0f,
                 'z' => 1.0f,
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported position component."),
@@ -80,8 +80,8 @@ namespace XREngine.Animation.Importers
             => component switch
             {
                 'x' => 1.0f,
-                'y' => -1.0f,
-                'z' => -1.0f,
+                'y' => 1.0f,
+                'z' => 1.0f,
                 'w' => 1.0f,
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported rotation component."),
             };
@@ -89,7 +89,7 @@ namespace XREngine.Animation.Importers
         private static float GetHumanoidBodyPositionComponentScale(char component)
             => component switch
             {
-                'x' => -1.0f,
+                'x' => 1.0f,
                 'y' => 1.0f,
                 'z' => 1.0f,
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported humanoid position component."),
@@ -99,8 +99,8 @@ namespace XREngine.Animation.Importers
             => component switch
             {
                 'x' => 1.0f,
-                'y' => -1.0f,
-                'z' => -1.0f,
+                'y' => 1.0f,
+                'z' => 1.0f,
                 'w' => 1.0f,
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported humanoid rotation component."),
             };
@@ -585,7 +585,7 @@ namespace XREngine.Animation.Importers
                 // Humanoid values are applied on the root node's HumanoidComponent.
                 // We keep this importer decoupled from the HumanoidComponent assembly by using string-based reflection.
                 var getComp = GetOrAddMethod(_sceneNode, "GetComponentInHierarchy", ["HumanoidComponent"], animatedArgIndex: -1, cacheReturnValue: true);
-                var method = GetOrAddMethod(getComp, "SetValue", [humanoidValue, 0.0f], animatedArgIndex: 1, cacheReturnValue: false);
+                var method = GetOrAddMethod(getComp, "SetImportedRawValue", [humanoidValue, 0.0f, false], animatedArgIndex: 1, cacheReturnValue: false);
                 method.Animation = anim;
             }
 

@@ -4,7 +4,7 @@ namespace XREngine.Components.Animation
 {
     public sealed class HumanoidPoseAuditReport
     {
-        public const int CurrentSchemaVersion = 1;
+        public const int CurrentSchemaVersion = 3;
 
         public int SchemaVersion { get; set; } = CurrentSchemaVersion;
         public string Source { get; set; } = string.Empty;
@@ -13,6 +13,8 @@ namespace XREngine.Components.Animation
         public float DurationSeconds { get; set; }
         public int SampleRate { get; set; }
         public int SampleCount { get; set; }
+        public List<HumanoidPoseAuditNamedFloatRange> MuscleDefaultRanges { get; set; } = [];
+        public HumanoidPoseAuditSample? DefaultMusclePose { get; set; }
         public List<HumanoidPoseAuditSample> Samples { get; set; } = [];
     }
 
@@ -23,6 +25,7 @@ namespace XREngine.Components.Animation
         public HumanoidPoseAuditVector3 BodyPosition { get; set; } = new();
         public HumanoidPoseAuditQuaternion BodyRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
         public List<HumanoidPoseAuditNamedFloat> Muscles { get; set; } = [];
+        public List<HumanoidPoseAuditRawCurveSample> RawCurves { get; set; } = [];
         public List<HumanoidPoseAuditBoneSample> Bones { get; set; } = [];
     }
 
@@ -32,10 +35,26 @@ namespace XREngine.Components.Animation
         public float Value { get; set; }
     }
 
+    public sealed class HumanoidPoseAuditNamedFloatRange
+    {
+        public string Name { get; set; } = string.Empty;
+        public float Min { get; set; }
+        public float Max { get; set; }
+    }
+
+    public sealed class HumanoidPoseAuditRawCurveSample
+    {
+        public string Path { get; set; } = string.Empty;
+        public string TypeName { get; set; } = string.Empty;
+        public string PropertyName { get; set; } = string.Empty;
+        public float Value { get; set; }
+    }
+
     public sealed class HumanoidPoseAuditBoneSample
     {
         public string Name { get; set; } = string.Empty;
         public HumanoidPoseAuditQuaternion LocalRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
+        public HumanoidPoseAuditQuaternion BindRelativeRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
         public HumanoidPoseAuditVector3 RootSpacePosition { get; set; } = new();
         public HumanoidPoseAuditVector3 WorldPosition { get; set; } = new();
     }

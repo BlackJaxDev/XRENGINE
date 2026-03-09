@@ -20,7 +20,9 @@ namespace XREngine.Input.Devices.Glfw
             set => _mouse.Cursor.CursorMode = value ? CursorMode.Disabled : CursorMode.Normal;
         }
 
-        private float _lastScroll = 0.0f;
+        private readonly Queue<float> _pendingScrollDeltas = [];
+        private readonly List<float> _scrollDispatchBuffer = [];
+        private readonly object _scrollLock = new();
 
         public GlfwMouse(IMouse mouse) : base(mouse.Index)
         {
@@ -54,12 +56,17 @@ namespace XREngine.Input.Devices.Glfw
 
         private void Scroll(IMouse mouse, ScrollWheel wheel)
         {
-            _lastScroll += wheel.Y;
+            if (MathF.Abs(wheel.Y) <= float.Epsilon)
+                return;
+
+            lock (_scrollLock)
+                _pendingScrollDeltas.Enqueue(wheel.Y);
         }
 
         public override void ClearScrollBuffer()
         {
-            _lastScroll = 0.0f;
+            lock (_scrollLock)
+                _pendingScrollDeltas.Clear();
         }
 
         private void MouseDown(IMouse mouse, MouseButton button)
@@ -80,8 +87,17 @@ namespace XREngine.Input.Devices.Glfw
         public override void TickStates(float delta)
         {
             _cursor.Tick(CursorPosition.X, CursorPosition.Y);
-            _wheel.Tick(_lastScroll);
-            _lastScroll = 0.0f;
+
+            lock (_scrollLock)
+            {
+                _scrollDispatchBuffer.Clear();
+                while (_pendingScrollDeltas.Count > 0)
+                    _scrollDispatchBuffer.Add(_pendingScrollDeltas.Dequeue());
+            }
+
+            for (int i = 0; i < _scrollDispatchBuffer.Count; i++)
+                _wheel.Tick(_scrollDispatchBuffer[i]);
+
             LeftClick?.Tick(_mouse.IsButtonPressed(MouseButton.Left), delta);
             RightClick?.Tick(_mouse.IsButtonPressed(MouseButton.Right), delta);
             MiddleClick?.Tick(_mouse.IsButtonPressed(MouseButton.Middle), delta);

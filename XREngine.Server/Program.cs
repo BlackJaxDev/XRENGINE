@@ -12,11 +12,11 @@ using XREngine.Server.Instances;
 using XREngine;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
-using XREngine.Editor;
 using XREngine.Native;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using XREngine.Networking.LoadBalance;
@@ -34,8 +34,6 @@ namespace XREngine.Networking
     /// </summary>
     public class Program
     {
-        private const string UnitTestingWorldSettingsFileName = "UnitTestingWorldSettings.json";
-
         //private static readonly CommandServer _loadBalancer;
 
         //static Program()
@@ -89,29 +87,11 @@ namespace XREngine.Networking
             // Note: engine startup settings (render API, update rates, etc.) are sourced from UnitTestingWorld.Toggles
             // via GetEngineSettings(). Load the JSON settings for both Default and UnitTesting modes so defaults don't
             // accidentally pick unsupported/undesired values and render a black screen.
-            LoadUnitTestingSettings(false);
+            var settings = UnitTestingWorldSettingsStore.Load(false);
+            UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
             XRWorld targetWorld = CreateWorld();
 
             Engine.Run(GetEngineSettings(targetWorld), Engine.LoadOrGenerateGameState());
-        }
-
-        private static void LoadUnitTestingSettings(bool writeBackAfterRead)
-        {
-            string dir = Environment.CurrentDirectory;
-            string fileName = UnitTestingWorldSettingsFileName;
-            string filePath = Path.Combine(dir, "Assets", fileName);
-            if (!File.Exists(filePath))
-                File.WriteAllText(filePath, JsonConvert.SerializeObject(EditorUnitTests.Toggles, Formatting.Indented));
-            else
-            {
-                string? content = File.ReadAllText(filePath);
-                if (content is not null)
-                {
-                    EditorUnitTests.Toggles = JsonConvert.DeserializeObject<EditorUnitTests.Settings>(content) ?? new EditorUnitTests.Settings();
-                    if (writeBackAfterRead)
-                        File.WriteAllText(filePath, JsonConvert.SerializeObject(EditorUnitTests.Toggles, Formatting.Indented));
-                }
-            }
         }
 
         private static Task BuildWebApi()
@@ -196,17 +176,17 @@ namespace XREngine.Networking
         /// <returns></returns>
         public static XRWorld CreateWorld()
         {
-            EditorUnitTests.ApplyRenderSettingsFromToggles();
+            BootstrapRenderSettings.Apply();
 
             var scene = new XRScene("Main Scene");
             var rootNode = new SceneNode("Root Node");
             scene.RootNodes.Add(rootNode);
 
-            SceneNode? characterPawnModelParentNode = EditorUnitTests.Pawns.CreatePlayerPawn(false, true, rootNode);
+            SceneNode? characterPawnModelParentNode = BootstrapPawnFactory.CreatePlayerPawn(false, true, rootNode);
 
-            EditorUnitTests.Lighting.AddDirLight(rootNode);
-            EditorUnitTests.Lighting.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
-            EditorUnitTests.Models.AddSkybox(rootNode, null);
+            BootstrapLightingBuilder.AddDirLight(rootNode);
+            BootstrapLightingBuilder.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
+            BootstrapModelBuilder.AddSkybox(rootNode, null);
             CreateConsoleUI(rootNode);
             
             var world = new XRWorld("Default World", scene);
@@ -283,9 +263,9 @@ namespace XREngine.Networking
             return cameraNode;
         }
 
-        private static EditorFlyingCameraPawnComponent CreateDesktopViewerPawn(SceneNode cameraNode, CameraComponent? camera)
+        private static FlyingCameraPawnComponent CreateDesktopViewerPawn(SceneNode cameraNode, CameraComponent? camera)
         {
-            var pawnComp = cameraNode.AddComponent<EditorFlyingCameraPawnComponent>();
+            var pawnComp = cameraNode.AddComponent<FlyingCameraPawnComponent>();
             var listener = cameraNode.AddComponent<AudioListenerComponent>()!;
             listener.Gain = 1.0f;
             listener.DistanceModel = EDistanceModel.InverseDistance;
@@ -483,12 +463,12 @@ namespace XREngine.Networking
                 UdpServerSendPort = 5000,
                 UdpMulticastPort = 5000,
                 NetworkingType = ENetworkingType.Server,
-                GPURenderDispatch = EditorUnitTests.Toggles.GPURenderDispatch,
+                GPURenderDispatch = RuntimeBootstrapState.Settings.GPURenderDispatch,
                 DefaultUserSettings = new UserSettings()
                 {
                     VSync = EVSyncMode.Off,
-                    RenderLibrary = EditorUnitTests.Toggles.RenderAPI,
-                    PhysicsLibrary = EditorUnitTests.Toggles.PhysicsAPI,
+                    RenderLibrary = RuntimeBootstrapState.Settings.RenderAPI,
+                    PhysicsLibrary = RuntimeBootstrapState.Settings.PhysicsAPI,
                 },
                 TargetUpdatesPerSecond = updateHz,
                 TargetFramesPerSecond = renderHz,

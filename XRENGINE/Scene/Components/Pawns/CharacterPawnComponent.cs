@@ -338,7 +338,16 @@ namespace XREngine.Components
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            RegisterTick(ETickGroup.Normal, ETickOrder.Input, TickMovementInput);
+            RegisterTick(ETickGroup.Normal, InputConsumptionTickOrder, TickMovementInput);
+        }
+
+        /// <summary>
+        /// Called when the component is deactivated. Unregisters the movement input tick.
+        /// </summary>
+        protected internal override void OnComponentDeactivated()
+        {
+            base.OnComponentDeactivated();
+            UnregisterTick(ETickGroup.Normal, InputConsumptionTickOrder, TickMovementInput);
         }
 
         #endregion

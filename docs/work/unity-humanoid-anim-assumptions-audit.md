@@ -1,12 +1,22 @@
 # Unity Humanoid `.anim` Assumptions Audit
 
-Date: 2026-03-03 (updated 2026-03-03)
+Date: 2026-03-03 (updated 2026-03-07)
 
 Scope:
 - Clip: `Assets/Walks/Sexy Walk.anim` — confirmed full Unity humanoid muscle clip (Path A)
 - Current test settings: `Assets/UnitTestingWorldSettings.json`
 - Runtime path traced through `.anim` import, `AnimationClipComponent`, and `HumanoidComponent`
 - Goal: identify incorrect assumptions, not propose code changes
+
+Update 2026-03-07:
+- A direct pose audit against Unity's `HumanPose` output showed that the engine is faithfully replaying the raw `.anim` float curves, but those raw values do not match Unity's sampled `HumanPose.muscles` for `Sexy Walk.anim`.
+- Representative sample-0 differences:
+  - `Left Arm Down-Up`: Unity `0.400032`, raw `.anim` / engine `-0.687864`
+  - `Left Upper Leg Front-Back`: Unity `0.599612`, raw `.anim` / engine `0.862525`
+  - `Right Upper Leg Front-Back`: Unity `0.599612`, raw `.anim` / engine `-0.021309`
+  - `Spine Front-Back`: Unity `0.000000`, raw `.anim` / engine `0.090756`
+- This means the current pipeline's first broken assumption is earlier than bone application: we currently treat the humanoid float curves as if they were already in the same semantic space as Unity's `HumanPose.muscles`, and for this clip that assumption is false.
+- The Unity audit exporter was then extended to emit both `HumanPose` samples and editor-evaluated raw curve bindings plus default muscle ranges, so future audit JSONs can prove whether the importer matches raw Unity clip data or whether the divergence appears even earlier.
 
 **Revised goal framing** (clarified by user): we are not trying to replicate all of Unity Mecanim. The target is a character with Unity's **default humanoid setup** — meaning the muscle ranges, bone axis conventions, and body-space definitions are Unity's published defaults, not avatar-specific overrides. The fix should produce correct output using good defaults plus any per-model adjustments derivable from the imported FBX bind pose, without requiring a Unity avatar asset.
 
@@ -23,7 +33,9 @@ Scope:
 **Confirmed**: `Sexy Walk.anim` is a full Unity humanoid clip containing root channels (`RootT`, `RootQ`), IK goal channels (`LeftFootT/Q`, `RightFootT/Q`, `LeftHandT/Q`, `RightHandT/Q`), full humanoid muscle channels, and blendshapes. It routes entirely through **Path A** (muscle values → `HumanoidComponent.SetValue` → `ApplyMusclePose`). No explicit per-bone transform quaternions are involved for the main pose. The `ConvertRotation` path at importer line 261 is **not exercised** for this clip's primary data.
 
 Conclusion:
-- The current "close but not correct" result is coming from the muscle-to-rotation application logic in `HumanoidComponent`, not from import-time coordinate conversion.
+- The current "close but not correct" result is not explained only by `HumanoidComponent` bone application.
+- The imported humanoid float curves themselves already diverge from Unity's sampled `HumanPose.muscles`, so the pipeline is misidentifying the meaning of the clip data before the bone solve even starts.
+- Import-time coordinate conversion is still not the issue for this clip's primary pose path.
 
 ---
 
@@ -226,20 +238,22 @@ Important for the current test: `AddCharacterIK = false`, so this is **not** the
 
 Ranked by likelihood given the confirmed default-humanoid-setup context:
 
-1. **Hips bind-pose basis not aligning with anatomical body axes** — if the imported hips bind matrix has any unexpected pre-rotation (from Assimp's FBX coordinate conversion, or baked rig offsets), then `bodyRight` and `bodyForward` are wrong for all limb swing-axis calculations. This is the single most likely root cause since it affects shoulders, arms, and legs simultaneously.
+1. **The imported humanoid float curves are not the same data Unity reports through `HumanPose.muscles`** — the engine currently treats the `.anim` channels as final normalized muscles, but the audit shows that Unity's post-solve humanoid pose lives in a different semantic space for this clip. This is now the primary root-cause candidate.
 
-2. **Spine/head bones have non-standard local axes after import** — Assimp's handling of Unity FBX files may produce spine bones with local coordinate frames that don't follow Y-up/X-right/Z-forward. The generic Euler convention (Y=twist, X=pitch, Z=roll) applied without `BoneAxisMapping` would then map the wrong muscles to the wrong axes.
+2. **Hips bind-pose basis not aligning with anatomical body axes** — if the imported hips bind matrix has any unexpected pre-rotation (from Assimp's FBX coordinate conversion, or baked rig offsets), then `bodyRight` and `bodyForward` are wrong for all limb swing-axis calculations. This remains the strongest application-stage candidate once the input-space mismatch is solved.
 
-3. **`BoneAxisMapping` is not used for the most visually important bones** — the profiler builds per-bone axis data for the entire skeleton but it is only consumed for terminal joints (elbows, wrists, knees, feet, fingers). The spine chain and upper limbs ignore it. Extending axis-mapping usage to those bones, or verifying the generic assumptions hold for the specific imported rig, is necessary.
+3. **Spine/head bones have non-standard local axes after import** — Assimp's handling of Unity FBX files may produce spine bones with local coordinate frames that don't follow Y-up/X-right/Z-forward. The generic Euler convention (Y=twist, X=pitch, Z=roll) applied without `BoneAxisMapping` would then map the wrong muscles to the wrong axes.
 
-4. **Right-limb Down-Up sideAxis direction** — the sign of `sideAxisWorld` is inverted for the right side (via `sideMirror`). Whether this matches Unity's muscle sign convention for the right arm/leg Down-Up channel needs explicit verification.
+4. **`BoneAxisMapping` is not used for the most visually important bones** — the profiler builds per-bone axis data for the entire skeleton but it is only consumed for terminal joints (elbows, wrists, knees, feet, fingers). The spine chain and upper limbs ignore it. Extending axis-mapping usage to those bones, or verifying the generic assumptions hold for the specific imported rig, is necessary.
 
-5. **Root-motion body center vs bind-pose offset** — `RootT/Q` are applied as bind-relative offsets to the hips, but the clip's frame-0 values are not identity. The body may be slightly offset or rotated relative to the true bind-relative rest position.
+5. **Right-limb Down-Up sideAxis direction** — the sign of `sideAxisWorld` is inverted for the right side (via `sideMirror`). Whether this matches Unity's muscle sign convention for the right arm/leg Down-Up channel needs explicit verification.
+
+6. **Root-motion body center vs bind-pose offset** — `RootT/Q` are applied as bind-relative offsets to the hips, but the clip's frame-0 values are not identity. The body may be slightly offset or rotated relative to the true bind-relative rest position.
 
 ---
 
 ## Bottom Line
 
-The current code path is coherent enough to explain why the pose is close. The math is correct; the remaining mismatch is in the **rig-space assumptions** that the code makes when translating abstract muscle degrees into bone-local rotations. The primary question to resolve is whether the imported FBX skeleton's hips and spine bones have the local coordinate orientations that `HumanoidComponent` assumes (Y along the bone, X to the right, Z forward for spine bones; local −Z = world forward for the hips). Logging the actual bind-pose axes of those bones at runtime would confirm or eliminate that hypothesis.
+The current code path is coherent enough to explain why the pose is close, but the new audit evidence changes the priority order. The first question is no longer just "are our bone axes wrong?" It is "what do Unity's humanoid `.anim` float curves actually represent relative to `HumanPose.muscles`?" Until that input-space mismatch is resolved, tuning the bone application stage can only produce partial improvements.
 
-The secondary question is whether the generic Euler convention (Y=twist, X=pitch, Z=roll) with the current LH→RH sign flip is producing the correct rotation axes for each spine/head bone on this specific imported model.
+Once the imported channel semantics are understood, the next questions remain the rig-space ones: whether the imported FBX skeleton's hips and spine bones have the local coordinate orientations that `HumanoidComponent` assumes (Y along the bone, X to the right, Z forward for spine bones; local −Z = world forward for the hips), and whether the generic Euler convention (Y=twist, X=pitch, Z=roll) with the current LH→RH sign flip is producing the correct rotation axes for each spine/head bone on this specific imported model.

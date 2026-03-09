@@ -12,18 +12,11 @@ using System.Threading;
 
 namespace XREngine.Editor;
 
-internal sealed class ArchiveEntryNode
+internal sealed class ArchiveEntryNode(string name, string fullPath, bool isDirectory)
 {
-    public ArchiveEntryNode(string name, string fullPath, bool isDirectory)
-    {
-        Name = name;
-        FullPath = fullPath;
-        IsDirectory = isDirectory;
-    }
-
-    public string Name { get; }
-    public string FullPath { get; }
-    public bool IsDirectory { get; private set; }
+    public string Name { get; } = name;
+    public string FullPath { get; } = fullPath;
+    public bool IsDirectory { get; private set; } = isDirectory;
     public long Size { get; private set; }
     public List<ArchiveEntryNode> Children { get; } = new();
 
@@ -240,8 +233,8 @@ internal static class ArchiveImportUtilities
         IReadOnlyDictionary<string, UnityPackageAssetRecord> records,
         CancellationToken cancellationToken)
     {
-        if (selectedEntries is null)
-            throw new ArgumentNullException(nameof(selectedEntries));
+        ArgumentNullException.ThrowIfNull(selectedEntries);
+        
         if (selectedEntries.Count == 0)
             yield break;
 
@@ -345,7 +338,7 @@ internal static class ArchiveImportUtilities
         {
             string part = parts[i];
             bool last = i == parts.Length - 1;
-            bool childIsDirectory = last ? isDirectory : true;
+            bool childIsDirectory = !last || isDirectory;
 
             var child = FindOrCreateChild(parent, part, childIsDirectory);
             if (last && !child.IsDirectory)

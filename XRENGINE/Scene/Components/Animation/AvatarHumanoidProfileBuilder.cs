@@ -77,6 +77,7 @@ namespace XREngine.Components.Animation
         {
             var settings = component.Settings;
             var entries = new Dictionary<string, BoneProfileEntry>(StringComparer.OrdinalIgnoreCase);
+            GetBindBodyBasis(component, out Vector3 bodyLeft, out Vector3 bodyUp, out Vector3 bodyForward);
 
             // ── Spine chain ─────────────────────────────────────────────
             ProfileBone(entries, settings, component.Hips, component.Spine, null);
@@ -88,10 +89,10 @@ namespace XREngine.Components.Animation
             ProfileBone(entries, settings, component.Neck, component.Head, component.Chest);
 
             // ── Left side ───────────────────────────────────────────────
-            ProfileLimbs(entries, settings, component.Left, component);
+            ProfileLimbs(entries, settings, component.Left, component, isLeft: true, bodyLeft, bodyUp, bodyForward);
 
             // ── Right side ──────────────────────────────────────────────
-            ProfileLimbs(entries, settings, component.Right, component);
+            ProfileLimbs(entries, settings, component.Right, component, isLeft: false, bodyLeft, bodyUp, bodyForward);
 
             // ── Aggregate confidence ────────────────────────────────────
             int totalBones = entries.Count;
@@ -126,17 +127,26 @@ namespace XREngine.Components.Animation
             Dictionary<string, BoneProfileEntry> entries,
             HumanoidSettings settings,
             HumanoidComponent.BodySide side,
-            HumanoidComponent component)
+            HumanoidComponent component,
+            bool isLeft,
+            Vector3 bodyLeft,
+            Vector3 bodyUp,
+            Vector3 bodyForward)
         {
+            Vector3 armPitchAxisWorld = isLeft ? bodyForward : -bodyForward;
+            Vector3 armRollAxisWorld = isLeft ? -bodyUp : bodyUp;
+            Vector3 legPitchAxisWorld = -bodyLeft;
+            Vector3 legRollAxisWorld = isLeft ? -bodyForward : bodyForward;
+
             // Arm chain
-            ProfileBone(entries, settings, side.Shoulder, side.Arm, null);
-            ProfileBone(entries, settings, side.Arm, side.Elbow, side.Shoulder);
-            ProfileBone(entries, settings, side.Elbow, side.Wrist, side.Arm);
+            ProfileBone(entries, settings, side.Shoulder, side.Arm, null, armPitchAxisWorld, armRollAxisWorld);
+            ProfileBone(entries, settings, side.Arm, side.Elbow, side.Shoulder, armPitchAxisWorld, armRollAxisWorld);
+            ProfileBone(entries, settings, side.Elbow, side.Wrist, side.Arm, armPitchAxisWorld, armRollAxisWorld);
 
             // Leg chain
-            ProfileBone(entries, settings, side.Leg, side.Knee, component.Hips);
-            ProfileBone(entries, settings, side.Knee, side.Foot, side.Leg);
-            ProfileBone(entries, settings, side.Foot, side.Toes, side.Knee);
+            ProfileBone(entries, settings, side.Leg, side.Knee, component.Hips, legPitchAxisWorld, legRollAxisWorld);
+            ProfileBone(entries, settings, side.Knee, side.Foot, side.Leg, legPitchAxisWorld, legRollAxisWorld);
+            ProfileBone(entries, settings, side.Foot, side.Toes, side.Knee, legPitchAxisWorld, legRollAxisWorld);
 
             // Fingers  
             ProfileFingerChain(entries, settings, side.Hand.Index);
@@ -164,7 +174,9 @@ namespace XREngine.Components.Animation
             HumanoidSettings settings,
             HumanoidComponent.BoneDef bone,
             HumanoidComponent.BoneDef childBone,
-            HumanoidComponent.BoneDef? parentBone)
+            HumanoidComponent.BoneDef? parentBone,
+            Vector3? preferredPitchAxisWorld = null,
+            Vector3? preferredRollAxisWorld = null)
         {
             if (bone.Node?.Name is null)
                 return;
@@ -178,7 +190,7 @@ namespace XREngine.Components.Animation
                 // Preserve user-selected axes, but upgrade missing polarity signs automatically.
                 if (NeedsSignUpgrade(existingMapping))
                 {
-                    var (detected, _, _) = DetectAxisMapping(bone, childBone, parentBone, settings);
+                    var (detected, _, _) = DetectAxisMapping(bone, childBone, parentBone, settings, preferredPitchAxisWorld, preferredRollAxisWorld);
                     existingMapping = UpgradeMissingSigns(existingMapping, detected);
                     settings.BoneAxisMappings[boneName] = existingMapping;
                 }
@@ -194,7 +206,7 @@ namespace XREngine.Components.Animation
             }
 
             // Attempt geometry-based detection
-            var (mapping, confidence, reason) = DetectAxisMapping(bone, childBone, parentBone, settings);
+            var (mapping, confidence, reason) = DetectAxisMapping(bone, childBone, parentBone, settings, preferredPitchAxisWorld, preferredRollAxisWorld);
 
             settings.BoneAxisMappings[boneName] = mapping;
             entries[boneName] = new BoneProfileEntry
@@ -252,7 +264,9 @@ namespace XREngine.Components.Animation
             HumanoidComponent.BoneDef bone,
             HumanoidComponent.BoneDef childBone,
             HumanoidComponent.BoneDef? parentBone,
-            HumanoidSettings settings)
+            HumanoidSettings settings,
+            Vector3? preferredPitchAxisWorld,
+            Vector3? preferredRollAxisWorld)
         {
             if (childBone.Node is null)
             {
@@ -284,6 +298,9 @@ namespace XREngine.Components.Animation
                 return InheritOrDefault(bone, parentBone, settings, "degenerate local direction");
             }
             dirLocal /= localLen;
+
+            if (preferredPitchAxisWorld.HasValue && preferredRollAxisWorld.HasValue)
+                return DetectLimbAxisMapping(bone, childBone, parentBone, settings, dirLocal, preferredPitchAxisWorld.Value, preferredRollAxisWorld.Value);
 
             float ax = MathF.Abs(dirLocal.X);
             float ay = MathF.Abs(dirLocal.Y);
@@ -353,6 +370,57 @@ namespace XREngine.Components.Animation
             return (mapping, confidence, reason);
         }
 
+        private static (BoneAxisMapping mapping, float confidence, string reason) DetectLimbAxisMapping(
+            HumanoidComponent.BoneDef bone,
+            HumanoidComponent.BoneDef childBone,
+            HumanoidComponent.BoneDef? parentBone,
+            HumanoidSettings settings,
+            Vector3 twistLocal,
+            Vector3 preferredPitchAxisWorld,
+            Vector3 preferredRollAxisWorld)
+        {
+            if (!Matrix4x4.Invert(bone.WorldBindPose, out Matrix4x4 invBind))
+                return InheritOrDefault(bone, parentBone, settings, "bind matrix not invertible");
+
+            Vector3 pitchLocal = Vector3.TransformNormal(preferredPitchAxisWorld, invBind);
+            Vector3 rollLocal = Vector3.TransformNormal(preferredRollAxisWorld, invBind);
+
+            float pitchLen = pitchLocal.Length();
+            float rollLen = rollLocal.Length();
+            if (pitchLen < 1e-8f || rollLen < 1e-8f)
+                return InheritOrDefault(bone, parentBone, settings, "degenerate limb body-basis axis");
+
+            pitchLocal /= pitchLen;
+            rollLocal /= rollLen;
+
+            int twistAxis = SelectDominantAxis(twistLocal);
+            int twistSign = SignOrOne(GetAxisComponent(twistLocal, twistAxis));
+
+            int frontBackAxis = SelectDominantAxis(pitchLocal, twistAxis);
+            int frontBackSign = -SignOrOne(GetAxisComponent(pitchLocal, frontBackAxis));
+
+            int leftRightAxis = SelectDominantAxis(rollLocal, twistAxis, frontBackAxis);
+            int leftRightSign = SignOrOne(GetAxisComponent(rollLocal, leftRightAxis));
+
+            float twistAlignment = MathF.Abs(GetAxisComponent(twistLocal, twistAxis));
+            float frontBackAlignment = MathF.Abs(GetAxisComponent(pitchLocal, frontBackAxis));
+            float leftRightAlignment = MathF.Abs(GetAxisComponent(rollLocal, leftRightAxis));
+            float confidence = MathF.Min(twistAlignment, MathF.Min(frontBackAlignment, leftRightAlignment));
+
+            var mapping = new BoneAxisMapping
+            {
+                TwistAxis = twistAxis,
+                TwistSign = twistSign,
+                FrontBackAxis = frontBackAxis,
+                FrontBackSign = frontBackSign,
+                LeftRightAxis = leftRightAxis,
+                LeftRightSign = leftRightSign,
+            };
+
+            string reason = $"Body-basis limb detection (twist={twistAlignment:F3}, fb={frontBackAlignment:F3}, lr={leftRightAlignment:F3})";
+            return (mapping, confidence, reason);
+        }
+
         private static (BoneAxisMapping mapping, float confidence, string reason) InheritOrDefault(
             HumanoidComponent.BoneDef bone,
             HumanoidComponent.BoneDef? parentBone,
@@ -374,6 +442,73 @@ namespace XREngine.Components.Animation
 
         private static int SignOrOne(float value)
             => value < 0.0f ? -1 : 1;
+
+        private static int SelectDominantAxis(Vector3 vector, params int[] excludedAxes)
+        {
+            float best = float.NegativeInfinity;
+            int bestAxis = -1;
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if (excludedAxes.Contains(axis))
+                    continue;
+
+                float magnitude = MathF.Abs(GetAxisComponent(vector, axis));
+                if (magnitude > best)
+                {
+                    best = magnitude;
+                    bestAxis = axis;
+                }
+            }
+
+            return bestAxis >= 0 ? bestAxis : 0;
+        }
+
+        private static float GetAxisComponent(Vector3 vector, int axis)
+            => axis switch
+            {
+                0 => vector.X,
+                1 => vector.Y,
+                2 => vector.Z,
+                _ => 0.0f,
+            };
+
+        private static void GetBindBodyBasis(HumanoidComponent component, out Vector3 bodyLeft, out Vector3 bodyUp, out Vector3 bodyForward)
+        {
+            Vector3 hipsPos = component.Hips.WorldBindPose.Translation;
+            Vector3 spinePos = component.Spine.Node is not null
+                ? component.Spine.WorldBindPose.Translation
+                : hipsPos + Vector3.UnitY;
+            bodyUp = NormalizeOrFallback(spinePos - hipsPos, Vector3.UnitY);
+
+            Vector3 sideSum =
+                GetBindSideDelta(component.Left.Shoulder, component.Right.Shoulder) +
+                GetBindSideDelta(component.Left.Arm, component.Right.Arm) +
+                GetBindSideDelta(component.Left.Wrist, component.Right.Wrist) +
+                GetBindSideDelta(component.Left.Leg, component.Right.Leg) +
+                GetBindSideDelta(component.Left.Foot, component.Right.Foot) +
+                GetBindSideDelta(component.Left.Eye, component.Right.Eye);
+
+            bodyLeft = NormalizeOrFallback(RejectAxis(sideSum, bodyUp), RejectAxis(Vector3.UnitX, bodyUp));
+            bodyForward = NormalizeOrFallback(Vector3.Cross(bodyLeft, bodyUp), RejectAxis(Vector3.UnitZ, bodyUp));
+            bodyLeft = NormalizeOrFallback(Vector3.Cross(bodyUp, bodyForward), bodyLeft);
+        }
+
+        private static Vector3 GetBindSideDelta(HumanoidComponent.BoneDef left, HumanoidComponent.BoneDef right)
+        {
+            if (left.Node is null || right.Node is null)
+                return Vector3.Zero;
+
+            return left.WorldBindPose.Translation - right.WorldBindPose.Translation;
+        }
+
+        private static Vector3 RejectAxis(Vector3 vector, Vector3 normal)
+            => vector - Vector3.Dot(vector, normal) * normal;
+
+        private static Vector3 NormalizeOrFallback(Vector3 vector, Vector3 fallback)
+        {
+            float lenSq = vector.LengthSquared();
+            return lenSq > 1e-8f ? vector / MathF.Sqrt(lenSq) : fallback;
+        }
 
         private static int ResolveSwingAxisSign(
             HumanoidComponent.BoneDef? parentBone,

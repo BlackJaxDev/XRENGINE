@@ -589,13 +589,20 @@ public static partial class EditorImGuiUI
         private static void DrawComplexPropertyObject(object owner, PropertyInfo property, object value, string label, string? description, HashSet<object> visited)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawComplexPropertyObject");
+            Type propertyType = property.PropertyType;
+            Type effectiveType = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+            if (value is XRComponent componentValue && typeof(XRComponent).IsAssignableFrom(effectiveType))
+            {
+                DrawComponentReferenceProperty(owner, property, componentValue, label, description, visited);
+                return;
+            }
+
             if (!visited.Add(value))
             {
                 ImGui.TextUnformatted($"{label}: <circular reference>");
                 return;
             }
 
-            Type propertyType = property.PropertyType;
             bool isNullable = Nullable.GetUnderlyingType(propertyType) is not null || !propertyType.IsValueType;
             bool canWrite = property.CanWrite && property.SetMethod?.IsPublic == true;
 
@@ -652,7 +659,6 @@ public static partial class EditorImGuiUI
                 {
                     // Struct (value type) properties need special handling: edits to sub-properties
                     // must re-set the entire struct back on the parent so the change propagates.
-                    Type effectiveType = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
                     if (effectiveType.IsValueType && !effectiveType.IsPrimitive && !effectiveType.IsEnum && canWrite)
                         DrawStructPropertyEditor(owner, property, value);
                     else
@@ -2376,6 +2382,13 @@ public static partial class EditorImGuiUI
 
             ImGui.PushID(property.Name);
 
+            if (typeof(XRComponent).IsAssignableFrom(effectiveType))
+            {
+                DrawNullComponentReferenceProperty(owner, property, displayName, description, effectiveType, canWrite, isNullable);
+                ImGui.PopID();
+                return;
+            }
+
             // Check if this is an asset type
             bool isAssetType = typeof(XRAsset).IsAssignableFrom(effectiveType);
             if (isAssetType)
@@ -2450,6 +2463,174 @@ public static partial class EditorImGuiUI
             }
 
             ImGui.PopID();
+        }
+
+        private static void DrawNullComponentReferenceProperty(object owner, PropertyInfo property, string displayName, string? description, Type componentType, bool canWrite, bool isNullable)
+        {
+            ImGui.TextUnformatted($"{displayName}:");
+            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(description);
+
+            using (new ImGuiDisabledScope(!canWrite))
+            {
+                ImGui.SameLine();
+                ImGui.Button("<null>##ComponentReference", new Vector2(120.0f, 0.0f));
+            }
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Drop a {componentType.Name} here.");
+
+            if (canWrite)
+            {
+                TryAcceptDroppedComponentReference(componentType, null, droppedComponent =>
+                {
+                    try
+                    {
+                        using var _ = Undo.TrackChange($"Set {property.Name}", owner);
+                        property.SetValue(owner, droppedComponent);
+                        NotifyInspectorValueEdited(owner);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogException(ex, $"Failed to set component reference for property '{property.Name}'.");
+                    }
+                });
+            }
+
+            if (canWrite && isNullable)
+            {
+                var typeDescriptors = GetPropertyTypeDescriptors(componentType);
+                int typeCount = typeDescriptors.Count;
+                if (typeCount > 0)
+                {
+                    ImGui.SameLine();
+
+                    string createPopupId = $"CreateProperty_{property.Name}";
+                    if (typeCount == 1)
+                    {
+                        string buttonLabel = $"Create {typeDescriptors[0].DisplayName}";
+                        if (ImGui.SmallButton(buttonLabel))
+                            TryCreateAndSetPropertyValue(owner, property, typeDescriptors[0].Type);
+                    }
+                    else
+                    {
+                        if (ImGui.SmallButton("Create..."))
+                            ImGui.OpenPopup(createPopupId);
+
+                        DrawPropertyTypePickerPopup(createPopupId, componentType, selectedType =>
+                        {
+                            TryCreateAndSetPropertyValue(owner, property, selectedType);
+                        });
+                    }
+                }
+                else
+                {
+                    ImGui.SameLine();
+                    ImGui.TextDisabled("(no concrete types available)");
+                }
+            }
+        }
+
+        private static void DrawComponentReferenceProperty(object owner, PropertyInfo property, XRComponent value, string label, string? description, HashSet<object> visited)
+        {
+            Type propertyType = property.PropertyType;
+            Type effectiveType = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+            bool isNullable = Nullable.GetUnderlyingType(propertyType) is not null || !propertyType.IsValueType;
+            bool canWrite = property.CanWrite && property.SetMethod?.IsPublic == true;
+
+            ImGui.PushID(property.Name);
+
+            string treeLabel = $"{label}: {GetComponentReferenceDisplayLabel(value)}";
+            bool open = ImGui.TreeNodeEx(treeLabel, ImGuiTreeNodeFlags.None);
+            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                ImGui.SetTooltip(description);
+
+            if (canWrite)
+            {
+                TryAcceptDroppedComponentReference(effectiveType, value, droppedComponent =>
+                {
+                    try
+                    {
+                        using var _ = Undo.TrackChange($"Set {property.Name}", owner);
+                        property.SetValue(owner, droppedComponent);
+                        NotifyInspectorValueEdited(owner);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogException(ex, $"Failed to set component reference for property '{property.Name}'.");
+                    }
+                });
+            }
+
+            if (isNullable && canWrite)
+            {
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Clear"))
+                {
+                    try
+                    {
+                        using var _ = Undo.TrackChange($"Clear {property.Name}", owner);
+                        property.SetValue(owner, null);
+                        NotifyInspectorValueEdited(owner);
+                        if (open)
+                            ImGui.TreePop();
+                        ImGui.PopID();
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogException(ex, $"Failed to clear property '{property.Name}'.");
+                    }
+                }
+            }
+
+            if (open)
+            {
+                if (!visited.Add(value))
+                {
+                    ImGui.TextUnformatted($"{label}: <circular reference>");
+                }
+                else
+                {
+                    DrawSettingsProperties(new InspectorTargetSet(new[] { value }, value.GetType()), visited);
+                    visited.Remove(value);
+                }
+
+                ImGui.TreePop();
+            }
+
+            ImGui.PopID();
+        }
+
+        private static bool TryAcceptDroppedComponentReference(Type expectedType, XRComponent? currentValue, Action<XRComponent> onAccepted)
+        {
+            if (!ImGui.BeginDragDropTarget())
+                return false;
+
+            try
+            {
+                XRComponent? peekedComponent = ImGuiComponentDragDrop.Accept(peekOnly: true);
+                if (peekedComponent is null || ReferenceEquals(peekedComponent, currentValue) || !expectedType.IsAssignableFrom(peekedComponent.GetType()))
+                    return false;
+
+                XRComponent? droppedComponent = ImGuiComponentDragDrop.Accept();
+                if (droppedComponent is null || ReferenceEquals(droppedComponent, currentValue) || !expectedType.IsAssignableFrom(droppedComponent.GetType()))
+                    return false;
+
+                onAccepted(droppedComponent);
+                return true;
+            }
+            finally
+            {
+                ImGui.EndDragDropTarget();
+            }
+        }
+
+        private static string GetComponentReferenceDisplayLabel(XRComponent component)
+        {
+            string typeName = component.GetType().Name;
+            string? componentName = string.IsNullOrWhiteSpace(component.Name) ? null : component.Name;
+            return componentName is null ? typeName : $"{componentName} ({typeName})";
         }
 
         /// <summary>
@@ -3341,7 +3522,22 @@ public static partial class EditorImGuiUI
             else if (effectiveType == typeof(string))
             {
                 string textValue = currentValue as string ?? string.Empty;
-                if (TryGetStringOptions(property, out string[] options) && options.Length > 0)
+                if (TryGetInspectorPathAttribute(property, out var pathAttribute))
+                {
+                    handled = DrawInspectorPathStringEditor($"PropertyPath_{property.Name}", property, pathAttribute, canWrite, hasMixedValues, textValue, newValue =>
+                    {
+                        if (!TryApplyInspectorValue(targets, property, values, newValue))
+                            return false;
+
+                        currentValue = newValue;
+                        isCurrentlyNull = false;
+                        hasMixedValues = false;
+                        return true;
+                    });
+
+                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                }
+                else if (TryGetStringOptions(property, out string[] options) && options.Length > 0)
                 {
                     using (new ImGuiDisabledScope(!canWrite))
                     {
@@ -3622,6 +3818,12 @@ public static partial class EditorImGuiUI
                     ImGui.SetNextItemWidth(-1f);
 
                 if (effectiveType == typeof(string)
+                    && TryGetInspectorPathAttribute(field, out var pathAttribute))
+                {
+                    string textValue = currentValue as string ?? string.Empty;
+                    handled = DrawInspectorPathStringEditor($"FieldPath_{field.Name}", field, pathAttribute, canWrite, hasMixedValues, textValue, newValue => Apply(newValue));
+                }
+                else if (effectiveType == typeof(string)
                     && TryGetStringOptions(field, out string[] options)
                     && options.Length > 0)
                 {
@@ -5032,6 +5234,12 @@ public static partial class EditorImGuiUI
         private static bool TryGetStringOptions(FieldInfo field, out string[] options)
             => TryGetStringOptionsCore(field, field.GetCustomAttribute<StringOptionsProviderAttribute>(), field.DeclaringType, out options);
 
+        private static bool TryGetInspectorPathAttribute(MemberInfo member, out InspectorPathAttribute attribute)
+        {
+            attribute = member.GetCustomAttribute<InspectorPathAttribute>(true)!;
+            return attribute is not null;
+        }
+
         private static bool TryGetStringOptionsCore(MemberInfo member, StringOptionsProviderAttribute? attr, Type? declaringType, out string[] options)
         {
             if (_stringOptionsCache.TryGetValue(member, out var cached))
@@ -5096,6 +5304,191 @@ public static partial class EditorImGuiUI
                 return false;
             }
         }
+
+        private static bool DrawInspectorPathStringEditor(string id, MemberInfo member, InspectorPathAttribute attribute, bool canWrite, bool hasMixedValues, string currentText, Func<string, bool> applyValue)
+        {
+            using (new ImGuiDisabledScope(!canWrite))
+            {
+                const float browseWidth = 74.0f;
+                float availableWidth = ImGui.GetContentRegionAvail().X;
+                ImGui.SetNextItemWidth(availableWidth > browseWidth + 8.0f ? availableWidth - browseWidth - 6.0f : -1f);
+
+                Vector2 regionMin = ImGui.GetCursorScreenPos();
+                string editedText = currentText;
+                if (ImGui.InputTextWithHint("##Value", hasMixedValues ? "<multiple values>" : GetInspectorPathHint(attribute), ref editedText, 512u, ImGuiInputTextFlags.None) && canWrite)
+                    applyValue(editedText);
+
+                if (ImGuiTextFieldHelper.DrawTextFieldContextMenu($"ctx_PathValue_{id}", ref editedText) && canWrite)
+                    applyValue(editedText);
+
+                if (!canWrite)
+                    return true;
+
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Browse"))
+                {
+                    string dialogId = $"InspectorPathPicker_{member.Name}_{id}";
+                    OpenInspectorPathBrowser(dialogId, attribute, currentText, selectedPath =>
+                    {
+                        if (!string.IsNullOrEmpty(selectedPath))
+                            applyValue(selectedPath);
+                    });
+                }
+
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(GetInspectorPathTooltip(attribute));
+
+                Vector2 regionMax = ImGui.GetItemRectMax();
+                if (canWrite && ImGui.IsMouseHoveringRect(regionMin, regionMax, clip: false))
+                {
+                    ImGuiExternalPathDrop.RegisterHoveredTarget(attribute.PathKind, droppedPath =>
+                    {
+                        string formattedPath = FormatSelectedInspectorPath(droppedPath, currentText, attribute, ResolveInspectorPathBaseDirectory());
+                        applyValue(formattedPath);
+                    });
+                }
+            }
+
+            return true;
+        }
+
+        private static void OpenInspectorPathBrowser(string dialogId, InspectorPathAttribute attribute, string? currentText, Action<string?> onSelected)
+        {
+            string baseDirectory = ResolveInspectorPathBaseDirectory();
+            string? resolvedCurrentPath = ResolveInspectorPathForDialog(currentText, baseDirectory);
+            string initialDirectory = attribute.PathKind == InspectorPathKind.Folder
+                ? (resolvedCurrentPath ?? baseDirectory)
+                : ResolveInitialDirectory(resolvedCurrentPath, baseDirectory);
+            string? initialFileName = attribute.PathKind == InspectorPathKind.File
+                ? ResolveInitialFileName(resolvedCurrentPath)
+                : null;
+            string title = attribute.Title ?? GetDefaultInspectorPathDialogTitle(attribute);
+
+            void HandleSelection(UI.ImGuiFileBrowser.DialogResult result)
+            {
+                if (!result.Success || string.IsNullOrWhiteSpace(result.SelectedPath))
+                {
+                    onSelected(null);
+                    return;
+                }
+
+                onSelected(FormatSelectedInspectorPath(result.SelectedPath, currentText, attribute, baseDirectory));
+            }
+
+            if (attribute.PathKind == InspectorPathKind.Folder)
+            {
+                UI.ImGuiFileBrowser.SelectFolder(dialogId, title, HandleSelection, initialDirectory);
+                return;
+            }
+
+            if (attribute.DialogMode == InspectorPathDialogMode.Save)
+                UI.ImGuiFileBrowser.SaveFile(dialogId, title, HandleSelection, attribute.Filter, initialDirectory, initialFileName);
+            else
+                UI.ImGuiFileBrowser.OpenFile(dialogId, title, HandleSelection, attribute.Filter, initialDirectory);
+        }
+
+        private static string ResolveInspectorPathBaseDirectory()
+        {
+            string? projectDirectory = Engine.CurrentProject?.ProjectDirectory;
+            if (!string.IsNullOrWhiteSpace(projectDirectory))
+                return Path.GetFullPath(projectDirectory);
+
+            string currentDirectory = Directory.GetCurrentDirectory();
+            if (!string.IsNullOrWhiteSpace(currentDirectory))
+                return Path.GetFullPath(currentDirectory);
+
+            return Path.GetFullPath(AppContext.BaseDirectory);
+        }
+
+        private static string? ResolveInspectorPathForDialog(string? currentText, string baseDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(currentText))
+                return null;
+
+            try
+            {
+                return Path.GetFullPath(currentText, baseDirectory);
+            }
+            catch
+            {
+                try
+                {
+                    return Path.GetFullPath(currentText);
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+        }
+
+        private static string ResolveInitialDirectory(string? resolvedCurrentPath, string baseDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(resolvedCurrentPath))
+                return baseDirectory;
+
+            if (Directory.Exists(resolvedCurrentPath))
+                return resolvedCurrentPath;
+
+            string? directory = Path.GetDirectoryName(resolvedCurrentPath);
+            return string.IsNullOrWhiteSpace(directory) ? baseDirectory : directory;
+        }
+
+        private static string? ResolveInitialFileName(string? resolvedCurrentPath)
+        {
+            if (string.IsNullOrWhiteSpace(resolvedCurrentPath))
+                return null;
+
+            string fileName = Path.GetFileName(resolvedCurrentPath);
+            return string.IsNullOrWhiteSpace(fileName) ? null : fileName;
+        }
+
+        private static string FormatSelectedInspectorPath(string selectedPath, string? previousText, InspectorPathAttribute attribute, string baseDirectory)
+        {
+            string absolutePath = Path.GetFullPath(selectedPath);
+            return ResolveInspectorPathFormat(attribute, previousText, absolutePath, baseDirectory) switch
+            {
+                InspectorPathFormat.Absolute => absolutePath,
+                InspectorPathFormat.Relative => Path.GetRelativePath(baseDirectory, absolutePath),
+                _ => absolutePath,
+            };
+        }
+
+        private static InspectorPathFormat ResolveInspectorPathFormat(InspectorPathAttribute attribute, string? previousText, string absolutePath, string baseDirectory)
+        {
+            if (attribute.Format != InspectorPathFormat.Both)
+                return attribute.Format;
+
+            if (!string.IsNullOrWhiteSpace(previousText))
+                return Path.IsPathRooted(previousText) ? InspectorPathFormat.Absolute : InspectorPathFormat.Relative;
+
+            return IsPathUnderDirectory(absolutePath, baseDirectory)
+                ? InspectorPathFormat.Relative
+                : InspectorPathFormat.Absolute;
+        }
+
+        private static string GetDefaultInspectorPathDialogTitle(InspectorPathAttribute attribute)
+            => attribute.PathKind switch
+            {
+                InspectorPathKind.Folder => "Select Folder",
+                InspectorPathKind.File when attribute.DialogMode == InspectorPathDialogMode.Save => "Save File",
+                _ => "Select File",
+            };
+
+        private static string GetInspectorPathHint(InspectorPathAttribute attribute)
+            => attribute.Format switch
+            {
+                InspectorPathFormat.Absolute => attribute.PathKind == InspectorPathKind.Folder ? "Absolute folder path" : "Absolute file path",
+                InspectorPathFormat.Relative => attribute.PathKind == InspectorPathKind.Folder ? "Relative folder path" : "Relative file path",
+                _ => attribute.PathKind == InspectorPathKind.Folder ? "Absolute or relative folder path" : "Absolute or relative file path",
+            };
+
+        private static string GetInspectorPathTooltip(InspectorPathAttribute attribute)
+            => attribute.PathKind switch
+            {
+                InspectorPathKind.Folder => $"Browse for a folder path. Accepted format: {attribute.Format}.",
+                _ => $"Browse for a file path. Accepted format: {attribute.Format}. Dialog mode: {attribute.DialogMode}.",
+            };
 
         private static bool IsPathUnderDirectory(string candidatePath, string rootDirectory)
         {

@@ -14,9 +14,13 @@ public sealed class HumanoidSettingsTests
         var settings = new HumanoidSettings();
 
         settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.NeckNodDownUp).ShouldBe(new Vector2(-40.0f, 40.0f));
-        settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.JawClose).ShouldBe(new Vector2(-5.0f, 25.0f));
+        settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.JawClose).ShouldBe(new Vector2(-10.0f, 10.0f));
         settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.LeftUpperLegInOut).ShouldBe(new Vector2(-60.0f, 60.0f));
         settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.RightUpperLegInOut).ShouldBe(new Vector2(-60.0f, 60.0f));
+        settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.LeftForearmStretch).ShouldBe(new Vector2(-80.0f, 80.0f));
+        settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.RightForearmStretch).ShouldBe(new Vector2(-80.0f, 80.0f));
+        settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.LeftLowerLegStretch).ShouldBe(new Vector2(-80.0f, 80.0f));
+        settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.RightLowerLegStretch).ShouldBe(new Vector2(-80.0f, 80.0f));
         settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.LeftHandThumb2Stretched).ShouldBe(new Vector2(-40.0f, 35.0f));
         settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.RightHandThumb2Stretched).ShouldBe(new Vector2(-40.0f, 35.0f));
     }
@@ -44,7 +48,7 @@ public sealed class HumanoidSettingsTests
 
         settings.NegateAllRanges();
 
-        settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.JawClose).ShouldBe(new Vector2(-25.0f, 5.0f));
+        settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.JawClose).ShouldBe(new Vector2(-10.0f, 10.0f));
         settings.GetResolvedMuscleRotationDegRange(EHumanoidValue.LeftUpperLegFrontBack).ShouldBe(new Vector2(-34.0f, 12.0f));
         settings.MuscleScaleRanges[EHumanoidValue.LeftUpperLegFrontBack].ShouldBe(new Vector2(-5.0f, 2.0f));
     }

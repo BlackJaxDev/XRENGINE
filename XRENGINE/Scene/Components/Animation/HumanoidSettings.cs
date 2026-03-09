@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System;
+using System.Numerics;
 using XREngine.Data.Core;
 
 namespace XREngine.Components.Animation
@@ -19,6 +20,20 @@ namespace XREngine.Components.Animation
         }
         public float GetValue(EHumanoidValue value)
             => CurrentValues.TryGetValue(value, out var amount) ? amount : 0.0f;
+
+        private Dictionary<string, Quaternion> _neutralPoseBoneRotations = new(StringComparer.Ordinal);
+        /// <summary>
+        /// Optional bind-relative local rotations that define the avatar's Unity humanoid zero-muscle pose per bone.
+        /// When present, muscle rotations are composed on top of this neutral pose instead of directly on top of bind pose.
+        /// </summary>
+        public Dictionary<string, Quaternion> NeutralPoseBoneRotations
+        {
+            get => _neutralPoseBoneRotations;
+            set => SetField(ref _neutralPoseBoneRotations, value);
+        }
+
+        public bool TryGetNeutralPoseBoneRotation(string boneName, out Quaternion rotation)
+            => NeutralPoseBoneRotations.TryGetValue(boneName, out rotation);
 
         private Vector2 _leftEyeDownUpRange = new(-1.0f, 1.0f);
         public Vector2 LeftEyeDownUpRange
@@ -297,7 +312,7 @@ namespace XREngine.Components.Animation
             set => SetField(ref _jawLeftRightDegRange, value);
         }
 
-        private Vector2 _jawCloseDegRange = new(-5.0f, 25.0f);
+        private Vector2 _jawCloseDegRange = new(-10.0f, 10.0f);
         public Vector2 JawCloseDegRange
         {
             get => _jawCloseDegRange;
@@ -349,7 +364,7 @@ namespace XREngine.Components.Animation
             set => SetField(ref _forearmTwistDegRange, value);
         }
 
-        private Vector2 _forearmStretchDegRange = new(-10.0f, 70.0f);
+        private Vector2 _forearmStretchDegRange = new(-80.0f, 80.0f);
         public Vector2 ForearmStretchDegRange
         {
             get => _forearmStretchDegRange;
@@ -401,7 +416,7 @@ namespace XREngine.Components.Animation
             set => SetField(ref _lowerLegTwistDegRange, value);
         }
 
-        private Vector2 _lowerLegStretchDegRange = new(-10.0f, 100.0f);
+        private Vector2 _lowerLegStretchDegRange = new(-80.0f, 80.0f);
         public Vector2 LowerLegStretchDegRange
         {
             get => _lowerLegStretchDegRange;
