@@ -282,12 +282,6 @@ public static partial class EditorUnitTests
             //Debug.Out(rootNode.PrintTree());
 
             var humanComp = rootNode.AddComponent<HumanoidComponent>()!;
-            humanComp.SolveIK = false;
-            humanComp.LeftArmIKEnabled = false;
-            humanComp.RightArmIKEnabled = false;
-            humanComp.LeftLegIKEnabled = false;
-            humanComp.RightLegIKEnabled = false;
-            humanComp.HipToHeadIKEnabled = false;
 
             var animator = rootNode.AddComponent<AnimStateMachineComponent>()!;
 

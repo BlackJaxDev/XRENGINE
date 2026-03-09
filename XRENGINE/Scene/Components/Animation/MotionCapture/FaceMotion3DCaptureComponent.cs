@@ -206,8 +206,6 @@ public class FaceMotion3DCaptureComponent : XRComponent
         headWorldTranslation += neckWorldPose.Translation;
 
         headTfm.SetWorldRotation(_headRotation, true);
-        Humanoid.HeadTarget = (null, Matrix4x4.CreateTranslation(headWorldTranslation));
-
         //Humanoid.Hips.Node?.Transform?.DeriveWorldMatrix(Matrix4x4.CreateTranslation(headWorldTranslation.X, Humanoid.Hips.WorldBindPose.Translation.Y, headWorldTranslation.Z), false);
     }
 

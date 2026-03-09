@@ -617,7 +617,7 @@ namespace XREngine.Scene.Physics.Jolt
             return _worldAnchorBodyID;
         }
 
-        private bool TryGetBody(BodyID bodyID, out Body body)
+        private bool TryGetBody(BodyID bodyID, out Body? body)
         {
             body = default;
             if (_physicsSystem is null || bodyID.IsInvalid)
@@ -632,7 +632,7 @@ namespace XREngine.Scene.Physics.Jolt
                     return false;
 
                 body = bodyLock.Body;
-                return true;
+                return body is not null;
             }
             finally
             {
@@ -653,7 +653,11 @@ namespace XREngine.Scene.Physics.Jolt
                 if (!bodyLock.Succeeded)
                     return false;
 
-                action(bodyLock.Body);
+                Body? body = bodyLock.Body;
+                if (body is null)
+                    return false;
+
+                action(body);
                 return true;
             }
             finally
@@ -677,7 +681,7 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null)
                 return false;
 
-            if (!TryGetBody(bodyA, out var a) || !TryGetBody(bodyB, out var b))
+            if (!TryGetBody(bodyA, out Body? a) || a is null || !TryGetBody(bodyB, out Body? b) || b is null)
                 return false;
 
             constraint = create(a, b);

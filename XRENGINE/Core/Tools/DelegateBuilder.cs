@@ -7,10 +7,12 @@ namespace XREngine.Core.Tools
     {
         public static T BuildDelegate<T>(MethodInfo method, params object[] missingParamValues)
         {
+            if (missingParamValues.Length == 0 && TryCreateDirectDelegate(method, out T? directDelegate))
+                return directDelegate;
+
             var queueMissingParams = new Queue<object>(missingParamValues);
 
             var dgtMi = typeof(T).GetMethod("Invoke") ?? throw new InvalidOperationException($"Type {typeof(T)} does not have an Invoke method");
-            var dgtRet = dgtMi.ReturnType;
             var dgtParams = dgtMi.GetParameters();
 
             var paramsOfDelegate = dgtParams
@@ -29,7 +31,7 @@ namespace XREngine.Core.Tools
                     Expression.Call(method, paramsToPass),
                     paramsOfDelegate);
 
-                return expr.Compile();
+                return CompileDelegate(expr);
             }
             else
             {
@@ -43,9 +45,28 @@ namespace XREngine.Core.Tools
                     Expression.Call(paramThis, method, paramsToPass),
                     paramsOfDelegate);
 
-                return expr.Compile();
+                return CompileDelegate(expr);
             }
         }
+
+        private static bool TryCreateDirectDelegate<T>(MethodInfo method, out T? result)
+        {
+            try
+            {
+                result = (T)(object)method.CreateDelegate(typeof(T));
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                result = default;
+                return false;
+            }
+        }
+
+        private static T CompileDelegate<T>(Expression<T> expression)
+            => XRRuntimeEnvironment.IsAotRuntimeBuild || !XRRuntimeEnvironment.SupportsDynamicCode
+                ? expression.Compile(preferInterpretation: true)
+                : expression.Compile();
 
         private static Expression CreateParam(ParameterExpression[] paramsOfDelegate, int i, ParameterInfo callParamType, Queue<object> queueMissingParams)
         {

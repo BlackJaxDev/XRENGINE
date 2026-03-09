@@ -1087,12 +1087,10 @@ internal class Program
         if (publishNativeAot.HasValue)
             settings.PublishLauncherAsNativeAot = publishNativeAot.Value;
 
-        if (!string.IsNullOrWhiteSpace(defineConstantsArg))
-            settings.LauncherDefineConstants = defineConstantsArg.Trim();
-        else if (settings.PublishLauncherAsNativeAot)
-            settings.LauncherDefineConstants = "XRE_PUBLISHED";
-        else
-            settings.LauncherDefineConstants = string.Empty;
+        settings.LauncherDefineConstants = XRRuntimeEnvironment.ComposeDefineConstants(
+            defineConstantsArg,
+            includePublishedBuild: settings.PublishLauncherAsNativeAot,
+            includeAotRuntime: settings.PublishLauncherAsNativeAot);
 
         Engine.BuildSettings = settings;
         Console.WriteLine($"Resolved build settings: BuildManagedAssemblies={settings.BuildManagedAssemblies}, CopyGameAssemblies={settings.CopyGameAssemblies}, BuildLauncherExecutable={settings.BuildLauncherExecutable}");

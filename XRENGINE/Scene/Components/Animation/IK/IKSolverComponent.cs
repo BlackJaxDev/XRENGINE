@@ -2,7 +2,7 @@
 
 namespace XREngine.Components.Animation
 {
-    public abstract class IKSolverComponent : BaseIKSolverComponent
+    public abstract class IKSolverComponent : HumanoidIKComponentBase
     {
         public abstract IKSolver GetIKSolver();
 

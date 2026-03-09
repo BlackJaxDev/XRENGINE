@@ -71,8 +71,9 @@ namespace XREngine.Scene.Transforms
 
         private static readonly ConcurrentQueue<ParentReassignRequest> _parentsToReassign = new();
 
-        [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code", Justification = "<Pending>")]
-        public static Type[] TransformTypes { get; } = GetAllTransformTypes();
+        private static readonly Lazy<Type[]> _transformTypes = new(ResolveTransformTypes);
+
+        public static Type[] TransformTypes => _transformTypes.Value;
 
         [RequiresUnreferencedCode("This method is used to find all transform types in all assemblies in the current domain and should not be trimmed.")]
         private static Type[] GetAllTransformTypes()
@@ -80,9 +81,35 @@ namespace XREngine.Scene.Transforms
                 .SelectMany(x => x.GetExportedTypes())
                 .Where(x => x.IsSubclassOf(typeof(TransformBase)))];
 
+        private static Type[] ResolveTransformTypes()
+        {
+            if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+                return GetAllTransformTypes();
+
+            AotRuntimeMetadata? metadata = AotRuntimeMetadataStore.Metadata;
+            if (metadata?.TransformTypes is null || metadata.TransformTypes.Length == 0)
+                return [];
+
+            return [.. metadata.TransformTypes
+                .Select(x => AotRuntimeMetadataStore.ResolveType(x.AssemblyQualifiedName))
+                .OfType<Type>()
+                .Where(x => x.IsSubclassOf(typeof(TransformBase)))];
+        }
+
         [RequiresUnreferencedCode("This method is used to find all transform types in all assemblies in the current domain and should not be trimmed.")]
         public static string[] GetFriendlyTransformTypeSelector()
-            => TransformTypes.Select(FriendlyTransformName).ToArray();
+            => XRRuntimeEnvironment.IsAotRuntimeBuild
+                ? ResolveFriendlyTransformNamesFromMetadata()
+                : TransformTypes.Select(FriendlyTransformName).ToArray();
+
+        private static string[] ResolveFriendlyTransformNamesFromMetadata()
+        {
+            AotRuntimeMetadata? metadata = AotRuntimeMetadataStore.Metadata;
+            if (metadata?.TransformTypes is null || metadata.TransformTypes.Length == 0)
+                return [];
+
+            return [.. metadata.TransformTypes.Select(x => x.FriendlyName)];
+        }
 
         private static string FriendlyTransformName(Type x)
         {

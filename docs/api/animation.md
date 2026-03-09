@@ -44,7 +44,7 @@ The animation module in XRENGINE mixes traditional timeline playback, data-drive
 
 ## Humanoid Rigging and IK
 
-- **HumanoidComponent** (`Scene/Components/Animation/HumanoidComponent.cs`) represents a rigged character. When added to a `SceneNode`, it traverses the hierarchy to locate bones by name pattern or spatial hints, populating `BoneDef` entries for hips, spine, limbs, fingers, and eyes. It caches bone bind poses, exposes setters for blendshape weights and bone transforms, and optionally renders debug lines for solved chains.
+- **HumanoidComponent** (`Scene/Components/Animation/HumanoidComponent.cs`) represents a rigged character. When added to a `SceneNode`, it traverses the hierarchy to locate bones by name pattern or spatial hints, populating `BoneDef` entries for hips, spine, limbs, fingers, and eyes. It caches bone bind poses, applies built-in neutral pose presets onto the mapped rig, exposes setters for blendshape weights and bone transforms, and optionally renders debug lines for solved chains.
 - The component stores IK targets as pairs of transform references plus calibration offsets. It can reset poses, clear targets, and toggle IK per limb. During late tick it calls `InverseKinematics.SolveFullBodyIK`, a FABRIK-style solver implemented in `Scene/Components/Animation/IK/InverseKinematics.cs`. That solver supports single-target and dual-target chains, optional elbow/knee/chest goals, and constraint hooks for future limit enforcement.
 - **IK Components** (`Scene/Components/Animation/IK/`) include:
   - `HumanoidIKSolverComponent` for humanoid-specific solver management.

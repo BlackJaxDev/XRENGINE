@@ -94,7 +94,57 @@ namespace XREngine
 
         static XRWorldObjectBase()
         {
+            InitializeReplicationMetadata();
+        }
+
+        private static void InitializeReplicationMetadata()
+        {
+            if (TryLoadReplicablePropertiesFromAotMetadata())
+                return;
+
             CollectReplicableProperties();
+        }
+
+        private static bool TryLoadReplicablePropertiesFromAotMetadata()
+        {
+            if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+                return false;
+
+            AotRuntimeMetadata? metadata = AotRuntimeMetadataStore.Metadata;
+            if (metadata?.WorldObjectReplications is null || metadata.WorldObjectReplications.Length == 0)
+                return false;
+
+            _replicatedTypes.Clear();
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+            foreach (AotWorldObjectReplicationInfo entry in metadata.WorldObjectReplications)
+            {
+                Type? type = AotRuntimeMetadataStore.ResolveType(entry.AssemblyQualifiedName);
+                if (type is null || !typeof(XRWorldObjectBase).IsAssignableFrom(type))
+                    continue;
+
+                ReplicationInfo replication = new();
+                foreach (string propertyName in entry.ReplicateOnChangeProperties)
+                {
+                    PropertyInfo? property = type.GetProperty(propertyName, flags);
+                    if (property is not null)
+                        replication._replicateOnChangeProperties[property.Name] = property;
+                }
+
+                foreach (string propertyName in entry.ReplicateOnTickProperties)
+                {
+                    PropertyInfo? property = type.GetProperty(propertyName, flags);
+                    if (property is not null)
+                        replication._replicateOnTickProperties[property.Name] = property;
+                }
+
+                replication._compressedPropertyNames = [.. entry.CompressedPropertyNames.Distinct(StringComparer.Ordinal)];
+
+                if (replication._replicateOnChangeProperties.Count > 0 || replication._replicateOnTickProperties.Count > 0)
+                    _replicatedTypes[type] = replication;
+            }
+
+            return true;
         }
 
         private static void CollectReplicableProperties()

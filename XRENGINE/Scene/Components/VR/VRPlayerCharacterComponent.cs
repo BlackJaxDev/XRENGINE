@@ -239,6 +239,8 @@ namespace XREngine.Components.VR
 
         public HumanoidComponent? GetHumanoid()
             => HumanoidComponent ?? GetSiblingComponent<HumanoidComponent>();
+        public VRIKSolverComponent? GetIKSolver()
+            => IKSolver ?? GetSiblingComponent<VRIKSolverComponent>();
         public VRTrackerCollectionComponent? GetTrackerCollection()
             => TrackerCollection ?? GetSiblingComponent<VRTrackerCollectionComponent>();
         public CharacterMovement3DComponent? GetCharacterMovement()
@@ -296,34 +298,24 @@ namespace XREngine.Components.VR
         {
             base.OnComponentDeactivated();
 
-            var h = GetHumanoid();
-            if (h is null)
-                return;
-
-            h.ClearIKTargets();
+            GetHumanoid()?.ClearIKTargets();
             UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, UpdateTick);
         }
 
         private void SetInitialState()
         {
             var h = GetHumanoid();
-            if (h is null)
+            var solver = GetIKSolver();
+            if (h is null || solver is null)
                 return;
 
             GetHeightScaleComponent()?.CalculateEyeOffsetFromHead(EyesModel, EyeLBoneName, EyeRBoneName);
 
             //Engine.VRState.CalibrationSettings.HeadOffset = ScaledToRealWorldEyeOffsetFromHead;
-            h.HeadTarget = (Headset, Matrix4x4.Identity);
-            h.LeftHandTarget = (LeftController, Matrix4x4.Identity);
-            h.RightHandTarget = (RightController, Matrix4x4.Identity);
-            h.HipsTarget = (null, Matrix4x4.Identity);
-            h.LeftFootTarget = (null, Matrix4x4.Identity);
-            h.RightFootTarget = (null, Matrix4x4.Identity);
-            h.ChestTarget = (null, Matrix4x4.Identity);
-            h.LeftElbowTarget = (null, Matrix4x4.Identity);
-            h.RightElbowTarget = (null, Matrix4x4.Identity);
-            h.LeftKneeTarget = (null, Matrix4x4.Identity);
-            h.RightKneeTarget = (null, Matrix4x4.Identity);
+            h.SetIKTarget(EHumanoidIKTarget.Head, Headset, Matrix4x4.Identity);
+            h.SetIKTarget(EHumanoidIKTarget.LeftHand, LeftController, Matrix4x4.Identity);
+            h.SetIKTarget(EHumanoidIKTarget.RightHand, RightController, Matrix4x4.Identity);
+            ClearTrackerTargets(h);
         }
 
         private void ResolveDependencies()
@@ -449,11 +441,14 @@ namespace XREngine.Components.VR
         private void MovePlayer(Transform avatarRootTfm, Transform playspaceRootTfm)
         {
             var h = GetHumanoid();
-            if (h is null)
+            var solver = GetIKSolver();
+            if (h is null || solver is null)
                 return;
 
             //Use the hip transform if the tracker controlling it exists and the player isn't calibrating
-            bool useHip = h.HipsTarget.tfm is not null;
+            var hipsTarget = h.GetIKTarget(EHumanoidIKTarget.Hips);
+            var headTarget = h.GetIKTarget(EHumanoidIKTarget.Head);
+            bool useHip = hipsTarget.tfm is not null;
 
             CharacterMovement3DComponent? movement = GetCharacterMovement();
             TransformBase? rigidBodyTfm = Transform; //This should be the same transform as the rigid body
@@ -466,14 +461,14 @@ namespace XREngine.Components.VR
             if (useHip)
             {
                 //If using the hips as the target, we need to follow the hips, not the tracker
-                deviceToBodyOffsetMtx = h.HipsTarget.offset;
-                deviceMtx = h.HipsTarget.tfm!.WorldMatrix;
+                deviceToBodyOffsetMtx = hipsTarget.offset;
+                deviceMtx = hipsTarget.tfm!.WorldMatrix;
             }
             else
             {
                 //If using the HMD as the target, we need to follow the eyes
-                deviceToBodyOffsetMtx = h.HeadTarget.offset;
-                deviceMtx = h.HeadTarget.tfm!.WorldMatrix;
+                deviceToBodyOffsetMtx = headTarget.offset;
+                deviceMtx = headTarget.tfm!.WorldMatrix;
             }
 
             Matrix4x4 deviceRelativeToFoot = GetTrackedDeviceMatrixRelativeToPlayspace(h, deviceToBodyOffsetMtx * deviceMtx);
@@ -507,7 +502,8 @@ namespace XREngine.Components.VR
             {
                 _calibrationUpdateFence.Reset();
                 UpdateCalibrationPose(h, avatarRootTfm, playspaceRootTfm);
-                FindNearestTrackerTargets(h);
+                if (GetIKSolver() is { } solver)
+                    FindNearestTrackerTargets(h, solver);
                 _calibrationUpdateFence.Set();
             }
             else
@@ -554,9 +550,6 @@ namespace XREngine.Components.VR
             //=> (Engine.VRState.Api.Headset?.DeviceToAbsoluteTrackingMatrix ?? Matrix4x4.Identity);
             => GetTrackedDeviceMatrixRelativeToPlayspace(h, Headset?.WorldMatrix ?? Matrix4x4.Identity);
 
-        private static Matrix4x4 GetHipTrackerRelativeToPlayspace(HumanoidComponent h)
-            => GetTrackedDeviceMatrixRelativeToPlayspace(h, h.HipsTarget.tfm?.WorldMatrix ?? Matrix4x4.Identity);
-
         private static Matrix4x4 GetTrackedDeviceMatrixRelativeToPlayspace(HumanoidComponent h, Matrix4x4 trackedDeviceMatrix)
         {
             var playspaceTfm = h.SceneNode.Transform.Parent!.FirstChild()!;
@@ -569,7 +562,8 @@ namespace XREngine.Components.VR
                 return false;
 
             var h = GetHumanoid();
-            if (h is null)
+            var solver = GetIKSolver();
+            if (h is null || solver is null)
                 return false;
 
             var headNode = h.Head.Node;
@@ -581,22 +575,20 @@ namespace XREngine.Components.VR
                 return false;
 
             //Save the current targets before they're cleared
-            LastHeadTarget = h.HeadTarget;
-            LastHipsTarget = h.HipsTarget;
-            LastLeftHandTarget = h.LeftHandTarget;
-            LastRightHandTarget = h.RightHandTarget;
-            LastLeftFootTarget = h.LeftFootTarget;
-            LastRightFootTarget = h.RightFootTarget;
-            LastChestTarget = h.ChestTarget;
-            LastLeftElbowTarget = h.LeftElbowTarget;
-            LastRightElbowTarget = h.RightElbowTarget;
-            LastLeftKneeTarget = h.LeftKneeTarget;
-            LastRightKneeTarget = h.RightKneeTarget;
+            LastHeadTarget = h.GetIKTarget(EHumanoidIKTarget.Head);
+            LastHipsTarget = h.GetIKTarget(EHumanoidIKTarget.Hips);
+            LastLeftHandTarget = h.GetIKTarget(EHumanoidIKTarget.LeftHand);
+            LastRightHandTarget = h.GetIKTarget(EHumanoidIKTarget.RightHand);
+            LastLeftFootTarget = h.GetIKTarget(EHumanoidIKTarget.LeftFoot);
+            LastRightFootTarget = h.GetIKTarget(EHumanoidIKTarget.RightFoot);
+            LastChestTarget = h.GetIKTarget(EHumanoidIKTarget.Chest);
+            LastLeftElbowTarget = h.GetIKTarget(EHumanoidIKTarget.LeftElbow);
+            LastRightElbowTarget = h.GetIKTarget(EHumanoidIKTarget.RightElbow);
+            LastLeftKneeTarget = h.GetIKTarget(EHumanoidIKTarget.LeftKnee);
+            LastRightKneeTarget = h.GetIKTarget(EHumanoidIKTarget.RightKnee);
 
-            //Stop solving
-            h.SolveIK = false;
-            if (IKSolver is not null)
-                IKSolver.IsActive = false;
+            //Stop solver-driven pose updates
+            solver.IsActive = false;
 
             //Clear all targets
             h.ClearIKTargets();
@@ -638,12 +630,13 @@ namespace XREngine.Components.VR
 
         #endregion
 
-        private bool EndCalib(out HumanoidComponent? h)
+        private bool EndCalib(out HumanoidComponent? h, out VRIKSolverComponent? solver)
         {
             IsCalibrating = false;
 
             h = GetHumanoid();
-            if (h is null)
+            solver = GetIKSolver();
+            if (h is null || solver is null)
                 return false;
             
             _calibrationUpdateFence.Wait(100);
@@ -652,56 +645,51 @@ namespace XREngine.Components.VR
 
         public void CancelCalibration()
         {
-            if (!EndCalib(out HumanoidComponent? h))
+            if (!EndCalib(out HumanoidComponent? h, out VRIKSolverComponent? solver))
                 return;
+
+            var activeHumanoid = h!;
+            var activeSolver = solver!;
             
-            h!.HeadTarget = LastHeadTarget;
-            h.LeftHandTarget = LastLeftHandTarget;
-            h.RightHandTarget = LastRightHandTarget;
+            RestoreTargets(activeHumanoid, LastHeadTarget, LastHipsTarget, LastLeftHandTarget, LastRightHandTarget, LastLeftFootTarget, LastRightFootTarget, LastChestTarget, LastLeftElbowTarget, LastRightElbowTarget, LastLeftKneeTarget, LastRightKneeTarget);
 
-            h.HipsTarget = LastHipsTarget;
-            h.LeftFootTarget = LastLeftFootTarget;
-            h.RightFootTarget = LastRightFootTarget;
-            h.ChestTarget = LastChestTarget;
-            h.LeftElbowTarget = LastLeftElbowTarget;
-            h.RightElbowTarget = LastRightElbowTarget;
-            h.LeftKneeTarget = LastLeftKneeTarget;
-            h.RightKneeTarget = LastRightKneeTarget;
-
-            FinalizeCalib(h);
+            FinalizeCalib(activeHumanoid, activeSolver);
         }
 
         public void EndCalibration()
         {
-            if (!EndCalib(out HumanoidComponent? h))
+            if (!EndCalib(out HumanoidComponent? h, out VRIKSolverComponent? solver))
                 return;
+
+            var activeHumanoid = h!;
+            var activeSolver = solver!;
 
             Vector3 eyeOffsetFromHead = GetHeightScaleComponent()?.ScaledToRealWorldEyeOffsetFromHead ?? Vector3.Zero;
-            h!.HeadTarget = (Headset, Matrix4x4.CreateTranslation(-eyeOffsetFromHead));
-            h.LeftHandTarget = (LeftController, LeftControllerOffset);
-            h.RightHandTarget = (RightController, RightControllerOffset);
+            activeHumanoid.SetIKTarget(EHumanoidIKTarget.Head, Headset, Matrix4x4.CreateTranslation(-eyeOffsetFromHead));
+            activeHumanoid.SetIKTarget(EHumanoidIKTarget.LeftHand, LeftController, LeftControllerOffset);
+            activeHumanoid.SetIKTarget(EHumanoidIKTarget.RightHand, RightController, RightControllerOffset);
 
-            FinalizeCalib(h);
+            FinalizeCalib(activeHumanoid, activeSolver);
         }
 
-        private void FinalizeCalib(HumanoidComponent h)
+        private void FinalizeCalib(HumanoidComponent h, VRIKSolverComponent solver)
         {
-            if (IKSolver is null)
-            {
-                Debug.AnimationWarning("IKSolver is null, failed to calibrate.");
-                return;
-            }
-
-            IKSolver.IsActive = true;
+            solver.IsActive = true;
+            var headTarget = h.GetIKTarget(EHumanoidIKTarget.Head);
+            var hipsTarget = h.GetIKTarget(EHumanoidIKTarget.Hips);
+            var leftHandTarget = h.GetIKTarget(EHumanoidIKTarget.LeftHand);
+            var rightHandTarget = h.GetIKTarget(EHumanoidIKTarget.RightHand);
+            var leftFootTarget = h.GetIKTarget(EHumanoidIKTarget.LeftFoot);
+            var rightFootTarget = h.GetIKTarget(EHumanoidIKTarget.RightFoot);
             VRIKCalibrator.Calibrate(
-                IKSolver,
+                solver,
                 Engine.VRState.CalibrationSettings,
-                h.HeadTarget.tfm,
-                h.HipsTarget.tfm,
-                h.LeftHandTarget.tfm,
-                h.RightHandTarget.tfm,
-                h.LeftFootTarget.tfm,
-                h.RightFootTarget.tfm);
+                headTarget.tfm,
+                hipsTarget.tfm,
+                leftHandTarget.tfm,
+                rightHandTarget.tfm,
+                leftFootTarget.tfm,
+                rightFootTarget.tfm);
         }
 
         /// <summary>
@@ -719,7 +707,7 @@ namespace XREngine.Components.VR
             RightKnee,
         }
 
-        private void FindNearestTrackerTargets(HumanoidComponent h)
+        private void FindNearestTrackerTargets(HumanoidComponent h, VRIKSolverComponent solver)
         {
             var t = GetTrackerCollection();
             if (t is null)
@@ -735,14 +723,7 @@ namespace XREngine.Components.VR
             var rightKneeTfm = h.Right.Knee.Node?.Transform;
 
             //Clear tracker-dependent targets
-            h.HipsTarget = (null, Matrix4x4.Identity);
-            h.LeftFootTarget = (null, Matrix4x4.Identity);
-            h.RightFootTarget = (null, Matrix4x4.Identity);
-            h.ChestTarget = (null, Matrix4x4.Identity);
-            h.LeftElbowTarget = (null, Matrix4x4.Identity);
-            h.RightElbowTarget = (null, Matrix4x4.Identity);
-            h.LeftKneeTarget = (null, Matrix4x4.Identity);
-            h.RightKneeTarget = (null, Matrix4x4.Identity);
+            ClearTrackerTargets(h);
 
             foreach ((_, VRTrackerTransform tracker) in t.Trackers.Values)
             {
@@ -776,39 +757,78 @@ namespace XREngine.Components.VR
                 switch (closestBodyPart)
                 {
                     case ETrackableBodyPart.Hips:
-                        h.HipsTarget = (tracker, offset2);
+                        h.SetIKTarget(EHumanoidIKTarget.Hips, tracker, offset2);
                         Engine.Rendering.Debug.RenderPoint(waistTfm!.RenderTranslation, ColorF4.Orange);
                         break;
                     case ETrackableBodyPart.Chest:
-                        h.ChestTarget = (tracker, offset2);
+                        h.SetIKTarget(EHumanoidIKTarget.Chest, tracker, offset2);
                         Engine.Rendering.Debug.RenderPoint(chestTfm!.RenderTranslation, ColorF4.Orange);
                         break;
                     case ETrackableBodyPart.LeftFoot:
-                        h.LeftFootTarget = (tracker, offset2);
+                        h.SetIKTarget(EHumanoidIKTarget.LeftFoot, tracker, offset2);
                         Engine.Rendering.Debug.RenderPoint(leftFootTfm!.RenderTranslation, ColorF4.Orange);
                         break;
                     case ETrackableBodyPart.RightFoot:
-                        h.RightFootTarget = (tracker, offset2);
+                        h.SetIKTarget(EHumanoidIKTarget.RightFoot, tracker, offset2);
                         Engine.Rendering.Debug.RenderPoint(rightFootTfm!.RenderTranslation, ColorF4.Orange);
                         break;
                     case ETrackableBodyPart.LeftElbow:
-                        h.LeftElbowTarget = (tracker, offset2);
+                        h.SetIKTarget(EHumanoidIKTarget.LeftElbow, tracker, offset2);
                         Engine.Rendering.Debug.RenderPoint(leftElbowTfm!.RenderTranslation, ColorF4.Orange);
                         break;
                     case ETrackableBodyPart.RightElbow:
-                        h.RightElbowTarget = (tracker, offset2);
+                        h.SetIKTarget(EHumanoidIKTarget.RightElbow, tracker, offset2);
                         Engine.Rendering.Debug.RenderPoint(rightElbowTfm!.RenderTranslation, ColorF4.Orange);
                         break;
                     case ETrackableBodyPart.LeftKnee:
-                        h.LeftKneeTarget = (tracker, offset2);
+                        h.SetIKTarget(EHumanoidIKTarget.LeftKnee, tracker, offset2);
                         Engine.Rendering.Debug.RenderPoint(leftKneeTfm!.RenderTranslation, ColorF4.Orange);
                         break;
                     case ETrackableBodyPart.RightKnee:
-                        h.RightKneeTarget = (tracker, offset2);
+                        h.SetIKTarget(EHumanoidIKTarget.RightKnee, tracker, offset2);
                         Engine.Rendering.Debug.RenderPoint(rightKneeTfm!.RenderTranslation, ColorF4.Orange);
                         break;
                 }
             }
+        }
+
+        private static void ClearTrackerTargets(HumanoidComponent humanoid)
+        {
+            humanoid.ClearIKTarget(EHumanoidIKTarget.Hips);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.LeftFoot);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.RightFoot);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.Chest);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.LeftElbow);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.RightElbow);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.LeftKnee);
+            humanoid.ClearIKTarget(EHumanoidIKTarget.RightKnee);
+        }
+
+        private static void RestoreTargets(
+            HumanoidComponent humanoid,
+            (TransformBase? tfm, Matrix4x4 offset) head,
+            (TransformBase? tfm, Matrix4x4 offset) hips,
+            (TransformBase? tfm, Matrix4x4 offset) leftHand,
+            (TransformBase? tfm, Matrix4x4 offset) rightHand,
+            (TransformBase? tfm, Matrix4x4 offset) leftFoot,
+            (TransformBase? tfm, Matrix4x4 offset) rightFoot,
+            (TransformBase? tfm, Matrix4x4 offset) chest,
+            (TransformBase? tfm, Matrix4x4 offset) leftElbow,
+            (TransformBase? tfm, Matrix4x4 offset) rightElbow,
+            (TransformBase? tfm, Matrix4x4 offset) leftKnee,
+            (TransformBase? tfm, Matrix4x4 offset) rightKnee)
+        {
+            humanoid.SetIKTarget(EHumanoidIKTarget.Head, head.tfm, head.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.Hips, hips.tfm, hips.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.LeftHand, leftHand.tfm, leftHand.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.RightHand, rightHand.tfm, rightHand.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.LeftFoot, leftFoot.tfm, leftFoot.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.RightFoot, rightFoot.tfm, rightFoot.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.Chest, chest.tfm, chest.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.LeftElbow, leftElbow.tfm, leftElbow.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.RightElbow, rightElbow.tfm, rightElbow.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.LeftKnee, leftKnee.tfm, leftKnee.offset);
+            humanoid.SetIKTarget(EHumanoidIKTarget.RightKnee, rightKnee.tfm, rightKnee.offset);
         }
 
         //protected override void OnPropertyChanged<T>(string? propName, T prev, T field)

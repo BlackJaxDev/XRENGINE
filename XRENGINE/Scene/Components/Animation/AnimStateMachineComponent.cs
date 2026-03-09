@@ -87,13 +87,23 @@ namespace XREngine.Components
         {
             base.OnComponentDeactivated();
             UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
+            var humanoid = GetHumanoidComponent();
+            if (humanoid is not null)
+                humanoid.ResetPose();
+            else
+                StateMachine.ResetAnimatedState();
             StateMachine.Deinitialize();
             StateMachine.VariableChanged -= VariableChanged;
+            _changedLastEval.Clear();
         }
 
         protected internal void EvaluationTick()
         {
             if (SuspendedByClip)
+                return;
+
+            var humanoid = GetHumanoidComponent();
+            if (humanoid is not null && !humanoid.IsAnimatedPosePreviewActive)
                 return;
 
             StateMachine.EvaluationTick(this, Engine.Delta);

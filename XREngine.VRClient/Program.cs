@@ -3,7 +3,6 @@ using OpenVR.NET.Manifest;
 using System.Diagnostics;
 using System.Management;
 using System.Reflection;
-using System.Reflection.Emit;
 using XREngine.Native;
 using XREngine.Scene;
 
@@ -11,6 +10,32 @@ namespace XREngine.VRClient
 {
     internal class Program
     {
+        private enum EActionCategory
+        {
+            Global,
+            OneHanded,
+            QuickMenu,
+            Menu,
+            AvatarMenu,
+        }
+
+        private enum EGameAction
+        {
+            Interact,
+            Jump,
+            ToggleMute,
+            Grab,
+            PlayspaceDragLeft,
+            PlayspaceDragRight,
+            ToggleQuickMenu,
+            ToggleMenu,
+            ToggleAvatarMenu,
+            LeftHandPose,
+            RightHandPose,
+            Locomote,
+            Turn,
+        }
+
         static void Main(string[] args)
         {
             IVRGameStartupSettings settings = GenerateSettings();
@@ -52,32 +77,7 @@ namespace XREngine.VRClient
         }
 
         private static IVRGameStartupSettings GenerateSettings()
-        {
-            ModuleBuilder moduleBuilder = MakeDynamicAssemblyModule("DynamicEnums");
-
-            //TODO: read from game init file
-            string[] actionCategoryNames = ["Global", "OneHanded", "QuickMenu", "Menu", "AvatarMenu"];
-            string[] gameActionNames = ["Interact", "Jump", "ToggleMute", "Grab", "PlayspaceDragLeft", "PlayspaceDragRight", "ToggleQuickMenu", "ToggleMenu", "ToggleAvatarMenu", "LeftHandPose", "RightHandPose", "Locomote", "Turn"];
-
-            var actionCategoryType = CreateEnumType(moduleBuilder, "EActionCategory", actionCategoryNames);
-            var gameActionType = CreateEnumType(moduleBuilder, "EGameAction", gameActionNames);
-
-            return (IVRGameStartupSettings)typeof(Program).
-                GetMethod(nameof(GenerateGameSettings), BindingFlags.NonPublic | BindingFlags.Static)!.
-                MakeGenericMethod([actionCategoryType, gameActionType]).
-                Invoke(null, null)!;
-        }
-
-        private static Type CreateEnumType(ModuleBuilder moduleBuilder, string typeName, string[] names)
-        {
-            EnumBuilder enumBuilder = moduleBuilder.DefineEnum(typeName, TypeAttributes.Public, typeof(int));
-            for (int i = 0; i < names.Length; i++)
-                enumBuilder.DefineLiteral(names[i], i);
-            return enumBuilder.CreateType();
-        }
-
-        private static ModuleBuilder MakeDynamicAssemblyModule(string dynamicAssemblyName)
-            => AssemblyBuilder.DefineDynamicAssembly(new AssemblyName(dynamicAssemblyName), AssemblyBuilderAccess.Run).DefineDynamicModule(dynamicAssemblyName);
+            => GenerateGameSettings<EActionCategory, EGameAction>();
 
         private static bool VerifyMainGameRunning(Process[]? processes, IVRGameStartupSettings settings, out string? resultPath)
         {

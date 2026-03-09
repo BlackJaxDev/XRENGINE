@@ -6,6 +6,12 @@ namespace XREngine.Components.Animation
 {
     public class HumanoidSettings : XRBase
     {
+        public HumanoidSettings()
+        {
+            SetMuscleRotationDegRange(EHumanoidValue.RightUpperLegTwistInOut, new Vector2(60.0f, -60.0f));
+            SetMuscleRotationDegRange(EHumanoidValue.RightLowerLegTwistInOut, new Vector2(90.0f, -90.0f));
+        }
+
         private Dictionary<EHumanoidValue, float> _currentValues = [];
         public Dictionary<EHumanoidValue, float> CurrentValues
         {
@@ -320,14 +326,14 @@ namespace XREngine.Components.Animation
         }
 
         // ── Shoulder ────────────────────────────────────────────────────
-        private Vector2 _shoulderDownUpDegRange = new(-15.0f, 30.0f);
+        private Vector2 _shoulderDownUpDegRange = new(15.0f, -30.0f);
         public Vector2 ShoulderDownUpDegRange
         {
             get => _shoulderDownUpDegRange;
             set => SetField(ref _shoulderDownUpDegRange, value);
         }
 
-        private Vector2 _shoulderFrontBackDegRange = new(-15.0f, 15.0f);
+        private Vector2 _shoulderFrontBackDegRange = new(15.0f, -15.0f);
         public Vector2 ShoulderFrontBackDegRange
         {
             get => _shoulderFrontBackDegRange;
@@ -342,14 +348,14 @@ namespace XREngine.Components.Animation
             set => SetField(ref _armTwistDegRange, value);
         }
 
-        private Vector2 _armDownUpDegRange = new(-60.0f, 100.0f);
+        private Vector2 _armDownUpDegRange = new(60.0f, -100.0f);
         public Vector2 ArmDownUpDegRange
         {
             get => _armDownUpDegRange;
             set => SetField(ref _armDownUpDegRange, value);
         }
 
-        private Vector2 _armFrontBackDegRange = new(-100.0f, 100.0f);
+        private Vector2 _armFrontBackDegRange = new(100.0f, -100.0f);
         public Vector2 ArmFrontBackDegRange
         {
             get => _armFrontBackDegRange;
@@ -372,14 +378,14 @@ namespace XREngine.Components.Animation
         }
 
         // ── Hand / Wrist ────────────────────────────────────────────────
-        private Vector2 _handDownUpDegRange = new(-80.0f, 80.0f);
+        private Vector2 _handDownUpDegRange = new(80.0f, -80.0f);
         public Vector2 HandDownUpDegRange
         {
             get => _handDownUpDegRange;
             set => SetField(ref _handDownUpDegRange, value);
         }
 
-        private Vector2 _handInOutDegRange = new(-40.0f, 40.0f);
+        private Vector2 _handInOutDegRange = new(40.0f, -40.0f);
         public Vector2 HandInOutDegRange
         {
             get => _handInOutDegRange;
@@ -394,14 +400,14 @@ namespace XREngine.Components.Animation
             set => SetField(ref _upperLegTwistDegRange, value);
         }
 
-        private Vector2 _upperLegFrontBackDegRange = new(-90.0f, 50.0f);
+        private Vector2 _upperLegFrontBackDegRange = new(90.0f, -50.0f);
         public Vector2 UpperLegFrontBackDegRange
         {
             get => _upperLegFrontBackDegRange;
             set => SetField(ref _upperLegFrontBackDegRange, value);
         }
 
-        private Vector2 _upperLegInOutDegRange = new(-60.0f, 60.0f);
+        private Vector2 _upperLegInOutDegRange = new(60.0f, -60.0f);
         public Vector2 UpperLegInOutDegRange
         {
             get => _upperLegInOutDegRange;
@@ -424,21 +430,21 @@ namespace XREngine.Components.Animation
         }
 
         // ── Foot / Toes ─────────────────────────────────────────────────
-        private Vector2 _footTwistDegRange = new(-30.0f, 30.0f);
+        private Vector2 _footTwistDegRange = new(30.0f, -30.0f);
         public Vector2 FootTwistDegRange
         {
             get => _footTwistDegRange;
             set => SetField(ref _footTwistDegRange, value);
         }
 
-        private Vector2 _footUpDownDegRange = new(-50.0f, 50.0f);
+        private Vector2 _footUpDownDegRange = new(50.0f, -50.0f);
         public Vector2 FootUpDownDegRange
         {
             get => _footUpDownDegRange;
             set => SetField(ref _footUpDownDegRange, value);
         }
 
-        private Vector2 _toesUpDownDegRange = new(-50.0f, 50.0f);
+        private Vector2 _toesUpDownDegRange = new(50.0f, -50.0f);
         public Vector2 ToesUpDownDegRange
         {
             get => _toesUpDownDegRange;
@@ -446,49 +452,49 @@ namespace XREngine.Components.Animation
         }
 
         // ── Fingers ─────────────────────────────────────────────────────
-        private Vector2 _thumbSpreadDegRange = new(-25.0f, 25.0f);
+        private Vector2 _thumbSpreadDegRange = new(25.0f, -25.0f);
         public Vector2 ThumbSpreadDegRange { get => _thumbSpreadDegRange; set => SetField(ref _thumbSpreadDegRange, value); }
-        private Vector2 _thumb1StretchedDegRange = new(-20.0f, 20.0f);
+        private Vector2 _thumb1StretchedDegRange = new(20.0f, -20.0f);
         public Vector2 Thumb1StretchedDegRange { get => _thumb1StretchedDegRange; set => SetField(ref _thumb1StretchedDegRange, value); }
-        private Vector2 _thumb2StretchedDegRange = new(-40.0f, 35.0f);
+        private Vector2 _thumb2StretchedDegRange = new(40.0f, -35.0f);
         public Vector2 Thumb2StretchedDegRange { get => _thumb2StretchedDegRange; set => SetField(ref _thumb2StretchedDegRange, value); }
-        private Vector2 _thumb3StretchedDegRange = new(-40.0f, 35.0f);
+        private Vector2 _thumb3StretchedDegRange = new(40.0f, -35.0f);
         public Vector2 Thumb3StretchedDegRange { get => _thumb3StretchedDegRange; set => SetField(ref _thumb3StretchedDegRange, value); }
 
-        private Vector2 _indexSpreadDegRange = new(-20.0f, 20.0f);
+        private Vector2 _indexSpreadDegRange = new(20.0f, -20.0f);
         public Vector2 IndexSpreadDegRange { get => _indexSpreadDegRange; set => SetField(ref _indexSpreadDegRange, value); }
-        private Vector2 _index1StretchedDegRange = new(-50.0f, 50.0f);
+        private Vector2 _index1StretchedDegRange = new(50.0f, -50.0f);
         public Vector2 Index1StretchedDegRange { get => _index1StretchedDegRange; set => SetField(ref _index1StretchedDegRange, value); }
-        private Vector2 _index2StretchedDegRange = new(-45.0f, 45.0f);
+        private Vector2 _index2StretchedDegRange = new(45.0f, -45.0f);
         public Vector2 Index2StretchedDegRange { get => _index2StretchedDegRange; set => SetField(ref _index2StretchedDegRange, value); }
-        private Vector2 _index3StretchedDegRange = new(-45.0f, 45.0f);
+        private Vector2 _index3StretchedDegRange = new(45.0f, -45.0f);
         public Vector2 Index3StretchedDegRange { get => _index3StretchedDegRange; set => SetField(ref _index3StretchedDegRange, value); }
 
-        private Vector2 _middleSpreadDegRange = new(-7.5f, 7.5f);
+        private Vector2 _middleSpreadDegRange = new(7.5f, -7.5f);
         public Vector2 MiddleSpreadDegRange { get => _middleSpreadDegRange; set => SetField(ref _middleSpreadDegRange, value); }
-        private Vector2 _middle1StretchedDegRange = new(-50.0f, 50.0f);
+        private Vector2 _middle1StretchedDegRange = new(50.0f, -50.0f);
         public Vector2 Middle1StretchedDegRange { get => _middle1StretchedDegRange; set => SetField(ref _middle1StretchedDegRange, value); }
-        private Vector2 _middle2StretchedDegRange = new(-45.0f, 45.0f);
+        private Vector2 _middle2StretchedDegRange = new(45.0f, -45.0f);
         public Vector2 Middle2StretchedDegRange { get => _middle2StretchedDegRange; set => SetField(ref _middle2StretchedDegRange, value); }
-        private Vector2 _middle3StretchedDegRange = new(-45.0f, 45.0f);
+        private Vector2 _middle3StretchedDegRange = new(45.0f, -45.0f);
         public Vector2 Middle3StretchedDegRange { get => _middle3StretchedDegRange; set => SetField(ref _middle3StretchedDegRange, value); }
 
-        private Vector2 _ringSpreadDegRange = new(-7.5f, 7.5f);
+        private Vector2 _ringSpreadDegRange = new(7.5f, -7.5f);
         public Vector2 RingSpreadDegRange { get => _ringSpreadDegRange; set => SetField(ref _ringSpreadDegRange, value); }
-        private Vector2 _ring1StretchedDegRange = new(-50.0f, 50.0f);
+        private Vector2 _ring1StretchedDegRange = new(50.0f, -50.0f);
         public Vector2 Ring1StretchedDegRange { get => _ring1StretchedDegRange; set => SetField(ref _ring1StretchedDegRange, value); }
-        private Vector2 _ring2StretchedDegRange = new(-45.0f, 45.0f);
+        private Vector2 _ring2StretchedDegRange = new(45.0f, -45.0f);
         public Vector2 Ring2StretchedDegRange { get => _ring2StretchedDegRange; set => SetField(ref _ring2StretchedDegRange, value); }
-        private Vector2 _ring3StretchedDegRange = new(-45.0f, 45.0f);
+        private Vector2 _ring3StretchedDegRange = new(45.0f, -45.0f);
         public Vector2 Ring3StretchedDegRange { get => _ring3StretchedDegRange; set => SetField(ref _ring3StretchedDegRange, value); }
 
-        private Vector2 _littleSpreadDegRange = new(-20.0f, 20.0f);
+        private Vector2 _littleSpreadDegRange = new(20.0f, -20.0f);
         public Vector2 LittleSpreadDegRange { get => _littleSpreadDegRange; set => SetField(ref _littleSpreadDegRange, value); }
-        private Vector2 _little1StretchedDegRange = new(-50.0f, 50.0f);
+        private Vector2 _little1StretchedDegRange = new(50.0f, -50.0f);
         public Vector2 Little1StretchedDegRange { get => _little1StretchedDegRange; set => SetField(ref _little1StretchedDegRange, value); }
-        private Vector2 _little2StretchedDegRange = new(-45.0f, 45.0f);
+        private Vector2 _little2StretchedDegRange = new(45.0f, -45.0f);
         public Vector2 Little2StretchedDegRange { get => _little2StretchedDegRange; set => SetField(ref _little2StretchedDegRange, value); }
-        private Vector2 _little3StretchedDegRange = new(-45.0f, 45.0f);
+        private Vector2 _little3StretchedDegRange = new(45.0f, -45.0f);
         public Vector2 Little3StretchedDegRange { get => _little3StretchedDegRange; set => SetField(ref _little3StretchedDegRange, value); }
 
         /// <summary>

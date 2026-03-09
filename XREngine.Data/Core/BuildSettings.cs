@@ -106,7 +106,7 @@ namespace XREngine
         }
 
         [Category("Build Steps")]
-        [Description("When enabled, the launcher EXE is produced via MSBuild Publish with PublishAot=true (NativeAOT). This is intended for shipping/cooked builds; keep disabled for editor/dev hot-reload workflows.")]
+        [Description("When enabled, the launcher EXE is produced via MSBuild Publish with PublishAot=true (NativeAOT). This is intended for shipping/cooked builds; keep disabled for editor/dev hot-reload workflows. NativeAOT launcher publishes automatically add XRE_PUBLISHED and XRE_AOT_RUNTIME define constants.")]
         public bool PublishLauncherAsNativeAot
         {
             get => _publishLauncherAsNativeAot;
@@ -170,7 +170,7 @@ namespace XREngine
         }
 
         [Category("Build Target")]
-        [Description("Semicolon-delimited compile constants passed when building the generated launcher project.")]
+        [Description("Semicolon-delimited compile constants passed when building the generated launcher project. XRE_PUBLISHED is reserved for published launcher builds and XRE_AOT_RUNTIME is reserved for NativeAOT runtime launchers; both are added automatically when applicable.")]
         public string LauncherDefineConstants
         {
             get => _launcherDefineConstants;

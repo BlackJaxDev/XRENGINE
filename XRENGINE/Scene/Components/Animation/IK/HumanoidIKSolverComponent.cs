@@ -9,10 +9,9 @@ namespace XREngine.Components.Animation
 {
     [RequireComponents(typeof(HumanoidComponent))]
     [XRComponentEditor("XREngine.Editor.ComponentEditors.HumanoidIKSolverComponentEditor")]
-    public class HumanoidIKSolverComponent : BaseIKSolverComponent
+    public class HumanoidIKSolverComponent : HumanoidIKComponentBase
     {
         private const float FullGoalWeight = 1.0f;
-        public HumanoidComponent Humanoid => GetSiblingComponent<HumanoidComponent>(true)!;
 
         public HumanoidIKSolverComponent()
         {
@@ -27,11 +26,6 @@ namespace XREngine.Components.Animation
         //public IKSolverLookAt lookAt = new IKSolverLookAt();
         //public IKSolverAim aim = new IKSolverAim();
         public TransformConstrainer _hips = new();
-        private SceneNode? _animatedGoalRootNode;
-        private Transform? _animatedLeftFootTarget;
-        private Transform? _animatedRightFootTarget;
-        private Transform? _animatedLeftHandTarget;
-        private Transform? _animatedRightHandTarget;
         private Vector3 _animatedLeftFootLocalPosition;
         private Vector3 _animatedRightFootLocalPosition;
         private Vector3 _animatedLeftHandLocalPosition;
@@ -52,6 +46,11 @@ namespace XREngine.Components.Animation
         private bool _animatedLeftHandGoalRotationOffsetInitialized;
         private bool _animatedRightHandGoalRotationOffsetInitialized;
         private bool _ikGoalWarningLogged;
+
+        public bool UpdateLeftFootTarget { get; set; } = true;
+        public bool UpdateRightFootTarget { get; set; } = true;
+        public bool UpdateLeftHandTarget { get; set; } = true;
+        public bool UpdateRightHandTarget { get; set; } = true;
 
         public override void Visualize()
         {
@@ -351,6 +350,18 @@ namespace XREngine.Components.Animation
             UpdateAnimatedIKGoal(goal);
         }
 
+        public void SetAnimatedFootPosition(Vector3 position, bool leftFoot)
+            => SetAnimatedIKPosition(leftFoot ? ELimbEndEffector.LeftFoot : ELimbEndEffector.RightFoot, position);
+
+        public void SetAnimatedFootRotation(Quaternion rotation, bool leftFoot)
+            => SetAnimatedIKRotation(leftFoot ? ELimbEndEffector.LeftFoot : ELimbEndEffector.RightFoot, rotation);
+
+        public void SetAnimatedHandPosition(Vector3 position, bool leftHand)
+            => SetAnimatedIKPosition(leftHand ? ELimbEndEffector.LeftHand : ELimbEndEffector.RightHand, position);
+
+        public void SetAnimatedHandRotation(Quaternion rotation, bool leftHand)
+            => SetAnimatedIKRotation(leftHand ? ELimbEndEffector.LeftHand : ELimbEndEffector.RightHand, rotation);
+
         public IKSolverLimb? GetGoalIK(ELimbEndEffector goal) => goal switch
         {
             ELimbEndEffector.LeftFoot => _leftFoot,
@@ -400,7 +411,7 @@ namespace XREngine.Components.Animation
             InitializeChains(Humanoid);
             ResetAnimatedGoalRotationOffsets();
 
-            var rootTfm = SceneNode.GetTransformAs<Transform>(true)!;
+            var rootTfm = Root ?? SceneNode.GetTransformAs<Transform>(true)!;
 
             if (_spine._bones.Length > 1)
                 _spine.Initialize(rootTfm);
@@ -485,6 +496,10 @@ namespace XREngine.Components.Animation
 
             var target = EnsureAnimatedGoalTransform(goal);
             ik.TargetIKTransform = target;
+
+            if (!ShouldUpdateAnimatedGoalTarget(goal))
+                return;
+
             RefreshAnimatedGoalTransform(goal, captureRotationOffset: false);
         }
 
@@ -502,13 +517,14 @@ namespace XREngine.Components.Animation
             if (target is null)
                 return;
 
+            if (!ShouldUpdateAnimatedGoalTarget(goal))
+                return;
+
             float scale = Humanoid.EstimateAnimatedMotionScale();
             Vector3 localPosition = GetAnimatedGoalLocalPosition(goal) * scale;
             Quaternion localRotation = GetAnimatedGoalLocalRotation(goal);
             Matrix4x4 bodyMatrix = GetAnimatedGoalBodyMatrix();
             Quaternion bodyRotation = GetAnimatedGoalBodyRotation();
-
-            target.SetWorldTranslation(Vector3.Transform(localPosition, bodyMatrix));
 
             Quaternion goalRotationOffset = captureRotationOffset
                 ? EnsureAnimatedGoalRotationOffset(goal, bodyRotation, localRotation)
@@ -518,7 +534,7 @@ namespace XREngine.Components.Animation
                 ? Quaternion.Normalize(bodyRotation * localRotation * goalRotationOffset)
                 : Quaternion.Normalize(bodyRotation * localRotation);
 
-            target.SetWorldRotation(worldRotation);
+            Humanoid.SetIKTargetWorldPose(GetAnimatedGoalTarget(goal), Vector3.Transform(localPosition, bodyMatrix), worldRotation);
             target.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
         }
 
@@ -548,8 +564,9 @@ namespace XREngine.Components.Animation
                 return body.WorldMatrix;
             }
 
-            Transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
-            return Transform.WorldMatrix;
+            var root = Root ?? Transform;
+            root.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+            return root.WorldMatrix;
         }
 
         private Quaternion GetAnimatedGoalBodyRotation()
@@ -561,8 +578,9 @@ namespace XREngine.Components.Animation
                 return body.WorldRotation;
             }
 
-            Transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
-            return Transform.WorldRotation;
+            var root = Root ?? Transform;
+            root.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+            return root.WorldRotation;
         }
 
         private Transform? GetGoalBoneTransform(ELimbEndEffector goal) => goal switch
@@ -576,53 +594,39 @@ namespace XREngine.Components.Animation
 
         private Transform EnsureAnimatedGoalTransform(ELimbEndEffector goal)
         {
-            // First check the cached animated target
             var target = GetAnimatedGoalTransform(goal);
             if (target is not null)
                 return target;
 
-            // Reuse an existing TargetIKTransform if one was already assigned
-            // (e.g. by external setup like AddCharacterIK) instead of creating a duplicate.
             var ik = GetGoalIK(goal);
             if (ik?.TargetIKTransform is Transform existingTarget)
             {
-                SetAnimatedGoalTransform(goal, existingTarget);
+                Humanoid.SetIKTarget(GetAnimatedGoalTarget(goal), existingTarget, Matrix4x4.Identity);
                 return existingTarget;
             }
 
-            _animatedGoalRootNode ??= SceneNode.NewChild("AnimatedIKTargets");
-            var targetNode = _animatedGoalRootNode.NewChild($"{goal}Target");
-            target = targetNode.GetTransformAs<Transform>(true)!;
-            SetAnimatedGoalTransform(goal, target);
-            return target;
+            return Humanoid.EnsureOwnedIKTarget(GetAnimatedGoalTarget(goal), $"{goal}Target");
         }
 
-        private void SetAnimatedGoalTransform(ELimbEndEffector goal, Transform target)
-        {
-            switch (goal)
-            {
-                case ELimbEndEffector.LeftFoot:
-                    _animatedLeftFootTarget = target;
-                    break;
-                case ELimbEndEffector.RightFoot:
-                    _animatedRightFootTarget = target;
-                    break;
-                case ELimbEndEffector.LeftHand:
-                    _animatedLeftHandTarget = target;
-                    break;
-                case ELimbEndEffector.RightHand:
-                    _animatedRightHandTarget = target;
-                    break;
-            }
-        }
+        private Transform? GetAnimatedGoalTransform(ELimbEndEffector goal)
+            => Humanoid.GetIKTargetTransform(GetAnimatedGoalTarget(goal)) as Transform;
 
-        private Transform? GetAnimatedGoalTransform(ELimbEndEffector goal) => goal switch
+        private static EHumanoidIKTarget GetAnimatedGoalTarget(ELimbEndEffector goal) => goal switch
         {
-            ELimbEndEffector.LeftFoot => _animatedLeftFootTarget,
-            ELimbEndEffector.RightFoot => _animatedRightFootTarget,
-            ELimbEndEffector.LeftHand => _animatedLeftHandTarget,
-            ELimbEndEffector.RightHand => _animatedRightHandTarget,
-            _ => null,
+            ELimbEndEffector.LeftFoot => EHumanoidIKTarget.LeftFoot,
+            ELimbEndEffector.RightFoot => EHumanoidIKTarget.RightFoot,
+            ELimbEndEffector.LeftHand => EHumanoidIKTarget.LeftHand,
+            ELimbEndEffector.RightHand => EHumanoidIKTarget.RightHand,
+            _ => EHumanoidIKTarget.LeftHand,
+        };
+
+        private bool ShouldUpdateAnimatedGoalTarget(ELimbEndEffector goal) => goal switch
+        {
+            ELimbEndEffector.LeftFoot => UpdateLeftFootTarget,
+            ELimbEndEffector.RightFoot => UpdateRightFootTarget,
+            ELimbEndEffector.LeftHand => UpdateLeftHandTarget,
+            ELimbEndEffector.RightHand => UpdateRightHandTarget,
+            _ => true,
         };
 
         private Vector3 GetAnimatedGoalLocalPosition(ELimbEndEffector goal) => goal switch

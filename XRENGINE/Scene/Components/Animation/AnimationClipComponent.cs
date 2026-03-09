@@ -185,6 +185,13 @@ namespace XREngine.Components.Animation
 
         private void RestoreAnimatedState()
         {
+            var humanoid = GetSiblingHumanoid();
+            if (humanoid is not null)
+            {
+                humanoid.ResetPose();
+                return;
+            }
+
             foreach (var member in _animatedMembersSnapshot)
             {
                 if (member.MemberType == EAnimationMemberType.Method)
@@ -197,9 +204,6 @@ namespace XREngine.Components.Animation
             }
 
             NormalizeAnimatedQuaternionTargets();
-
-            var humanoid = SceneNode.GetComponentInHierarchy("HumanoidComponent") as HumanoidComponent;
-            humanoid?.ResetAllTransformsToBindPose();
         }
 
         public void EvaluateAtTime(float timeSeconds)
@@ -215,11 +219,15 @@ namespace XREngine.Components.Animation
             float evaluationTime = NormalizePlaybackTime(timeSeconds, Animation, wrapLooped: false);
             SetAllPropertyAnimationTimes(Animation, evaluationTime, wrapLooped: false);
             PlaybackTime = evaluationTime;
+
+            if (!ShouldDriveSiblingHumanoidPose())
+                return;
+
             ApplyAnimatedValues();
 
             if (Animation.HasMuscleChannels)
             {
-                var humanoid = SceneNode.GetComponentInHierarchy("HumanoidComponent") as HumanoidComponent;
+                var humanoid = GetSiblingHumanoid();
                 humanoid?.ApplyCurrentMusclePose();
             }
         }
@@ -232,6 +240,10 @@ namespace XREngine.Components.Animation
             float delta = Engine.Delta * Speed;
             PlaybackTime = NormalizePlaybackTime(PlaybackTime + delta, Animation, wrapLooped: Animation.Looped);
             SetAllPropertyAnimationTimes(Animation, PlaybackTime, wrapLooped: false);
+
+            if (!ShouldDriveSiblingHumanoidPose())
+                return;
+
             ApplyAnimatedValues();
         }
 
@@ -259,7 +271,7 @@ namespace XREngine.Components.Animation
             if (Animation?.HasIKGoals != true)
                 return null;
 
-            var humanoid = SceneNode.GetComponentInHierarchy("HumanoidComponent") as HumanoidComponent;
+            var humanoid = GetSiblingHumanoid();
             if (humanoid is null)
                 return null;
 
@@ -285,9 +297,12 @@ namespace XREngine.Components.Animation
             if (Animation?.HasRootMotion != true)
                 return;
 
-            var humanoid = SceneNode.GetComponentInHierarchy("HumanoidComponent") as HumanoidComponent;
+            var humanoid = GetSiblingHumanoid();
             humanoid?.ResetRootMotionBaseline();
         }
+
+        private HumanoidComponent? GetSiblingHumanoid()
+            => TryGetSiblingComponent<HumanoidComponent>(out var humanoid) ? humanoid : null;
 
         private void Deinitialize()
         {
@@ -363,6 +378,12 @@ namespace XREngine.Components.Animation
             }
 
             NormalizeAnimatedQuaternionTargets();
+        }
+
+        private bool ShouldDriveSiblingHumanoidPose()
+        {
+            var humanoid = GetSiblingHumanoid();
+            return humanoid?.IsAnimatedPosePreviewActive ?? true;
         }
 
         private void ApplyRuntimeClipRemaps(AnimationMember member, ref object? value)

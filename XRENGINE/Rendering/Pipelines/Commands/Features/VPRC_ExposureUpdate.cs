@@ -24,7 +24,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         protected override void Execute()
         {
             var stage = ActivePipelineInstance.RenderState.SceneCamera?.GetPostProcessStageState<ColorGradingSettings>();
-            if (stage?.TryGetBacking(out ColorGradingSettings? grading) != true)
+            if (stage?.TryGetBacking(out ColorGradingSettings? grading) != true || grading is null)
             {
                 Debug.Out("[ExposureUpdate] No ColorGradingSettings stage found on camera");
                 return;

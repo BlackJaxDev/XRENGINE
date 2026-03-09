@@ -11,6 +11,200 @@ namespace XREngine.UnitTests.Animation;
 [TestFixture]
 public sealed class HumanoidComponentTests
 {
+    private static readonly MethodInfo ApplyBindRelativeEulerDegreesMethod =
+        typeof(HumanoidComponent).GetMethod(
+            "ApplyBindRelativeEulerDegrees",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            types: new[] { typeof(SceneNode), typeof(float), typeof(float), typeof(float), typeof(BoneAxisMapping?) },
+            modifiers: null)
+        ?? throw new InvalidOperationException("Failed to locate HumanoidComponent.ApplyBindRelativeEulerDegrees overload.");
+
+    [Test]
+    public void HumanoidComponent_DefaultsNeutralPosePresetToUnityMecanim()
+    {
+        var humanoid = new HumanoidComponent();
+
+        humanoid.NeutralPosePreset.ShouldBe(EHumanoidNeutralPosePreset.UnityMecanim);
+    }
+
+    [Test]
+    public void UnityMecanimPreset_UsesNeutralRotationsForAllBones()
+    {
+        var rotations = HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.UnityMecanim);
+
+        AssertEquivalent(
+            Quaternion.Normalize(rotations["Hips"]),
+            Quaternion.Normalize(new Quaternion(0.707106709f, -5.5577253e-08f, -4.50044837e-08f, 0.707106948f)));
+        AssertEquivalent(
+            Quaternion.Normalize(rotations["Spine"]),
+            Quaternion.Normalize(new Quaternion(-0.0227929503f, -0.000264644623f, -0.000274538994f, 0.999740183f)));
+        AssertEquivalent(
+            Quaternion.Normalize(rotations["Neck"]),
+            Quaternion.Normalize(new Quaternion(0.0162689108f, 0f, 0f, 0.999867678f)));
+        AssertEquivalent(
+            Quaternion.Normalize(rotations["LeftShoulder"]),
+            Quaternion.Normalize(new Quaternion(0.610601187f, -0.462940216f, -0.499911487f, -0.403659672f)));
+        AssertEquivalent(
+            Quaternion.Normalize(rotations["LeftUpperArm"]),
+            Quaternion.Normalize(new Quaternion(-0.294541091f, 0.175574958f, 0.104280844f, 0.933565497f)));
+        AssertEquivalent(
+            Quaternion.Normalize(rotations["LeftLowerArm"]),
+            Quaternion.Normalize(new Quaternion(-0.461033821f, 0.00238569081f, 0.500023484f, 0.733088493f)));
+        AssertEquivalent(
+            Quaternion.Normalize(rotations["RightHand"]),
+            Quaternion.Normalize(new Quaternion(0.0322548114f, 0.0347962528f, -0.0134812035f, 0.998782814f)));
+        AssertEquivalent(
+            Quaternion.Normalize(rotations["LeftIndexProximal"]),
+            Quaternion.Normalize(new Quaternion(0.272980094f, -0.0404032841f, 0.171944618f, -0.945666194f)));
+    }
+
+    [Test]
+    public void AddedToSceneNode_LoadsDefaultNeutralPosePresetUsingBindRelativeOffsets()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hipsBindRotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitZ, 30.0f * MathF.PI / 180.0f));
+        _ = new SceneNode(root, "Hips", new Transform(rotation: hipsBindRotation));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        var presetRotations = HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.UnityMecanim);
+        Quaternion expectedOffset = Quaternion.Normalize(Quaternion.Inverse(hipsBindRotation) * presetRotations["Hips"]);
+
+        humanoid.Settings.TryGetNeutralPoseBoneRotation("Hips", out Quaternion actualOffset).ShouldBeTrue();
+        AssertEquivalent(Quaternion.Normalize(actualOffset), expectedOffset);
+    }
+
+    [TestCase(EHumanoidPosePreviewMode.TPose)]
+    [TestCase(EHumanoidPosePreviewMode.MeshBindPose)]
+    public void NeutralPosePreset_Change_ReappliesBindLikePreviewModes(EHumanoidPosePreviewMode previewMode)
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        _ = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.PosePreviewMode = previewMode;
+
+        spine.GetTransformAs<Transform>(true)!.Rotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitY, 20.0f * MathF.PI / 180.0f));
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.None;
+
+        Quaternion bindRotation = Quaternion.Normalize(spine.GetTransformAs<Transform>(true)!.BindState.Rotation);
+        AssertEquivalent(Quaternion.Normalize(spine.GetTransformAs<Transform>(true)!.Rotation), bindRotation);
+    }
+
+    [Test]
+    public void NeutralPosePreset_Change_ReappliesNeutralPreview()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        _ = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.None;
+        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.NeutralMusclePose;
+
+        spine.GetTransformAs<Transform>(true)!.Rotation = Quaternion.Identity;
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.UnityMecanim;
+
+        Quaternion expectedRotation = Quaternion.Normalize(HumanoidNeutralPosePresets.GetRotations(EHumanoidNeutralPosePreset.UnityMecanim)["Spine"]);
+        AssertEquivalent(Quaternion.Normalize(spine.GetTransformAs<Transform>(true)!.Rotation), expectedRotation);
+    }
+
+    [Test]
+    public void PosePreviewMode_NeutralMusclePose_ResetsUnmappedHelperBonesToBindPose()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var chest = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var leftShoulder = new SceneNode(chest, "LeftShoulder", new Transform(translation: new(-0.25f, 0.1f, 0.0f)));
+        var shoulderTwist = new SceneNode(leftShoulder, "LeftShoulderTwist", new Transform(translation: new(-0.08f, 0.0f, 0.0f)));
+        _ = new SceneNode(shoulderTwist, "LeftArm", new Transform(translation: new(-0.22f, 0.0f, 0.0f)));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.None;
+        humanoid.SetFromNode();
+
+        shoulderTwist.GetTransformAs<Transform>(true)!.Rotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitZ, 35.0f * MathF.PI / 180.0f));
+        Quaternion neutralRotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitY, 25.0f * MathF.PI / 180.0f));
+        humanoid.Settings.NeutralPoseBoneRotations["LeftShoulder"] = neutralRotation;
+
+        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.NeutralMusclePose;
+
+        AssertEquivalent(Quaternion.Normalize(leftShoulder.GetTransformAs<Transform>(true)!.Rotation), neutralRotation);
+        AssertEquivalent(
+            Quaternion.Normalize(shoulderTwist.GetTransformAs<Transform>(true)!.Rotation),
+            Quaternion.Normalize(shoulderTwist.GetTransformAs<Transform>(true)!.BindState.Rotation));
+    }
+
+    [Test]
+    public void PosePreviewMode_NeutralMusclePose_UsesMappedArmChain_WhenDuplicateBoneNamesExistElsewhere()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var chest = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+
+        var duplicateLeftArm = new SceneNode(chest, "LeftArm", new Transform(translation: new(0.05f, -0.1f, 0.0f)));
+        var leftShoulder = new SceneNode(chest, "LeftShoulder", new Transform(translation: new(-0.25f, 0.1f, 0.0f)));
+        var leftArm = new SceneNode(leftShoulder, "LeftArm", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        _ = new SceneNode(leftArm, "LeftElbow", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.None;
+
+        Quaternion neutralRotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitZ, 20.0f * MathF.PI / 180.0f));
+        humanoid.Settings.NeutralPoseBoneRotations["LeftUpperArm"] = neutralRotation;
+
+        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.NeutralMusclePose;
+
+        AssertEquivalent(leftArm.GetTransformAs<Transform>(true)!.Rotation, neutralRotation);
+        AssertEquivalent(
+            duplicateLeftArm.GetTransformAs<Transform>(true)!.Rotation,
+            duplicateLeftArm.GetTransformAs<Transform>(true)!.BindState.Rotation);
+        humanoid.Left.Arm.Node.ShouldBeSameAs(leftArm);
+        humanoid.Left.Shoulder.Node.ShouldBeSameAs(leftShoulder);
+    }
+
+    [Test]
+    public void UnityMecanimPreset_KeepsMirroredHandsOnCorrectBodySide()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var chest = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+
+        var leftShoulder = new SceneNode(chest, "LeftShoulder", new Transform(translation: new(-0.25f, 0.1f, 0.0f)));
+        var rightShoulder = new SceneNode(chest, "RightShoulder", new Transform(translation: new(0.25f, 0.1f, 0.0f)));
+        var leftArm = new SceneNode(leftShoulder, "LeftArm", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        var rightArm = new SceneNode(rightShoulder, "RightArm", new Transform(translation: new(0.3f, 0.0f, 0.0f)));
+        var leftElbow = new SceneNode(leftArm, "LeftElbow", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        var rightElbow = new SceneNode(rightArm, "RightElbow", new Transform(translation: new(0.3f, 0.0f, 0.0f)));
+        var leftHand = new SceneNode(leftElbow, "LeftHand", new Transform(translation: new(-0.2f, 0.0f, 0.0f)));
+        var rightHand = new SceneNode(rightElbow, "RightHand", new Transform(translation: new(0.2f, 0.0f, 0.0f)));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.NeutralMusclePose;
+
+        leftHand.Transform.WorldTranslation.X.ShouldBeLessThan(0.0f);
+        rightHand.Transform.WorldTranslation.X.ShouldBeGreaterThan(0.0f);
+    }
+
     [Test]
     public void SetFromNode_AssignsNegativeXBonesToLeftSide_AndInitialHandTargetsMatch()
     {
@@ -49,8 +243,32 @@ public sealed class HumanoidComponentTests
         humanoid.Right.Wrist.Node.ShouldBeSameAs(rightHand);
         humanoid.Left.Eye.Node.ShouldBeSameAs(leftEye);
         humanoid.Right.Eye.Node.ShouldBeSameAs(rightEye);
-        humanoid.LeftHandTarget.tfm.ShouldBeSameAs(leftHand.Transform);
-        humanoid.RightHandTarget.tfm.ShouldBeSameAs(rightHand.Transform);
+    }
+
+    [Test]
+    public void SetFromNode_IgnoresShoulderAndUpperArmTwistHelpers()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var chest = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+
+        var leftShoulder = new SceneNode(chest, "LeftShoulder", new Transform(translation: new(-0.25f, 0.1f, 0.0f)));
+        _ = new SceneNode(chest, "LeftShoulderTwist", new Transform(translation: new(-0.26f, 0.1f, 0.0f)));
+
+        var leftUpperArm = new SceneNode(leftShoulder, "LeftUpperArm", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        _ = new SceneNode(leftShoulder, "LeftUpperArmTwist", new Transform(translation: new(-0.28f, 0.0f, 0.0f)));
+
+        var leftElbow = new SceneNode(leftUpperArm, "LeftElbow", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        var leftHand = new SceneNode(leftElbow, "LeftHand", new Transform(translation: new(-0.2f, 0.0f, 0.0f)));
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+
+        humanoid.Left.Shoulder.Node.ShouldBeSameAs(leftShoulder);
+        humanoid.Left.Arm.Node.ShouldBeSameAs(leftUpperArm);
+        humanoid.Left.Elbow.Node.ShouldBeSameAs(leftElbow);
+        humanoid.Left.Wrist.Node.ShouldBeSameAs(leftHand);
     }
 
     [Test]
@@ -103,6 +321,32 @@ public sealed class HumanoidComponentTests
     }
 
     [Test]
+    public void SetFromNode_DetectsFingerChains_IgnoresTwistAndMetacarpalHelpers()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var chest = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var leftShoulder = new SceneNode(chest, "LeftShoulder", new Transform(translation: new(-0.25f, 0.1f, 0.0f)));
+        var leftArm = new SceneNode(leftShoulder, "LeftUpperArm", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        var leftElbow = new SceneNode(leftArm, "LeftElbow", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        var leftHand = new SceneNode(leftElbow, "LeftHand", new Transform(translation: new(-0.2f, 0.0f, 0.0f)));
+
+        _ = new SceneNode(leftHand, "LeftIndexTwist1", new Transform(translation: new(-0.02f, 0.0f, 0.03f)));
+        var leftIndexMetacarpal = new SceneNode(leftHand, "LeftIndexMetacarpal", new Transform(translation: new(-0.03f, 0.0f, 0.05f)));
+        var leftIndexProximal = new SceneNode(leftIndexMetacarpal, "LeftIndexProximal", new Transform(translation: new(-0.01f, 0.0f, 0.03f)));
+        var leftIndexIntermediate = new SceneNode(leftIndexProximal, "LeftIndexIntermediate", new Transform(translation: new(0.0f, 0.0f, 0.02f)));
+        var leftIndexDistal = new SceneNode(leftIndexIntermediate, "LeftIndexDistal", new Transform(translation: new(0.0f, 0.0f, 0.02f)));
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+
+        humanoid.Left.Hand.Index.Proximal.Node.ShouldBeSameAs(leftIndexProximal);
+        humanoid.Left.Hand.Index.Intermediate.Node.ShouldBeSameAs(leftIndexIntermediate);
+        humanoid.Left.Hand.Index.Distal.Node.ShouldBeSameAs(leftIndexDistal);
+    }
+
+    [Test]
     public void SetFromNode_PrefersExplicitSideNames_WhenXAxisIsMirrored()
     {
         var root = new SceneNode("Root", new Transform());
@@ -145,10 +389,6 @@ public sealed class HumanoidComponentTests
         humanoid.Right.Foot.Node.ShouldBeSameAs(rightFoot);
         humanoid.Left.Eye.Node.ShouldBeSameAs(leftEye);
         humanoid.Right.Eye.Node.ShouldBeSameAs(rightEye);
-        humanoid.LeftHandTarget.tfm.ShouldBeSameAs(leftHand.Transform);
-        humanoid.RightHandTarget.tfm.ShouldBeSameAs(rightHand.Transform);
-        humanoid.LeftFootTarget.tfm.ShouldBeSameAs(leftFoot.Transform);
-        humanoid.RightFootTarget.tfm.ShouldBeSameAs(rightFoot.Transform);
     }
 
     [Test]
@@ -179,6 +419,8 @@ public sealed class HumanoidComponentTests
         SaveBindPoseRecursive(root);
 
         var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.None;
+        humanoid.Settings.ProfileSource = "manual";
         var customSpineMapping = new BoneAxisMapping
         {
             TwistAxis = 2,
@@ -188,15 +430,15 @@ public sealed class HumanoidComponentTests
             LeftRightAxis = 0,
             LeftRightSign = 1,
         };
-        humanoid.Settings.BoneAxisMappings["Spine"] = customSpineMapping;
         humanoid.SetFromNode();
+        humanoid.Settings.ProfileSource = "manual";
+        humanoid.Settings.BoneAxisMappings["Spine"] = customSpineMapping;
 
         humanoid.SetValue(EHumanoidValue.SpineFrontBack, 0.5f);
         InvokeApplyMusclePose(humanoid);
 
         var spineTransform = spine.GetTransformAs<Transform>(true)!;
-        Quaternion expectedRelative = CreateExpectedRotation(customSpineMapping, yawDeg: 0.0f, pitchDeg: 20.0f, rollDeg: 0.0f);
-        Quaternion expected = Quaternion.Normalize(spineTransform.BindState.Rotation * expectedRelative);
+        Quaternion expected = CreateExpectedRotation(humanoid, spine, customSpineMapping, yawDeg: 0.0f, pitchDeg: 20.0f, rollDeg: 0.0f);
         Quaternion actual = Quaternion.Normalize(spineTransform.Rotation);
 
         AssertEquivalent(actual, expected);
@@ -232,6 +474,8 @@ public sealed class HumanoidComponentTests
         SaveBindPoseRecursive(root);
 
         var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.None;
+        humanoid.Settings.ProfileSource = "manual";
         var customUpperLegMapping = new BoneAxisMapping
         {
             TwistAxis = 2,
@@ -241,17 +485,16 @@ public sealed class HumanoidComponentTests
             LeftRightAxis = 0,
             LeftRightSign = 1,
         };
-        humanoid.Settings.BoneAxisMappings["LeftLeg"] = customUpperLegMapping;
         humanoid.SetFromNode();
+        humanoid.Settings.ProfileSource = "manual";
+        humanoid.Settings.BoneAxisMappings["LeftLeg"] = customUpperLegMapping;
 
         humanoid.SetValue(EHumanoidValue.LeftUpperLegFrontBack, 0.5f);
         InvokeApplyMusclePose(humanoid);
 
         float pitchDeg = GetExpectedDeg(humanoid, EHumanoidValue.LeftUpperLegFrontBack, 0.5f);
-        Quaternion expectedRelative = CreateExpectedRotation(customUpperLegMapping, yawDeg: 0.0f, pitchDeg: pitchDeg, rollDeg: 0.0f);
-
         var leftLegTransform = leftLeg.GetTransformAs<Transform>(true)!;
-        Quaternion expected = Quaternion.Normalize(leftLegTransform.BindState.Rotation * expectedRelative);
+        Quaternion expected = CreateExpectedRotation(humanoid, leftLeg, customUpperLegMapping, yawDeg: 0.0f, pitchDeg: pitchDeg, rollDeg: 0.0f);
         Quaternion actual = Quaternion.Normalize(leftLegTransform.Rotation);
 
         AssertEquivalent(actual, expected);
@@ -286,6 +529,8 @@ public sealed class HumanoidComponentTests
         SaveBindPoseRecursive(root);
 
         var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.None;
+        humanoid.Settings.ProfileSource = "manual";
         var customShoulderMapping = new BoneAxisMapping
         {
             TwistAxis = 0,
@@ -295,16 +540,16 @@ public sealed class HumanoidComponentTests
             LeftRightAxis = 1,
             LeftRightSign = 1,
         };
-        humanoid.Settings.BoneAxisMappings["LeftShoulder"] = customShoulderMapping;
         humanoid.SetFromNode();
+        humanoid.Settings.ProfileSource = "manual";
+        humanoid.Settings.BoneAxisMappings["LeftShoulder"] = customShoulderMapping;
 
         humanoid.SetValue(EHumanoidValue.LeftShoulderDownUp, 0.5f);
         InvokeApplyMusclePose(humanoid);
 
         float pitchDeg = GetExpectedDeg(humanoid, EHumanoidValue.LeftShoulderDownUp, 0.5f);
         var shoulderTransform = leftShoulder.GetTransformAs<Transform>(true)!;
-        Quaternion expectedRelative = CreateExpectedRotation(customShoulderMapping, yawDeg: 0.0f, pitchDeg: pitchDeg, rollDeg: 0.0f);
-        Quaternion expected = Quaternion.Normalize(shoulderTransform.BindState.Rotation * expectedRelative);
+        Quaternion expected = CreateExpectedRotation(humanoid, leftShoulder, customShoulderMapping, yawDeg: 0.0f, pitchDeg: pitchDeg, rollDeg: 0.0f);
         Quaternion actual = Quaternion.Normalize(shoulderTransform.Rotation);
 
         AssertEquivalent(actual, expected);
@@ -342,6 +587,8 @@ public sealed class HumanoidComponentTests
         SaveBindPoseRecursive(root);
 
         var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.None;
+        humanoid.Settings.ProfileSource = "manual";
         var customFootMapping = new BoneAxisMapping
         {
             TwistAxis = 1,
@@ -351,19 +598,123 @@ public sealed class HumanoidComponentTests
             LeftRightAxis = 0,
             LeftRightSign = -1,
         };
-        humanoid.Settings.BoneAxisMappings["LeftFoot"] = customFootMapping;
         humanoid.SetFromNode();
+        humanoid.Settings.ProfileSource = "manual";
+        humanoid.Settings.BoneAxisMappings["LeftFoot"] = customFootMapping;
 
         humanoid.SetValue(EHumanoidValue.LeftFootUpDown, 0.5f);
         InvokeApplyMusclePose(humanoid);
 
         float pitchDeg = GetExpectedDeg(humanoid, EHumanoidValue.LeftFootUpDown, 0.5f);
         var footTransform = leftFoot.GetTransformAs<Transform>(true)!;
-        Quaternion expectedRelative = CreateExpectedRotation(customFootMapping, yawDeg: 0.0f, pitchDeg: pitchDeg, rollDeg: 0.0f);
-        Quaternion expected = Quaternion.Normalize(footTransform.BindState.Rotation * expectedRelative);
+        Quaternion expected = CreateExpectedRotation(humanoid, leftFoot, customFootMapping, yawDeg: 0.0f, pitchDeg: pitchDeg, rollDeg: 0.0f);
         Quaternion actual = Quaternion.Normalize(footTransform.Rotation);
 
         AssertEquivalent(actual, expected);
+    }
+
+    [Test]
+    public void SetIKTargetWorldPose_AppliesInverseOffsetToAssignedTransform()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var tracker = new SceneNode(root, "Tracker", new Transform());
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+
+        humanoid.SetIKTarget(EHumanoidIKTarget.LeftHand, tracker.Transform, Matrix4x4.CreateTranslation(1.0f, 0.0f, 0.0f));
+        humanoid.SetIKTargetWorldPose(EHumanoidIKTarget.LeftHand, new Vector3(5.0f, 0.0f, 0.0f), Quaternion.Identity);
+
+        AssertVectorEquivalent(tracker.Transform.WorldTranslation, new Vector3(4.0f, 0.0f, 0.0f));
+        AssertVectorEquivalent(humanoid.GetIKTargetWorldMatrix(EHumanoidIKTarget.LeftHand).Translation, new Vector3(5.0f, 0.0f, 0.0f));
+    }
+
+    [Test]
+    public void PosePreviewMode_NeutralMusclePose_AppliesNeutralBoneRotations()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        _ = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.None;
+        humanoid.SetFromNode();
+
+        Quaternion neutralRotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI * 0.25f));
+        humanoid.Settings.NeutralPoseBoneRotations["Spine"] = neutralRotation;
+        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.NeutralMusclePose;
+
+        AssertEquivalent(spine.GetTransformAs<Transform>(true)!.Rotation, neutralRotation);
+    }
+
+    [Test]
+    public void PosePreviewMode_NeutralMusclePose_PersistsAgainstLaterMuscleTicks()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        _ = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.None;
+        humanoid.SetFromNode();
+
+        Quaternion neutralRotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI * 0.25f));
+        humanoid.Settings.NeutralPoseBoneRotations["Spine"] = neutralRotation;
+        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.NeutralMusclePose;
+        humanoid.SetValue(EHumanoidValue.SpineFrontBack, 0.75f);
+
+        InvokeApplyMusclePose(humanoid);
+
+        AssertEquivalent(spine.GetTransformAs<Transform>(true)!.Rotation, neutralRotation);
+    }
+
+    [Test]
+    public void PosePreviewMode_NeutralMusclePose_UpdatesRenderMatrices()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        _ = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.NeutralPosePreset = EHumanoidNeutralPosePreset.None;
+        humanoid.SetFromNode();
+
+        Quaternion neutralRotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI * 0.25f));
+        humanoid.Settings.NeutralPoseBoneRotations["Spine"] = neutralRotation;
+        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.NeutralMusclePose;
+
+        Transform spineTransform = spine.GetTransformAs<Transform>(true)!;
+        AssertEquivalent(spineTransform.Rotation, neutralRotation);
+        AssertEquivalent(spineTransform.RenderRotation, spineTransform.WorldRotation);
+    }
+
+    [TestCase(EHumanoidPosePreviewMode.TPose)]
+    [TestCase(EHumanoidPosePreviewMode.MeshBindPose)]
+    public void PosePreviewMode_BindLikeModes_PersistAgainstLaterMuscleTicks(EHumanoidPosePreviewMode previewMode)
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        _ = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+        humanoid.PosePreviewMode = previewMode;
+        humanoid.SetValue(EHumanoidValue.SpineFrontBack, 0.75f);
+
+        InvokeApplyMusclePose(humanoid);
+
+        Quaternion bindRotation = Quaternion.Normalize(spine.GetTransformAs<Transform>(true)!.BindState.Rotation);
+        AssertEquivalent(spine.GetTransformAs<Transform>(true)!.Rotation, bindRotation);
     }
 
     [Test]
@@ -602,7 +953,7 @@ public sealed class HumanoidComponentTests
     }
 
     [Test]
-    public void ApplyNeutralPoseFromAuditReport_LoadsPerBoneBindRelativeOffsets()
+    public void ApplyNeutralPoseRotations_MapsCanonicalBoneNamesToAssignedNodes()
     {
         var root = new SceneNode("Root", new Transform());
         var hips = new SceneNode(root, "Hips", new Transform());
@@ -613,25 +964,98 @@ public sealed class HumanoidComponentTests
         humanoid.SetFromNode();
 
         Quaternion expectedOffset = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitX, 15.0f * MathF.PI / 180.0f));
-        var report = new HumanoidPoseAuditReport
+        humanoid.ApplyNeutralPoseRotations(new Dictionary<string, Quaternion>
         {
-            DefaultMusclePose = new HumanoidPoseAuditSample
-            {
-                Bones =
-                [
-                    new HumanoidPoseAuditBoneSample
-                    {
-                        Name = "Spine",
-                        BindRelativeRotation = HumanoidPoseAuditQuaternion.From(expectedOffset),
-                    },
-                ],
-            },
-        };
-
-        humanoid.ApplyNeutralPoseFromAuditReport(report);
+            ["Spine"] = expectedOffset,
+        });
 
         humanoid.Settings.TryGetNeutralPoseBoneRotation("Spine", out Quaternion actualOffset).ShouldBeTrue();
         AssertEquivalent(Quaternion.Normalize(actualOffset), expectedOffset);
+    }
+
+    [Test]
+    public void ApplyNeutralPoseRotations_MapsCanonicalFingerBoneNamesToAssignedNodes()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var chest = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var rightShoulder = new SceneNode(chest, "RightShoulder", new Transform(translation: new(0.25f, 0.1f, 0.0f)));
+        var rightArm = new SceneNode(rightShoulder, "RightArm", new Transform(translation: new(0.3f, 0.0f, 0.0f)));
+        var rightElbow = new SceneNode(rightArm, "RightElbow", new Transform(translation: new(0.3f, 0.0f, 0.0f)));
+        var rightHand = new SceneNode(rightElbow, "RightHand", new Transform(translation: new(0.2f, 0.0f, 0.0f)));
+        var rightThumb01 = new SceneNode(rightHand, "RightThumb01", new Transform(translation: new(0.03f, 0.0f, 0.04f)));
+        _ = new SceneNode(rightThumb01, "RightThumb02", new Transform(translation: new(0.0f, 0.0f, 0.02f)));
+        _ = new SceneNode(rightThumb01.FindDescendantByName("RightThumb02")!, "RightThumb03", new Transform(translation: new(0.0f, 0.0f, 0.02f)));
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+
+        Quaternion expectedOffset = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitY, 10.0f * MathF.PI / 180.0f));
+        humanoid.ApplyNeutralPoseRotations(new Dictionary<string, Quaternion>
+        {
+            ["RightThumbProximal"] = expectedOffset,
+        });
+
+        humanoid.Settings.TryGetNeutralPoseBoneRotation("RightThumbProximal", out Quaternion actualOffset).ShouldBeTrue();
+        AssertEquivalent(Quaternion.Normalize(actualOffset), expectedOffset);
+    }
+
+    [Test]
+    public void ApplyNeutralPoseLocalRotations_ConvertsAbsoluteLocalRotationToBindRelativeOffset()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spineBindRotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitX, 30.0f * MathF.PI / 180.0f));
+        var spine = new SceneNode(hips, "Spine", new Transform(
+            translation: new(0.0f, 0.3f, 0.0f),
+            rotation: spineBindRotation));
+        _ = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+
+        Quaternion exportedLocalRotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitY, 40.0f * MathF.PI / 180.0f));
+        Quaternion expectedOffset = Quaternion.Normalize(Quaternion.Inverse(spineBindRotation) * exportedLocalRotation);
+
+        humanoid.ApplyNeutralPoseLocalRotations(new Dictionary<string, Quaternion>
+        {
+            ["Spine"] = exportedLocalRotation,
+        });
+
+        humanoid.Settings.TryGetNeutralPoseBoneRotation("Spine", out Quaternion actualOffset).ShouldBeTrue();
+        AssertEquivalent(Quaternion.Normalize(actualOffset), expectedOffset);
+        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.NeutralMusclePose;
+        AssertEquivalent(Quaternion.Normalize(spine.GetTransformAs<Transform>(true)!.Rotation), exportedLocalRotation);
+    }
+
+    [Test]
+    public void PosePreviewMode_NeutralMusclePose_AppliesStoredFingerNeutralRotations()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var chest = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var leftShoulder = new SceneNode(chest, "LeftShoulder", new Transform(translation: new(-0.25f, 0.1f, 0.0f)));
+        var leftArm = new SceneNode(leftShoulder, "LeftArm", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        var leftElbow = new SceneNode(leftArm, "LeftElbow", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        var leftHand = new SceneNode(leftElbow, "LeftHand", new Transform(translation: new(-0.2f, 0.0f, 0.0f)));
+        var leftIndex = new SceneNode(leftHand, "LeftIndexProximal", new Transform(translation: new(-0.03f, 0.0f, 0.05f)));
+        _ = new SceneNode(leftIndex, "LeftIndexIntermediate", new Transform(translation: new(0.0f, 0.0f, 0.02f)));
+        _ = new SceneNode(leftIndex.FindDescendantByName("LeftIndexIntermediate")!, "LeftIndexDistal", new Transform(translation: new(0.0f, 0.0f, 0.02f)));
+
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+
+        Quaternion fingerRotation = Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitZ, 20.0f * MathF.PI / 180.0f));
+        humanoid.Settings.NeutralPoseBoneRotations["LeftIndexProximal"] = fingerRotation;
+        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.NeutralMusclePose;
+
+        AssertEquivalent(leftIndex.GetTransformAs<Transform>(true)!.Rotation, fingerRotation);
     }
 
     [Test]
@@ -742,21 +1166,17 @@ public sealed class HumanoidComponentTests
         method.Invoke(humanoid, null);
     }
 
-    private static Quaternion CreateExpectedRotation(BoneAxisMapping mapping, float yawDeg, float pitchDeg, float rollDeg)
+    private static Quaternion CreateExpectedRotation(HumanoidComponent humanoid, SceneNode node, BoneAxisMapping mapping, float yawDeg, float pitchDeg, float rollDeg)
     {
-        const float degToRad = MathF.PI / 180.0f;
+        var bindTransform = node.GetTransformAs<Transform>(true)!;
+        var probe = new SceneNode($"{node.Name}_Probe", new Transform(
+            translation: bindTransform.BindState.Translation,
+            rotation: bindTransform.BindState.Rotation,
+            scale: bindTransform.BindState.Scale));
+        probe.Transform.SaveBindState();
 
-        Quaternion twist = Quaternion.CreateFromAxisAngle(
-            AxisIndexToVector(mapping.TwistAxis),
-            HandednessSign(mapping.TwistAxis) * mapping.TwistSign * yawDeg * degToRad);
-        Quaternion frontBack = Quaternion.CreateFromAxisAngle(
-            AxisIndexToVector(mapping.FrontBackAxis),
-            HandednessSign(mapping.FrontBackAxis) * mapping.FrontBackSign * pitchDeg * degToRad);
-        Quaternion leftRight = Quaternion.CreateFromAxisAngle(
-            AxisIndexToVector(mapping.LeftRightAxis),
-            HandednessSign(mapping.LeftRightAxis) * mapping.LeftRightSign * rollDeg * degToRad);
-
-        return Quaternion.Normalize(leftRight * frontBack * twist);
+        ApplyBindRelativeEulerDegreesMethod.Invoke(humanoid, new object[] { probe, yawDeg, pitchDeg, rollDeg, mapping });
+        return Quaternion.Normalize(probe.GetTransformAs<Transform>(true)!.Rotation);
     }
 
     private static float GetExpectedDeg(HumanoidComponent humanoid, EHumanoidValue value, float muscle)
@@ -852,17 +1272,6 @@ public sealed class HumanoidComponentTests
         return lenSq > 1e-8f ? vector / MathF.Sqrt(lenSq) : fallback;
     }
 
-    private static Vector3 AxisIndexToVector(int axis) => axis switch
-    {
-        0 => Vector3.UnitX,
-        1 => Vector3.UnitY,
-        2 => Vector3.UnitZ,
-        _ => Vector3.UnitY,
-    };
-
-    private static float HandednessSign(int axis)
-        => axis == 2 ? 1.0f : -1.0f;
-
     private static void AssertEquivalent(Quaternion actual, Quaternion expected, float tolerance = 0.0001f)
     {
         if (Quaternion.Dot(actual, expected) < 0.0f)
@@ -872,6 +1281,13 @@ public sealed class HumanoidComponentTests
         actual.Y.ShouldBe(expected.Y, tolerance);
         actual.Z.ShouldBe(expected.Z, tolerance);
         actual.W.ShouldBe(expected.W, tolerance);
+    }
+
+    private static void AssertVectorEquivalent(Vector3 actual, Vector3 expected, float tolerance = 0.0001f)
+    {
+        actual.X.ShouldBe(expected.X, tolerance);
+        actual.Y.ShouldBe(expected.Y, tolerance);
+        actual.Z.ShouldBe(expected.Z, tolerance);
     }
 
 }

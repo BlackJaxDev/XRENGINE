@@ -560,7 +560,7 @@ namespace XREngine
                 if (HasExistingAssetFile(subAsset))
                 {
                     skippedCount++;
-                    Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Skipping (already exists): {0} '{1}' at '{2}'", subAsset.GetType().Name, subAsset.Name, subAsset.FilePath);
+                    Debug.Log(ELogCategory.General, "[ExternalizeEmbedded] Skipping (already exists): {0} '{1}' at '{2}'", subAsset.GetType().Name, subAsset.Name ?? string.Empty, subAsset.FilePath ?? string.Empty);
                     continue;
                 }
 

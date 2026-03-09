@@ -1,6 +1,6 @@
 # AOT Compatibility Scan (XRENGINE)
 
-Date: 2025-12-22
+Date: 2026-03-09
 
 This document tracks code patterns in this repo that are **incompatible** or **high-risk** for .NET **NativeAOT** (and, secondarily, ILLink trimming).
 
@@ -9,6 +9,33 @@ This document tracks code patterns in this repo that are **incompatible** or **h
 > - The repo contains multiple apps (Editor, VRClient, Server, etc.) and third-party code under `Build/Submodules/`.
 > - **AOT viability is per-final-app**. Some findings are “Editor-only” and may not matter if the Editor is never AOT-compiled.
 > - Findings are grouped by severity and include a suggested remediation path.
+
+## 2026 status check
+
+This scan still mostly rings true.
+
+What still holds after re-checking the current repo:
+
+- The codebase now has clearer **NativeAOT publish plumbing** than it did when this doc was first written:
+  - `BuildSettings.PublishLauncherAsNativeAot`
+  - `XREngine.Editor/ProjectBuilder.cs` enforces that NativeAOT is only used on the launcher publish path
+  - `XREngine.Editor/CodeManager.cs` can generate projects with `PublishAot` / `IsAotCompatible`
+- That plumbing does **not** mean the runtime is currently NativeAOT-safe end-to-end.
+- The biggest blockers called out here are still present in current code:
+  - `XREngine.VRClient/Program.cs` still uses `System.Reflection.Emit` to create enums at runtime.
+  - `XRENGINE/Scene/Components/Scripting/GameCSProjLoader.cs` still uses collectible `AssemblyLoadContext` + dynamic assembly loading.
+  - `XRENGINE/Core/Tools/DelegateBuilder.cs` still uses `Expression.Compile()`.
+  - `XRENGINE/Scene/Transforms/TransformBase.cs` still scans loaded assemblies for transform discovery.
+  - Prefab/cooked-asset paths are still explicitly annotated with `RequiresUnreferencedCode` / `RequiresDynamicCode` in multiple runtime files.
+- Several projects now declare `IsAotCompatible=True` and `IsTrimmable=True`. Treat this as **intent plus analyzer coverage**, not as proof that the final apps are ready to publish with NativeAOT.
+
+Net assessment as of 2026-03-09:
+
+- **NativeAOT support is partially scaffolded in the build pipeline.**
+- **Runtime compatibility is still incomplete for shipping apps that need dynamic loading, runtime code generation, reflection-driven serialization, or reflection-driven type discovery.**
+- The most realistic short-term posture remains:
+  - Editor/dev workflows on CoreCLR/JIT
+  - NativeAOT only for a cooked/final launcher once AOT blockers are explicitly gated or replaced
 
 ---
 
@@ -59,6 +86,8 @@ This document tracks code patterns in this repo that are **incompatible** or **h
      - Keep the C# dynamic-load path for non-AOT desktop builds.
 
 ### AOT-003 — `dynamic` COM automation (WScript.Shell)
+
+Status note (2026-03-09): this appears to be a **historical caution**, not a current repo hit.
 
 - Location: historical third-party utility path from a removed media submodule (method `GetLnkTargetPath`)
 - Pattern:
@@ -326,6 +355,71 @@ If you want “user code hot reload” in dev but “static code” in shipping:
 
 - Build user game code into a normal referenced project for Release shipping.
 - Keep dynamic load/unload tooling only in dev/editor builds.
+
+---
+
+## Comparison: NativeAOT vs minimal in-house transpiler for XRE-owned code
+
+This section compares two realistic paths:
+
+1. **NativeAOT-first**: keep using .NET, remove/gate incompatible runtime features, and publish the final game EXE with `PublishAot=true`.
+2. **Minimal transpiler**: build a narrow IL-to-native pipeline for only the engine/game code we own, with explicit exclusions for dynamic .NET features.
+
+The important constraint is scope. A viable in-house transpiler here would **not** be a general IL2CPP replacement. It would need to target a restricted subset of our own code only.
+
+| Dimension | NativeAOT-first | Minimal in-house transpiler (own code only) |
+|---|---|---|
+| Primary investment | Refactor engine/runtime patterns to be AOT-safe | Build and maintain a compiler, metadata model, codegen backend, and runtime support layer |
+| Compatibility with existing libraries | High, as long as referenced libraries are AOT/trimming-safe | Low to medium; every library boundary becomes a translation/runtime problem unless left managed |
+| Dynamic assembly loading / hot reload | Must be disabled or isolated for shipping AOT builds | Usually impossible unless kept in a separate managed host process |
+| Reflection-heavy systems | Can survive only with registries, source generation, and metadata discipline | Must usually be redesigned away or replaced with generated registries up front |
+| Time to first shippable result | Moderate | Very high |
+| Maintenance burden | Ongoing but bounded to application/runtime refactors | Permanent compiler/runtime product cost |
+| Debugging/tooling | Strong; keep standard .NET build and diagnostic tooling | Weak initially; custom source mapping, crash diagnosis, and symbols become your problem |
+| Performance upside | Good startup and deployment wins; runtime perf often good enough | Potentially higher ceiling in narrow areas, but only after major compiler work |
+| Risk of semantic drift | Low to medium | Very high; generics, exceptions, delegates, async, marshalling, and GC semantics are easy to get subtly wrong |
+| Best fit for XRENGINE now | Shipping cooked final executables without editor-style dynamic features | Long-term platform/compiler R&D if AOT becomes a core engine differentiator |
+
+### What a “minimal transpiler” would have to exclude
+
+To stay tractable, a minimal transpiler for XRE-owned code would likely need all of the following restrictions:
+
+- One platform first, likely `win-x64` only.
+- No runtime managed plugin loading.
+- No `System.Reflection.Emit`.
+- No `Expression.Compile()` or other runtime codegen.
+- No arbitrary reflection-based serialization.
+- No “scan every assembly/type in the AppDomain” discovery paths.
+- Prefer blittable DTOs and explicit generated registries.
+- Prefer source-generated serializers and source-generated component/type registries.
+
+### What the minimal transpiler would still need to solve
+
+Even with the restrictions above, this is still a serious project:
+
+- Parse IL and metadata for the supported subset.
+- Choose a backend: C++, C, LLVM IR, or direct machine code generation.
+- Define a generic-sharing or monomorphization strategy.
+- Implement delegate, virtual dispatch, exception, and array semantics.
+- Provide interop rules for native libraries already used by the engine.
+- Provide a metadata model for any reflection we keep.
+- Integrate with the cook/build pipeline and produce debuggable symbols.
+
+### Pragmatic read for XRENGINE
+
+For the current repo, a minimal transpiler is only attractive if all of the following become true:
+
+- NativeAOT proves insufficient for a must-have shipping target.
+- We are willing to permanently split dev/editor workflows from shipping runtime workflows.
+- We deliberately narrow the supported gameplay/runtime subset.
+- We accept a multi-phase compiler/runtime effort rather than an engine feature task.
+
+Otherwise, the better return is to keep pushing the codebase toward a clear **AOT-safe runtime subset**:
+
+- generated registries instead of runtime discovery
+- generated serializers instead of arbitrary reflection
+- no runtime managed loading in shipping builds
+- no runtime code emission in shipping builds
 
 ---
 

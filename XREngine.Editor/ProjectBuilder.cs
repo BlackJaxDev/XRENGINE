@@ -1,14 +1,23 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
+using System.Runtime.Loader;
 using System.Text;
 using System.Text.Json;
+using System.Linq;
 using MemoryPack;
 using XREngine;
+using XREngine.Components.Scripting;
+using XREngine.Core.Attributes;
 using XREngine.Core.Files;
 using XREngine.Diagnostics;
+using XREngine.Scene.Transforms;
+using XREngine.Serialization;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Editor;
 
@@ -27,6 +36,7 @@ internal static class ProjectBuilder
 
     private const string StartupAssetName = "startup.asset";
     private const string CommonAssetsArchiveName = "CommonAssets.pak";
+    private const string AotRuntimeMetadataFileName = AotRuntimeMetadataStore.MetadataFileName;
 
     private sealed record AssetTimestampEntry(string Path, long LastWriteUtcTicks, long Length);
 
@@ -227,15 +237,15 @@ internal static class ProjectBuilder
             steps.Add(new BuildStep("Cooking content", () => CookContent(context)));
         }
 
-        bool needConfigArchive = generateConfigArchive || settings.BuildLauncherExecutable;
-        if (needConfigArchive)
-        {
-            steps.Add(new BuildStep("Generating config archive", () => GenerateConfigArchive(context)));
-        }
-
         if (settings.BuildManagedAssemblies)
         {
             steps.Add(new BuildStep("Compiling managed assemblies", () => BuildManagedAssemblies(configuration, platform)));
+        }
+
+        bool needConfigArchive = generateConfigArchive || settings.BuildLauncherExecutable;
+        if (needConfigArchive)
+        {
+            steps.Add(new BuildStep("Generating config archive", () => GenerateConfigArchive(context, configuration, platform)));
         }
 
         if (settings.CopyGameAssemblies)
@@ -301,7 +311,7 @@ internal static class ProjectBuilder
         BuildContentArchiveIncremental(context);
     }
 
-    private static void GenerateConfigArchive(BuildContext context)
+    private static void GenerateConfigArchive(BuildContext context, string configuration, string platform)
     {
         string staging = context.ConfigStagingDirectory;
         if (Directory.Exists(staging))
@@ -314,6 +324,9 @@ internal static class ProjectBuilder
             WriteCookedAsset(Engine.EditorPreferences, Path.Combine(staging, XRProject.EngineSettingsFileName));
 
         WriteCookedAsset(Engine.UserSettings ?? new UserSettings(), Path.Combine(staging, XRProject.UserSettingsFileName));
+
+        if (context.Settings.PublishLauncherAsNativeAot)
+            WriteAotRuntimeMetadata(staging, configuration, platform);
 
         Directory.CreateDirectory(Path.GetDirectoryName(context.ConfigArchivePath)!);
         try
@@ -333,6 +346,202 @@ internal static class ProjectBuilder
         {
             if (Directory.Exists(staging))
                 Directory.Delete(staging, true);
+        }
+    }
+
+    private static void WriteAotRuntimeMetadata(string stagingDirectory, string configuration, string platform)
+    {
+        AotRuntimeMetadata metadata = BuildAotRuntimeMetadata(configuration, platform);
+        byte[] bytes = MemoryPackSerializer.Serialize(metadata);
+        File.WriteAllBytes(Path.Combine(stagingDirectory, AotRuntimeMetadataFileName), bytes);
+    }
+
+    private static AotRuntimeMetadata BuildAotRuntimeMetadata(string configuration, string platform)
+    {
+        List<Assembly> assemblies = [.. AppDomain.CurrentDomain.GetAssemblies().Where(a => !a.IsDynamic)];
+        DynamicGameAssemblyScope? gameAssemblyScope = TryLoadBuiltGameAssembly(configuration, platform);
+        if (gameAssemblyScope?.Assembly is not null)
+            assemblies.Add(gameAssemblyScope.Assembly);
+
+        try
+        {
+            Type[] allTypes = [.. EnumerateLoadableTypes(assemblies)
+                .Where(t => t.AssemblyQualifiedName is not null)
+                .DistinctBy(t => t.AssemblyQualifiedName, StringComparer.Ordinal)];
+
+            AotRuntimeMetadata metadata = new()
+            {
+                KnownTypeAssemblyQualifiedNames = [.. allTypes
+                    .Select(t => t.AssemblyQualifiedName!)
+                    .OrderBy(x => x, StringComparer.Ordinal)],
+                TransformTypes = [.. allTypes
+                    .Where(t => !t.IsAbstract && t.IsSubclassOf(typeof(TransformBase)))
+                    .Select(t => new AotTransformTypeInfo
+                    {
+                        AssemblyQualifiedName = t.AssemblyQualifiedName!,
+                        FriendlyName = FriendlyTransformName(t),
+                    })
+                    .OrderBy(x => x.AssemblyQualifiedName, StringComparer.Ordinal)],
+                TypeRedirects = [.. allTypes
+                    .SelectMany(BuildRedirectInfos)
+                    .OrderBy(x => x.LegacyTypeName, StringComparer.Ordinal)
+                    .ThenBy(x => x.FullName, StringComparer.Ordinal)],
+                WorldObjectReplications = [.. allTypes
+                    .Where(t => !t.IsAbstract && typeof(XRWorldObjectBase).IsAssignableFrom(t))
+                    .Select(BuildReplicationInfo)
+                    .Where(x => x is not null)
+                    .Cast<AotWorldObjectReplicationInfo>()
+                    .OrderBy(x => x.AssemblyQualifiedName, StringComparer.Ordinal)],
+                YamlTypeConverterTypeNames = [.. allTypes
+                    .Where(t => !t.IsAbstract && !t.IsInterface)
+                    .Where(t => typeof(IYamlTypeConverter).IsAssignableFrom(t))
+                    .Where(t => t.GetCustomAttribute<YamlTypeConverterAttribute>() is not null)
+                    .Select(t => t.AssemblyQualifiedName!)
+                    .OrderBy(x => x, StringComparer.Ordinal)]
+            };
+
+            return metadata;
+        }
+        finally
+        {
+            gameAssemblyScope?.Dispose();
+        }
+    }
+
+    private static IEnumerable<Type> EnumerateLoadableTypes(IEnumerable<Assembly> assemblies)
+    {
+        foreach (Assembly assembly in assemblies.DistinctBy(a => a.FullName, StringComparer.Ordinal))
+        {
+            Type[] types;
+            try
+            {
+                types = assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (Type type in types)
+                yield return type;
+        }
+    }
+
+    private static IEnumerable<AotTypeRedirectInfo> BuildRedirectInfos(Type type)
+    {
+        XRTypeRedirectAttribute[] attrs = type.GetCustomAttributes<XRTypeRedirectAttribute>(inherit: false).ToArray();
+        if (attrs.Length == 0)
+            yield break;
+
+        string fullName = type.FullName ?? type.Name;
+        string? assemblyQualifiedName = type.AssemblyQualifiedName;
+
+        foreach (XRTypeRedirectAttribute attr in attrs)
+        {
+            foreach (string legacyName in attr.LegacyTypeNames ?? [])
+            {
+                if (string.IsNullOrWhiteSpace(legacyName))
+                    continue;
+
+                yield return new AotTypeRedirectInfo
+                {
+                    LegacyTypeName = legacyName.Trim(),
+                    FullName = fullName,
+                    AssemblyQualifiedName = assemblyQualifiedName,
+                };
+            }
+        }
+    }
+
+    private static AotWorldObjectReplicationInfo? BuildReplicationInfo(Type type)
+    {
+        const BindingFlags replicableFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        List<string> onChange = [];
+        List<string> onTick = [];
+        HashSet<string> compressed = new(StringComparer.Ordinal);
+
+        foreach (PropertyInfo property in type.GetProperties(replicableFlags))
+        {
+            if (property.GetCustomAttribute<ReplicateOnChangeAttribute>(true) is ReplicateOnChangeAttribute changeAttr)
+            {
+                onChange.Add(property.Name);
+                if (changeAttr.Compress)
+                    compressed.Add(property.Name);
+            }
+
+            if (property.GetCustomAttribute<ReplicateOnTickAttribute>(true) is ReplicateOnTickAttribute tickAttr)
+            {
+                onTick.Add(property.Name);
+                if (tickAttr.Compress)
+                    compressed.Add(property.Name);
+            }
+        }
+
+        if (onChange.Count == 0 && onTick.Count == 0)
+            return null;
+
+        return new AotWorldObjectReplicationInfo
+        {
+            AssemblyQualifiedName = type.AssemblyQualifiedName!,
+            ReplicateOnChangeProperties = [.. onChange.OrderBy(x => x, StringComparer.Ordinal)],
+            ReplicateOnTickProperties = [.. onTick.OrderBy(x => x, StringComparer.Ordinal)],
+            CompressedPropertyNames = [.. compressed.OrderBy(x => x, StringComparer.Ordinal)],
+        };
+    }
+
+    private static string FriendlyTransformName(Type type)
+    {
+        DisplayNameAttribute? name = type.GetCustomAttribute<DisplayNameAttribute>();
+        return $"{name?.DisplayName ?? type.Name} ({type.Assembly.GetName().Name})";
+    }
+
+    private static DynamicGameAssemblyScope? TryLoadBuiltGameAssembly(string configuration, string platform)
+    {
+        string binaryPath = global::CodeManager.Instance.GetBinaryPath(configuration, platform);
+        if (string.IsNullOrWhiteSpace(binaryPath) || !File.Exists(binaryPath))
+            return null;
+
+        try
+        {
+            byte[] assemblyBytes = File.ReadAllBytes(binaryPath);
+            string pdbPath = Path.ChangeExtension(binaryPath, ".pdb");
+            byte[]? pdbBytes = File.Exists(pdbPath) ? File.ReadAllBytes(pdbPath) : null;
+
+            GameCSProjLoader.DynamicEngineAssemblyLoadContext context = new();
+            Assembly assembly;
+            using MemoryStream assemblyStream = new(assemblyBytes);
+            if (pdbBytes is not null)
+            {
+                using MemoryStream pdbStream = new(pdbBytes);
+                assembly = context.LoadFromStream(assemblyStream, pdbStream);
+            }
+            else
+            {
+                assembly = context.LoadFromStream(assemblyStream);
+            }
+
+            return new DynamicGameAssemblyScope(context, assembly);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private sealed class DynamicGameAssemblyScope(GameCSProjLoader.DynamicEngineAssemblyLoadContext context, Assembly assembly) : IDisposable
+    {
+        public GameCSProjLoader.DynamicEngineAssemblyLoadContext Context { get; } = context;
+        public Assembly Assembly { get; } = assembly;
+
+        public void Dispose()
+        {
+            Context.Unload();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
         }
     }
 

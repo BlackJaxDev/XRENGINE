@@ -11,8 +11,6 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
-using BoneChainItem = XREngine.Components.Animation.InverseKinematics.BoneChainItem;
-using BoneIKConstraints = XREngine.Components.Animation.InverseKinematics.BoneIKConstraints;
 
 namespace XREngine.Components.Animation
 {
@@ -48,16 +46,101 @@ namespace XREngine.Components.Animation
             set => SetField(ref _settings, value);
         }
 
-        private string? _neutralPoseAuditPath;
-        [InspectorPath(InspectorPathKind.File, InspectorPathFormat.Both, DialogMode = InspectorPathDialogMode.Open, Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*", Title = "Choose Neutral Pose Audit Path")]
-        public string? NeutralPoseAuditPath
+        private EHumanoidPosePreviewMode _posePreviewMode;
+        public EHumanoidPosePreviewMode PosePreviewMode
         {
-            get => _neutralPoseAuditPath;
-            set => SetField(ref _neutralPoseAuditPath, value);
+            get => _posePreviewMode;
+            set => SetField(ref _posePreviewMode, value);
         }
 
-        private string? _loadedNeutralPoseAuditPath;
-        private bool _neutralPoseAuditLoadFailed;
+        private (TransformBase? tfm, Matrix4x4 offset) _headIKTarget = HumanoidIKTargetDefaults.Empty;
+        public (TransformBase? tfm, Matrix4x4 offset) HeadIKTarget
+        {
+            get => _headIKTarget;
+            set => SetField(ref _headIKTarget, value);
+        }
+
+        private (TransformBase? tfm, Matrix4x4 offset) _hipsIKTarget = HumanoidIKTargetDefaults.Empty;
+        public (TransformBase? tfm, Matrix4x4 offset) HipsIKTarget
+        {
+            get => _hipsIKTarget;
+            set => SetField(ref _hipsIKTarget, value);
+        }
+
+        private (TransformBase? tfm, Matrix4x4 offset) _leftHandIKTarget = HumanoidIKTargetDefaults.Empty;
+        public (TransformBase? tfm, Matrix4x4 offset) LeftHandIKTarget
+        {
+            get => _leftHandIKTarget;
+            set => SetField(ref _leftHandIKTarget, value);
+        }
+
+        private (TransformBase? tfm, Matrix4x4 offset) _rightHandIKTarget = HumanoidIKTargetDefaults.Empty;
+        public (TransformBase? tfm, Matrix4x4 offset) RightHandIKTarget
+        {
+            get => _rightHandIKTarget;
+            set => SetField(ref _rightHandIKTarget, value);
+        }
+
+        private (TransformBase? tfm, Matrix4x4 offset) _leftFootIKTarget = HumanoidIKTargetDefaults.Empty;
+        public (TransformBase? tfm, Matrix4x4 offset) LeftFootIKTarget
+        {
+            get => _leftFootIKTarget;
+            set => SetField(ref _leftFootIKTarget, value);
+        }
+
+        private (TransformBase? tfm, Matrix4x4 offset) _rightFootIKTarget = HumanoidIKTargetDefaults.Empty;
+        public (TransformBase? tfm, Matrix4x4 offset) RightFootIKTarget
+        {
+            get => _rightFootIKTarget;
+            set => SetField(ref _rightFootIKTarget, value);
+        }
+
+        private (TransformBase? tfm, Matrix4x4 offset) _leftElbowIKTarget = HumanoidIKTargetDefaults.Empty;
+        public (TransformBase? tfm, Matrix4x4 offset) LeftElbowIKTarget
+        {
+            get => _leftElbowIKTarget;
+            set => SetField(ref _leftElbowIKTarget, value);
+        }
+
+        private (TransformBase? tfm, Matrix4x4 offset) _rightElbowIKTarget = HumanoidIKTargetDefaults.Empty;
+        public (TransformBase? tfm, Matrix4x4 offset) RightElbowIKTarget
+        {
+            get => _rightElbowIKTarget;
+            set => SetField(ref _rightElbowIKTarget, value);
+        }
+
+        private (TransformBase? tfm, Matrix4x4 offset) _leftKneeIKTarget = HumanoidIKTargetDefaults.Empty;
+        public (TransformBase? tfm, Matrix4x4 offset) LeftKneeIKTarget
+        {
+            get => _leftKneeIKTarget;
+            set => SetField(ref _leftKneeIKTarget, value);
+        }
+
+        private (TransformBase? tfm, Matrix4x4 offset) _rightKneeIKTarget = HumanoidIKTargetDefaults.Empty;
+        public (TransformBase? tfm, Matrix4x4 offset) RightKneeIKTarget
+        {
+            get => _rightKneeIKTarget;
+            set => SetField(ref _rightKneeIKTarget, value);
+        }
+
+        private (TransformBase? tfm, Matrix4x4 offset) _chestIKTarget = HumanoidIKTargetDefaults.Empty;
+        public (TransformBase? tfm, Matrix4x4 offset) ChestIKTarget
+        {
+            get => _chestIKTarget;
+            set => SetField(ref _chestIKTarget, value);
+        }
+
+        private SceneNode? _ikTargetRootNode;
+
+        private EHumanoidNeutralPosePreset _neutralPosePreset = EHumanoidNeutralPosePreset.UnityMecanim;
+        public EHumanoidNeutralPosePreset NeutralPosePreset
+        {
+            get => _neutralPosePreset;
+            set => SetField(ref _neutralPosePreset, value);
+        }
+
+        public bool IsAnimatedPosePreviewActive
+            => PosePreviewMode == EHumanoidPosePreviewMode.AnimatedPose;
 
         public void SetValue(EHumanoidValue value, float amount)
         {
@@ -350,77 +433,202 @@ namespace XREngine.Components.Animation
         public void ApplyCurrentMusclePose()
             => ApplyMusclePose();
 
-        public void ReloadNeutralPoseFromAuditPath()
-        {
-            _loadedNeutralPoseAuditPath = null;
-            _neutralPoseAuditLoadFailed = false;
-            EnsureNeutralPoseLoaded();
-        }
+        public void ReloadNeutralPosePreset()
+            => ApplyNeutralPosePreset(NeutralPosePreset);
 
         public void ClearNeutralPoseOffsets()
         {
             Settings.NeutralPoseBoneRotations.Clear();
-            _loadedNeutralPoseAuditPath = null;
-            _neutralPoseAuditLoadFailed = false;
+            if (PosePreviewMode == EHumanoidPosePreviewMode.NeutralMusclePose)
+                ApplyNeutralPosePreview();
         }
 
-        public void ApplyNeutralPoseFromAuditReport(HumanoidPoseAuditReport report)
+        public void ApplyNeutralPosePreset(EHumanoidNeutralPosePreset preset)
+            => ApplyNeutralPoseLocalRotations(HumanoidNeutralPosePresets.GetRotations(preset));
+
+        public void ApplyNeutralPoseLocalRotations(IReadOnlyDictionary<string, Quaternion> rotations)
         {
             Settings.NeutralPoseBoneRotations.Clear();
-            if (report.DefaultMusclePose?.Bones is not { Count: > 0 } bones)
-                return;
+            foreach ((string boneName, Quaternion rotation) in rotations)
+            {
+                string targetBoneName = ResolveNeutralPoseBoneSettingKey(boneName);
+                SceneNode? targetNode = ResolveNeutralPoseMappedNodeByStoredKey(targetBoneName);
+                Quaternion bindRelativeRotation = rotation;
 
-            foreach (HumanoidPoseAuditBoneSample bone in bones)
-                Settings.NeutralPoseBoneRotations[bone.Name] = Quaternion.Normalize(bone.BindRelativeRotation.Value);
+                if (targetNode?.GetTransformAs<Transform>(true) is Transform targetTransform)
+                    bindRelativeRotation = Quaternion.Normalize(Quaternion.Inverse(targetTransform.BindState.Rotation) * rotation);
+
+                Settings.NeutralPoseBoneRotations[targetBoneName] = Quaternion.Normalize(bindRelativeRotation);
+            }
+
+            if (PosePreviewMode == EHumanoidPosePreviewMode.NeutralMusclePose)
+                ApplyNeutralPosePreview();
         }
 
-        public void LoadNeutralPoseFromAudit(string path)
+        public void ApplyNeutralPoseRotations(IReadOnlyDictionary<string, Quaternion> rotations)
         {
-            if (string.IsNullOrWhiteSpace(path))
-                throw new ArgumentException("Neutral pose audit path is required.", nameof(path));
+            Settings.NeutralPoseBoneRotations.Clear();
+            foreach ((string boneName, Quaternion rotation) in rotations)
+            {
+                string targetBoneName = ResolveNeutralPoseBoneSettingKey(boneName);
+                Settings.NeutralPoseBoneRotations[targetBoneName] = Quaternion.Normalize(rotation);
+            }
 
-            HumanoidPoseAuditReport report = HumanoidPoseAuditIO.LoadReport(path);
-            ApplyNeutralPoseFromAuditReport(report);
-            _loadedNeutralPoseAuditPath = path;
-            _neutralPoseAuditLoadFailed = false;
+            if (PosePreviewMode == EHumanoidPosePreviewMode.NeutralMusclePose)
+                ApplyNeutralPosePreview();
         }
 
-        private void EnsureNeutralPoseLoaded()
+        public (TransformBase? tfm, Matrix4x4 offset) GetIKTarget(EHumanoidIKTarget target)
+            => target switch
+            {
+                EHumanoidIKTarget.Head => HeadIKTarget,
+                EHumanoidIKTarget.Hips => HipsIKTarget,
+                EHumanoidIKTarget.LeftHand => LeftHandIKTarget,
+                EHumanoidIKTarget.RightHand => RightHandIKTarget,
+                EHumanoidIKTarget.LeftFoot => LeftFootIKTarget,
+                EHumanoidIKTarget.RightFoot => RightFootIKTarget,
+                EHumanoidIKTarget.LeftElbow => LeftElbowIKTarget,
+                EHumanoidIKTarget.RightElbow => RightElbowIKTarget,
+                EHumanoidIKTarget.LeftKnee => LeftKneeIKTarget,
+                EHumanoidIKTarget.RightKnee => RightKneeIKTarget,
+                EHumanoidIKTarget.Chest => ChestIKTarget,
+                _ => HumanoidIKTargetDefaults.Empty,
+            };
+
+        public TransformBase? GetIKTargetTransform(EHumanoidIKTarget target)
+            => GetIKTarget(target).tfm;
+
+        public void SetIKTarget(EHumanoidIKTarget target, TransformBase? tfm, Matrix4x4 offset)
         {
-            if (string.IsNullOrWhiteSpace(NeutralPoseAuditPath))
+            var binding = (tfm, offset);
+            switch (target)
+            {
+                case EHumanoidIKTarget.Head:
+                    HeadIKTarget = binding;
+                    break;
+                case EHumanoidIKTarget.Hips:
+                    HipsIKTarget = binding;
+                    break;
+                case EHumanoidIKTarget.LeftHand:
+                    LeftHandIKTarget = binding;
+                    break;
+                case EHumanoidIKTarget.RightHand:
+                    RightHandIKTarget = binding;
+                    break;
+                case EHumanoidIKTarget.LeftFoot:
+                    LeftFootIKTarget = binding;
+                    break;
+                case EHumanoidIKTarget.RightFoot:
+                    RightFootIKTarget = binding;
+                    break;
+                case EHumanoidIKTarget.LeftElbow:
+                    LeftElbowIKTarget = binding;
+                    break;
+                case EHumanoidIKTarget.RightElbow:
+                    RightElbowIKTarget = binding;
+                    break;
+                case EHumanoidIKTarget.LeftKnee:
+                    LeftKneeIKTarget = binding;
+                    break;
+                case EHumanoidIKTarget.RightKnee:
+                    RightKneeIKTarget = binding;
+                    break;
+                case EHumanoidIKTarget.Chest:
+                    ChestIKTarget = binding;
+                    break;
+            }
+        }
+
+        public void ClearIKTarget(EHumanoidIKTarget target)
+            => SetIKTarget(target, null, Matrix4x4.Identity);
+
+        public void ClearIKTargets()
+        {
+            ClearIKTarget(EHumanoidIKTarget.Head);
+            ClearIKTarget(EHumanoidIKTarget.Hips);
+            ClearIKTarget(EHumanoidIKTarget.LeftHand);
+            ClearIKTarget(EHumanoidIKTarget.RightHand);
+            ClearIKTarget(EHumanoidIKTarget.LeftFoot);
+            ClearIKTarget(EHumanoidIKTarget.RightFoot);
+            ClearIKTarget(EHumanoidIKTarget.LeftElbow);
+            ClearIKTarget(EHumanoidIKTarget.RightElbow);
+            ClearIKTarget(EHumanoidIKTarget.LeftKnee);
+            ClearIKTarget(EHumanoidIKTarget.RightKnee);
+            ClearIKTarget(EHumanoidIKTarget.Chest);
+        }
+
+        public Transform EnsureOwnedIKTarget(EHumanoidIKTarget target, string? nodeName = null)
+        {
+            if (GetIKTargetTransform(target) is Transform transform)
+                return transform;
+
+            _ikTargetRootNode ??= SceneNode.NewChild("HumanoidIKTargets");
+            var targetNode = _ikTargetRootNode.NewChild(nodeName ?? GetDefaultIKTargetNodeName(target));
+            transform = targetNode.GetTransformAs<Transform>(true)!;
+            SetIKTarget(target, transform, Matrix4x4.Identity);
+            return transform;
+        }
+
+        public Matrix4x4 GetIKTargetWorldMatrix(EHumanoidIKTarget target)
+        {
+            var binding = GetIKTarget(target);
+            return binding.offset * (binding.tfm?.RenderMatrix ?? Matrix4x4.Identity);
+        }
+
+        public void SetIKTargetWorldPosition(EHumanoidIKTarget target, Vector3 position)
+        {
+            var binding = GetIKTarget(target);
+            if (binding.tfm is null)
                 return;
 
-            if (_loadedNeutralPoseAuditPath is not null &&
-                string.Equals(_loadedNeutralPoseAuditPath, NeutralPoseAuditPath, StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
+            Matrix4x4 current = GetIKTargetWorldMatrix(target);
+            current.Translation = position;
+            ApplyIKTargetWorldMatrix(binding, current);
+        }
 
-            if (_neutralPoseAuditLoadFailed &&
-                string.Equals(_loadedNeutralPoseAuditPath, NeutralPoseAuditPath, StringComparison.OrdinalIgnoreCase))
-            {
+        public void SetIKTargetWorldRotation(EHumanoidIKTarget target, Quaternion rotation)
+        {
+            var binding = GetIKTarget(target);
+            if (binding.tfm is null)
                 return;
-            }
 
-            try
-            {
-                LoadNeutralPoseFromAudit(NeutralPoseAuditPath);
-            }
-            catch (Exception ex)
-            {
-                _loadedNeutralPoseAuditPath = NeutralPoseAuditPath;
-                _neutralPoseAuditLoadFailed = true;
-                Settings.NeutralPoseBoneRotations.Clear();
-                Debug.LogWarning($"[HumanoidComponent] Failed to load neutral pose audit '{NeutralPoseAuditPath}': {ex.Message}");
-            }
+            Matrix4x4 current = GetIKTargetWorldMatrix(target);
+            current = Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(current.Translation);
+            ApplyIKTargetWorldMatrix(binding, current);
+        }
+
+        public void SetIKTargetWorldPose(EHumanoidIKTarget target, Vector3 position, Quaternion rotation)
+        {
+            var binding = GetIKTarget(target);
+            if (binding.tfm is null)
+                return;
+
+            Matrix4x4 desired = Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position);
+            ApplyIKTargetWorldMatrix(binding, desired);
         }
 
         private Quaternion GetNeutralPoseBoneRotation(SceneNode? node)
         {
-            if (node?.Name is not null && Settings.TryGetNeutralPoseBoneRotation(node.Name, out Quaternion rotation))
+            if (node is null)
+                return Quaternion.Identity;
+
+            if (TryGetNeutralPoseStoredRotation(node, out Quaternion rotation))
                 return Quaternion.Normalize(rotation);
 
             return Quaternion.Identity;
+        }
+
+        private bool TryGetNeutralPoseStoredRotation(SceneNode node, out Quaternion rotation)
+        {
+            if (node.Name is not null && Settings.TryGetNeutralPoseBoneRotation(node.Name, out rotation))
+                return true;
+
+            string? canonicalName = ResolveNeutralPoseCanonicalName(node);
+            if (canonicalName is not null && Settings.TryGetNeutralPoseBoneRotation(canonicalName, out rotation))
+                return true;
+
+            rotation = Quaternion.Identity;
+            return false;
         }
 
         private void ApplyNeutralBindRelativeRotation(SceneNode? node, Quaternion deltaRotation)
@@ -435,6 +643,9 @@ namespace XREngine.Components.Animation
 
         private void ApplyMusclePose()
         {
+            if (!IsAnimatedPosePreviewActive)
+                return;
+
             // Skip when no muscle values have been set — avoids overwriting
             // animation-driven bone rotations with bind-pose identity.
             lock (_muscleValuesLock)
@@ -442,8 +653,6 @@ namespace XREngine.Components.Animation
                 if (_muscleValues.Count == 0)
                     return;
             }
-
-            EnsureNeutralPoseLoaded();
 
             EnsureBoneMapping();
 
@@ -1089,24 +1298,22 @@ namespace XREngine.Components.Animation
         {
             base.OnPropertyChanged(propName, prev, field);
 
-            if (propName == nameof(NeutralPoseAuditPath))
+            if (propName == nameof(NeutralPosePreset))
             {
-                _loadedNeutralPoseAuditPath = null;
-                _neutralPoseAuditLoadFailed = false;
+                ReloadNeutralPosePreset();
+                ApplyPosePreviewMode();
             }
+
+            if (propName == nameof(PosePreviewMode))
+                ApplyPosePreviewMode();
         }
 
         protected internal override void AddedToSceneNode(SceneNode sceneNode)
         {
             base.AddedToSceneNode(sceneNode);
             SetFromNode();
-        }
-
-        private bool _solveIK = false;
-        public bool SolveIK
-        {
-            get => _solveIK;
-            set => SetField(ref _solveIK, value);
+            ReloadNeutralPosePreset();
+            ApplyPosePreviewMode();
         }
 
         public HumanoidComponent() 
@@ -1122,60 +1329,50 @@ namespace XREngine.Components.Animation
             if (Engine.Rendering.State.IsShadowPass)
                 return;
 
-            var hipToHeadChain = GetHipToHeadChain();
-            if (hipToHeadChain is not null)
-                for (int i = 0; i < hipToHeadChain.Length; i++)
-                {
-                    BoneChainItem? bone = hipToHeadChain[i];
-                    BoneChainItem? nextBone = i + 1 < hipToHeadChain.Length ? hipToHeadChain[i + 1] : null;
-                    Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
-                    if (nextBone is not null)
-                        Engine.Rendering.Debug.RenderLine(bone.WorldPosSolve, nextBone.WorldPosSolve, ColorF4.Red);
-                }
+            RenderBoneLink(Hips, Spine);
+            RenderBoneLink(Spine, Chest);
+            RenderBoneLink(Chest, UpperChest.Node is not null ? UpperChest : Neck);
+            if (UpperChest.Node is not null)
+                RenderBoneLink(UpperChest, Neck);
+            RenderBoneLink(Neck, Head);
+            RenderBoneLink(Head, Jaw);
 
-            var leftLegToAnkleChain = GetLeftLegToAnkleChain();
-            if (leftLegToAnkleChain is not null)
-                for (int i = 0; i < leftLegToAnkleChain.Length; i++)
-                {
-                    BoneChainItem? bone = leftLegToAnkleChain[i];
-                    BoneChainItem? nextBone = i + 1 < leftLegToAnkleChain.Length ? leftLegToAnkleChain[i + 1] : null;
-                    Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
-                    if (nextBone is not null)
-                        Engine.Rendering.Debug.RenderLine(bone.WorldPosSolve, nextBone.WorldPosSolve, ColorF4.Red);
-                }
+            RenderBodySide(Left);
+            RenderBodySide(Right);
+        }
 
-            var rightLegToAnkleChain = GetRightLegToAnkleChain();
-            if (rightLegToAnkleChain is not null)
-                for (int i = 0; i < rightLegToAnkleChain.Length; i++)
-                {
-                    BoneChainItem? bone = rightLegToAnkleChain[i];
-                    BoneChainItem? nextBone = i + 1 < rightLegToAnkleChain.Length ? rightLegToAnkleChain[i + 1] : null;
-                    Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
-                    if (nextBone is not null)
-                        Engine.Rendering.Debug.RenderLine(bone.WorldPosSolve, nextBone.WorldPosSolve, ColorF4.Red);
-                }
+        private void RenderBodySide(BodySide side)
+        {
+            RenderBoneLink(side.Shoulder, side.Arm);
+            RenderBoneLink(side.Arm, side.Elbow);
+            RenderBoneLink(side.Elbow, side.Wrist);
+            RenderFinger(side.Hand.Thumb);
+            RenderFinger(side.Hand.Index);
+            RenderFinger(side.Hand.Middle);
+            RenderFinger(side.Hand.Ring);
+            RenderFinger(side.Hand.Pinky);
 
-            var leftShoulderToWristChain = GetLeftShoulderToWristChain();
-            if (leftShoulderToWristChain is not null)
-                for (int i = 0; i < leftShoulderToWristChain.Length; i++)
-                {
-                    BoneChainItem? bone = leftShoulderToWristChain[i];
-                    BoneChainItem? nextBone = i + 1 < leftShoulderToWristChain.Length ? leftShoulderToWristChain[i + 1] : null;
-                    Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
-                    if (nextBone is not null)
-                        Engine.Rendering.Debug.RenderLine(bone.WorldPosSolve, nextBone.WorldPosSolve, ColorF4.Red);
-                }
+            RenderBoneLink(side.Leg, side.Knee);
+            RenderBoneLink(side.Knee, side.Foot);
+            RenderBoneLink(side.Foot, side.Toes);
+        }
 
-            var rightShoulderToWristChain = GetRightShoulderToWristChain();
-            if (rightShoulderToWristChain is not null)
-                for (int i = 0; i < rightShoulderToWristChain.Length; i++)
-                {
-                    BoneChainItem? bone = rightShoulderToWristChain[i];
-                    BoneChainItem? nextBone = i + 1 < rightShoulderToWristChain.Length ? rightShoulderToWristChain[i + 1] : null;
-                    Engine.Rendering.Debug.RenderPoint(bone.WorldPosSolve, ColorF4.Red);
-                    if (nextBone is not null)
-                        Engine.Rendering.Debug.RenderLine(bone.WorldPosSolve, nextBone.WorldPosSolve, ColorF4.Red);
-                }
+        private void RenderFinger(BodySide.Fingers.Finger finger)
+        {
+            RenderBoneLink(finger.Proximal, finger.Intermediate);
+            RenderBoneLink(finger.Intermediate, finger.Distal);
+        }
+
+        private static void RenderBoneLink(BoneDef start, BoneDef end)
+        {
+            if (start.Node?.Transform is null || end.Node?.Transform is null)
+                return;
+
+            Vector3 startPos = start.Node.Transform.WorldTranslation;
+            Vector3 endPos = end.Node.Transform.WorldTranslation;
+            Engine.Rendering.Debug.RenderPoint(startPos, ColorF4.Red);
+            Engine.Rendering.Debug.RenderPoint(endPos, ColorF4.Red);
+            Engine.Rendering.Debug.RenderLine(startPos, endPos, ColorF4.Red);
         }
 
         public class BoneDef : XRBase
@@ -1315,16 +1512,21 @@ namespace XREngine.Components.Animation
         {
             ResetRuntimeAnimationDiagnostics();
             ClearRuntimeMuscleState();
-            Hips.ResetPose();
-            Spine.ResetPose();
-            Chest.ResetPose();
-            UpperChest.ResetPose();
-            Neck.ResetPose();
-            Head.ResetPose();
-            Jaw.ResetPose();
-            EyesTarget.ResetPose();
-            Left.ResetPose();
-            Right.ResetPose();
+            GetSiblingComponent<HumanoidIKSolverComponent>(false)?.ClearAnimatedIKGoals();
+            if (SceneNode is not null)
+                ResetBindPoseRecursive(SceneNode);
+
+            SyncPreviewRenderMatrices();
+        }
+
+        private static void ResetBindPoseRecursive(SceneNode node)
+        {
+            node.Transform.ResetPose();
+            foreach (TransformBase child in node.Transform.Children)
+            {
+                if (child.SceneNode is not null)
+                    ResetBindPoseRecursive(child.SceneNode);
+            }
         }
 
         private void ClearRuntimeMuscleState()
@@ -1336,160 +1538,6 @@ namespace XREngine.Components.Animation
             }
 
             Settings.CurrentValues.Clear();
-        }
-
-        public BoneChainItem[]? _hipToHeadChain = null;
-        public BoneChainItem[]? _leftLegToAnkleChain = null;
-        public BoneChainItem[]? _rightLegToAnkleChain = null;
-        public BoneChainItem[]? _leftShoulderToWristChain = null;
-        public BoneChainItem[]? _rightShoulderToWristChain = null;
-        private bool _leftArmIKEnabled = true;
-        private bool _rightArmIKEnabled = true;
-        private bool _leftLegIKEnabled = true;
-        private bool _rightLegIKEnabled = true;
-        private bool _hipToHeadIKEnabled = true;
-        private (TransformBase? tfm, Matrix4x4 offset) _headTarget = (null, Matrix4x4.Identity);
-        private (TransformBase? tfm, Matrix4x4 offset) _hipsTarget = (null, Matrix4x4.Identity);
-        private (TransformBase? tfm, Matrix4x4 offset) _leftHandTarget = (null, Matrix4x4.Identity);
-        private (TransformBase? tfm, Matrix4x4 offset) _rightHandTarget = (null, Matrix4x4.Identity);
-        private (TransformBase? tfm, Matrix4x4 offset) _leftFootTarget = (null, Matrix4x4.Identity);
-        private (TransformBase? tfm, Matrix4x4 offset) _rightFootTarget = (null, Matrix4x4.Identity);
-        private (TransformBase? tfm, Matrix4x4 offset) _leftElbowTarget = (null, Matrix4x4.Identity);
-        private (TransformBase? tfm, Matrix4x4 offset) _rightElbowTarget = (null, Matrix4x4.Identity);
-        private (TransformBase? tfm, Matrix4x4 offset) _leftKneeTarget = (null, Matrix4x4.Identity);
-        private (TransformBase? tfm, Matrix4x4 offset) _rightKneeTarget = (null, Matrix4x4.Identity);
-        private (TransformBase? tfm, Matrix4x4 offset) _chestTarget = (null, Matrix4x4.Identity);
-
-        private static BoneChainItem[] Link(BoneDef[] bones)
-            => bones.Any(bone => bone.Node is null) 
-            ? [] 
-            : [.. bones.Select(bone => new BoneChainItem(bone.Node!, bone.Constraints))];
-
-        public bool LeftArmIKEnabled
-        {
-            get => _leftArmIKEnabled;
-            set => SetField(ref _leftArmIKEnabled, value);
-        }
-        public bool RightArmIKEnabled
-        {
-            get => _rightArmIKEnabled;
-            set => SetField(ref _rightArmIKEnabled, value);
-        }
-        public bool LeftLegIKEnabled
-        {
-            get => _leftLegIKEnabled;
-            set => SetField(ref _leftLegIKEnabled, value);
-        }
-        public bool RightLegIKEnabled
-        {
-            get => _rightLegIKEnabled;
-            set => SetField(ref _rightLegIKEnabled, value);
-        }
-        public bool HipToHeadIKEnabled
-        {
-            get => _hipToHeadIKEnabled;
-            set => SetField(ref _hipToHeadIKEnabled, value);
-        }
-
-        public BoneChainItem[]? GetHipToHeadChain()
-        {
-            if (!_hipToHeadIKEnabled)
-                return null;
-
-            return _hipToHeadChain ??= UpperChest.Node is not null 
-                ? Link([Hips, Spine, Chest, UpperChest, Neck, Head])
-                : Link([Hips, Spine, Chest, Neck, Head]);
-        }
-
-        public BoneChainItem[]? GetLeftLegToAnkleChain()
-        {
-            if (!_leftLegIKEnabled)
-                return null;
-
-            return _leftLegToAnkleChain ??= Link([Left.Leg, Left.Knee, Left.Foot]);
-        }
-
-        public BoneChainItem[]? GetRightLegToAnkleChain()
-        {
-            if (!_rightLegIKEnabled)
-                return null;
-
-            return _rightLegToAnkleChain ??= Link([Right.Leg, Right.Knee, Right.Foot]);
-        }
-
-        public BoneChainItem[]? GetLeftShoulderToWristChain()
-        {
-            if (!_leftArmIKEnabled)
-                return null;
-
-            return _leftShoulderToWristChain ??= Link([Left.Shoulder, Left.Arm, Left.Elbow, Left.Wrist]);
-        }
-
-        public BoneChainItem[]? GetRightShoulderToWristChain()
-        {
-            if (!_rightArmIKEnabled)
-                return null;
-
-            return _rightShoulderToWristChain ??= Link([Right.Shoulder, Right.Arm, Right.Elbow, Right.Wrist]);
-        }
-
-        public static Matrix4x4 GetMatrixForTarget((TransformBase? tfm, Matrix4x4 offset) target)
-            => target.offset * (target.tfm?.RenderMatrix ?? Matrix4x4.Identity);
-
-        public (TransformBase? tfm, Matrix4x4 offset) HeadTarget
-        {
-            get => _headTarget;
-            set => SetField(ref _headTarget, value);
-        }
-        public (TransformBase? tfm, Matrix4x4 offset) HipsTarget
-        {
-            get => _hipsTarget;
-            set => SetField(ref _hipsTarget, value);
-        }
-        public (TransformBase? tfm, Matrix4x4 offset) LeftHandTarget
-        {
-            get => _leftHandTarget;
-            set => SetField(ref _leftHandTarget, value);
-        }
-        public (TransformBase? tfm, Matrix4x4 offset) RightHandTarget
-        {
-            get => _rightHandTarget;
-            set => SetField(ref _rightHandTarget, value);
-        }
-        public (TransformBase? tfm, Matrix4x4 offset) LeftFootTarget
-        {
-            get => _leftFootTarget;
-            set => SetField(ref _leftFootTarget, value);
-        }
-        public (TransformBase? tfm, Matrix4x4 offset) RightFootTarget
-        {
-            get => _rightFootTarget;
-            set => SetField(ref _rightFootTarget, value);
-        }
-        public (TransformBase? tfm, Matrix4x4 offset) LeftElbowTarget
-        {
-            get => _leftElbowTarget;
-            set => SetField(ref _leftElbowTarget, value);
-        }
-        public (TransformBase? tfm, Matrix4x4 offset) RightElbowTarget
-        {
-            get => _rightElbowTarget;
-            set => SetField(ref _rightElbowTarget, value);
-        }
-        public (TransformBase? tfm, Matrix4x4 offset) LeftKneeTarget
-        {
-            get => _leftKneeTarget;
-            set => SetField(ref _leftKneeTarget, value);
-        }
-        public (TransformBase? tfm, Matrix4x4 offset) RightKneeTarget
-        {
-            get => _rightKneeTarget;
-            set => SetField(ref _rightKneeTarget, value);
-        }
-        public (TransformBase? tfm, Matrix4x4 offset) ChestTarget
-        {
-            get => _chestTarget;
-            set => SetField(ref _chestTarget, value);
         }
 
         public RenderInfo[] RenderedObjects { get; }
@@ -1528,8 +1576,8 @@ namespace XREngine.Components.Animation
                     (UpperChest, ByNameContainsAny("UpperChest", "Upper_Chest")),
                     (Neck, ByName("Neck")),
                     (Head, ByName("Head")),
-                    (Left.Shoulder, BySideAwarePosition("Shoulder", isLeft: true, x => x.X < 0.0f)),
-                    (Right.Shoulder, BySideAwarePosition("Shoulder", isLeft: false, x => x.X > 0.0f)),
+                    (Left.Shoulder, BySideAwarePositionAndDoesNotContain("Shoulder", TwistBoneMismatch, isLeft: true, x => x.X < 0.0f)),
+                    (Right.Shoulder, BySideAwarePositionAndDoesNotContain("Shoulder", TwistBoneMismatch, isLeft: false, x => x.X > 0.0f)),
                 ]);
 
             // If UpperChest was found, shoulders/neck/head may be children of UpperChest rather than Chest.
@@ -1537,8 +1585,8 @@ namespace XREngine.Components.Animation
                 FindChildrenFor(UpperChest, [
                     (Neck, ByName("Neck")),
                     (Head, ByName("Head")),
-                    (Left.Shoulder, BySideAwarePosition("Shoulder", isLeft: true, x => x.X < 0.0f)),
-                    (Right.Shoulder, BySideAwarePosition("Shoulder", isLeft: false, x => x.X > 0.0f)),
+                    (Left.Shoulder, BySideAwarePositionAndDoesNotContain("Shoulder", TwistBoneMismatch, isLeft: true, x => x.X < 0.0f)),
+                    (Right.Shoulder, BySideAwarePositionAndDoesNotContain("Shoulder", TwistBoneMismatch, isLeft: false, x => x.X > 0.0f)),
                 ]);
 
             if (Neck.Node is not null && Head.Node is null)
@@ -1559,7 +1607,7 @@ namespace XREngine.Components.Animation
             //Find shoulder bones
             if (Left.Shoulder.Node is not null)
                 FindChildrenFor(Left.Shoulder, [
-                    (Left.Arm, ByNameContainsAll("Arm")),
+                    (Left.Arm, ByNameContainsAllAndDoesNotContain(TwistBoneMismatch, "Arm")),
                     (Left.Elbow, ByNameContainsAnyAndDoesNotContain(ElbowNameMatches, TwistBoneMismatch)),
                     (Left.Wrist, ByNameContainsAnyAndDoesNotContain(HandNameMatches, TwistBoneMismatch)),
                 ]);
@@ -1567,7 +1615,7 @@ namespace XREngine.Components.Animation
             if (Right.Shoulder.Node is not null)
             {
                 FindChildrenFor(Right.Shoulder, [
-                    (Right.Arm, ByNameContainsAll("Arm")),
+                    (Right.Arm, ByNameContainsAllAndDoesNotContain(TwistBoneMismatch, "Arm")),
                     (Right.Elbow, ByNameContainsAnyAndDoesNotContain(ElbowNameMatches, TwistBoneMismatch)),
                     (Right.Wrist, ByNameContainsAnyAndDoesNotContain(HandNameMatches, TwistBoneMismatch)),
                 ]);
@@ -1639,39 +1687,13 @@ namespace XREngine.Components.Animation
                     (Right.Toes, ByNameContainsAll(ToeNameContains)),
                 ]);
 
-            //Left.Knee.Constraints = KneeConstraints();
-            //Right.Knee.Constraints = KneeConstraints();
-            //Left.Elbow.Constraints = ElbowConstraints();
-            //Right.Elbow.Constraints = ElbowConstraints();
-
-            //Assign initial solve targets to current bone positions
-
-            //Center
-            HipsTarget = (Hips.Node?.Transform, Matrix4x4.Identity);
-            ChestTarget = (Chest.Node?.Transform, Matrix4x4.Identity);
-            HeadTarget = (Head.Node?.Transform, Matrix4x4.Identity);
-
-            //Hands
-            LeftHandTarget = (Left.Wrist.Node?.Transform, Matrix4x4.Identity);
-            RightHandTarget = (Right.Wrist.Node?.Transform, Matrix4x4.Identity);
-
-            //Feet
-            LeftFootTarget = (Left.Foot.Node?.Transform, Matrix4x4.Identity);
-            RightFootTarget = (Right.Foot.Node?.Transform, Matrix4x4.Identity);
-
-            //Elbows
-            LeftElbowTarget = (Left.Elbow.Node?.Transform, Matrix4x4.Identity);
-            RightElbowTarget = (Right.Elbow.Node?.Transform, Matrix4x4.Identity);
-
-            //Knees
-            LeftKneeTarget = (Left.Knee.Node?.Transform, Matrix4x4.Identity);
-            RightKneeTarget = (Right.Knee.Node?.Transform, Matrix4x4.Identity);
-
             // Log diagnostic information about bone mapping results
             LogBoneMappingDiagnostics();
 
-            if (string.IsNullOrWhiteSpace(Settings.ProfileSource)
-                || string.Equals(Settings.ProfileSource, "auto-generated", StringComparison.OrdinalIgnoreCase))
+            bool shouldAutoProfile = string.IsNullOrWhiteSpace(Settings.ProfileSource)
+                || string.Equals(Settings.ProfileSource, "auto-generated", StringComparison.OrdinalIgnoreCase);
+
+            if (shouldAutoProfile)
             {
                 Settings.BoneAxisMappings.Clear();
             }
@@ -1681,7 +1703,8 @@ namespace XREngine.Components.Animation
             // sets IsIKCalibrated based on overall confidence, and applies
             // conservative fallback when confidence is low.
             var profileResult = AvatarHumanoidProfileBuilder.BuildProfile(this);
-            Settings.ProfileSource = "auto-generated";
+            if (shouldAutoProfile)
+                Settings.ProfileSource = "auto-generated";
 
             string avatarName = SceneNode?.Name ?? "(unknown)";
             AvatarHumanoidProfileBuilder.LogProfileSummary(profileResult, avatarName);
@@ -1928,32 +1951,6 @@ namespace XREngine.Components.Animation
                 $"IK={ikPolicy} calibrated={ikCalibrated}");
         }
 
-        private static BoneIKConstraints KneeConstraints()
-        {
-            return new BoneIKConstraints()
-            {
-                MaxPitch = 90.0f,
-                MinPitch = -90.0f,
-                MaxRoll = 0.0f,
-                MinRoll = 0.0f,
-                MaxYaw = 0.0f,
-                MinYaw = 0.0f,
-            };
-        }
-
-        private static BoneIKConstraints ElbowConstraints()
-        {
-            return new BoneIKConstraints()
-            {
-                MaxPitch = 90.0f,
-                MinPitch = -90.0f,
-                MaxRoll = 0.0f,
-                MinRoll = 0.0f,
-                MaxYaw = 90.0f,
-                MinYaw = -90.0f,
-            };
-        }
-
         private const string LegNameContains = "Leg";
         private const string ToeNameContains = "Toe";
         private const string KneeNameContains = "Knee";
@@ -1969,114 +1966,7 @@ namespace XREngine.Components.Animation
         private static readonly string[] ProximalFingerSegmentMatches = ["1", "01", "prox", "proximal"];
         private static readonly string[] IntermediateFingerSegmentMatches = ["2", "02", "inter", "intermediate"];
         private static readonly string[] DistalFingerSegmentMatches = ["3", "03", "dist", "distal", "tip"];
-        private static readonly string[] FingerBoneMismatch = ["metacarp"];
-
-        public void SetFootPositionX(float x, bool leftFoot)
-        {
-            if (leftFoot)
-                LeftFootTarget = (null, Matrix4x4.CreateTranslation(new Vector3(x, LeftFootTarget.offset.Translation.Y, LeftFootTarget.offset.Translation.Z)));
-            else
-                RightFootTarget = (null, Matrix4x4.CreateTranslation(new Vector3(x, RightFootTarget.offset.Translation.Y, RightFootTarget.offset.Translation.Z)));
-        }
-        public void SetFootPositionY(float y, bool leftFoot)
-        {
-            if (leftFoot)
-                LeftFootTarget = (null, Matrix4x4.CreateTranslation(new Vector3(LeftFootTarget.offset.Translation.X, y, LeftFootTarget.offset.Translation.Z)));
-            else
-                RightFootTarget = (null, Matrix4x4.CreateTranslation(new Vector3(RightFootTarget.offset.Translation.X, y, RightFootTarget.offset.Translation.Z)));
-        }
-        public void SetFootPositionZ(float z, bool leftFoot)
-        {
-            if (leftFoot)
-                LeftFootTarget = (null, Matrix4x4.CreateTranslation(new Vector3(LeftFootTarget.offset.Translation.X, LeftFootTarget.offset.Translation.Y, z)));
-            else
-                RightFootTarget = (null, Matrix4x4.CreateTranslation(new Vector3(RightFootTarget.offset.Translation.X, RightFootTarget.offset.Translation.Y, z)));
-        }
-        public void SetFootPosition(Vector3 position, bool leftFoot)
-        {
-            if (leftFoot)
-                LeftFootTarget = (null, Matrix4x4.CreateTranslation(position));
-            else
-                RightFootTarget = (null, Matrix4x4.CreateTranslation(position));
-        }
-        public void SetFootRotation(Quaternion rotation, bool leftFoot)
-        {
-            if (leftFoot)
-                LeftFootTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(LeftFootTarget.offset.Translation));
-            else
-                RightFootTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(RightFootTarget.offset.Translation));
-        }
-        public void SetHandPosition(Vector3 position, bool leftHand)
-        {
-            if (leftHand)
-                LeftHandTarget = (null, Matrix4x4.CreateTranslation(position));
-            else
-                RightHandTarget = (null, Matrix4x4.CreateTranslation(position));
-        }
-        public void SetHandRotation(Quaternion rotation, bool leftHand)
-        {
-            if (leftHand)
-                LeftHandTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(LeftHandTarget.offset.Translation));
-            else
-                RightHandTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(RightHandTarget.offset.Translation));
-        }
-        public void SetFootPositionAndRotation(Vector3 position, Quaternion rotation, bool leftFoot)
-        {
-            if (leftFoot)
-                LeftFootTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position));
-            else
-                RightFootTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position));
-        }
-        public void SetHandPositionAndRotation(Vector3 position, Quaternion rotation, bool leftHand)
-        {
-            if (leftHand)
-                LeftHandTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position));
-            else
-                RightHandTarget = (null, Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(position));
-        }
-
-        // Legacy animation-driven IK gateways.
-        // New Unity humanoid imports target HumanoidIKSolverComponent directly, but
-        // these wrappers keep older imported clips functioning by forwarding to it.
-
-        public void SetAnimatedFootPosition(Vector3 position, bool leftFoot)
-        {
-            EnsureAnimationIKSolver()?.SetAnimatedIKPosition(
-                leftFoot ? ELimbEndEffector.LeftFoot : ELimbEndEffector.RightFoot,
-                position);
-        }
-
-        public void SetAnimatedFootRotation(Quaternion rotation, bool leftFoot)
-        {
-            EnsureAnimationIKSolver()?.SetAnimatedIKRotation(
-                leftFoot ? ELimbEndEffector.LeftFoot : ELimbEndEffector.RightFoot,
-                rotation);
-        }
-
-        public void SetAnimatedHandPosition(Vector3 position, bool leftHand)
-        {
-            EnsureAnimationIKSolver()?.SetAnimatedIKPosition(
-                leftHand ? ELimbEndEffector.LeftHand : ELimbEndEffector.RightHand,
-                position);
-        }
-
-        public void SetAnimatedHandRotation(Quaternion rotation, bool leftHand)
-        {
-            EnsureAnimationIKSolver()?.SetAnimatedIKRotation(
-                leftHand ? ELimbEndEffector.LeftHand : ELimbEndEffector.RightHand,
-                rotation);
-        }
-
-        public HumanoidIKSolverComponent? EnsureAnimationIKSolver()
-        {
-            if (TryGetSiblingComponent<VRIKSolverComponent>(out var vrik) && vrik is not null)
-                return null;
-
-            // Only return an existing solver — never auto-create or auto-reconfigure one.
-            // Silent reconfiguration here clobbers user-authored IK tuning during playback.
-            var solver = GetSiblingComponent<HumanoidIKSolverComponent>(false);
-            return solver is { IsActive: true } ? solver : null;
-        }
+        private static readonly string[] FingerBoneMismatch = ["metacarp", "twist"];
 
         /// <summary>
         /// Estimates the avatar-space motion scale used by imported Unity humanoid
@@ -2298,6 +2188,11 @@ namespace XREngine.Components.Animation
         private static Func<SceneNode, bool> ByNameContainsAll(params string[] names)
             => node => names.All(name => node.Name?.Contains(name, StringComparison.InvariantCultureIgnoreCase) ?? false);
 
+        private static Func<SceneNode, bool> ByNameContainsAllAndDoesNotContain(string[] none, params string[] names)
+            => node =>
+            names.All(name => node.Name?.Contains(name, StringComparison.InvariantCultureIgnoreCase) ?? false)
+            && none.All(name => !(node.Name?.Contains(name, StringComparison.InvariantCultureIgnoreCase) ?? false));
+
         private static Func<SceneNode, bool> ByNameContainsAny(StringComparison comp, params string[] names)
             => node => names.Any(name => node.Name?.Contains(name, comp) ?? false);
 
@@ -2326,6 +2221,15 @@ namespace XREngine.Components.Animation
                     ESideHint.Right => !isLeft,
                     _ => posMatch(node.Transform.LocalTranslation),
                 };
+            };
+
+        private static Func<SceneNode, bool> BySideAwarePositionAndDoesNotContain(string nameContains, string[] none, bool isLeft, Func<Vector3, bool> posMatch, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
+            => node =>
+            {
+                if (!BySideAwarePosition(nameContains, isLeft, posMatch, comp)(node))
+                    return false;
+
+                return none.All(name => !(node.Name?.Contains(name, comp) ?? false));
             };
 
         private static Func<SceneNode, bool> ByName(string name, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
@@ -2423,38 +2327,49 @@ namespace XREngine.Components.Animation
         }
 
         /// <summary>
-        /// Removes all IK targets, effectively disabling IK.
-        /// </summary>
-        public void ClearIKTargets()
-        {
-            HeadTarget = (null, Matrix4x4.Identity);
-            LeftHandTarget = (null, Matrix4x4.Identity);
-            RightHandTarget = (null, Matrix4x4.Identity);
-            HipsTarget = (null, Matrix4x4.Identity);
-            LeftFootTarget = (null, Matrix4x4.Identity);
-            RightFootTarget = (null, Matrix4x4.Identity);
-            ChestTarget = (null, Matrix4x4.Identity);
-            LeftElbowTarget = (null, Matrix4x4.Identity);
-            RightElbowTarget = (null, Matrix4x4.Identity);
-            LeftKneeTarget = (null, Matrix4x4.Identity);
-            RightKneeTarget = (null, Matrix4x4.Identity);
-        }
-
-        /// <summary>
         /// Resets the pose of the humanoid to the default pose (T-pose).
         /// </summary>
         public void ResetPose()
         {
             ResetRuntimeAnimationDiagnostics();
             ClearRuntimeMuscleState();
+            GetSiblingComponent<HumanoidIKSolverComponent>(false)?.ClearAnimatedIKGoals();
+            ResetMappedTransformsToBindPose(includeEyesTarget: false);
+
+            SyncPreviewRenderMatrices();
+        }
+
+        public void ApplyPosePreviewMode()
+        {
+            switch (PosePreviewMode)
+            {
+                case EHumanoidPosePreviewMode.MeshBindPose:
+                    ResetAllTransformsToBindPose();
+                    break;
+                case EHumanoidPosePreviewMode.TPose:
+                    ResetPose();
+                    break;
+                case EHumanoidPosePreviewMode.NeutralMusclePose:
+                    ApplyNeutralPosePreview();
+                    break;
+                case EHumanoidPosePreviewMode.AnimatedPose:
+                default:
+                    ClearRuntimeMuscleState();
+                    break;
+            }
+        }
+
+        private void ResetMappedTransformsToBindPose(bool includeEyesTarget)
+        {
+            Hips.ResetPose();
+            Spine.ResetPose();
+            Chest.ResetPose();
+            UpperChest.ResetPose();
+            Neck.ResetPose();
             Head.ResetPose();
             Jaw.ResetPose();
-            Neck.ResetPose();
-            UpperChest.ResetPose();
-            Chest.ResetPose();
-            Spine.ResetPose();
-            Hips.ResetPose();
-
+            if (includeEyesTarget)
+                EyesTarget.ResetPose();
             Left.ResetPose();
             Right.ResetPose();
         }
@@ -2464,6 +2379,220 @@ namespace XREngine.Components.Animation
             ResetRootMotionBaseline();
             _leftKneeClampLogged = false;
             _rightKneeClampLogged = false;
+        }
+
+        private void ApplyNeutralPosePreview()
+        {
+            ResetAllTransformsToBindPose();
+            if (SceneNode is null)
+                return;
+
+            foreach (string boneName in Settings.NeutralPoseBoneRotations.Keys)
+                ApplyNeutralPoseBoneRotation(ResolveNeutralPoseMappedNodeByStoredKey(boneName));
+
+            SyncPreviewRenderMatrices();
+        }
+
+        private void SyncPreviewRenderMatrices()
+        {
+            TransformBase? rootTransform = SceneNode?.Transform;
+            if (rootTransform is null)
+                return;
+
+            rootTransform.RecalculateMatrixHierarchy(
+                forceWorldRecalc: true,
+                setRenderMatrixNow: true,
+                childRecalcType: Engine.Rendering.Settings.RecalcChildMatricesLoopType).Wait();
+        }
+
+        private void ApplyNeutralPoseBoneRotation(SceneNode? node)
+        {
+            if (node?.Transform is null)
+                return;
+
+            Quaternion rotation = GetNeutralPoseBoneRotation(node);
+            node.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(rotation);
+        }
+
+        private void ApplyIKTargetWorldMatrix((TransformBase? tfm, Matrix4x4 offset) binding, Matrix4x4 desiredWorldMatrix)
+        {
+            if (binding.tfm is null)
+                return;
+
+            Matrix4x4 actualWorldMatrix = desiredWorldMatrix;
+            if (Matrix4x4.Invert(binding.offset, out Matrix4x4 inverseOffset))
+                actualWorldMatrix = inverseOffset * desiredWorldMatrix;
+
+            if (binding.tfm is Transform concrete)
+            {
+                if (!Matrix4x4.Decompose(actualWorldMatrix, out _, out Quaternion rotation, out Vector3 translation))
+                {
+                    translation = actualWorldMatrix.Translation;
+                    rotation = Quaternion.Identity;
+                }
+
+                concrete.SetWorldTranslationRotation(translation, Quaternion.Normalize(rotation));
+                concrete.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+                return;
+            }
+
+            binding.tfm.DeriveWorldMatrix(actualWorldMatrix);
+        }
+
+        private static string GetDefaultIKTargetNodeName(EHumanoidIKTarget target)
+            => target switch
+            {
+                EHumanoidIKTarget.Head => "HeadTarget",
+                EHumanoidIKTarget.Hips => "HipsTarget",
+                EHumanoidIKTarget.LeftHand => "LeftHandTarget",
+                EHumanoidIKTarget.RightHand => "RightHandTarget",
+                EHumanoidIKTarget.LeftFoot => "LeftFootTarget",
+                EHumanoidIKTarget.RightFoot => "RightFootTarget",
+                EHumanoidIKTarget.LeftElbow => "LeftElbowTarget",
+                EHumanoidIKTarget.RightElbow => "RightElbowTarget",
+                EHumanoidIKTarget.LeftKnee => "LeftKneeTarget",
+                EHumanoidIKTarget.RightKnee => "RightKneeTarget",
+                EHumanoidIKTarget.Chest => "ChestTarget",
+                _ => "IKTarget",
+            };
+
+        private string ResolveNeutralPoseBoneSettingKey(string boneName)
+        {
+            if (ResolveNeutralPoseCanonicalNode(boneName) is not null)
+                return boneName;
+
+            SceneNode? resolvedNode = SceneNode?.FindDescendantByName(boneName, StringComparison.InvariantCultureIgnoreCase);
+            return ResolveNeutralPoseCanonicalName(resolvedNode) ?? boneName;
+        }
+
+        private string? ResolveNeutralPoseCanonicalName(SceneNode? node)
+        {
+            if (node is null)
+                return null;
+
+            return ReferenceEquals(Hips.Node, node) ? "Hips" :
+                ReferenceEquals(Spine.Node, node) ? "Spine" :
+                ReferenceEquals(Chest.Node, node) ? "Chest" :
+                ReferenceEquals(UpperChest.Node, node) ? "UpperChest" :
+                ReferenceEquals(Neck.Node, node) ? "Neck" :
+                ReferenceEquals(Head.Node, node) ? "Head" :
+                ReferenceEquals(Jaw.Node, node) ? "Jaw" :
+                ReferenceEquals(Left.Eye.Node, node) ? "LeftEye" :
+                ReferenceEquals(Right.Eye.Node, node) ? "RightEye" :
+                ReferenceEquals(Left.Shoulder.Node, node) ? "LeftShoulder" :
+                ReferenceEquals(Right.Shoulder.Node, node) ? "RightShoulder" :
+                ReferenceEquals(Left.Arm.Node, node) ? "LeftUpperArm" :
+                ReferenceEquals(Right.Arm.Node, node) ? "RightUpperArm" :
+                ReferenceEquals(Left.Elbow.Node, node) ? "LeftLowerArm" :
+                ReferenceEquals(Right.Elbow.Node, node) ? "RightLowerArm" :
+                ReferenceEquals(Left.Wrist.Node, node) ? "LeftHand" :
+                ReferenceEquals(Right.Wrist.Node, node) ? "RightHand" :
+                ReferenceEquals(Left.Leg.Node, node) ? "LeftUpperLeg" :
+                ReferenceEquals(Right.Leg.Node, node) ? "RightUpperLeg" :
+                ReferenceEquals(Left.Knee.Node, node) ? "LeftLowerLeg" :
+                ReferenceEquals(Right.Knee.Node, node) ? "RightLowerLeg" :
+                ReferenceEquals(Left.Foot.Node, node) ? "LeftFoot" :
+                ReferenceEquals(Right.Foot.Node, node) ? "RightFoot" :
+                ReferenceEquals(Left.Toes.Node, node) ? "LeftToes" :
+                ReferenceEquals(Right.Toes.Node, node) ? "RightToes" :
+                ReferenceEquals(Left.Hand.Thumb.Proximal.Node, node) ? "LeftThumbProximal" :
+                ReferenceEquals(Left.Hand.Thumb.Intermediate.Node, node) ? "LeftThumbIntermediate" :
+                ReferenceEquals(Left.Hand.Thumb.Distal.Node, node) ? "LeftThumbDistal" :
+                ReferenceEquals(Right.Hand.Thumb.Proximal.Node, node) ? "RightThumbProximal" :
+                ReferenceEquals(Right.Hand.Thumb.Intermediate.Node, node) ? "RightThumbIntermediate" :
+                ReferenceEquals(Right.Hand.Thumb.Distal.Node, node) ? "RightThumbDistal" :
+                ReferenceEquals(Left.Hand.Index.Proximal.Node, node) ? "LeftIndexProximal" :
+                ReferenceEquals(Left.Hand.Index.Intermediate.Node, node) ? "LeftIndexIntermediate" :
+                ReferenceEquals(Left.Hand.Index.Distal.Node, node) ? "LeftIndexDistal" :
+                ReferenceEquals(Right.Hand.Index.Proximal.Node, node) ? "RightIndexProximal" :
+                ReferenceEquals(Right.Hand.Index.Intermediate.Node, node) ? "RightIndexIntermediate" :
+                ReferenceEquals(Right.Hand.Index.Distal.Node, node) ? "RightIndexDistal" :
+                ReferenceEquals(Left.Hand.Middle.Proximal.Node, node) ? "LeftMiddleProximal" :
+                ReferenceEquals(Left.Hand.Middle.Intermediate.Node, node) ? "LeftMiddleIntermediate" :
+                ReferenceEquals(Left.Hand.Middle.Distal.Node, node) ? "LeftMiddleDistal" :
+                ReferenceEquals(Right.Hand.Middle.Proximal.Node, node) ? "RightMiddleProximal" :
+                ReferenceEquals(Right.Hand.Middle.Intermediate.Node, node) ? "RightMiddleIntermediate" :
+                ReferenceEquals(Right.Hand.Middle.Distal.Node, node) ? "RightMiddleDistal" :
+                ReferenceEquals(Left.Hand.Ring.Proximal.Node, node) ? "LeftRingProximal" :
+                ReferenceEquals(Left.Hand.Ring.Intermediate.Node, node) ? "LeftRingIntermediate" :
+                ReferenceEquals(Left.Hand.Ring.Distal.Node, node) ? "LeftRingDistal" :
+                ReferenceEquals(Right.Hand.Ring.Proximal.Node, node) ? "RightRingProximal" :
+                ReferenceEquals(Right.Hand.Ring.Intermediate.Node, node) ? "RightRingIntermediate" :
+                ReferenceEquals(Right.Hand.Ring.Distal.Node, node) ? "RightRingDistal" :
+                ReferenceEquals(Left.Hand.Pinky.Proximal.Node, node) ? "LeftLittleProximal" :
+                ReferenceEquals(Left.Hand.Pinky.Intermediate.Node, node) ? "LeftLittleIntermediate" :
+                ReferenceEquals(Left.Hand.Pinky.Distal.Node, node) ? "LeftLittleDistal" :
+                ReferenceEquals(Right.Hand.Pinky.Proximal.Node, node) ? "RightLittleProximal" :
+                ReferenceEquals(Right.Hand.Pinky.Intermediate.Node, node) ? "RightLittleIntermediate" :
+                ReferenceEquals(Right.Hand.Pinky.Distal.Node, node) ? "RightLittleDistal" :
+                null;
+        }
+
+        private SceneNode? ResolveNeutralPoseMappedNodeByStoredKey(string boneName)
+            => ResolveNeutralPoseCanonicalNode(boneName)
+            ?? SceneNode?.FindDescendantByName(boneName, StringComparison.InvariantCultureIgnoreCase);
+
+        private SceneNode? ResolveNeutralPoseCanonicalNode(string boneName)
+        {
+            return boneName switch
+            {
+                "Hips" => Hips.Node,
+                "Spine" => Spine.Node,
+                "Chest" => Chest.Node,
+                "UpperChest" => UpperChest.Node,
+                "Neck" => Neck.Node,
+                "Head" => Head.Node,
+                "Jaw" => Jaw.Node,
+                "LeftEye" => Left.Eye.Node,
+                "RightEye" => Right.Eye.Node,
+                "LeftShoulder" => Left.Shoulder.Node,
+                "RightShoulder" => Right.Shoulder.Node,
+                "LeftUpperArm" => Left.Arm.Node,
+                "RightUpperArm" => Right.Arm.Node,
+                "LeftLowerArm" => Left.Elbow.Node,
+                "RightLowerArm" => Right.Elbow.Node,
+                "LeftHand" => Left.Wrist.Node,
+                "RightHand" => Right.Wrist.Node,
+                "LeftUpperLeg" => Left.Leg.Node,
+                "RightUpperLeg" => Right.Leg.Node,
+                "LeftLowerLeg" => Left.Knee.Node,
+                "RightLowerLeg" => Right.Knee.Node,
+                "LeftFoot" => Left.Foot.Node,
+                "RightFoot" => Right.Foot.Node,
+                "LeftToes" => Left.Toes.Node,
+                "RightToes" => Right.Toes.Node,
+                "LeftThumbProximal" => Left.Hand.Thumb.Proximal.Node,
+                "LeftThumbIntermediate" => Left.Hand.Thumb.Intermediate.Node,
+                "LeftThumbDistal" => Left.Hand.Thumb.Distal.Node,
+                "RightThumbProximal" => Right.Hand.Thumb.Proximal.Node,
+                "RightThumbIntermediate" => Right.Hand.Thumb.Intermediate.Node,
+                "RightThumbDistal" => Right.Hand.Thumb.Distal.Node,
+                "LeftIndexProximal" => Left.Hand.Index.Proximal.Node,
+                "LeftIndexIntermediate" => Left.Hand.Index.Intermediate.Node,
+                "LeftIndexDistal" => Left.Hand.Index.Distal.Node,
+                "RightIndexProximal" => Right.Hand.Index.Proximal.Node,
+                "RightIndexIntermediate" => Right.Hand.Index.Intermediate.Node,
+                "RightIndexDistal" => Right.Hand.Index.Distal.Node,
+                "LeftMiddleProximal" => Left.Hand.Middle.Proximal.Node,
+                "LeftMiddleIntermediate" => Left.Hand.Middle.Intermediate.Node,
+                "LeftMiddleDistal" => Left.Hand.Middle.Distal.Node,
+                "RightMiddleProximal" => Right.Hand.Middle.Proximal.Node,
+                "RightMiddleIntermediate" => Right.Hand.Middle.Intermediate.Node,
+                "RightMiddleDistal" => Right.Hand.Middle.Distal.Node,
+                "LeftRingProximal" => Left.Hand.Ring.Proximal.Node,
+                "LeftRingIntermediate" => Left.Hand.Ring.Intermediate.Node,
+                "LeftRingDistal" => Left.Hand.Ring.Distal.Node,
+                "RightRingProximal" => Right.Hand.Ring.Proximal.Node,
+                "RightRingIntermediate" => Right.Hand.Ring.Intermediate.Node,
+                "RightRingDistal" => Right.Hand.Ring.Distal.Node,
+                "LeftLittleProximal" => Left.Hand.Pinky.Proximal.Node,
+                "LeftLittleIntermediate" => Left.Hand.Pinky.Intermediate.Node,
+                "LeftLittleDistal" => Left.Hand.Pinky.Distal.Node,
+                "RightLittleProximal" => Right.Hand.Pinky.Proximal.Node,
+                "RightLittleIntermediate" => Right.Hand.Pinky.Intermediate.Node,
+                "RightLittleDistal" => Right.Hand.Pinky.Distal.Node,
+                _ => null,
+            };
         }
 
         /// <summary>

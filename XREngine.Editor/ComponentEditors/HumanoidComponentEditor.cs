@@ -56,10 +56,6 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         DrawActionButtons(humanoid);
         ImGui.SeparatorText("General");
         DrawGeneralSection(humanoid);
-        ImGui.SeparatorText("IK Chains");
-        DrawIkSection(humanoid);
-        ImGui.SeparatorText("Targets");
-        DrawTargetSection(humanoid);
         ImGui.SeparatorText("Bone Mapping");
         DrawBoneMappingSection(humanoid);
         ImGui.SeparatorText("Per-Muscle Settings");
@@ -86,12 +82,8 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
             RunSceneEdit(humanoid.SetFromNode);
 
         ImGui.SameLine();
-        if (ImGui.Button("Clear IK Targets"))
-            RunSceneEdit(humanoid.ClearIKTargets);
-
-        ImGui.SameLine();
-        if (ImGui.Button("Load Neutral Pose"))
-            RunSceneEdit(humanoid.ReloadNeutralPoseFromAuditPath);
+        if (ImGui.Button("Apply Neutral Preset"))
+            RunSceneEdit(humanoid.ReloadNeutralPosePreset);
 
         ImGui.SameLine();
         if (ImGui.Button("Clear Neutral Pose"))
@@ -102,11 +94,51 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 
     private static void DrawGeneralSection(HumanoidComponent humanoid)
     {
-        ImGui.TextDisabled("Humanoid IK playback now runs through HumanoidIKSolverComponent.");
-        if (string.IsNullOrWhiteSpace(humanoid.NeutralPoseAuditPath))
-            ImGui.TextDisabled("Set NeutralPoseAuditPath in Default Inspector mode to import Unity's zero-muscle base pose.");
+        var previewMode = humanoid.PosePreviewMode;
+        if (ImGui.BeginCombo("Pose Preview", previewMode.ToString()))
+        {
+            foreach (EHumanoidPosePreviewMode mode in Enum.GetValues<EHumanoidPosePreviewMode>())
+            {
+                bool selected = previewMode == mode;
+                if (ImGui.Selectable(mode.ToString(), selected))
+                {
+                    using var _ = Undo.TrackChange("Change Pose Preview", humanoid);
+                    EnqueueSceneEdit(() => humanoid.PosePreviewMode = mode);
+                }
+
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+
+        var neutralPreset = humanoid.NeutralPosePreset;
+        if (ImGui.BeginCombo("Neutral Pose Preset", neutralPreset.ToString()))
+        {
+            foreach (EHumanoidNeutralPosePreset preset in Enum.GetValues<EHumanoidNeutralPosePreset>())
+            {
+                bool selected = neutralPreset == preset;
+                if (ImGui.Selectable(preset.ToString(), selected))
+                {
+                    using var _ = Undo.TrackChange("Change Neutral Pose Preset", humanoid);
+                    EnqueueSceneEdit(() => humanoid.NeutralPosePreset = preset);
+                }
+
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+
+        int neutralRotationCount = HumanoidNeutralPosePresets.GetRotationCount(neutralPreset);
+        if (neutralPreset == EHumanoidNeutralPosePreset.None)
+            ImGui.TextDisabled("Neutral pose preset disabled.");
+        else if (neutralRotationCount == 0)
+            ImGui.TextDisabled("Selected preset has no embedded rotations yet. Populate HumanoidNeutralPosePresets from the Unity exporter output.");
         else
-            ImGui.TextWrapped($"Neutral pose audit: {humanoid.NeutralPoseAuditPath}");
+            ImGui.TextWrapped($"Neutral preset rotations: {neutralRotationCount}");
 
         bool debugVisibility = humanoid.RenderInfo.IsVisible;
         if (ImGui.Checkbox("Show Debug Skeleton", ref debugVisibility))
@@ -114,145 +146,6 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
             using var _ = Undo.TrackChange("Toggle Debug Skeleton", humanoid);
             humanoid.RenderInfo.IsVisible = debugVisibility;
         }
-    }
-
-    private static void DrawIkSection(HumanoidComponent humanoid)
-    {
-        if (!ImGui.BeginTable("HumanoidIkToggles", 3, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
-            return;
-
-        ImGui.TableSetupColumn("Chain", ImGuiTableColumnFlags.WidthStretch, 0.4f);
-        ImGui.TableSetupColumn("Left", ImGuiTableColumnFlags.WidthStretch, 0.3f);
-        ImGui.TableSetupColumn("Right", ImGuiTableColumnFlags.WidthStretch, 0.3f);
-        ImGui.TableHeadersRow();
-
-        ImGui.TableNextRow();
-        ImGui.TableSetColumnIndex(0);
-        ImGui.TextUnformatted("Arms");
-        ImGui.TableSetColumnIndex(1);
-        DrawIkToggle("LeftArm", humanoid.LeftArmIKEnabled, value => humanoid.LeftArmIKEnabled = value, humanoid);
-        ImGui.TableSetColumnIndex(2);
-        DrawIkToggle("RightArm", humanoid.RightArmIKEnabled, value => humanoid.RightArmIKEnabled = value, humanoid);
-
-        ImGui.TableNextRow();
-        ImGui.TableSetColumnIndex(0);
-        ImGui.TextUnformatted("Legs");
-        ImGui.TableSetColumnIndex(1);
-        DrawIkToggle("LeftLeg", humanoid.LeftLegIKEnabled, value => humanoid.LeftLegIKEnabled = value, humanoid);
-        ImGui.TableSetColumnIndex(2);
-        DrawIkToggle("RightLeg", humanoid.RightLegIKEnabled, value => humanoid.RightLegIKEnabled = value, humanoid);
-
-        ImGui.TableNextRow();
-        ImGui.TableSetColumnIndex(0);
-        ImGui.TextUnformatted("Spine");
-        ImGui.TableSetColumnIndex(1);
-        DrawIkToggle("HipToHead", humanoid.HipToHeadIKEnabled, value => humanoid.HipToHeadIKEnabled = value, humanoid);
-        ImGui.TableSetColumnIndex(2);
-        ImGui.TextDisabled("--");
-
-        ImGui.EndTable();
-    }
-
-    private static void DrawIkToggle(string id, bool value, Action<bool> setter, HumanoidComponent humanoid)
-    {
-        ImGui.PushID(id);
-        bool toggle = value;
-        if (ImGui.Checkbox("##Toggle", ref toggle))
-        {
-            using var _ = Undo.TrackChange($"Toggle {id} IK", humanoid);
-            setter(toggle);
-        }
-        ImGui.PopID();
-    }
-
-    private static void DrawTargetSection(HumanoidComponent humanoid)
-    {
-        if (!ImGui.BeginTable("HumanoidTargets", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH))
-            return;
-
-        ImGui.TableSetupColumn("Target", ImGuiTableColumnFlags.WidthStretch, 0.25f);
-        ImGui.TableSetupColumn("Node", ImGuiTableColumnFlags.WidthStretch, 0.30f);
-        ImGui.TableSetupColumn("Offset", ImGuiTableColumnFlags.WidthStretch, 0.25f);
-        ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthStretch, 0.20f);
-        ImGui.TableHeadersRow();
-
-        DrawTargetRow("Head", humanoid.HeadTarget, value => humanoid.HeadTarget = value, humanoid);
-        DrawTargetRow("Chest", humanoid.ChestTarget, value => humanoid.ChestTarget = value, humanoid);
-        DrawTargetRow("Hips", humanoid.HipsTarget, value => humanoid.HipsTarget = value, humanoid);
-        DrawTargetRow("Left Hand", humanoid.LeftHandTarget, value => humanoid.LeftHandTarget = value, humanoid);
-        DrawTargetRow("Right Hand", humanoid.RightHandTarget, value => humanoid.RightHandTarget = value, humanoid);
-        DrawTargetRow("Left Foot", humanoid.LeftFootTarget, value => humanoid.LeftFootTarget = value, humanoid);
-        DrawTargetRow("Right Foot", humanoid.RightFootTarget, value => humanoid.RightFootTarget = value, humanoid);
-        DrawTargetRow("Left Elbow", humanoid.LeftElbowTarget, value => humanoid.LeftElbowTarget = value, humanoid);
-        DrawTargetRow("Right Elbow", humanoid.RightElbowTarget, value => humanoid.RightElbowTarget = value, humanoid);
-        DrawTargetRow("Left Knee", humanoid.LeftKneeTarget, value => humanoid.LeftKneeTarget = value, humanoid);
-        DrawTargetRow("Right Knee", humanoid.RightKneeTarget, value => humanoid.RightKneeTarget = value, humanoid);
-
-        ImGui.EndTable();
-    }
-
-    private static void DrawTargetRow(string label, (TransformBase? tfm, Matrix4x4 offset) target, Action<(TransformBase? tfm, Matrix4x4 offset)> setter, HumanoidComponent humanoid)
-    {
-        ImGui.PushID(label);
-        ImGui.TableNextRow();
-
-        ImGui.TableSetColumnIndex(0);
-        ImGui.TextUnformatted(label);
-
-        ImGui.TableSetColumnIndex(1);
-        string nodeName = target.tfm?.SceneNode?.Name ?? "<unassigned>";
-        Vector4 nodeColor = target.tfm is null ? MissingColor : AssignedColor;
-        ImGui.TextColored(nodeColor, nodeName);
-        Vector2 nodeRectMin = ImGui.GetItemRectMin();
-        Vector2 nodeRectMax = ImGui.GetItemRectMax();
-        TryHandleSceneNodeDrop(sceneNode =>
-        {
-            using var _ = Undo.TrackChange($"Set {label} Target", humanoid);
-            setter((sceneNode.Transform, target.offset));
-            return true;
-        }, out bool targetPreviewActive);
-        if (targetPreviewActive)
-        {
-            DrawDropHighlight(nodeRectMin, nodeRectMax);
-            ImGui.SetTooltip("Drop a scene node to assign this target.");
-        }
-
-        ImGui.TableSetColumnIndex(2);
-        Vector3 translation = target.offset.Translation;
-        ImGui.SetNextItemWidth(-1f);
-        bool offsetChanged = ImGui.DragFloat3("##Offset", ref translation, 0.01f);
-        ImGuiUndoHelper.TrackDragUndo($"{label} Offset", humanoid);
-
-        ImGui.TableSetColumnIndex(3);
-        bool selectionAvailable = Selection.SceneNode?.Transform is not null;
-        if (!selectionAvailable)
-            ImGui.BeginDisabled();
-        if (ImGui.Button("Use Selected"))
-        {
-            var selectedTransform = Selection.SceneNode?.Transform;
-            if (selectedTransform is not null)
-            {
-                using var _ = Undo.TrackChange($"Set {label} Target", humanoid);
-                setter((selectedTransform, target.offset));
-            }
-        }
-        if (!selectionAvailable)
-            ImGui.EndDisabled();
-        ImGui.SameLine();
-        if (ImGui.Button("Clear"))
-        {
-            using var _ = Undo.TrackChange($"Clear {label} Target", humanoid);
-            setter((null, Matrix4x4.Identity));
-        }
-
-        if (offsetChanged)
-        {
-            var offset = target.offset;
-            offset.Translation = translation;
-            setter((target.tfm, offset));
-        }
-
-        ImGui.PopID();
     }
 
     private static void DrawBoneMappingSection(HumanoidComponent humanoid)

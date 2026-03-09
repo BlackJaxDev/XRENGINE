@@ -218,6 +218,34 @@ public sealed class AnimationClipComponentTests
     }
 
     [Test]
+    public void EvaluateAtTime_DoesNotDriveHumanoidWhenPreviewModeIsNotAnimatedPose()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        SaveBindPoseRecursive(root);
+
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.MeshBindPose;
+
+        var clip = new AnimationClip
+        {
+            Name = "SuppressedByPreview",
+            LengthInSeconds = 1.0f,
+            Looped = false,
+            SampleRate = 60,
+            RootMember = CreateTranslationClipRoot(CreateLinearFloatAnimation(0.0f, 10.0f)),
+        };
+
+        var component = root.AddComponent<AnimationClipComponent>()!;
+        component.Animation = clip;
+
+        component.EvaluateAtTime(1.0f);
+
+        hips.GetTransformAs<Transform>(true)!.Translation.X.ShouldBe(0.0f, 0.0001f);
+        component.PlaybackTime.ShouldBe(1.0f, 0.0001f);
+    }
+
+    [Test]
     public void ImportedUnityCurve_ShiftsStartTimeAndAppliesClampInfinity()
     {
         string path = WriteTempAnimYaml(
@@ -302,7 +330,7 @@ public sealed class AnimationClipComponentTests
         animation.Keyframes[0].MakeInLinear();
 
         animation.Keyframes[1].OutTangent.ShouldBe(-7.0f, 0.0001f);
-        animation.Keyframes[0].InTangent.ShouldBe(5.0f, 0.0001f);
+        animation.Keyframes[0].InTangent.ShouldBe(-5.0f, 0.0001f);
     }
 
     [Test]

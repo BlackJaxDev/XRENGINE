@@ -74,6 +74,30 @@ namespace XREngine.Animation
                 layer?.Deinitialize();
         }
 
+        public void ResetAnimatedState()
+        {
+            var restoredMembers = new HashSet<AnimationMember>();
+            foreach (var member in _animatedCurves.Values)
+            {
+                if (!restoredMembers.Add(member))
+                    continue;
+
+                member.ApplyAnimationValue(member.DefaultValue);
+            }
+
+            lock (_animationValuesLock)
+                _animationValues.Clear();
+
+            foreach (var layer in Layers)
+            {
+                if (layer is null)
+                    continue;
+
+                lock (layer._animationValuesLock)
+                    layer._animatedValues.Clear();
+            }
+        }
+
         public void EvaluationTick(object? rootObject, float delta)
         {
             for (int i = 0; i < Layers.Count; ++i)

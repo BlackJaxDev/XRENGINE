@@ -11,13 +11,57 @@ namespace XREngine
 {
     public partial class AssetManager
     {
-        private static readonly IReadOnlyList<IYamlTypeConverter> RegisteredYamlTypeConverters = DiscoverYamlTypeConverters();
+        private static readonly Lazy<IReadOnlyList<IYamlTypeConverter>> RegisteredYamlTypeConverters = new(CreateYamlTypeConverters);
 
-        internal static IReadOnlyList<IYamlTypeConverter> YamlTypeConverters => RegisteredYamlTypeConverters;
+        private static readonly Lazy<ISerializer> SerializerInstance = new(CreateSerializer);
 
-        public static readonly ISerializer Serializer = CreateSerializer();
+        private static readonly Lazy<IDeserializer> DeserializerInstance = new(CreateDeserializer);
 
-        public static readonly IDeserializer Deserializer = CreateDeserializer();
+        internal static bool SupportsYamlAssetRuntime => !XRRuntimeEnvironment.IsPublishedBuild;
+
+        internal static IReadOnlyList<IYamlTypeConverter> YamlTypeConverters
+        {
+            get
+            {
+                EnsureYamlAssetRuntimeSupported();
+                return RegisteredYamlTypeConverters.Value;
+            }
+        }
+
+        public static ISerializer Serializer
+        {
+            get
+            {
+                EnsureYamlAssetRuntimeSupported();
+                return SerializerInstance.Value;
+            }
+        }
+
+        public static IDeserializer Deserializer
+        {
+            get
+            {
+                EnsureYamlAssetRuntimeSupported();
+                return DeserializerInstance.Value;
+            }
+        }
+
+        internal static void EnsureYamlAssetRuntimeSupported(string? path = null)
+        {
+            if (SupportsYamlAssetRuntime)
+                return;
+
+            string detail = string.IsNullOrWhiteSpace(path)
+                ? "Published runtime does not support YAML asset serialization or deserialization."
+                : $"Published runtime does not support YAML asset serialization or deserialization for '{path}'.";
+
+            throw new NotSupportedException($"{detail} Use cooked published content instead.");
+        }
+
+        private static IReadOnlyList<IYamlTypeConverter> CreateYamlTypeConverters()
+            => XRRuntimeEnvironment.IsAotRuntimeBuild
+                ? LoadYamlTypeConvertersFromMetadata()
+                : DiscoverYamlTypeConverters();
 
         private static ISerializer CreateSerializer()
         {
@@ -35,12 +79,32 @@ namespace XREngine
                 //.WithTagMapping("!UITransform", typeof(UITransform))
                 .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull | DefaultValuesHandling.OmitDefaults | DefaultValuesHandling.OmitEmptyCollections);
 
-            foreach (var converter in RegisteredYamlTypeConverters)
+            foreach (var converter in RegisteredYamlTypeConverters.Value)
                 builder.WithTypeConverter(converter);
 
             builder.WithTypeConverter(new XRAssetYamlConverter());
 
             return builder.Build();
+        }
+
+        private static IReadOnlyList<IYamlTypeConverter> LoadYamlTypeConvertersFromMetadata()
+        {
+            AotRuntimeMetadata? metadata = AotRuntimeMetadataStore.Metadata;
+            if (metadata?.YamlTypeConverterTypeNames is null || metadata.YamlTypeConverterTypeNames.Length == 0)
+                return [];
+
+            List<IYamlTypeConverter> converters = [];
+            foreach (string typeName in metadata.YamlTypeConverterTypeNames)
+            {
+                Type? type = AotRuntimeMetadataStore.ResolveType(typeName);
+                if (type is null || !typeof(IYamlTypeConverter).IsAssignableFrom(type))
+                    continue;
+
+                if (Activator.CreateInstance(type) is IYamlTypeConverter converter)
+                    converters.Add(converter);
+            }
+
+            return converters;
         }
 
         private static IDeserializer CreateDeserializer()
@@ -60,7 +124,7 @@ namespace XREngine
                 //.WithNodeDeserializer(new XRAssetDeserializer(), w => w.OnTop())
                 ;
 
-            foreach (var converter in RegisteredYamlTypeConverters)
+            foreach (var converter in RegisteredYamlTypeConverters.Value)
                 builder.WithTypeConverter(converter);
 
             builder.WithNodeDeserializer(new XRAssetDeserializer(), w => w.OnTop());
