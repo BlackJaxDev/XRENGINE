@@ -61,7 +61,7 @@ When enabled, the unit-test world attaches `HumanoidPoseAuditComponent` to the i
 3. writes the XRENGINE export JSON
 4. optionally compares it against the Unity reference JSON and writes a comparison report
 
-If you want runtime muscle playback to use Unity's neutral humanoid base pose, assign the Unity audit JSON to `HumanoidComponent.NeutralPoseAuditPath` and reload the neutral pose. The component reads `DefaultMusclePose` from the audit and stores per-bone neutral bind-relative rotations in `HumanoidSettings.NeutralPoseBoneRotations`. Subsequent muscle application composes muscle deltas on top of those neutral rotations instead of directly on top of bind pose.
+If you want runtime muscle playback to use Unity's neutral humanoid base pose, populate `HumanoidNeutralPosePresets` from the Unity export script output and apply the desired `HumanoidComponent.NeutralPosePreset`. The component resolves Unity HumanBodyBones-style names onto the mapped avatar bones and stores per-bone neutral bind-relative rotations in `HumanoidSettings.NeutralPoseBoneRotations`. Subsequent muscle application composes muscle deltas on top of those neutral rotations instead of directly on top of bind pose.
 
 ## Typical loop
 

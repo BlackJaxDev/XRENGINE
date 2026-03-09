@@ -51,8 +51,11 @@ public partial class XRMesh
             uint offset = ColorOffset.Value + colorIndex * 16u;
             InterleavedVertexBuffer?.SetVector4AtOffset(index * InterleavedStride + offset, value);
         }
-        else
-            ColorBuffers?[(int)colorIndex].SetVector4(index, value);
+        else if (!Interleaved && ColorBuffers is not null && colorIndex < ColorBuffers.Length)
+        {
+            XRDataBuffer? colorBuffer = ColorBuffers[(int)colorIndex];
+            colorBuffer?.SetVector4(index, value);
+        }
     }
     public Vector4 GetColor(uint index, uint colorIndex)
     {
@@ -61,7 +64,12 @@ public partial class XRMesh
             uint offset = ColorOffset.Value + colorIndex * 16u;
             return InterleavedVertexBuffer?.GetVector4AtOffset(index * InterleavedStride + offset) ?? Vector4.Zero;
         }
-        return Interleaved ? Vector4.Zero : (ColorBuffers?[(int)colorIndex].GetVector4(index) ?? Vector4.Zero);
+        if (!Interleaved && ColorBuffers is not null && colorIndex < ColorBuffers.Length)
+        {
+            XRDataBuffer? colorBuffer = ColorBuffers[(int)colorIndex];
+            return colorBuffer?.GetVector4(index) ?? Vector4.Zero;
+        }
+        return Vector4.Zero;
     }
 
     public void SetTexCoord(uint index, Vector2 value, uint texCoordIndex)
@@ -72,7 +80,10 @@ public partial class XRMesh
             InterleavedVertexBuffer?.SetVector2AtOffset(index * InterleavedStride + offset, value);
         }
         else if (TexCoordBuffers is not null && texCoordIndex < TexCoordBuffers.Length)
-            TexCoordBuffers[(int)texCoordIndex].SetVector2(index, value);
+        {
+            XRDataBuffer? texCoordBuffer = TexCoordBuffers[(int)texCoordIndex];
+            texCoordBuffer?.SetVector2(index, value);
+        }
     }
     public Vector2 GetTexCoord(uint index, uint texCoordIndex)
     {
@@ -82,7 +93,10 @@ public partial class XRMesh
             return InterleavedVertexBuffer?.GetVector2AtOffset(index * InterleavedStride + offset) ?? Vector2.Zero;
         }
         if (!Interleaved && TexCoordBuffers is not null && texCoordIndex < TexCoordBuffers.Length)
-            return TexCoordBuffers[(int)texCoordIndex].GetVector2(index);
+        {
+            XRDataBuffer? texCoordBuffer = TexCoordBuffers[(int)texCoordIndex];
+            return texCoordBuffer?.GetVector2(index) ?? Vector2.Zero;
+        }
         return Vector2.Zero;
     }
 }

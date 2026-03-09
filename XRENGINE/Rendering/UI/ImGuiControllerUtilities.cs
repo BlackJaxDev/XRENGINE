@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using ImGuiNET;
 using Silk.NET.Input;
 using Silk.NET.OpenGL.Extensions.ImGui;
@@ -135,22 +136,35 @@ internal static class ImGuiControllerUtilities
 
         io.Fonts.Clear();
 
-        // ── Primary font ─────────────────────────────────────────────────
-        fixed (ushort* primaryRanges = PrimaryGlyphRanges)
+        // ImGui stores the raw GlyphRanges pointer inside ImFontConfig and reads it
+        // at Build() time — it does NOT copy the data. Both arrays must remain pinned
+        // across the entire Add + Build sequence to prevent a dangling-pointer read.
+        var primaryPin = GCHandle.Alloc(PrimaryGlyphRanges, GCHandleType.Pinned);
+        var symbolPin  = GCHandle.Alloc(SymbolGlyphRanges,  GCHandleType.Pinned);
+        try
         {
-            var font = io.Fonts.AddFontFromFileTTF(loadedFontPath, sizePixels, null, (nint)primaryRanges);
+            // ── Primary font ─────────────────────────────────────────────────
+            var font = io.Fonts.AddFontFromFileTTF(loadedFontPath, sizePixels, null, primaryPin.AddrOfPinnedObject());
             if (font.NativePtr == null)
                 return false;
+
+            // ── Merge symbol fallback font (Windows: Segoe UI Symbol) ────────
+            TryMergeSymbolFont(io, sizePixels, symbolPin.AddrOfPinnedObject());
+
+            // Build only after both atlas entries are registered and arrays still pinned.
+            io.Fonts.Build();
+        }
+        finally
+        {
+            primaryPin.Free();
+            symbolPin.Free();
         }
 
-        // ── Merge symbol fallback font (Windows: Segoe UI Symbol) ────────
-        TryMergeSymbolFont(io, sizePixels);
-
-        io.Fonts.Build();
         return true;
     }
 
-    private static unsafe void TryMergeSymbolFont(ImGuiIOPtr io, float sizePixels)
+    // symRangesPtr must remain pinned by the caller until io.Fonts.Build() completes.
+    private static unsafe void TryMergeSymbolFont(ImGuiIOPtr io, float sizePixels, nint symRangesPtr)
     {
         // On Windows, Segoe UI Symbol provides excellent coverage for
         // arrows, math, box drawing, geometric shapes, dingbats, etc.
@@ -166,10 +180,7 @@ internal static class ImGuiControllerUtilities
             mergeConfig->OversampleH = 1;         // symbols don't need heavy oversampling
             mergeConfig->OversampleV = 1;
 
-            fixed (ushort* symRanges = SymbolGlyphRanges)
-            {
-                io.Fonts.AddFontFromFileTTF(symbolFontPath, sizePixels, mergeConfig, (nint)symRanges);
-            }
+            io.Fonts.AddFontFromFileTTF(symbolFontPath, sizePixels, mergeConfig, symRangesPtr);
 
             ImGuiNative.ImFontConfig_destroy(mergeConfig);
             Debug.Out($"ImGui font: merged symbol fallback from {Path.GetFileName(symbolFontPath)}");

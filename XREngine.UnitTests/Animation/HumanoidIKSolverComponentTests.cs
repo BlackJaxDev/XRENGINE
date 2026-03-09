@@ -34,8 +34,8 @@ public sealed class HumanoidIKSolverComponentTests
         solver.IsActive = false;
         solver.IsActive = true;
 
-        humanoid.SetAnimatedHandPosition(new Vector3(1.0f, 2.0f, 3.0f), leftHand: true);
-        humanoid.SetAnimatedHandRotation(Quaternion.Identity, leftHand: true);
+        solver.SetAnimatedHandPosition(new Vector3(1.0f, 2.0f, 3.0f), leftHand: true);
+        solver.SetAnimatedHandRotation(Quaternion.Identity, leftHand: true);
 
         solver._leftHand.IKPositionWeight.ShouldBe(0.25f, 0.0001f);
         solver._leftHand.IKRotationWeight.ShouldBe(0.5f, 0.0001f);
@@ -47,5 +47,41 @@ public sealed class HumanoidIKSolverComponentTests
         solver._spine._tolerance.ShouldBe(0.125f, 0.0001f);
         solver._spine._maxIterations.ShouldBe(11);
         solver._spine._useRotationLimits.ShouldBeTrue();
+    }
+
+    [Test]
+    public void AnimatedGoalTargets_AreStoredOnHumanoid()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        var solver = root.AddComponent<HumanoidIKSolverComponent>()!;
+
+        humanoid.Settings.IKGoalPolicy = EHumanoidIKGoalPolicy.AlwaysApply;
+
+        solver.SetAnimatedHandPosition(new Vector3(1.0f, 2.0f, 3.0f), leftHand: true);
+        solver.SetAnimatedHandRotation(Quaternion.Identity, leftHand: true);
+
+        var humanoidTarget = humanoid.GetIKTargetTransform(EHumanoidIKTarget.LeftHand);
+        humanoidTarget.ShouldNotBeNull();
+        solver._leftHand.TargetIKTransform.ShouldBeSameAs(humanoidTarget);
+    }
+
+    [Test]
+    public void DisabledAnimatedGoalTarget_DoesNotMoveExistingHumanoidTarget()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var targetNode = new SceneNode(root, "ExistingLeftHandTarget", new Transform());
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        var solver = root.AddComponent<HumanoidIKSolverComponent>()!;
+
+        humanoid.Settings.IKGoalPolicy = EHumanoidIKGoalPolicy.AlwaysApply;
+        humanoid.SetIKTarget(EHumanoidIKTarget.LeftHand, targetNode.GetTransformAs<Transform>(true), Matrix4x4.Identity);
+        solver.UpdateLeftHandTarget = false;
+
+        solver.SetAnimatedHandPosition(new Vector3(5.0f, 6.0f, 7.0f), leftHand: true);
+        solver.SetAnimatedHandRotation(Quaternion.Identity, leftHand: true);
+
+        targetNode.Transform.WorldTranslation.ShouldBe(Vector3.Zero);
+        solver._leftHand.TargetIKTransform.ShouldBeSameAs(targetNode.Transform);
     }
 }

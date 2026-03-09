@@ -51,6 +51,12 @@ namespace XREngine.Core
                 if (_initialized)
                     return;
 
+                if (TryInitializeFromAotMetadata())
+                {
+                    _initialized = true;
+                    return;
+                }
+
                 foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 {
                     Type[] types;
@@ -102,6 +108,28 @@ namespace XREngine.Core
 
                 _initialized = true;
             }
+        }
+
+        private static bool TryInitializeFromAotMetadata()
+        {
+            if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+                return false;
+
+            AotRuntimeMetadata? metadata = AotRuntimeMetadataStore.Metadata;
+            if (metadata?.TypeRedirects is null || metadata.TypeRedirects.Length == 0)
+                return false;
+
+            foreach (AotTypeRedirectInfo redirect in metadata.TypeRedirects)
+            {
+                if (string.IsNullOrWhiteSpace(redirect.LegacyTypeName))
+                    continue;
+
+                Redirects.TryAdd(
+                    redirect.LegacyTypeName,
+                    new RedirectTarget(redirect.FullName, redirect.AssemblyQualifiedName));
+            }
+
+            return true;
         }
     }
 }

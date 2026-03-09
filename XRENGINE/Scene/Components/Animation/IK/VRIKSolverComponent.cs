@@ -18,8 +18,84 @@ namespace XREngine.Components.Animation
         private static readonly Dictionary<ushort, VRIKSolverComponent> _registry = new();
 
         public IKSolverVR Solver { get; } = new();
-        public HumanoidComponent Humanoid => GetSiblingComponent<HumanoidComponent>(true)!;
-        public Transform? Root => Humanoid?.SceneNode?.GetTransformAs<Transform>(true);
+
+        public bool UpdateHeadTarget { get; set; } = true;
+        public bool UpdateHipsTarget { get; set; } = true;
+        public bool UpdateLeftHandTarget { get; set; } = true;
+        public bool UpdateRightHandTarget { get; set; } = true;
+        public bool UpdateLeftFootTarget { get; set; } = true;
+        public bool UpdateRightFootTarget { get; set; } = true;
+        public bool UpdateLeftElbowTarget { get; set; } = true;
+        public bool UpdateRightElbowTarget { get; set; } = true;
+        public bool UpdateLeftKneeTarget { get; set; } = true;
+        public bool UpdateRightKneeTarget { get; set; } = true;
+        public bool UpdateChestTarget { get; set; } = true;
+
+        public (TransformBase? tfm, Matrix4x4 offset) HeadTarget
+        {
+            get => GetHumanoidTarget(EHumanoidIKTarget.Head);
+            set => SetHumanoidTarget(EHumanoidIKTarget.Head, value.tfm, value.offset);
+        }
+
+        public (TransformBase? tfm, Matrix4x4 offset) HipsTarget
+        {
+            get => GetHumanoidTarget(EHumanoidIKTarget.Hips);
+            set => SetHumanoidTarget(EHumanoidIKTarget.Hips, value.tfm, value.offset);
+        }
+
+        public (TransformBase? tfm, Matrix4x4 offset) LeftHandTarget
+        {
+            get => GetHumanoidTarget(EHumanoidIKTarget.LeftHand);
+            set => SetHumanoidTarget(EHumanoidIKTarget.LeftHand, value.tfm, value.offset);
+        }
+
+        public (TransformBase? tfm, Matrix4x4 offset) RightHandTarget
+        {
+            get => GetHumanoidTarget(EHumanoidIKTarget.RightHand);
+            set => SetHumanoidTarget(EHumanoidIKTarget.RightHand, value.tfm, value.offset);
+        }
+
+        public (TransformBase? tfm, Matrix4x4 offset) LeftFootTarget
+        {
+            get => GetHumanoidTarget(EHumanoidIKTarget.LeftFoot);
+            set => SetHumanoidTarget(EHumanoidIKTarget.LeftFoot, value.tfm, value.offset);
+        }
+
+        public (TransformBase? tfm, Matrix4x4 offset) RightFootTarget
+        {
+            get => GetHumanoidTarget(EHumanoidIKTarget.RightFoot);
+            set => SetHumanoidTarget(EHumanoidIKTarget.RightFoot, value.tfm, value.offset);
+        }
+
+        public (TransformBase? tfm, Matrix4x4 offset) LeftElbowTarget
+        {
+            get => GetHumanoidTarget(EHumanoidIKTarget.LeftElbow);
+            set => SetHumanoidTarget(EHumanoidIKTarget.LeftElbow, value.tfm, value.offset);
+        }
+
+        public (TransformBase? tfm, Matrix4x4 offset) RightElbowTarget
+        {
+            get => GetHumanoidTarget(EHumanoidIKTarget.RightElbow);
+            set => SetHumanoidTarget(EHumanoidIKTarget.RightElbow, value.tfm, value.offset);
+        }
+
+        public (TransformBase? tfm, Matrix4x4 offset) LeftKneeTarget
+        {
+            get => GetHumanoidTarget(EHumanoidIKTarget.LeftKnee);
+            set => SetHumanoidTarget(EHumanoidIKTarget.LeftKnee, value.tfm, value.offset);
+        }
+
+        public (TransformBase? tfm, Matrix4x4 offset) RightKneeTarget
+        {
+            get => GetHumanoidTarget(EHumanoidIKTarget.RightKnee);
+            set => SetHumanoidTarget(EHumanoidIKTarget.RightKnee, value.tfm, value.offset);
+        }
+
+        public (TransformBase? tfm, Matrix4x4 offset) ChestTarget
+        {
+            get => GetHumanoidTarget(EHumanoidIKTarget.Chest);
+            set => SetHumanoidTarget(EHumanoidIKTarget.Chest, value.tfm, value.offset);
+        }
 
         public ushort PoseEntityId
         {
@@ -57,6 +133,21 @@ namespace XREngine.Components.Animation
             Solver.Visualize();
         }
 
+        public void ClearTargets()
+        {
+            Humanoid.ClearIKTarget(EHumanoidIKTarget.Head);
+            Humanoid.ClearIKTarget(EHumanoidIKTarget.LeftHand);
+            Humanoid.ClearIKTarget(EHumanoidIKTarget.RightHand);
+            Humanoid.ClearIKTarget(EHumanoidIKTarget.Hips);
+            Humanoid.ClearIKTarget(EHumanoidIKTarget.LeftFoot);
+            Humanoid.ClearIKTarget(EHumanoidIKTarget.RightFoot);
+            Humanoid.ClearIKTarget(EHumanoidIKTarget.Chest);
+            Humanoid.ClearIKTarget(EHumanoidIKTarget.LeftElbow);
+            Humanoid.ClearIKTarget(EHumanoidIKTarget.RightElbow);
+            Humanoid.ClearIKTarget(EHumanoidIKTarget.LeftKnee);
+            Humanoid.ClearIKTarget(EHumanoidIKTarget.RightKnee);
+        }
+
         /// <summary>
         /// Fills in arm wristToPalmAxis and palmToThumbAxis.
         /// </summary>
@@ -68,6 +159,7 @@ namespace XREngine.Components.Animation
         protected override void InitializeSolver()
         {
             Solver.SetToReferences(Humanoid);
+            SyncSolverTargets();
             base.InitializeSolver();
         }
 
@@ -98,6 +190,7 @@ namespace XREngine.Components.Animation
                 return;
             }
 
+            SyncSolverTargets();
             base.UpdateSolver();
             TrySendPose();
         }
@@ -147,12 +240,12 @@ namespace XREngine.Components.Animation
             Vector3 rootPos = Root?.RenderTranslation ?? Vector3.Zero;
             float rootYaw = GetYawRadians(Root?.RenderRotation ?? Quaternion.Identity);
 
-            Vector3 hip = GetLocalTracker(Humanoid.HipsTarget, rootPos, rootYaw);
-            Vector3 head = GetLocalTracker(Humanoid.HeadTarget, rootPos, rootYaw);
-            Vector3 leftHand = GetLocalTracker(Humanoid.LeftHandTarget, rootPos, rootYaw);
-            Vector3 rightHand = GetLocalTracker(Humanoid.RightHandTarget, rootPos, rootYaw);
-            Vector3 leftFoot = GetLocalTracker(Humanoid.LeftFootTarget, rootPos, rootYaw);
-            Vector3 rightFoot = GetLocalTracker(Humanoid.RightFootTarget, rootPos, rootYaw);
+            Vector3 hip = GetLocalTracker(EHumanoidIKTarget.Hips, rootPos, rootYaw);
+            Vector3 head = GetLocalTracker(EHumanoidIKTarget.Head, rootPos, rootYaw);
+            Vector3 leftHand = GetLocalTracker(EHumanoidIKTarget.LeftHand, rootPos, rootYaw);
+            Vector3 rightHand = GetLocalTracker(EHumanoidIKTarget.RightHand, rootPos, rootYaw);
+            Vector3 leftFoot = GetLocalTracker(EHumanoidIKTarget.LeftFoot, rootPos, rootYaw);
+            Vector3 rightFoot = GetLocalTracker(EHumanoidIKTarget.RightFoot, rootPos, rootYaw);
 
             return new HumanoidPoseSample(
                 rootPos,
@@ -165,12 +258,13 @@ namespace XREngine.Components.Animation
                 rightFoot);
         }
 
-        private Vector3 GetLocalTracker((TransformBase? tfm, Matrix4x4 offset) target, Vector3 rootPos, float rootYaw)
+        private Vector3 GetLocalTracker(EHumanoidIKTarget targetType, Vector3 rootPos, float rootYaw)
         {
+            var target = Humanoid.GetIKTarget(targetType);
             if (target.tfm is null)
                 return Vector3.Zero;
 
-            Matrix4x4 world = HumanoidComponent.GetMatrixForTarget(target);
+            Matrix4x4 world = GetMatrixForTarget(target);
             Vector3 worldPos = world.Translation;
             Vector3 offset = worldPos - rootPos;
 
@@ -193,33 +287,32 @@ namespace XREngine.Components.Animation
             Quaternion yawRot = Quaternion.CreateFromAxisAngle(Vector3.UnitY, yaw);
 
             SetTransform(Root, sample.RootPosition, yawRot);
-            SetTransform(Humanoid.HipsTarget.tfm as Transform, sample.RootPosition + Vector3.Transform(sample.Hip, yawRot));
-            SetTransform(Humanoid.HeadTarget.tfm as Transform, sample.RootPosition + Vector3.Transform(sample.Head, yawRot));
-            SetTransform(Humanoid.LeftHandTarget.tfm as Transform, sample.RootPosition + Vector3.Transform(sample.LeftHand, yawRot));
-            SetTransform(Humanoid.RightHandTarget.tfm as Transform, sample.RootPosition + Vector3.Transform(sample.RightHand, yawRot));
-            SetTransform(Humanoid.LeftFootTarget.tfm as Transform, sample.RootPosition + Vector3.Transform(sample.LeftFoot, yawRot));
-            SetTransform(Humanoid.RightFootTarget.tfm as Transform, sample.RootPosition + Vector3.Transform(sample.RightFoot, yawRot));
+            if (UpdateHipsTarget)
+                Humanoid.SetIKTargetWorldPosition(EHumanoidIKTarget.Hips, sample.RootPosition + Vector3.Transform(sample.Hip, yawRot));
+            if (UpdateHeadTarget)
+                Humanoid.SetIKTargetWorldPosition(EHumanoidIKTarget.Head, sample.RootPosition + Vector3.Transform(sample.Head, yawRot));
+            if (UpdateLeftHandTarget)
+                Humanoid.SetIKTargetWorldPosition(EHumanoidIKTarget.LeftHand, sample.RootPosition + Vector3.Transform(sample.LeftHand, yawRot));
+            if (UpdateRightHandTarget)
+                Humanoid.SetIKTargetWorldPosition(EHumanoidIKTarget.RightHand, sample.RootPosition + Vector3.Transform(sample.RightHand, yawRot));
+            if (UpdateLeftFootTarget)
+                Humanoid.SetIKTargetWorldPosition(EHumanoidIKTarget.LeftFoot, sample.RootPosition + Vector3.Transform(sample.LeftFoot, yawRot));
+            if (UpdateRightFootTarget)
+                Humanoid.SetIKTargetWorldPosition(EHumanoidIKTarget.RightFoot, sample.RootPosition + Vector3.Transform(sample.RightFoot, yawRot));
         }
 
-        private static void SetTransform(TransformBase? tfm, Vector3 position, Quaternion? rotation = null)
+        private void SyncSolverTargets()
         {
-            if (tfm is null)
-                return;
-
-            if (tfm is Transform concrete)
-            {
-                concrete.TargetTranslation = position;
-                if (rotation.HasValue)
-                    concrete.TargetRotation = rotation.Value;
-            }
-            else
-            {
-                // TransformBase doesn't have TargetTranslation/TargetRotation, set via world matrix
-                Matrix4x4 matrix = rotation.HasValue
-                    ? Matrix4x4.CreateFromQuaternion(rotation.Value) * Matrix4x4.CreateTranslation(position)
-                    : Matrix4x4.CreateTranslation(position);
-                tfm.DeriveWorldMatrix(matrix);
-            }
+            Solver.Spine.HeadTarget = GetHumanoidTargetTransform(EHumanoidIKTarget.Head);
+            Solver.Spine.HipsTarget = GetHumanoidTargetTransform(EHumanoidIKTarget.Hips);
+            Solver.LeftArm.Target = GetHumanoidTargetTransform(EHumanoidIKTarget.LeftHand);
+            Solver.RightArm.Target = GetHumanoidTargetTransform(EHumanoidIKTarget.RightHand);
+            Solver.LeftLeg.Target = GetHumanoidTargetTransform(EHumanoidIKTarget.LeftFoot);
+            Solver.RightLeg.Target = GetHumanoidTargetTransform(EHumanoidIKTarget.RightFoot);
+            Solver.LeftArm.BendGoal = GetHumanoidTargetTransform(EHumanoidIKTarget.LeftElbow);
+            Solver.RightArm.BendGoal = GetHumanoidTargetTransform(EHumanoidIKTarget.RightElbow);
+            Solver.LeftLeg.KneeTarget = GetHumanoidTargetTransform(EHumanoidIKTarget.LeftKnee);
+            Solver.RightLeg.KneeTarget = GetHumanoidTargetTransform(EHumanoidIKTarget.RightKnee);
         }
 
         private ushort PoseIdFromSceneNode()

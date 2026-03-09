@@ -416,10 +416,20 @@ namespace XREngine
             // Back-compat: allow types to redirect legacy names via [XRTypeRedirect].
             hint = XRTypeRedirectRegistry.RewriteTypeName(hint);
 
+            Type? resolved = AotRuntimeMetadataStore.ResolveType(hint);
+            if (resolved is not null && typeof(XRAsset).IsAssignableFrom(resolved))
+            {
+                type = resolved;
+                return true;
+            }
+
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                return false;
+
             // XRAsset.SerializedAssetType writes FullName (no assembly qualifier). Resolve via loaded assemblies.
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                var resolved = assembly.GetType(hint, throwOnError: false, ignoreCase: false);
+                resolved = assembly.GetType(hint, throwOnError: false, ignoreCase: false);
                 if (resolved is not null && typeof(XRAsset).IsAssignableFrom(resolved))
                 {
                     type = resolved;

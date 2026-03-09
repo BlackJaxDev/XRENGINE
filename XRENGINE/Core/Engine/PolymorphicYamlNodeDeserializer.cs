@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using XREngine.Core;
 using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -118,17 +119,10 @@ namespace XREngine
 
         private static bool TryResolveType(string typeName, out Type? type)
         {
-            type = Type.GetType(typeName, throwOnError: false, ignoreCase: false);
+            typeName = XRTypeRedirectRegistry.RewriteTypeName(typeName);
+            type = AotRuntimeMetadataStore.ResolveType(typeName);
             if (type is not null)
                 return true;
-
-            // Fall back to searching loaded assemblies by full name.
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                type = asm.GetType(typeName, throwOnError: false, ignoreCase: false);
-                if (type is not null)
-                    return true;
-            }
 
             type = null;
             return false;

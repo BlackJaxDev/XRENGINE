@@ -84,15 +84,18 @@ namespace XREngine.Core.Files
 
             typeName = XRTypeRedirectRegistry.RewriteTypeName(typeName);
 
-            Type? type = Type.GetType(typeName, throwOnError: false, ignoreCase: false);
-            if (type is not null)
-                return type;
+            Type? resolved = AotRuntimeMetadataStore.ResolveType(typeName);
+            if (resolved is not null)
+                return resolved;
+
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                return null;
 
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                type = assembly.GetType(typeName, throwOnError: false, ignoreCase: false);
-                if (type is not null)
-                    return type;
+                resolved = assembly.GetType(typeName, throwOnError: false, ignoreCase: false);
+                if (resolved is not null)
+                    return resolved;
             }
 
             return null;

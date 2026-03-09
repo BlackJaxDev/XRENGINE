@@ -10,6 +10,7 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 - [Vulkan TODO](backlog/VULKAN_TODO.md)
 - [Vulkan CPU Octree + Screen UI DAG TODO](backlog/vulkan-cpu-octree-dag-todo.md)
 - [Indirect GPU Rendering TODO](backlog/IndirectGPURendering-TODO.md)
+- [AOT TODO For Final Game Builds](todo/aot-final-game-builds.md)
 
 ## Design & Investigations
 - [Indirect GPU Rendering Architecture](design/IndirectGPURendering-Design.md)

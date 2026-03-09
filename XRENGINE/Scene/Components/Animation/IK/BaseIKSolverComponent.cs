@@ -18,6 +18,7 @@ namespace XREngine.Components.Animation
 		protected virtual void InitializeSolver() { }
         protected virtual void UpdateSolver() { }
         protected virtual void ResetTransformsToDefault() { }
+        protected virtual bool ShouldApplySolverPose() => true;
 
         private bool IsAnimated
             => _animStateMachine != null;
@@ -68,7 +69,7 @@ namespace XREngine.Components.Animation
 
         private void Update()
         {
-            if (_skipSolverUpdate || AnimatePhysics)
+            if (_skipSolverUpdate || AnimatePhysics || !ShouldApplySolverPose())
                 return;
 
             if (_resetTransformsToDefault)
@@ -102,6 +103,12 @@ namespace XREngine.Components.Animation
         {
             if (_skipSolverUpdate)
                 _skipSolverUpdate = false;
+
+            if (!ShouldApplySolverPose())
+            {
+                _updateFrame = false;
+                return;
+            }
             
             _updateFrame = true;
 
@@ -111,7 +118,7 @@ namespace XREngine.Components.Animation
 
         private void LateUpdate()
         {
-            if (_skipSolverUpdate)
+            if (_skipSolverUpdate || !ShouldApplySolverPose())
                 return;
 
             // Check if either animatePhysics is false or FixedUpdate has been called
@@ -128,7 +135,7 @@ namespace XREngine.Components.Animation
 
         public void UpdateSolverExternal()
         {
-            if (!IsActive)
+            if (!IsActive || !ShouldApplySolverPose())
                 return;
 
             _skipSolverUpdate = true;

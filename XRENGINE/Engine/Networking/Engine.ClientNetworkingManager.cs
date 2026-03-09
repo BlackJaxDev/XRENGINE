@@ -414,6 +414,13 @@ namespace XREngine
             [RequiresUnreferencedCode("Type resolution via reflection for networking sync")]
             private static Type? ResolveTypeIgnoreCase(string typeName)
             {
+                Type? resolved = AotRuntimeMetadataStore.ResolveTypeIgnoreCase(typeName);
+                if (resolved is not null)
+                    return resolved;
+
+                if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                    return null;
+
                 foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 {
                     Type? match = null;

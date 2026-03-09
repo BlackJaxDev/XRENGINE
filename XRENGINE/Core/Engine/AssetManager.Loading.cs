@@ -29,19 +29,6 @@ namespace XREngine
                 if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
                     return existingAsset is T tAsset ? tAsset : null;
 
-                if (!File.Exists(filePath))
-                {
-#if XRE_PUBLISHED
-                    if (TryLoadPublishedAssetFromArchive(filePath, out T? publishedAsset))
-                    {
-                        PostLoaded(filePath, publishedAsset);
-                        return publishedAsset;
-                    }
-#endif
-                    AssetDiagnostics.RecordMissingAsset(filePath, typeof(T).Name, $"{nameof(AssetManager)}.{nameof(Load)}");
-                    return null;
-                }
-
                 string extension = Path.GetExtension(filePath);
                 if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
                 {
@@ -50,6 +37,21 @@ namespace XREngine
                 }
 
                 string normalizedExtension = extension[1..].ToLowerInvariant();
+
+#if XRE_PUBLISHED
+                if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, out T? publishedAsset))
+                {
+                    PostLoaded(filePath, publishedAsset);
+                    return publishedAsset;
+                }
+#endif
+
+                if (!File.Exists(filePath))
+                {
+                    AssetDiagnostics.RecordMissingAsset(filePath, typeof(T).Name, $"{nameof(AssetManager)}.{nameof(Load)}");
+                    return null;
+                }
+
                 file = normalizedExtension == AssetExtension
                     ? DeserializeAssetFile<T>(filePath)
                     : Load3rdPartyWithCache<T>(filePath, normalizedExtension);
@@ -75,19 +77,6 @@ namespace XREngine
                 if (TryGetAssetByPath(filePath, out XRAsset? existingAsset))
                     return existingAsset.GetType().IsAssignableTo(type) ? existingAsset : null;
 
-                if (!File.Exists(filePath))
-                {
-#if XRE_PUBLISHED
-                    if (TryLoadPublishedAssetFromArchive(filePath, type, out XRAsset? publishedAsset))
-                    {
-                        PostLoaded(filePath, publishedAsset);
-                        return publishedAsset;
-                    }
-#endif
-                    AssetDiagnostics.RecordMissingAsset(filePath, type.Name, $"{nameof(AssetManager)}.{nameof(Load)}");
-                    return null;
-                }
-
                 string extension = Path.GetExtension(filePath);
                 if (string.IsNullOrWhiteSpace(extension) || extension.Length <= 1)
                 {
@@ -96,6 +85,21 @@ namespace XREngine
                 }
 
                 string normalizedExtension = extension[1..].ToLowerInvariant();
+
+#if XRE_PUBLISHED
+                if (normalizedExtension == AssetExtension && TryLoadPublishedAssetFromArchive(filePath, type, out XRAsset? publishedAsset))
+                {
+                    PostLoaded(filePath, publishedAsset);
+                    return publishedAsset;
+                }
+#endif
+
+                if (!File.Exists(filePath))
+                {
+                    AssetDiagnostics.RecordMissingAsset(filePath, type.Name, $"{nameof(AssetManager)}.{nameof(Load)}");
+                    return null;
+                }
+
                 file = normalizedExtension == AssetExtension
                     ? DeserializeAssetFile(filePath, type)
                     : Load3rdPartyWithCache(filePath, normalizedExtension, type);
@@ -450,6 +454,7 @@ namespace XREngine
 
         private static T? DeserializeAssetFile<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
+            EnsureYamlAssetRuntimeSupported(filePath);
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsset {filePath}");
             using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(fs);
@@ -458,6 +463,7 @@ namespace XREngine
 
         public static XRAsset? DeserializeAssetFile(string filePath, Type type)
         {
+            EnsureYamlAssetRuntimeSupported(filePath);
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAsset {filePath}");
             using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(fs);
@@ -466,6 +472,7 @@ namespace XREngine
 
         private static async Task<T?> DeserializeAssetFileAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath) where T : XRAsset, new()
         {
+            EnsureYamlAssetRuntimeSupported(filePath);
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAssetAsync {filePath}");
             // YamlDotNet deserialization is synchronous; keep async signature by doing IO + parse on background thread.
             return await Task.Run(() =>
@@ -478,6 +485,7 @@ namespace XREngine
 
         public static async Task<XRAsset?> DeserializeAssetFileAsync(string filePath, Type type)
         {
+            EnsureYamlAssetRuntimeSupported(filePath);
             using var t = Engine.Profiler.Start($"AssetManager.DeserializeAssetAsync {filePath}");
             // YamlDotNet deserialization is synchronous; keep async signature by doing IO + parse on background thread.
             return await Task.Run(() =>

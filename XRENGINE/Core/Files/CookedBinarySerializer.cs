@@ -1854,9 +1854,12 @@ public static class CookedBinarySerializer
 
         return TypeCache.GetOrAdd(name, static key =>
         {
-            Type? resolved = Type.GetType(key, throwOnError: false, ignoreCase: false);
+            Type? resolved = AotRuntimeMetadataStore.ResolveType(key);
             if (resolved is not null)
                 return resolved;
+
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                throw new InvalidOperationException($"Unable to resolve type '{key}' from published AOT metadata.");
 
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {

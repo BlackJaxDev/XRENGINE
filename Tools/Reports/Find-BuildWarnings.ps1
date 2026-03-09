@@ -330,6 +330,10 @@ function ConvertTo-Hashtable($inputObject) {
         return $null
     }
 
+    if ($inputObject -is [string]) {
+        return $inputObject
+    }
+
     if ($inputObject -is [System.Collections.IDictionary]) {
         $result = @{}
         foreach ($key in $inputObject.Keys) {
@@ -356,6 +360,18 @@ function ConvertTo-Hashtable($inputObject) {
     }
 
     return $inputObject
+}
+
+function Test-WarningMetadataEntry($entry) {
+    if ($null -eq $entry) {
+        return $false
+    }
+
+    if ($entry -is [hashtable]) {
+        $entry = [PSCustomObject]$entry
+    }
+
+    return $entry.Description -is [string] -and $entry.Url -is [string] -and $entry.Code -is [string]
 }
 
 # Warning code metadata for human-readable descriptions
@@ -433,7 +449,13 @@ function Resolve-WarningMetadata(
         if ($cached -is [hashtable]) {
             $cached = [PSCustomObject]$cached
         }
-        if ($cached -and $cached.Description -and $cached.Description -notmatch '^Search\s*\|') {
+        $hasValidCachedMetadata =
+            $cached -and
+            $cached.Description -is [string] -and
+            $cached.Url -is [string] -and
+            $cached.Description -notmatch '^Search\s*\|'
+
+        if ($hasValidCachedMetadata) {
             return $cached
         }
     }
@@ -491,7 +513,11 @@ if (Test-Path $cacheFile) {
             $loadedJson = ConvertFrom-Json -InputObject $rawCache
             $loaded = ConvertTo-Hashtable $loadedJson
             if ($loaded) {
-                $warningDocCache = $loaded
+                foreach ($entry in $loaded.GetEnumerator()) {
+                    if (Test-WarningMetadataEntry $entry.Value) {
+                        $warningDocCache[$entry.Key] = $entry.Value
+                    }
+                }
             }
         }
     }
@@ -519,14 +545,29 @@ if ($SkipDocLookup) {
         if ($warningDocCache.ContainsKey($cacheKey)) {
             $cached = $warningDocCache[$cacheKey]
             if ($cached -is [hashtable]) { $cached = [PSCustomObject]$cached }
+
+            $hasValidCachedMetadata =
+                $cached -and
+                $cached.Description -is [string] -and
+                $cached.Url -is [string]
+
+            if (-not $hasValidCachedMetadata) {
+                $cached = $null
+            }
+
             # If cached entry points to a search page, replace its URL with the direct docs URL
-            if ($cached.Url -match '/search/') {
+            if ($cached -and $cached.Url -match '/search/') {
                 $directUrl = Get-WarningDocCandidates -code $code -docView $docView | Where-Object { $_ -notmatch '/search/' } | Select-Object -First 1
                 if ($directUrl) { $cached.Url = $directUrl }
             }
-            $warningMetadata[$code] = $cached
+
+            if ($cached) {
+                $warningMetadata[$code] = $cached
+                continue
+            }
         }
-        else {
+
+        if (-not $warningMetadata.ContainsKey($code)) {
             $fallbackDesc = if ($codeDescriptions.ContainsKey($upperCode)) { $codeDescriptions[$upperCode] } else { "(see docs)" }
             $fallbackUrl  = Get-WarningDocCandidates -code $code -docView $docView | Where-Object { $_ -notmatch '/search/' } | Select-Object -First 1
             if (-not $fallbackUrl) { $fallbackUrl = Get-WarningDocCandidates -code $code -docView $docView | Select-Object -First 1 }

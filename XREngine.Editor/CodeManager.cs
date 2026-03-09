@@ -500,7 +500,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string programPath = Path.Combine(launcherRoot, "Program.cs");
         string launcherAssemblyName = $"{projectName}.Launcher";
         string launcherProjectPath = Path.Combine(launcherRoot, $"{launcherAssemblyName}.csproj");
-        string defineConstants = settings.LauncherDefineConstants?.Trim() ?? string.Empty;
+        string defineConstants = XRRuntimeEnvironment.ComposeDefineConstants(
+            settings.LauncherDefineConstants,
+            includePublishedBuild: settings.PublishLauncherAsNativeAot,
+            includeAotRuntime: settings.PublishLauncherAsNativeAot);
 
         string programSource = BuildLauncherProgramSource(
             settings,
@@ -810,9 +813,17 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("    [STAThread]");
         sb.AppendLine("    private static void Main(string[] args)");
         sb.AppendLine("    {");
+        sb.AppendLine("#if XRE_AOT_RUNTIME");
+        sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);");
+        sb.AppendLine("#elif XRE_PUBLISHED");
+        sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Published);");
+        sb.AppendLine("#else");
+        sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);");
+        sb.AppendLine("#endif");
         sb.AppendLine($"        string archivePath = string.IsNullOrWhiteSpace(\"{escapedConfigFolder}\") ?");
         sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedConfigArchive}\") :");
         sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedConfigFolder}\", \"{escapedConfigArchive}\");");
+        sb.AppendLine("        XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);");
         sb.AppendLine();
         sb.AppendLine($"        string contentArchivePath = string.IsNullOrWhiteSpace(\"{escapedContentFolder}\") ?");
         sb.AppendLine($"            Path.Combine(AppContext.BaseDirectory, \"{escapedContentArchive}\") :");

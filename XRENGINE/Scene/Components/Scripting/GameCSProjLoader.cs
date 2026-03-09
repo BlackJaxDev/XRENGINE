@@ -8,6 +8,14 @@ namespace XREngine.Components.Scripting
 {
     public static class GameCSProjLoader
     {
+        private static void EnsureRuntimeAssemblyLoadingSupported()
+        {
+            if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+                return;
+
+            throw new NotSupportedException("Runtime managed assembly loading is disabled for NativeAOT runtime builds.");
+        }
+
         public class DynamicEngineAssemblyLoadContext : AssemblyLoadContext
         {
             public DynamicEngineAssemblyLoadContext() : base(isCollectible: true) { }
@@ -46,6 +54,8 @@ namespace XREngine.Components.Scripting
         [RequiresUnreferencedCode("")]
         public static void LoadFromStream(string id, Stream stream)
         {
+            EnsureRuntimeAssemblyLoadingSupported();
+
             // Unload existing assembly with this ID first
             Unload(id);
 
@@ -64,6 +74,8 @@ namespace XREngine.Components.Scripting
         [RequiresUnreferencedCode("")]
         public static void LoadFromPath(string id, string assemblyPath)
         {
+            EnsureRuntimeAssemblyLoadingSupported();
+
             if (!File.Exists(assemblyPath))
             {
                 Debug.ScriptingWarning($"Assembly file not found: {assemblyPath}");
