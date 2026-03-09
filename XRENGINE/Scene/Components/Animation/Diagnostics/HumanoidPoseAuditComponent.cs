@@ -1,4 +1,5 @@
 using XREngine.Components;
+using XREngine.Core.Reflection.Attributes;
 
 namespace XREngine.Components.Animation
 {
@@ -7,6 +8,9 @@ namespace XREngine.Components.Animation
         private bool _completed;
 
         private AnimationClipComponent? _targetClipComponent;
+        /// <summary>
+        /// The AnimationClipComponent to audit. If not set, the audit will attempt to find a sibling AnimationClipComponent.
+        /// </summary>
         public AnimationClipComponent? TargetClipComponent
         {
             get => _targetClipComponent;
@@ -14,6 +18,9 @@ namespace XREngine.Components.Animation
         }
 
         private HumanoidComponent? _targetHumanoid;
+        /// <summary>
+        /// The humanoid component to audit. If not set, the audit will attempt to find a sibling HumanoidComponent.
+        /// </summary>
         public HumanoidComponent? TargetHumanoid
         {
             get => _targetHumanoid;
@@ -21,6 +28,9 @@ namespace XREngine.Components.Animation
         }
 
         private bool _autoRunOnActivate = true;
+        /// <summary>
+        /// If true, the audit will automatically run when the component is activated and the required references are available.
+        /// </summary>
         public bool AutoRunOnActivate
         {
             get => _autoRunOnActivate;
@@ -28,13 +38,24 @@ namespace XREngine.Components.Animation
         }
 
         private string _outputPath = string.Empty;
+        /// <summary>
+        /// If set, the audit report will be saved to this path. 
+        /// Can be relative to the current working directory or absolute. 
+        /// If not set, the report will only exist in memory and be logged to the console.
+        /// </summary>
+        [InspectorPath(InspectorPathKind.File, InspectorPathFormat.Both, DialogMode = InspectorPathDialogMode.Save, Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*", Title = "Choose Audit Output Path")]
         public string OutputPath
         {
             get => _outputPath;
             set => SetField(ref _outputPath, value);
         }
 
-        private string? _referencePath;
+        private string? _referencePath = "K:\\Unity\\Jax Main Avatars\\PoseAudit\\UnityHumanoidPose.json";
+        /// <summary>
+        /// If set, the audit report at this path will be loaded and compared against the generated report, with a summary of the comparison logged to the console.
+        /// Can be relative to the current working directory or absolute.
+        /// </summary>
+        [InspectorPath(InspectorPathKind.File, InspectorPathFormat.Both, DialogMode = InspectorPathDialogMode.Open, Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*", Title = "Choose Reference Audit Path")]
         public string? ReferencePath
         {
             get => _referencePath;
@@ -42,6 +63,11 @@ namespace XREngine.Components.Animation
         }
 
         private string? _comparisonOutputPath;
+        /// <summary>
+        /// If set, the comparison report will be saved to this path.
+        /// Can be relative to the current working directory or absolute.
+        /// </summary>
+        [InspectorPath(InspectorPathKind.File, InspectorPathFormat.Both, DialogMode = InspectorPathDialogMode.Save, Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*", Title = "Choose Comparison Output Path")]
         public string? ComparisonOutputPath
         {
             get => _comparisonOutputPath;
@@ -49,6 +75,10 @@ namespace XREngine.Components.Animation
         }
 
         private int _sampleRateOverride;
+        /// <summary>
+        /// If set, this value will override the default sample rate for the audit.
+        /// Must be a non-negative integer.
+        /// </summary>
         public int SampleRateOverride
         {
             get => _sampleRateOverride;
@@ -87,19 +117,20 @@ namespace XREngine.Components.Animation
             if (humanoid.Hips.Node is null)
                 return;
 
-            HumanoidPoseAuditReport export = HumanoidPoseAuditSampler.Sample(clipComponent, humanoid, SampleRateOverride);
+            HumanoidPoseAuditReport? reference = LoadReferenceReportIfAvailable();
+            int sampleRate = ResolveSampleRate(reference);
+            HumanoidPoseAuditReport export = HumanoidPoseAuditSampler.Sample(clipComponent, humanoid, sampleRate);
+            string outputPath = ResolveOutputPath(export);
 
-            if (!string.IsNullOrWhiteSpace(OutputPath))
-                HumanoidPoseAuditIO.SaveReport(OutputPath, export);
+            HumanoidPoseAuditIO.SaveReport(outputPath, export);
 
             string? comparisonOutputPath = null;
             if (!string.IsNullOrWhiteSpace(ReferencePath))
             {
-                if (File.Exists(ReferencePath))
+                if (reference is not null)
                 {
-                    HumanoidPoseAuditReport reference = HumanoidPoseAuditIO.LoadReport(ReferencePath);
-                    var comparison = HumanoidPoseAuditComparer.Compare(reference, export, ReferencePath, OutputPath);
-                    comparisonOutputPath = ResolveComparisonOutputPath();
+                    var comparison = HumanoidPoseAuditComparer.Compare(reference, export, ReferencePath, outputPath);
+                    comparisonOutputPath = ResolveComparisonOutputPath(outputPath);
                     if (!string.IsNullOrWhiteSpace(comparisonOutputPath))
                         HumanoidPoseAuditIO.SaveComparison(comparisonOutputPath, comparison);
 
@@ -112,26 +143,58 @@ namespace XREngine.Components.Animation
             }
             else
             {
-                string outputLabel = string.IsNullOrWhiteSpace(OutputPath) ? "<memory-only>" : Path.GetFullPath(OutputPath);
-                Debug.Out($"[HumanoidPoseAudit] Exported {export.SampleCount} samples for '{export.ClipName}' to '{outputLabel}'.");
+                Debug.Out($"[HumanoidPoseAudit] Exported {export.SampleCount} samples for '{export.ClipName}' to '{Path.GetFullPath(outputPath)}'.");
             }
 
             _completed = true;
             UnregisterTick(ETickGroup.Late, ETickOrder.Scene, TryRunAudit);
         }
 
-        private string? ResolveComparisonOutputPath()
+        private HumanoidPoseAuditReport? LoadReferenceReportIfAvailable()
+            => string.IsNullOrWhiteSpace(ReferencePath) || !File.Exists(ReferencePath) ? (HumanoidPoseAuditReport?)null : HumanoidPoseAuditIO.LoadReport(ReferencePath);
+
+        private int ResolveSampleRate(HumanoidPoseAuditReport? reference)
+        {
+            if (SampleRateOverride > 0)
+                return SampleRateOverride;
+
+            if (reference?.SampleRate > 0)
+                return reference.SampleRate;
+
+            return 0;
+        }
+
+        private string ResolveOutputPath(HumanoidPoseAuditReport export)
+        {
+            if (!string.IsNullOrWhiteSpace(OutputPath))
+                return OutputPath;
+
+            string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            string fileName = BuildDefaultAuditFileName(export.ClipName, ".json");
+            return Path.Combine(desktopPath, fileName);
+        }
+
+        private string ResolveComparisonOutputPath(string outputPath)
         {
             if (!string.IsNullOrWhiteSpace(ComparisonOutputPath))
                 return ComparisonOutputPath;
 
-            if (string.IsNullOrWhiteSpace(OutputPath))
-                return null;
-
-            string fullPath = Path.GetFullPath(OutputPath);
+            string fullPath = Path.GetFullPath(outputPath);
             string directory = Path.GetDirectoryName(fullPath) ?? string.Empty;
             string fileName = Path.GetFileNameWithoutExtension(fullPath);
             return Path.Combine(directory, $"{fileName}.comparison.json");
+        }
+
+        private static string BuildDefaultAuditFileName(string? clipName, string extension)
+        {
+            string baseName = string.IsNullOrWhiteSpace(clipName)
+                ? "humanoid_pose_audit"
+                : $"{clipName}_humanoid_pose_audit";
+
+            foreach (char invalidChar in Path.GetInvalidFileNameChars())
+                baseName = baseName.Replace(invalidChar, '_');
+
+            return $"{baseName}{extension}";
         }
 
         private static void LogComparisonSummary(

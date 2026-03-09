@@ -1448,7 +1448,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private Vector2? _lastRotateDelta = null;
     private Vector3? _arcballRotationPosition = null;
     private Vector2? _lastMouseTranslationDelta = null;
-    private float? _lastScrollDelta = null;
+    private readonly Queue<float> _pendingScrollDeltas = [];
     private bool _wantsScreenshot = false;
 
     private float _distancePercentagePerScroll = 0.1f;
@@ -1464,16 +1464,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (tfm is null)
             return;
 
-        var scroll = _lastScrollDelta;
-        _lastScrollDelta = null;
-
         var trans = _lastMouseTranslationDelta;
         _lastMouseTranslationDelta = null;
 
         var rot = _lastRotateDelta;
         _lastRotateDelta = null;
 
-        bool hasInput = scroll.HasValue || trans.HasValue || rot.HasValue;
+        bool hasInput = _pendingScrollDeltas.Count > 0 || trans.HasValue || rot.HasValue;
         if (_cameraFocusLerp.HasValue)
         {
             if (hasInput)
@@ -1485,24 +1482,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             }
         }
 
-        if (scroll.HasValue)
-        {
-            float scrollSpeed = scroll.Value;
-            if (DepthHitNormalizedViewportPoint.HasValue)
-            {
-                if (ShiftPressed)
-                    scrollSpeed *= ShiftSpeedModifier;
-
-                //Make scroll-based dolly tickrate independent.
-                float delta = Engine.UndilatedDelta;
-                Vector3 worldCoord = vp.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint.Value);
-                float dist = tfm.WorldTranslation.Distance(worldCoord);
-                Vector3 newWorldPos = Segment.PointAtLineDistance(tfm.WorldTranslation, worldCoord, scrollSpeed * dist * DistancePercentagePerScroll * ScrollSpeed * delta);
-                tfm.SetWorldTranslation(newWorldPos);
-            }
-            else
-                base.OnScrolled(scrollSpeed);
-        }
+        while (_pendingScrollDeltas.Count > 0)
+            ApplyScrollTransformation(vp, tfm, _pendingScrollDeltas.Dequeue());
         if (trans.HasValue && WorldDragPoint.HasValue && DepthHitNormalizedViewportPoint.HasValue)
         {
             Vector3 normCoord = DepthHitNormalizedViewportPoint.Value;
@@ -1522,6 +1503,25 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 ArcBallRotate(y, x, pos.Value);
             }
         }
+    }
+
+    private void ApplyScrollTransformation(XRViewport vp, Transform tfm, float scrollSpeed)
+    {
+        if (ShiftPressed)
+            scrollSpeed *= ShiftSpeedModifier;
+
+        if (DepthHitNormalizedViewportPoint.HasValue)
+        {
+            Vector3 worldCoord = vp.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint.Value);
+            float dist = tfm.WorldTranslation.Distance(worldCoord);
+            Vector3 newWorldPos = Segment.PointAtLineDistance(
+                tfm.WorldTranslation,
+                worldCoord,
+                scrollSpeed * dist * DistancePercentagePerScroll * ScrollSpeed);
+            tfm.SetWorldTranslation(newWorldPos);
+        }
+        else
+            base.OnScrolled(scrollSpeed);
     }
 
     protected override void OnRightClick(bool pressed)
@@ -1647,8 +1647,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         if (IsHoveringUI())
             return;
-        // Accumulate all scroll events until the next tick so none are dropped when multiple arrive in a frame.
-        _lastScrollDelta = (_lastScrollDelta ?? 0.0f) + diff;
+        _pendingScrollDeltas.Enqueue(diff);
         _depthQueryRequested = true;
     }
 

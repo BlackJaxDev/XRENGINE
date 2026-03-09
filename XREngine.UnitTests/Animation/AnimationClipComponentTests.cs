@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
@@ -304,6 +305,118 @@ public sealed class AnimationClipComponentTests
         animation.Keyframes[0].InTangent.ShouldBe(5.0f, 0.0001f);
     }
 
+    [Test]
+    public void ImportedUnityHumanoidClip_EvaluateAtTime_UsesRawCurveValues()
+    {
+        string repoRoot = FindRepositoryRoot();
+        string clipPath = Path.Combine(repoRoot, "Assets", "Walks", "Sexy Walk.anim");
+        var clip = AnimYamlImporter.Import(clipPath);
+
+        var root = new SceneNode("Root", new Transform());
+        var clipComponent = root.AddComponent<AnimationClipComponent>()!;
+        clipComponent.Animation = clip;
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+
+        clipComponent.EvaluateAtTime(0.0f);
+
+        humanoid.TryGetRawHumanoidValue(EHumanoidValue.SpineFrontBack, out float rawSpineFrontBack).ShouldBeTrue();
+        humanoid.TryGetRawHumanoidValue(EHumanoidValue.LeftArmDownUp, out float rawLeftArmDownUp).ShouldBeTrue();
+        humanoid.TryGetRawHumanoidValue(EHumanoidValue.LeftUpperLegFrontBack, out float rawLeftUpperLegFrontBack).ShouldBeTrue();
+        humanoid.TryGetRawHumanoidValue(EHumanoidValue.RightUpperLegFrontBack, out float rawRightUpperLegFrontBack).ShouldBeTrue();
+
+        humanoid.TryGetMuscleValue(EHumanoidValue.SpineFrontBack, out float spineFrontBack).ShouldBeTrue();
+        humanoid.TryGetMuscleValue(EHumanoidValue.LeftArmDownUp, out float leftArmDownUp).ShouldBeTrue();
+        humanoid.TryGetMuscleValue(EHumanoidValue.LeftUpperLegFrontBack, out float leftUpperLegFrontBack).ShouldBeTrue();
+        humanoid.TryGetMuscleValue(EHumanoidValue.RightUpperLegFrontBack, out float rightUpperLegFrontBack).ShouldBeTrue();
+
+        rawSpineFrontBack.ShouldBe(0.090756066f, 0.000001f);
+        rawLeftArmDownUp.ShouldBe(-0.687864f, 0.000001f);
+        rawLeftUpperLegFrontBack.ShouldBe(0.8625245f, 0.000001f);
+        rawRightUpperLegFrontBack.ShouldBe(-0.021309234f, 0.000001f);
+
+        spineFrontBack.ShouldBe(0.090756066f, 0.000001f);
+        leftArmDownUp.ShouldBe(-0.687864f, 0.000001f);
+        leftUpperLegFrontBack.ShouldBe(0.8625245f, 0.000001f);
+        rightUpperLegFrontBack.ShouldBe(-0.021309234f, 0.000001f);
+    }
+
+    [Test]
+    public void ImportedUnityHumanoidClip_FlipMuscleZ_PreservesRawAndOnlyFlipsPitchYawFamilies()
+    {
+        string repoRoot = FindRepositoryRoot();
+        string clipPath = Path.Combine(repoRoot, "Assets", "Walks", "Sexy Walk.anim");
+        var clip = AnimYamlImporter.Import(clipPath);
+
+        var root = new SceneNode("Root", new Transform());
+        var clipComponent = root.AddComponent<AnimationClipComponent>()!;
+        clipComponent.Animation = clip;
+        clipComponent.FlipMuscleZ = true;
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+
+        clipComponent.EvaluateAtTime(0.0f);
+
+        humanoid.TryGetRawHumanoidValue(EHumanoidValue.LeftArmDownUp, out float rawLeftArmDownUp).ShouldBeTrue();
+        humanoid.TryGetMuscleValue(EHumanoidValue.LeftArmDownUp, out float convertedLeftArmDownUp).ShouldBeTrue();
+        humanoid.TryGetRawHumanoidValue(EHumanoidValue.SpineLeftRight, out float rawSpineLeftRight).ShouldBeTrue();
+        humanoid.TryGetMuscleValue(EHumanoidValue.SpineLeftRight, out float convertedSpineLeftRight).ShouldBeTrue();
+
+        rawLeftArmDownUp.ShouldBe(-0.687864f, 0.000001f);
+        convertedLeftArmDownUp.ShouldBe(0.687864f, 0.000001f);
+        convertedSpineLeftRight.ShouldBe(rawSpineLeftRight, 0.000001f);
+    }
+
+    [Test]
+    public void Stop_HumanoidClip_RestoresBindPoseAndClearsHumanoidMuscles()
+    {
+        string repoRoot = FindRepositoryRoot();
+        string clipPath = Path.Combine(repoRoot, "Assets", "Walks", "Sexy Walk.anim");
+        var clip = AnimYamlImporter.Import(clipPath);
+
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var chest = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        _ = new SceneNode(chest, "Head", new Transform(translation: new(0.0f, 0.25f, 0.0f)));
+
+        var leftLeg = new SceneNode(hips, "LeftLeg", new Transform(translation: new(-0.2f, -0.4f, 0.0f)));
+        var leftKnee = new SceneNode(leftLeg, "LeftKnee", new Transform(translation: new(0.0f, -0.35f, 0.0f)));
+        _ = new SceneNode(leftKnee, "LeftFoot", new Transform(translation: new(0.0f, -0.25f, 0.0f)));
+        var rightLeg = new SceneNode(hips, "RightLeg", new Transform(translation: new(0.2f, -0.4f, 0.0f)));
+        var rightKnee = new SceneNode(rightLeg, "RightKnee", new Transform(translation: new(0.0f, -0.35f, 0.0f)));
+        _ = new SceneNode(rightKnee, "RightFoot", new Transform(translation: new(0.0f, -0.25f, 0.0f)));
+
+        var leftShoulder = new SceneNode(chest, "LeftShoulder", new Transform(translation: new(-0.25f, 0.1f, 0.0f)));
+        var leftArm = new SceneNode(leftShoulder, "LeftArm", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        var leftElbow = new SceneNode(leftArm, "LeftElbow", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        _ = new SceneNode(leftElbow, "LeftHand", new Transform(translation: new(-0.2f, 0.0f, 0.0f)));
+
+        var rightShoulder = new SceneNode(chest, "RightShoulder", new Transform(translation: new(0.25f, 0.1f, 0.0f)));
+        var rightArm = new SceneNode(rightShoulder, "RightArm", new Transform(translation: new(0.3f, 0.0f, 0.0f)));
+        var rightElbow = new SceneNode(rightArm, "RightElbow", new Transform(translation: new(0.3f, 0.0f, 0.0f)));
+        _ = new SceneNode(rightElbow, "RightHand", new Transform(translation: new(0.2f, 0.0f, 0.0f)));
+
+        SaveBindPoseRecursive(root);
+
+        var clipComponent = root.AddComponent<AnimationClipComponent>()!;
+        clipComponent.Animation = clip;
+        var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+
+        clipComponent.EvaluateAtTime(0.0f);
+
+        var leftArmTransform = leftArm.GetTransformAs<Transform>(true)!;
+        Quaternion bindRotation = Quaternion.Normalize(leftArmTransform.BindState.Rotation);
+        Quaternion posedRotation = Quaternion.Normalize(leftArmTransform.Rotation);
+        Quaternion.Dot(posedRotation, bindRotation).ShouldBeLessThan(0.999f);
+        humanoid.TryGetMuscleValue(EHumanoidValue.LeftArmDownUp, out _).ShouldBeTrue();
+
+        InvokePrivate(StopMethod, clipComponent);
+
+        humanoid.TryGetMuscleValue(EHumanoidValue.LeftArmDownUp, out _).ShouldBeFalse();
+        humanoid.TryGetRawHumanoidValue(EHumanoidValue.LeftArmDownUp, out _).ShouldBeFalse();
+        AssertEquivalent(Quaternion.Normalize(leftArmTransform.Rotation), bindRotation);
+    }
+
     private static AnimationMember CreateMethodMember(string methodName, ELimbEndEffector goal)
         => new AnimationMember(methodName, EAnimationMemberType.Method, animation: null)
         {
@@ -376,6 +489,28 @@ public sealed class AnimationClipComponentTests
         return args[1];
     }
 
+    private static void SaveBindPoseRecursive(SceneNode node)
+    {
+        node.Transform.SaveBindState();
+        foreach (var child in node.Transform.Children)
+        {
+            if (child.SceneNode is not null)
+                SaveBindPoseRecursive(child.SceneNode);
+        }
+    }
+
+    private static void AssertEquivalent(Quaternion actual, Quaternion expected)
+    {
+        const float epsilon = 0.0001f;
+        if (Quaternion.Dot(actual, expected) < 0.0f)
+            actual = new Quaternion(-actual.X, -actual.Y, -actual.Z, -actual.W);
+
+        actual.X.ShouldBe(expected.X, epsilon);
+        actual.Y.ShouldBe(expected.Y, epsilon);
+        actual.Z.ShouldBe(expected.Z, epsilon);
+        actual.W.ShouldBe(expected.W, epsilon);
+    }
+
     private static void InvokePrivate(MethodInfo method, object target)
         => method.Invoke(target, null);
 
@@ -384,5 +519,24 @@ public sealed class AnimationClipComponentTests
         string path = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"{Guid.NewGuid():N}.anim");
         File.WriteAllText(path, contents.ReplaceLineEndings(Environment.NewLine));
         return path;
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        string current = Path.GetFullPath(AppContext.BaseDirectory);
+
+        while (true)
+        {
+            if (File.Exists(Path.Combine(current, "XRENGINE.sln")))
+                return current;
+
+            string? parent = Directory.GetParent(current)?.FullName;
+            if (string.IsNullOrWhiteSpace(parent))
+                break;
+
+            current = parent;
+        }
+
+        throw new DirectoryNotFoundException("Unable to locate repository root containing XRENGINE.sln.");
     }
 }

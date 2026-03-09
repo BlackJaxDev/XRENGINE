@@ -38,7 +38,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 ## Work Docs (WIP / TODO / Design)
 - [Work Docs Index](work/README.md)
 - Backlog: [Project TODO](work/backlog/todo.md), [Warnings Remediation Checklist](work/backlog/warnings-todo.md), [Vulkan TODO](work/backlog/VULKAN_TODO.md), [Indirect GPU Rendering TODO](work/backlog/IndirectGPURendering-TODO.md)
-- Design: [Indirect GPU Rendering Architecture](work/design/IndirectGPURendering-Design.md), [Vulkan Parity Report](work/design/vulkan-parity-report.md), [Vulkan Command Buffer Refactor](work/design/vulkan-command-buffer-refactor.md), [GPU Physics Chain Compatibility](work/design/gpu-physics-chain-compatibility.md), [GPU Physics Chain Engine Verification](work/design/gpu-physics-chain-engine-verification.md)
+- Design: [Indirect GPU Rendering Architecture](work/design/IndirectGPURendering-Design.md), [Vulkan Parity Report](work/design/vulkan-parity-report.md), [Vulkan Command Buffer Refactor](work/design/vulkan-command-buffer-refactor.md), [GPU Physics Chain Compatibility](work/design/gpu-physics-chain-compatibility.md), [GPU Physics Chain Engine Verification](work/design/gpu-physics-chain-engine-verification.md), [Runtime Modularization And Bootstrap Extraction Plan](work/design/runtime-modularization-plan.md), [Phase 1 Execution Checklist - Runtime Bootstrap Extraction](work/design/runtime-modularization-phase1-checklist.md)
 
 ## Tips
 - Most API docs cross-link to related systems. Use "Related Documentation" sections at the bottom of each page for deeper dives.

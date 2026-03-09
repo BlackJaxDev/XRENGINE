@@ -46,9 +46,6 @@ namespace XREngine.Components.Animation
             if (reference.Samples.Count != actual.Samples.Count)
                 report.Warnings.Add($"Sample count mismatch: reference={reference.Samples.Count}, actual={actual.Samples.Count}.");
 
-            int comparedSamples = Math.Min(reference.Samples.Count, actual.Samples.Count);
-            report.ComparedSamples = comparedSamples;
-
             var bodyPosition = new MetricAccumulator();
             var bodyRotation = new MetricAccumulator();
             var muscles = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
@@ -56,12 +53,31 @@ namespace XREngine.Components.Animation
             var bonePositions = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
 
             bool timeMismatchLogged = false;
-            for (int i = 0; i < comparedSamples; i++)
+            bool missingTimeMatchLogged = false;
+            int actualIndex = 0;
+            int comparedSamples = 0;
+            for (int i = 0; i < reference.Samples.Count; i++)
             {
                 HumanoidPoseAuditSample referenceSample = reference.Samples[i];
-                HumanoidPoseAuditSample actualSample = actual.Samples[i];
+                if (!TryFindClosestSampleAtTime(actual.Samples, referenceSample.TimeSeconds, ref actualIndex, out HumanoidPoseAuditSample actualSample))
+                    break;
 
-                if (!timeMismatchLogged && Math.Abs(referenceSample.TimeSeconds - actualSample.TimeSeconds) > 0.0001f)
+                float timeDifference = Math.Abs(referenceSample.TimeSeconds - actualSample.TimeSeconds);
+                float timeTolerance = GetTimeAlignmentTolerance(reference, actual);
+                if (timeDifference > timeTolerance)
+                {
+                    if (!missingTimeMatchLogged)
+                    {
+                        missingTimeMatchLogged = true;
+                        report.Warnings.Add($"Unable to time-align samples within tolerance {timeTolerance:F6}s. First mismatch at reference index {i}: reference={referenceSample.TimeSeconds:F6}, actual={actualSample.TimeSeconds:F6}.");
+                    }
+
+                    continue;
+                }
+
+                comparedSamples++;
+
+                if (!timeMismatchLogged && timeDifference > 0.0001f)
                 {
                     timeMismatchLogged = true;
                     report.Warnings.Add($"Sample time mismatch at index {i}: reference={referenceSample.TimeSeconds:F6}, actual={actualSample.TimeSeconds:F6}.");
@@ -74,6 +90,8 @@ namespace XREngine.Components.Animation
                 AccumulateBoneErrors(referenceSample.Bones, actualSample.Bones, boneRotations, bonePositions);
             }
 
+            report.ComparedSamples = comparedSamples;
+
             report.BodyPositionError = bodyPosition.ToMetric();
             report.BodyRotationErrorDegrees = bodyRotation.ToMetric();
             report.MuscleAbsoluteError = ToMetricEntries(muscles);
@@ -82,18 +100,65 @@ namespace XREngine.Components.Animation
             return report;
         }
 
+        private static bool TryFindClosestSampleAtTime(
+            IReadOnlyList<HumanoidPoseAuditSample> samples,
+            float targetTime,
+            ref int startIndex,
+            out HumanoidPoseAuditSample sample)
+        {
+            sample = null!;
+            if (samples.Count == 0)
+                return false;
+
+            startIndex = Math.Clamp(startIndex, 0, samples.Count - 1);
+            while (startIndex + 1 < samples.Count)
+            {
+                float currentDelta = Math.Abs(samples[startIndex].TimeSeconds - targetTime);
+                float nextDelta = Math.Abs(samples[startIndex + 1].TimeSeconds - targetTime);
+                if (nextDelta > currentDelta)
+                    break;
+
+                startIndex++;
+            }
+
+            sample = samples[startIndex];
+            return true;
+        }
+
+        private static float GetTimeAlignmentTolerance(HumanoidPoseAuditReport reference, HumanoidPoseAuditReport actual)
+        {
+            float referenceStep = GetNominalSampleStep(reference);
+            float actualStep = GetNominalSampleStep(actual);
+            return Math.Max(0.0001f, 0.5f * Math.Max(referenceStep, actualStep));
+        }
+
+        private static float GetNominalSampleStep(HumanoidPoseAuditReport report)
+        {
+            if (report.SampleRate > 0)
+                return 1.0f / report.SampleRate;
+
+            if (report.Samples.Count > 1)
+                return Math.Max(0.0001f, report.Samples[1].TimeSeconds - report.Samples[0].TimeSeconds);
+
+            if (report.DurationSeconds > 0.0f && report.SampleCount > 1)
+                return report.DurationSeconds / (report.SampleCount - 1);
+
+            return 1.0f / 30.0f;
+        }
+
         private static void AccumulateNamedFloatErrors(
             IReadOnlyList<HumanoidPoseAuditNamedFloat> reference,
             IReadOnlyList<HumanoidPoseAuditNamedFloat> actual,
             Dictionary<string, MetricAccumulator> accumulators)
         {
-            var actualByName = actual.ToDictionary(static x => x.Name, static x => x.Value, StringComparer.Ordinal);
+            var actualByName = ToCanonicalNamedFloatDictionary(actual);
             foreach (var entry in reference)
             {
-                if (!actualByName.TryGetValue(entry.Name, out float actualValue))
+                string canonicalName = CanonicalizeMuscleName(entry.Name);
+                if (!actualByName.TryGetValue(canonicalName, out float actualValue))
                     continue;
 
-                GetOrAdd(accumulators, entry.Name).Add(Math.Abs(entry.Value - actualValue));
+                GetOrAdd(accumulators, canonicalName).Add(Math.Abs(entry.Value - actualValue));
             }
         }
 
@@ -146,6 +211,25 @@ namespace XREngine.Components.Animation
             float dot = Math.Abs(Quaternion.Dot(a, b));
             dot = Math.Clamp(dot, -1.0f, 1.0f);
             return MathF.Acos(dot) * 2.0f * (180.0f / MathF.PI);
+        }
+
+        private static Dictionary<string, float> ToCanonicalNamedFloatDictionary(IReadOnlyList<HumanoidPoseAuditNamedFloat> entries)
+        {
+            var map = new Dictionary<string, float>(StringComparer.Ordinal);
+            foreach (var entry in entries)
+                map[CanonicalizeMuscleName(entry.Name)] = entry.Value;
+
+            return map;
+        }
+
+        private static string CanonicalizeMuscleName(string name)
+        {
+            if (!UnityHumanoidMuscleMap.TryGetValue(name, out var value))
+                return name;
+
+            return UnityHumanoidMuscleMap.TryGetHumanTraitName(value, out string humanTraitName)
+                ? humanTraitName
+                : value.ToString();
         }
     }
 }

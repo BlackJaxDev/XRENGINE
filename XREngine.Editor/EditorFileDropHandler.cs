@@ -49,6 +49,9 @@ internal static class EditorFileDropHandler
     {
         _ = window; // Currently unused; retained for future multi-window routing.
 
+        if (ImGuiExternalPathDrop.TryHandleExternalDrop(paths))
+            return;
+
         var assetManager = Engine.Assets;
         if (assetManager is null)
         {

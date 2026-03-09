@@ -310,12 +310,12 @@ namespace XREngine.Components
         protected internal override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            RegisterTick(ETickGroup.Normal, ETickOrder.Input, Tick);
+            RegisterTick(ETickGroup.Normal, InputConsumptionTickOrder, Tick);
         }
         protected internal override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
-            UnregisterTick(ETickGroup.Normal, ETickOrder.Input, Tick);
+            UnregisterTick(ETickGroup.Normal, InputConsumptionTickOrder, Tick);
         }
 
         protected abstract void OnScrolled(float diff);

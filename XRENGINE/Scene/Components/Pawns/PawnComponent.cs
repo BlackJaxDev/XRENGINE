@@ -16,6 +16,10 @@ namespace XREngine.Components
     /// </summary>
     public class PawnComponent : XRComponent
     {
+        // Keep raw device state dispatch ahead of any pawn logic that consumes those updates.
+        protected virtual int InputDispatchTickOrder => (int)ETickOrder.Input;
+        protected virtual int InputConsumptionTickOrder => InputDispatchTickOrder + 1;
+
         public XREvent<PawnComponent>? PrePossessed;
         public XREvent<PawnComponent>? PostPossessed;
         public XREvent<PawnComponent>? PreUnpossessed;
@@ -95,7 +99,7 @@ namespace XREngine.Components
                     case nameof(Controller):
                         PreUnpossess();
                         if (Controller is LocalPlayerController localPlayerController)
-                            UnregisterTick(ETickGroup.Normal, ETickOrder.Input, TickInput);
+                            UnregisterTick(ETickGroup.Normal, InputDispatchTickOrder, TickInput);
                         PostUnpossess();
                         break;
                 }
@@ -112,7 +116,7 @@ namespace XREngine.Components
                     if (Controller is LocalPlayerController localPlayerController)
                     {
                         Debug.Out($"[PawnComponent] Possessed by LocalPlayerController, registering tick. Input={localPlayerController.Input?.GetType().Name}");
-                        RegisterTick(ETickGroup.Normal, ETickOrder.Input, TickInput);
+                        RegisterTick(ETickGroup.Normal, InputDispatchTickOrder, TickInput);
                     }
                     PostPossess();
                     break;

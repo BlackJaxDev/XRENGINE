@@ -18,6 +18,8 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 - [GPU Physics Chain Compatibility](design/gpu-physics-chain-compatibility.md)
 - [GPU Physics Chain Engine Verification](design/gpu-physics-chain-engine-verification.md)
 - [Slang Shader Cross-Compile Plan](design/slang-shader-cross-compile-plan.md)
+- [Runtime Modularization And Bootstrap Extraction Plan](design/runtime-modularization-plan.md)
+- [Phase 1 Execution Checklist - Runtime Bootstrap Extraction](design/runtime-modularization-phase1-checklist.md)
 
 ## Notes
 - Treat these documents as working areas for active refactors and planning.

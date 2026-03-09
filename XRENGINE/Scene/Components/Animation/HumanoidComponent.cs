@@ -1,6 +1,7 @@
 ﻿using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Core.Reflection.Attributes;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -21,6 +22,7 @@ namespace XREngine.Components.Animation
         // Humanoid (muscle) curve state. Values are expected to be normalized in [-1, 1].
         // We store raw values and apply a full pose once per frame.
         private readonly Dictionary<EHumanoidValue, float> _muscleValues = [];
+        private readonly Dictionary<EHumanoidValue, float> _rawHumanoidValues = [];
         private readonly object _muscleValuesLock = new();
 
         protected internal override void OnComponentActivated()
@@ -46,8 +48,25 @@ namespace XREngine.Components.Animation
             set => SetField(ref _settings, value);
         }
 
+        private string? _neutralPoseAuditPath;
+        [InspectorPath(InspectorPathKind.File, InspectorPathFormat.Both, DialogMode = InspectorPathDialogMode.Open, Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*", Title = "Choose Neutral Pose Audit Path")]
+        public string? NeutralPoseAuditPath
+        {
+            get => _neutralPoseAuditPath;
+            set => SetField(ref _neutralPoseAuditPath, value);
+        }
+
+        private string? _loadedNeutralPoseAuditPath;
+        private bool _neutralPoseAuditLoadFailed;
+
         public void SetValue(EHumanoidValue value, float amount)
         {
+            lock (_muscleValuesLock)
+            {
+                _rawHumanoidValues[value] = amount;
+                _muscleValues[value] = amount;
+            }
+
             float t = amount * 0.5f + 0.5f;
             switch (value)
             {
@@ -60,7 +79,7 @@ namespace XREngine.Components.Animation
 
                         // LH→RH: negate yaw (Y) and pitch (X) to convert from Unity's left-handed convention.
                         Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
-                        Left.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
+                        ApplyNeutralBindRelativeRotation(Left.Eye.Node, q);
                         break;
                     }
                 case EHumanoidValue.LeftEyeInOut:
@@ -71,7 +90,7 @@ namespace XREngine.Components.Animation
                         Settings.SetValue(EHumanoidValue.LeftEyeInOut, yaw);
 
                         Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
-                        Left.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
+                        ApplyNeutralBindRelativeRotation(Left.Eye.Node, q);
                         break;
                     }
                 case EHumanoidValue.RightEyeDownUp:
@@ -82,7 +101,7 @@ namespace XREngine.Components.Animation
                         Settings.SetValue(EHumanoidValue.RightEyeDownUp, pitch);
 
                         Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
-                        Right.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
+                        ApplyNeutralBindRelativeRotation(Right.Eye.Node, q);
                         break;
                     }
                 case EHumanoidValue.RightEyeInOut:
@@ -93,18 +112,29 @@ namespace XREngine.Components.Animation
                         Settings.SetValue(EHumanoidValue.RightEyeInOut, yaw);
 
                         Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
-                        Right.Eye.Node?.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
+                        ApplyNeutralBindRelativeRotation(Right.Eye.Node, q);
                         break;
                     }
                 default:
-                    // Store muscle values; actual application happens once per frame in ApplyMusclePose().
-                    lock (_muscleValuesLock)
-                    {
-                        _muscleValues[value] = amount;
-                    }
                     break;
             }
         }
+
+        public void SetImportedRawValue(EHumanoidValue value, float amount, bool flipMuscleZ = false)
+        {
+            float convertedAmount = ConvertImportedHumanoidAmount(value, amount, flipMuscleZ);
+
+            lock (_muscleValuesLock)
+            {
+                _rawHumanoidValues[value] = amount;
+                _muscleValues[value] = convertedAmount;
+            }
+
+            ApplyImmediateHumanoidValueEffects(value, convertedAmount);
+        }
+
+        public void SetImportedRawValue(int value, float amount, bool flipMuscleZ = false)
+            => SetImportedRawValue((EHumanoidValue)value, amount, flipMuscleZ);
 
         // Int overload for decoupled reflection callers (e.g. Unity animation importer).
         public void SetValue(int value, float amount)
@@ -129,6 +159,170 @@ namespace XREngine.Components.Animation
             // Intentionally no-op: string->enum conversion should live in the importer.
         }
 
+        private void ApplyImmediateHumanoidValueEffects(EHumanoidValue value, float amount)
+        {
+            float t = amount * 0.5f + 0.5f;
+            switch (value)
+            {
+                case EHumanoidValue.LeftEyeDownUp:
+                    {
+                        const float degToRad = MathF.PI / 180.0f;
+                        float yaw = Settings.GetValue(EHumanoidValue.LeftEyeInOut);
+                        float pitch = Interp.Lerp(Settings.LeftEyeDownUpRange.X, Settings.LeftEyeDownUpRange.Y, t);
+                        Settings.SetValue(EHumanoidValue.LeftEyeDownUp, pitch);
+
+                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
+                        ApplyNeutralBindRelativeRotation(Left.Eye.Node, q);
+                        break;
+                    }
+                case EHumanoidValue.LeftEyeInOut:
+                    {
+                        const float degToRad = MathF.PI / 180.0f;
+                        float yaw = Interp.Lerp(Settings.LeftEyeInOutRange.X, Settings.LeftEyeInOutRange.Y, t);
+                        float pitch = Settings.GetValue(EHumanoidValue.LeftEyeDownUp);
+                        Settings.SetValue(EHumanoidValue.LeftEyeInOut, yaw);
+
+                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
+                        ApplyNeutralBindRelativeRotation(Left.Eye.Node, q);
+                        break;
+                    }
+                case EHumanoidValue.RightEyeDownUp:
+                    {
+                        const float degToRad = MathF.PI / 180.0f;
+                        float yaw = Settings.GetValue(EHumanoidValue.RightEyeInOut);
+                        float pitch = Interp.Lerp(Settings.RightEyeDownUpRange.X, Settings.RightEyeDownUpRange.Y, t);
+                        Settings.SetValue(EHumanoidValue.RightEyeDownUp, pitch);
+
+                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
+                        ApplyNeutralBindRelativeRotation(Right.Eye.Node, q);
+                        break;
+                    }
+                case EHumanoidValue.RightEyeInOut:
+                    {
+                        const float degToRad = MathF.PI / 180.0f;
+                        float yaw = Interp.Lerp(Settings.RightEyeInOutRange.X, Settings.RightEyeInOutRange.Y, t);
+                        float pitch = Settings.GetValue(EHumanoidValue.RightEyeDownUp);
+                        Settings.SetValue(EHumanoidValue.RightEyeInOut, yaw);
+
+                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
+                        ApplyNeutralBindRelativeRotation(Right.Eye.Node, q);
+                        break;
+                    }
+            }
+        }
+
+        private static float ConvertImportedHumanoidAmount(EHumanoidValue value, float amount, bool flipMuscleZ)
+        {
+            if (!flipMuscleZ)
+                return amount;
+
+            return GetImportedHumanoidHandednessFamily(value) switch
+            {
+                ImportedHumanoidHandednessFamily.Pitch => -amount,
+                ImportedHumanoidHandednessFamily.Yaw => -amount,
+                _ => amount,
+            };
+        }
+
+        private static ImportedHumanoidHandednessFamily GetImportedHumanoidHandednessFamily(EHumanoidValue value)
+            => value switch
+            {
+                EHumanoidValue.LeftEyeDownUp or
+                EHumanoidValue.RightEyeDownUp or
+                EHumanoidValue.SpineFrontBack or
+                EHumanoidValue.ChestFrontBack or
+                EHumanoidValue.UpperChestFrontBack or
+                EHumanoidValue.NeckNodDownUp or
+                EHumanoidValue.HeadNodDownUp or
+                EHumanoidValue.JawClose or
+                EHumanoidValue.LeftShoulderDownUp or
+                EHumanoidValue.LeftArmDownUp or
+                EHumanoidValue.LeftForearmStretch or
+                EHumanoidValue.LeftHandDownUp or
+                EHumanoidValue.LeftUpperLegFrontBack or
+                EHumanoidValue.LeftLowerLegStretch or
+                EHumanoidValue.LeftFootUpDown or
+                EHumanoidValue.LeftToesUpDown or
+                EHumanoidValue.RightShoulderDownUp or
+                EHumanoidValue.RightArmDownUp or
+                EHumanoidValue.RightForearmStretch or
+                EHumanoidValue.RightHandDownUp or
+                EHumanoidValue.RightUpperLegFrontBack or
+                EHumanoidValue.RightLowerLegStretch or
+                EHumanoidValue.RightFootUpDown or
+                EHumanoidValue.RightToesUpDown or
+                EHumanoidValue.LeftHandIndex1Stretched or
+                EHumanoidValue.LeftHandIndex2Stretched or
+                EHumanoidValue.LeftHandIndex3Stretched or
+                EHumanoidValue.LeftHandMiddle1Stretched or
+                EHumanoidValue.LeftHandMiddle2Stretched or
+                EHumanoidValue.LeftHandMiddle3Stretched or
+                EHumanoidValue.LeftHandRing1Stretched or
+                EHumanoidValue.LeftHandRing2Stretched or
+                EHumanoidValue.LeftHandRing3Stretched or
+                EHumanoidValue.LeftHandLittle1Stretched or
+                EHumanoidValue.LeftHandLittle2Stretched or
+                EHumanoidValue.LeftHandLittle3Stretched or
+                EHumanoidValue.LeftHandThumb1Stretched or
+                EHumanoidValue.LeftHandThumb2Stretched or
+                EHumanoidValue.LeftHandThumb3Stretched or
+                EHumanoidValue.RightHandIndex1Stretched or
+                EHumanoidValue.RightHandIndex2Stretched or
+                EHumanoidValue.RightHandIndex3Stretched or
+                EHumanoidValue.RightHandMiddle1Stretched or
+                EHumanoidValue.RightHandMiddle2Stretched or
+                EHumanoidValue.RightHandMiddle3Stretched or
+                EHumanoidValue.RightHandRing1Stretched or
+                EHumanoidValue.RightHandRing2Stretched or
+                EHumanoidValue.RightHandRing3Stretched or
+                EHumanoidValue.RightHandLittle1Stretched or
+                EHumanoidValue.RightHandLittle2Stretched or
+                EHumanoidValue.RightHandLittle3Stretched or
+                EHumanoidValue.RightHandThumb1Stretched or
+                EHumanoidValue.RightHandThumb2Stretched or
+                EHumanoidValue.RightHandThumb3Stretched
+                    => ImportedHumanoidHandednessFamily.Pitch,
+
+                EHumanoidValue.LeftEyeInOut or
+                EHumanoidValue.RightEyeInOut or
+                EHumanoidValue.SpineTwistLeftRight or
+                EHumanoidValue.ChestTwistLeftRight or
+                EHumanoidValue.UpperChestTwistLeftRight or
+                EHumanoidValue.NeckTurnLeftRight or
+                EHumanoidValue.HeadTurnLeftRight or
+                EHumanoidValue.JawLeftRight or
+                EHumanoidValue.LeftArmTwistInOut or
+                EHumanoidValue.LeftForearmTwistInOut or
+                EHumanoidValue.LeftFootTwistInOut or
+                EHumanoidValue.LeftUpperLegTwistInOut or
+                EHumanoidValue.LeftLowerLegTwistInOut or
+                EHumanoidValue.RightArmTwistInOut or
+                EHumanoidValue.RightForearmTwistInOut or
+                EHumanoidValue.RightFootTwistInOut or
+                EHumanoidValue.RightUpperLegTwistInOut or
+                EHumanoidValue.RightLowerLegTwistInOut or
+                EHumanoidValue.LeftHandIndexSpread or
+                EHumanoidValue.LeftHandMiddleSpread or
+                EHumanoidValue.LeftHandRingSpread or
+                EHumanoidValue.LeftHandLittleSpread or
+                EHumanoidValue.LeftHandThumbSpread or
+                EHumanoidValue.RightHandIndexSpread or
+                EHumanoidValue.RightHandMiddleSpread or
+                EHumanoidValue.RightHandRingSpread or
+                EHumanoidValue.RightHandLittleSpread or
+                EHumanoidValue.RightHandThumbSpread
+                    => ImportedHumanoidHandednessFamily.Yaw,
+
+                _ => ImportedHumanoidHandednessFamily.Roll,
+            };
+
+        private enum ImportedHumanoidHandednessFamily
+        {
+            Pitch,
+            Yaw,
+            Roll,
+        }
+
         private float GetMuscleValue(EHumanoidValue value)
         {
             lock (_muscleValuesLock)
@@ -145,8 +339,99 @@ namespace XREngine.Components.Animation
             }
         }
 
+        public bool TryGetRawHumanoidValue(EHumanoidValue value, out float amount)
+        {
+            lock (_muscleValuesLock)
+            {
+                return _rawHumanoidValues.TryGetValue(value, out amount);
+            }
+        }
+
         public void ApplyCurrentMusclePose()
             => ApplyMusclePose();
+
+        public void ReloadNeutralPoseFromAuditPath()
+        {
+            _loadedNeutralPoseAuditPath = null;
+            _neutralPoseAuditLoadFailed = false;
+            EnsureNeutralPoseLoaded();
+        }
+
+        public void ClearNeutralPoseOffsets()
+        {
+            Settings.NeutralPoseBoneRotations.Clear();
+            _loadedNeutralPoseAuditPath = null;
+            _neutralPoseAuditLoadFailed = false;
+        }
+
+        public void ApplyNeutralPoseFromAuditReport(HumanoidPoseAuditReport report)
+        {
+            Settings.NeutralPoseBoneRotations.Clear();
+            if (report.DefaultMusclePose?.Bones is not { Count: > 0 } bones)
+                return;
+
+            foreach (HumanoidPoseAuditBoneSample bone in bones)
+                Settings.NeutralPoseBoneRotations[bone.Name] = Quaternion.Normalize(bone.BindRelativeRotation.Value);
+        }
+
+        public void LoadNeutralPoseFromAudit(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                throw new ArgumentException("Neutral pose audit path is required.", nameof(path));
+
+            HumanoidPoseAuditReport report = HumanoidPoseAuditIO.LoadReport(path);
+            ApplyNeutralPoseFromAuditReport(report);
+            _loadedNeutralPoseAuditPath = path;
+            _neutralPoseAuditLoadFailed = false;
+        }
+
+        private void EnsureNeutralPoseLoaded()
+        {
+            if (string.IsNullOrWhiteSpace(NeutralPoseAuditPath))
+                return;
+
+            if (_loadedNeutralPoseAuditPath is not null &&
+                string.Equals(_loadedNeutralPoseAuditPath, NeutralPoseAuditPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (_neutralPoseAuditLoadFailed &&
+                string.Equals(_loadedNeutralPoseAuditPath, NeutralPoseAuditPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            try
+            {
+                LoadNeutralPoseFromAudit(NeutralPoseAuditPath);
+            }
+            catch (Exception ex)
+            {
+                _loadedNeutralPoseAuditPath = NeutralPoseAuditPath;
+                _neutralPoseAuditLoadFailed = true;
+                Settings.NeutralPoseBoneRotations.Clear();
+                Debug.LogWarning($"[HumanoidComponent] Failed to load neutral pose audit '{NeutralPoseAuditPath}': {ex.Message}");
+            }
+        }
+
+        private Quaternion GetNeutralPoseBoneRotation(SceneNode? node)
+        {
+            if (node?.Name is not null && Settings.TryGetNeutralPoseBoneRotation(node.Name, out Quaternion rotation))
+                return Quaternion.Normalize(rotation);
+
+            return Quaternion.Identity;
+        }
+
+        private void ApplyNeutralBindRelativeRotation(SceneNode? node, Quaternion deltaRotation)
+        {
+            if (node?.Transform is null)
+                return;
+
+            Quaternion neutralRotation = GetNeutralPoseBoneRotation(node);
+            Quaternion effective = Quaternion.Normalize(neutralRotation * deltaRotation);
+            node.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(effective);
+        }
 
         private void ApplyMusclePose()
         {
@@ -157,6 +442,8 @@ namespace XREngine.Components.Animation
                 if (_muscleValues.Count == 0)
                     return;
             }
+
+            EnsureNeutralPoseLoaded();
 
             EnsureBoneMapping();
 
@@ -298,16 +585,17 @@ namespace XREngine.Components.Animation
                     legPitchAxisWorld);
             }
 
-            ApplyBodyBasisLimbRotation(
+            ApplyLimbBoneRotation(
                 side.Shoulder.Node, DebugShoulderSigns,
                 yawDeg: 0.0f,
                 pitchDeg: MapMuscleToDeg(shoulderDownUp, GetMuscleValue(shoulderDownUp)),
                 rollDeg: MapMuscleToDeg(shoulderFrontBack, GetMuscleValue(shoulderFrontBack)),
                 twistAxisWorld: shoulderTwistAxisWorld,
                 pitchAxisWorld: armPitchAxisWorld,
-                rollAxisWorld: armRollAxisWorld);
+                rollAxisWorld: armRollAxisWorld,
+                preferAxisMapping: true);
 
-            ApplyBodyBasisLimbRotation(
+            ApplyLimbBoneRotation(
                 side.Arm.Node, DebugArmSigns,
                 yawDeg: MapMuscleToDeg(armTwist, GetMuscleValue(armTwist)),
                 pitchDeg: MapMuscleToDeg(armDownUp, GetMuscleValue(armDownUp)),
@@ -316,7 +604,7 @@ namespace XREngine.Components.Animation
                 pitchAxisWorld: armPitchAxisWorld,
                 rollAxisWorld: armRollAxisWorld);
 
-            ApplyBodyBasisLimbRotation(
+            ApplyLimbBoneRotation(
                 side.Elbow.Node, DebugForearmSigns,
                 yawDeg: MapMuscleToDeg(forearmTwist, GetMuscleValue(forearmTwist)),
                 pitchDeg: MapMuscleToDeg(forearmStretch, forearmStretchMuscle),
@@ -325,7 +613,7 @@ namespace XREngine.Components.Animation
                 pitchAxisWorld: armPitchAxisWorld,
                 rollAxisWorld: armRollAxisWorld);
 
-            ApplyBodyBasisLimbRotation(
+            ApplyLimbBoneRotation(
                 side.Wrist.Node, DebugWristSigns,
                 yawDeg: 0.0f,
                 pitchDeg: MapMuscleToDeg(handDownUp, GetMuscleValue(handDownUp)),
@@ -334,41 +622,45 @@ namespace XREngine.Components.Animation
                 pitchAxisWorld: armPitchAxisWorld,
                 rollAxisWorld: armRollAxisWorld);
 
-            ApplyBodyBasisLimbRotation(
+            ApplyLimbBoneRotation(
                 side.Leg.Node, DebugUpperLegSigns,
                 yawDeg: MapMuscleToDeg(upperLegTwist, GetMuscleValue(upperLegTwist)),
                 pitchDeg: MapMuscleToDeg(upperLegFrontBack, GetMuscleValue(upperLegFrontBack)),
                 rollDeg: MapMuscleToDeg(upperLegInOut, GetMuscleValue(upperLegInOut)),
                 twistAxisWorld: upperLegTwistAxisWorld,
                 pitchAxisWorld: legPitchAxisWorld,
-                rollAxisWorld: legRollAxisWorld);
+                rollAxisWorld: legRollAxisWorld,
+                preferAxisMapping: true);
 
-            ApplyBodyBasisLimbRotation(
+            ApplyLimbBoneRotation(
                 side.Knee.Node, DebugKneeSigns,
                 yawDeg: MapMuscleToDeg(lowerLegTwist, GetMuscleValue(lowerLegTwist)),
                 pitchDeg: lowerLegPitchDeg,
                 rollDeg: 0.0f,
                 twistAxisWorld: lowerLegTwistAxisWorld,
                 pitchAxisWorld: legPitchAxisWorld,
-                rollAxisWorld: legRollAxisWorld);
+                rollAxisWorld: legRollAxisWorld,
+                preferAxisMapping: true);
 
-            ApplyBodyBasisLimbRotation(
+            ApplyLimbBoneRotation(
                 side.Foot.Node, DebugFootSigns,
                 yawDeg: MapMuscleToDeg(footTwist, GetMuscleValue(footTwist)),
                 pitchDeg: MapMuscleToDeg(footUpDown, GetMuscleValue(footUpDown)),
                 rollDeg: 0.0f,
                 twistAxisWorld: footTwistAxisWorld,
                 pitchAxisWorld: legPitchAxisWorld,
-                rollAxisWorld: legRollAxisWorld);
+                rollAxisWorld: legRollAxisWorld,
+                preferAxisMapping: true);
 
-            ApplyBodyBasisLimbRotation(
+            ApplyLimbBoneRotation(
                 side.Toes.Node, DebugToesSigns,
                 yawDeg: 0.0f,
                 pitchDeg: MapMuscleToDeg(toesUpDown, GetMuscleValue(toesUpDown)),
                 rollDeg: 0.0f,
                 twistAxisWorld: footTwistAxisWorld,
                 pitchAxisWorld: legPitchAxisWorld,
-                rollAxisWorld: legRollAxisWorld);
+                rollAxisWorld: legRollAxisWorld,
+                preferAxisMapping: true);
         }
 
         private void ApplyFingerMuscles(bool isLeft)
@@ -445,7 +737,7 @@ namespace XREngine.Components.Animation
                 : null;
         }
 
-        private static void ApplyBodyBasisLimbRotation(
+        private void ApplyBodyBasisLimbRotation(
             SceneNode? node,
             LimbSignOverrides overrides,
             float yawDeg,
@@ -463,6 +755,60 @@ namespace XREngine.Components.Animation
                 twistAxisWorld,
                 pitchAxisWorld,
                 rollAxisWorld);
+
+        private void ApplyLimbBoneRotation(
+            SceneNode? node,
+            LimbSignOverrides overrides,
+            float yawDeg,
+            float pitchDeg,
+            float rollDeg,
+            Vector3 twistAxisWorld,
+            Vector3 pitchAxisWorld,
+            Vector3 rollAxisWorld,
+            bool preferAxisMapping = false)
+        {
+            BoneAxisMapping? axisMapping = preferAxisMapping ? GetBoneAxisMapping(node) : null;
+            if (axisMapping.HasValue)
+            {
+                ApplyAxisMappedLimbRotation(node, overrides, yawDeg, pitchDeg, rollDeg, axisMapping.Value);
+                return;
+            }
+
+            ApplyBodyBasisLimbRotation(
+                node,
+                overrides,
+                yawDeg,
+                pitchDeg,
+                rollDeg,
+                twistAxisWorld,
+                pitchAxisWorld,
+                rollAxisWorld);
+        }
+
+        private void ApplyAxisMappedLimbRotation(
+            SceneNode? node,
+            LimbSignOverrides overrides,
+            float yawDeg,
+            float pitchDeg,
+            float rollDeg,
+            BoneAxisMapping axisMapping)
+        {
+            yawDeg *= overrides.YawSign;
+            pitchDeg *= overrides.PitchSign;
+            rollDeg *= overrides.RollSign;
+
+            if (overrides.SkipBlanketNegateYaw)
+                yawDeg = -yawDeg;
+            if (overrides.SkipBlanketNegatePitch)
+                pitchDeg = -pitchDeg;
+            if (overrides.SkipBlanketNegateRoll)
+                rollDeg = -rollDeg;
+
+            if (overrides.SwapPitchRollAxes)
+                (pitchDeg, rollDeg) = (rollDeg, pitchDeg);
+
+            ApplyBindRelativeEulerDegrees(node, yawDeg, pitchDeg, rollDeg, axisMapping);
+        }
 
         private float MapMuscleToDeg(EHumanoidValue value, float muscle)
         {
@@ -556,12 +902,12 @@ namespace XREngine.Components.Animation
             tfm.Scale = new Vector3(bind.X, bind.Y * s, bind.Z);
         }
 
-        private static void ApplyBindRelativeEulerDegrees(SceneNode? node, float yawDeg, float pitchDeg, float rollDeg)
+        private void ApplyBindRelativeEulerDegrees(SceneNode? node, float yawDeg, float pitchDeg, float rollDeg)
         {
             ApplyBindRelativeEulerDegrees(node, yawDeg, pitchDeg, rollDeg, null);
         }
 
-        private static void ApplyBindRelativeEulerDegrees(SceneNode? node, float yawDeg, float pitchDeg, float rollDeg, BoneAxisMapping? axisMapping)
+        private void ApplyBindRelativeEulerDegrees(SceneNode? node, float yawDeg, float pitchDeg, float rollDeg, BoneAxisMapping? axisMapping)
         {
             if (node?.Transform is null)
                 return;
@@ -609,7 +955,7 @@ namespace XREngine.Components.Animation
                 q = Quaternion.CreateFromYawPitchRoll(-yawDeg * degToRad, -pitchDeg * degToRad, rollDeg * degToRad);
             }
 
-            node.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
+            ApplyNeutralBindRelativeRotation(node, q);
         }
 
         private static Vector3 AxisIndexToVector(int axis) => axis switch
@@ -665,7 +1011,7 @@ namespace XREngine.Components.Animation
         /// <summary>
         /// Helper that applies debug sign overrides before delegating to the world-axis rotation function.
         /// </summary>
-        private static void ApplyWithDebugOverrides(
+        private void ApplyWithDebugOverrides(
             SceneNode? node,
             LimbSignOverrides overrides,
             float yawDeg, float pitchDeg, float rollDeg,
@@ -686,7 +1032,7 @@ namespace XREngine.Components.Animation
                 overrides.SkipBlanketNegateRoll);
         }
 
-        private static void ApplyBindRelativeSwingTwistWorldAxes(
+        private void ApplyBindRelativeSwingTwistWorldAxes(
             SceneNode? node,
             float yawDeg,
             float pitchDeg,
@@ -736,11 +1082,19 @@ namespace XREngine.Components.Animation
 
             // Unity ZXY Euler order: twist(Z) innermost, front-back(X), left-right(Y) outermost.
             Quaternion q = leftRight * frontBack * twist;
-            node.GetTransformAs<Transform>(true)?.SetBindRelativeRotation(q);
+            ApplyNeutralBindRelativeRotation(node, q);
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
-            => base.OnPropertyChanged(propName, prev, field);
+        {
+            base.OnPropertyChanged(propName, prev, field);
+
+            if (propName == nameof(NeutralPoseAuditPath))
+            {
+                _loadedNeutralPoseAuditPath = null;
+                _neutralPoseAuditLoadFailed = false;
+            }
+        }
 
         protected internal override void AddedToSceneNode(SceneNode sceneNode)
         {
@@ -960,6 +1314,7 @@ namespace XREngine.Components.Animation
         public void ResetAllTransformsToBindPose()
         {
             ResetRuntimeAnimationDiagnostics();
+            ClearRuntimeMuscleState();
             Hips.ResetPose();
             Spine.ResetPose();
             Chest.ResetPose();
@@ -970,6 +1325,17 @@ namespace XREngine.Components.Animation
             EyesTarget.ResetPose();
             Left.ResetPose();
             Right.ResetPose();
+        }
+
+        private void ClearRuntimeMuscleState()
+        {
+            lock (_muscleValuesLock)
+            {
+                _muscleValues.Clear();
+                _rawHumanoidValues.Clear();
+            }
+
+            Settings.CurrentValues.Clear();
         }
 
         public BoneChainItem[]? _hipToHeadChain = null;
@@ -1303,6 +1669,12 @@ namespace XREngine.Components.Animation
 
             // Log diagnostic information about bone mapping results
             LogBoneMappingDiagnostics();
+
+            if (string.IsNullOrWhiteSpace(Settings.ProfileSource)
+                || string.Equals(Settings.ProfileSource, "auto-generated", StringComparison.OrdinalIgnoreCase))
+            {
+                Settings.BoneAxisMappings.Clear();
+            }
 
             // ── Build avatar profile (replaces the old ComputeAutoAxisMappings) ──
             // This derives per-bone axis mappings with confidence scoring,
@@ -1811,6 +2183,9 @@ namespace XREngine.Components.Animation
         private Vector3 _currentRawRootPosition = Vector3.Zero;
         private Quaternion _currentRawRootRotation = Quaternion.Identity;
 
+        public Vector3 CurrentRawBodyPosition => _currentRawRootPosition;
+        public Quaternion CurrentRawBodyRotation => Quaternion.Normalize(_currentRawRootRotation);
+
         // ── Runtime debug overrides for muscle→rotation sign tuning ─────────
         // These are NOT serialized. They let you flip axis signs at runtime
         // from the editor UI to quickly diagnose and fix retargeting issues.
@@ -2071,6 +2446,7 @@ namespace XREngine.Components.Animation
         public void ResetPose()
         {
             ResetRuntimeAnimationDiagnostics();
+            ClearRuntimeMuscleState();
             Head.ResetPose();
             Jaw.ResetPose();
             Neck.ResetPose();

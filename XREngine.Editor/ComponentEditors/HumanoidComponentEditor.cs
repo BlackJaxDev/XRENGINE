@@ -15,7 +15,7 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
 {
     private static readonly Vector4 MissingColor = new(0.90f, 0.40f, 0.40f, 1.00f);
     private static readonly Vector4 AssignedColor = new(0.60f, 0.85f, 0.60f, 1.00f);
-    private static bool _showZeroMuscleValues = false;
+    private static bool _showZeroMuscleValues = true;
     private static readonly (string Label, EHumanoidValue Left, EHumanoidValue Right)[] ArmOverrideChannels =
     [
         ("Arm Twist", EHumanoidValue.LeftArmTwistInOut, EHumanoidValue.RightArmTwistInOut),
@@ -89,12 +89,24 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
         if (ImGui.Button("Clear IK Targets"))
             RunSceneEdit(humanoid.ClearIKTargets);
 
+        ImGui.SameLine();
+        if (ImGui.Button("Load Neutral Pose"))
+            RunSceneEdit(humanoid.ReloadNeutralPoseFromAuditPath);
+
+        ImGui.SameLine();
+        if (ImGui.Button("Clear Neutral Pose"))
+            RunSceneEdit(humanoid.ClearNeutralPoseOffsets);
+
         ImGui.Spacing();
     }
 
     private static void DrawGeneralSection(HumanoidComponent humanoid)
     {
         ImGui.TextDisabled("Humanoid IK playback now runs through HumanoidIKSolverComponent.");
+        if (string.IsNullOrWhiteSpace(humanoid.NeutralPoseAuditPath))
+            ImGui.TextDisabled("Set NeutralPoseAuditPath in Default Inspector mode to import Unity's zero-muscle base pose.");
+        else
+            ImGui.TextWrapped($"Neutral pose audit: {humanoid.NeutralPoseAuditPath}");
 
         bool debugVisibility = humanoid.RenderInfo.IsVisible;
         if (ImGui.Checkbox("Show Debug Skeleton", ref debugVisibility))

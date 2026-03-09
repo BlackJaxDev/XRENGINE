@@ -1000,6 +1000,13 @@ public static partial class EditorImGuiUI
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip(fullDisplayLabel);
 
+                    if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
+                    {
+                        ImGuiComponentDragDrop.SetPayload(component);
+                        ImGui.TextUnformatted(fullDisplayLabel);
+                        ImGui.EndDragDropSource();
+                    }
+
                     ImGui.TableSetColumnIndex(1);
                     using (new ImGuiDisabledScope(component.IsDestroyed))
                     {

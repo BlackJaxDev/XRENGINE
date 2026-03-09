@@ -83,13 +83,24 @@ namespace XREngine.Components.Animation
                 BodyRotation = CaptureBodyRotation(humanoid),
             };
 
-            foreach (var (value, unityName) in UnityHumanoidMuscleMap.OrderedEntries)
+            foreach (UnityHumanoidMuscleMap.MuscleEntry entry in UnityHumanoidMuscleMap.OrderedMuscleEntries)
             {
-                humanoid.TryGetMuscleValue(value, out float amount);
+                humanoid.TryGetMuscleValue(entry.Value, out float amount);
                 sample.Muscles.Add(new HumanoidPoseAuditNamedFloat
                 {
-                    Name = unityName,
+                    Name = entry.HumanTraitName,
                     Value = amount,
+                });
+
+                if (!humanoid.TryGetRawHumanoidValue(entry.Value, out float rawAmount))
+                    continue;
+
+                sample.RawCurves.Add(new HumanoidPoseAuditRawCurveSample
+                {
+                    Path = string.Empty,
+                    TypeName = typeof(HumanoidComponent).FullName ?? nameof(HumanoidComponent),
+                    PropertyName = entry.CurveAttributeName,
+                    Value = rawAmount,
                 });
             }
 
@@ -114,23 +125,10 @@ namespace XREngine.Components.Animation
         }
 
         private static HumanoidPoseAuditVector3 CaptureBodyPosition(HumanoidComponent humanoid)
-        {
-            var hipsTransform = humanoid.Hips.Node?.GetTransformAs<Transform>(true);
-            if (hipsTransform is null)
-                return new HumanoidPoseAuditVector3();
-
-            return HumanoidPoseAuditVector3.From(hipsTransform.Translation - hipsTransform.BindState.Translation);
-        }
+            => HumanoidPoseAuditVector3.From(humanoid.CurrentRawBodyPosition);
 
         private static HumanoidPoseAuditQuaternion CaptureBodyRotation(HumanoidComponent humanoid)
-        {
-            var hipsTransform = humanoid.Hips.Node?.GetTransformAs<Transform>(true);
-            if (hipsTransform is null)
-                return HumanoidPoseAuditQuaternion.Identity;
-
-            Quaternion relative = Quaternion.Normalize(Quaternion.Inverse(hipsTransform.BindState.Rotation) * hipsTransform.Rotation);
-            return HumanoidPoseAuditQuaternion.From(relative);
-        }
+            => HumanoidPoseAuditQuaternion.From(humanoid.CurrentRawBodyRotation);
 
         private static int ResolveSampleRate(AnimationClip clip, int sampleRateOverride)
         {

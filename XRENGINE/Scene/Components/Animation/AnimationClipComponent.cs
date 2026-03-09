@@ -166,6 +166,9 @@ namespace XREngine.Components.Animation
             if (Animation is not null)
                 StopAllPropertyAnimations(Animation);
 
+            if (_initialized)
+                RestoreAnimatedState();
+
             UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
 
             if (_suspendedSiblingAnimator is not null)
@@ -178,6 +181,25 @@ namespace XREngine.Components.Animation
 
             if (_initialized)
                 Deinitialize();
+        }
+
+        private void RestoreAnimatedState()
+        {
+            foreach (var member in _animatedMembersSnapshot)
+            {
+                if (member.MemberType == EAnimationMemberType.Method)
+                {
+                    RestoreBaselineMethodArguments(member);
+                    continue;
+                }
+
+                member.ApplyAnimationValue(member.DefaultValue);
+            }
+
+            NormalizeAnimatedQuaternionTargets();
+
+            var humanoid = SceneNode.GetComponentInHierarchy("HumanoidComponent") as HumanoidComponent;
+            humanoid?.ResetAllTransformsToBindPose();
         }
 
         public void EvaluateAtTime(float timeSeconds)
@@ -353,6 +375,7 @@ namespace XREngine.Components.Animation
             switch (member.MemberName)
             {
                 case "SetValue":
+                case "SetImportedRawValue":
                     RemapHumanoidMuscle(member, ref value);
                     break;
                 case "SetAnimatedIKPosition":
@@ -401,10 +424,9 @@ namespace XREngine.Components.Animation
             if (FlipMuscleLeftRight)
                 humanoidValue = SwapHumanoidLeftRight(humanoidValue);
 
-            if (FlipMuscleZ)
-                amount = -amount;
-
             member.MethodArguments[0] = ConvertHumanoidArgumentType(muscleArg, humanoidValue);
+            if (string.Equals(member.MemberName, "SetImportedRawValue", StringComparison.Ordinal) && member.MethodArguments.Length > 2)
+                member.MethodArguments[2] = FlipMuscleZ;
             value = amount;
         }
 
