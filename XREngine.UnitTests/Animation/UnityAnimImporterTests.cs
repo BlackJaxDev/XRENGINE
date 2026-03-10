@@ -106,6 +106,16 @@ AnimationClip:
             outSlope: 2
             tangentMode: 1
     - path: ''
+      attribute: RootT.y
+      classID: 95
+      curve:
+        m_Curve:
+          - time: 0
+            value: 0.55
+            inSlope: -1.5
+            outSlope: 2.5
+            tangentMode: 1
+    - path: ''
       attribute: RootQ.y
       classID: 95
       curve:
@@ -211,11 +221,17 @@ AnimationClip:
         rootPositionXAnim.Keyframes[0].InTangent.ShouldBe(-0.25f);
         rootPositionXAnim.Keyframes[0].OutTangent.ShouldBe(-0.5f);
 
+        var rootPositionY = GetMethod(humanoid, "SetRootPositionY", animatedArgIndex: 0, methodArgs: [0.0f]);
+        var rootPositionYAnim = rootPositionY.Animation.ShouldBeOfType<PropAnimFloat>();
+        rootPositionYAnim.Keyframes[0].InValue.ShouldBe(0.75f);
+        rootPositionYAnim.Keyframes[0].InTangent.ShouldBe(1.0f);
+        rootPositionYAnim.Keyframes[0].OutTangent.ShouldBe(2.0f);
+
         var rootPositionZ = GetMethod(humanoid, "SetRootPositionZ", animatedArgIndex: 0, methodArgs: [0.0f]);
-        var rootPositionAnim = rootPositionZ.Animation.ShouldBeOfType<PropAnimFloat>();
-        rootPositionAnim.Keyframes[0].InValue.ShouldBe(0.75f);
-        rootPositionAnim.Keyframes[0].InTangent.ShouldBe(1.0f);
-        rootPositionAnim.Keyframes[0].OutTangent.ShouldBe(2.0f);
+        var rootPositionZAnim = rootPositionZ.Animation.ShouldBeOfType<PropAnimFloat>();
+        rootPositionZAnim.Keyframes[0].InValue.ShouldBe(0.55f);
+        rootPositionZAnim.Keyframes[0].InTangent.ShouldBe(1.5f);
+        rootPositionZAnim.Keyframes[0].OutTangent.ShouldBe(2.5f);
 
         var rootRotationX = GetMethod(humanoid, "SetRootRotationX", animatedArgIndex: 0, methodArgs: [0.0f]);
         var rootRotationAnim = rootRotationX.Animation.ShouldBeOfType<PropAnimFloat>();
