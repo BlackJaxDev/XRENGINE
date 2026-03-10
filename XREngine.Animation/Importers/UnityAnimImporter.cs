@@ -86,21 +86,48 @@ namespace XREngine.Animation.Importers
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported rotation component."),
             };
 
+        private static char GetHumanoidBodyPositionTargetComponent(char component)
+            => component switch
+            {
+                'x' => 'x',
+                'y' => 'y',
+                'z' => 'z',
+                _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported humanoid position component."),
+            };
+
         private static float GetHumanoidBodyPositionComponentScale(char component)
             => component switch
             {
-                'x' => 1.0f,
+                'x' => -1.0f,
                 'y' => 1.0f,
                 'z' => 1.0f,
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported humanoid position component."),
+            };
+
+        private static char GetHumanoidRootMotionPositionTargetComponent(char component)
+            => component switch
+            {
+                'x' => 'x',
+                'y' => 'z',
+                'z' => 'y',
+                _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported root-motion position component."),
+            };
+
+        private static float GetHumanoidRootMotionPositionComponentScale(char component)
+            => component switch
+            {
+                'x' => -1.0f,
+                'y' => 1.0f,
+                'z' => 1.0f,
+                _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported root-motion position component."),
             };
 
         private static float GetHumanoidBodyRotationComponentScale(char component)
             => component switch
             {
                 'x' => 1.0f,
-                'y' => 1.0f,
-                'z' => 1.0f,
+                'y' => -1.0f,
+                'z' => -1.0f,
                 'w' => 1.0f,
                 _ => throw new ArgumentOutOfRangeException(nameof(component), component, "Unsupported humanoid rotation component."),
             };
@@ -328,8 +355,9 @@ namespace XREngine.Animation.Importers
                 {
                     foreach (var component in rootPosGroup.Components.OrderBy(x => x.Key))
                     {
-                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyPositionComponentScale(component.Key), startTime);
-                        builder.AddRootMotionComponentAnimation(component.Key, anim);
+                        char targetComponent = GetHumanoidRootMotionPositionTargetComponent(component.Key);
+                        var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidRootMotionPositionComponentScale(component.Key), startTime);
+                        builder.AddRootMotionComponentAnimation(targetComponent, anim);
                     }
                 }
 
@@ -381,8 +409,9 @@ namespace XREngine.Animation.Importers
                     {
                         foreach (var component in posGroup.Components.OrderBy(x => x.Key))
                         {
+                            char targetComponent = GetHumanoidBodyPositionTargetComponent(component.Key);
                             var anim = BuildFloatAnim(component.Value, length, looped, sampleRate, GetHumanoidBodyPositionComponentScale(component.Key), startTime);
-                            builder.AddIKGoalPositionComponentAnimation(goalName, component.Key, anim);
+                            builder.AddIKGoalPositionComponentAnimation(goalName, targetComponent, anim);
                         }
                     }
 
