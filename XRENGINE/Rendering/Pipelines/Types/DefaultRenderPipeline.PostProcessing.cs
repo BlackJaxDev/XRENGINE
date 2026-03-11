@@ -419,6 +419,9 @@ public partial class DefaultRenderPipeline
 
     private static void DescribeAmbientOcclusionStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
     {
+        static string AoPath(string groupName, string propertyName)
+            => $"{groupName}.{propertyName}";
+
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.Enabled),
             PostProcessParameterKind.Bool,
@@ -430,30 +433,32 @@ public partial class DefaultRenderPipeline
             PostProcessParameterKind.Int,
             (int)AmbientOcclusionSettings.EType.ScreenSpace,
             displayName: "Method",
-            enumOptions: BuildEnumOptions<AmbientOcclusionSettings.EType>());
+            enumOptions: BuildAmbientOcclusionTypeOptions());
 
-        bool IsSSAO(object o) => ((AmbientOcclusionSettings)o).Type == AmbientOcclusionSettings.EType.ScreenSpace;
+        bool IsSSAO(object o) => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.ScreenSpace;
+
+        bool IsHBAO(object o) => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.HorizonBased;
+
+        bool IsHBAOPlus(object o) => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.HorizonBasedPlus;
+
+        bool IsGTAO(object o) => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion;
+
+        bool IsVXAO(object o) => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.VoxelAmbientOcclusion;
 
         bool IsMVAO(object o)
         {
-            var type = ((AmbientOcclusionSettings)o).Type;
-            return type == AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion
-                || type == AmbientOcclusionSettings.EType.HorizonBased
-                || type == AmbientOcclusionSettings.EType.HorizonBasedPlus;
+            var type = AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type);
+            return type == AmbientOcclusionSettings.EType.MultiViewCustom;
         }
 
-        bool IsMSVO(object o)
-        {
-            var type = ((AmbientOcclusionSettings)o).Type;
-            return type == AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance
-                || type == AmbientOcclusionSettings.EType.ScalableAmbientObscurance;
-        }
+        bool IsPrototypeObscurance(object o)
+            => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype;
 
-        bool IsSpatialHash(object o) => ((AmbientOcclusionSettings)o).Type == AmbientOcclusionSettings.EType.SpatialHashRaytraced;
+        bool IsSpatialHash(object o) => AmbientOcclusionSettings.NormalizeType(((AmbientOcclusionSettings)o).Type) == AmbientOcclusionSettings.EType.SpatialHashExperimental;
 
-        bool UsesRadius(object o) => IsSSAO(o) || IsMVAO(o) || IsSpatialHash(o);
-        bool UsesPower(object o) => IsSSAO(o) || IsMVAO(o) || IsSpatialHash(o);
-        bool UsesBias(object o) => IsMVAO(o) || IsMSVO(o) || IsSpatialHash(o);
+        bool UsesRadius(object o) => IsSSAO(o) || IsHBAO(o) || IsHBAOPlus(o) || IsGTAO(o) || IsVXAO(o) || IsMVAO(o) || IsSpatialHash(o);
+        bool UsesPower(object o) => IsSSAO(o) || IsHBAO(o) || IsHBAOPlus(o) || IsGTAO(o) || IsVXAO(o) || IsMVAO(o) || IsSpatialHash(o);
+        bool UsesBias(object o) => IsHBAO(o) || IsHBAOPlus(o) || IsGTAO(o) || IsMVAO(o) || IsPrototypeObscurance(o) || IsSpatialHash(o);
 
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.Radius),
@@ -486,17 +491,17 @@ public partial class DefaultRenderPipeline
             visibilityCondition: UsesBias);
 
         stage.AddParameter(
-            nameof(AmbientOcclusionSettings.Intensity),
+            AoPath(nameof(AmbientOcclusionSettings.Prototype), nameof(PrototypeAmbientOcclusionSettings.Intensity)),
             PostProcessParameterKind.Float,
             1.0f,
             displayName: "Intensity",
             min: 0.0f,
             max: 4.0f,
             step: 0.01f,
-            visibilityCondition: IsMSVO);
+            visibilityCondition: IsPrototypeObscurance);
 
         stage.AddParameter(
-            nameof(AmbientOcclusionSettings.SecondaryRadius),
+            AoPath(nameof(AmbientOcclusionSettings.MultiView), nameof(MultiViewAmbientOcclusionSettings.SecondaryRadius)),
             PostProcessParameterKind.Float,
             1.6f,
             displayName: "Secondary Radius",
@@ -506,7 +511,7 @@ public partial class DefaultRenderPipeline
             visibilityCondition: IsMVAO);
 
         stage.AddParameter(
-            nameof(AmbientOcclusionSettings.MultiViewBlend),
+            AoPath(nameof(AmbientOcclusionSettings.MultiView), nameof(MultiViewAmbientOcclusionSettings.Blend)),
             PostProcessParameterKind.Float,
             0.6f,
             displayName: "Blend",
@@ -516,7 +521,7 @@ public partial class DefaultRenderPipeline
             visibilityCondition: IsMVAO);
 
         stage.AddParameter(
-            nameof(AmbientOcclusionSettings.MultiViewSpread),
+            AoPath(nameof(AmbientOcclusionSettings.MultiView), nameof(MultiViewAmbientOcclusionSettings.Spread)),
             PostProcessParameterKind.Float,
             0.5f,
             displayName: "Spread",
@@ -526,7 +531,7 @@ public partial class DefaultRenderPipeline
             visibilityCondition: IsMVAO);
 
         stage.AddParameter(
-            nameof(AmbientOcclusionSettings.DepthPhi),
+            AoPath(nameof(AmbientOcclusionSettings.MultiView), nameof(MultiViewAmbientOcclusionSettings.DepthPhi)),
             PostProcessParameterKind.Float,
             4.0f,
             displayName: "Depth Phi",
@@ -536,7 +541,7 @@ public partial class DefaultRenderPipeline
             visibilityCondition: IsMVAO);
 
         stage.AddParameter(
-            nameof(AmbientOcclusionSettings.NormalPhi),
+            AoPath(nameof(AmbientOcclusionSettings.MultiView), nameof(MultiViewAmbientOcclusionSettings.NormalPhi)),
             PostProcessParameterKind.Float,
             64.0f,
             displayName: "Normal Phi",
@@ -546,7 +551,209 @@ public partial class DefaultRenderPipeline
             visibilityCondition: IsMVAO);
 
         stage.AddParameter(
-            nameof(AmbientOcclusionSettings.SamplesPerPixel),
+            AoPath(nameof(AmbientOcclusionSettings.HorizonBased), nameof(HorizonBasedAmbientOcclusionSettings.DirectionCount)),
+            PostProcessParameterKind.Int,
+            8,
+            displayName: "Direction Count",
+            min: 4.0f,
+            max: 16.0f,
+            step: 1.0f,
+            visibilityCondition: IsHBAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.HorizonBased), nameof(HorizonBasedAmbientOcclusionSettings.StepsPerDirection)),
+            PostProcessParameterKind.Int,
+            4,
+            displayName: "Steps / Direction",
+            min: 2.0f,
+            max: 16.0f,
+            step: 1.0f,
+            visibilityCondition: IsHBAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.HorizonBased), nameof(HorizonBasedAmbientOcclusionSettings.TangentBias)),
+            PostProcessParameterKind.Float,
+            0.1f,
+            displayName: "Tangent Bias",
+            min: 0.0f,
+            max: 0.5f,
+            step: 0.001f,
+            visibilityCondition: IsHBAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.HorizonBasedPlus), nameof(HorizonBasedPlusAmbientOcclusionSettings.DetailAO)),
+            PostProcessParameterKind.Float,
+            0.0f,
+            displayName: "Detail AO",
+            min: 0.0f,
+            max: 5.0f,
+            step: 0.01f,
+            visibilityCondition: IsHBAOPlus);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.HorizonBasedPlus), nameof(HorizonBasedPlusAmbientOcclusionSettings.BlurEnabled)),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Blur Enabled",
+            visibilityCondition: IsHBAOPlus);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.HorizonBasedPlus), nameof(HorizonBasedPlusAmbientOcclusionSettings.BlurRadius)),
+            PostProcessParameterKind.Int,
+            8,
+            displayName: "Blur Radius",
+            min: 0.0f,
+            max: 16.0f,
+            step: 1.0f,
+            visibilityCondition: IsHBAOPlus);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.HorizonBasedPlus), nameof(HorizonBasedPlusAmbientOcclusionSettings.BlurSharpness)),
+            PostProcessParameterKind.Float,
+            4.0f,
+            displayName: "Blur Sharpness",
+            min: 0.0f,
+            max: 16.0f,
+            step: 0.1f,
+            visibilityCondition: IsHBAOPlus);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.HorizonBasedPlus), nameof(HorizonBasedPlusAmbientOcclusionSettings.UseInputNormals)),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Use Input Normals",
+            visibilityCondition: IsHBAOPlus);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.HorizonBasedPlus), nameof(HorizonBasedPlusAmbientOcclusionSettings.MetersToViewSpaceUnits)),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Meters To View Units",
+            min: 0.01f,
+            max: 100.0f,
+            step: 0.01f,
+            visibilityCondition: IsHBAOPlus);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.SliceCount)),
+            PostProcessParameterKind.Int,
+            3,
+            displayName: "Slice Count",
+            min: 1.0f,
+            max: 8.0f,
+            step: 1.0f,
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.StepsPerSlice)),
+            PostProcessParameterKind.Int,
+            6,
+            displayName: "Steps / Slice",
+            min: 1.0f,
+            max: 16.0f,
+            step: 1.0f,
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.FalloffStartRatio)),
+            PostProcessParameterKind.Float,
+            0.4f,
+            displayName: "Falloff Start Ratio",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.DenoiseEnabled)),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Denoise Enabled",
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.DenoiseRadius)),
+            PostProcessParameterKind.Int,
+            4,
+            displayName: "Denoise Radius",
+            min: 0.0f,
+            max: 16.0f,
+            step: 1.0f,
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.DenoiseSharpness)),
+            PostProcessParameterKind.Float,
+            4.0f,
+            displayName: "Denoise Sharpness",
+            min: 0.0f,
+            max: 16.0f,
+            step: 0.1f,
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.UseInputNormals)),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Use Input Normals",
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.Voxel), nameof(VoxelAmbientOcclusionSettings.VoxelGridResolution)),
+            PostProcessParameterKind.Int,
+            128,
+            displayName: "Voxel Grid Resolution",
+            min: 32.0f,
+            max: 512.0f,
+            step: 32.0f,
+            visibilityCondition: IsVXAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.Voxel), nameof(VoxelAmbientOcclusionSettings.CoverageExtent)),
+            PostProcessParameterKind.Float,
+            24.0f,
+            displayName: "Coverage Extent",
+            min: 1.0f,
+            max: 256.0f,
+            step: 1.0f,
+            visibilityCondition: IsVXAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.Voxel), nameof(VoxelAmbientOcclusionSettings.VoxelOpacityScale)),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Voxel Opacity Scale",
+            min: 0.0f,
+            max: 8.0f,
+            step: 0.01f,
+            visibilityCondition: IsVXAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.Voxel), nameof(VoxelAmbientOcclusionSettings.TemporalReuseEnabled)),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Temporal Reuse Enabled",
+            visibilityCondition: IsVXAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.Voxel), nameof(VoxelAmbientOcclusionSettings.CombineWithScreenSpaceDetail)),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Combine With Screen-Space Detail",
+            visibilityCondition: IsVXAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.Voxel), nameof(VoxelAmbientOcclusionSettings.DetailBlend)),
+            PostProcessParameterKind.Float,
+            0.35f,
+            displayName: "Detail Blend",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsVXAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.SamplesPerPixel)),
             PostProcessParameterKind.Float,
             8.0f,
             displayName: "Feature Size (px)",
@@ -556,7 +763,7 @@ public partial class DefaultRenderPipeline
             visibilityCondition: IsSpatialHash);
 
         stage.AddParameter(
-            nameof(AmbientOcclusionSettings.SpatialHashCellSize),
+            AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.CellSize)),
             PostProcessParameterKind.Float,
             0.01f,
             displayName: "Min Cell Size",
@@ -566,7 +773,7 @@ public partial class DefaultRenderPipeline
             visibilityCondition: IsSpatialHash);
 
         stage.AddParameter(
-            nameof(AmbientOcclusionSettings.SpatialHashSteps),
+            AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.Steps)),
             PostProcessParameterKind.Int,
             8,
             displayName: "Ray Steps",
@@ -576,7 +783,7 @@ public partial class DefaultRenderPipeline
             visibilityCondition: IsSpatialHash);
 
         stage.AddParameter(
-            nameof(AmbientOcclusionSettings.Thickness),
+            AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.Thickness)),
             PostProcessParameterKind.Float,
             0.5f,
             displayName: "Thickness",
@@ -586,7 +793,7 @@ public partial class DefaultRenderPipeline
             visibilityCondition: IsSpatialHash);
 
         stage.AddParameter(
-            nameof(AmbientOcclusionSettings.SpatialHashJitterScale),
+            AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.JitterScale)),
             PostProcessParameterKind.Float,
             1.0f,
             displayName: "Jitter Scale",
@@ -595,25 +802,6 @@ public partial class DefaultRenderPipeline
             step: 0.01f,
             visibilityCondition: IsSpatialHash);
 
-        stage.AddParameter(
-            nameof(AmbientOcclusionSettings.ResolutionScale),
-            PostProcessParameterKind.Float,
-            1.0f,
-            displayName: "Resolution Scale",
-            min: 0.25f,
-            max: 2.0f,
-            step: 0.01f,
-            visibilityCondition: IsMSVO);
-
-        stage.AddParameter(
-            nameof(AmbientOcclusionSettings.SamplesPerPixel),
-            PostProcessParameterKind.Float,
-            1.0f,
-            displayName: "Samples / Pixel",
-            min: 0.5f,
-            max: 8.0f,
-            step: 0.1f,
-            visibilityCondition: IsMSVO);
     }
 
     private static void DescribeMotionBlurStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
@@ -935,6 +1123,19 @@ public partial class DefaultRenderPipeline
 
         return options;
     }
+
+    private static PostProcessEnumOption[] BuildAmbientOcclusionTypeOptions()
+        =>
+        [
+            new("SSAO", (int)AmbientOcclusionSettings.EType.ScreenSpace),
+            new("Multi-View AO (Custom)", (int)AmbientOcclusionSettings.EType.MultiViewCustom),
+            new("Multi-Radius AO (Prototype)", (int)AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype),
+            new("HBAO (Deferred)", (int)AmbientOcclusionSettings.EType.HorizonBased),
+            new("HBAO+", (int)AmbientOcclusionSettings.EType.HorizonBasedPlus),
+            new("GTAO (Experimental)", (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion),
+            new("VXAO / Voxel AO (Planned)", (int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion),
+            new("Spatial Hash AO (Experimental)", (int)AmbientOcclusionSettings.EType.SpatialHashExperimental),
+        ];
 
     private static MotionBlurSettings? GetMotionBlurSettings()
     {

@@ -69,7 +69,12 @@ public static partial class EditorImGuiUI
         private static bool _showAssetExplorer = true;
         private static bool _showNetworking;
         private static bool _showAnimationClipEditor;
-        private static UserSettings? _windowVisibilitySettingsSource;
+        private static UserSettings? _editorSceneHierarchySettingsSource;
+        private static string? _ownedImGuiIniFilename;
+        private static DateTime _ownedImGuiIniLastWriteTimeUtc;
+        private static bool _imguiPanelVisibilityLoaded;
+        private static bool _imguiPanelVisibilityWriteRequested;
+        private static ImGuiPanelVisibilityState _savedPanelVisibilityState;
 
         private static bool _renameInputFocusRequested;
         private static bool _imguiStyleInitialized;
@@ -201,6 +206,25 @@ public static partial class EditorImGuiUI
         private static XRWindow? _closePromptBypassWindow;
         private static readonly List<XRAsset> _closePromptAssets = [];
         private static readonly Dictionary<Guid, bool> _closePromptSelections = [];
+
+        private const string PanelVisibilityIniSectionHeader = "[XREngine][PanelVisibility]";
+
+        private readonly record struct ImGuiPanelVisibilityState(
+            bool Hierarchy,
+            bool Inspector,
+            bool AssetExplorer,
+            bool Console,
+            bool RenderPipelineGraph,
+            bool EngineState,
+            bool Profiler,
+            bool RenderApiObjects,
+            bool RenderApiErrors,
+            bool RenderApiExtensions,
+            bool MissingAssets,
+            bool Networking,
+            bool AnimationClipEditor,
+            bool ShaderGraph,
+            bool ArchiveInspector);
 
 
 
@@ -498,7 +522,7 @@ public static partial class EditorImGuiUI
             _assetExplorerWindowHovered = false;
             _assetDragInProgress = false;
 
-            LoadWindowVisibilityFromUserSettingsIfNeeded();
+            LoadEditorSceneHierarchyFromUserSettingsIfNeeded();
 
             EnsureProfessionalImGuiStyling();
             ApplyViewportModeImGuiBackgroundAlpha();
@@ -575,7 +599,8 @@ public static partial class EditorImGuiUI
             DrawArchiveInspectorPanel();
             DrawClosePromptDialog();
 
-            PersistWindowVisibilityToUserSettingsIfChanged();
+            PersistEditorSceneHierarchyToUserSettingsIfChanged();
+            PersistPanelVisibilityToImGuiIniIfChanged();
 
             // Tool windows
             UI.Tools.ShaderLockingWindow.Instance.Render();
@@ -1356,6 +1381,8 @@ public static partial class EditorImGuiUI
                 return;
 
             var io = ImGui.GetIO();
+            if (!string.IsNullOrWhiteSpace(io.IniFilename))
+                _ownedImGuiIniFilename ??= io.IniFilename;
             io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
 
             var style = ImGui.GetStyle();
@@ -1460,8 +1487,10 @@ public static partial class EditorImGuiUI
             if (!_dockingIniReloaded)
             {
                 _dockingIniReloaded = true;
-                string iniFilename = io.IniFilename;
-                if (!string.IsNullOrEmpty(iniFilename) && File.Exists(iniFilename))
+                LoadPanelVisibilityFromImGuiIniIfNeeded();
+
+                string? iniFilename = _ownedImGuiIniFilename;
+                if (!string.IsNullOrWhiteSpace(iniFilename) && File.Exists(iniFilename))
                     ImGui.LoadIniSettingsFromDisk(iniFilename);
             }
         }
@@ -1518,51 +1547,29 @@ public static partial class EditorImGuiUI
             return null;
         }
 
-        private static void LoadWindowVisibilityFromUserSettingsIfNeeded()
+        private static void LoadEditorSceneHierarchyFromUserSettingsIfNeeded()
         {
             var userSettings = Engine.UserSettings;
             if (userSettings is null)
                 return;
 
-            if (ReferenceEquals(_windowVisibilitySettingsSource, userSettings))
+            if (ReferenceEquals(_editorSceneHierarchySettingsSource, userSettings))
                 return;
 
-            _windowVisibilitySettingsSource = userSettings;
-
-            _showHierarchy = userSettings.ImGuiShowHierarchy;
+            _editorSceneHierarchySettingsSource = userSettings;
             _showEditorSceneHierarchy = userSettings.ImGuiShowEditorSceneHierarchy;
-            _showInspector = userSettings.ImGuiShowInspector;
-            _showAssetExplorer = userSettings.ImGuiShowAssetExplorer;
-            _showConsole = userSettings.ImGuiShowConsole;
-            _showRenderPipelineGraph = userSettings.ImGuiShowRenderPipelineGraph;
-            _showStatePanel = userSettings.ImGuiShowEngineState;
-            _showProfiler = userSettings.ImGuiShowProfiler;
-            _showOpenGLApiObjects = userSettings.ImGuiShowRenderApiObjects;
-            _showOpenGLErrors = userSettings.ImGuiShowRenderApiErrors;
-            _showRenderApiExtensions = userSettings.ImGuiShowRenderApiExtensions;
-            _showMissingAssets = userSettings.ImGuiShowMissingAssets;
-            _showNetworking = userSettings.ImGuiShowNetworking;
-            _showAnimationClipEditor = userSettings.ImGuiShowAnimationClipEditor;
-            _showShaderGraphPanel = userSettings.ImGuiShowShaderGraph;
-            _showArchiveInspector = userSettings.ImGuiShowArchiveInspector;
         }
 
-        private static void PersistWindowVisibilityToUserSettingsIfChanged()
+        private static void PersistEditorSceneHierarchyToUserSettingsIfChanged()
         {
             var userSettings = Engine.UserSettings;
             if (userSettings is null)
                 return;
 
-            if (!ReferenceEquals(_windowVisibilitySettingsSource, userSettings))
-                LoadWindowVisibilityFromUserSettingsIfNeeded();
+            if (!ReferenceEquals(_editorSceneHierarchySettingsSource, userSettings))
+                LoadEditorSceneHierarchyFromUserSettingsIfNeeded();
 
             bool changed = false;
-
-            if (userSettings.ImGuiShowHierarchy != _showHierarchy)
-            {
-                userSettings.ImGuiShowHierarchy = _showHierarchy;
-                changed = true;
-            }
 
             if (userSettings.ImGuiShowEditorSceneHierarchy != _showEditorSceneHierarchy)
             {
@@ -1570,93 +1577,256 @@ public static partial class EditorImGuiUI
                 changed = true;
             }
 
-            if (userSettings.ImGuiShowInspector != _showInspector)
-            {
-                userSettings.ImGuiShowInspector = _showInspector;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowAssetExplorer != _showAssetExplorer)
-            {
-                userSettings.ImGuiShowAssetExplorer = _showAssetExplorer;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowConsole != _showConsole)
-            {
-                userSettings.ImGuiShowConsole = _showConsole;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowRenderPipelineGraph != _showRenderPipelineGraph)
-            {
-                userSettings.ImGuiShowRenderPipelineGraph = _showRenderPipelineGraph;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowEngineState != _showStatePanel)
-            {
-                userSettings.ImGuiShowEngineState = _showStatePanel;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowProfiler != _showProfiler)
-            {
-                userSettings.ImGuiShowProfiler = _showProfiler;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowRenderApiObjects != _showOpenGLApiObjects)
-            {
-                userSettings.ImGuiShowRenderApiObjects = _showOpenGLApiObjects;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowRenderApiErrors != _showOpenGLErrors)
-            {
-                userSettings.ImGuiShowRenderApiErrors = _showOpenGLErrors;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowRenderApiExtensions != _showRenderApiExtensions)
-            {
-                userSettings.ImGuiShowRenderApiExtensions = _showRenderApiExtensions;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowMissingAssets != _showMissingAssets)
-            {
-                userSettings.ImGuiShowMissingAssets = _showMissingAssets;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowNetworking != _showNetworking)
-            {
-                userSettings.ImGuiShowNetworking = _showNetworking;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowAnimationClipEditor != _showAnimationClipEditor)
-            {
-                userSettings.ImGuiShowAnimationClipEditor = _showAnimationClipEditor;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowShaderGraph != _showShaderGraphPanel)
-            {
-                userSettings.ImGuiShowShaderGraph = _showShaderGraphPanel;
-                changed = true;
-            }
-
-            if (userSettings.ImGuiShowArchiveInspector != _showArchiveInspector)
-            {
-                userSettings.ImGuiShowArchiveInspector = _showArchiveInspector;
-                changed = true;
-            }
-
             if (changed)
                 Engine.SaveProjectUserSettings();
         }
+
+        private static void LoadPanelVisibilityFromImGuiIniIfNeeded()
+        {
+            if (_imguiPanelVisibilityLoaded)
+                return;
+
+            _imguiPanelVisibilityLoaded = true;
+            _savedPanelVisibilityState = CapturePanelVisibilityState();
+
+            string? iniFilename = _ownedImGuiIniFilename;
+            if (string.IsNullOrWhiteSpace(iniFilename) || !File.Exists(iniFilename))
+            {
+                _imguiPanelVisibilityWriteRequested = true;
+                return;
+            }
+
+            _ownedImGuiIniLastWriteTimeUtc = File.GetLastWriteTimeUtc(iniFilename);
+
+            bool sectionFound = false;
+
+            try
+            {
+                bool inSection = false;
+                foreach (string rawLine in File.ReadLines(iniFilename))
+                {
+                    string line = rawLine.Trim();
+                    if (line.Length == 0 || line.StartsWith(';'))
+                        continue;
+
+                    if (line.StartsWith('['))
+                    {
+                        inSection = string.Equals(line, PanelVisibilityIniSectionHeader, StringComparison.Ordinal);
+                        sectionFound |= inSection;
+                        continue;
+                    }
+
+                    if (!inSection)
+                        continue;
+
+                    int separatorIndex = line.IndexOf('=');
+                    if (separatorIndex <= 0 || separatorIndex == line.Length - 1)
+                        continue;
+
+                    string key = line[..separatorIndex].Trim();
+                    string valueText = line[(separatorIndex + 1)..].Trim();
+                    if (!TryParseIniBoolean(valueText, out bool value))
+                        continue;
+
+                    ApplyPanelVisibilityValue(key, value);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to load ImGui panel visibility from '{iniFilename}': {ex.Message}");
+                _imguiPanelVisibilityWriteRequested = true;
+            }
+
+            _savedPanelVisibilityState = CapturePanelVisibilityState();
+            if (!sectionFound)
+                _imguiPanelVisibilityWriteRequested = true;
+        }
+
+        private static void PersistPanelVisibilityToImGuiIniIfChanged()
+        {
+            string? iniFilename = _ownedImGuiIniFilename;
+            if (string.IsNullOrWhiteSpace(iniFilename))
+                return;
+
+            ImGuiPanelVisibilityState currentState = CapturePanelVisibilityState();
+            bool panelVisibilityChanged = currentState != _savedPanelVisibilityState;
+            DateTime currentLastWriteTimeUtc = File.Exists(iniFilename)
+                ? File.GetLastWriteTimeUtc(iniFilename)
+                : DateTime.MinValue;
+            bool iniFileChanged = currentLastWriteTimeUtc != _ownedImGuiIniLastWriteTimeUtc;
+            if (!panelVisibilityChanged && !_imguiPanelVisibilityWriteRequested && !iniFileChanged)
+                return;
+
+            try
+            {
+                string? iniDirectory = Path.GetDirectoryName(iniFilename);
+                if (!string.IsNullOrWhiteSpace(iniDirectory))
+                    Directory.CreateDirectory(iniDirectory);
+
+                ImGui.SaveIniSettingsToDisk(iniFilename);
+                string currentIniContent = File.Exists(iniFilename) ? File.ReadAllText(iniFilename) : string.Empty;
+                string updatedIniContent = UpsertPanelVisibilityIniSection(currentIniContent, currentState);
+                if (!string.Equals(currentIniContent, updatedIniContent, StringComparison.Ordinal))
+                    File.WriteAllText(iniFilename, updatedIniContent);
+
+                _ownedImGuiIniLastWriteTimeUtc = File.Exists(iniFilename)
+                    ? File.GetLastWriteTimeUtc(iniFilename)
+                    : DateTime.MinValue;
+                _savedPanelVisibilityState = currentState;
+                _imguiPanelVisibilityWriteRequested = false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to persist ImGui panel visibility to '{iniFilename}': {ex.Message}");
+            }
+        }
+
+        private static ImGuiPanelVisibilityState CapturePanelVisibilityState()
+            => new(
+                Hierarchy: _showHierarchy,
+                Inspector: _showInspector,
+                AssetExplorer: _showAssetExplorer,
+                Console: _showConsole,
+                RenderPipelineGraph: _showRenderPipelineGraph,
+                EngineState: _showStatePanel,
+                Profiler: _showProfiler,
+                RenderApiObjects: _showOpenGLApiObjects,
+                RenderApiErrors: _showOpenGLErrors,
+                RenderApiExtensions: _showRenderApiExtensions,
+                MissingAssets: _showMissingAssets,
+                Networking: _showNetworking,
+                AnimationClipEditor: _showAnimationClipEditor,
+                ShaderGraph: _showShaderGraphPanel,
+                ArchiveInspector: _showArchiveInspector);
+
+        private static bool TryParseIniBoolean(string valueText, out bool value)
+        {
+            if (bool.TryParse(valueText, out value))
+                return true;
+
+            switch (valueText)
+            {
+                case "1":
+                    value = true;
+                    return true;
+                case "0":
+                    value = false;
+                    return true;
+                default:
+                    value = false;
+                    return false;
+            }
+        }
+
+        private static void ApplyPanelVisibilityValue(string key, bool value)
+        {
+            switch (key)
+            {
+                case "Hierarchy":
+                    _showHierarchy = value;
+                    break;
+                case "Inspector":
+                    _showInspector = value;
+                    break;
+                case "AssetExplorer":
+                    _showAssetExplorer = value;
+                    break;
+                case "Console":
+                    _showConsole = value;
+                    break;
+                case "RenderPipelineGraph":
+                    _showRenderPipelineGraph = value;
+                    break;
+                case "EngineState":
+                    _showStatePanel = value;
+                    break;
+                case "Profiler":
+                    _showProfiler = value;
+                    break;
+                case "RenderApiObjects":
+                    _showOpenGLApiObjects = value;
+                    break;
+                case "RenderApiErrors":
+                    _showOpenGLErrors = value;
+                    break;
+                case "RenderApiExtensions":
+                    _showRenderApiExtensions = value;
+                    break;
+                case "MissingAssets":
+                    _showMissingAssets = value;
+                    break;
+                case "Networking":
+                    _showNetworking = value;
+                    break;
+                case "AnimationClipEditor":
+                    _showAnimationClipEditor = value;
+                    break;
+                case "ShaderGraph":
+                    _showShaderGraphPanel = value;
+                    break;
+                case "ArchiveInspector":
+                    _showArchiveInspector = value;
+                    break;
+            }
+        }
+
+        private static string UpsertPanelVisibilityIniSection(string iniContent, ImGuiPanelVisibilityState state)
+        {
+            var builder = new StringBuilder(RemovePanelVisibilityIniSection(iniContent).TrimEnd('\r', '\n'));
+            if (builder.Length > 0)
+                builder.AppendLine().AppendLine();
+
+            builder.AppendLine(PanelVisibilityIniSectionHeader);
+            builder.AppendLine($"Hierarchy={FormatIniBoolean(state.Hierarchy)}");
+            builder.AppendLine($"Inspector={FormatIniBoolean(state.Inspector)}");
+            builder.AppendLine($"AssetExplorer={FormatIniBoolean(state.AssetExplorer)}");
+            builder.AppendLine($"Console={FormatIniBoolean(state.Console)}");
+            builder.AppendLine($"RenderPipelineGraph={FormatIniBoolean(state.RenderPipelineGraph)}");
+            builder.AppendLine($"EngineState={FormatIniBoolean(state.EngineState)}");
+            builder.AppendLine($"Profiler={FormatIniBoolean(state.Profiler)}");
+            builder.AppendLine($"RenderApiObjects={FormatIniBoolean(state.RenderApiObjects)}");
+            builder.AppendLine($"RenderApiErrors={FormatIniBoolean(state.RenderApiErrors)}");
+            builder.AppendLine($"RenderApiExtensions={FormatIniBoolean(state.RenderApiExtensions)}");
+            builder.AppendLine($"MissingAssets={FormatIniBoolean(state.MissingAssets)}");
+            builder.AppendLine($"Networking={FormatIniBoolean(state.Networking)}");
+            builder.AppendLine($"AnimationClipEditor={FormatIniBoolean(state.AnimationClipEditor)}");
+            builder.AppendLine($"ShaderGraph={FormatIniBoolean(state.ShaderGraph)}");
+            builder.AppendLine($"ArchiveInspector={FormatIniBoolean(state.ArchiveInspector)}");
+            return builder.ToString();
+        }
+
+        private static string RemovePanelVisibilityIniSection(string iniContent)
+        {
+            if (string.IsNullOrEmpty(iniContent))
+                return string.Empty;
+
+            string normalized = iniContent.Replace("\r\n", "\n");
+            string[] lines = normalized.Split('\n');
+            var builder = new StringBuilder(iniContent.Length);
+            bool skippingSection = false;
+
+            foreach (string line in lines)
+            {
+                if (string.Equals(line.Trim(), PanelVisibilityIniSectionHeader, StringComparison.Ordinal))
+                {
+                    skippingSection = true;
+                    continue;
+                }
+
+                if (skippingSection && line.TrimStart().StartsWith('['))
+                    skippingSection = false;
+
+                if (skippingSection)
+                    continue;
+
+                builder.AppendLine(line);
+            }
+
+            return builder.ToString();
+        }
+
+        private static string FormatIniBoolean(bool value)
+            => value ? "1" : "0";
 
         private static void OpenSettingsInInspector(object? settingsRoot, string title)
         {

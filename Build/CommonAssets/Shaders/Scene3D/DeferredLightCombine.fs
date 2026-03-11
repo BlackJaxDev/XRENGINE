@@ -11,7 +11,7 @@ layout(location = 0) in vec3 FragPos;
 layout(binding = 0) uniform sampler2D AlbedoOpacity;
 layout(binding = 1) uniform sampler2D Normal;
 layout(binding = 2) uniform sampler2D RMSE;
-layout(binding = 3) uniform sampler2D SSAOIntensityTexture;
+layout(binding = 3) uniform sampler2D AmbientOcclusionTexture;
 layout(binding = 4) uniform sampler2D DepthView; //Depth
 layout(binding = 5) uniform sampler2D LightingTexture;
 
@@ -341,7 +341,7 @@ void main()
         vec3 albedoColor = texture(AlbedoOpacity, uv).rgb;
         vec3 normal = texture(Normal, uv).rgb;
         vec4 rmse = texture(RMSE, uv);
-        float ao = UseAmbientOcclusion ? texture(SSAOIntensityTexture, uv).r : 1.0f;
+        float ao = UseAmbientOcclusion ? texture(AmbientOcclusionTexture, uv).r : 1.0f;
         float depth = texture(DepthView, uv).r;
         vec3 InLo = max(texture(LightingTexture, uv).rgb, vec3(0.0f));
         vec3 fragPosWS = WorldPosFromDepth(depth, uv);

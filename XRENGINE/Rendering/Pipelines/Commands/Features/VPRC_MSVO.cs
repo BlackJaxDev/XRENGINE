@@ -17,9 +17,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         private string MSVOBlurShaderName()
             => Stereo ? "SSAOBlurStereo.fs" : "SSAOBlur.fs";
 
-        public string MSVOIntensityTextureName { get; set; } = "SSAOIntensityTexture";
-        public string MSVOFBOName { get; set; } = "SSAOFBO";
-        public string MSVOBlurFBOName { get; set; } = "SSAOBlurFBO";
+        public string MSVOIntensityTextureName { get; set; } = "AmbientOcclusionTexture";
+        public string MSVOFBOName { get; set; } = "AmbientOcclusionFBO";
+        public string MSVOBlurFBOName { get; set; } = "AmbientOcclusionBlurFBO";
         public string GBufferFBOFBOName { get; set; } = "GBufferFBO";
         public string NormalTextureName { get; set; } = "Normal";
         public string DepthViewTextureName { get; set; } = "DepthView";
@@ -58,11 +58,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             TransformIdTextureName = transformId;
         }
 
-        public void SetOutputNames(string ssaoIntensityTexture, string ssaoFBO, string ssaoBlurFBO, string gBufferFBO)
+        public void SetOutputNames(string intensityTexture, string generationFbo, string blurFbo, string gBufferFBO)
         {
-            MSVOIntensityTextureName = ssaoIntensityTexture;
-            MSVOFBOName = ssaoFBO;
-            MSVOBlurFBOName = ssaoBlurFBO;
+            MSVOIntensityTextureName = intensityTexture;
+            MSVOFBOName = generationFbo;
+            MSVOBlurFBOName = blurFbo;
             GBufferFBOFBOName = gBufferFBO;
         }
 
@@ -260,7 +260,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Engine.Rendering.State.IsStereoPass)
                 ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
-            rc.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance);
+            rc.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype);
 
             program.Uniform(EEngineUniform.ScreenWidth.ToString(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToString(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Height);

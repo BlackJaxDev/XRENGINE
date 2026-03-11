@@ -35,10 +35,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         private string MVAOBlurShaderName() =>
             "MVAOBlur.fs";
 
-        public string NoiseTextureName { get; set; } = "SSAONoiseTexture";
-        public string IntensityTextureName { get; set; } = "SSAOIntensityTexture";
-        public string GenerationFBOName { get; set; } = "SSAOFBO";
-        public string BlurFBOName { get; set; } = "SSAOBlurFBO";
+        public string NoiseTextureName { get; set; } = "AmbientOcclusionNoiseTexture";
+        public string IntensityTextureName { get; set; } = "AmbientOcclusionTexture";
+        public string GenerationFBOName { get; set; } = "AmbientOcclusionFBO";
+        public string BlurFBOName { get; set; } = "AmbientOcclusionBlurFBO";
         public string OutputFBOName { get; set; } = "GBufferFBO";
 
         public string NormalTextureName { get; set; } = "Normal";
@@ -372,7 +372,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Engine.Rendering.State.IsStereoPass)
                 ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
-            camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion);
+            camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.MultiViewCustom);
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
             program.Uniform(EEngineUniform.ScreenWidth.ToString(), region.Width);

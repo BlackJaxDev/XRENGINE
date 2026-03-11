@@ -33,10 +33,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             Stereo ? "SSAOGenStereo.fs" : 
             "SSAOGen.fs";
 
-        public string SSAONoiseTextureName { get; set; } = "SSAONoiseTexture";
-        public string SSAOIntensityTextureName { get; set; } = "SSAOFBOTexture";
-        public string SSAOFBOName { get; set; } = "SSAOFBO";
-        public string SSAOBlurFBOName { get; set; } = "SSAOBlurFBO";
+        public string SSAONoiseTextureName { get; set; } = "AmbientOcclusionNoiseTexture";
+        public string SSAOIntensityTextureName { get; set; } = "AmbientOcclusionTexture";
+        public string SSAOFBOName { get; set; } = "AmbientOcclusionFBO";
+        public string SSAOBlurFBOName { get; set; } = "AmbientOcclusionBlurFBO";
         public string GBufferFBOFBOName { get; set; } = "GBufferFBO";
 
         public const int DefaultSamples = 128;
@@ -119,12 +119,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             DepthStencilTextureName = depthStencil;
             TransformIdTextureName = transformId;
         }
-        public void SetOutputNames(string noise, string ssaoIntensityTexture, string ssaoFBO, string ssaoBlurFBO, string gBufferFBO)
+        public void SetOutputNames(string noise, string intensityTexture, string generationFbo, string blurFbo, string gBufferFBO)
         {
             SSAONoiseTextureName = noise;
-            SSAOIntensityTextureName = ssaoIntensityTexture;
-            SSAOFBOName = ssaoFBO;
-            SSAOBlurFBOName = ssaoBlurFBO;
+            SSAOIntensityTextureName = intensityTexture;
+            SSAOFBOName = generationFbo;
+            SSAOBlurFBOName = blurFbo;
             GBufferFBOFBOName = gBufferFBO;
         }
 

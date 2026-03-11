@@ -12,7 +12,7 @@ layout(location = 0) in vec3 FragPos;
 layout(binding = 0) uniform sampler2DArray AlbedoOpacity;
 layout(binding = 1) uniform sampler2DArray Normal;
 layout(binding = 2) uniform sampler2DArray RMSE;
-layout(binding = 3) uniform sampler2DArray SSAOIntensityTexture;
+layout(binding = 3) uniform sampler2DArray AmbientOcclusionTexture;
 layout(binding = 4) uniform sampler2DArray DepthView;
 layout(binding = 5) uniform sampler2DArray LightingTexture;
 
@@ -91,7 +91,7 @@ void main()
 	vec3 albedoColor = texture(AlbedoOpacity, uvi).rgb;
 	vec3 normal = texture(Normal, uvi).rgb;
 	vec3 rms = texture(RMSE, uvi).rgb;
-	float ao = UseAmbientOcclusion ? texture(SSAOIntensityTexture, uvi).r : 1.0f;
+	float ao = UseAmbientOcclusion ? texture(AmbientOcclusionTexture, uvi).r : 1.0f;
 	float depth = texture(DepthView, uvi).r;
 	vec3 InLo = texture(LightingTexture, uvi).rgb;
 	vec3 irradianceColor = SampleOcta(Irradiance, normal);

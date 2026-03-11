@@ -4,6 +4,7 @@ using XREngine.Animation.IK;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.MMD;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Animation
 {
@@ -13,7 +14,7 @@ namespace XREngine.Animation
     [XRAssetInspector("XREngine.Editor.AssetEditors.AnimationClipInspector")]
     [XRAssetContextMenu("Open in Animation Clip Editor", "XREngine.Editor.UI.Tools.AnimationClipAssetMenuActions", "OpenInAnimationClipEditor")]
     [XR3rdPartyExtensions(typeof(XREngine.Data.XRDefault3rdPartyImportOptions), "vmd", "anim")]
-    [MemoryPackable]
+    [MemoryPackable(GenerateType.NoGenerate)]
     public partial class AnimationClip : MotionBase
     {
         public override string ToString()
@@ -140,6 +141,7 @@ namespace XREngine.Animation
         private AnimationMember? _rootMember;
 
         [MemoryPackIgnore]
+        [YamlIgnore]
         public AnimationMember? RootMember
         {
             get => _rootMember;

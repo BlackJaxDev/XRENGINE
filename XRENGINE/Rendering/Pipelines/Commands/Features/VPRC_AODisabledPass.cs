@@ -10,12 +10,19 @@ namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_AODisabledPass : ViewportRenderCommand
     {
+        private static void LogStub(string key, string message)
+            => Debug.RenderingEvery(
+                $"AO.Stub.{key}",
+                TimeSpan.FromSeconds(2),
+                "[AO][Stub] {0}",
+                message);
+
         private string DisabledShaderName()
             => Stereo ? "AODisabledStereo.fs" : "AODisabled.fs";
 
-        public string IntensityTextureName { get; set; } = "SSAOIntensityTexture";
-        public string GenerationFBOName { get; set; } = "SSAOFBO";
-        public string BlurFBOName { get; set; } = "SSAOBlurFBO";
+        public string IntensityTextureName { get; set; } = "AmbientOcclusionTexture";
+        public string GenerationFBOName { get; set; } = "AmbientOcclusionFBO";
+        public string BlurFBOName { get; set; } = "AmbientOcclusionBlurFBO";
         public string OutputFBOName { get; set; } = "GBufferFBO";
 
         public string NormalTextureName { get; set; } = "Normal";
@@ -27,6 +34,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         public IReadOnlyList<string> DependentFboNames { get; set; } = Array.Empty<string>();
 
         public bool Stereo { get; set; }
+        public string? StubLogKey { get; set; }
+        public string? StubLogMessage { get; set; }
 
         private sealed class InstanceState
         {
@@ -43,6 +52,12 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         public void SetOptions(bool stereo)
             => Stereo = stereo;
+
+        public void SetStubInfo(string? key, string? message)
+        {
+            StubLogKey = key;
+            StubLogMessage = message;
+        }
 
         public void SetGBufferInputTextureNames(string normal, string depthView, string albedo, string rmse, string depthStencil, string transformId = "TransformId")
         {
@@ -66,6 +81,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             var instance = ActivePipelineInstance;
             var state = GetInstanceState(instance);
+
+            if (!string.IsNullOrWhiteSpace(StubLogKey) && !string.IsNullOrWhiteSpace(StubLogMessage))
+                LogStub(StubLogKey, StubLogMessage);
 
             XRTexture? normalTex = instance.GetTexture<XRTexture>(NormalTextureName);
             XRTexture? depthViewTex = instance.GetTexture<XRTexture>(DepthViewTextureName);

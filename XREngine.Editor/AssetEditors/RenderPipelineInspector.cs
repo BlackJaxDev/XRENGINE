@@ -6,6 +6,7 @@ using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using ImGuiNET;
 using Silk.NET.OpenGL;
@@ -15,6 +16,7 @@ using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Vulkan;
 
@@ -27,6 +29,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
     private static readonly Vector4 DirtyBadgeColor = new(0.95f, 0.55f, 0.2f, 1f);
     private static readonly Vector4 CleanBadgeColor = new(0.5f, 0.8f, 0.5f, 1f);
     private static readonly Vector4 WarningColor = new(0.95f, 0.45f, 0.45f, 1f);
+    private const long AutoExposurePreviewRefreshIntervalMs = 250;
 
     private readonly ConditionalWeakTable<RenderPipeline, EditorState> _stateCache = new();
 
@@ -228,9 +231,34 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
         bool flipPreview = state.FlipPreview;
 
-        DrawAutoExposureMeteringPreview(selectedInstance);
+        DrawPreferredDebugTargets(selectedInstance, state);
         ImGui.Separator();
 
+        if (ImGui.CollapsingHeader("Auto Exposure (Metering Preview)"))
+        {
+            DrawAutoExposureMeteringPreview(selectedInstance);
+            ImGui.Separator();
+        }
+
+        if (ImGui.BeginTable("##RenderPipelineDebugResources", 2, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchSame))
+        {
+            ImGui.TableSetupColumn("Framebuffers");
+            ImGui.TableSetupColumn("Textures");
+            ImGui.TableHeadersRow();
+
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            DrawFrameBufferBrowser(selectedInstance, state, flipPreview);
+
+            ImGui.TableSetColumnIndex(1);
+            DrawTextureBrowser(selectedInstance, state, flipPreview);
+
+            ImGui.EndTable();
+        }
+    }
+
+    private static void DrawFrameBufferBrowser(XRRenderPipelineInstance selectedInstance, EditorState state, bool flipPreview)
+    {
         var fboRecords = selectedInstance.Resources.FrameBufferRecords
             .Where(pair => pair.Value.Instance is not null)
             .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
@@ -245,7 +273,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         if (string.IsNullOrWhiteSpace(state.SelectedFboName)
             || !fboRecords.Any(pair => pair.Key.Equals(state.SelectedFboName, StringComparison.OrdinalIgnoreCase)))
         {
-            state.SelectedFboName = fboRecords[0].Key;
+            state.SelectedFboName = SelectDefaultFboName(selectedInstance, fboRecords);
         }
 
         string currentFboLabel = state.SelectedFboName ?? fboRecords[0].Key;
@@ -290,10 +318,56 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         }
     }
 
+    private static void DrawTextureBrowser(XRRenderPipelineInstance selectedInstance, EditorState state, bool flipPreview)
+    {
+        var textureRecords = selectedInstance.Resources.TextureRecords
+            .Where(pair => pair.Value.Instance is not null)
+            .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (textureRecords.Count == 0)
+        {
+            ImGui.TextDisabled("Instance has no textures to preview.");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(state.SelectedTextureName)
+            || !textureRecords.Any(pair => pair.Key.Equals(state.SelectedTextureName, StringComparison.OrdinalIgnoreCase)))
+        {
+            state.SelectedTextureName = SelectDefaultTextureName(selectedInstance, textureRecords);
+        }
+
+        string currentTextureLabel = state.SelectedTextureName ?? textureRecords[0].Key;
+        ImGui.SetNextItemWidth(260f);
+        if (ImGui.BeginCombo("Texture##RenderPipelineTexture", currentTextureLabel))
+        {
+            foreach (var pair in textureRecords)
+            {
+                bool selected = pair.Key.Equals(state.SelectedTextureName, StringComparison.OrdinalIgnoreCase);
+                if (ImGui.Selectable(pair.Key, selected))
+                    state.SelectedTextureName = pair.Key;
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndCombo();
+        }
+
+        ImGui.Checkbox("Flip Preview Vertically##Texture", ref state.FlipPreview);
+
+        var selectedRecord = textureRecords.First(pair => pair.Key.Equals(state.SelectedTextureName, StringComparison.OrdinalIgnoreCase));
+        XRTexture texture = selectedRecord.Value.Instance!;
+
+        ImGui.TextDisabled($"Type: {texture.GetType().Name}");
+        if (TryDescribeTextureDimensions(texture, out string sizeLabel))
+            ImGui.TextDisabled(sizeLabel);
+        if (texture.FrameBufferAttachment is { } attachment)
+            ImGui.TextDisabled($"Attachment: {attachment}");
+
+        DrawTexturePreview(texture, flipPreview);
+    }
+
     private static void DrawAutoExposureMeteringPreview(XRRenderPipelineInstance instance)
     {
-        ImGui.TextUnformatted("Auto Exposure (Metering Preview)");
-
         if (!instance.Resources.TryGetTexture(DefaultRenderPipeline.HDRSceneTextureName, out XRTexture? hdrTex) || hdrTex is null)
         {
             ImGui.TextDisabled($"Texture '{DefaultRenderPipeline.HDRSceneTextureName}' not found on this instance.");
@@ -324,29 +398,49 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         GetMipDimensions(baseWidth, baseHeight, meteringMip, out int mipW, out int mipH);
         ImGui.TextDisabled($"Mode: {mode} | Metering Mip: {meteringMip} ({mipW}x{mipH}) | Smallest Mip: {smallestMip}");
 
+        string requestKey = $"{instance.GetHashCode():X8}:{mode}:{meteringMip}:{smallestMip}:{targetSize}:{ignoreTopPercent:0.####}:{centerStrength:0.####}:{centerPower:0.####}:{luminanceWeights.X:0.####}:{luminanceWeights.Y:0.####}:{luminanceWeights.Z:0.####}";
+        var previewState = GetOrCreateAutoExposurePreviewState(instance);
+
+        int readbackMip = mode == ColorGradingSettings.AutoExposureMeteringMode.Average ? smallestMip : meteringMip;
+        bool settingsChanged = !string.Equals(previewState.RequestKey, requestKey, StringComparison.Ordinal);
+        bool refreshDue = unchecked(Environment.TickCount64 - previewState.LastRequestTick) >= AutoExposurePreviewRefreshIntervalMs;
+        if (!previewState.HasPendingRequest && (settingsChanged || refreshDue))
+            RequestAutoExposurePreview(instance, hdrTex, previewState, requestKey, readbackMip);
+
+        if (previewState.HasPendingRequest)
+            ImGui.TextDisabled("Preview readback pending...");
+
+        if (!string.IsNullOrWhiteSpace(previewState.Failure))
+        {
+            ImGui.TextDisabled(previewState.Failure);
+            return;
+        }
+
+        if (previewState.RgbaFloats is null)
+            return;
+
         // This panel intentionally avoids ImGui.Image for HDR mip previews (it tends to appear black and is redundant).
         // Instead, we compute mode-specific swatches from the same sample strategy as the GPU auto-exposure shader.
         if (mode == ColorGradingSettings.AutoExposureMeteringMode.Average)
         {
-            if (TryReadBackRgbaFloat(hdrTex, smallestMip, 0, out Vector4 rgba, out string failure))
+            float[] rgbaFloats = previewState.RgbaFloats;
+            if (rgbaFloats.Length < 4)
             {
-                ImGui.TextDisabled($"Smallest mip RGBA (float): {rgba.X:0.####}, {rgba.Y:0.####}, {rgba.Z:0.####}, {rgba.W:0.####}");
-                DrawTonemappedSwatch("##AutoExposure_AverageSwatch", new Vector3(rgba.X, rgba.Y, rgba.Z), new Vector2(160f, 160f));
+                ImGui.TextDisabled("Async readback returned insufficient data.");
+                return;
             }
-            else
-            {
-                ImGui.TextDisabled(failure);
-            }
+
+            Vector4 rgba = new(rgbaFloats[0], rgbaFloats[1], rgbaFloats[2], rgbaFloats[3]);
+            ImGui.TextDisabled($"Smallest mip RGBA (float): {rgba.X:0.####}, {rgba.Y:0.####}, {rgba.Z:0.####}, {rgba.W:0.####}");
+            DrawTonemappedSwatch("##AutoExposure_AverageSwatch", new Vector3(rgba.X, rgba.Y, rgba.Z), new Vector2(160f, 160f));
             return;
         }
 
-        if (!TryReadBackMipRgbaFloat(hdrTex, meteringMip, 0, out float[]? rgbaFloats, out int width, out int height, out string readbackFailure))
-        {
-            ImGui.TextDisabled(readbackFailure);
-            return;
-        }
-
-        float[] rgbaBuffer = rgbaFloats!;
+        float[] rgbaBuffer = previewState.RgbaFloats;
+        int width = previewState.Width;
+        int height = previewState.Height;
+        float[]? lums = null;
+        Vector3[]? rgbs = null;
 
         try
         {
@@ -358,10 +452,10 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             float meanLum = 0.0f;
 
             // For sorting-based metering.
-            float[]? lums = mode == ColorGradingSettings.AutoExposureMeteringMode.IgnoreTopPercent
+            lums = mode == ColorGradingSettings.AutoExposureMeteringMode.IgnoreTopPercent
                 ? ArrayPool<float>.Shared.Rent(sampleCount)
                 : null;
-            Vector3[]? rgbs = mode == ColorGradingSettings.AutoExposureMeteringMode.IgnoreTopPercent
+            rgbs = mode == ColorGradingSettings.AutoExposureMeteringMode.IgnoreTopPercent
                 ? ArrayPool<Vector3>.Shared.Rent(sampleCount)
                 : null;
 
@@ -494,8 +588,169 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(rgbaBuffer);
+            if (lums is not null)
+                ArrayPool<float>.Shared.Return(lums);
+            if (rgbs is not null)
+                ArrayPool<Vector3>.Shared.Return(rgbs);
         }
+    }
+
+    private static AutoExposurePreviewState GetOrCreateAutoExposurePreviewState(XRRenderPipelineInstance instance)
+        => AutoExposurePreviewStates.GetValue(instance, _ => new AutoExposurePreviewState());
+
+    private static void RequestAutoExposurePreview(
+        XRRenderPipelineInstance instance,
+        XRTexture texture,
+        AutoExposurePreviewState previewState,
+        string requestKey,
+        int mipLevel)
+    {
+        previewState.RequestKey = requestKey;
+        previewState.LastRequestTick = Environment.TickCount64;
+        previewState.HasPendingRequest = true;
+        previewState.Failure = null;
+
+        if (AbstractRenderer.Current is OpenGLRenderer glRenderer)
+        {
+            if (!TryRequestOpenGlTextureMipReadback(glRenderer, texture, mipLevel, 0,
+                (success, rgbaFloats, width, height, failure) =>
+                {
+                    previewState.HasPendingRequest = false;
+                    previewState.Failure = success ? null : failure;
+                    previewState.RgbaFloats = success ? rgbaFloats : null;
+                    previewState.Width = success ? width : 0;
+                    previewState.Height = success ? height : 0;
+                }))
+            {
+                previewState.HasPendingRequest = false;
+                previewState.Failure = "Async readback request failed to start.";
+            }
+
+            return;
+        }
+
+        void FallbackReadback()
+        {
+            string failure = string.Empty;
+            bool success = false;
+            float[]? rgbaFloats = null;
+            int width = 0;
+            int height = 0;
+
+            if (AbstractRenderer.Current is { } renderer)
+            {
+                success = renderer.TryReadTextureMipRgbaFloat(texture, mipLevel, 0, out rgbaFloats, out width, out height, out failure);
+            }
+            else
+            {
+                failure = "Readback requires an active renderer.";
+            }
+
+            previewState.HasPendingRequest = false;
+            previewState.Failure = success ? null : failure;
+            previewState.RgbaFloats = success ? rgbaFloats : null;
+            previewState.Width = success ? width : 0;
+            previewState.Height = success ? height : 0;
+        }
+
+        if (!Engine.InvokeOnMainThread(FallbackReadback, "RenderPipelineInspector.AutoExposureReadback", true))
+            FallbackReadback();
+    }
+
+    private static unsafe bool TryRequestOpenGlTextureMipReadback(
+        OpenGLRenderer renderer,
+        XRTexture texture,
+        int mipLevel,
+        int layerIndex,
+        Action<bool, float[]?, int, int, string> callback)
+    {
+        if (!Engine.IsRenderThread)
+            return false;
+
+        if (texture is XRTexture2D tex2D && tex2D.MultiSample)
+        {
+            callback(false, null, 0, 0, "Multisample textures do not support async mip readback.");
+            return true;
+        }
+
+        if (texture is XRTexture2DArray tex2DArray && tex2DArray.MultiSample)
+        {
+            callback(false, null, 0, 0, "Multisample textures do not support async mip readback.");
+            return true;
+        }
+
+        AbstractRenderAPIObject? apiRenderObject = renderer.GetOrCreateAPIRenderObject(texture);
+        if (apiRenderObject is not OpenGLRenderer.GLObjectBase apiObject)
+        {
+            callback(false, null, 0, 0, "Texture not uploaded.");
+            return true;
+        }
+
+        uint binding = apiObject.BindingId;
+        if (binding == OpenGLRenderer.GLObjectBase.InvalidBindingId || binding == 0)
+        {
+            callback(false, null, 0, 0, "Texture not ready.");
+            return true;
+        }
+
+        int baseWidth;
+        int baseHeight;
+        int zOffset = 0;
+        int zDepth = 1;
+        switch (texture)
+        {
+            case XRTexture2D t2d:
+                baseWidth = (int)t2d.Width;
+                baseHeight = (int)t2d.Height;
+                break;
+            case XRTexture2DArray t2da:
+                baseWidth = (int)t2da.Width;
+                baseHeight = (int)t2da.Height;
+                zOffset = Math.Clamp(layerIndex, 0, Math.Max(0, (int)t2da.Depth - 1));
+                break;
+            default:
+                callback(false, null, 0, 0, "Async preview currently supports 2D and 2D array textures only.");
+                return true;
+        }
+
+        int width = Math.Max(1, baseWidth >> Math.Max(0, mipLevel));
+        int height = Math.Max(1, baseHeight >> Math.Max(0, mipLevel));
+        uint byteSize = (uint)(width * height * 4 * sizeof(float));
+
+        var gl = renderer.RawGL;
+        uint pbo = gl.GenBuffer();
+        gl.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+        gl.BufferData(GLEnum.PixelPackBuffer, byteSize, (void*)0, GLEnum.StreamRead);
+        gl.GetTextureSubImage(binding, mipLevel, 0, 0, zOffset, (uint)width, (uint)height, (uint)zDepth,
+            GLEnum.Rgba, GLEnum.Float, byteSize, (void*)0);
+        IntPtr sync = gl.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+        gl.BindBuffer(GLEnum.PixelPackBuffer, 0);
+
+        bool FenceCheck()
+        {
+            var result = gl.ClientWaitSync(sync, 0u, 0u);
+            if (!(result == GLEnum.AlreadySignaled || result == GLEnum.ConditionSatisfied))
+                return false;
+
+            byte[] byteData = new byte[byteSize];
+            gl.BindBuffer(GLEnum.PixelPackBuffer, pbo);
+            unsafe
+            {
+                fixed (byte* ptr = byteData)
+                    gl.GetBufferSubData(GLEnum.PixelPackBuffer, IntPtr.Zero, byteSize, ptr);
+            }
+            gl.BindBuffer(GLEnum.PixelPackBuffer, 0);
+            gl.DeleteSync(sync);
+            gl.DeleteBuffer(pbo);
+
+            float[] rgbaFloats = new float[byteData.Length / sizeof(float)];
+            global::System.Buffer.BlockCopy(byteData, 0, rgbaFloats, 0, byteData.Length);
+            callback(true, rgbaFloats, width, height, string.Empty);
+            return true;
+        }
+
+        Engine.AddMainThreadCoroutine(FenceCheck);
+        return true;
     }
 
     private static bool TryGetColorGradingSettings(XRRenderPipelineInstance instance, out ColorGradingSettings? grading)
@@ -762,7 +1017,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
 
         DrawPreviewControls(previewState, layerCount, mipCount);
 
-        if (TryGetTexturePreviewHandle(texture, 320f, previewState, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure))
+        if (TryGetTexturePreviewHandle(texture, 320f, previewState, previewState.Channel, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string failure))
         {
             Vector2 uv0 = flipPreview ? new Vector2(0f, 1f) : Vector2.Zero;
             Vector2 uv1 = flipPreview ? new Vector2(1f, 0f) : Vector2.One;
@@ -785,6 +1040,54 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         {
             ImGui.TextDisabled(failure);
         }
+
+        ImGui.Spacing();
+        DrawAuxiliaryChannelPreviews(texture, flipPreview, previewState);
+    }
+
+    private static void DrawAuxiliaryChannelPreviews(XRTexture texture, bool flipPreview, TexturePreviewState previewState)
+    {
+        ImGui.TextDisabled("Alpha");
+        DrawChannelPreview(texture, flipPreview, previewState, TextureChannelView.A, "##TexturePreviewAlpha", 112f);
+
+        if (!previewState.ShowSeparateRgbChannels)
+            return;
+
+        if (ImGui.BeginTable("##TexturePreviewRgbChannels", 3, ImGuiTableFlags.SizingStretchSame))
+        {
+            DrawChannelPreviewColumn(texture, flipPreview, previewState, TextureChannelView.R, "##TexturePreviewRed");
+            DrawChannelPreviewColumn(texture, flipPreview, previewState, TextureChannelView.G, "##TexturePreviewGreen");
+            DrawChannelPreviewColumn(texture, flipPreview, previewState, TextureChannelView.B, "##TexturePreviewBlue");
+            ImGui.EndTable();
+        }
+    }
+
+    private static void DrawChannelPreviewColumn(XRTexture texture, bool flipPreview, TexturePreviewState previewState, TextureChannelView channel, string id)
+    {
+        ImGui.TableNextColumn();
+        ImGui.TextDisabled(GetChannelLabel(channel));
+        DrawChannelPreview(texture, flipPreview, previewState, channel, id, 96f);
+    }
+
+    private static void DrawChannelPreview(
+        XRTexture texture,
+        bool flipPreview,
+        TexturePreviewState previewState,
+        TextureChannelView channel,
+        string imageId,
+        float maxEdge)
+    {
+        if (!TryGetTexturePreviewHandle(texture, maxEdge, previewState, channel, out nint handle, out Vector2 displaySize, out _, out string failure))
+        {
+            ImGui.TextDisabled(failure);
+            return;
+        }
+
+        Vector2 uv0 = flipPreview ? new Vector2(0f, 1f) : Vector2.Zero;
+        Vector2 uv1 = flipPreview ? new Vector2(1f, 0f) : Vector2.One;
+        ImGui.PushID(imageId);
+        ImGui.Image(handle, displaySize, uv0, uv1);
+        ImGui.PopID();
     }
 
     private static List<XRTexture> CollectFboInputs(XRFrameBuffer fbo)
@@ -794,7 +1097,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             var unique = new List<XRTexture>();
             foreach (XRTexture? tex in material.Textures)
             {
-                if (tex is null || tex.FrameBufferAttachment is not null)
+                if (tex is null)
                     continue;
 
                 if (unique.Any(existing => ReferenceEquals(existing, tex)))
@@ -807,6 +1110,132 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         }
 
         return new List<XRTexture>();
+    }
+
+    private static void DrawPreferredDebugTargets(XRRenderPipelineInstance instance, EditorState state)
+    {
+        ImGui.TextDisabled("Quick Targets");
+
+        void DrawFboButton(string label, string fboName)
+        {
+            bool hasFbo = instance.Resources.FrameBufferRecords.TryGetValue(fboName, out var record)
+                && record.Instance is not null;
+            if (!hasFbo)
+                return;
+
+            if (ImGui.SmallButton($"{label}##FboQuick"))
+                state.SelectedFboName = fboName;
+            ImGui.SameLine();
+        }
+
+        void DrawTextureButton(string label, string textureName)
+        {
+            bool hasTexture = instance.Resources.TextureRecords.TryGetValue(textureName, out var record)
+                && record.Instance is not null;
+            if (!hasTexture)
+                return;
+
+            if (ImGui.SmallButton($"{label}##TexQuick"))
+                state.SelectedTextureName = textureName;
+            ImGui.SameLine();
+        }
+
+        if (instance.Pipeline is DefaultRenderPipeline)
+        {
+            DrawFboButton("Velocity FBO", DefaultRenderPipeline.VelocityFBOName);
+            DrawTextureButton("Velocity", DefaultRenderPipeline.VelocityTextureName);
+            DrawTextureButton("Depth", DefaultRenderPipeline.DepthViewTextureName);
+            DrawTextureButton("HDR Scene", DefaultRenderPipeline.HDRSceneTextureName);
+            DrawTextureButton("History", DefaultRenderPipeline.HistoryColorTextureName);
+        }
+
+        ImGui.NewLine();
+    }
+
+    private static string SelectDefaultFboName(
+        XRRenderPipelineInstance instance,
+        IReadOnlyList<KeyValuePair<string, RenderFrameBufferResource>> fboRecords)
+    {
+        static bool ContainsName(IReadOnlyList<KeyValuePair<string, RenderFrameBufferResource>> records, string name)
+            => records.Any(pair => pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+        if (instance.Pipeline is DefaultRenderPipeline)
+        {
+            string[] preferredNames =
+            [
+                DefaultRenderPipeline.VelocityFBOName,
+                DefaultRenderPipeline.ForwardPassFBOName,
+                DefaultRenderPipeline.PostProcessFBOName,
+                DefaultRenderPipeline.MotionBlurFBOName,
+            ];
+
+            foreach (string preferredName in preferredNames)
+            {
+                if (ContainsName(fboRecords, preferredName))
+                    return preferredName;
+            }
+        }
+
+        foreach (var pair in fboRecords)
+        {
+            XRFrameBuffer? fbo = pair.Value.Instance;
+            if (fbo is null)
+                continue;
+
+            bool hasOutputs = fbo.Targets is { Length: > 0 };
+            bool hasInputs = CollectFboInputs(fbo).Count > 0;
+            if (hasOutputs || hasInputs)
+                return pair.Key;
+        }
+
+        return fboRecords[0].Key;
+    }
+
+    private static string SelectDefaultTextureName(
+        XRRenderPipelineInstance instance,
+        IReadOnlyList<KeyValuePair<string, RenderTextureResource>> textureRecords)
+    {
+        static bool ContainsName(IReadOnlyList<KeyValuePair<string, RenderTextureResource>> records, string name)
+            => records.Any(pair => pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+        if (instance.Pipeline is DefaultRenderPipeline)
+        {
+            string[] preferredNames =
+            [
+                DefaultRenderPipeline.VelocityTextureName,
+                DefaultRenderPipeline.DepthViewTextureName,
+                DefaultRenderPipeline.HDRSceneTextureName,
+                DefaultRenderPipeline.HistoryColorTextureName,
+                DefaultRenderPipeline.PostProcessOutputTextureName,
+            ];
+
+            foreach (string preferredName in preferredNames)
+            {
+                if (ContainsName(textureRecords, preferredName))
+                    return preferredName;
+            }
+        }
+
+        return textureRecords[0].Key;
+    }
+
+    private static bool TryDescribeTextureDimensions(XRTexture texture, out string sizeLabel)
+    {
+        switch (texture)
+        {
+            case XRTexture2D tex2D:
+                sizeLabel = $"Size: {tex2D.Width} x {tex2D.Height}";
+                return true;
+            case XRTexture2DArray tex2DArray:
+                sizeLabel = $"Size: {tex2DArray.Width} x {tex2DArray.Height} x {tex2DArray.Depth}";
+                return true;
+            case XRTextureViewBase view:
+                sizeLabel = $"View Size: {view.WidthHeightDepth.X} x {view.WidthHeightDepth.Y} x {view.WidthHeightDepth.Z}";
+                return true;
+            default:
+                sizeLabel = string.Empty;
+                return false;
+        }
     }
 
     #endregion
@@ -1351,6 +1780,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         XRTexture texture,
         float maxEdge,
         TexturePreviewState previewState,
+        TextureChannelView channel,
         out nint handle,
         out Vector2 displaySize,
         out Vector2 pixelSize,
@@ -1367,7 +1797,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return false;
         }
 
-        XRTexture? previewTexture = GetPreviewTexture(texture, previewState, out int mipLevel, out _, out string previewError);
+        XRTexture? previewTexture = GetPreviewTexture(texture, previewState, out int mipLevel, out int layerIndex, out string previewError);
         if (previewTexture is null)
         {
             failure = previewError;
@@ -1399,6 +1829,8 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return false;
         }
 
+        previewTexture = GetIsolatedOpenGlPreviewTexture(previewTexture, mipLevel, layerIndex);
+
         var apiRenderObject = renderer.GetOrCreateAPIRenderObject(previewTexture);
         if (apiRenderObject is not IGLTexture || apiRenderObject is not OpenGLRenderer.GLObjectBase apiObject)
         {
@@ -1414,12 +1846,29 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         }
 
         bool previewUsesView = previewTexture is XRTextureViewBase;
-        if (previewUsesView || previewState.Channel != TextureChannelView.RGBA)
-            ApplyChannelSwizzle(renderer, binding, previewState.Channel);
-        if (previewUsesView)
-            ApplyPreviewSamplingState(renderer, binding);
+        if (previewUsesView || channel != TextureChannelView.RGBA)
+            ApplyChannelSwizzle(renderer, binding, channel);
+        ApplyPreviewSamplingState(renderer, binding);
         handle = (nint)binding;
         return true;
+    }
+
+    private static XRTexture GetIsolatedOpenGlPreviewTexture(XRTexture texture, int mipLevel, int layerIndex)
+    {
+        switch (texture)
+        {
+            case XRTexture2D tex2D:
+                return GetOrCreate2DView(tex2D, mipLevel);
+
+            case XRTexture2DArray tex2DArray:
+                return GetOrCreateArrayView(tex2DArray, layerIndex, mipLevel);
+
+            case XRTextureViewBase:
+                return texture;
+
+            default:
+                return texture;
+        }
     }
 
     #endregion
@@ -1441,6 +1890,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         public int Layer;
         public int Mip;
         public TextureChannelView Channel = TextureChannelView.RGBA;
+        public bool ShowSeparateRgbChannels;
     }
 
     private sealed class TextureViewCacheKeyComparer : IEqualityComparer<XRTexture>
@@ -1500,6 +1950,8 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             }
             ImGui.EndCombo();
         }
+
+        ImGui.Checkbox("Show Separate RGB Channels##TexturePreview", ref state.ShowSeparateRgbChannels);
     }
 
     private static string GetChannelLabel(TextureChannelView channel)
@@ -1644,6 +2096,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         int baseLevel = 0;
         int maxLevel = 0;
         int clamp = (int)GLEnum.ClampToEdge;
+        int compareMode = (int)GLEnum.None;
 
         gl.TextureParameterI(binding, GLEnum.TextureMinFilter, in linear);
         gl.TextureParameterI(binding, GLEnum.TextureMagFilter, in linear);
@@ -1651,6 +2104,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         gl.TextureParameterI(binding, GLEnum.TextureMaxLevel, in maxLevel);
         gl.TextureParameterI(binding, GLEnum.TextureWrapS, in clamp);
         gl.TextureParameterI(binding, GLEnum.TextureWrapT, in clamp);
+        gl.TextureParameterI(binding, GLEnum.TextureCompareMode, in compareMode);
     }
 
     private static void ApplyChannelSwizzle(OpenGLRenderer renderer, uint binding, TextureChannelView channel)
@@ -1718,8 +2172,22 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         public string? SelectedCommandPath;
         public int SelectedInstanceIndex;
         public string? SelectedFboName;
+        public string? SelectedTextureName;
         public bool FlipPreview = true;
     }
+
+    private sealed class AutoExposurePreviewState
+    {
+        public string? RequestKey;
+        public long LastRequestTick;
+        public bool HasPendingRequest;
+        public string? Failure;
+        public float[]? RgbaFloats;
+        public int Width;
+        public int Height;
+    }
+
+    private static readonly ConditionalWeakTable<XRRenderPipelineInstance, AutoExposurePreviewState> AutoExposurePreviewStates = new();
 
     private sealed class CommandTreeNode(string label, string path, ViewportRenderCommand? command)
     {

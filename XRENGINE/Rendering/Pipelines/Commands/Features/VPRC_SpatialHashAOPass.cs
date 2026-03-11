@@ -32,9 +32,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         public const float DefaultMinSampleDist = 0.1f;
         public const float DefaultMaxSampleDist = 1.0f;
 
-        public string IntensityTextureName { get; set; } = "SSAOIntensityTexture";
-        public string GenerationFBOName { get; set; } = "SSAOFBO";
-        public string BlurFBOName { get; set; } = "SSAOBlurFBO";
+        public string IntensityTextureName { get; set; } = "AmbientOcclusionTexture";
+        public string GenerationFBOName { get; set; } = "AmbientOcclusionFBO";
+        public string BlurFBOName { get; set; } = "AmbientOcclusionBlurFBO";
         public string OutputFBOName { get; set; } = "GBufferFBO";
 
         public string NormalTextureName { get; set; } = "Normal";

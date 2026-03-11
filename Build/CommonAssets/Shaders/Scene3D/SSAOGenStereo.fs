@@ -1,5 +1,6 @@
 #version 460
 #extension GL_OVR_multiview2 : require
+#include "AOCommon.glsl"
 //#extension GL_EXT_multiview_tessellation_geometry_shader : enable
 
 const float PI = 3.14159265359f;
@@ -9,7 +10,7 @@ layout(location = 0) out float OutIntensity;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2DArray Normal; //Normal
-uniform sampler2D SSAONoiseTexture; //SSAO Noise
+uniform sampler2D AONoiseTexture; // AO noise
 uniform sampler2DArray DepthView; //Depth
 
 uniform vec3 Samples[128];
@@ -22,13 +23,6 @@ uniform mat4 RightEyeInverseViewMatrix;
 
 uniform mat4 LeftEyeProjMatrix;
 uniform mat4 RightEyeProjMatrix;
-
-vec3 ViewPosFromDepth(float depth, vec2 uv, mat4 ProjMatrix)
-{
-    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = inverse(ProjMatrix) * clipSpacePosition;
-    return viewSpacePosition.xyz / viewSpacePosition.w;
-}
 
 void main()
 {
@@ -45,9 +39,9 @@ void main()
     vec3 Normal = texture(Normal, uvi).rgb;
     float Depth = texture(DepthView, uvi).r;
 
-    vec3 FragPosVS = ViewPosFromDepth(Depth, uv, ProjMatrix);
+    vec3 FragPosVS = AOViewPosFromDepth(Depth, uv, ProjMatrix);
 
-    vec3 randomVec = vec3(texture(SSAONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
+    vec3 randomVec = vec3(texture(AONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
     vec3 viewNormal = normalize((inverse(InverseViewMatrix) * vec4(Normal, 0.0f)).rgb);
     vec3 viewTangent = normalize(randomVec - viewNormal * dot(randomVec, viewNormal));
     vec3 viewBitangent = cross(viewNormal, viewTangent);
@@ -70,7 +64,7 @@ void main()
         offset.xyz /= offset.w;
         offset.xyz = offset.xyz * 0.5f + 0.5f;
 
-        sampleDepth = ViewPosFromDepth(texture(DepthView, vec3(offset.xy, gl_ViewID_OVR)).r, offset.xy, ProjMatrix).z;
+        sampleDepth = AOViewPosFromDepth(texture(DepthView, vec3(offset.xy, gl_ViewID_OVR)).r, offset.xy, ProjMatrix).z;
 
         occlusion += (sampleDepth >= noiseSample.z + bias ? smoothstep(0.0f, 1.0f, Radius / abs(FragPosVS.z - sampleDepth)) : 0.0f);
     }

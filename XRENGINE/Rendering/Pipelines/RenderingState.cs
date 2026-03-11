@@ -236,6 +236,28 @@ public sealed partial class XRRenderPipelineInstance
             }
         }
 
+        /// <summary>
+        /// When true, mesh renderers should bypass material-specific vertex shaders and use their generated default vertex stage.
+        /// This is used by passes like motion vectors that depend on engine-defined varyings such as FragPosLocal.
+        /// </summary>
+        public bool ForceGeneratedVertexProgram { get; private set; }
+        private int _forceGeneratedVertexProgramDepth;
+        public StateObject PushForceGeneratedVertexProgram()
+        {
+            _forceGeneratedVertexProgramDepth++;
+            ForceGeneratedVertexProgram = true;
+            return StateObject.New(PopForceGeneratedVertexProgram);
+        }
+        private void PopForceGeneratedVertexProgram()
+        {
+            _forceGeneratedVertexProgramDepth--;
+            if (_forceGeneratedVertexProgramDepth <= 0)
+            {
+                _forceGeneratedVertexProgramDepth = 0;
+                ForceGeneratedVertexProgram = false;
+            }
+        }
+
         public IReadOnlyCollection<XRViewport?> ViewportStack => _renderingViewports;
 
         public XRViewport? RenderingViewport

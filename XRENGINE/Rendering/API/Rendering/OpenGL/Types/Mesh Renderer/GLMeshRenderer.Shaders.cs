@@ -155,7 +155,10 @@ namespace XREngine.Rendering.OpenGL
             private bool GenerateVertexShader(out GLRenderProgram? vertexProgram, GLRenderProgram? materialProgram, EProgramStageMask mask)
             {
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.GenerateVertexShader");
-                vertexProgram = _separatedVertexProgram;
+                bool forceGeneratedVertexProgram = Engine.Rendering.State.RenderingPipelineState?.ForceGeneratedVertexProgram ?? false;
+                vertexProgram = forceGeneratedVertexProgram
+                    ? GetForcedGeneratedVertexProgram()
+                    : _separatedVertexProgram;
 
                 if (materialProgram?.Link() ?? false)
                     _pipeline!.Set(mask, materialProgram);
@@ -175,6 +178,21 @@ namespace XREngine.Rendering.OpenGL
 
                 Dbg("GenerateVertexShader: success", "Programs");
                 return true;
+            }
+
+            private GLRenderProgram? GetForcedGeneratedVertexProgram()
+            {
+                if (_forcedGeneratedVertexProgram is not null)
+                    return _forcedGeneratedVertexProgram;
+
+                CreateSeparatedVertexProgram(
+                    ref _forcedGeneratedVertexProgram,
+                    true,
+                    Array.Empty<XRShader>(),
+                    Data.VertexShaderSelector,
+                    () => Data.VertexShaderSource ?? string.Empty);
+
+                return _forcedGeneratedVertexProgram;
             }
 
             /// <summary>

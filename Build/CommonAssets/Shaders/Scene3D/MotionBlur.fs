@@ -52,19 +52,28 @@ void main()
         return;
     }
 
-    vec2 direction = normalize(velocity);
-    float texelMagnitude = max(length(TexelSize), 1e-5f);
-    float maxBlurUv = MaxBlurPixels * texelMagnitude;
-    float blurLength = min(motionMagnitude * ShutterScale, maxBlurUv);
-    if (blurLength <= 1e-5f)
+    // Velocity is encoded in NDC like the temporal pass expects. Convert to UV/pixel
+    // space before building the blur kernel so both consumers interpret the buffer identically.
+    vec2 velocityUv = velocity * 0.5f;
+    vec2 texelSize = max(TexelSize, vec2(1e-5f));
+    vec2 velocityPixels = velocityUv / texelSize;
+    float motionMagnitudePixels = length(velocityPixels);
+    if (motionMagnitudePixels <= 1e-5f)
     {
         OutColor = baseColor;
         return;
     }
 
-    float blurRatio = clamp(blurLength / maxBlurUv, 0.0f, 1.0f);
+    float blurPixels = min(motionMagnitudePixels * ShutterScale, MaxBlurPixels);
+    if (blurPixels <= 1e-5f)
+    {
+        OutColor = baseColor;
+        return;
+    }
+
+    vec2 blurVector = (velocityPixels / motionMagnitudePixels) * (blurPixels * texelSize);
+    float blurRatio = clamp(blurPixels / max(MaxBlurPixels, 1e-5f), 0.0f, 1.0f);
     int steps = max(1, int(ceil(blurRatio * float(MaxSamples))));
-    vec2 blurVector = direction * blurLength;
 
     vec3 accum = baseColor.rgb;
     float totalWeight = 1.0f;

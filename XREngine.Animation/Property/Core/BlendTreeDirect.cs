@@ -3,7 +3,7 @@ using XREngine.Data.Core;
 
 namespace XREngine.Animation
 {
-    [MemoryPackable]
+    [MemoryPackable(GenerateType.NoGenerate)]
     public partial class BlendTreeDirect : BlendTree
     {
         public override string ToString()

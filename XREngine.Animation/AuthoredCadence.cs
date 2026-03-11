@@ -3,19 +3,13 @@ using MemoryPack;
 namespace XREngine.Animation
 {
     [MemoryPackable]
-    public partial struct AuthoredCadence
+    public partial struct AuthoredCadence(int frameCount, int framesPerSecond)
     {
-        public int FrameCount { get; set; }
-        public int FramesPerSecond { get; set; }
+        public int FrameCount { get; set; } = Math.Max(0, frameCount);
+        public int FramesPerSecond { get; set; } = Math.Max(0, framesPerSecond);
 
         [MemoryPackIgnore]
         public readonly bool IsValid => FrameCount > 0 && FramesPerSecond > 0;
-
-        public AuthoredCadence(int frameCount, int framesPerSecond)
-        {
-            FrameCount = Math.Max(0, frameCount);
-            FramesPerSecond = Math.Max(0, framesPerSecond);
-        }
 
         public readonly AuthoredCadence Sanitize()
             => new(FrameCount, FramesPerSecond);
