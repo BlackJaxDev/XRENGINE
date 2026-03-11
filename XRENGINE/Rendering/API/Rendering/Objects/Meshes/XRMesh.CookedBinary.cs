@@ -961,11 +961,7 @@ public partial class XRMesh : ICookedBinarySerializable
     }
 
     private unsafe void CopyBytesToBuffer(ReadOnlySpan<byte> data, XRDataBuffer buffer)
-    {
-        if (buffer.ClientSideSource is null || buffer.ClientSideSource.Length < data.Length)
-            buffer.ClientSideSource = DataSource.Allocate((uint)data.Length);
-        data.CopyTo(new Span<byte>((void*)buffer.ClientSideSource!.Address, data.Length));
-    }
+        => buffer.SetRawBytes(data, (uint)data.Length);
 
     private sealed class MeshPayloadWritePlan
     {
@@ -1215,7 +1211,7 @@ public partial class XRMesh : ICookedBinarySerializable
             Integral = buffer.Integral,
             PadEndingToVec4 = buffer.PadEndingToVec4,
             ByteLength = buffer.ClientSideSource.Length,
-            Data = buffer.ClientSideSource.GetBytes()
+            Data = buffer.GetRawBytes(buffer.ClientSideSource.Length)
         };
     }
 
@@ -1229,10 +1225,9 @@ public partial class XRMesh : ICookedBinarySerializable
             PadEndingToVec4 = blob.PadEndingToVec4
         };
 
-        buffer.ClientSideSource?.Dispose();
-        buffer.ClientSideSource = new DataSource(blob.Data);
+        buffer.SetRawBytes(blob.Data, blob.ByteLength);
 
-        if (blob.ByteLength != buffer.ClientSideSource.Length)
+        if (blob.ByteLength != buffer.ClientSideSource?.Length)
             throw new InvalidOperationException($"Cooked buffer '{blob.AttributeName ?? "<unnamed>"}' length mismatch.");
 
         return buffer;
@@ -1304,7 +1299,7 @@ public partial class XRMesh : ICookedBinarySerializable
         };
     }
 
-    private sealed class MeshCookedPayload
+    internal sealed class MeshCookedPayload
     {
         public Vector3[] Positions { get; set; } = Array.Empty<Vector3>();
         public Vector3[]? Normals { get; set; }
@@ -1331,7 +1326,7 @@ public partial class XRMesh : ICookedBinarySerializable
         public BlendshapePayload? Blendshapes { get; set; }
     }
 
-    private sealed class SkinningPayload
+    internal sealed class SkinningPayload
     {
         public BoneInfo[]? Bones { get; set; }
         public BufferBlob? Offsets { get; set; }
@@ -1341,7 +1336,7 @@ public partial class XRMesh : ICookedBinarySerializable
         public int MaxWeightCount { get; set; }
     }
 
-    private sealed class BlendshapePayload
+    internal sealed class BlendshapePayload
     {
         public string[]? Names { get; set; }
         public BufferBlob? Counts { get; set; }
@@ -1349,7 +1344,7 @@ public partial class XRMesh : ICookedBinarySerializable
         public BufferBlob? Deltas { get; set; }
     }
 
-    private sealed class BoneInfo
+    internal sealed class BoneInfo
     {
         public Guid BoneId { get; set; }
         public string? Name { get; set; }
@@ -1358,7 +1353,7 @@ public partial class XRMesh : ICookedBinarySerializable
         public Matrix4x4 InverseBindMatrix { get; set; }
     }
 
-    private sealed class BufferBlob
+    internal sealed class BufferBlob
     {
         public string? AttributeName { get; set; }
         public EBufferTarget Target { get; set; }

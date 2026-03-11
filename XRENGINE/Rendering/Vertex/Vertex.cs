@@ -1,15 +1,15 @@
+using System.Collections;
 using Assimp;
 using Extensions;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Scene.Transforms;
 using Matrix4x4 = System.Numerics.Matrix4x4;
 
 namespace XREngine.Data.Rendering
 {
-    public class Vertex : VertexData, IEquatable<Vertex>
+    public class Vertex : VertexData, IEquatable<Vertex>, IEnumerable<Vertex>
     {
-        public override FaceType Type => FaceType.Points;
-
         private Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? _weights;
         /// <summary>
         /// Contains weights for each bone that influences the position of this vertex.
@@ -32,7 +32,8 @@ namespace XREngine.Data.Rendering
         }
 
         public Vertex()
-            => _vertices.Add(this);
+        {
+        }
 
         public Vertex(Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights)
             : this() => Weights = weights;
@@ -80,21 +81,177 @@ namespace XREngine.Data.Rendering
             => obj is Vertex vertex && Equals(vertex);
 
         public bool Equals(Vertex? other)
-            => other is not null && other.GetHashCode() == GetHashCode();
+        {
+            if (ReferenceEquals(this, other))
+                return true;
+
+            if (other is null)
+                return false;
+
+            return VertexDataEquals(this, other)
+                && WeightsEqual(Weights, other.Weights)
+                && BlendshapesEqual(Blendshapes, other.Blendshapes);
+        }
 
         public static implicit operator Vertex(Vector3 pos) => new(pos);
+
+        public IEnumerator<Vertex> GetEnumerator()
+        {
+            yield return this;
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+            => GetEnumerator();
 
         public override int GetHashCode()
         {
             var hash = new HashCode();
-            hash.Add(Weights);
-            hash.Add(Position);
-            hash.Add(Normal);
-            hash.Add(Tangent);
-            hash.Add(TextureCoordinateSets);
-            hash.Add(ColorSets);
-            hash.Add(Blendshapes);
+            AddVertexDataHash(ref hash, this);
+            AddWeightsHash(ref hash, Weights);
+            AddBlendshapeHash(ref hash, Blendshapes);
             return hash.ToHashCode();
+        }
+
+        private static bool VertexDataEquals(VertexData left, VertexData right)
+            => left.Position == right.Position
+            && Nullable.Equals(left.Normal, right.Normal)
+            && Nullable.Equals(left.Tangent, right.Tangent)
+            && SequenceEqual(left.TextureCoordinateSets, right.TextureCoordinateSets)
+            && SequenceEqual(left.ColorSets, right.ColorSets);
+
+        private static bool SequenceEqual<T>(IReadOnlyList<T>? left, IReadOnlyList<T>? right)
+        {
+            if (ReferenceEquals(left, right))
+                return true;
+
+            if (left is null || right is null || left.Count != right.Count)
+                return false;
+
+            var comparer = EqualityComparer<T>.Default;
+            for (int i = 0; i < left.Count; i++)
+            {
+                if (!comparer.Equals(left[i], right[i]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool WeightsEqual(
+            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? left,
+            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? right)
+        {
+            if (ReferenceEquals(left, right))
+                return true;
+
+            if (left is null || right is null || left.Count != right.Count)
+                return false;
+
+            foreach (var pair in left)
+            {
+                if (!TryGetWeight(right, pair.Key, out var otherWeight) || otherWeight != pair.Value)
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryGetWeight(
+            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)> weights,
+            TransformBase key,
+            out (float weight, Matrix4x4 bindInvWorldMatrix) value)
+        {
+            foreach (var pair in weights)
+            {
+                if (ReferenceEquals(pair.Key, key))
+                {
+                    value = pair.Value;
+                    return true;
+                }
+            }
+
+            value = default;
+            return false;
+        }
+
+        private static bool BlendshapesEqual(List<(string name, VertexData data)>? left, List<(string name, VertexData data)>? right)
+        {
+            if (ReferenceEquals(left, right))
+                return true;
+
+            if (left is null || right is null || left.Count != right.Count)
+                return false;
+
+            for (int i = 0; i < left.Count; i++)
+            {
+                var leftBlendshape = left[i];
+                var rightBlendshape = right[i];
+                if (leftBlendshape.name != rightBlendshape.name || !VertexDataEquals(leftBlendshape.data, rightBlendshape.data))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static void AddVertexDataHash(ref HashCode hash, VertexData data)
+        {
+            hash.Add(data.Position);
+            hash.Add(data.Normal);
+            hash.Add(data.Tangent);
+            AddSequenceHash(ref hash, data.TextureCoordinateSets);
+            AddSequenceHash(ref hash, data.ColorSets);
+        }
+
+        private static void AddSequenceHash<T>(ref HashCode hash, IReadOnlyList<T>? values)
+        {
+            if (values is null)
+            {
+                hash.Add(0);
+                return;
+            }
+
+            hash.Add(values.Count);
+            foreach (var value in values)
+                hash.Add(value);
+        }
+
+        private static void AddWeightsHash(
+            ref HashCode hash,
+            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights)
+        {
+            if (weights is null)
+            {
+                hash.Add(0);
+                return;
+            }
+
+            int combinedHash = 0;
+            foreach (var pair in weights)
+            {
+                combinedHash ^= HashCode.Combine(
+                    RuntimeHelpers.GetHashCode(pair.Key),
+                    pair.Value.weight,
+                    pair.Value.bindInvWorldMatrix);
+            }
+
+            hash.Add(weights.Count);
+            hash.Add(combinedHash);
+        }
+
+        private static void AddBlendshapeHash(ref HashCode hash, List<(string name, VertexData data)>? blendshapes)
+        {
+            if (blendshapes is null)
+            {
+                hash.Add(0);
+                return;
+            }
+
+            hash.Add(blendshapes.Count);
+            foreach (var blendshape in blendshapes)
+            {
+                hash.Add(blendshape.name);
+                AddVertexDataHash(ref hash, blendshape.data);
+            }
         }
 
         public Vertex HardCopy()

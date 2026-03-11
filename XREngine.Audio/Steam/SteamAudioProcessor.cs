@@ -97,6 +97,9 @@ namespace XREngine.Audio.Steam
         /// </summary>
         private sealed class SourceChain : IDisposable
         {
+            public int InputChannels;
+            public float SpatialBlend;
+
             // --- Direct path ---
             public IPLSource Source;
             public IPLDirectEffect DirectEffect;
@@ -177,6 +180,17 @@ namespace XREngine.Audio.Steam
             int totalFrames,
             int frameSize,
             int outputChannels)
+            => GetChunkLayout(chunkIndex, totalFrames, frameSize, 1, outputChannels) switch
+            {
+                var chunk => (chunk.InputOffset, chunk.FrameCount, chunk.OutputOffset, chunk.OutputSampleCount)
+            };
+
+        internal static (int InputOffset, int InputSampleCount, int FrameCount, int OutputOffset, int OutputSampleCount) GetChunkLayout(
+            int chunkIndex,
+            int totalFrames,
+            int frameSize,
+            int inputChannels,
+            int outputChannels)
         {
             if (chunkIndex < 0)
                 throw new ArgumentOutOfRangeException(nameof(chunkIndex));
@@ -184,17 +198,21 @@ namespace XREngine.Audio.Steam
                 throw new ArgumentOutOfRangeException(nameof(totalFrames));
             if (frameSize <= 0)
                 throw new ArgumentOutOfRangeException(nameof(frameSize));
+            if (inputChannels <= 0)
+                throw new ArgumentOutOfRangeException(nameof(inputChannels));
             if (outputChannels <= 0)
                 throw new ArgumentOutOfRangeException(nameof(outputChannels));
 
-            int inputOffset = chunkIndex * frameSize;
-            if (inputOffset >= totalFrames)
+            int frameOffset = chunkIndex * frameSize;
+            if (frameOffset >= totalFrames)
                 throw new ArgumentOutOfRangeException(nameof(chunkIndex));
 
-            int frameCount = Math.Min(frameSize, totalFrames - inputOffset);
-            int outputOffset = inputOffset * outputChannels;
+            int frameCount = Math.Min(frameSize, totalFrames - frameOffset);
+            int inputOffset = frameOffset * inputChannels;
+            int inputSampleCount = frameCount * inputChannels;
+            int outputOffset = frameOffset * outputChannels;
             int outputSampleCount = frameCount * outputChannels;
-            return (inputOffset, frameCount, outputOffset, outputSampleCount);
+            return (inputOffset, inputSampleCount, frameCount, outputOffset, outputSampleCount);
         }
 
         // --- IAudioEffectsProcessor: Lifecycle ---
@@ -409,6 +427,9 @@ namespace XREngine.Audio.Steam
 
                 try
                 {
+                    chain.InputChannels = Math.Clamp(settings.InputChannels, 1, 2);
+                    chain.SpatialBlend = Math.Clamp(settings.SpatialBlend, 0.0f, 1.0f);
+
                     // Create source with all simulation capabilities
                     var simFlags = IPLSimulationFlags.IPL_SIMULATIONFLAGS_DIRECT
                                  | IPLSimulationFlags.IPL_SIMULATIONFLAGS_REFLECTIONS
@@ -437,7 +458,7 @@ namespace XREngine.Audio.Steam
                 SetSourceInputs(chain, ActiveSimFlags);
 
                 // Create direct effect (mono → mono)
-                var directSettings = new IPLDirectEffectSettings { numChannels = 1 };
+                var directSettings = new IPLDirectEffectSettings { numChannels = chain.InputChannels };
                 error = Phonon.iplDirectEffectCreate(_context, ref _audioSettings, ref directSettings, ref chain.DirectEffect);
                 if (error != IPLerror.IPL_STATUS_SUCCESS)
                     throw new InvalidOperationException($"iplDirectEffectCreate failed: {error}");
@@ -479,11 +500,11 @@ namespace XREngine.Audio.Steam
                 // Pre-allocate audio buffers: avoid per-frame allocation
                 int ambiChannels = (MaxAmbisonicsOrder + 1) * (MaxAmbisonicsOrder + 1);
 
-                error = Phonon.iplAudioBufferAllocate(_context, 1, _audioSettings.frameSize, ref chain.InputBuffer);
+                error = Phonon.iplAudioBufferAllocate(_context, chain.InputChannels, _audioSettings.frameSize, ref chain.InputBuffer);
                 if (error != IPLerror.IPL_STATUS_SUCCESS)
                     throw new InvalidOperationException($"iplAudioBufferAllocate (input) failed: {error}");
 
-                error = Phonon.iplAudioBufferAllocate(_context, 1, _audioSettings.frameSize, ref chain.DirectOutputBuffer);
+                error = Phonon.iplAudioBufferAllocate(_context, chain.InputChannels, _audioSettings.frameSize, ref chain.DirectOutputBuffer);
                 if (error != IPLerror.IPL_STATUS_SUCCESS)
                     throw new InvalidOperationException($"iplAudioBufferAllocate (direct output) failed: {error}");
 
@@ -626,20 +647,29 @@ namespace XREngine.Audio.Steam
         private void ProcessChunk(SourceChain chain, ReadOnlySpan<float> inputFrame, Span<float> outputFrame, bool hasScene, bool hasProbes)
         {
             int frameSize = _audioSettings.frameSize;
+            int inputChannels = chain.InputChannels;
+            int frameCount = inputFrame.Length / inputChannels;
 
             unsafe
             {
-                float** inputChannels = (float**)chain.InputBuffer.data;
-                float* inputData = inputChannels[0];
-                inputFrame.CopyTo(new Span<float>(inputData, inputFrame.Length));
-                if (inputFrame.Length < frameSize)
-                    new Span<float>(inputData + inputFrame.Length, frameSize - inputFrame.Length).Clear();
+                float** channelData = (float**)chain.InputBuffer.data;
+                for (int channel = 0; channel < inputChannels; channel++)
+                {
+                    float* destination = channelData[channel];
+                    int sampleIndex = channel;
+                    for (int frame = 0; frame < frameCount; frame++, sampleIndex += inputChannels)
+                        destination[frame] = inputFrame[sampleIndex];
+
+                    if (frameCount < frameSize)
+                        new Span<float>(destination + frameCount, frameSize - frameCount).Clear();
+                }
             }
 
             var allFlags = IPLSimulationFlags.IPL_SIMULATIONFLAGS_DIRECT;
-            if (hasScene)
+            bool spatialized = chain.SpatialBlend > 0.0001f;
+            if (hasScene && spatialized)
                 allFlags |= IPLSimulationFlags.IPL_SIMULATIONFLAGS_REFLECTIONS;
-            if (hasScene && hasProbes)
+            if (hasScene && hasProbes && spatialized)
                 allFlags |= IPLSimulationFlags.IPL_SIMULATIONFLAGS_PATHING;
 
             var simOutputs = new IPLSimulationOutputs();
@@ -667,7 +697,7 @@ namespace XREngine.Audio.Steam
             {
                 direction = direction,
                 interpolation = IPLHRTFInterpolation.IPL_HRTFINTERPOLATION_BILINEAR,
-                spatialBlend = 1.0f,
+                spatialBlend = chain.SpatialBlend,
                 hrtf = _hrtf,
                 peakDelays = IntPtr.Zero,
             };
@@ -678,7 +708,7 @@ namespace XREngine.Audio.Steam
                 ref chain.DirectOutputBuffer,
                 ref chain.BinauralOutputBuffer);
 
-            if (hasScene)
+            if (hasScene && spatialized)
             {
                 var reflParams = simOutputs.reflections;
                 reflParams.type = ReflectionType;
@@ -708,7 +738,7 @@ namespace XREngine.Audio.Steam
                     ref chain.ReflectionDecodedBuffer);
             }
 
-            if (hasScene && hasProbes)
+            if (hasScene && hasProbes && spatialized)
             {
                 var pathParams = simOutputs.pathing;
                 pathParams.order = MaxAmbisonicsOrder;
@@ -735,14 +765,14 @@ namespace XREngine.Audio.Steam
                 float* pathLeft = null;
                 float* pathRight = null;
 
-                if (hasScene)
+                if (hasScene && spatialized)
                 {
                     float** reflectionPtrs = (float**)chain.ReflectionDecodedBuffer.data;
                     reflectionLeft = reflectionPtrs[0];
                     reflectionRight = reflectionPtrs[1];
                 }
 
-                if (hasScene && hasProbes)
+                if (hasScene && hasProbes && spatialized)
                 {
                     float** pathPtrs = (float**)chain.PathOutputBuffer.data;
                     pathLeft = pathPtrs[0];
@@ -797,7 +827,7 @@ namespace XREngine.Audio.Steam
 
                 const int outputChannels = 2;
                 int frameSize = _audioSettings.frameSize;
-                int totalFrames = Math.Min(input.Length, output.Length / outputChannels);
+                int totalFrames = Math.Min(input.Length / Math.Max(1, channels), output.Length / outputChannels);
                 if (totalFrames <= 0)
                 {
                     output.Clear();
@@ -811,10 +841,10 @@ namespace XREngine.Audio.Steam
                 int chunkCount = GetChunkCount(totalFrames, frameSize);
                 for (int chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++)
                 {
-                    var chunk = GetChunkLayout(chunkIndex, totalFrames, frameSize, outputChannels);
+                    var chunk = GetChunkLayout(chunkIndex, totalFrames, frameSize, channels, outputChannels);
                     ProcessChunk(
                         chain,
-                        input.Slice(chunk.InputOffset, chunk.FrameCount),
+                        input.Slice(chunk.InputOffset, chunk.InputSampleCount),
                         output.Slice(chunk.OutputOffset, chunk.OutputSampleCount),
                         hasScene,
                         hasProbes);

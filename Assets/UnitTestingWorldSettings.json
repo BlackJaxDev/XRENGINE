@@ -36,14 +36,14 @@
   "Mirror": false,
   "Spline": false,
 
-  "EditorType": "IMGUI",
+  "EditorType": "Native",
   "CameraUIDrawSpaceOnInit": "Screen",
   "TransformTool": false,
   "EnableProfilerLogging": true,
   "RiveUI": false,
-  "VideoStreaming": false,
+  "VideoStreaming": true,
   "VideoStreamingAudio": true,
-  "VideoStreamingUrl": "https://twitch.tv/blackjaxvr",
+  "VideoStreamingUrl": "https://www.twitch.tv/videos/2718537827",
   "UltralightWebView": false,
   "UltralightWebViewUrl": "https://blackjaxvr.com",
 
@@ -65,7 +65,7 @@
 
   "ModelsToImport": [
     {
-      "Enabled": true,
+      "Enabled": false,
       "Kind": "Animated",
       "Path": "misc\\Mitsuki.fbx",
       "ImportFlags": "Triangulate, FlipUVs",
@@ -90,9 +90,9 @@
   "SoundNode": false,
   "Microphone": false,
   "AttachMicToAnimatedModel": true,
-  "AudioArchitectureV2": true,
+  "AudioArchitectureV2": false,
   "AudioTransport": "OpenAL",
-  "AudioEffects": "OpenAL_EFX",
+  "AudioEffects": "SteamAudio",
 
   "VMC": false,
   "LipSync": false,

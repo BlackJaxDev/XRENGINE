@@ -1,11 +1,10 @@
 using System.Numerics;
+using XREngine.Data.Core;
 
 namespace XREngine.Data.Rendering
 {
-    public class VertexData : VertexPrimitive
+    public class VertexData : XRBase
     {
-        public override FaceType Type => FaceType.Points;
-
         /// <summary>
         /// The position of the vertex. Required - will be 0,0,0 if not set.
         /// </summary>

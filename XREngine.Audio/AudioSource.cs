@@ -69,11 +69,15 @@ namespace XREngine.Audio
             var processor = ParentListener.EffectsProcessor;
             if (processor is null)
                 return;
+            if (processor is SteamAudioProcessor && _bypassSteamAudioSpatialization)
+                return;
 
             EffectsSourceHandle effectsHandle = processor.AddSource(new AudioEffectsSourceSettings
             {
                 Position = _position,
                 Forward = GetEffectsForward(),
+                InputChannels = _steamAudioNonSpatialStereo ? 2 : 1,
+                SpatialBlend = _steamAudioNonSpatialStereo ? 0.0f : 1.0f,
             });
 
             _effectsHandle = effectsHandle.IsValid ? effectsHandle : null;
@@ -213,8 +217,9 @@ namespace XREngine.Audio
                 return false;
             }
 
-            float[] monoInput = ConvertBytesToMonoFloat(data, stereo);
-            processedData = ProcessSteamAudioBuffer(processor, effectsHandle, monoInput, frequency);
+            int inputChannels = _steamAudioNonSpatialStereo && stereo ? 2 : 1;
+            float[] input = inputChannels == 2 ? ConvertBytesToStereoFloat(data) : ConvertBytesToMonoFloat(data, stereo);
+            processedData = ProcessSteamAudioBuffer(processor, effectsHandle, input, frequency, inputChannels);
             processedStereo = true;
             return true;
         }
@@ -228,8 +233,9 @@ namespace XREngine.Audio
                 return false;
             }
 
-            float[] monoInput = ConvertShortsToMonoFloat(data, stereo);
-            processedData = ProcessSteamAudioBuffer(processor, effectsHandle, monoInput, frequency);
+            int inputChannels = _steamAudioNonSpatialStereo && stereo ? 2 : 1;
+            float[] input = inputChannels == 2 ? ConvertShortsToStereoFloat(data) : ConvertShortsToMonoFloat(data, stereo);
+            processedData = ProcessSteamAudioBuffer(processor, effectsHandle, input, frequency, inputChannels);
             processedStereo = true;
             return true;
         }
@@ -243,8 +249,9 @@ namespace XREngine.Audio
                 return false;
             }
 
-            float[] monoInput = stereo ? ConvertStereoToMono(data) : [.. data];
-            processedData = ProcessSteamAudioBuffer(processor, effectsHandle, monoInput, frequency);
+            int inputChannels = _steamAudioNonSpatialStereo && stereo ? 2 : 1;
+            float[] input = inputChannels == 2 ? [.. data] : stereo ? ConvertStereoToMono(data) : [.. data];
+            processedData = ProcessSteamAudioBuffer(processor, effectsHandle, input, frequency, inputChannels);
             processedStereo = true;
             return true;
         }
@@ -258,15 +265,20 @@ namespace XREngine.Audio
                 return false;
             }
 
-            float[] monoInput = data.Type switch
+            int inputChannels = _steamAudioNonSpatialStereo && data.Stereo ? 2 : 1;
+            float[] input = (data.Type, inputChannels) switch
             {
-                AudioData.EPCMType.Byte => ConvertBytesToMonoFloat(data.GetByteData(), data.Stereo),
-                AudioData.EPCMType.Short => ConvertShortsToMonoFloat(data.GetShortData(), data.Stereo),
-                AudioData.EPCMType.Float => data.Stereo ? ConvertStereoToMono(data.GetFloatData()) : data.GetFloatData(),
+                (AudioData.EPCMType.Byte, 2) => ConvertBytesToStereoFloat(data.GetByteData()),
+                (AudioData.EPCMType.Byte, _) => ConvertBytesToMonoFloat(data.GetByteData(), data.Stereo),
+                (AudioData.EPCMType.Short, 2) => ConvertShortsToStereoFloat(data.GetShortData()),
+                (AudioData.EPCMType.Short, _) => ConvertShortsToMonoFloat(data.GetShortData(), data.Stereo),
+                (AudioData.EPCMType.Float, 2) => [.. data.GetFloatData()],
+                (AudioData.EPCMType.Float, _) => data.Stereo ? ConvertStereoToMono(data.GetFloatData()) : data.GetFloatData(),
+                (_, 2) => [.. data.GetFloatData()],
                 _ => data.Stereo ? ConvertStereoToMono(data.GetFloatData()) : data.GetFloatData(),
             };
 
-            processedData = ProcessSteamAudioBuffer(processor, effectsHandle, monoInput, data.Frequency);
+            processedData = ProcessSteamAudioBuffer(processor, effectsHandle, input, data.Frequency, inputChannels);
             processedStereo = true;
             return true;
         }
@@ -275,6 +287,9 @@ namespace XREngine.Audio
         {
             processor = null!;
             effectsHandle = EffectsSourceHandle.Invalid;
+
+            if (_bypassSteamAudioSpatialization)
+                return false;
 
             if (!IsV2 || ParentListener.EffectsProcessor is not SteamAudioProcessor steamProcessor)
                 return false;
@@ -287,11 +302,20 @@ namespace XREngine.Audio
             return true;
         }
 
-        private static float[] ProcessSteamAudioBuffer(SteamAudioProcessor processor, EffectsSourceHandle effectsHandle, float[] monoInput, int frequency)
+        private static float[] ProcessSteamAudioBuffer(SteamAudioProcessor processor, EffectsSourceHandle effectsHandle, float[] input, int frequency, int inputChannels)
         {
-            float[] processed = new float[monoInput.Length * 2];
-            processor.ProcessBuffer(effectsHandle, monoInput, processed, 1, frequency);
+            int frameCount = input.Length / Math.Max(1, inputChannels);
+            float[] processed = new float[frameCount * 2];
+            processor.ProcessBuffer(effectsHandle, input, processed, inputChannels, frequency);
             return processed;
+        }
+
+        private static float[] ConvertBytesToStereoFloat(byte[] data)
+        {
+            float[] stereo = new float[data.Length];
+            for (int i = 0; i < data.Length; i++)
+                stereo[i] = data[i] / 128f - 1f;
+            return stereo;
         }
 
         private static float[] ConvertBytesToMonoFloat(byte[] data, bool stereo)
@@ -336,6 +360,14 @@ namespace XREngine.Audio
             }
 
             return mixed;
+        }
+
+        private static float[] ConvertShortsToStereoFloat(short[] data)
+        {
+            float[] stereo = new float[data.Length];
+            for (int i = 0; i < data.Length; i++)
+                stereo[i] = data[i] / 32768f;
+            return stereo;
         }
 
         private static float[] ConvertStereoToMono(float[] data)
@@ -702,6 +734,22 @@ namespace XREngine.Audio
             set => SetLooping(value);
         }
         /// <summary>
+        /// If true, Steam Audio is bypassed for this source so stereo media stays normal stereo.
+        /// </summary>
+        public bool BypassSteamAudioSpatialization
+        {
+            get => _bypassSteamAudioSpatialization;
+            set => SetBypassSteamAudioSpatialization(value);
+        }
+        /// <summary>
+        /// If true, Steam Audio preserves the source's stereo image instead of spatializing it.
+        /// </summary>
+        public bool SteamAudioNonSpatialStereo
+        {
+            get => _steamAudioNonSpatialStereo;
+            set => SetSteamAudioNonSpatialStereo(value);
+        }
+        /// <summary>
         /// How far the source is from the listener.
         /// At 0.0f, no distance attenuation occurs.
         /// Default: 1.0f.
@@ -837,6 +885,8 @@ namespace XREngine.Audio
         private AudioBufferHandle _bufferHandle;
         private bool _sourceRelative;
         private bool _looping;
+        private bool _bypassSteamAudioSpatialization;
+        private bool _steamAudioNonSpatialStereo;
         private int _byteOffset;
         private int _sampleOffset;
         private float _secondsOffset;
@@ -892,6 +942,38 @@ namespace XREngine.Audio
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceBoolean.Looping, loop);
             ParentListener.VerifyError();
+        }
+        private void SetBypassSteamAudioSpatialization(bool bypass)
+        {
+            if (_bypassSteamAudioSpatialization == bypass)
+                return;
+
+            _bypassSteamAudioSpatialization = bypass;
+
+            if (!IsV2 || ParentListener.EffectsProcessor is not SteamAudioProcessor)
+                return;
+
+            if (bypass)
+                UnregisterEffectsSource();
+            else if (_transportHandle.IsValid)
+                RegisterEffectsSource();
+        }
+
+        private void SetSteamAudioNonSpatialStereo(bool enabled)
+        {
+            if (_steamAudioNonSpatialStereo == enabled)
+                return;
+
+            _steamAudioNonSpatialStereo = enabled;
+
+            if (!IsV2 || ParentListener.EffectsProcessor is not SteamAudioProcessor || _bypassSteamAudioSpatialization)
+                return;
+
+            if (_transportHandle.IsValid)
+            {
+                UnregisterEffectsSource();
+                RegisterEffectsSource();
+            }
         }
 
         private int GetByteOffset()

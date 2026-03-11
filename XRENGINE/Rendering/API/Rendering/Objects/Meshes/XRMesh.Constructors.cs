@@ -1,6 +1,6 @@
 using Extensions;
-using System.Collections.Concurrent;
 using System.Numerics;
+using System.Linq;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 
@@ -31,8 +31,8 @@ public partial class XRMesh
     {
         using var _ = Engine.Profiler.Start("XRMesh Triangles Constructor");
 
-        List<Vertex> triVertices = [];
-        ConcurrentDictionary<int, DelVertexAction> vertexActions = [];
+        vertices.TryGetNonEnumeratedCount(out int vertexCountHint);
+        List<Vertex> triVertices = vertexCountHint > 0 ? new(vertexCountHint) : [];
 
         int maxColorCount = 0;
         int maxTexCoordCount = 0;
@@ -41,36 +41,45 @@ public partial class XRMesh
 
         bool hasNormalAction = false, hasTangentAction = false, hasTexCoordAction = false, hasColorAction = false;
 
-        void Add(Vertex v)
+        foreach (var v in vertices)
         {
             bounds = bounds?.ExpandedToInclude(v.Position) ?? new AABB(v.Position, v.Position);
-            AddVertex(triVertices, v, vertexActions, ref maxTexCoordCount, ref maxColorCount,
+            AddVertex(triVertices, v, ref maxTexCoordCount, ref maxColorCount,
                 ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
         }
-        vertices.ForEach(Add);
 
         _bounds = bounds ?? new AABB(Vector3.Zero, Vector3.Zero);
-        _triangles = [.. triangleIndices.SelectEvery(3, x => new IndexTriangle(x[0], x[1], x[2]))];
+        _triangles = new List<IndexTriangle>(triangleIndices.Count / 3);
+        for (int i = 0; i + 2 < triangleIndices.Count; i += 3)
+            _triangles.Add(new IndexTriangle(triangleIndices[i], triangleIndices[i + 1], triangleIndices[i + 2]));
         _type = EPrimitiveType.Triangles;
         VertexCount = triVertices.Count;
 
-        InitMeshBuffers(vertexActions.ContainsKey(1), vertexActions.ContainsKey(2), maxColorCount, maxTexCoordCount);
-        AddPositionsAction(vertexActions);
+        DelVertexAction[] vertexActions = CreateVertexActions(
+            hasNormalAction,
+            hasTangentAction,
+            hasTexCoordAction,
+            hasColorAction,
+            includePositions: true,
+            updateBounds: false);
 
-        PopulateVertexData(vertexActions.Values, [.. triVertices], VertexCount, dataTransform,
+        InitMeshBuffers(hasNormalAction, hasTangentAction, maxColorCount, maxTexCoordCount);
+
+        Vertex[] sourceVertices = [.. triVertices];
+
+        PopulateVertexData(vertexActions, sourceVertices, VertexCount, dataTransform,
             Engine.Rendering.Settings.PopulateVertexDataInParallel);
 
-        Vertices = [.. vertices];
+        Vertices = sourceVertices;
     }
 
-    public XRMesh(IEnumerable<VertexPrimitive> primitives) : this()
+    public XRMesh(IEnumerable<object?> primitives) : this()
     {
         using var _ = Engine.Profiler.Start("XRMesh Constructor");
 
         List<Vertex> points = [];
         List<Vertex> lines = [];
         List<Vertex> triangles = [];
-        ConcurrentDictionary<int, DelVertexAction> vertexActions = [];
 
         int maxColorCount = 0, maxTexCoordCount = 0;
         AABB? bounds = null;
@@ -83,7 +92,7 @@ public partial class XRMesh
             {
                 case Vertex v:
                     bounds = bounds?.ExpandedToInclude(v.Position) ?? new AABB(v.Position, v.Position);
-                    AddVertex(points, v, vertexActions, ref maxTexCoordCount, ref maxColorCount,
+                    AddVertex(points, v, ref maxTexCoordCount, ref maxColorCount,
                         ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
                     break;
                 case VertexLinePrimitive lp:
@@ -91,7 +100,7 @@ public partial class XRMesh
                         foreach (var vtx in line.Vertices)
                         {
                             bounds = bounds?.ExpandedToInclude(vtx.Position) ?? new AABB(vtx.Position, vtx.Position);
-                            AddVertex(lines, vtx, vertexActions, ref maxTexCoordCount, ref maxColorCount,
+                            AddVertex(lines, vtx, ref maxTexCoordCount, ref maxColorCount,
                                 ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
                         }
                     break;
@@ -99,7 +108,7 @@ public partial class XRMesh
                     foreach (var vtx in line.Vertices)
                     {
                         bounds = bounds?.ExpandedToInclude(vtx.Position) ?? new AABB(vtx.Position, vtx.Position);
-                        AddVertex(lines, vtx, vertexActions, ref maxTexCoordCount, ref maxColorCount,
+                        AddVertex(lines, vtx, ref maxTexCoordCount, ref maxColorCount,
                             ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
                     }
                     break;
@@ -108,10 +117,14 @@ public partial class XRMesh
                         foreach (var vtx in tri.Vertices)
                         {
                             bounds = bounds?.ExpandedToInclude(vtx.Position) ?? new AABB(vtx.Position, vtx.Position);
-                            AddVertex(triangles, vtx, vertexActions, ref maxTexCoordCount, ref maxColorCount,
+                            AddVertex(triangles, vtx, ref maxTexCoordCount, ref maxColorCount,
                                 ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
                         }
                     break;
+                case null:
+                    break;
+                default:
+                    throw new ArgumentException($"Unsupported mesh primitive type '{prim.GetType().FullName}'.", nameof(primitives));
             }
         }
 
@@ -142,6 +155,14 @@ public partial class XRMesh
             remapper = SetPointIndices(sourceList);
         }
 
+        DelVertexAction[] vertexActions = CreateVertexActions(
+            hasNormalAction,
+            hasTangentAction,
+            hasTexCoordAction,
+            hasColorAction,
+            includePositions: true,
+            updateBounds: false);
+
         int[] firstAppearanceArray;
         if (remapper?.ImplementationTable is null)
         {
@@ -152,11 +173,10 @@ public partial class XRMesh
             firstAppearanceArray = remapper.ImplementationTable!;
         VertexCount = firstAppearanceArray.Length;
 
-        InitMeshBuffers(vertexActions.ContainsKey(1), vertexActions.ContainsKey(2), maxColorCount, maxTexCoordCount);
-        AddPositionsAction(vertexActions);
+        InitMeshBuffers(hasNormalAction, hasTangentAction, maxColorCount, maxTexCoordCount);
 
         PopulateVertexData(
-            vertexActions.Values,
+            vertexActions,
             sourceList,
             firstAppearanceArray,
             dataTransform,

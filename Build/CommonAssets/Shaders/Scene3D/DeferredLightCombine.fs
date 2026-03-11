@@ -62,6 +62,7 @@ uniform ivec3 ProbeGridDims;
 uniform vec3 ProbeGridOrigin;
 uniform float ProbeGridCellSize;
 uniform bool UseProbeGrid;
+uniform bool UseAmbientOcclusion = true;
 vec2 EncodeOcta(vec3 dir)
 {
 	dir = normalize(dir);
@@ -340,7 +341,7 @@ void main()
         vec3 albedoColor = texture(AlbedoOpacity, uv).rgb;
         vec3 normal = texture(Normal, uv).rgb;
         vec4 rmse = texture(RMSE, uv);
-        float ao = texture(SSAOIntensityTexture, uv).r;
+        float ao = UseAmbientOcclusion ? texture(SSAOIntensityTexture, uv).r : 1.0f;
         float depth = texture(DepthView, uv).r;
         vec3 InLo = max(texture(LightingTexture, uv).rgb, vec3(0.0f));
         vec3 fragPosWS = WorldPosFromDepth(depth, uv);

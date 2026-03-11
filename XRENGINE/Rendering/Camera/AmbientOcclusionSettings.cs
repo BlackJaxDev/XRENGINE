@@ -283,6 +283,13 @@ namespace XREngine.Rendering
         public void SetUniforms(XRRenderProgram program, EType? overrideType)
         {
             var typeToApply = overrideType ?? Type;
+            typeToApply = typeToApply switch
+            {
+                EType.ScalableAmbientObscurance => EType.MultiScaleVolumetricObscurance,
+                EType.HorizonBased => EType.MultiViewAmbientOcclusion,
+                EType.HorizonBasedPlus => EType.MultiViewAmbientOcclusion,
+                _ => typeToApply,
+            };
 
             switch (typeToApply)
             {

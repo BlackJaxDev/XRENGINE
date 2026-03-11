@@ -156,7 +156,8 @@ namespace XREngine.Rendering
             Action<Exception>? onError = null,
             Action? onCanceled = null,
             Action<float>? onProgress = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            JobPriority priority = JobPriority.Normal)
         {
             if (string.IsNullOrWhiteSpace(filePath))
                 throw new ArgumentException("File path must be provided.", nameof(filePath));
@@ -226,7 +227,8 @@ namespace XREngine.Rendering
                 error: null,
                 canceled: null,
                 progressWithPayload: null,
-                cancellationToken: CancellationToken.None);
+                cancellationToken: CancellationToken.None,
+                priority: priority);
         }
 
         public static EnumeratorJob SchedulePreviewJob(
