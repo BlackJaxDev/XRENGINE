@@ -137,8 +137,11 @@ namespace XREngine.Rendering.Compute
         private readonly List<PendingQuery> _pending = [];
         private Accumulator _frameAccumulator;
         private Metrics _latest = Metrics.Empty;
-        private float _currentFrameTimestamp;
+        private long _currentFrameTimestampTicks;
         private bool _initializedFrameStamp;
+
+        internal static bool ShouldResetFrameAccumulator(bool initializedFrameStamp, long currentFrameTimestampTicks, long nextFrameTimestampTicks)
+            => initializedFrameStamp && nextFrameTimestampTicks != currentFrameTimestampTicks;
 
         private BvhGpuProfiler() { }
 
@@ -153,14 +156,14 @@ namespace XREngine.Rendering.Compute
                 _frameAccumulator.Add(stage, 0, workCount);
         }
 
-        public Metrics ResolveAndPublish(float frameTimestamp, XRDataBuffer? statsBuffer)
+        public Metrics ResolveAndPublish(long frameTimestampTicks, XRDataBuffer? statsBuffer)
         {
             lock (_lock)
             {
-                if (_initializedFrameStamp && Math.Abs(frameTimestamp - _currentFrameTimestamp) > float.Epsilon)
+                if (ShouldResetFrameAccumulator(_initializedFrameStamp, _currentFrameTimestampTicks, frameTimestampTicks))
                     _frameAccumulator.Reset();
 
-                _currentFrameTimestamp = frameTimestamp;
+                _currentFrameTimestampTicks = frameTimestampTicks;
                 _initializedFrameStamp = true;
 
                 var gl = AbstractRenderer.Current as OpenGLRenderer;

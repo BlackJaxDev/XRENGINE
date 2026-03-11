@@ -5,6 +5,7 @@ namespace XREngine;
 
 public static partial class Engine
 {
+#if !XRE_PUBLISHED
     public static ThreadAllocationTracker Allocations { get; } = new();
 
     public sealed class ThreadAllocationTracker
@@ -94,4 +95,31 @@ public static partial class Engine
         AllocationRingSnapshot CollectSwap,
         AllocationRingSnapshot Update,
         AllocationRingSnapshot FixedUpdate);
+#else
+    public static ThreadAllocationTracker Allocations { get; } = new();
+
+    public sealed class ThreadAllocationTracker
+    {
+        public void RecordRender(long bytes) { }
+        public void RecordCollectSwap(long bytes) { }
+        public void RecordUpdateTick(long bytes) { }
+        public void RecordFixedUpdateTick(long bytes) { }
+
+        public ThreadAllocationSnapshot GetSnapshot()
+            => new(default, default, default, default);
+    }
+
+    public readonly record struct AllocationRingSnapshot(long LastBytes, double AverageBytes, long MaxBytes, int Samples, int Capacity)
+    {
+        public double LastKB => 0.0;
+        public double AverageKB => 0.0;
+        public double MaxKB => 0.0;
+    }
+
+    public readonly record struct ThreadAllocationSnapshot(
+        AllocationRingSnapshot Render,
+        AllocationRingSnapshot CollectSwap,
+        AllocationRingSnapshot Update,
+        AllocationRingSnapshot FixedUpdate);
+#endif
 }

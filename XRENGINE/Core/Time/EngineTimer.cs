@@ -8,18 +8,49 @@ namespace XREngine.Timers
 {
     public partial class EngineTimer : XRBase
     {
+        private static readonly double SecondsPerStopwatchTick = 1.0 / Stopwatch.Frequency;
+
+        public static long StopwatchTickFrequency => Stopwatch.Frequency;
+
+        public static long SecondsToStopwatchTicks(double seconds)
+            => seconds <= 0.0
+                ? 0L
+                : Math.Max(1L, (long)Math.Round(seconds * Stopwatch.Frequency));
+
+        public static double TicksToSecondsDouble(long ticks)
+            => ticks * SecondsPerStopwatchTick;
+
+        public static float TicksToSeconds(long ticks)
+            => (float)TicksToSecondsDouble(ticks);
+
+        public static long StopwatchTicksToTimeSpanTicks(long stopwatchTicks)
+            => stopwatchTicks == 0L
+                ? 0L
+                : (long)Math.Round(stopwatchTicks * (TimeSpan.TicksPerSecond / (double)Stopwatch.Frequency));
+
+        public static long TimeSpanTicksToStopwatchTicks(long timeSpanTicks)
+            => timeSpanTicks == 0L
+                ? 0L
+                : (long)Math.Round(timeSpanTicks * (Stopwatch.Frequency / (double)TimeSpan.TicksPerSecond));
+
         /// <summary>
         /// This is the delta used for physics and other fixed-timestep calculations.
         /// Fixed-timestep is consistent and does not vary based on rendering speed.
         /// </summary>
-        public float FixedUpdateDelta { get; set; } = 0.033f;
+        private long _fixedUpdateDeltaTicks = SecondsToStopwatchTicks(0.033f);
+        public long FixedUpdateDeltaTicks => _fixedUpdateDeltaTicks;
+        public float FixedUpdateDelta
+        {
+            get => TicksToSeconds(_fixedUpdateDeltaTicks);
+            set => SetField(ref _fixedUpdateDeltaTicks, SecondsToStopwatchTicks(value.ClampMin(0.0001f)));
+        }
         /// <summary>
         /// This is the desired FPS for physics and other fixed-timestep calculations.
         /// It does not vary.
         /// </summary>
         public float FixedUpdateFrequency
         {
-            get => 1.0f / FixedUpdateDelta.ClampMin(0.0001f);
+            get => (float)(Stopwatch.Frequency / (double)Math.Max(1L, _fixedUpdateDeltaTicks));
             set => FixedUpdateDelta = 1.0f / value.ClampMin(0.0001f);
         }
 
@@ -110,7 +141,7 @@ namespace XREngine.Timers
         /// </summary>
         public XREvent? FixedUpdate;
 
-        private float _updateTimeDiff = 0.0f; // quantization error for UpdateFrame events
+        private long _updateTimeDiffTicks; // quantization error for UpdateFrame events
         private bool _isRunningSlowly; // true, when UpdatePeriod cannot reach TargetUpdatePeriod
 
         private readonly Stopwatch _watch = new();
@@ -208,9 +239,11 @@ namespace XREngine.Timers
         {
             while (IsRunning)
             {
+#if !XRE_PUBLISHED
                 long allocStart = 0;
                 if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
                     allocStart = GC.GetAllocatedBytesForCurrentThread();
+#endif
 
                 using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread"))
                 {
@@ -235,11 +268,13 @@ namespace XREngine.Timers
                     }
                 }
 
+#if !XRE_PUBLISHED
                 if (allocStart != 0)
                 {
                     long allocEnd = GC.GetAllocatedBytesForCurrentThread();
                     Engine.Allocations.RecordCollectSwap(allocEnd - allocStart);
                 }
+#endif
 
                 //Inform the render thread that the swap is done
                 _swapDone.Set();
@@ -267,28 +302,32 @@ namespace XREngine.Timers
                     continue;
                 }
 
-                float timestamp = Time();
-                float elapsed = (timestamp - FixedUpdateManager.LastTimestamp).Clamp(0.0f, 1.0f);
-                if (elapsed < FixedUpdateDelta)
+                long timestampTicks = TimeTicks();
+                long elapsedTicks = Math.Clamp(timestampTicks - FixedUpdateManager.LastTimestampTicks, 0L, Stopwatch.Frequency);
+                if (elapsedTicks < _fixedUpdateDeltaTicks)
                     continue;
                 
-                FixedUpdateManager.Delta = elapsed;
-                FixedUpdateManager.LastTimestamp = timestamp;
+                FixedUpdateManager.DeltaTicks = elapsedTicks;
+                FixedUpdateManager.LastTimestampTicks = timestampTicks;
 
+#if !XRE_PUBLISHED
                 long allocStart = 0;
                 if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
                     allocStart = GC.GetAllocatedBytesForCurrentThread();
+#endif
 
                 DispatchFixedUpdate();
 
+#if !XRE_PUBLISHED
                 if (allocStart != 0)
                 {
                     long allocEnd = GC.GetAllocatedBytesForCurrentThread();
                     Engine.Allocations.RecordFixedUpdateTick(allocEnd - allocStart);
                 }
+#endif
 
-                timestamp = Time();
-                FixedUpdateManager.ElapsedTime = timestamp - FixedUpdateManager.LastTimestamp;
+                timestampTicks = TimeTicks();
+                FixedUpdateManager.ElapsedTicks = Math.Max(0L, timestampTicks - FixedUpdateManager.LastTimestampTicks);
             }
         }
         /// <summary>
@@ -356,38 +395,46 @@ namespace XREngine.Timers
         /// Retrives the current timestamp from the stopwatch.
         /// </summary>
         /// <returns></returns>
-        public float Time() => (float)_watch.ElapsedTicks / TimeSpan.TicksPerSecond;
+        public long TimeTicks() => _watch.ElapsedTicks;
+
+        public double TimeDouble() => TicksToSecondsDouble(TimeTicks());
+
+        public float Time() => (float)TimeDouble();
 
         public bool DispatchRender()
         {
             try
             {
-                float timestamp = Time();
-                float elapsed = (timestamp - Render.LastTimestamp).Clamp(0.0f, 1.0f);
-                bool dispatch = elapsed > 0.0f && elapsed >= TargetRenderPeriod;
+                long timestampTicks = TimeTicks();
+                long elapsedTicks = Math.Clamp(timestampTicks - Render.LastTimestampTicks, 0L, Stopwatch.Frequency);
+                bool dispatch = elapsedTicks > 0L && elapsedTicks >= _targetRenderPeriodTicks;
                 if (dispatch)
                 {
                     //Debug.Out("Dispatching render.");
                     using var sample = Engine.Profiler.Start("EngineTimer.DispatchRender");
 
+#if !XRE_PUBLISHED
                     long allocStart = 0;
                     if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
                         allocStart = GC.GetAllocatedBytesForCurrentThread();
+#endif
 
-                    Render.Delta = elapsed;
-                    Render.LastTimestamp = timestamp;
+                    Render.DeltaTicks = elapsedTicks;
+                    Render.LastTimestampTicks = timestampTicks;
 
                     Engine.Rendering.State.BeginRenderFrame();
                     RenderFrame?.Invoke(); // This dispatch has to be synchronous to stay on the main thread
 
+#if !XRE_PUBLISHED
                     if (allocStart != 0)
                     {
                         long allocEnd = GC.GetAllocatedBytesForCurrentThread();
                         Engine.Allocations.RecordRender(allocEnd - allocStart);
                     }
+#endif
 
-                    timestamp = Time();
-                    Render.ElapsedTime = timestamp - Render.LastTimestamp;
+                    timestampTicks = TimeTicks();
+                    Render.ElapsedTicks = Math.Max(0L, timestampTicks - Render.LastTimestampTicks);
                 }
                 return dispatch;
             }
@@ -404,15 +451,15 @@ namespace XREngine.Timers
             {
                 using var sample = Engine.Profiler.Start("EngineTimer.DispatchCollectVisible");
 
-                float timestamp = Time();
-                float elapsed = (timestamp - Collect.LastTimestamp).Clamp(0.0f, 1.0f);
-                Collect.Delta = elapsed;
-                Collect.LastTimestamp = timestamp;
+                long timestampTicks = TimeTicks();
+                long elapsedTicks = Math.Clamp(timestampTicks - Collect.LastTimestampTicks, 0L, Stopwatch.Frequency);
+                Collect.DeltaTicks = elapsedTicks;
+                Collect.LastTimestampTicks = timestampTicks;
                 PreCollectVisible?.Invoke();
                 //CollectVisible?.InvokeParallel();
                 (CollectVisible?.InvokeAsync() ?? Task.CompletedTask).Wait();
-                timestamp = Time();
-                Collect.ElapsedTime = timestamp - Collect.LastTimestamp;
+                timestampTicks = TimeTicks();
+                Collect.ElapsedTicks = Math.Max(0L, timestampTicks - Collect.LastTimestampTicks);
             }
             catch (Exception e)
             {
@@ -447,20 +494,22 @@ namespace XREngine.Timers
 
                 int runningSlowlyRetries = 4;
 
-                float timestamp = Time();
-                float elapsed = (timestamp - Update.LastTimestamp).Clamp(0.0f, 1.0f);
+                long timestampTicks = TimeTicks();
+                long elapsedTicks = Math.Clamp(timestampTicks - Update.LastTimestampTicks, 0L, Stopwatch.Frequency);
 
                 //Raise UpdateFrame events until we catch up with the target update period
-                while (IsRunning && elapsed > 0.0f && elapsed + _updateTimeDiff >= TargetUpdatePeriod)
+                while (IsRunning && elapsedTicks > 0L && elapsedTicks + _updateTimeDiffTicks >= _targetUpdatePeriodTicks)
                 {
                     using var updateIterationSample = Engine.Profiler.Start("EngineTimer.DispatchUpdate.Iteration");
 
+#if !XRE_PUBLISHED
                     long allocStart = 0;
                     if (Engine.EditorPreferences.Debug.EnableThreadAllocationTracking)
                         allocStart = GC.GetAllocatedBytesForCurrentThread();
+#endif
 
-                    Update.Delta = elapsed;
-                    Update.LastTimestamp = timestamp;
+                    Update.DeltaTicks = elapsedTicks;
+                    Update.LastTimestampTicks = timestampTicks;
 
                     using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.PreUpdate"))
                     {
@@ -469,7 +518,19 @@ namespace XREngine.Timers
 
                     using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.Update"))
                     {
+#if !XRE_PUBLISHED
+                        Engine.Profiler.BeginComponentTimingFrame(Time());
+                        try
+                        {
+                            UpdateFrame?.Invoke();
+                        }
+                        finally
+                        {
+                            Engine.Profiler.EndComponentTimingFrame(Time());
+                        }
+#else
                         UpdateFrame?.Invoke();
+#endif
                     }
 
                     using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.PostUpdate"))
@@ -477,21 +538,23 @@ namespace XREngine.Timers
                         PostUpdateFrame?.Invoke();
                     }
 
+#if !XRE_PUBLISHED
                     if (allocStart != 0)
                     {
                         long allocEnd = GC.GetAllocatedBytesForCurrentThread();
                         Engine.Allocations.RecordUpdateTick(allocEnd - allocStart);
                     }
+#endif
 
-                    timestamp = Time();
-                    Update.ElapsedTime = timestamp - Update.LastTimestamp;
+                    timestampTicks = TimeTicks();
+                    Update.ElapsedTicks = Math.Max(0L, timestampTicks - Update.LastTimestampTicks);
 
                     // Calculate difference (positive or negative) between
                     // actual elapsed time and target elapsed time. We must
                     // compensate for this difference.
-                    _updateTimeDiff += elapsed - TargetUpdatePeriod;
+                    _updateTimeDiffTicks += elapsedTicks - _targetUpdatePeriodTicks;
 
-                    if (TargetUpdatePeriod <= double.Epsilon)
+                    if (_targetUpdatePeriodTicks <= 0L)
                     {
                         // According to the TargetUpdatePeriod documentation,
                         // a TargetUpdatePeriod of zero means we will raise
@@ -500,7 +563,7 @@ namespace XREngine.Timers
                         break;
                     }
 
-                    _isRunningSlowly = _updateTimeDiff >= TargetUpdatePeriod;
+                    _isRunningSlowly = _updateTimeDiffTicks >= _targetUpdatePeriodTicks;
                     if (_isRunningSlowly && --runningSlowlyRetries == 0)
                     {
                         // If UpdateFrame consistently takes longer than TargetUpdateFrame
@@ -509,7 +572,7 @@ namespace XREngine.Timers
                     }
 
                     // Prepare for next loop
-                    elapsed = (timestamp - Update.LastTimestamp).Clamp(0.0f, 1.0f);
+                    elapsedTicks = Math.Clamp(timestampTicks - Update.LastTimestampTicks, 0L, Stopwatch.Frequency);
                 }
             }
             catch (Exception e)
@@ -518,7 +581,7 @@ namespace XREngine.Timers
             }
         }
 
-        private float _targetRenderPeriod;
+        private long _targetRenderPeriodTicks;
         /// <summary>
         /// Gets or sets a float representing the target render frequency, in hertz.
         /// </summary>
@@ -528,22 +591,22 @@ namespace XREngine.Timers
         /// </remarks>
         public float TargetRenderFrequency
         {
-            get => _targetRenderPeriod == 0.0f ? 0.0f : 1.0f / _targetRenderPeriod;
+            get => _targetRenderPeriodTicks == 0L ? 0.0f : (float)(Stopwatch.Frequency / (double)_targetRenderPeriodTicks);
             set
             {
                 if (value < 1.0f)
                 {
-                    SetField(ref _targetRenderPeriod, 0.0f);
+                    SetField(ref _targetRenderPeriodTicks, 0L);
                     Debug.Out("Target render frequency set to unrestricted.");
                 }
                 else if (value < MaxFrequency)
                 {
-                    SetField(ref _targetRenderPeriod, 1.0f / value);
+                    SetField(ref _targetRenderPeriodTicks, SecondsToStopwatchTicks(1.0 / value));
                     Debug.Out("Target render frequency set to {0}Hz.", value.ToString());
                 }
                 else
                 {
-                    SetField(ref _targetRenderPeriod, 1.0f / MaxFrequency);
+                    SetField(ref _targetRenderPeriodTicks, SecondsToStopwatchTicks(1.0 / MaxFrequency));
                     Debug.Out("Target render frequency clamped to {0}Hz.", MaxFrequency.ToString());
                 }
             }
@@ -558,28 +621,28 @@ namespace XREngine.Timers
         /// </remarks>
         public float TargetRenderPeriod
         {
-            get => _targetRenderPeriod;
+            get => TicksToSeconds(_targetRenderPeriodTicks);
             set
             {
                 if (value < 1.0f / MaxFrequency)
                 {
-                    SetField(ref _targetRenderPeriod, 0.0f);
+                    SetField(ref _targetRenderPeriodTicks, 0L);
                     Debug.Out("Target render frequency set to unrestricted.");
                 }
                 else if (value < 1.0f)
                 {
-                    SetField(ref _targetRenderPeriod, value);
+                    SetField(ref _targetRenderPeriodTicks, SecondsToStopwatchTicks(value));
                     Debug.Out("Target render frequency set to {0}Hz.", TargetRenderFrequency.ToString());
                 }
                 else
                 {
-                    SetField(ref _targetRenderPeriod, 1.0f);
+                    SetField(ref _targetRenderPeriodTicks, SecondsToStopwatchTicks(1.0));
                     Debug.Out("Target render frequency clamped to 1Hz.");
                 }
             }
         }
 
-        private float _targetUpdatePeriod;
+        private long _targetUpdatePeriodTicks;
         /// <summary>
         /// Gets or sets a float representing the target update frequency, in hertz.
         /// </summary>
@@ -589,22 +652,22 @@ namespace XREngine.Timers
         /// </remarks>
         public float TargetUpdateFrequency
         {
-            get => _targetUpdatePeriod == 0.0f ? 0.0f : 1.0f / _targetUpdatePeriod;
+            get => _targetUpdatePeriodTicks == 0L ? 0.0f : (float)(Stopwatch.Frequency / (double)_targetUpdatePeriodTicks);
             set
             {
                 if (value < 1.0)
                 {
-                    SetField(ref _targetUpdatePeriod, 0.0f);
+                    SetField(ref _targetUpdatePeriodTicks, 0L);
                     Debug.Out("Target update frequency set to unrestricted.");
                 }
                 else if (value < MaxFrequency)
                 {
-                    SetField(ref _targetUpdatePeriod, 1.0f / value);
+                    SetField(ref _targetUpdatePeriodTicks, SecondsToStopwatchTicks(1.0 / value));
                     Debug.Out("Target update frequency set to {0}Hz.", value);
                 }
                 else
                 {
-                    SetField(ref _targetUpdatePeriod, 1.0f / MaxFrequency);
+                    SetField(ref _targetUpdatePeriodTicks, SecondsToStopwatchTicks(1.0 / MaxFrequency));
                     Debug.Out("Target update frequency clamped to {0}Hz.", MaxFrequency);
                 }
             }
@@ -619,22 +682,22 @@ namespace XREngine.Timers
         /// </remarks>
         public float TargetUpdatePeriod
         {
-            get => _targetUpdatePeriod;
+            get => TicksToSeconds(_targetUpdatePeriodTicks);
             set
             {
                 if (value < 1.0f / MaxFrequency)
                 {
-                    SetField(ref _targetUpdatePeriod, 0.0f);
+                    SetField(ref _targetUpdatePeriodTicks, 0L);
                     Debug.Out("Target update frequency set to unrestricted.");
                 }
                 else if (value < 1.0)
                 {
-                    SetField(ref _targetUpdatePeriod, value);
+                    SetField(ref _targetUpdatePeriodTicks, SecondsToStopwatchTicks(value));
                     Debug.Out("Target update frequency set to {0}Hz.", TargetUpdateFrequency);
                 }
                 else
                 {
-                    SetField(ref _targetUpdatePeriod, 1.0f);
+                    SetField(ref _targetUpdatePeriodTicks, SecondsToStopwatchTicks(1.0));
                     Debug.Out("Target update frequency clamped to 1Hz.");
                 }
             }

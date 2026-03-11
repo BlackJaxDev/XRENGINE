@@ -1,6 +1,8 @@
 ﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
+using XREngine.Components;
 using XREngine.Core;
 using XREngine.Data.Core;
 
@@ -8,6 +10,7 @@ namespace XREngine
 {
     public static partial class Engine
     {
+#if !XRE_PUBLISHED
         /// <summary>
         /// Event-based code profiler with near-zero overhead on the calling thread.
         /// Start() only captures a timestamp and pushes a lightweight event to a queue.
@@ -79,6 +82,8 @@ namespace XREngine
             // Lock-free snapshot access using volatile references
             private volatile ProfilerFrameSnapshot? _readySnapshot;
             private volatile Dictionary<int, float[]> _readyHistorySnapshot = [];
+            private volatile ProfilerComponentFrameSnapshot? _readyComponentTimingSnapshot;
+            private ComponentTimingFrameState? _activeComponentTimingFrame;
             
             // Stats thread owns these - no locking needed
             private readonly Dictionary<int, Queue<float>> _threadFrameHistory = [];
@@ -229,6 +234,40 @@ namespace XREngine
                     foreach (var child in timer.Children)
                         ReturnBuiltRecursive(child);
                     ReturnBuilt(timer);
+                }
+            }
+
+            private sealed class ComponentTimingFrameState(float frameTime)
+            {
+                public float FrameTime { get; } = frameTime;
+                public ConcurrentDictionary<Guid, ComponentTimingAccumulator> Components { get; } = [];
+            }
+
+            private sealed class ComponentTimingAccumulator(XRComponent component)
+            {
+                private long _elapsedTicks;
+                private int _callCount;
+                private int _tickGroupMask;
+
+                public XRComponent Component { get; } = component;
+                public long ElapsedTicks => Interlocked.Read(ref _elapsedTicks);
+                public int CallCount => Volatile.Read(ref _callCount);
+                public int TickGroupMask => Volatile.Read(ref _tickGroupMask);
+
+                public void Add(long elapsedTicks, ETickGroup group)
+                {
+                    Interlocked.Add(ref _elapsedTicks, elapsedTicks);
+                    Interlocked.Increment(ref _callCount);
+
+                    int mask = 1 << (int)group;
+                    int currentMask;
+                    int updatedMask;
+                    do
+                    {
+                        currentMask = _tickGroupMask;
+                        updatedMask = currentMask | mask;
+                    }
+                    while (currentMask != updatedMask && Interlocked.CompareExchange(ref _tickGroupMask, updatedMask, currentMask) != currentMask);
                 }
             }
 
@@ -431,7 +470,7 @@ namespace XREngine
 
                 ProfilerFrameSnapshot? frameSnapshot = null;
                 if (_threadSnapshotsBuffer.Count > 0)
-                    frameSnapshot = new ProfilerFrameSnapshot(frameTime, _threadSnapshotsBuffer.ToArray());
+                    frameSnapshot = new ProfilerFrameSnapshot(frameTime, _threadSnapshotsBuffer.ToArray(), _readyComponentTimingSnapshot);
 
                 // Update history
                 if (frameSnapshot is not null)
@@ -501,6 +540,37 @@ namespace XREngine
             public bool TryRequestSnapshot(float minIntervalSeconds, out ProfilerFrameSnapshot? frameSnapshot, out Dictionary<int, float[]> history)
             {
                 return TryGetSnapshot(out frameSnapshot, out history);
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal bool HasActiveComponentTimingFrame()
+                => _activeComponentTimingFrame is not null;
+
+            public void BeginComponentTimingFrame(float frameTime)
+            {
+                if (!EnableFrameLogging)
+                    return;
+
+                _activeComponentTimingFrame = new ComponentTimingFrameState(frameTime);
+            }
+
+            public void EndComponentTimingFrame(float frameTime)
+            {
+                var state = Interlocked.Exchange(ref _activeComponentTimingFrame, null);
+                if (state is null)
+                    return;
+
+                _readyComponentTimingSnapshot = BuildComponentTimingSnapshot(state, frameTime);
+            }
+
+            internal void RecordComponentTick(XRComponent component, ETickGroup group, long elapsedTicks)
+            {
+                var state = _activeComponentTimingFrame;
+                if (state is null)
+                    return;
+
+                var accumulator = state.Components.GetOrAdd(component.ID, static (_, c) => new ComponentTimingAccumulator(c), component);
+                accumulator.Add(elapsedTicks, group);
             }
 
             /// <summary>
@@ -596,15 +666,52 @@ namespace XREngine
             public ProfilerFrameSnapshot? GetLastFrameSnapshot()
                 => _readySnapshot;
 
+            public ProfilerComponentFrameSnapshot? GetLastComponentTimingSnapshot()
+                => _readyComponentTimingSnapshot;
+
             public Dictionary<int, float[]> GetThreadHistorySnapshot()
                 => _readyHistorySnapshot;
 
             // ============ SNAPSHOT TYPES ============
 
-            public sealed class ProfilerFrameSnapshot(float frameTime, IReadOnlyList<ProfilerThreadSnapshot> threads)
+            private static ProfilerComponentFrameSnapshot BuildComponentTimingSnapshot(ComponentTimingFrameState state, float frameTime)
+            {
+                if (state.Components.IsEmpty)
+                    return new ProfilerComponentFrameSnapshot(frameTime, []);
+
+                var snapshots = new List<ProfilerComponentTimingSnapshot>(state.Components.Count);
+                foreach (var entry in state.Components)
+                {
+                    var component = entry.Value.Component;
+                    long elapsedTicks = entry.Value.ElapsedTicks;
+                    int callCount = entry.Value.CallCount;
+                    if (elapsedTicks <= 0 || callCount <= 0)
+                        continue;
+
+                    string componentType = component.GetType().Name;
+                    string componentName = string.IsNullOrWhiteSpace(component.Name) ? componentType : component.Name!;
+                    string sceneNodeName = string.IsNullOrWhiteSpace(component.SceneNode?.Name) ? "(unnamed node)" : component.SceneNode.Name!;
+                    float elapsedMs = (float)(elapsedTicks * 1000.0 / Stopwatch.Frequency);
+
+                    snapshots.Add(new ProfilerComponentTimingSnapshot(
+                        component.ID,
+                        componentName,
+                        componentType,
+                        sceneNodeName,
+                        elapsedMs,
+                        callCount,
+                        entry.Value.TickGroupMask));
+                }
+
+                snapshots.Sort(static (left, right) => right.ElapsedMs.CompareTo(left.ElapsedMs));
+                return new ProfilerComponentFrameSnapshot(frameTime, snapshots.ToArray());
+            }
+
+            public sealed class ProfilerFrameSnapshot(float frameTime, IReadOnlyList<ProfilerThreadSnapshot> threads, ProfilerComponentFrameSnapshot? componentTimings)
             {
                 public float FrameTime { get; } = frameTime;
                 public IReadOnlyList<ProfilerThreadSnapshot> Threads { get; } = threads;
+                public ProfilerComponentFrameSnapshot? ComponentTimings { get; } = componentTimings;
             }
 
             public sealed class ProfilerThreadSnapshot
@@ -630,6 +737,188 @@ namespace XREngine
                 public float ElapsedMs { get; } = elapsedMs;
                 public IReadOnlyList<ProfilerNodeSnapshot> Children { get; } = children;
             }
+
+            public sealed class ProfilerComponentFrameSnapshot(float frameTime, IReadOnlyList<ProfilerComponentTimingSnapshot> components)
+            {
+                public float FrameTime { get; } = frameTime;
+                public IReadOnlyList<ProfilerComponentTimingSnapshot> Components { get; } = components;
+            }
+
+            public sealed class ProfilerComponentTimingSnapshot(
+                Guid componentId,
+                string componentName,
+                string componentType,
+                string sceneNodeName,
+                float elapsedMs,
+                int callCount,
+                int tickGroupMask)
+            {
+                public Guid ComponentId { get; } = componentId;
+                public string ComponentName { get; } = componentName;
+                public string ComponentType { get; } = componentType;
+                public string SceneNodeName { get; } = sceneNodeName;
+                public float ElapsedMs { get; } = elapsedMs;
+                public int CallCount { get; } = callCount;
+                public int TickGroupMask { get; } = tickGroupMask;
+            }
         }
+#else
+        public class CodeProfiler : XRBase
+        {
+            public delegate void DelTimerCallback(string? methodName, float elapsedMs);
+
+            public struct ProfilerScope : IDisposable
+            {
+                public void Dispose()
+                {
+                }
+            }
+
+            public sealed class CodeProfilerTimer(string? name = null) : IPoolable
+            {
+                public float StartTime { get; private set; }
+                public float EndTime { get; private set; }
+                public float ElapsedMs { get; private set; }
+                public float ElapsedSec => ElapsedMs * 0.001f;
+                public string Name { get; private set; } = name ?? string.Empty;
+                public int ThreadId { get; private set; }
+                public int Depth { get; private set; }
+
+                public void OnPoolableDestroyed() { }
+                public void OnPoolableReleased() { }
+                public void OnPoolableReset()
+                {
+                    Depth = 0;
+                    ThreadId = 0;
+                    Name = string.Empty;
+                    StartTime = 0f;
+                    EndTime = 0f;
+                    ElapsedMs = 0f;
+                }
+            }
+
+            public sealed class ProfilerFrameSnapshot(float frameTime, IReadOnlyList<ProfilerThreadSnapshot> threads, ProfilerComponentFrameSnapshot? componentTimings)
+            {
+                public float FrameTime { get; } = frameTime;
+                public IReadOnlyList<ProfilerThreadSnapshot> Threads { get; } = threads;
+                public ProfilerComponentFrameSnapshot? ComponentTimings { get; } = componentTimings;
+            }
+
+            public sealed class ProfilerThreadSnapshot(int threadId, IReadOnlyList<ProfilerNodeSnapshot> rootNodes)
+            {
+                public int ThreadId { get; } = threadId;
+                public IReadOnlyList<ProfilerNodeSnapshot> RootNodes { get; } = rootNodes;
+                public float TotalTimeMs { get; } = 0f;
+            }
+
+            public sealed class ProfilerNodeSnapshot(string name, float elapsedMs, IReadOnlyList<ProfilerNodeSnapshot> children)
+            {
+                public string Name { get; } = name;
+                public float ElapsedMs { get; } = elapsedMs;
+                public IReadOnlyList<ProfilerNodeSnapshot> Children { get; } = children;
+            }
+
+            public sealed class ProfilerComponentFrameSnapshot(float frameTime, IReadOnlyList<ProfilerComponentTimingSnapshot> components)
+            {
+                public float FrameTime { get; } = frameTime;
+                public IReadOnlyList<ProfilerComponentTimingSnapshot> Components { get; } = components;
+            }
+
+            public sealed class ProfilerComponentTimingSnapshot(
+                Guid componentId,
+                string componentName,
+                string componentType,
+                string sceneNodeName,
+                float elapsedMs,
+                int callCount,
+                int tickGroupMask)
+            {
+                public Guid ComponentId { get; } = componentId;
+                public string ComponentName { get; } = componentName;
+                public string ComponentType { get; } = componentType;
+                public string SceneNodeName { get; } = sceneNodeName;
+                public float ElapsedMs { get; } = elapsedMs;
+                public int CallCount { get; } = callCount;
+                public int TickGroupMask { get; } = tickGroupMask;
+            }
+
+            public bool EnableFrameLogging
+            {
+                get => false;
+                set { }
+            }
+
+            public float DebugOutputMinElapsedMs
+            {
+                get => 0f;
+                set { }
+            }
+
+            public ConcurrentDictionary<int, CodeProfilerTimer> RootEntriesPerThread { get; } = [];
+
+            public void ClearFrameLog()
+            {
+            }
+
+            public bool TryGetSnapshot(out ProfilerFrameSnapshot? frameSnapshot, out Dictionary<int, float[]> history)
+            {
+                frameSnapshot = null;
+                history = [];
+                return false;
+            }
+
+            public bool TryRequestSnapshot(float minIntervalSeconds, out ProfilerFrameSnapshot? frameSnapshot, out Dictionary<int, float[]> history)
+            {
+                frameSnapshot = null;
+                history = [];
+                return false;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            internal bool HasActiveComponentTimingFrame()
+                => false;
+
+            public void BeginComponentTimingFrame(float frameTime)
+            {
+            }
+
+            public void EndComponentTimingFrame(float frameTime)
+            {
+            }
+
+            internal void RecordComponentTick(XRComponent component, ETickGroup group, long elapsedTicks)
+            {
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public ProfilerScope Start(DelTimerCallback? callback, [CallerMemberName] string? methodName = null)
+                => default;
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public ProfilerScope Start([CallerMemberName] string? methodName = null)
+                => default;
+
+            public Guid StartAsync(DelTimerCallback? callback = null, [CallerMemberName] string? methodName = null)
+                => Guid.Empty;
+
+            public float StopAsync(Guid id, out string? methodName)
+            {
+                methodName = string.Empty;
+                return 0.0f;
+            }
+
+            public float StopAsync(Guid id)
+                => 0.0f;
+
+            public ProfilerFrameSnapshot? GetLastFrameSnapshot()
+                => null;
+
+            public ProfilerComponentFrameSnapshot? GetLastComponentTimingSnapshot()
+                => null;
+
+            public Dictionary<int, float[]> GetThreadHistorySnapshot()
+                => [];
+        }
+#endif
     }
 }

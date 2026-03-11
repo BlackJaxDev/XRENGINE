@@ -3,7 +3,9 @@ using Silk.NET.OpenAL.Extensions.Creative;
 using System.Diagnostics;
 using System.Numerics;
 using XREngine.Core;
+using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine.Audio.Steam;
 
 namespace XREngine.Audio
 {
@@ -15,32 +17,100 @@ namespace XREngine.Audio
         {
             ParentListener = parentListener;
             Api = parentListener.Api;
-            if (IsV2)
-                Handle = ParentListener.Transport!.CreateSource().Id;
-            else
-            {
-                Handle = Api.GenSource();
-                ParentListener.VerifyError();
-            }
+            CreateNativeSource();
         }
 
         public ListenerContext ParentListener { get; }
         public AL Api { get; }
-        public uint Handle { get; private set; }
+        private AudioSourceHandle _transportHandle;
+        private EffectsSourceHandle? _effectsHandle;
 
-        public void Dispose()
+        public uint Handle => _transportHandle.Id;
+        internal AudioSourceHandle TransportHandle => _transportHandle;
+        internal EffectsSourceHandle? EffectsHandle => _effectsHandle;
+
+        private void CreateNativeSource()
         {
-            if (Handle == 0u)
+            if (IsV2)
+            {
+                _transportHandle = ParentListener.Transport!.CreateSource();
+                RegisterEffectsSource();
+                return;
+            }
+
+            _transportHandle = new AudioSourceHandle(Api.GenSource());
+            ParentListener.VerifyError();
+        }
+
+        private void DestroyNativeSource()
+        {
+            if (!_transportHandle.IsValid)
                 return;
 
             if (IsV2)
-                ParentListener.Transport!.DestroySource(new AudioSourceHandle(Handle));
+            {
+                UnregisterEffectsSource();
+                ParentListener.Transport!.DestroySource(_transportHandle);
+            }
             else
             {
                 Api.SourceStop(Handle);
                 Api.DeleteSource(Handle);
             }
-            Handle = 0u;
+
+            ParentListener.VerifyError();
+            _transportHandle = AudioSourceHandle.Invalid;
+        }
+
+        private void RegisterEffectsSource()
+        {
+            UnregisterEffectsSource();
+
+            var processor = ParentListener.EffectsProcessor;
+            if (processor is null)
+                return;
+
+            EffectsSourceHandle effectsHandle = processor.AddSource(new AudioEffectsSourceSettings
+            {
+                Position = _position,
+                Forward = GetEffectsForward(),
+            });
+
+            _effectsHandle = effectsHandle.IsValid ? effectsHandle : null;
+            SyncEffectsSourcePose();
+        }
+
+        private void UnregisterEffectsSource()
+        {
+            if (_effectsHandle is not { } effectsHandle || !effectsHandle.IsValid)
+            {
+                _effectsHandle = null;
+                return;
+            }
+
+            ParentListener.EffectsProcessor?.RemoveSource(effectsHandle);
+            _effectsHandle = null;
+        }
+
+        private Vector3 GetEffectsForward()
+            => _direction.LengthSquared() > 0.0001f
+                ? Vector3.Normalize(_direction)
+                : -Vector3.UnitZ;
+
+        private void SyncEffectsSourcePose()
+        {
+            if (_effectsHandle is not { } effectsHandle || !effectsHandle.IsValid)
+                return;
+
+            ParentListener.EffectsProcessor?.SetSourcePose(effectsHandle, _position, GetEffectsForward());
+        }
+
+        public void Dispose()
+        {
+            if (!_transportHandle.IsValid)
+                return;
+
+            DestroyNativeSource();
 
             GC.SuppressFinalize(this);
         }
@@ -51,7 +121,7 @@ namespace XREngine.Audio
         /// </summary>
         public int BuffersQueued
             => IsV2
-                ? (_currentStreamingBuffers.Count > 0 ? _currentStreamingBuffers.Count : (_bufferHandle != 0 ? 1 : 0))
+                ? (_currentStreamingBuffers.Count > 0 ? _currentStreamingBuffers.Count : (_bufferHandle.IsValid ? 1 : 0))
                 : GetBuffersQueued();
         /// <summary>
         /// The number of buffers in the queue that have been processed.
@@ -63,7 +133,7 @@ namespace XREngine.Audio
         /// </summary>
         public AudioBuffer? Buffer
         {
-            get => ParentListener.GetBufferByHandle(IsV2 ? _bufferHandle : GetBufferHandle());
+            get => ParentListener.GetBufferByHandle(IsV2 ? _bufferHandle.Id : GetBufferHandle());
             set
             {
                 if (value is not null)
@@ -85,6 +155,198 @@ namespace XREngine.Audio
         /// scenarios where the caller controls playback timing (e.g. pre-buffering).
         /// </summary>
         public bool AutoPlayOnQueue { get; set; } = true;
+
+        public void SetBufferData(AudioBuffer buffer, byte[] data, int frequency, bool stereo)
+        {
+            if (!TryProcessBufferData(data, frequency, stereo, out float[] processedData, out bool processedStereo))
+            {
+                buffer.SetData(data, frequency, stereo);
+                return;
+            }
+
+            ArgumentNullException.ThrowIfNull(processedData);
+            buffer.SetData(processedData, frequency, processedStereo);
+        }
+
+        public void SetBufferData(AudioBuffer buffer, short[] data, int frequency, bool stereo)
+        {
+            if (!TryProcessBufferData(data, frequency, stereo, out float[] processedData, out bool processedStereo))
+            {
+                buffer.SetData(data, frequency, stereo);
+                return;
+            }
+
+            ArgumentNullException.ThrowIfNull(processedData);
+            buffer.SetData(processedData, frequency, processedStereo);
+        }
+
+        public void SetBufferData(AudioBuffer buffer, float[] data, int frequency, bool stereo)
+        {
+            if (!TryProcessBufferData(data, frequency, stereo, out float[] processedData, out bool processedStereo))
+            {
+                buffer.SetData(data, frequency, stereo);
+                return;
+            }
+
+            ArgumentNullException.ThrowIfNull(processedData);
+            buffer.SetData(processedData, frequency, processedStereo);
+        }
+
+        public void SetBufferData(AudioBuffer buffer, AudioData data)
+        {
+            if (!TryProcessBufferData(data, out float[] processedData, out bool processedStereo))
+            {
+                buffer.SetData(data);
+                return;
+            }
+
+            ArgumentNullException.ThrowIfNull(processedData);
+            buffer.SetData(processedData, data.Frequency, processedStereo);
+        }
+
+        private bool TryProcessBufferData(byte[] data, int frequency, bool stereo, out float[] processedData, out bool processedStereo)
+        {
+            if (!TryGetSteamAudioProcessor(out var processor, out var effectsHandle))
+            {
+                processedData = [];
+                processedStereo = stereo;
+                return false;
+            }
+
+            float[] monoInput = ConvertBytesToMonoFloat(data, stereo);
+            processedData = ProcessSteamAudioBuffer(processor, effectsHandle, monoInput, frequency);
+            processedStereo = true;
+            return true;
+        }
+
+        private bool TryProcessBufferData(short[] data, int frequency, bool stereo, out float[] processedData, out bool processedStereo)
+        {
+            if (!TryGetSteamAudioProcessor(out var processor, out var effectsHandle))
+            {
+                processedData = [];
+                processedStereo = stereo;
+                return false;
+            }
+
+            float[] monoInput = ConvertShortsToMonoFloat(data, stereo);
+            processedData = ProcessSteamAudioBuffer(processor, effectsHandle, monoInput, frequency);
+            processedStereo = true;
+            return true;
+        }
+
+        private bool TryProcessBufferData(float[] data, int frequency, bool stereo, out float[] processedData, out bool processedStereo)
+        {
+            if (!TryGetSteamAudioProcessor(out var processor, out var effectsHandle))
+            {
+                processedData = [];
+                processedStereo = stereo;
+                return false;
+            }
+
+            float[] monoInput = stereo ? ConvertStereoToMono(data) : [.. data];
+            processedData = ProcessSteamAudioBuffer(processor, effectsHandle, monoInput, frequency);
+            processedStereo = true;
+            return true;
+        }
+
+        private bool TryProcessBufferData(AudioData data, out float[] processedData, out bool processedStereo)
+        {
+            if (!TryGetSteamAudioProcessor(out var processor, out var effectsHandle) || data.Data is null)
+            {
+                processedData = [];
+                processedStereo = data.Stereo;
+                return false;
+            }
+
+            float[] monoInput = data.Type switch
+            {
+                AudioData.EPCMType.Byte => ConvertBytesToMonoFloat(data.GetByteData(), data.Stereo),
+                AudioData.EPCMType.Short => ConvertShortsToMonoFloat(data.GetShortData(), data.Stereo),
+                AudioData.EPCMType.Float => data.Stereo ? ConvertStereoToMono(data.GetFloatData()) : data.GetFloatData(),
+                _ => data.Stereo ? ConvertStereoToMono(data.GetFloatData()) : data.GetFloatData(),
+            };
+
+            processedData = ProcessSteamAudioBuffer(processor, effectsHandle, monoInput, data.Frequency);
+            processedStereo = true;
+            return true;
+        }
+
+        private bool TryGetSteamAudioProcessor(out SteamAudioProcessor processor, out EffectsSourceHandle effectsHandle)
+        {
+            processor = null!;
+            effectsHandle = EffectsSourceHandle.Invalid;
+
+            if (!IsV2 || ParentListener.EffectsProcessor is not SteamAudioProcessor steamProcessor)
+                return false;
+
+            if (_effectsHandle is not { } handle || !handle.IsValid)
+                return false;
+
+            processor = steamProcessor;
+            effectsHandle = handle;
+            return true;
+        }
+
+        private static float[] ProcessSteamAudioBuffer(SteamAudioProcessor processor, EffectsSourceHandle effectsHandle, float[] monoInput, int frequency)
+        {
+            float[] processed = new float[monoInput.Length * 2];
+            processor.ProcessBuffer(effectsHandle, monoInput, processed, 1, frequency);
+            return processed;
+        }
+
+        private static float[] ConvertBytesToMonoFloat(byte[] data, bool stereo)
+        {
+            if (!stereo)
+            {
+                float[] mono = new float[data.Length];
+                for (int i = 0; i < data.Length; i++)
+                    mono[i] = data[i] / 128f - 1f;
+                return mono;
+            }
+
+            int frameCount = data.Length / 2;
+            float[] mixed = new float[frameCount];
+            for (int frame = 0, sample = 0; frame < frameCount; frame++, sample += 2)
+            {
+                float left = data[sample] / 128f - 1f;
+                float right = data[sample + 1] / 128f - 1f;
+                mixed[frame] = (left + right) * 0.5f;
+            }
+
+            return mixed;
+        }
+
+        private static float[] ConvertShortsToMonoFloat(short[] data, bool stereo)
+        {
+            if (!stereo)
+            {
+                float[] mono = new float[data.Length];
+                for (int i = 0; i < data.Length; i++)
+                    mono[i] = data[i] / 32768f;
+                return mono;
+            }
+
+            int frameCount = data.Length / 2;
+            float[] mixed = new float[frameCount];
+            for (int frame = 0, sample = 0; frame < frameCount; frame++, sample += 2)
+            {
+                float left = data[sample] / 32768f;
+                float right = data[sample + 1] / 32768f;
+                mixed[frame] = (left + right) * 0.5f;
+            }
+
+            return mixed;
+        }
+
+        private static float[] ConvertStereoToMono(float[] data)
+        {
+            int frameCount = data.Length / 2;
+            float[] mixed = new float[frameCount];
+            for (int frame = 0, sample = 0; frame < frameCount; frame++, sample += 2)
+                mixed[frame] = (data[sample] + data[sample + 1]) * 0.5f;
+
+            return mixed;
+        }
 
         public unsafe bool QueueBuffers(int maxbuffers, params AudioBuffer[] buffers)
         {
@@ -116,7 +378,7 @@ namespace XREngine.Audio
                 Span<AudioBufferHandle> queueHandles = stackalloc AudioBufferHandle[buffers.Length];
                 for (int i = 0; i < buffers.Length; i++)
                     queueHandles[i] = new AudioBufferHandle(handles[i]);
-                ParentListener.Transport!.QueueBuffers(new AudioSourceHandle(Handle), queueHandles);
+                ParentListener.Transport!.QueueBuffers(_transportHandle, queueHandles);
                 _sourceType = ESourceType.Streaming;
             }
             else
@@ -162,7 +424,7 @@ namespace XREngine.Audio
             if (IsV2)
             {
                 Span<AudioBufferHandle> unqueued = stackalloc AudioBufferHandle[count];
-                int returned = ParentListener.Transport!.UnqueueProcessedBuffers(new AudioSourceHandle(Handle), unqueued);
+                int returned = ParentListener.Transport!.UnqueueProcessedBuffers(_transportHandle, unqueued);
                 count = Math.Min(count, returned);
                 for (int i = 0; i < count; i++)
                     handles[i] = unqueued[i].Id;
@@ -347,7 +609,7 @@ namespace XREngine.Audio
         {
             var prev = SourceState;
             if (IsV2)
-                ParentListener.Transport!.Play(new AudioSourceHandle(Handle));
+                ParentListener.Transport!.Play(_transportHandle);
             else
             {
                 Api.SourcePlay(Handle);
@@ -363,7 +625,7 @@ namespace XREngine.Audio
         {
             var prev = SourceState;
             if (IsV2)
-                ParentListener.Transport!.Stop(new AudioSourceHandle(Handle));
+                ParentListener.Transport!.Stop(_transportHandle);
             else
             {
                 Api.SourceStop(Handle);
@@ -379,7 +641,7 @@ namespace XREngine.Audio
         {
             var prev = SourceState;
             if (IsV2)
-                ParentListener.Transport!.Pause(new AudioSourceHandle(Handle));
+                ParentListener.Transport!.Pause(_transportHandle);
             else
             {
                 Api.SourcePause(Handle);
@@ -401,7 +663,7 @@ namespace XREngine.Audio
             }
             else
             {
-                ParentListener.Transport!.Rewind(new AudioSourceHandle(Handle));
+                ParentListener.Transport!.Rewind(_transportHandle);
                 _secondsOffset = 0.0f;
                 _byteOffset = 0;
                 _sampleOffset = 0;
@@ -572,7 +834,7 @@ namespace XREngine.Audio
         #region Get / Set Methods
         private ESourceState _sourceState = ESourceState.Initial;
         private ESourceType _sourceType = ESourceType.Undetermined;
-        private uint _bufferHandle;
+        private AudioBufferHandle _bufferHandle;
         private bool _sourceRelative;
         private bool _looping;
         private int _byteOffset;
@@ -624,7 +886,7 @@ namespace XREngine.Audio
             _looping = loop;
             if (IsV2)
             {
-                ParentListener.Transport!.SetSourceLooping(new AudioSourceHandle(Handle), loop);
+                ParentListener.Transport!.SetSourceLooping(_transportHandle, loop);
                 return;
             }
             ParentListener.MakeCurrent();
@@ -644,7 +906,7 @@ namespace XREngine.Audio
         private int GetSampleOffset()
         {
             if (IsV2)
-                return ParentListener.Transport!.GetSampleOffset(new AudioSourceHandle(Handle));
+                return ParentListener.Transport!.GetSampleOffset(_transportHandle);
             ParentListener.MakeCurrent();
             Api.GetSourceProperty(Handle, GetSourceInteger.SampleOffset, out int value);
             ParentListener.VerifyError();
@@ -653,7 +915,7 @@ namespace XREngine.Audio
         private unsafe uint GetBufferHandle()
         {
             if (IsV2)
-                return _bufferHandle;
+                return _bufferHandle.Id;
             ParentListener.MakeCurrent();
             uint buffer;
             Api.GetSourceProperty(Handle, GetSourceInteger.Buffer, (int*)&buffer);
@@ -673,7 +935,7 @@ namespace XREngine.Audio
             {
                 // Query the transport for the real source state so we detect when
                 // OpenAL (or NAudio) stops the source after all buffers are consumed.
-                bool playing = ParentListener.Transport!.IsSourcePlaying(new AudioSourceHandle(Handle));
+                bool playing = ParentListener.Transport!.IsSourcePlaying(_transportHandle);
                 if (playing)
                     _sourceState = ESourceState.Playing;
                 else if (_sourceState == ESourceState.Playing)
@@ -698,7 +960,7 @@ namespace XREngine.Audio
         private unsafe int GetBuffersProcessed()
         {
             if (IsV2)
-                return ParentListener.Transport!.GetBuffersProcessed(new AudioSourceHandle(Handle));
+                return ParentListener.Transport!.GetBuffersProcessed(_transportHandle);
             ParentListener.MakeCurrent();
             int value;
             Api.GetSourceProperty(Handle, GetSourceInteger.BuffersProcessed, &value);
@@ -726,10 +988,10 @@ namespace XREngine.Audio
         }
         private void SetBufferHandle(uint buffer)
         {
-            _bufferHandle = buffer;
+            _bufferHandle = new AudioBufferHandle(buffer);
             if (IsV2)
             {
-                ParentListener.Transport!.SetSourceBuffer(new AudioSourceHandle(Handle), new AudioBufferHandle(buffer));
+                ParentListener.Transport!.SetSourceBuffer(_transportHandle, _bufferHandle);
                 _sourceType = buffer == 0 ? ESourceType.Undetermined : ESourceType.Static;
                 return;
             }
@@ -778,7 +1040,8 @@ namespace XREngine.Audio
             _position = position;
             if (IsV2)
             {
-                ParentListener.Transport!.SetSourcePosition(new AudioSourceHandle(Handle), position);
+                ParentListener.Transport!.SetSourcePosition(_transportHandle, position);
+                SyncEffectsSourcePose();
                 return;
             }
             ParentListener.MakeCurrent();
@@ -790,7 +1053,7 @@ namespace XREngine.Audio
             _velocity = velocity;
             if (IsV2)
             {
-                ParentListener.Transport!.SetSourceVelocity(new AudioSourceHandle(Handle), velocity);
+                ParentListener.Transport!.SetSourceVelocity(_transportHandle, velocity);
                 return;
             }
             ParentListener.MakeCurrent();
@@ -801,7 +1064,10 @@ namespace XREngine.Audio
         {
             _direction = direction;
             if (IsV2)
+            {
+                SyncEffectsSourcePose();
                 return;
+            }
             ParentListener.MakeCurrent();
             Api.SetSourceProperty(Handle, SourceVector3.Direction, direction);
             ParentListener.VerifyError();
@@ -939,7 +1205,7 @@ namespace XREngine.Audio
             _pitch = pitch;
             if (IsV2)
             {
-                ParentListener.Transport!.SetSourcePitch(new AudioSourceHandle(Handle), pitch);
+                ParentListener.Transport!.SetSourcePitch(_transportHandle, pitch);
                 return;
             }
             ParentListener.MakeCurrent();
@@ -969,7 +1235,7 @@ namespace XREngine.Audio
             _gain = gain;
             if (IsV2)
             {
-                ParentListener.Transport!.SetSourceGain(new AudioSourceHandle(Handle), gain);
+                ParentListener.Transport!.SetSourceGain(_transportHandle, gain);
                 return;
             }
             ParentListener.MakeCurrent();
@@ -1202,34 +1468,16 @@ namespace XREngine.Audio
         void IPoolable.OnPoolableReset()
         {
             _currentStreamingBuffers.Clear();
-            _bufferHandle = 0;
+            _bufferHandle = AudioBufferHandle.Invalid;
             _sourceState = ESourceState.Initial;
             _sourceType = ESourceType.Undetermined;
-
-            if (IsV2)
-                Handle = ParentListener.Transport!.CreateSource().Id;
-            else
-            {
-                Handle = Api.GenSource();
-                ParentListener.VerifyError();
-            }
+            CreateNativeSource();
         }
 
         void IPoolable.OnPoolableReleased()
         {
             ReleaseAllTrackedStreamingBuffers();
-            if (Handle != 0u)
-            {
-                if (IsV2)
-                    ParentListener.Transport!.DestroySource(new AudioSourceHandle(Handle));
-                else
-                {
-                    Api.SourceStop(Handle);
-                    Api.DeleteSource(Handle);
-                    ParentListener.VerifyError();
-                }
-            }
-            Handle = 0u;
+            DestroyNativeSource();
         }
 
         void IPoolable.OnPoolableDestroyed()

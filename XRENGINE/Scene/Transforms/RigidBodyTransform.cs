@@ -4,6 +4,7 @@ using XREngine.Components;
 using XREngine.Components.Physics;
 using XREngine.Data.Core;
 using XREngine.Scene.Physics;
+using XREngine.Timers;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Scene.Transforms
@@ -176,20 +177,33 @@ namespace XREngine.Scene.Transforms
             }
         }
 
-        private float _accumulatedTime = 0.0f;
+        private long _accumulatedTimeTicks = 0L;
+
+        internal static float ComputeInterpolationAlpha(long accumulatedTimeTicks, long fixedDeltaTicks)
+            => fixedDeltaTicks <= 0L
+                ? 0.0f
+                : Math.Clamp((float)(Math.Max(0L, accumulatedTimeTicks) / (double)fixedDeltaTicks), 0.0f, 1.0f);
+
+        internal static float AccumulatedTicksToSeconds(long accumulatedTimeTicks)
+            => EngineTimer.TicksToSeconds(Math.Max(0L, accumulatedTimeTicks));
+
+        internal static bool ShouldUseImmediatePhysicsPose(EInterpolationMode mode, long updateDeltaTicks, long fixedDeltaTicks)
+            => mode == EInterpolationMode.Discrete || updateDeltaTicks > fixedDeltaTicks;
+
         private void OnUpdate()
         {
             if (RigidBody is null || RigidBody.IsSleeping)
                 return;
 
             var mode = InterpolationMode;
-            float updateDelta = Engine.Delta;
-            float fixedDelta = Engine.Time.Timer.FixedUpdateDelta;
-            if (fixedDelta < float.Epsilon)
+            long updateDeltaTicks = Engine.Time.Timer.Update.DeltaTicks;
+            long fixedDeltaTicks = Engine.Time.Timer.FixedUpdateDeltaTicks;
+            if (fixedDeltaTicks <= 0L)
                 return;
 
-            _accumulatedTime += updateDelta;
-            float alpha = (_accumulatedTime / fixedDelta).Clamp(0.0f, 1.0f);
+            _accumulatedTimeTicks += Math.Max(0L, updateDeltaTicks);
+            float alpha = ComputeInterpolationAlpha(_accumulatedTimeTicks, fixedDeltaTicks);
+            float accumulatedTime = AccumulatedTicksToSeconds(_accumulatedTimeTicks);
 
             var (lastPosUpdate, lastRotUpdate) = LastPhysicsTransform;
             switch (mode)
@@ -210,8 +224,8 @@ namespace XREngine.Scene.Transforms
                     }
                 case EInterpolationMode.Extrapolate:
                     {
-                        Vector3 posDelta = LastPhysicsLinearVelocity * _accumulatedTime;
-                        float angle = LastPhysicsAngularVelocity.Length() * _accumulatedTime;
+                        Vector3 posDelta = LastPhysicsLinearVelocity * accumulatedTime;
+                        float angle = LastPhysicsAngularVelocity.Length() * accumulatedTime;
 
                         bool posMoved = posDelta.Length() > float.Epsilon;
                         bool rotMoved = angle > float.Epsilon;
@@ -307,11 +321,11 @@ namespace XREngine.Scene.Transforms
 
             LastPosition = Position;
             LastRotation = Rotation;
-            _accumulatedTime = 0;
+            _accumulatedTimeTicks = 0L;
 
-            float updateDelta = Engine.Delta;
-            float fixedDelta = Engine.Time.Timer.FixedUpdateDelta;
-            if (InterpolationMode == EInterpolationMode.Discrete || updateDelta > fixedDelta)
+            long updateDeltaTicks = Engine.Time.Timer.Update.DeltaTicks;
+            long fixedDeltaTicks = Engine.Time.Timer.FixedUpdateDeltaTicks;
+            if (ShouldUseImmediatePhysicsPose(InterpolationMode, updateDeltaTicks, fixedDeltaTicks))
             {
                 if (!RigidBody.IsSleeping)
                 {

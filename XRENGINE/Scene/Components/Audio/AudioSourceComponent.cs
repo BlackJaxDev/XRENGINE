@@ -30,6 +30,7 @@ namespace XREngine.Components
         private float _coneInnerAngle = 360.0f;
         private float _coneOuterAngle = 360.0f;
         private float _coneOuterGain = 0.0f;
+        private bool _streamingStereo;
 
         /// <summary>
         /// These are the listeners that are currently listening to this audio source because it is within their range.
@@ -312,8 +313,9 @@ namespace XREngine.Components
                 foreach (var buffer in buffers)
                 {
                     var audioBuffer = source.ParentListener.TakeBuffer();
-                    audioBuffer.SetData(buffer, frequency, stereo);
+                    source.SetBufferData(audioBuffer, buffer, frequency, stereo);
                     source.QueueBuffers(MaxStreamingBuffers, audioBuffer);
+                    _streamingStereo = stereo;
                     StreamingBufferEnqueuedFloat?.Invoke((frequency, stereo, buffer));
                 }
             }
@@ -327,9 +329,10 @@ namespace XREngine.Components
                 foreach (var buffer in buffers)
                 {
                     var audioBuffer = source.ParentListener.TakeBuffer();
-                    audioBuffer.SetData(buffer, frequency, stereo);
+                    source.SetBufferData(audioBuffer, buffer, frequency, stereo);
                     if (source.QueueBuffers(MaxStreamingBuffers, audioBuffer))
                         anyQueued = true;
+                    _streamingStereo = stereo;
                     StreamingBufferEnqueuedShort?.Invoke((frequency, stereo, buffer));
                 }
             }
@@ -347,8 +350,9 @@ namespace XREngine.Components
                 foreach (var buffer in buffers)
                 {
                     AudioBuffer audioBuffer = source.ParentListener.TakeBuffer();
-                    audioBuffer.SetData(buffer, frequency, stereo);
+                    source.SetBufferData(audioBuffer, buffer, frequency, stereo);
                     source.QueueBuffers(MaxStreamingBuffers, audioBuffer);
+                    _streamingStereo = stereo;
                     StreamingBufferEnqueuedByte?.Invoke((frequency, stereo, buffer));
                 }
             }
@@ -366,8 +370,9 @@ namespace XREngine.Components
                 foreach (var buffer in buffers)
                 {
                     var audioBuffer = source.ParentListener.TakeBuffer();
-                    audioBuffer.SetData(buffer);
+                    source.SetBufferData(audioBuffer, buffer);
                     source.QueueBuffers(MaxStreamingBuffers, audioBuffer);
+                    _streamingStereo = buffer.Stereo;
                     StreamingBufferEnqueued?.Invoke(buffer);
                 }
             }
@@ -599,11 +604,11 @@ namespace XREngine.Components
                 if (source.Buffer is null)
                 {
                     var buffer = listener.TakeBuffer();
-                    buffer.SetData(_staticBuffer);
+                    source.SetBufferData(buffer, _staticBuffer);
                     source.Buffer = buffer;
                 }
                 else
-                    source.Buffer.SetData(_staticBuffer);
+                    source.SetBufferData(source.Buffer, _staticBuffer);
             }
             else if (source.Buffer is not null)
             {
@@ -624,7 +629,7 @@ namespace XREngine.Components
         public bool IsStereo => Type switch
         {
             ESourceType.Static => StaticBuffer?.Stereo ?? false,
-            ESourceType.Streaming => (ActiveListeners.Values.FirstOrDefault()?.CurrentStreamingBuffers?.TryPeek(out var buffer) ?? false) && (buffer?.Stereo ?? false),
+            ESourceType.Streaming => _streamingStereo,
             ESourceType.Undetermined => false,
             _ => false
         };

@@ -90,6 +90,15 @@ namespace XREngine.Animation
                 component.StateTick(this, variables, delta);
         }
 
+        public void Tick(long deltaTicks, IDictionary<string, AnimVar> variables)
+        {
+            Motion?.Tick(deltaTicks);
+
+            float delta = deltaTicks == 0L ? 0.0f : (float)(deltaTicks / (double)Stopwatch.Frequency);
+            foreach (var component in Components)
+                component.StateTick(this, variables, delta);
+        }
+
         public void OnEnter(IDictionary<string, AnimVar> variables)
         {
             foreach (var component in Components)

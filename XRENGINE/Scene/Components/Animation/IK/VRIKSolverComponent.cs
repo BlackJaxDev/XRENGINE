@@ -4,6 +4,7 @@ using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Networking;
 using XREngine.Scene.Transforms;
+using XREngine.Timers;
 
 namespace XREngine.Components.Animation
 {
@@ -14,6 +15,7 @@ namespace XREngine.Components.Animation
     public class VRIKSolverComponent : IKSolverComponent
     {
         private const double BaselineIntervalSeconds = 1.0;
+        private static readonly long BaselineIntervalTicks = EngineTimer.SecondsToStopwatchTicks(BaselineIntervalSeconds);
         private static readonly Dictionary<ushort, (QuantizedHumanoidPose pose, ushort sequence)> _receivedBaselines = new();
         private static readonly Dictionary<ushort, VRIKSolverComponent> _registry = new();
 
@@ -123,7 +125,10 @@ namespace XREngine.Components.Animation
         private ushort _poseEntityId;
         private QuantizedHumanoidPose? _baselinePose;
         private ushort _baselineSequence;
-        private double _lastBaselineTime;
+        private long _lastBaselineTicks;
+
+        internal static bool ShouldSendBaseline(bool baselineMissing, long nowTicks, long lastBaselineTicks)
+            => baselineMissing || Math.Max(0L, nowTicks - lastBaselineTicks) >= BaselineIntervalTicks;
         private HumanoidQuantizationSettings _quantization = HumanoidQuantizationSettings.Default;
         private HumanoidPoseDeltaSettings _delta = HumanoidPoseDeltaSettings.Default;
 
@@ -211,13 +216,13 @@ namespace XREngine.Components.Animation
 
             HumanoidPosePacketBuilder builder = new(_quantization, _delta);
 
-            double now = Engine.ElapsedTime;
-            bool sendBaseline = _baselinePose is null || now - _lastBaselineTime >= BaselineIntervalSeconds;
+            long nowTicks = Engine.ElapsedTicks;
+            bool sendBaseline = ShouldSendBaseline(_baselinePose is null, nowTicks, _lastBaselineTicks);
             if (sendBaseline)
             {
                 _baselineSequence++;
                 _baselinePose = quantized;
-                _lastBaselineTime = now;
+                _lastBaselineTicks = nowTicks;
 
                 builder.BeginFrame(HumanoidPosePacketKind.Baseline, _baselineSequence);
                 builder.AddBaselineAvatar(PoseEntityId, quantized);

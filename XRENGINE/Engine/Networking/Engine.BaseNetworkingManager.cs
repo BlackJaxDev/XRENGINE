@@ -14,6 +14,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Scene.Transforms;
 using XREngine.Networking;
+using XREngine.Timers;
 
 namespace XREngine
 {
@@ -139,6 +140,24 @@ namespace XREngine
 
         public abstract class BaseNetworkingManager : XRBase, IDisposable
         {
+            internal static long CurrentEngineTicks()
+                => Engine.ElapsedTicks;
+
+            internal static long SecondsToStopwatchTicks(double seconds)
+                => EngineTimer.SecondsToStopwatchTicks(seconds);
+
+            internal static double TickDeltaToSeconds(long currentTicks, long previousTicks)
+                => EngineTimer.TicksToSecondsDouble(Math.Max(0L, currentTicks - previousTicks));
+
+            internal static bool HasElapsed(long currentTicks, long previousTicks, double intervalSeconds)
+                => Math.Max(0L, currentTicks - previousTicks) >= SecondsToStopwatchTicks(intervalSeconds);
+
+            internal static bool HasElapsed(long currentTicks, long previousTicks, long intervalTicks)
+                => Math.Max(0L, currentTicks - previousTicks) >= Math.Max(0L, intervalTicks);
+
+            internal static long GetWindowStartTicks(long currentTicks, double windowSeconds)
+                => Math.Max(0L, currentTicks - SecondsToStopwatchTicks(windowSeconds));
+
             protected ConcurrentQueue<(ushort sequenceNum, byte[])> UdpSendQueue { get; } = new();
 
             public abstract bool IsServer { get; }
@@ -328,17 +347,17 @@ namespace XREngine
                 UdpReceiver = udpClient;
             }
 
-            private readonly record struct PendingAckPacket(Guid OwnerId, byte[] Bytes, float FirstSendTimeSec, float TimeoutSec);
+            private readonly record struct PendingAckPacket(Guid OwnerId, byte[] Bytes, long FirstSendTicks, long TimeoutTicks);
 
             private readonly ConcurrentDictionary<ushort, PendingAckPacket> _mustAck = new();
 
-            private void EnqueueBroadcast(ushort sequenceNum, byte[] bytes, bool resendOnFailedAck, Guid ownerId, float maxAckWaitSec, float? firstSendTimeSec = null)
+            private void EnqueueBroadcast(ushort sequenceNum, byte[] bytes, bool resendOnFailedAck, Guid ownerId, float maxAckWaitSec, long? firstSendTicks = null)
             {
                 UdpSendQueue.Enqueue((sequenceNum, bytes));
                 if (resendOnFailedAck)
                 {
-                    float firstSend = firstSendTimeSec ?? Engine.ElapsedTime;
-                    _mustAck[sequenceNum] = new PendingAckPacket(ownerId, bytes, firstSend, maxAckWaitSec);
+                    long firstSend = firstSendTicks ?? CurrentEngineTicks();
+                    _mustAck[sequenceNum] = new PendingAckPacket(ownerId, bytes, firstSend, SecondsToStopwatchTicks(maxAckWaitSec));
                 }
             }
 
@@ -365,7 +384,7 @@ namespace XREngine
                 set => SetField(ref _maxRoundTripSec, value);
             }
 
-            private readonly ConcurrentDictionary<ushort, float> _rttBuffer = [];
+            private readonly ConcurrentDictionary<ushort, long> _rttBuffer = [];
 
             private int? _maxSendablePacketsPerSecond = null;
             public int? MaxSendablePacketsPerSecond
@@ -375,8 +394,8 @@ namespace XREngine
             }
 
             // Token bucket fields for rate limiting
-            private float _packetTokens = 0;
-            private float _lastTokenUpdate = Engine.ElapsedTime;
+            private double _packetTokens = 0.0;
+            private long _lastTokenUpdateTicks = CurrentEngineTicks();
 
             private void UpdatePacketTokens()
             {
@@ -384,20 +403,34 @@ namespace XREngine
                 if (perSec is null)
                     return;
 
-                var now = Engine.ElapsedTime;
-                float elapsedSeconds = now - _lastTokenUpdate;
+                long nowTicks = CurrentEngineTicks();
+                double elapsedSeconds = TickDeltaToSeconds(nowTicks, _lastTokenUpdateTicks);
                 _packetTokens += elapsedSeconds * perSec.Value;
                 if (_packetTokens > perSec.Value)
                     _packetTokens = perSec.Value;
-                _lastTokenUpdate = now;
+                _lastTokenUpdateTicks = nowTicks;
             }
 
             // Add the following field and property near _totalBytesSent:
-            private readonly ConcurrentQueue<(float timestamp, int bytes)> _bytesSentLog = new();
+            private readonly ConcurrentQueue<(long timestampTicks, int bytes)> _bytesSentLog = new();
 
-            public bool HasSentBytesInTheLastSecond => !_bytesSentLog.IsEmpty;
+            public bool HasSentBytesInTheLastSecond
+            {
+                get
+                {
+                    TrimBytesSentLog(CurrentEngineTicks());
+                    return !_bytesSentLog.IsEmpty;
+                }
+            }
 
-            public float PacketsPerSecond => _bytesSentLog.Count;
+            public float PacketsPerSecond
+            {
+                get
+                {
+                    TrimBytesSentLog(CurrentEngineTicks());
+                    return _bytesSentLog.Count;
+                }
+            }
 
             /// <summary>
             /// Gets the total number of bytes sent during the last 1 second.
@@ -406,10 +439,10 @@ namespace XREngine
             {
                 get
                 {
-                    float now = Engine.ElapsedTime;
-                    TrimBytesSentLog(now);
+                    long nowTicks = CurrentEngineTicks();
+                    TrimBytesSentLog(nowTicks);
                     int sum = 0;
-                    foreach (var (timestamp, bytes) in _bytesSentLog)
+                    foreach (var (_, bytes) in _bytesSentLog)
                         sum += bytes;
                     return sum;
                     
@@ -418,9 +451,10 @@ namespace XREngine
             public float KBytesSentLastSecond => BytesSentLastSecond / 1024.0f;
             public float MBytesSentLastSecond => KBytesSentLastSecond / 1024.0f;
 
-            private void TrimBytesSentLog(float now)
+            private void TrimBytesSentLog(long nowTicks)
             {
-                while (_bytesSentLog.TryPeek(out (float timestamp, int bytes) entry) && entry.timestamp < now - 1.0f)
+                long oldestAllowedTicks = GetWindowStartTicks(nowTicks, 1.0);
+                while (_bytesSentLog.TryPeek(out (long timestampTicks, int bytes) entry) && entry.timestampTicks < oldestAllowedTicks)
                     _bytesSentLog.TryDequeue(out _);
             }
 
@@ -447,8 +481,8 @@ namespace XREngine
                 if (UdpSendQueue.IsEmpty)
                     return;
 
-                float now = Engine.ElapsedTime;
-                TrimBytesSentLog(now);
+                long nowTicks = CurrentEngineTicks();
+                TrimBytesSentLog(nowTicks);
 
                 int packetsAllowed = int.MaxValue;
                 if (MaxSendablePacketsPerSecond is not null)
@@ -461,20 +495,20 @@ namespace XREngine
                 while (packetsSent < packetsAllowed && UdpSendQueue.TryDequeue(out (ushort sequenceNum, byte[] bytes) data))
                 {
                     if (!_rttBuffer.ContainsKey(data.sequenceNum))
-                        _rttBuffer[data.sequenceNum] = Engine.ElapsedTime;
+                        _rttBuffer[data.sequenceNum] = CurrentEngineTicks();
 
                     if (client is null)
                         continue;
 
                     await client.SendAsync(data.bytes, data.bytes.Length, endPoint);
-                    float timestamp = Engine.ElapsedTime;
-                    _bytesSentLog.Enqueue((timestamp, data.bytes.Length));
-                    TrimBytesSentLog(timestamp);
+                    long timestampTicks = CurrentEngineTicks();
+                    _bytesSentLog.Enqueue((timestampTicks, data.bytes.Length));
+                    TrimBytesSentLog(timestampTicks);
                     packetsSent++;
                 }
                 _packetTokens -= packetsSent;
                 if (_packetTokens < 0)
-                    _packetTokens = 0;
+                    _packetTokens = 0.0;
             }
 
             private void ClearOldRTTs()
@@ -482,26 +516,27 @@ namespace XREngine
                 if (_rttBuffer.IsEmpty)
                     return;
 
-                float now = Engine.ElapsedTime;
-                float oldest = now - MaxRoundTripSec;
+                long nowTicks = CurrentEngineTicks();
+                long oldestTicks = GetWindowStartTicks(nowTicks, MaxRoundTripSec);
                 foreach (ushort key in _rttBuffer.Keys)
                 {
-                    if (!_rttBuffer.TryGetValue(key, out float time) || time >= oldest)
+                    if (!_rttBuffer.TryGetValue(key, out long timeTicks) || timeTicks >= oldestTicks)
                         continue;
                     
                     _rttBuffer.TryRemove(key, out _);
                     if (_mustAck.TryRemove(key, out PendingAckPacket pending))
                     {
-                        if (pending.TimeoutSec > 0.0f && now - pending.FirstSendTimeSec >= pending.TimeoutSec)
+                        if (pending.TimeoutTicks > 0L && nowTicks - pending.FirstSendTicks >= pending.TimeoutTicks)
                         {
-                            Debug.Out($"Required packet sequence {key} timed out after {pending.TimeoutSec:0.###}s, dropping...");
+                            double timeoutSeconds = EngineTimer.TicksToSecondsDouble(pending.TimeoutTicks);
+                            Debug.Out($"Required packet sequence {key} timed out after {timeoutSeconds:0.###}s, dropping...");
                             continue;
                         }
 
                         if (ShouldResendRequiredPacket(pending.OwnerId))
                         {
                             Debug.Out($"Required packet sequence {key} failed to return, resending...");
-                            EnqueueBroadcast(key, pending.Bytes, true, pending.OwnerId, pending.TimeoutSec, pending.FirstSendTimeSec);
+                            EnqueueBroadcast(key, pending.Bytes, true, pending.OwnerId, (float)EngineTimer.TicksToSecondsDouble(pending.TimeoutTicks), pending.FirstSendTicks);
                         }
                     }
                     //else
@@ -881,10 +916,10 @@ namespace XREngine
 
             private bool AcknowledgeSeq(ushort ackedSeq)
             {
-                if (!_rttBuffer.TryRemove(ackedSeq, out float time))
+                if (!_rttBuffer.TryRemove(ackedSeq, out long timeTicks))
                     return false;
                 
-                UpdateRTT(Engine.ElapsedTime - time);
+                UpdateRTT((float)TickDeltaToSeconds(CurrentEngineTicks(), timeTicks));
 
                 if (_mustAck.TryRemove(ackedSeq, out _))
                     Debug.Out($"Acknowledged required sequence number: {ackedSeq}");

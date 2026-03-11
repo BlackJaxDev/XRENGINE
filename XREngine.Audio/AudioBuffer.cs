@@ -12,7 +12,10 @@ namespace XREngine.Audio
     {
         public ListenerContext ParentListener { get; }
         public AL Api { get; }
-        public uint Handle { get; private set; }
+        private AudioBufferHandle _transportHandle;
+
+        public uint Handle => _transportHandle.Id;
+        internal AudioBufferHandle TransportHandle => _transportHandle;
 
         private bool IsV2 => ParentListener.IsV2 && ParentListener.Transport is not null;
 
@@ -20,14 +23,35 @@ namespace XREngine.Audio
         {
             ParentListener = parentListener;
             Api = parentListener.Api;
+            CreateNativeBuffer();
+        }
+
+        private void CreateNativeBuffer()
+        {
+            if (IsV2)
+            {
+                _transportHandle = ParentListener.Transport!.CreateBuffer();
+                return;
+            }
+
+            _transportHandle = new AudioBufferHandle(Api.GenBuffer());
+            ParentListener.VerifyError();
+        }
+
+        private void DestroyNativeBuffer()
+        {
+            if (!_transportHandle.IsValid)
+                return;
 
             if (IsV2)
-                Handle = ParentListener.Transport!.CreateBuffer().Id;
+                ParentListener.Transport!.DestroyBuffer(_transportHandle);
             else
             {
-                Handle = Api.GenBuffer();
+                Api.DeleteBuffer(Handle);
                 ParentListener.VerifyError();
             }
+
+            _transportHandle = AudioBufferHandle.Invalid;
         }
 
         private object? _data;
@@ -47,7 +71,7 @@ namespace XREngine.Audio
             if (IsV2)
             {
                 ParentListener.Transport!.UploadBufferData(
-                    new AudioBufferHandle(Handle), data, frequency,
+                    _transportHandle, data, frequency,
                     stereo ? 2 : 1, SampleFormat.Byte);
             }
             else
@@ -66,7 +90,7 @@ namespace XREngine.Audio
             {
                 ReadOnlySpan<byte> pcm = System.Runtime.InteropServices.MemoryMarshal.AsBytes(data.AsSpan());
                 ParentListener.Transport!.UploadBufferData(
-                    new AudioBufferHandle(Handle), pcm, frequency,
+                    _transportHandle, pcm, frequency,
                     stereo ? 2 : 1, SampleFormat.Short);
             }
             else
@@ -85,7 +109,7 @@ namespace XREngine.Audio
             {
                 ReadOnlySpan<byte> pcm = System.Runtime.InteropServices.MemoryMarshal.AsBytes(data.AsSpan());
                 ParentListener.Transport!.UploadBufferData(
-                    new AudioBufferHandle(Handle), pcm, frequency,
+                    _transportHandle, pcm, frequency,
                     stereo ? 2 : 1, SampleFormat.Float);
             }
             else
@@ -117,7 +141,7 @@ namespace XREngine.Audio
                     _ => SampleFormat.Short,
                 };
                 ParentListener.Transport!.UploadBufferData(
-                    new AudioBufferHandle(Handle), pcm, buffer.Frequency,
+                    _transportHandle, pcm, buffer.Frequency,
                     buffer.Stereo ? 2 : 1, fmt);
             }
             else
@@ -263,17 +287,10 @@ namespace XREngine.Audio
         public void Dispose()
         {
             GC.SuppressFinalize(this);
-            if (Handle == 0u)
+            if (!_transportHandle.IsValid)
                 return;
 
-            if (IsV2)
-                ParentListener.Transport!.DestroyBuffer(new AudioBufferHandle(Handle));
-            else
-            {
-                Api.DeleteBuffer(Handle);
-                ParentListener.VerifyError();
-            }
-            Handle = 0u;
+            DestroyNativeBuffer();
         }
 
         void IPoolable.OnPoolableReset()

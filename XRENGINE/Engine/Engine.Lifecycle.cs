@@ -103,8 +103,10 @@ namespace XREngine
                 Time.Timer.RenderFrame += DequeueMainThreadTasks;
 
                 // Wire up the external profiler UDP sender (delegates bridge XREngine.Data → Engine)
+#if !XRE_PUBLISHED
                 WireProfilerSenderCollectors();
                 UdpProfilerSender.TryStartFromEnvironment();
+#endif
 
                 success = true;
             }
@@ -166,7 +168,9 @@ namespace XREngine
         internal static void Cleanup()
         {
             // Stop profiler sender before tearing down subsystems it reads from
+#if !XRE_PUBLISHED
             UdpProfilerSender.Stop();
+#endif
 
             // TODO: Implement clean shutdown where each window disposes of its own allocated assets
             Rendering.SecondaryContext.Dispose();

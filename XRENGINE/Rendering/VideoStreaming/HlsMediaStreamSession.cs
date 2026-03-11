@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Rendering.VideoStreaming.Interfaces;
+using XREngine.Timers;
 
 namespace XREngine.Rendering.VideoStreaming;
 
@@ -546,5 +547,5 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     /// Returns the current engine elapsed time converted to 100-nanosecond ticks.
     /// </summary>
     private static long GetNowTicks()
-        => (long)(Engine.ElapsedTime * TimeSpan.TicksPerSecond);
+        => EngineTimer.StopwatchTicksToTimeSpanTicks(Engine.ElapsedTicks);
 }

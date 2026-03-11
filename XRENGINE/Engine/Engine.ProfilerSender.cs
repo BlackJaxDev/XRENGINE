@@ -4,6 +4,7 @@ namespace XREngine;
 
 public static partial class Engine
 {
+#if !XRE_PUBLISHED
     /// <summary>
     /// Wires up the delegate-based collectors on <see cref="UdpProfilerSender"/>
     /// so it can read engine stats without a direct assembly reference.
@@ -41,6 +42,7 @@ public static partial class Engine
             FrameTime = snapshot.FrameTime,
             Threads = threads,
             ThreadHistory = history ?? [],
+            ComponentTimings = ConvertComponentTimings(snapshot.ComponentTimings?.Components),
         };
     }
 
@@ -60,6 +62,30 @@ public static partial class Engine
                 Children = ConvertNodes(n.Children),
             };
         }
+        return result;
+    }
+
+    private static ProfilerComponentTimingData[] ConvertComponentTimings(IReadOnlyList<CodeProfiler.ProfilerComponentTimingSnapshot>? components)
+    {
+        if (components is null || components.Count == 0)
+            return [];
+
+        var result = new ProfilerComponentTimingData[components.Count];
+        for (int i = 0; i < components.Count; i++)
+        {
+            var component = components[i];
+            result[i] = new ProfilerComponentTimingData
+            {
+                ComponentId = component.ComponentId,
+                ComponentName = component.ComponentName,
+                ComponentType = component.ComponentType,
+                SceneNodeName = component.SceneNodeName,
+                ElapsedMs = component.ElapsedMs,
+                CallCount = component.CallCount,
+                TickGroupMask = component.TickGroupMask,
+            };
+        }
+
         return result;
     }
 
@@ -213,4 +239,9 @@ public static partial class Engine
 
         return new MainThreadInvokesPacket { Entries = entries };
     }
+#else
+    internal static void WireProfilerSenderCollectors()
+    {
+    }
+#endif
 }

@@ -146,13 +146,86 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <param name="cmd"></param>
         public void Add(ViewportRenderCommand cmd)
         {
+            AttachCommand(cmd, _commands.Count, notifyStructureChanged: true);
+        }
+
+        public void Insert(int index, ViewportRenderCommand cmd)
+        {
+            int clampedIndex = Math.Clamp(index, 0, _commands.Count);
+            AttachCommand(cmd, clampedIndex, notifyStructureChanged: true);
+        }
+
+        public int IndexOf(ViewportRenderCommand cmd)
+            => _commands.IndexOf(cmd);
+
+        public bool Remove(ViewportRenderCommand cmd)
+        {
+            int index = _commands.IndexOf(cmd);
+            if (index < 0)
+                return false;
+
+            RemoveAt(index);
+            return true;
+        }
+
+        public ViewportRenderCommand RemoveAt(int index)
+        {
+            ViewportRenderCommand cmd = _commands[index];
+            _commands.RemoveAt(index);
+            cmd.CommandContainer = null;
+            RebuildCollectVisibleCommands();
+            NotifyStructureChanged();
+            return cmd;
+        }
+
+        public ViewportRenderCommand ReplaceAt(int index, ViewportRenderCommand cmd)
+        {
+            ArgumentNullException.ThrowIfNull(cmd);
+
+            ViewportRenderCommand previous = _commands[index];
+            if (ReferenceEquals(previous, cmd))
+                return previous;
+
+            if (cmd.CommandContainer is not null && !ReferenceEquals(cmd.CommandContainer, this))
+                throw new InvalidOperationException("Command is already attached to a different command container.");
+
+            previous.CommandContainer = null;
+            _commands[index] = cmd;
             cmd.CommandContainer = this;
-            _commands.Add(cmd);
             cmd.OnAttachedToContainer();
             if (_parentPipeline is not null)
                 cmd.OnParentPipelineAssigned();
-            if (cmd.NeedsCollecVisible)
-                _collecVisibleCommands.Add(cmd);
+
+            RebuildCollectVisibleCommands();
+            NotifyStructureChanged();
+            return previous;
+        }
+
+        public void Move(int fromIndex, int toIndex)
+        {
+            if (_commands.Count <= 1)
+                return;
+
+            int sourceIndex = Math.Clamp(fromIndex, 0, _commands.Count - 1);
+            int targetIndex = Math.Clamp(toIndex, 0, _commands.Count - 1);
+            if (sourceIndex == targetIndex)
+                return;
+
+            ViewportRenderCommand cmd = _commands[sourceIndex];
+            _commands.RemoveAt(sourceIndex);
+            _commands.Insert(targetIndex, cmd);
+
+            RebuildCollectVisibleCommands();
+            NotifyStructureChanged();
+        }
+
+        public void Move(ViewportRenderCommand cmd, int toIndex)
+        {
+            int fromIndex = _commands.IndexOf(cmd);
+            if (fromIndex < 0)
+                return;
+
+            Move(fromIndex, toIndex);
         }
 
         public IEnumerator<ViewportRenderCommand> GetEnumerator()
@@ -242,6 +315,40 @@ namespace XREngine.Rendering.Pipelines.Commands
                 _commands[i].ReleaseContainerResources(instance);
 
             state.ResourcesAllocated = false;
+        }
+
+        private void AttachCommand(ViewportRenderCommand cmd, int index, bool notifyStructureChanged)
+        {
+            ArgumentNullException.ThrowIfNull(cmd);
+
+            if (cmd.CommandContainer is not null && !ReferenceEquals(cmd.CommandContainer, this))
+                throw new InvalidOperationException("Command is already attached to a different command container.");
+
+            cmd.CommandContainer = this;
+            _commands.Insert(index, cmd);
+            cmd.OnAttachedToContainer();
+            if (_parentPipeline is not null)
+                cmd.OnParentPipelineAssigned();
+
+            RebuildCollectVisibleCommands();
+            if (notifyStructureChanged)
+                NotifyStructureChanged();
+        }
+
+        private void RebuildCollectVisibleCommands()
+        {
+            _collecVisibleCommands.Clear();
+            for (int i = 0; i < _commands.Count; i++)
+            {
+                if (_commands[i].NeedsCollecVisible)
+                    _collecVisibleCommands.Add(_commands[i]);
+            }
+        }
+
+        private void NotifyStructureChanged()
+        {
+            _instanceStates.Clear();
+            _parentPipeline?.NotifyCommandChainStructureChanged();
         }
     }
 }

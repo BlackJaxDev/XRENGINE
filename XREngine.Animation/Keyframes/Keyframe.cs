@@ -11,6 +11,7 @@ namespace XREngine.Animation
     public abstract class Keyframe : XRBase, IKeyframe
     {
         protected float _second;
+        protected int _authoredFrameIndex = -1;
         protected Keyframe? _next;
         protected Keyframe? _prev;
         protected BaseKeyframeTrack? _owningTrack = null;
@@ -28,13 +29,26 @@ namespace XREngine.Animation
             get => _second;
             set
             {
-                _second = value.ClampMin(0.0f);
-                if (float.IsNaN(_second))
-                    _second = 0.0f;
+                float nextSecond = value.ClampMin(0.0f);
+                if (!float.IsFinite(nextSecond))
+                    nextSecond = 0.0f;
+
+                bool timeChanged = MathF.Abs(_second - nextSecond) > 0.000001f;
+                _second = nextSecond;
+                if (timeChanged)
+                    _authoredFrameIndex = -1;
+
                 Keyframe? kf = Prev ?? Next;
                 kf?.UpdateLink(this, false);
                 OwningTrack?.OnChanged();
             }
+        }
+
+        [Category("Keyframe")]
+        public int AuthoredFrameIndex
+        {
+            get => _authoredFrameIndex;
+            set => _authoredFrameIndex = value < 0 ? -1 : value;
         }
 
         public Keyframe? Next => _next;
@@ -57,6 +71,16 @@ namespace XREngine.Animation
 
         [Browsable(false)]
         public abstract Type ValueType { get; }
+
+        protected static float GetSecondForAuthoredFrame(int frameIndex, float framesPerSecond)
+            => framesPerSecond > 0.0f && float.IsFinite(framesPerSecond)
+                ? Math.Max(0, frameIndex) / framesPerSecond
+                : 0.0f;
+
+        protected void TrySetAuthoredFrameIndex(int frameIndex, float framesPerSecond)
+            => AuthoredFrameIndex = frameIndex >= 0 && AuthoredCadence.TryNormalizeFramesPerSecond(framesPerSecond, out _)
+                ? frameIndex
+                : -1;
 
         public void UpdateLink(Keyframe? key, bool notifyChange = true)
         {

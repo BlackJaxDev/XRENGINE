@@ -39,6 +39,86 @@ AnimationClip:
     }
 
     [Test]
+    public void Import_ScalarCurves_PreserveAuthoredCadenceAndFrameIdentity()
+    {
+        const string yaml = """
+AnimationClip:
+  m_Name: AuthoredCadenceClip
+  m_SampleRate: 60
+  m_AnimationClipSettings:
+    m_StartTime: 0
+    m_StopTime: 1
+    m_LoopTime: 0
+  m_FloatCurves:
+    - path: Hips
+      attribute: m_LocalScale.x
+      classID: 4
+      curve:
+        m_Curve:
+          - time: 0
+            value: 1
+            inSlope: 0
+            outSlope: 0
+            tangentMode: 0
+          - time: 0.5
+            value: 2
+            inSlope: 0
+            outSlope: 0
+            tangentMode: 0
+""";
+
+        AnimationClip clip = ImportClip(yaml);
+        var hipsTransform = GetTransformMember(GetSceneNodeRoot(clip), "Hips");
+        var scaleAnim = GetChild(hipsTransform, "ScaleX", EAnimationMemberType.Property).Animation.ShouldBeOfType<PropAnimFloat>();
+
+        scaleAnim.HasAuthoredCadence.ShouldBeTrue();
+        scaleAnim.AuthoredFrameCount.ShouldBe(60);
+        scaleAnim.AuthoredFramesPerSecond.ShouldBe(60);
+        scaleAnim.Keyframes[0].AuthoredFrameIndex.ShouldBe(0);
+        scaleAnim.Keyframes[1].AuthoredFrameIndex.ShouldBe(30);
+    }
+
+    [Test]
+    public void Import_ScalarCurves_PreserveExactClipEndFrameIdentity()
+    {
+        const string yaml = """
+AnimationClip:
+  m_Name: EndFrameClip
+  m_SampleRate: 60
+  m_AnimationClipSettings:
+    m_StartTime: 0
+    m_StopTime: 1
+    m_LoopTime: 0
+  m_FloatCurves:
+    - path: Hips
+      attribute: m_LocalScale.x
+      classID: 4
+      curve:
+        m_Curve:
+          - time: 0
+            value: 1
+            inSlope: 0
+            outSlope: 0
+            tangentMode: 0
+          - time: 1
+            value: 3
+            inSlope: 0
+            outSlope: 0
+            tangentMode: 0
+""";
+
+        AnimationClip clip = ImportClip(yaml);
+        var hipsTransform = GetTransformMember(GetSceneNodeRoot(clip), "Hips");
+        var scaleAnim = GetChild(hipsTransform, "ScaleX", EAnimationMemberType.Property).Animation.ShouldBeOfType<PropAnimFloat>();
+
+        scaleAnim.HasAuthoredCadence.ShouldBeTrue();
+        scaleAnim.AuthoredFrameCount.ShouldBe(60);
+        scaleAnim.Keyframes[0].AuthoredFrameIndex.ShouldBe(0);
+        scaleAnim.Keyframes[1].AuthoredFrameIndex.ShouldBe(60);
+        scaleAnim.Keyframes[1].Second.ShouldBe(1.0f, 0.000001f);
+    }
+
+    [Test]
     public void Import_ScalarCurves_RoutePerComponent_PreserveTangents_AndConvertAxes()
     {
         const string yaml = """
@@ -522,10 +602,15 @@ AnimationClip:
         var scaleAnim = GetChild(hipsTransform, "ScaleX", EAnimationMemberType.Property).Animation.ShouldBeOfType<PropAnimFloat>();
 
         clip.LengthInSeconds.ShouldBe(1.0f);
+        scaleAnim.HasAuthoredCadence.ShouldBeTrue();
+        scaleAnim.AuthoredFrameCount.ShouldBe(60);
+        scaleAnim.AuthoredFramesPerSecond.ShouldBe(60);
         scaleAnim.Keyframes.PreInfinityMode.ShouldBe(EKeyframeInfinityMode.Clamp);
         scaleAnim.Keyframes.PostInfinityMode.ShouldBe(EKeyframeInfinityMode.Loop);
         scaleAnim.Keyframes[0].Second.ShouldBe(0.0f);
         scaleAnim.Keyframes[1].Second.ShouldBe(1.0f);
+        scaleAnim.Keyframes[0].AuthoredFrameIndex.ShouldBe(0);
+        scaleAnim.Keyframes[1].AuthoredFrameIndex.ShouldBe(60);
     }
 
     [Test]

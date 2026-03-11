@@ -213,6 +213,41 @@ namespace XREngine.Animation
             NextState?.Tick(delta, variables);
         }
 
+        public void EvaluationTick(object? rootObject, long deltaTicks, IDictionary<string, AnimVar> variables)
+        {
+            var currState = CurrentState;
+            if (currState is null)
+            {
+                InitialState ??= States.FirstOrDefault();
+                CurrentState = currState = InitialState;
+                if (currState is null)
+                    return;
+            }
+
+            CurrentState?.EvaluateValues(variables);
+            NextState?.EvaluateValues(variables);
+
+            float delta = deltaTicks == 0L ? 0.0f : (float)(deltaTicks / (double)Stopwatch.Frequency);
+            var nextState = NextState;
+            if (nextState is not null || TryTransition(variables, currState, out nextState) || TryTransition(variables, AnyState, out nextState))
+            {
+                if (_blendManager.TickBlend(this, delta))
+                {
+                    CurrentState = nextState;
+                    CurrentState?.OnEnter(variables);
+                    NextState = null;
+                }
+            }
+            else
+            {
+                NextState = null;
+                CopyAnimationValuesFromMotion(_currentState?.Motion);
+            }
+
+            CurrentState?.Tick(deltaTicks, variables);
+            NextState?.Tick(deltaTicks, variables);
+        }
+
         private void CopyAnimationValuesFromMotion(MotionBase? motion)
             => CopyAnimationValues(motion?.GetAnimationValuesSnapshot());
         private void CopyAnimationValues(IEnumerable<KeyValuePair<string, object?>>? values)

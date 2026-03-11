@@ -127,6 +127,21 @@ public abstract partial class RenderPipeline : XRAsset
         RefreshPostProcessSchema();
     }
 
+    internal void NotifyCommandChainStructureChanged()
+    {
+        OnCommandChainChanged();
+
+        for (int i = 0; i < Instances.Count; i++)
+        {
+            XRRenderPipelineInstance instance = Instances[i];
+            instance.MeshRenderCommands.SetRenderPasses(PassIndicesAndSorters, PassMetadata);
+            instance.DestroyCache();
+        }
+
+        if (!IsDirty)
+            MarkDirty();
+    }
+
     protected virtual RenderPipelinePostProcessSchema BuildPostProcessSchema()
     {
         RenderPipelinePostProcessSchemaBuilder builder = new(this);

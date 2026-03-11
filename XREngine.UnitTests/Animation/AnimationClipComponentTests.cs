@@ -191,6 +191,48 @@ public sealed class AnimationClipComponentTests
     }
 
     [Test]
+    public void Start_WhenAlreadyPlaying_DoesNotRestartOrReinitializePlayback()
+    {
+        var root = new SceneNode("Root", new Transform());
+        var hips = new SceneNode(root, "Hips", new Transform());
+
+        var clip = new AnimationClip
+        {
+            Name = "StartupReentryGuard",
+            LengthInSeconds = 1.0f,
+            Looped = true,
+            SampleRate = 60,
+            RootMember = CreateTranslationClipRoot(CreateLinearFloatAnimation(0.0f, 10.0f)),
+        };
+
+        var component = root.AddComponent<AnimationClipComponent>()!;
+        component.Animation = clip;
+
+        float previousDelta = Engine.Time.Timer.Update.Delta;
+        try
+        {
+            Engine.Time.Timer.Update.Delta = 0.25f;
+
+            InvokePrivate(StartMethod, component);
+            InvokePrivate(TickAnimationMethod, component);
+            component.PlaybackTime.ShouldBe(0.25f, 0.0001f);
+            hips.GetTransformAs<Transform>(true)!.Translation.X.ShouldBe(2.5f, 0.0001f);
+
+            // Startup ordering can re-enter Start via both activation and property-change callbacks.
+            // Once already playing, the component must ignore those extra Start calls.
+            InvokePrivate(StartMethod, component);
+
+            component.PlaybackTime.ShouldBe(0.25f, 0.0001f);
+            hips.GetTransformAs<Transform>(true)!.Translation.X.ShouldBe(2.5f, 0.0001f);
+        }
+        finally
+        {
+            Engine.Time.Timer.Update.Delta = previousDelta;
+            InvokePrivate(StopMethod, component);
+        }
+    }
+
+    [Test]
     public void EvaluateAtTime_NormalizesAnimatedQuaternionComponentsAfterApply()
     {
         var root = new SceneNode("Root", new Transform());

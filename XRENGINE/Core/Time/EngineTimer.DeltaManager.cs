@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using System;
 using XREngine.Data;
 using XREngine.Data.Core;
 
@@ -35,17 +36,23 @@ namespace XREngine.Timers
                 set => SetField(ref _deltaSmoothingSpeed, value.Clamp(0.0f, 1.0f));
             }
 
-            private float _delta = 0.016f;
+            private long _deltaTicks = SecondsToStopwatchTicks(0.016f);
             /// <summary>
             /// The amount of time that has passed since the last frame, in seconds.
             /// </summary>
             public float Delta
             {
-                get => _delta;
+                get => TicksToSeconds(_deltaTicks);
+                set => DeltaTicks = SecondsToStopwatchTicks(value.ClampMin(0.0f));
+            }
+
+            public long DeltaTicks
+            {
+                get => _deltaTicks;
                 set
                 {
-                    _delta = value;
-                    SmoothedDelta = Interp.Lerp(SmoothedDelta, value, DeltaSmoothingSpeed);
+                    _deltaTicks = Math.Max(0L, value);
+                    SmoothedDelta = Interp.Lerp(SmoothedDelta, TicksToSeconds(_deltaTicks), DeltaSmoothingSpeed);
                 }
             }
 
@@ -53,11 +60,34 @@ namespace XREngine.Timers
             public float SmoothedDelta { get; private set; }
             public float SmoothedDilatedDelta => SmoothedDelta * Dilation;
 
-            public float LastTimestamp { get; set; }
+            private long _lastTimestampTicks;
+            public float LastTimestamp
+            {
+                get => TicksToSeconds(_lastTimestampTicks);
+                set => _lastTimestampTicks = SecondsToStopwatchTicks(value.ClampMin(0.0f));
+            }
+
+            public long LastTimestampTicks
+            {
+                get => _lastTimestampTicks;
+                set => _lastTimestampTicks = Math.Max(0L, value);
+            }
+
             /// <summary>
             /// This is the time that has passed running calculations of the last frame, in seconds.
             /// </summary>
-            public float ElapsedTime { get; set; }
+            private long _elapsedTicks;
+            public float ElapsedTime
+            {
+                get => TicksToSeconds(_elapsedTicks);
+                set => _elapsedTicks = SecondsToStopwatchTicks(value.ClampMin(0.0f));
+            }
+
+            public long ElapsedTicks
+            {
+                get => _elapsedTicks;
+                set => _elapsedTicks = Math.Max(0L, value);
+            }
         }
     }
 }

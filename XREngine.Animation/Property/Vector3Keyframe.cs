@@ -12,9 +12,11 @@ namespace XREngine.Animation
         public Vector3Keyframe()
             : this(0.0f, Vector3.Zero, Vector3.Zero, EVectorInterpType.Smooth) { }
         public Vector3Keyframe(int frameIndex, float FPS, Vector3 inValue, Vector3 outValue, Vector3 inTangent, Vector3 outTangent, EVectorInterpType type)
-            : this(frameIndex / FPS, inValue, outValue, inTangent, outTangent, type) { }
+            : this(GetSecondForAuthoredFrame(frameIndex, FPS), inValue, outValue, inTangent, outTangent, type)
+            => TrySetAuthoredFrameIndex(frameIndex, FPS);
         public Vector3Keyframe(int frameIndex, float FPS, Vector3 inoutValue, Vector3 inoutTangent, EVectorInterpType type)
-            : this(frameIndex / FPS, inoutValue, inoutValue, inoutTangent, inoutTangent, type) { }
+            : this(GetSecondForAuthoredFrame(frameIndex, FPS), inoutValue, inoutValue, inoutTangent, inoutTangent, type)
+            => TrySetAuthoredFrameIndex(frameIndex, FPS);
         public Vector3Keyframe(float second, Vector3 inoutValue, Vector3 inoutTangent, EVectorInterpType type)
             : this(second, inoutValue, inoutValue, inoutTangent, inoutTangent, type) { }
         public Vector3Keyframe(float second, Vector3 inoutValue, Vector3 inTangent, Vector3 outTangent, EVectorInterpType type)

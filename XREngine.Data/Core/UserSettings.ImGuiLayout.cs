@@ -17,6 +17,7 @@ namespace XREngine
         private bool _imGuiShowRenderApiExtensions;
         private bool _imGuiShowMissingAssets;
         private bool _imGuiShowNetworking;
+        private bool _imGuiShowAnimationClipEditor;
         private bool _imGuiShowShaderGraph;
         private bool _imGuiShowArchiveInspector;
 
@@ -122,6 +123,14 @@ namespace XREngine
         {
             get => _imGuiShowNetworking;
             set => SetField(ref _imGuiShowNetworking, value);
+        }
+
+        [Category("Editor UI")]
+        [Description("Show the Animation Clip Editor panel in the ImGui editor.")]
+        public bool ImGuiShowAnimationClipEditor
+        {
+            get => _imGuiShowAnimationClipEditor;
+            set => SetField(ref _imGuiShowAnimationClipEditor, value);
         }
 
         [Category("Editor UI")]

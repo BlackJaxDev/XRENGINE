@@ -1,5 +1,6 @@
 ﻿using Extensions;
 using MemoryPack;
+using System.Diagnostics;
 using System.ComponentModel;
 using XREngine.Core.Files;
 using XREngine.Data.Animation;
@@ -35,8 +36,11 @@ namespace XREngine.Animation
         protected void OnLoopChanged() => LoopChanged?.Invoke(this);
         protected void OnLengthChanged() => LengthChanged?.Invoke(this);
 
+        protected AuthoredCadence _authoredCadence = default;
         protected float _lengthInSeconds = 0.0f;
         protected float _speed = 1.0f;
+        [MemoryPackIgnore]
+        protected long _currentTicks = 0L;
         [MemoryPackIgnore]
         protected float _currentTime = 0.0f;
         protected bool _looped = false;
@@ -50,7 +54,27 @@ namespace XREngine.Animation
         }
 
         public void SetFrameCount(int numFrames, float framesPerSecond, bool stretchAnimation)
-            => SetLength(numFrames / framesPerSecond, stretchAnimation);
+        {
+            if (AuthoredCadence.TryNormalizeFramesPerSecond(framesPerSecond, out int authoredFramesPerSecond))
+            {
+                SetAuthoredCadence(new AuthoredCadence(numFrames, authoredFramesPerSecond));
+                return;
+            }
+
+            _authoredCadence = default;
+            SetLength(framesPerSecond <= 0.0f ? 0.0f : numFrames / framesPerSecond, stretchAnimation);
+        }
+
+        public void SetAuthoredCadence(AuthoredCadence cadence, bool notifyChanged = true)
+        {
+            _authoredCadence = cadence.Sanitize();
+            if (_authoredCadence.IsValid)
+                _lengthInSeconds = _authoredCadence.GetLengthSeconds();
+
+            if (notifyChanged)
+                OnLengthChanged();
+        }
+
         public virtual void SetLength(float seconds, bool stretchAnimation, bool notifyChanged = true)
         {
             if (seconds < 0.0f)
@@ -67,6 +91,30 @@ namespace XREngine.Animation
             get => _lengthInSeconds;
             set => SetLength(value, false);
         }
+
+        [Category(AnimCategory)]
+        public AuthoredCadence AuthoredCadence
+        {
+            get => _authoredCadence;
+            set => SetAuthoredCadence(value);
+        }
+
+        [Category(AnimCategory)]
+        public int AuthoredFrameCount
+        {
+            get => _authoredCadence.FrameCount;
+            set => SetAuthoredCadence(new AuthoredCadence(value, _authoredCadence.FramesPerSecond));
+        }
+
+        [Category(AnimCategory)]
+        public int AuthoredFramesPerSecond
+        {
+            get => _authoredCadence.FramesPerSecond;
+            set => SetAuthoredCadence(new AuthoredCadence(_authoredCadence.FrameCount, value));
+        }
+
+        [MemoryPackIgnore]
+        public bool HasAuthoredCadence => _authoredCadence.IsValid;
 
         /// <summary>
         /// The speed at which the animation plays back.
@@ -105,14 +153,18 @@ namespace XREngine.Animation
         }
 
         public virtual void Seek(float timeSeconds, bool wrapLooped)
+            => Seek(SecondsToStopwatchTicksSigned(timeSeconds), wrapLooped);
+
+        public virtual void Seek(long timeTicks, bool wrapLooped)
         {
             float oldTime = _currentTime;
-            if (_lengthInSeconds <= 0.0f)
-                _currentTime = 0.0f;
+            long lengthTicks = GetLengthStopwatchTicks();
+            if (lengthTicks <= 0L)
+                SetCurrentTicks(0L, lengthTicks);
             else if (wrapLooped)
-                _currentTime = timeSeconds.RemapToRange(0.0f, _lengthInSeconds);
+                SetCurrentTicks(WrapStopwatchTicks(timeTicks, lengthTicks), lengthTicks);
             else
-                _currentTime = Math.Clamp(timeSeconds, 0.0f, _lengthInSeconds);
+                SetCurrentTicks(Math.Clamp(timeTicks, 0L, lengthTicks), lengthTicks);
 
             OnProgressed(_currentTime - oldTime);
             OnCurrentTimeChanged();
@@ -149,7 +201,7 @@ namespace XREngine.Animation
                 return;
             PreStarted();
             if (_state == EAnimationState.Stopped)
-                _currentTime = 0.0f;
+                SetCurrentTicks(0L, GetLengthStopwatchTicks());
             _state = EAnimationState.Playing;
             OnAnimationStarted();
             PostStarted();
@@ -181,53 +233,89 @@ namespace XREngine.Animation
         /// </summary>
         /// <param name="delta">The change in seconds to add to the current time. Negative values are allowed.</param>
         public virtual void Tick(float delta)
+            => Tick(SecondsToStopwatchTicksSigned(delta));
+
+        public virtual void Tick(long deltaTicks)
         {
             if (_state != EAnimationState.Playing)
                 return;
 
-            //Modify delta with speed
-            delta *= Speed;
+            float oldTime = _currentTime;
+            long lengthTicks = GetLengthStopwatchTicks();
+            if (lengthTicks <= 0L)
+            {
+                SetCurrentTicks(0L, lengthTicks);
+                OnProgressed(_currentTime - oldTime);
+                OnCurrentTimeChanged();
+                return;
+            }
 
-            //Increment the current time with the delta value
-            _currentTime += delta;
+            long nextTicks = _currentTicks + ScaleStopwatchTicks(deltaTicks, Speed);
 
-            //Is the new current time out of range of the animation?
-            bool greater = _currentTime >= _lengthInSeconds;
-            bool less = _currentTime <= 0.0f;
+            bool greater = nextTicks >= lengthTicks;
+            bool less = nextTicks <= 0L;
             if (greater || less)
             {
                 //If playing but not looped, end the animation
                 if (_state == EAnimationState.Playing && !_looped)
                 {
-                    //Correct delta and current time for over-progression past the start or end point
-                    if (greater)
-                    {
-                        delta -= _currentTime - _lengthInSeconds;
-                        _currentTime = _lengthInSeconds;
-                    }
-                    else if (less)
-                    {
-                        delta -= _currentTime;
-                        _currentTime = 0.0f;
-                    }
-                    //Progress whatever delta is remaining and then stop
-                    OnProgressed(delta);
+                    SetCurrentTicks(Math.Clamp(nextTicks, 0L, lengthTicks), lengthTicks);
+                    OnProgressed(_currentTime - oldTime);
                     OnCurrentTimeChanged();
                     Stop();
                     return;
                 }
                 else
                 {
-                    //Remap current time into proper range and correct delta
-                    float remappedCurrentTime = _currentTime.RemapToRange(0.0f, _lengthInSeconds);
-                    delta = remappedCurrentTime - _currentTime;
-                    _currentTime = remappedCurrentTime;
+                    SetCurrentTicks(WrapStopwatchTicks(nextTicks, lengthTicks), lengthTicks);
+                    OnProgressed(_currentTime - oldTime);
+                    OnCurrentTimeChanged();
+                    return;
                 }
             }
 
-            OnProgressed(delta);
+            SetCurrentTicks(nextTicks, lengthTicks);
+            OnProgressed(_currentTime - oldTime);
             OnCurrentTimeChanged();
         }
+
+        private static long SecondsToStopwatchTicksSigned(double seconds)
+            => !double.IsFinite(seconds) || seconds == 0.0
+                ? 0L
+                : (long)Math.Round(seconds * Stopwatch.Frequency);
+
+        private static long ScaleStopwatchTicks(long deltaTicks, float speed)
+            => deltaTicks == 0L || !float.IsFinite(speed) || speed == 0.0f
+                ? 0L
+                : (long)Math.Round(deltaTicks * (double)speed);
+
+        private long GetLengthStopwatchTicks()
+            => HasAuthoredCadence
+                ? _authoredCadence.GetLengthStopwatchTicks(Stopwatch.Frequency)
+                : SecondsToStopwatchTicksSigned(_lengthInSeconds);
+
+        private void SetCurrentTicks(long valueTicks, long lengthTicks)
+        {
+            _currentTicks = Math.Max(0L, valueTicks);
+            _currentTime = lengthTicks > 0L && _currentTicks == lengthTicks
+                ? _lengthInSeconds
+                : StopwatchTicksToSeconds(_currentTicks);
+        }
+
+        private static long WrapStopwatchTicks(long valueTicks, long lengthTicks)
+        {
+            if (lengthTicks <= 0L)
+                return 0L;
+
+            long wrappedTicks = valueTicks % lengthTicks;
+            if (wrappedTicks < 0L)
+                wrappedTicks += lengthTicks;
+            return wrappedTicks;
+        }
+
+        private static float StopwatchTicksToSeconds(long ticks)
+            => (float)(ticks / (double)Stopwatch.Frequency);
+
         /// <summary>
         /// Called when <see cref="Tick(float)"/> has been called and <see cref="CurrentTime"/> has been updated.
         /// </summary>

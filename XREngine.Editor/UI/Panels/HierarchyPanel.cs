@@ -13,6 +13,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Timers;
 using static XREngine.Editor.EditorImGuiUI;
 
 namespace XREngine.Editor;
@@ -50,7 +51,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
 
     private readonly Dictionary<UIInteractableComponent, Vector2> _pendingDragStarts = new();
     private SceneNode? _lastClickedNode;
-    private float _lastClickTime = float.NegativeInfinity;
+    private long _lastClickTicks = long.MinValue;
     private UIListTransform? _treeListTransform;
     private UIBoundableTransform? _scrollbarTrackTransform;
     private UIBoundableTransform? _scrollbarThumbTransform;
@@ -1249,6 +1250,9 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
     private UICanvasInputComponent? GetCanvasInput()
         => BoundableTransform.GetCanvasComponent()?.GetInputComponent();
 
+    internal static bool IsDoubleClick(SceneNode? currentNode, SceneNode? lastClickedNode, long nowTicks, long lastClickTicks, float thresholdSeconds)
+        => currentNode == lastClickedNode && Math.Max(0L, nowTicks - lastClickTicks) <= EngineTimer.SecondsToStopwatchTicks(thresholdSeconds);
+
     private void HandleNodeButtonInteraction(UIInteractableComponent obj)
     {
         _contextMenu?.Hide();
@@ -1292,26 +1296,26 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         if (!FocusCameraOnDoubleClick)
             return;
 
-        float now = Engine.Time.Timer.Time();
-        bool doubleClicked = _lastClickedNode == node && now - _lastClickTime <= DoubleClickThreshold;
+        long nowTicks = Engine.ElapsedTicks;
+        bool doubleClicked = IsDoubleClick(node, _lastClickedNode, nowTicks, _lastClickTicks, DoubleClickThreshold);
 
         if (doubleClicked)
         {
             if (TryFocusCameraOnNode(node))
             {
                 _lastClickedNode = null;
-                _lastClickTime = float.NegativeInfinity;
+                _lastClickTicks = long.MinValue;
             }
             else
             {
                 _lastClickedNode = node;
-                _lastClickTime = now;
+                _lastClickTicks = nowTicks;
             }
         }
         else
         {
             _lastClickedNode = node;
-            _lastClickTime = now;
+            _lastClickTicks = nowTicks;
         }
     }
 

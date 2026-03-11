@@ -1026,7 +1026,7 @@ namespace XREngine.Rendering
             {
                 SortedDictionary<int, TickList> dic = TickLists[group];
                 if (!dic.TryGetValue(order, out TickList? list))
-                    dic.Add(order, list = new TickList(Engine.Rendering.Settings.TickGroupedItemsInParallel));
+                    dic.Add(order, list = new TickList(Engine.Rendering.Settings.TickGroupedItemsInParallel, group, order));
                 return list;
             }
         }

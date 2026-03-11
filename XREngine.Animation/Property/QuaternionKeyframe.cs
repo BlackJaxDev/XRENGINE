@@ -9,9 +9,11 @@ namespace XREngine.Animation
     {
         public QuaternionKeyframe() { }
         public QuaternionKeyframe(int frameIndex, float FPS, Quaternion inValue, Quaternion outValue, Quaternion inTangent, Quaternion outTangent, ERadialInterpType type)
-            : this(frameIndex / FPS, inValue, outValue, inTangent, outTangent, type) { }
+            : this(GetSecondForAuthoredFrame(frameIndex, FPS), inValue, outValue, inTangent, outTangent, type)
+            => TrySetAuthoredFrameIndex(frameIndex, FPS);
         public QuaternionKeyframe(int frameIndex, float FPS, Quaternion inoutValue, Quaternion inTangent, Quaternion outTangent, ERadialInterpType type)
-            : this(frameIndex / FPS, inoutValue, inoutValue, inTangent, outTangent, type) { }
+            : this(GetSecondForAuthoredFrame(frameIndex, FPS), inoutValue, inoutValue, inTangent, outTangent, type)
+            => TrySetAuthoredFrameIndex(frameIndex, FPS);
         public QuaternionKeyframe(float second, Quaternion inoutValue, Quaternion inOutTangent, ERadialInterpType type)
             : this(second, inoutValue, inoutValue, inOutTangent, inOutTangent, type) { }
         public QuaternionKeyframe(float second, Quaternion inoutValue, Quaternion inTangent, Quaternion outTangent, ERadialInterpType type)

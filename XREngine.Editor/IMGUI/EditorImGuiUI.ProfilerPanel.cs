@@ -50,6 +50,7 @@ public static partial class EditorImGuiUI
     private static bool _showFpsDropSpikes = true;
     private static bool _showRenderStats = true;
     private static bool _showThreadAllocations = true;
+    private static bool _showComponentTimings = true;
     private static bool _showBvhMetrics = true;
     private static bool _showJobSystem = true;
     private static bool _showMainThreadInvokes = true;
@@ -158,6 +159,7 @@ public static partial class EditorImGuiUI
             ImGui.SameLine(); ImGui.Checkbox("Spikes", ref _showFpsDropSpikes);
             ImGui.SameLine(); ImGui.Checkbox("Render", ref _showRenderStats);
             ImGui.SameLine(); ImGui.Checkbox("Allocs", ref _showThreadAllocations);
+            ImGui.SameLine(); ImGui.Checkbox("Components", ref _showComponentTimings);
             ImGui.SameLine(); ImGui.Checkbox("BVH", ref _showBvhMetrics);
             ImGui.SameLine(); ImGui.Checkbox("Jobs", ref _showJobSystem);
             ImGui.SameLine(); ImGui.Checkbox("Invokes", ref _showMainThreadInvokes);
@@ -170,6 +172,7 @@ public static partial class EditorImGuiUI
             ref _showFpsDropSpikes,
             ref _showRenderStats,
             ref _showThreadAllocations,
+            ref _showComponentTimings,
             ref _showBvhMetrics,
             ref _showJobSystem,
             ref _showMainThreadInvokes,
@@ -239,6 +242,7 @@ public static partial class EditorImGuiUI
         ImGuiDockBuilderNative.DockWindow("FPS Drop Spikes", leftBottomId);
         ImGuiDockBuilderNative.DockWindow("Render Stats", rightTopId);
         ImGuiDockBuilderNative.DockWindow("Thread Allocations", rightMidId);
+        ImGuiDockBuilderNative.DockWindow("Component Timings", rightMidId);
         ImGuiDockBuilderNative.DockWindow("BVH Metrics", rightMidId);
         ImGuiDockBuilderNative.DockWindow("Job System", rightLowerId);
         ImGuiDockBuilderNative.DockWindow("Main Thread Invokes", rightLowerId);

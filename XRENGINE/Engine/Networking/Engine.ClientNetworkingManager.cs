@@ -26,10 +26,10 @@ namespace XREngine
             private bool _joinRequested;
             private bool _tickRegistered;
             private bool _assignmentReceived;
-            private double _lastInputSyncTime;
-            private double _lastTransformSyncTime;
-            private double _lastJoinRequestTime;
-            private double _lastHeartbeatTime;
+            private long _lastInputSyncTicks;
+            private long _lastTransformSyncTicks;
+            private long _lastJoinRequestTicks;
+            private long _lastHeartbeatTicks;
             private Guid _activeInstanceId = Guid.Empty;
             private const double InputSyncIntervalSeconds = 1.0 / 60.0;
             private const double TransformSyncIntervalSeconds = 1.0 / 20.0;
@@ -154,27 +154,27 @@ namespace XREngine
                 if (!UDPServerConnectionEstablished)
                     return;
 
-                double now = Engine.ElapsedTime;
+                long nowTicks = CurrentEngineTicks();
 
-                if (!_assignmentReceived && (!_joinRequested || now - _lastJoinRequestTime >= JoinRetrySeconds))
+                if (!_assignmentReceived && (!_joinRequested || HasElapsed(nowTicks, _lastJoinRequestTicks, JoinRetrySeconds)))
                     SendJoinRequest();
 
-                if (now - _lastInputSyncTime >= InputSyncIntervalSeconds)
+                if (HasElapsed(nowTicks, _lastInputSyncTicks, InputSyncIntervalSeconds))
                 {
                     SendLocalInputSnapshots();
-                    _lastInputSyncTime = now;
+                    _lastInputSyncTicks = nowTicks;
                 }
 
-                if (now - _lastTransformSyncTime >= TransformSyncIntervalSeconds)
+                if (HasElapsed(nowTicks, _lastTransformSyncTicks, TransformSyncIntervalSeconds))
                 {
                     SendLocalTransformSnapshots();
-                    _lastTransformSyncTime = now;
+                    _lastTransformSyncTicks = nowTicks;
                 }
 
-                if (_assignmentReceived && now - _lastHeartbeatTime >= HeartbeatIntervalSeconds)
+                if (_assignmentReceived && HasElapsed(nowTicks, _lastHeartbeatTicks, HeartbeatIntervalSeconds))
                 {
                     SendHeartbeat();
-                    _lastHeartbeatTime = now;
+                    _lastHeartbeatTicks = nowTicks;
                 }
             }
 
@@ -191,7 +191,7 @@ namespace XREngine
 
                 BroadcastStateChange(EStateChangeType.PlayerJoin, request, compress: true);
                 _joinRequested = true;
-                _lastJoinRequestTime = Engine.ElapsedTime;
+                _lastJoinRequestTicks = CurrentEngineTicks();
             }
 
             private void SendHeartbeat()

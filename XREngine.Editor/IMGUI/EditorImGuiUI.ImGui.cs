@@ -68,6 +68,7 @@ public static partial class EditorImGuiUI
         private static bool _showInspector = true;
         private static bool _showAssetExplorer = true;
         private static bool _showNetworking;
+        private static bool _showAnimationClipEditor;
         private static UserSettings? _windowVisibilitySettingsSource;
 
         private static bool _renameInputFocusRequested;
@@ -564,6 +565,7 @@ public static partial class EditorImGuiUI
             DrawUserSettingsPanel();
             DrawBuildSettingsPanel();
             DrawNetworkingPanel();
+            DrawAnimationClipEditorPanel();
             DrawRenderPipelineGraphPanel();
             DrawShaderGraphPanel();
             DrawHierarchyPanel();
@@ -1148,6 +1150,7 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Render API Extensions", null, ref _showRenderApiExtensions);
                 ImGui.MenuItem("Missing Assets", null, ref _showMissingAssets);
                 ImGui.MenuItem("Networking", null, ref _showNetworking);
+                ImGui.MenuItem("Animation Clip Editor", null, ref _showAnimationClipEditor);
                 ImGui.Separator();
                 if (ImGui.MenuItem("Reset Layout"))
                     ResetDockingLayout();
@@ -1539,6 +1542,7 @@ public static partial class EditorImGuiUI
             _showRenderApiExtensions = userSettings.ImGuiShowRenderApiExtensions;
             _showMissingAssets = userSettings.ImGuiShowMissingAssets;
             _showNetworking = userSettings.ImGuiShowNetworking;
+            _showAnimationClipEditor = userSettings.ImGuiShowAnimationClipEditor;
             _showShaderGraphPanel = userSettings.ImGuiShowShaderGraph;
             _showArchiveInspector = userSettings.ImGuiShowArchiveInspector;
         }
@@ -1629,6 +1633,12 @@ public static partial class EditorImGuiUI
             if (userSettings.ImGuiShowNetworking != _showNetworking)
             {
                 userSettings.ImGuiShowNetworking = _showNetworking;
+                changed = true;
+            }
+
+            if (userSettings.ImGuiShowAnimationClipEditor != _showAnimationClipEditor)
+            {
+                userSettings.ImGuiShowAnimationClipEditor = _showAnimationClipEditor;
                 changed = true;
             }
 

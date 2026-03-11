@@ -138,6 +138,7 @@ public static partial class EditorUnitTests
     public static XRWorld CreateSelectedWorld(bool setUI, bool isServer)
         => Toggles.WorldKind switch
         {
+            UnitTestWorldKind.AudioTesting => CreateAudioTestingWorld(setUI, isServer),
             UnitTestWorldKind.MathIntersections => CreateMathIntersectionsWorld(setUI, isServer),
             UnitTestWorldKind.MeshEditing => CreateMeshEditingWorld(setUI, isServer),
             UnitTestWorldKind.UberShader => CreateUberShaderWorld(setUI, isServer),

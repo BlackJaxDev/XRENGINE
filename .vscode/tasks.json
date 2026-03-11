@@ -649,6 +649,74 @@
                 "reveal": "always"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "Install-Audio2Face3D-SDK",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\Dependencies\\Get-Audio2Face3DSdk.ps1"
+            ],
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Install-TensorRT",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\Dependencies\\Get-TensorRT.ps1"
+            ],
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Install-CUDA",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\Dependencies\\Get-CudaToolkit.ps1"
+            ],
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Install-Audio2Face3D-Prereqs",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/d",
+                "/c",
+                "echo Installing Audio2Face3D prerequisites..."
+            ],
+            "dependsOn": [
+                "Install-CUDA",
+                "Install-TensorRT",
+                "Install-Audio2Face3D-SDK"
+            ],
+            "dependsOrder": "sequence",
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
         }
     ]
 }

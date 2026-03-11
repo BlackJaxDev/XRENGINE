@@ -131,6 +131,12 @@ namespace XREngine.Animation
                 child.Motion?.Tick(delta * child.Speed);
         }
 
+        public override void Tick(long deltaTicks)
+        {
+            foreach (var child in Children)
+                child.Motion?.Tick(ScaleStopwatchTicks(deltaTicks, child.Speed));
+        }
+
         public override void BlendChildMotionAnimationValues(IDictionary<string, AnimVar> variables, float weight)
         {
             if (_children.Count == 0)

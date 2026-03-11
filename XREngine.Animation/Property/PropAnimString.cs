@@ -37,7 +37,7 @@ namespace XREngine.Animation
         public override object? GetValueGeneric(float second)
             => _getValue(second);
         public string? GetValueBaked(float second)
-            => GetValueBaked((int)Math.Floor(second * BakedFramesPerSecond));
+            => GetValueBaked(GetBakedFrameIndex(second));
         public string? GetValueBaked(int frameIndex)
             => _baked?.TryGet(frameIndex);
         public string? GetValueKeyframed(float second)
@@ -48,11 +48,14 @@ namespace XREngine.Animation
             return DefaultValue;
         }
         
-        public override void Bake(float framesPerSecond)
+        public override void Bake(int framesPerSecond)
         {
-            _bakedFPS = framesPerSecond;
-            _bakedFrameCount = (int)Math.Ceiling(LengthInSeconds * framesPerSecond);
+            _bakedFPS = Math.Max(0, framesPerSecond);
+            _bakedFrameCount = _bakedFPS <= 0 ? 0 : (int)Math.Ceiling(LengthInSeconds * _bakedFPS);
             _baked = new string[BakedFrameCount];
+            if (_bakedFPS <= 0)
+                return;
+
             float invFPS = 1.0f / _bakedFPS;
             for (int i = 0; i < BakedFrameCount; ++i)
                 _baked[i] = GetValueKeyframed(i * invFPS);

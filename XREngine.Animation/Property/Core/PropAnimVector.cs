@@ -147,8 +147,8 @@ namespace XREngine.Animation
             if (_baked is null)
                 throw new InvalidOperationException("Cannot get baked value when not baked.");
 
-            float frameTime = second.RemapToRange(0, LengthInSeconds) * BakedFramesPerSecond;
-            int frame = (int)frameTime;
+            if (!TryGetCadenceFrameWindow(second, out int frame, out int nextFrame, out _, out _, out float frameFraction))
+                return DefaultValue;
 
             if (LerpConstrainedFPS)
             {
@@ -162,7 +162,7 @@ namespace XREngine.Animation
                         //TODO: interpolate values by creating tangents dynamically?
 
                         //Span is always 1 frame, so no need to divide to normalize
-                        float lerpTime = frameTime - frame;
+                        float lerpTime = frameFraction;
 
                         return LerpValues(t1, t2, lerpTime);
                     }
@@ -171,12 +171,12 @@ namespace XREngine.Animation
                 else
                 {
                     TValue t1 = _baked[frame];
-                    TValue t2 = _baked[frame + 1];
+                    TValue t2 = _baked[nextFrame];
 
                     //TODO: interpolate values by creating tangents dynamically?
 
                     //Span is always 1 frame, so no need to divide to normalize
-                    float lerpTime = frameTime - frame;
+                    float lerpTime = frameFraction;
 
                     return LerpValues(t1, t2, lerpTime);
                 }
@@ -239,15 +239,11 @@ namespace XREngine.Animation
 
             if (ConstrainKeyframedFPS)
             {
-                int frame = (int)(second * _bakedFPS);
-                float floorSec = _bakedFPS != 0.0f ? (frame / _bakedFPS) : 0.0f;
+                if (!TryGetCadenceFrameWindow(second, out _, out _, out float floorSec, out float ceilSec, out float frameFraction))
+                    return DefaultValue;
 
                 if (LerpConstrainedFPS)
-                {
-                    float ceilSec = _bakedFPS != 0.0f ? ((frame + 1) / _bakedFPS) : 0.0f;
-                    float time = second - floorSec;
-                    return LerpKeyedValues(floorSec, ceilSec, time, type);
-                }
+                    return LerpKeyedValues(floorSec, ceilSec, frameFraction, type);
 
                 second = floorSec;
             }
@@ -295,14 +291,13 @@ namespace XREngine.Animation
             float second = _currentTime;
             if (ConstrainKeyframedFPS)
             {
-                int frame = (int)(second * _bakedFPS);
-                float floorSec = frame / _bakedFPS;
-                float ceilSec = (frame + 1) / _bakedFPS;
-
-                //second - floorSec is the resulting delta from one frame to the next.
-                //we want the delta to be between two frames with a specified number of frames in between, 
-                //so we multiply by the FPS.
-                float time = (second - floorSec) * _bakedFPS;
+                if (!TryGetCadenceFrameWindow(second, out _, out _, out float floorSec, out float ceilSec, out float frameFraction))
+                {
+                    CurrentPosition = DefaultValue;
+                    CurrentVelocity = new TValue();
+                    CurrentAcceleration = new TValue();
+                    return;
+                }
 
                 if (LerpConstrainedFPS)
                 {
@@ -327,9 +322,9 @@ namespace XREngine.Animation
                        out ceilVelocity,
                        out ceilAcceleration);
 
-                    CurrentPosition = LerpValues(floorPosition, ceilPosition, time);
-                    CurrentVelocity = LerpValues(floorVelocity, ceilVelocity, time);
-                    CurrentAcceleration = LerpValues(floorAcceleration, ceilAcceleration, time);
+                    CurrentPosition = LerpValues(floorPosition, ceilPosition, frameFraction);
+                    CurrentVelocity = LerpValues(floorVelocity, ceilVelocity, frameFraction);
+                    CurrentAcceleration = LerpValues(floorAcceleration, ceilAcceleration, frameFraction);
                     return;
                 }
                 second = floorSec;
@@ -369,11 +364,14 @@ namespace XREngine.Animation
 
             return LerpValues(floorValue.Value, ceilValue.Value, time);
         }
-        public override void Bake(float framesPerSecond)
+        public override void Bake(int framesPerSecond)
         {
-            _bakedFPS = framesPerSecond;
-            _bakedFrameCount = (int)Math.Ceiling(LengthInSeconds * framesPerSecond);
+            _bakedFPS = Math.Max(0, framesPerSecond);
+            _bakedFrameCount = _bakedFPS <= 0 ? 0 : (int)Math.Ceiling(LengthInSeconds * _bakedFPS);
             _baked = new TValue[BakedFrameCount];
+            if (_bakedFPS <= 0)
+                return;
+
             float invFPS = 1.0f / _bakedFPS;
             for (int i = 0; i < BakedFrameCount; ++i)
                 _baked[i] = GetValueKeyframed(i * invFPS);
