@@ -80,6 +80,7 @@ namespace XREngine
             Matrix4x4? rootTransformMatrix = null,
             DelMaterialFactory? materialFactory = null,
             DelMakeMaterialAction? makeMaterialAction = null,
+            bool? batchSubmeshAddsDuringAsyncImport = null,
             int layer = DefaultLayers.DynamicIndex)
         {
             Debug.Out($"[ModelImporter] ScheduleImportJob called for: {path}");
@@ -91,7 +92,7 @@ namespace XREngine
                 Debug.Out($"[ModelImporter] ImportRoutine started on thread: {Environment.CurrentManagedThreadId}");
                 // Run on the job system thread directly (no Task.Run). The job system already executes
                 // this enumerator on a worker thread.
-                var result = ImportInternal(path, options, parent, scaleConversion, zUp, rootTransformMatrix, onFinished, materialFactory, makeMaterialAction, onProgress, cancellationToken, layer);
+                var result = ImportInternal(path, options, parent, scaleConversion, zUp, rootTransformMatrix, onFinished, materialFactory, makeMaterialAction, onProgress, cancellationToken, batchSubmeshAddsDuringAsyncImport, layer);
                 Debug.Out($"[ModelImporter] ImportInternal completed, yielding result");
                 yield return new JobProgress(1f, result);
             }
@@ -348,7 +349,8 @@ namespace XREngine
                     uint h = mipmaps?.Length > 0 ? mipmaps[0].Height : 0;
                     Debug.Out($"[TextureFactory] LOADED texture: {path} ({w}x{h})");
                 },
-                onError: ex => Debug.LogException(ex, $"[TextureFactory] Texture import job FAILED for '{path}'."));
+                onError: ex => Debug.LogException(ex, $"[TextureFactory] Texture import job FAILED for '{path}'."),
+                priority: JobPriority.Low);
 
             return placeholder;
         }
@@ -400,10 +402,12 @@ namespace XREngine
             DelMaterialFactory? materialFactory,
             SceneNode? parent,
             float scaleConversion = 1.0f,
-            bool zUp = false)
+            bool zUp = false,
+            bool? processMeshesAsynchronously = null,
+            bool? batchSubmeshAddsDuringAsyncImport = null)
         {
             using var importer = new ModelImporter(path, onCompleted, materialFactory);
-            var node = importer.Import(options, true, true, scaleConversion, zUp, true);
+            var node = importer.Import(options, true, true, scaleConversion, zUp, true, processMeshesAsynchronously, batchSubmeshAddsDuringAsyncImport);
             materials = importer._materials;
             meshes = importer._meshes;
             if (parent != null && node != null)
@@ -419,6 +423,7 @@ namespace XREngine
             SceneNode? parent,
             float scaleConversion = 1.0f,
             bool zUp = false,
+            bool? batchSubmeshAddsDuringAsyncImport = null,
             CancellationToken cancellationToken = default)
         {
             var tcs = new TaskCompletionSource<(SceneNode?, IReadOnlyCollection<XRMaterial>, IReadOnlyCollection<XRMesh>)>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -439,7 +444,8 @@ namespace XREngine
                 scaleConversion: scaleConversion,
                 zUp: zUp,
                 materialFactory: materialFactory,
-                makeMaterialAction: null);
+                makeMaterialAction: null,
+                batchSubmeshAddsDuringAsyncImport: batchSubmeshAddsDuringAsyncImport);
 
             return tcs.Task;
         }
@@ -456,6 +462,7 @@ namespace XREngine
             DelMakeMaterialAction? makeMaterialAction,
             Action<float>? onProgress,
             CancellationToken cancellationToken,
+            bool? batchSubmeshAddsDuringAsyncImport = null,
             int layer = DefaultLayers.DynamicIndex)
         {
             Debug.Out($"[ModelImporter] ImportInternal started on thread: {Environment.CurrentManagedThreadId}");
@@ -469,7 +476,7 @@ namespace XREngine
 
             // Let mesh processing mode follow the engine setting unless an explicit override is passed at a higher level.
             // This avoids long synchronous import bursts that starve the job system during startup/world load.
-            var node = importer.Import(options, true, true, scaleConversion, zUp, true, null, cancellationToken, onProgress, rootTransformMatrix);
+            var node = importer.Import(options, true, true, scaleConversion, zUp, true, null, batchSubmeshAddsDuringAsyncImport, cancellationToken, onProgress, rootTransformMatrix);
             Debug.Out($"[ModelImporter] Import() returned, node: {node?.Name ?? "NULL"}");
             Debug.Out($"[ModelImporter] Meshes loaded: {importer._meshes.Count}, Materials loaded: {importer._materials.Count}");
 
@@ -538,7 +545,8 @@ namespace XREngine
                         tex.Resizable = false;
                         tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
                     },
-                    onError: ex => Debug.LogException(ex, $"Uber sampler texture import job failed for '{key.path}'."));
+                    onError: ex => Debug.LogException(ex, $"Uber sampler texture import job failed for '{key.path}'."),
+                    priority: JobPriority.Low);
 
                 return tex;
             });
@@ -853,6 +861,7 @@ namespace XREngine
             bool zUp = false,
             bool multiThread = true,
             bool? processMeshesAsynchronously = null,
+            bool? batchSubmeshAddsDuringAsyncImport = null,
             CancellationToken cancellationToken = default,
             Action<float>? onProgress = null,
             Matrix4x4? rootTransformMatrix = null)
@@ -882,7 +891,9 @@ namespace XREngine
             _meshProcessRoutines.Clear();
             _meshFinalizeActions.Clear();
             bool processMeshesAsync = processMeshesAsynchronously ?? Engine.Rendering.Settings.ProcessMeshImportsAsynchronously;
+            bool batchSubmeshAdds = batchSubmeshAddsDuringAsyncImport ?? true;
             Debug.Out($"[ModelImporter.Import] processMeshesAsync resolved to: {processMeshesAsync}");
+            Debug.Out($"[ModelImporter.Import] batchSubmeshAdds resolved to: {batchSubmeshAdds}");
 
             SceneNode rootNode;
             using (Engine.Profiler.Start($"Assemble model hierarchy"))
@@ -892,7 +903,7 @@ namespace XREngine
                 _nodeTransforms.Clear();
                 ProcessNode(true, scene.RootNode, scene, rootNode, null, rootTransformMatrix ?? Matrix4x4.Identity, removeAssimpFBXNodes, null, cancellationToken);
                 Debug.Out($"[ModelImporter.Import] ProcessNode complete, {_nodeTransforms.Count} nodes processed");
-                NormalizeNodeScales(scene, rootNode, cancellationToken, processMeshesAsync);
+                NormalizeNodeScales(scene, rootNode, cancellationToken, processMeshesAsync, batchSubmeshAdds);
                 Debug.Out($"[ModelImporter.Import] NormalizeNodeScales complete, {_meshProcessRoutines.Count} mesh routines queued");
             }
 
@@ -955,13 +966,17 @@ namespace XREngine
                 return;
             }
 
-            Debug.Out($"[ModelImporter] Scheduling {total} mesh jobs asynchronously...");
+            int targetBatchCount = Math.Max(1, Math.Min(total, Engine.Jobs.WorkerCount));
+            int batchSize = Math.Max(1, (int)Math.Ceiling(total / (double)targetBatchCount));
+            int batchCount = (total + batchSize - 1) / batchSize;
 
-            int remaining = total;
+            Debug.Out($"[ModelImporter] Scheduling {batchCount} async mesh batches for {total} routines (batchSize={batchSize})...");
+
+            int remaining = batchCount;
             int faulted = 0;
             int canceled = 0;
             int finalized = 0;
-            int[] retried = new int[total];
+            int[] retried = new int[batchCount];
 
             void TryFlushAndComplete()
             {
@@ -995,27 +1010,37 @@ namespace XREngine
                 TryFlushAndComplete();
             }
 
-            void ScheduleMeshRoutine(int routineIndex)
+            void ScheduleMeshBatch(int batchIndex)
             {
-                var routineFactory = _meshProcessRoutines[routineIndex];
+                int start = batchIndex * batchSize;
+                int endExclusive = Math.Min(start + batchSize, total);
+
+                IEnumerable BatchRoutine()
+                {
+                    for (int routineIndex = start; routineIndex < endExclusive; routineIndex++)
+                    {
+                        foreach (var step in _meshProcessRoutines[routineIndex]())
+                            yield return step;
+                    }
+                }
 
                 Engine.Jobs.Schedule(
-                    routineFactory,
+                    BatchRoutine,
                     completed: () =>
                     {
                         TryFinalize();
                     },
                     error: ex =>
                     {
-                        if (Interlocked.CompareExchange(ref retried[routineIndex], 1, 0) == 0)
+                        if (Interlocked.CompareExchange(ref retried[batchIndex], 1, 0) == 0)
                         {
-                            Debug.Out($"[ModelImporter] Mesh job {routineIndex} faulted; retrying once...");
-                            ScheduleMeshRoutine(routineIndex);
+                            Debug.Out($"[ModelImporter] Mesh batch {batchIndex} faulted; retrying once...");
+                            ScheduleMeshBatch(batchIndex);
                             return;
                         }
 
                         Interlocked.Increment(ref faulted);
-                        Debug.LogException(ex, $"Mesh processing job failed after retry for '{SourceFilePath}' (routine {routineIndex}).");
+                        Debug.LogException(ex, $"Mesh processing batch failed after retry for '{SourceFilePath}' (batch {batchIndex}, routines {start}-{endExclusive - 1}).");
                         TryFinalize();
                     },
                     canceled: () =>
@@ -1023,14 +1048,15 @@ namespace XREngine
                         Interlocked.Increment(ref canceled);
                         TryFinalize();
                     },
-                    cancellationToken: cancellationToken);
+                    cancellationToken: cancellationToken,
+                    priority: JobPriority.Low);
             }
 
-            for (int i = 0; i < total; i++)
-                ScheduleMeshRoutine(i);
+            for (int i = 0; i < batchCount; i++)
+                ScheduleMeshBatch(i);
         }
 
-        private void NormalizeNodeScales(AScene scene, SceneNode rootNode, CancellationToken cancellationToken, bool scheduleOneJobPerMesh)
+        private void NormalizeNodeScales(AScene scene, SceneNode rootNode, CancellationToken cancellationToken, bool processMeshesAsynchronously, bool batchSubmeshAddsDuringAsyncImport)
         {
             using var t = Engine.Profiler.Start("Normalizing node scales");
 
@@ -1086,7 +1112,15 @@ namespace XREngine
                 //Debug.Out($"Processing node {nodeInfo.AssimpNode.Name} with world T[{translation}] R[{rotation}] S[{scale}]");
 
                 Matrix4x4 geometryTransform = nodeInfo.OriginalWorldMatrix * rootTransform.InverseWorldMatrix;
-                EnqueueProcessMeshes(nodeInfo.AssimpNode, scene, nodeInfo.SceneNode, geometryTransform, rootTransform, cancellationToken, scheduleOneJobPerMesh);
+                EnqueueProcessMeshes(
+                    nodeInfo.AssimpNode,
+                    scene,
+                    nodeInfo.SceneNode,
+                    geometryTransform,
+                    rootTransform,
+                    cancellationToken,
+                    publishSubMeshesOnSwapThread: processMeshesAsynchronously,
+                    batchSubmeshAddsDuringAsyncImport: processMeshesAsynchronously && batchSubmeshAddsDuringAsyncImport);
             }
         }
 
@@ -1211,7 +1245,15 @@ namespace XREngine
             return sceneNode;
         }
 
-        private unsafe void EnqueueProcessMeshes(Node node, AScene scene, SceneNode sceneNode, Matrix4x4 dataTransform, TransformBase rootTransform, CancellationToken cancellationToken, bool marshalSubMeshAddsToMainThread)
+        private unsafe void EnqueueProcessMeshes(
+            Node node,
+            AScene scene,
+            SceneNode sceneNode,
+            Matrix4x4 dataTransform,
+            TransformBase rootTransform,
+            CancellationToken cancellationToken,
+            bool publishSubMeshesOnSwapThread,
+            bool batchSubmeshAddsDuringAsyncImport)
         {
             int count = node.MeshCount;
             if (count == 0)
@@ -1224,24 +1266,36 @@ namespace XREngine
             modelComponent.Name = node.Name;
             modelComponent.Model = model;
 
-            // For async-per-mesh processing, collect submeshes then flush once on main thread.
-            // This avoids per-mesh main-thread waits (which can deadlock if the main thread is blocked).
-            ConcurrentDictionary<int, SubMesh>? pending = marshalSubMeshAddsToMainThread
+            // Async processing publishes mesh additions on the swap thread so scene/render state is not
+            // mutated from worker threads. The publish policy decides whether those additions are flushed
+            // once at the end or streamed as contiguous source-order submeshes become ready.
+            ConcurrentDictionary<int, SubMesh>? pending = publishSubMeshesOnSwapThread
                 ? new ConcurrentDictionary<int, SubMesh>()
                 : null;
 
+            int[]? ordered = null;
+            int nextPublishOffset = 0;
+
+            void FlushReadySubMeshes()
+            {
+                if (pending is null || ordered is null)
+                    return;
+
+                while (nextPublishOffset < ordered.Length && pending.TryRemove(ordered[nextPublishOffset], out var subMesh))
+                {
+                    model.Meshes.Add(subMesh);
+                    nextPublishOffset++;
+                }
+            }
+
             if (pending != null)
             {
-                int[] ordered = new int[count];
+                ordered = new int[count];
                 for (int i = 0; i < count; i++)
                     ordered[i] = node.MeshIndices[i];
 
-                _meshFinalizeActions.Add(() =>
-                {
-                    for (int i = 0; i < ordered.Length; i++)
-                        if (pending.TryGetValue(ordered[i], out var subMesh))
-                            model.Meshes.Add(subMesh);
-                });
+                if (batchSubmeshAddsDuringAsyncImport)
+                    _meshFinalizeActions.Add(FlushReadySubMeshes);
             }
 
             for (var i = 0; i < count; i++)
@@ -1269,8 +1323,10 @@ namespace XREngine
 
                 if (pending != null)
                 {
-                    Debug.Out($"[ModelImporter] Adding mesh '{mesh.Name}' to pending dict (deferred add)");
+                    Debug.Out($"[ModelImporter] Queueing mesh '{mesh.Name}' for {(batchSubmeshAddsDuringAsyncImport ? "batched" : "streamed")} publish");
                     pending[meshIndex] = subMesh;
+                    if (!batchSubmeshAddsDuringAsyncImport)
+                        Engine.EnqueueSwapTask(FlushReadySubMeshes);
                 }
                 else
                 {

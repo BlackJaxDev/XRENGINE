@@ -1,6 +1,7 @@
 using Assimp;
 using System.ComponentModel;
 using XREngine.Data;
+using XREngine.Rendering;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Models;
@@ -130,12 +131,51 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool? ProcessMeshesAsynchronously { get; set; } = null;
 
     /// <summary>
-    /// Maps original texture file paths to new paths.
+    /// When async mesh import is enabled, controls whether imported submeshes are published
+    /// to the scene in one batch at the end or streamed in as they become ready.
     /// </summary>
-    public Dictionary<string, string>? TexturePathRemap { get; set; }
+    public bool BatchSubmeshAddsDuringAsyncImport { get; set; } = true;
 
     /// <summary>
-    /// Maps original material names to paths of new materials.
+    /// Maps original imported texture file paths to finalized texture assets.
     /// </summary>
-    public Dictionary<string, string>? MaterialNameRemap { get; set; }
+    public Dictionary<string, XRTexture2D?>? TextureRemap { get; set; }
+
+    /// <summary>
+    /// Maps imported material names to finalized material assets.
+    /// </summary>
+    public Dictionary<string, XRMaterial?>? MaterialRemap { get; set; }
+
+    private Dictionary<string, string>? _legacyTexturePathRemap;
+    private Dictionary<string, string>? _legacyMaterialNameRemap;
+
+    /// <summary>
+    /// Backwards-compatibility: older cached YAML stored texture remaps as replacement paths.
+    /// Preserve those entries so reimport still works until the asset remaps are resaved.
+    /// </summary>
+    [Browsable(false)]
+    [YamlMember(Alias = "TexturePathRemap")]
+    public Dictionary<string, string>? LegacyTexturePathRemap
+    {
+        set => _legacyTexturePathRemap = value;
+    }
+
+    /// <summary>
+    /// Backwards-compatibility: older cached YAML stored material remaps as replacement paths.
+    /// Preserve those entries so reimport still works until the asset remaps are resaved.
+    /// </summary>
+    [Browsable(false)]
+    [YamlMember(Alias = "MaterialNameRemap")]
+    public Dictionary<string, string>? LegacyMaterialNameRemap
+    {
+        set => _legacyMaterialNameRemap = value;
+    }
+
+    [Browsable(false)]
+    [YamlIgnore]
+    public IReadOnlyDictionary<string, string>? LegacyTexturePathRemapValues => _legacyTexturePathRemap;
+
+    [Browsable(false)]
+    [YamlIgnore]
+    public IReadOnlyDictionary<string, string>? LegacyMaterialNameRemapValues => _legacyMaterialNameRemap;
 }

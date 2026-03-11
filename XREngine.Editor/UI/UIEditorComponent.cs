@@ -126,7 +126,11 @@ public partial class UIEditorComponent : UIComponent
             if (!string.IsNullOrWhiteSpace(EditorUnitTests.Toggles.VideoStreamingUrl))
                 videoComp.StreamUrl = EditorUnitTests.Toggles.VideoStreamingUrl;
             if (EditorUnitTests.Toggles.VideoStreamingAudio)
-                videoRoot.AddComponent<AudioSourceComponent>();
+            {
+                var audioSource = videoRoot.AddComponent<AudioSourceComponent>()!;
+                audioSource.RelativeToListener = true;
+                audioSource.SteamAudioNonSpatialStereo = true;
+            }
 
             videoRoot.IsActiveSelf = wasActive;
 

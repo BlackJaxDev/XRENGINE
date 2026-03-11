@@ -23,6 +23,8 @@ namespace XREngine.Components
         private AudioData? _staticBuffer;
         private bool _relativeToListener = false;
         private bool _looping = false;
+        private bool _bypassSteamAudioSpatialization = false;
+        private bool _steamAudioNonSpatialStereo = false;
         private float _pitch = 1.0f;
         private float _minGain = 0.0f;
         private float _maxGain = 1.0f;
@@ -103,6 +105,28 @@ namespace XREngine.Components
         {
             get => _relativeToListener;
             set => SetField(ref _relativeToListener, value);
+        }
+        /// <summary>
+        /// If true, Steam Audio processing is skipped so stereo media keeps its native stereo image.
+        /// </summary>
+        [Category("3D Settings")]
+        [DisplayName("Bypass Steam Audio Spatialization")]
+        [Description("Skips Steam Audio processing for this source so stereo media plays as normal stereo.")]
+        public bool BypassSteamAudioSpatialization
+        {
+            get => _bypassSteamAudioSpatialization;
+            set => SetField(ref _bypassSteamAudioSpatialization, value);
+        }
+        /// <summary>
+        /// If true, stereo media keeps its stereo image while still using the Steam Audio source pipeline.
+        /// </summary>
+        [Category("3D Settings")]
+        [DisplayName("Steam Audio Non-Spatial Stereo")]
+        [Description("Keeps stereo media non-spatial while still routing it through Steam Audio.")]
+        public bool SteamAudioNonSpatialStereo
+        {
+            get => _steamAudioNonSpatialStereo;
+            set => SetField(ref _steamAudioNonSpatialStereo, value);
         }
         /// <summary>
         /// If true, the source will loop.
@@ -464,6 +488,14 @@ namespace XREngine.Components
                             source.RelativeToListener = RelativeToListener;
                     //}
                     break;
+                case nameof(BypassSteamAudioSpatialization):
+                    foreach (var source in ActiveListeners.Values)
+                        source.BypassSteamAudioSpatialization = BypassSteamAudioSpatialization;
+                    break;
+                case nameof(SteamAudioNonSpatialStereo):
+                    foreach (var source in ActiveListeners.Values)
+                        source.SteamAudioNonSpatialStereo = SteamAudioNonSpatialStereo;
+                    break;
             case nameof(Type):
                 //lock (ActiveListeners)
                 //{
@@ -731,6 +763,8 @@ namespace XREngine.Components
             s.ReferenceDistance = ReferenceDistance;
             s.MaxDistance = MaxDistance;
             s.RelativeToListener = RelativeToListener;
+            s.BypassSteamAudioSpatialization = BypassSteamAudioSpatialization;
+            s.SteamAudioNonSpatialStereo = SteamAudioNonSpatialStereo;
             s.Looping = Loop;
             s.Pitch = Pitch;
             s.MinGain = MinGain;

@@ -414,3 +414,4 @@ XREngine.Audio/runtimes/win-x64/native/phonon.dll
 *.zip
 Screenshots/
 .dotnet/
+.matplot_venv/

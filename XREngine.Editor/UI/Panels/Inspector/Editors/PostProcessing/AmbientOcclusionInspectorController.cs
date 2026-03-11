@@ -31,6 +31,7 @@ public sealed class AmbientOcclusionInspectorController : UIComponent
 
     public SceneNode? ScreenSpaceGroup { get; set; }
     public SceneNode? MultiViewGroup { get; set; }
+    public SceneNode? MultiScaleGroup { get; set; }
     public SceneNode? SpatialHashGroup { get; set; }
     public SceneNode? MultipleTypeMessage { get; set; }
 
@@ -89,7 +90,13 @@ public sealed class AmbientOcclusionInspectorController : UIComponent
         var consistentType = DetermineConsistentType(ref hasTargets, ref unsupportedType);
 
         SetActive(ScreenSpaceGroup, consistentType == AmbientOcclusionSettings.EType.ScreenSpace);
-        SetActive(MultiViewGroup, consistentType == AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion);
+        SetActive(MultiViewGroup,
+            consistentType == AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion
+            || consistentType == AmbientOcclusionSettings.EType.HorizonBased
+            || consistentType == AmbientOcclusionSettings.EType.HorizonBasedPlus);
+        SetActive(MultiScaleGroup,
+            consistentType == AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance
+            || consistentType == AmbientOcclusionSettings.EType.ScalableAmbientObscurance);
         SetActive(SpatialHashGroup, consistentType == AmbientOcclusionSettings.EType.SpatialHashRaytraced);
 
         bool showWarning = (hasTargets && consistentType is null) || unsupportedType;
@@ -99,6 +106,7 @@ public sealed class AmbientOcclusionInspectorController : UIComponent
         {
             SetActive(ScreenSpaceGroup, false);
             SetActive(MultiViewGroup, false);
+            SetActive(MultiScaleGroup, false);
             SetActive(SpatialHashGroup, false);
         }
     }
@@ -141,6 +149,10 @@ public sealed class AmbientOcclusionInspectorController : UIComponent
     private static bool IsSupportedType(AmbientOcclusionSettings.EType type)
         => type == AmbientOcclusionSettings.EType.ScreenSpace
         || type == AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion
+        || type == AmbientOcclusionSettings.EType.ScalableAmbientObscurance
+        || type == AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance
+        || type == AmbientOcclusionSettings.EType.HorizonBased
+        || type == AmbientOcclusionSettings.EType.HorizonBasedPlus
         || type == AmbientOcclusionSettings.EType.SpatialHashRaytraced;
 
     private static void SetActive(SceneNode? node, bool active)

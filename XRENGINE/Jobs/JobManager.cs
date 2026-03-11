@@ -512,7 +512,12 @@ namespace XREngine
 
             double waitMs = waitedTicks * 1000d / System.Diagnostics.Stopwatch.Frequency;
             if (waitMs >= StarvationWarningThreshold.TotalMilliseconds && job.TryMarkStarvationLogged())
-                Debug.Out(EOutputVerbosity.Normal, $"Job {job.Id} ({job.Priority}) waited {waitMs:F1} ms before execution.");
+            {
+                string label = job.GetProfilerLabel();
+                Debug.Out(
+                    EOutputVerbosity.Normal,
+                    $"Job {job.Id} [{job.Affinity}/{job.Priority}] {label} waited {waitMs:F1} ms before execution.");
+            }
         }
 
         private static TimeSpan TicksToTimeSpan(long ticks)

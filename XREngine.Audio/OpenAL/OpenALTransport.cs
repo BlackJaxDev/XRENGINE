@@ -1,8 +1,10 @@
+using System.Buffers;
 using Silk.NET.OpenAL;
 using Silk.NET.OpenAL.Extensions.Creative;
 using Silk.NET.OpenAL.Extensions.EXT;
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 namespace XREngine.Audio
 {
@@ -17,6 +19,8 @@ namespace XREngine.Audio
     /// </summary>
     public sealed unsafe class OpenALTransport : IAudioTransport
     {
+        private bool _loggedFloatFallbackWarning;
+
         // --- OpenAL core objects ---
 
         public AL Api { get; }
@@ -261,13 +265,71 @@ namespace XREngine.Audio
                         }
                         else
                         {
-                            Trace.WriteLine("OpenAL float format extension not available; cannot upload float PCM.");
+                            if (!_loggedFloatFallbackWarning)
+                            {
+                                Trace.WriteLine("OpenAL float format extension not available; falling back to 16-bit PCM uploads.");
+                                _loggedFloatFallbackWarning = true;
+                            }
+
+                            int sampleCount = GetFloatSampleCount(pcm);
+                            short[] convertedPcm = ArrayPool<short>.Shared.Rent(sampleCount);
+                            try
+                            {
+                                int convertedSampleCount = ConvertFloatPcmToInt16Pcm(pcm, convertedPcm);
+                                fixed (short* convertedPtr = convertedPcm)
+                                {
+                                    Api.BufferData(
+                                        buffer.Id,
+                                        stereo ? BufferFormat.Stereo16 : BufferFormat.Mono16,
+                                        convertedPtr,
+                                        convertedSampleCount * sizeof(short),
+                                        frequency);
+                                }
+                            }
+                            finally
+                            {
+                                ArrayPool<short>.Shared.Return(convertedPcm);
+                            }
                         }
                         break;
                 }
             }
 
             VerifyError();
+        }
+
+        internal static int GetFloatSampleCount(ReadOnlySpan<byte> pcm)
+        {
+            if (pcm.Length % sizeof(float) != 0)
+                throw new ArgumentException("Float PCM byte count must be a multiple of 4.", nameof(pcm));
+
+            return pcm.Length / sizeof(float);
+        }
+
+        internal static int ConvertFloatPcmToInt16Pcm(ReadOnlySpan<byte> pcm, Span<short> destination)
+        {
+            int sampleCount = GetFloatSampleCount(pcm);
+            if (destination.Length < sampleCount)
+                throw new ArgumentException("Destination buffer is too small for converted PCM data.", nameof(destination));
+
+            ReadOnlySpan<float> source = MemoryMarshal.Cast<byte, float>(pcm);
+            for (int i = 0; i < source.Length; i++)
+                destination[i] = ConvertFloatSampleToInt16(source[i]);
+
+            return source.Length;
+        }
+
+        internal static short ConvertFloatSampleToInt16(float sample)
+        {
+            float clampedSample = Math.Clamp(sample, -1.0f, 1.0f);
+            if (clampedSample <= -1.0f)
+                return short.MinValue;
+            if (clampedSample >= 1.0f)
+                return short.MaxValue;
+
+            float scale = clampedSample < 0.0f ? 32768.0f : short.MaxValue;
+            int converted = (int)MathF.Round(clampedSample * scale);
+            return (short)Math.Clamp(converted, short.MinValue, short.MaxValue);
         }
 
         // --- IAudioTransport: Playback ---

@@ -433,6 +433,46 @@ namespace XREngine.Rendering
                 DataPointerSet?.Invoke(data);
         }
 
+        public unsafe byte[] GetRawBytes(uint? byteLength = null)
+        {
+            if (_clientSideSource is not { } source || source.Address == IntPtr.Zero)
+                return Array.Empty<byte>();
+
+            uint length = byteLength ?? source.Length;
+            if (source.Length < length)
+                throw new InvalidOperationException($"Buffer '{AttributeName}' does not contain {length} bytes of CPU data.");
+
+            byte[] bytes = GC.AllocateUninitializedArray<byte>((int)length);
+            if (length == 0)
+                return bytes;
+
+            fixed (byte* dst = bytes)
+                Memory.Move(dst, source.Address, length);
+
+            return bytes;
+        }
+
+        public unsafe void SetRawBytes(ReadOnlySpan<byte> data, uint? expectedLength = null)
+        {
+            uint byteLength = expectedLength ?? (uint)data.Length;
+            if (byteLength != data.Length)
+                throw new InvalidOperationException($"Raw byte payload length mismatch for buffer '{AttributeName}'. Expected {byteLength} bytes, got {data.Length}.");
+
+            if (_clientSideSource is null || _clientSideSource.Length != byteLength)
+            {
+                _clientSideSource?.Dispose();
+                _clientSideSource = DataSource.Allocate(byteLength);
+            }
+
+            if (byteLength > 0)
+            {
+                fixed (byte* src = data)
+                    Memory.Move(_clientSideSource.Address, src, byteLength);
+            }
+
+            ClearGpuCompressedPayload();
+        }
+
         public void Allocate<T>(uint listCount) where T : struct
         {
             _componentCount = 1;

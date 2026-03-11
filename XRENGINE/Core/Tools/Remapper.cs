@@ -5,6 +5,21 @@ namespace System
 {
     public class Remapper
     {
+        private readonly struct RemapKey<T>(T value) : IEquatable<RemapKey<T>>
+        {
+            private readonly T _value = value;
+            private readonly bool _hasValue = value is not null;
+
+            public bool Equals(RemapKey<T> other)
+                => _hasValue == other._hasValue && (!_hasValue || EqualityComparer<T>.Default.Equals(_value, other._value));
+
+            public override bool Equals(object? obj)
+                => obj is RemapKey<T> other && Equals(other);
+
+            public override int GetHashCode()
+                => !_hasValue ? 0 : EqualityComparer<T>.Default.GetHashCode(_value!);
+        }
+
         internal object? _source;
         internal int[] _impTable = [];
         internal int[] _remapTable = [];
@@ -20,22 +35,19 @@ namespace System
         public int ImplementationLength => _impTable.Length;
 
         public T[] GetFirstAppearanceBuffer<T>()
-        {
-            if (_source is null || _source is not IList<T> list)
-                throw new InvalidOperationException();
+            => _source is null || _source is not IList<T> list
+                ? throw new InvalidOperationException()
+                : [.. ImplementationTable.Select(x => list[x])];
 
-            return ImplementationTable.Select(x => list[x]).ToArray();
-        }
-
-        public void Remap<T>(IList<T> source) => Remap(source, null);
-        private static readonly object NullKey = new();
+        public void Remap<T>(IList<T> source)
+            => Remap(source, null);
 
         public void Remap<T>(IList<T> source, Comparison<T>? comp)
         {
             _source = source;
             int count = source.Count;
             int tmp;
-            Dictionary<object, int> cache = new();
+            Dictionary<RemapKey<T>, int> cache = [];
 
             _remapTable = new int[count];
             _impTable = new int[count];
@@ -45,13 +57,10 @@ namespace System
             for (int i = 0; i < count; i++)
             {
                 T t = source[i];
-
-                object key = t is null ? NullKey : t;
+                var key = new RemapKey<T>(t);
 
                 if (cache.TryGetValue(key, out int cachedIndex))
-                {
                     _remapTable[i] = cachedIndex;
-                }
                 else
                 {
                     _impTable[impIndex] = i;

@@ -20,6 +20,7 @@ layout(binding = 6) uniform sampler2D BRDF;
 
 layout(binding = 7) uniform sampler2D Irradiance;
 layout(binding = 8) uniform sampler2D Prefilter;
+uniform bool UseAmbientOcclusion = true;
 vec2 EncodeOcta(vec3 dir)
 {
 	dir = normalize(dir);
@@ -90,7 +91,7 @@ void main()
 	vec3 albedoColor = texture(AlbedoOpacity, uvi).rgb;
 	vec3 normal = texture(Normal, uvi).rgb;
 	vec3 rms = texture(RMSE, uvi).rgb;
-	float ao = texture(SSAOIntensityTexture, uvi).r;
+	float ao = UseAmbientOcclusion ? texture(SSAOIntensityTexture, uvi).r : 1.0f;
 	float depth = texture(DepthView, uvi).r;
 	vec3 InLo = texture(LightingTexture, uvi).rgb;
 	vec3 irradianceColor = SampleOcta(Irradiance, normal);

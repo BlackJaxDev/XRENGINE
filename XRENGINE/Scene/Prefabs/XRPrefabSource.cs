@@ -145,6 +145,30 @@ namespace XREngine.Scene.Prefabs
                 return false;
 
             var opts = importOptions as ModelImportOptions ?? new ModelImportOptions();
+            bool importOptionsChanged = false;
+
+            Dictionary<string, XRTexture2D?> textureRemap = opts.TextureRemap ??= [];
+            Dictionary<string, XRMaterial?> materialRemap = opts.MaterialRemap ??= [];
+            IReadOnlyDictionary<string, string> legacyPathRemap = opts.LegacyTexturePathRemapValues ?? new Dictionary<string, string>();
+            IReadOnlyDictionary<string, string> legacyMaterialRemap = opts.LegacyMaterialNameRemapValues ?? new Dictionary<string, string>();
+
+            void TrackTextureKey(string path)
+            {
+                if (!textureRemap.ContainsKey(path))
+                {
+                    textureRemap.Add(path, null);
+                    importOptionsChanged = true;
+                }
+            }
+
+            void TrackMaterialKey(string name)
+            {
+                if (!materialRemap.ContainsKey(name))
+                {
+                    materialRemap.Add(name, null);
+                    importOptionsChanged = true;
+                }
+            }
 
             using var importer = new ModelImporter(filePath, onCompleted: null, materialFactory: null);
 
@@ -154,8 +178,12 @@ namespace XREngine.Scene.Prefabs
 
             XRTexture2D GetOrCreateTextureRemapped(string path)
             {
-                Dictionary<string, string> pathRemap = opts.TexturePathRemap ?? [];
-                if (pathRemap.TryGetValue(path, out string? newPath) && !string.IsNullOrEmpty(newPath))
+                TrackTextureKey(path);
+
+                if (textureRemap.TryGetValue(path, out XRTexture2D? replacementTexture) && replacementTexture is not null)
+                    return replacementTexture;
+
+                if (legacyPathRemap.TryGetValue(path, out string? newPath) && !string.IsNullOrEmpty(newPath))
                     path = newPath;
 
                 return defaultMakeTexture(path);
@@ -163,8 +191,12 @@ namespace XREngine.Scene.Prefabs
 
             XRMaterial GetOrCreateMaterialRemapped(XRTexture[] textureList, List<TextureSlot> textures, string name)
             {
-                Dictionary<string, string> materialRemap = opts.MaterialNameRemap ?? [];
-                if (materialRemap.TryGetValue(name, out string? replacementPath) &&
+                TrackMaterialKey(name);
+
+                if (materialRemap.TryGetValue(name, out XRMaterial? replacementMaterial) && replacementMaterial is not null)
+                    return replacementMaterial;
+
+                if (legacyMaterialRemap.TryGetValue(name, out string? replacementPath) &&
                     !string.IsNullOrEmpty(replacementPath) &&
                     File.Exists(replacementPath))
                 {
@@ -180,6 +212,7 @@ namespace XREngine.Scene.Prefabs
             importer.MakeTextureAction = GetOrCreateTextureRemapped;
 
             bool? processMeshesAsynchronously = opts.ProcessMeshesAsynchronously;
+            bool batchSubmeshAddsDuringAsyncImport = opts.BatchSubmeshAddsDuringAsyncImport;
 
             SceneNode? rootNode = importer.Import(
                 opts.PostProcessSteps,
@@ -188,10 +221,14 @@ namespace XREngine.Scene.Prefabs
                 scaleConversion: opts.ScaleConversion,
                 zUp: opts.ZUp,
                 multiThread: opts.MultiThread,
-                processMeshesAsynchronously: processMeshesAsynchronously);
+                processMeshesAsynchronously: processMeshesAsynchronously,
+                batchSubmeshAddsDuringAsyncImport: batchSubmeshAddsDuringAsyncImport);
 
             if (rootNode is null)
                 return false;
+
+            if (importOptionsChanged)
+                Engine.Assets.SaveThirdPartyImportOptions(filePath, GetType(), opts);
 
             RootNode = rootNode;
             Name ??= Path.GetFileNameWithoutExtension(filePath);

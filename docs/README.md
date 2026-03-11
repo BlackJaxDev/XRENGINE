@@ -38,6 +38,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 ## Features
 - [Audio2Face-3D Component](features/audio2face-3d.md)
 - [Audio2Face-3D Engine Setup](features/audio2face-3d-engine-setup.md)
+- [Model Import](features/model-import.md)
 - [Steam Audio Integration](features/steam-audio.md)
 - [Tick-Based Animation Timing](features/tick-based-animation-timing.md)
 

@@ -160,12 +160,37 @@ namespace XREngine.Rendering.UI
                 queuedAudioBuffers >= MinAudioBuffersBeforePlay &&
                 audioSource is not null && !audioSource.ActiveListeners.IsEmpty)
             {
+                bool startedPlaying = false;
                 foreach (var source in audioSource.ActiveListeners.Values)
                 {
                     if (!source.IsPlaying)
+                    {
                         source.Play();
+                        startedPlaying = true;
+                    }
                 }
                 _audioHasEverPlayed = true;
+
+                // Re-seed the clock baseline at the moment audio actually
+                // starts playing, not when the first frame was submitted.
+                // During the pre-buffer wait (typically ~2 s) video may have
+                // continued via wall-clock fallback, advancing far beyond the
+                // baseline that was frozen at first-submission time.  Without
+                // this reseed the very first clock reading shows multi-second
+                // debt and immediately triggers a hard reset, creating a death
+                // spiral where audio is perpetually flushed before it can
+                // stabilize.  At play-start _processedSampleCount == 0 and
+                // SampleOffset == 0, so setting _firstAudioPts to the current
+                // video position makes the clock perfectly aligned.
+                if (startedPlaying && _lastPresentedVideoPts > 0)
+                {
+                    long prevPts = _firstAudioPts;
+                    _firstAudioPts = _lastPresentedVideoPts;
+                    Debug.Out($"[AV Audio] Clock reseeded at play-start: " +
+                              $"prev={prevPts / TimeSpan.TicksPerMillisecond}ms " +
+                              $"new={_firstAudioPts / TimeSpan.TicksPerMillisecond}ms " +
+                              $"(aligned to video position).");
+                }
             }
 
             // ── Phase 3: Underrun telemetry ──

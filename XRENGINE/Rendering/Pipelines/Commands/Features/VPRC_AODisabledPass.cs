@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -9,18 +8,16 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
-    public class VPRC_MSVO : ViewportRenderCommand
+    public class VPRC_AODisabledPass : ViewportRenderCommand
     {
-        private string MSVOGenShaderName()
-            => Stereo ? "MSVOGenStereo.fs" : "MSVOGen.fs";
+        private string DisabledShaderName()
+            => Stereo ? "AODisabledStereo.fs" : "AODisabled.fs";
 
-        private string MSVOBlurShaderName()
-            => Stereo ? "SSAOBlurStereo.fs" : "SSAOBlur.fs";
+        public string IntensityTextureName { get; set; } = "SSAOIntensityTexture";
+        public string GenerationFBOName { get; set; } = "SSAOFBO";
+        public string BlurFBOName { get; set; } = "SSAOBlurFBO";
+        public string OutputFBOName { get; set; } = "GBufferFBO";
 
-        public string MSVOIntensityTextureName { get; set; } = "SSAOIntensityTexture";
-        public string MSVOFBOName { get; set; } = "SSAOFBO";
-        public string MSVOBlurFBOName { get; set; } = "SSAOBlurFBO";
-        public string GBufferFBOFBOName { get; set; } = "GBufferFBO";
         public string NormalTextureName { get; set; } = "Normal";
         public string DepthViewTextureName { get; set; } = "DepthView";
         public string AlbedoTextureName { get; set; } = "AlbedoOpacity";
@@ -29,7 +26,6 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
         public IReadOnlyList<string> DependentFboNames { get; set; } = Array.Empty<string>();
 
-        public Vector4 ScaleFactors { get; set; } = new(0.1f, 0.2f, 0.4f, 0.8f);
         public bool Stereo { get; set; }
 
         private sealed class InstanceState
@@ -58,12 +54,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             TransformIdTextureName = transformId;
         }
 
-        public void SetOutputNames(string ssaoIntensityTexture, string ssaoFBO, string ssaoBlurFBO, string gBufferFBO)
+        public void SetOutputNames(string intensity, string generationFbo, string blurFbo, string outputFbo)
         {
-            MSVOIntensityTextureName = ssaoIntensityTexture;
-            MSVOFBOName = ssaoFBO;
-            MSVOBlurFBOName = ssaoBlurFBO;
-            GBufferFBOFBOName = gBufferFBO;
+            IntensityTextureName = intensity;
+            GenerationFBOName = generationFbo;
+            BlurFBOName = blurFbo;
+            OutputFBOName = outputFbo;
         }
 
         protected override void Execute()
@@ -89,12 +85,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             var area = Engine.Rendering.State.RenderArea;
             int width = area.Width;
             int height = area.Height;
+            if (width <= 0 || height <= 0)
+                return;
+
             bool forceRebuild = state.ResourcesDirty;
             state.ResourcesDirty = false;
 
             if (!forceRebuild)
             {
-                XRTexture? registeredAo = instance.GetTexture<XRTexture>(MSVOIntensityTextureName);
+                XRTexture? registeredAo = instance.GetTexture<XRTexture>(IntensityTextureName);
                 forceRebuild = state.AoTexture is null
                     || registeredAo is null
                     || !ReferenceEquals(state.AoTexture, registeredAo);
@@ -103,25 +102,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!forceRebuild && width == state.LastWidth && height == state.LastHeight)
                 return;
 
-            RegenerateFBOs(
-                instance,
-                state,
-                normalTex,
-                depthViewTex,
-                albedoTex,
-                rmseTex,
-                transformIdTex,
-                depthStencilTex,
-                width,
-                height);
+            RegenerateResources(instance, state, albedoTex, normalTex, rmseTex, transformIdTex, depthStencilTex, width, height);
         }
 
-        private void RegenerateFBOs(
+        private void RegenerateResources(
             XRRenderPipelineInstance instance,
             InstanceState state,
-            XRTexture normalTex,
-            XRTexture depthViewTex,
             XRTexture albedoTex,
+            XRTexture normalTex,
             XRTexture rmseTex,
             XRTexture transformIdTex,
             XRTexture depthStencilTex,
@@ -146,22 +134,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             };
 
-            XRShader msvoGenShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, MSVOGenShaderName()), EShaderType.Fragment);
-            XRShader msvoBlurShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, MSVOBlurShaderName()), EShaderType.Fragment);
-
-            XRTexture[] msvoGenTexRefs =
-            [
-                normalTex,
-                depthViewTex,
-            ];
-
-            XRTexture[] msvoBlurTexRefs =
-            [
-                state.AoTexture,
-            ];
-
-            XRMaterial msvoGenMat = new(msvoGenTexRefs, msvoGenShader) { RenderOptions = renderParams };
-            XRMaterial msvoBlurMat = new(msvoBlurTexRefs, msvoBlurShader) { RenderOptions = renderParams };
+            XRShader disabledShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, DisabledShaderName()), EShaderType.Fragment);
+            XRMaterial genMaterial = new(Array.Empty<XRTexture>(), disabledShader) { RenderOptions = renderParams };
+            XRMaterial blurMaterial = new(Array.Empty<XRTexture>(), disabledShader) { RenderOptions = renderParams };
 
             if (albedoTex is not IFrameBufferAttachement albedoAttach)
                 throw new ArgumentException("Albedo texture must be an IFrameBufferAttachement");
@@ -181,29 +156,28 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (state.AoTexture is not IFrameBufferAttachement aoAttach)
                 throw new ArgumentException("Ambient occlusion texture must be an IFrameBufferAttachement");
 
-            XRQuadFrameBuffer msvoGenFBO = new(msvoGenMat, true,
+            XRQuadFrameBuffer generationFbo = new(genMaterial, true,
                 (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
                 (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
                 (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
                 (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
                 (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
             {
-                Name = MSVOFBOName
+                Name = GenerationFBOName
             };
-            msvoGenFBO.SettingUniforms += MSVOGen_SetUniforms;
 
-            XRQuadFrameBuffer msvoBlurFBO = new(msvoBlurMat, true, (aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+            XRQuadFrameBuffer blurFbo = new(blurMaterial, true, (aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
             {
-                Name = MSVOBlurFBOName
+                Name = BlurFBOName
             };
 
             XRFrameBuffer outputFbo = new((aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
             {
-                Name = GBufferFBOFBOName
+                Name = OutputFBOName
             };
 
-            instance.SetFBO(msvoGenFBO);
-            instance.SetFBO(msvoBlurFBO);
+            instance.SetFBO(generationFbo);
+            instance.SetFBO(blurFbo);
             instance.SetFBO(outputFbo);
         }
 
@@ -222,8 +196,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 texture.Resizable = false;
                 texture.SizedInternalFormat = ESizedInternalFormat.R16f;
                 texture.OVRMultiViewParameters = new(0, 2u);
-                texture.Name = MSVOIntensityTextureName;
-                texture.SamplerName = MSVOIntensityTextureName;
+                texture.Name = IntensityTextureName;
+                texture.SamplerName = IntensityTextureName;
                 texture.MinFilter = ETexMinFilter.Nearest;
                 texture.MagFilter = ETexMagFilter.Nearest;
                 texture.UWrap = ETexWrapMode.ClampToEdge;
@@ -238,33 +212,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                 EPixelFormat.Red,
                 EPixelType.HalfFloat,
                 EFrameBufferAttachment.ColorAttachment0);
-            aoTexture.Name = MSVOIntensityTextureName;
-            aoTexture.SamplerName = MSVOIntensityTextureName;
+            aoTexture.Name = IntensityTextureName;
+            aoTexture.SamplerName = IntensityTextureName;
             aoTexture.MinFilter = ETexMinFilter.Nearest;
             aoTexture.MagFilter = ETexMagFilter.Nearest;
             aoTexture.UWrap = ETexWrapMode.ClampToEdge;
             aoTexture.VWrap = ETexWrapMode.ClampToEdge;
             return aoTexture;
-        }
-
-        private void MSVOGen_SetUniforms(XRRenderProgram program)
-        {
-            program.Uniform("ScaleFactors", ScaleFactors);
-
-            var rc = ActivePipelineInstance.RenderState.SceneCamera;
-            if (rc is null)
-                return;
-
-            rc.SetUniforms(program);
-
-            if (Engine.Rendering.State.IsStereoPass)
-                ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
-
-            rc.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance);
-
-            program.Uniform(EEngineUniform.ScreenWidth.ToString(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Width);
-            program.Uniform(EEngineUniform.ScreenHeight.ToString(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Height);
-            program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);
         }
 
         private void InvalidateDependentFbos(XRRenderPipelineInstance instance)

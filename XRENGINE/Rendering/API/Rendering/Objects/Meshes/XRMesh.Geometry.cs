@@ -48,7 +48,7 @@ public partial class XRMesh
     private Remapper? SetTriangleIndices(Vertex[] vertices, bool remap = true)
     {
         InvalidateIndexBufferCache(EPrimitiveType.Triangles);
-        _triangles = [];
+        _triangles = new List<IndexTriangle>(vertices.Length / 3);
         if (remap)
         {
             Remapper remapper = new();
@@ -65,7 +65,7 @@ public partial class XRMesh
     private Remapper? SetLineIndices(Vertex[] vertices, bool remap = true)
     {
         InvalidateIndexBufferCache(EPrimitiveType.Lines);
-        _lines = [];
+        _lines = new List<IndexLine>(vertices.Length / 2);
         if (remap)
         {
             Remapper remapper = new();
@@ -82,7 +82,7 @@ public partial class XRMesh
     private Remapper? SetPointIndices(Vertex[] vertices, bool remap = true)
     {
         InvalidateIndexBufferCache(EPrimitiveType.Points);
-        _points = [];
+        _points = new List<int>(vertices.Length);
         if (remap)
         {
             Remapper remapper = new();

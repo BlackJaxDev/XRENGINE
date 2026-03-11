@@ -68,5 +68,6 @@ void main()
     totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.y, uv);
     totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.z, uv);
     totalOcclusion += ComputeObscurance(position, viewNormal, ScaleFactors.w, uv);
-    OutIntensity = 0.0f;//clamp(1.0f - Bias * totalOcclusion * Intensity, 0.0f, 1.0f);
+    float obscurance = 0.25f * totalOcclusion;
+    OutIntensity = clamp(1.0f - Bias * obscurance * Intensity, 0.0f, 1.0f);
 }

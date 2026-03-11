@@ -433,8 +433,22 @@ public partial class DefaultRenderPipeline
             enumOptions: BuildEnumOptions<AmbientOcclusionSettings.EType>());
 
         bool IsSSAO(object o) => ((AmbientOcclusionSettings)o).Type == AmbientOcclusionSettings.EType.ScreenSpace;
-        bool IsMVAO(object o) => ((AmbientOcclusionSettings)o).Type == AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion;
-        bool IsMSVO(object o) => ((AmbientOcclusionSettings)o).Type == AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance;
+
+        bool IsMVAO(object o)
+        {
+            var type = ((AmbientOcclusionSettings)o).Type;
+            return type == AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion
+                || type == AmbientOcclusionSettings.EType.HorizonBased
+                || type == AmbientOcclusionSettings.EType.HorizonBasedPlus;
+        }
+
+        bool IsMSVO(object o)
+        {
+            var type = ((AmbientOcclusionSettings)o).Type;
+            return type == AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance
+                || type == AmbientOcclusionSettings.EType.ScalableAmbientObscurance;
+        }
+
         bool IsSpatialHash(object o) => ((AmbientOcclusionSettings)o).Type == AmbientOcclusionSettings.EType.SpatialHashRaytraced;
 
         bool UsesRadius(object o) => IsSSAO(o) || IsMVAO(o) || IsSpatialHash(o);
@@ -589,7 +603,7 @@ public partial class DefaultRenderPipeline
             min: 0.25f,
             max: 2.0f,
             step: 0.01f,
-            visibilityCondition: o => !IsSSAO(o) && !IsSpatialHash(o));
+            visibilityCondition: IsMSVO);
 
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.SamplesPerPixel),
@@ -599,7 +613,7 @@ public partial class DefaultRenderPipeline
             min: 0.5f,
             max: 8.0f,
             step: 0.1f,
-            visibilityCondition: o => !IsSSAO(o));
+            visibilityCondition: IsMSVO);
     }
 
     private static void DescribeMotionBlurStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)

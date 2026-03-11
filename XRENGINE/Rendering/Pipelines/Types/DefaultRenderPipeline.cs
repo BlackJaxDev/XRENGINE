@@ -184,6 +184,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private const string ColorGradingStageKey = "colorGrading";
     private const string BloomStageKey = "bloom";
     private const string AmbientOcclusionStageKey = "ambientOcclusion";
+    private const int AmbientOcclusionDisabledMode = -1;
     private const string MotionBlurStageKey = "motionBlur";
     private const string DepthOfFieldStageKey = "depthOfField";
     private const string LensDistortionStageKey = "lensDistortion";
@@ -344,19 +345,30 @@ public partial class DefaultRenderPipeline : RenderPipeline
         {
             if (enableComputePasses)
             {
-                // Render to the ambient occlusion FBO using a switch to select SSAO, MVAO, or spatial hash AO.
+                // Render to the ambient occlusion FBO using a switch to select the active AO implementation.
                 var aoSwitch = c.Add<VPRC_Switch>();
                 aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
                 aoSwitch.Cases = new()
                 {
+                    [(int)AmbientOcclusionSettings.EType.ScreenSpace] = CreateSSAOPassCommands(),
                     [(int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion] = CreateMVAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance] = CreateMSVOPassCommands(),
                     [(int)AmbientOcclusionSettings.EType.SpatialHashRaytraced] = CreateSpatialHashAOPassCommands(),
                 };
-                aoSwitch.DefaultCase = CreateSSAOPassCommands();
+                aoSwitch.DefaultCase = CreateAmbientOcclusionDisabledPassCommands();
             }
             else
             {
-                ConfigureSSAOPass(c.Add<VPRC_SSAOPass>());
+                var aoSwitch = c.Add<VPRC_Switch>();
+                aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
+                aoSwitch.Cases = new()
+                {
+                    [(int)AmbientOcclusionSettings.EType.ScreenSpace] = CreateSSAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion] = CreateSSAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance] = CreateSSAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.SpatialHashRaytraced] = CreateSSAOPassCommands(),
+                };
+                aoSwitch.DefaultCase = CreateAmbientOcclusionDisabledPassCommands();
             }
 
             using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(AmbientOcclusionFBOName)))
@@ -909,6 +921,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
         return container;
     }
 
+    private ViewportRenderCommandContainer CreateAmbientOcclusionDisabledPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureAmbientOcclusionDisabledPass(container.Add<VPRC_AODisabledPass>());
+        return container;
+    }
+
     private static void LogAo(string message)
         => Debug.Out(EOutputVerbosity.Normal, false, "[AO][Pipeline] {0}", message);
 
@@ -919,6 +941,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
             BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
         };
         ConfigureMVAOPass(container.Add<VPRC_MVAOPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateMSVOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureMSVOPass(container.Add<VPRC_MSVO>());
         return container;
     }
 
@@ -1042,6 +1074,46 @@ public partial class DefaultRenderPipeline : RenderPipeline
         pass.DependentFboNames = new[] { LightCombineFBOName };
     }
 
+    private void ConfigureMSVOPass(VPRC_MSVO pass)
+    {
+        pass.SetOptions(Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName,
+            TransformIdTextureName);
+
+        pass.SetOutputNames(
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            GBufferFBOName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
+    }
+
+    private void ConfigureAmbientOcclusionDisabledPass(VPRC_AODisabledPass pass)
+    {
+        pass.SetOptions(Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName,
+            TransformIdTextureName);
+
+        pass.SetOutputNames(
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            GBufferFBOName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
+    }
+
     private void ConfigureSpatialHashAOPass(VPRC_SpatialHashAOPass pass)
     {
         pass.SetOptions(
@@ -1070,21 +1142,31 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private int EvaluateAmbientOcclusionMode()
     {
         var aoStage = State.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
-        if (aoStage?.TryGetBacking(out AmbientOcclusionSettings? aoSettings) == true && aoSettings is not null && aoSettings.Enabled)
+        if (aoStage?.TryGetBacking(out AmbientOcclusionSettings? aoSettings) == true && aoSettings is not null)
         {
-            int result = (int)aoSettings.Type;
-            //LogAo($"EvaluateAmbientOcclusionMode -> camera={State.SceneCamera?.GetType().Name ?? "<none>"}, type={aoSettings.Type}");
-            return result;
+            if (!aoSettings.Enabled)
+                return AmbientOcclusionDisabledMode;
+
+            return MapAmbientOcclusionMode(aoSettings.Type);
         }
 
-        //LogAo("EvaluateAmbientOcclusionMode -> disabled or missing; defaulting to ScreenSpace");
-        return (int)AmbientOcclusionSettings.EType.ScreenSpace;
+        return AmbientOcclusionDisabledMode;
     }
 
+    private static int MapAmbientOcclusionMode(AmbientOcclusionSettings.EType type)
+        => type switch
+        {
+            AmbientOcclusionSettings.EType.ScreenSpace => (int)AmbientOcclusionSettings.EType.ScreenSpace,
+            AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion => (int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion,
+            AmbientOcclusionSettings.EType.ScalableAmbientObscurance => (int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance,
+            AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance => (int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance,
+            AmbientOcclusionSettings.EType.HorizonBased => (int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion,
+            AmbientOcclusionSettings.EType.HorizonBasedPlus => (int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion,
+            AmbientOcclusionSettings.EType.SpatialHashRaytraced => (int)AmbientOcclusionSettings.EType.SpatialHashRaytraced,
+            _ => (int)AmbientOcclusionSettings.EType.ScreenSpace,
+        };
+
     #endregion
-
-
-
 
     #region Setting Uniforms
 
@@ -1105,6 +1187,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private readonly Dictionary<Guid, uint> _cachedProbeCaptureVersions = new();
     private volatile bool _pendingProbeRefresh;
     private Job? _probeTessellationJob;
+    private volatile int _probeTessellationGeneration;
+    private int _probeTetraProbeCount;
 
     public bool UseProbeGridAcceleration
     {
@@ -1139,6 +1223,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
     {
+        program.Uniform("UseAmbientOcclusion", ShouldUseAmbientOcclusion());
+
         if (!UsesLightProbeGI)
             return;
 
@@ -1181,7 +1267,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
             program.Uniform("ProbeGridDims", _probeGridDims);
         }
 
-        int tetraCount = _probeTetraBuffer != null ? (int)_probeTetraBuffer.ElementCount : 0;
+        int tetraCount = _probeTetraBuffer != null && _probeTetraProbeCount == readyProbes.Count
+            ? (int)_probeTetraBuffer.ElementCount
+            : 0;
         program.Uniform("TetraCount", tetraCount);
         if (tetraCount > 0)
         {
@@ -1192,16 +1280,39 @@ public partial class DefaultRenderPipeline : RenderPipeline
         }
     }
 
+    private bool ShouldUseAmbientOcclusion()
+    {
+        var stage = State.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+        return stage?.TryGetBacking(out AmbientOcclusionSettings? settings) == true
+            && settings is not null
+            && settings.Enabled;
+    }
+
     private void RenderProbeTetrahedra(List<LightProbeComponent> readyProbes, int tetraCount)
     {
         for (uint i = 0; i < tetraCount; ++i)
         {
             var tetraData = _probeTetraBuffer!.GetDataRawAtIndex<ProbeTetraData>(i);
             var indices = tetraData.Indices;
-            Vector3 p0 = readyProbes[(int)indices.X].Transform.RenderTranslation;
-            Vector3 p1 = readyProbes[(int)indices.Y].Transform.RenderTranslation;
-            Vector3 p2 = readyProbes[(int)indices.Z].Transform.RenderTranslation;
-            Vector3 p3 = readyProbes[(int)indices.W].Transform.RenderTranslation;
+            int index0 = (int)indices.X;
+            int index1 = (int)indices.Y;
+            int index2 = (int)indices.Z;
+            int index3 = (int)indices.W;
+            int probeCount = readyProbes.Count;
+
+            if ((uint)index0 >= probeCount ||
+                (uint)index1 >= probeCount ||
+                (uint)index2 >= probeCount ||
+                (uint)index3 >= probeCount)
+            {
+                Debug.LogWarning($"Skipping stale probe tetrahedron {i}: indices=({index0}, {index1}, {index2}, {index3}) probeCount={probeCount}.");
+                continue;
+            }
+
+            Vector3 p0 = readyProbes[index0].Transform.RenderTranslation;
+            Vector3 p1 = readyProbes[index1].Transform.RenderTranslation;
+            Vector3 p2 = readyProbes[index2].Transform.RenderTranslation;
+            Vector3 p3 = readyProbes[index3].Transform.RenderTranslation;
             Engine.Rendering.Debug.RenderLine(p0, p1, ColorF4.Cyan);
             Engine.Rendering.Debug.RenderLine(p0, p2, ColorF4.Cyan);
             Engine.Rendering.Debug.RenderLine(p0, p3, ColorF4.Cyan);
@@ -1365,6 +1476,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
         _probeGridDims = IVector3.Zero;
         _probeTessellationJob?.Cancel();
         _probeTessellationJob = null;
+        unchecked { _probeTessellationGeneration++; }
+        _probeTetraProbeCount = 0;
         _cachedProbePositions.Clear();
         _cachedProbeTextures.Clear();
         _cachedProbeCaptureVersions.Clear();
@@ -1454,10 +1567,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private void StartTetrahedralizationJob(IList<LightProbeComponent> probes)
     {
         _probeTessellationJob?.Cancel();
-        _probeTessellationJob = Engine.Jobs.Schedule(() => RunTetrahedralization(probes));
+        int generation = _probeTessellationGeneration;
+        int probeCount = probes.Count;
+        _probeTessellationJob = Engine.Jobs.Schedule(() => RunTetrahedralization(probes, generation, probeCount));
     }
 
-    private IEnumerable RunTetrahedralization(IList<LightProbeComponent> probes)
+    private IEnumerable RunTetrahedralization(IList<LightProbeComponent> probes, int generation, int probeCount)
     {
         var probeIndices = new Dictionary<LightProbeComponent, int>(probes.Count);
         for (int i = 0; i < probes.Count; ++i)
@@ -1466,21 +1581,21 @@ public partial class DefaultRenderPipeline : RenderPipeline
         // If we don't have enough probes for a tetrahedralization, create a minimal fallback so shaders still have data.
         if (probes.Count is > 0 and < 5)
         {
-            UploadTetrahedralization(BuildFallbackTetraData(probeIndices));
+            UploadTetrahedralization(BuildFallbackTetraData(probeIndices), generation, probeCount);
             yield break;
         }
 
         if (!Lights3DCollection.TryCreateDelaunay(probes, out var triangulation))
         {
             Debug.LogWarning("Probe tetrahedralization failed; skipping tetra buffer upload.");
-            UploadTetrahedralization([]);
+            UploadTetrahedralization([], generation, probeCount);
             yield break;
         }
 
         if (triangulation is null)
         {
             Debug.LogWarning("Probe tetrahedralization returned null data; skipping tetra buffer upload.");
-            UploadTetrahedralization([]);
+            UploadTetrahedralization([], generation, probeCount);
             yield break;
         }
 
@@ -1488,7 +1603,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         if (cells is null || cells.Count == 0)
         {
             Debug.LogWarning("Probe tetrahedralization produced no cells; skipping tetra buffer upload.");
-            UploadTetrahedralization([]);
+            UploadTetrahedralization([], generation, probeCount);
             yield break;
         }
 
@@ -1509,7 +1624,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             }
         }
 
-        UploadTetrahedralization(tetraData);
+        UploadTetrahedralization(tetraData, generation, probeCount);
         yield break;
     }
 
@@ -1532,12 +1647,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
         return list;
     }
 
-    private void UploadTetrahedralization(IReadOnlyList<ProbeTetraData> tetraData)
+    private void UploadTetrahedralization(IReadOnlyList<ProbeTetraData> tetraData, int generation, int probeCount)
     {
+        if (generation != _probeTessellationGeneration)
+            return;
+
         _probeTetraBuffer?.Dispose();
         if (tetraData.Count == 0)
         {
             _probeTetraBuffer = null;
+            _probeTetraProbeCount = 0;
             return;
         }
 
@@ -1549,6 +1668,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         };
         _probeTetraBuffer.SetDataRaw(tetraList);
         _probeTetraBuffer.PushData();
+        _probeTetraProbeCount = probeCount;
     }
 
 

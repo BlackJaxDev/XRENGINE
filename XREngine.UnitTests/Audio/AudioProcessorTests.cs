@@ -127,6 +127,18 @@ namespace XREngine.UnitTests.Audio
                 SteamAudioProcessor.GetChunkLayout(chunkIndex: 1, totalFrames: 1024, frameSize: 1024, outputChannels: 2));
         }
 
+        [Test]
+        public void SteamAudioProcessor_GetChunkLayout_StereoInput_TracksSampleOffsets()
+        {
+            var firstChunk = SteamAudioProcessor.GetChunkLayout(chunkIndex: 0, totalFrames: 2050, frameSize: 1024, inputChannels: 2, outputChannels: 2);
+            var secondChunk = SteamAudioProcessor.GetChunkLayout(chunkIndex: 1, totalFrames: 2050, frameSize: 1024, inputChannels: 2, outputChannels: 2);
+            var tailChunk = SteamAudioProcessor.GetChunkLayout(chunkIndex: 2, totalFrames: 2050, frameSize: 1024, inputChannels: 2, outputChannels: 2);
+
+            firstChunk.ShouldBe((0, 2048, 1024, 0, 2048));
+            secondChunk.ShouldBe((2048, 2048, 1024, 2048, 2048));
+            tailChunk.ShouldBe((4096, 4, 2, 4096, 4));
+        }
+
         #endregion
 
         #region AudioManager Combo Validation
