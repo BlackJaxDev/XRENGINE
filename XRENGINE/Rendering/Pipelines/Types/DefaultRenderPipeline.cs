@@ -118,8 +118,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
         XRMaterial.CreateColorMaterialDeferred();
 
     //FBOs
-    public const string AmbientOcclusionFBOName = "SSAOFBO";
-    public const string AmbientOcclusionBlurFBOName = "SSAOBlurFBO";
+    public const string AmbientOcclusionFBOName = "AmbientOcclusionFBO";
+    public const string AmbientOcclusionBlurFBOName = "AmbientOcclusionBlurFBO";
+    public const string HBAOPlusBlurIntermediateFBOName = "HBAOPlusBlurIntermediateFBO";
+    public const string GTAOBlurIntermediateFBOName = "GTAOBlurIntermediateFBO";
     public const string GBufferFBOName = "GBufferFBO";
     public const string LightCombineFBOName = "LightCombineFBO";
     public const string ForwardPassFBOName = "ForwardPassFBO";
@@ -149,8 +151,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
 
     //Textures
-    public const string SSAONoiseTextureName = "SSAONoiseTexture";
-    public const string AmbientOcclusionIntensityTextureName = "SSAOIntensityTexture";
+    public const string AmbientOcclusionNoiseTextureName = "AmbientOcclusionNoiseTexture";
+    public const string AmbientOcclusionIntensityTextureName = "AmbientOcclusionTexture";
+    public const string GTAORawTextureName = "GTAORawTexture";
+    public const string GTAOBlurIntermediateTextureName = "GTAOBlurIntermediateTexture";
+    public const string HBAOPlusRawTextureName = "HBAOPlusRawTexture";
+    public const string HBAOPlusBlurIntermediateTextureName = "HBAOPlusBlurIntermediateTexture";
     public const string NormalTextureName = "Normal";
     public const string DepthViewTextureName = "DepthView";
     public const string StencilViewTextureName = "StencilView";
@@ -351,9 +357,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 aoSwitch.Cases = new()
                 {
                     [(int)AmbientOcclusionSettings.EType.ScreenSpace] = CreateSSAOPassCommands(),
-                    [(int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion] = CreateMVAOPassCommands(),
-                    [(int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance] = CreateMSVOPassCommands(),
-                    [(int)AmbientOcclusionSettings.EType.SpatialHashRaytraced] = CreateSpatialHashAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.HorizonBased] = CreateHBAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.HorizonBasedPlus] = CreateHBAOPlusPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion] = CreateVXAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.MultiViewCustom] = CreateMVAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype] = CreateMSVOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.SpatialHashExperimental] = CreateSpatialHashAOPassCommands(),
                 };
                 aoSwitch.DefaultCase = CreateAmbientOcclusionDisabledPassCommands();
             }
@@ -364,9 +374,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 aoSwitch.Cases = new()
                 {
                     [(int)AmbientOcclusionSettings.EType.ScreenSpace] = CreateSSAOPassCommands(),
-                    [(int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion] = CreateSSAOPassCommands(),
-                    [(int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance] = CreateSSAOPassCommands(),
-                    [(int)AmbientOcclusionSettings.EType.SpatialHashRaytraced] = CreateSSAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.HorizonBased] = CreateHBAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.HorizonBasedPlus] = CreateHBAOPlusPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion] = CreateVXAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.MultiViewCustom] = CreateSSAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype] = CreateSSAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.SpatialHashExperimental] = CreateSSAOPassCommands(),
                 };
                 aoSwitch.DefaultCase = CreateAmbientOcclusionDisabledPassCommands();
             }
@@ -380,8 +394,15 @@ public partial class DefaultRenderPipeline : RenderPipeline
             }
 
             c.Add<VPRC_DepthTest>().Enable = false;
-            c.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName);
-            c.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, GBufferFBOName);
+
+            var aoResolveSwitch = c.Add<VPRC_Switch>();
+            aoResolveSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
+            aoResolveSwitch.Cases = new()
+            {
+                [(int)AmbientOcclusionSettings.EType.HorizonBasedPlus] = CreateHBAOPlusResolveCommands(),
+                [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOResolveCommands(),
+            };
+            aoResolveSwitch.DefaultCase = CreateAmbientOcclusionResolveCommands();
 
             //LightCombine FBO
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
@@ -775,7 +796,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
         //SSAO FBO texture, this is created later by the SSAO command
         //c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-        //    SSAOIntensityTextureName,
+        //    AmbientOcclusionIntensityTextureName,
         //    CreateSSAOTexture,
         //    NeedsRecreateTextureInternalSize,
         //    ResizeTextureInternalSize);
@@ -931,6 +952,81 @@ public partial class DefaultRenderPipeline : RenderPipeline
         return container;
     }
 
+    private ViewportRenderCommandContainer CreateAmbientOcclusionResolveCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, GBufferFBOName);
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateHBAOPlusResolveCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, HBAOPlusBlurIntermediateFBOName);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(HBAOPlusBlurIntermediateFBOName, GBufferFBOName);
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateHBAOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureHBAOPass(container.Add<VPRC_AODisabledPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateHBAOPlusPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureHBAOPlusPass(container.Add<VPRC_HBAOPlusPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateGTAOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureGTAOPass(container.Add<VPRC_GTAOPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateGTAOResolveCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, GTAOBlurIntermediateFBOName);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(GTAOBlurIntermediateFBOName, GBufferFBOName);
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateVXAOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureVXAOPass(container.Add<VPRC_AODisabledPass>());
+        return container;
+    }
+
     private static void LogAo(string message)
         => Debug.Out(EOutputVerbosity.Normal, false, "[AO][Pipeline] {0}", message);
 
@@ -1040,7 +1136,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             DepthStencilTextureName);
 
         pass.SetOutputNames(
-            SSAONoiseTextureName,
+            AmbientOcclusionNoiseTextureName,
             AmbientOcclusionIntensityTextureName,
             AmbientOcclusionFBOName,
             AmbientOcclusionBlurFBOName,
@@ -1066,7 +1162,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             DepthStencilTextureName);
 
         pass.SetOutputNames(
-            SSAONoiseTextureName,
+            AmbientOcclusionNoiseTextureName,
             AmbientOcclusionIntensityTextureName,
             AmbientOcclusionFBOName,
             AmbientOcclusionBlurFBOName,
@@ -1097,6 +1193,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private void ConfigureAmbientOcclusionDisabledPass(VPRC_AODisabledPass pass)
     {
         pass.SetOptions(Stereo);
+        pass.SetStubInfo(null, null);
 
         pass.SetGBufferInputTextureNames(
             NormalTextureName,
@@ -1112,6 +1209,68 @@ public partial class DefaultRenderPipeline : RenderPipeline
             AmbientOcclusionBlurFBOName,
             GBufferFBOName);
         pass.DependentFboNames = new[] { LightCombineFBOName };
+    }
+
+    private void ConfigureHBAOPass(VPRC_AODisabledPass pass)
+    {
+        ConfigureAmbientOcclusionDisabledPass(pass);
+        pass.SetStubInfo(
+            "HorizonBased",
+            "HorizonBased AO is intentionally deferred in favor of HBAO+. Rendering neutral AO instead of implying that classic HBAO is implemented.");
+    }
+
+    private void ConfigureHBAOPlusPass(VPRC_HBAOPlusPass pass)
+    {
+        pass.SetOptions(Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName,
+            TransformIdTextureName);
+
+        pass.SetOutputNames(
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            HBAOPlusBlurIntermediateFBOName,
+            GBufferFBOName,
+            HBAOPlusRawTextureName,
+            HBAOPlusBlurIntermediateTextureName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
+    }
+
+    private void ConfigureGTAOPass(VPRC_GTAOPass pass)
+    {
+        pass.SetOptions(Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName,
+            TransformIdTextureName);
+
+        pass.SetOutputNames(
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            GTAOBlurIntermediateFBOName,
+            GBufferFBOName,
+            GTAORawTextureName,
+            GTAOBlurIntermediateTextureName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
+    }
+
+    private void ConfigureVXAOPass(VPRC_AODisabledPass pass)
+    {
+        ConfigureAmbientOcclusionDisabledPass(pass);
+        pass.SetStubInfo(
+            "VoxelAmbientOcclusion",
+            "VXAO is not implemented yet. This mode is reserved for a future voxelization plus cone-tracing path that will integrate with the existing voxel cone tracing infrastructure.");
     }
 
     private void ConfigureSpatialHashAOPass(VPRC_SpatialHashAOPass pass)
@@ -1154,15 +1313,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
     }
 
     private static int MapAmbientOcclusionMode(AmbientOcclusionSettings.EType type)
-        => type switch
+        => AmbientOcclusionSettings.NormalizeType(type) switch
         {
             AmbientOcclusionSettings.EType.ScreenSpace => (int)AmbientOcclusionSettings.EType.ScreenSpace,
-            AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion => (int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion,
-            AmbientOcclusionSettings.EType.ScalableAmbientObscurance => (int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance,
-            AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance => (int)AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance,
-            AmbientOcclusionSettings.EType.HorizonBased => (int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion,
-            AmbientOcclusionSettings.EType.HorizonBasedPlus => (int)AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion,
-            AmbientOcclusionSettings.EType.SpatialHashRaytraced => (int)AmbientOcclusionSettings.EType.SpatialHashRaytraced,
+            AmbientOcclusionSettings.EType.HorizonBased => (int)AmbientOcclusionSettings.EType.HorizonBased,
+            AmbientOcclusionSettings.EType.HorizonBasedPlus => (int)AmbientOcclusionSettings.EType.HorizonBasedPlus,
+            AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion => (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
+            AmbientOcclusionSettings.EType.VoxelAmbientOcclusion => (int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion,
+            AmbientOcclusionSettings.EType.MultiViewCustom => (int)AmbientOcclusionSettings.EType.MultiViewCustom,
+            AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype => (int)AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype,
+            AmbientOcclusionSettings.EType.SpatialHashExperimental => (int)AmbientOcclusionSettings.EType.SpatialHashExperimental,
             _ => (int)AmbientOcclusionSettings.EType.ScreenSpace,
         };
 

@@ -58,12 +58,12 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             //Debug.Out($"[Velocity] Motion vectors begin. GPU={GPUDispatch} PassCount={RenderPasses.Count}");
             using var overrideTicket = ActivePipelineInstance.RenderState.PushOverrideMaterial(material);
-            // Use unjittered projection during motion vectors pass to match the unjittered view-projection
-            // matrices passed to the fragment shader. This prevents jitter from creating artificial velocity.
-            using var unjitteredTicket = ActivePipelineInstance.RenderState.PushUnjitteredProjection();
             // Force shader pipeline mode so the override material is actually used.
             // In combined shader mode, material overrides are ignored and meshes render with their original shaders.
             using var pipelineTicket = ActivePipelineInstance.RenderState.PushForceShaderPipelines();
+            // Motion vectors require the engine-generated mesh vertex varyings (notably FragPosLocal).
+            // Some custom material vertex shaders do not emit those varyings, which leaves the velocity pass blank.
+            using var generatedVertexTicket = ActivePipelineInstance.RenderState.PushForceGeneratedVertexProgram();
 
             var commands = ActivePipelineInstance.MeshRenderCommands;
             if (commands is null)

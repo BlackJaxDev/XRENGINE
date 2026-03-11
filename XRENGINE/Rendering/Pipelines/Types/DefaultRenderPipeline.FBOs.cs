@@ -259,9 +259,12 @@ public partial class DefaultRenderPipeline
         if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporal))
         {
             //Debug.Out($"[Velocity] Using temporal uniforms. HistoryReady={temporal.HistoryReady}, ExposureReady={temporal.HistoryExposureReady}, Size={temporal.Width}x{temporal.Height}");
-            program.Uniform("HistoryReady", temporal.HistoryReady);
             program.Uniform("CurrViewProjection", temporal.CurrViewProjectionUnjittered);
-            program.Uniform("PrevViewProjection", temporal.PrevViewProjectionUnjittered);
+            program.Uniform(
+                "PrevViewProjection",
+                temporal.HistoryReady
+                    ? temporal.PrevViewProjectionUnjittered
+                    : temporal.CurrViewProjectionUnjittered);
             return;
         }
 
@@ -272,14 +275,12 @@ public partial class DefaultRenderPipeline
             Matrix4x4 projMatrix = camera.ProjectionMatrix;
             Matrix4x4 viewProj = projMatrix * viewMatrix;
             Debug.Out("[Velocity] Temporal data unavailable; using current camera matrices for motion vectors.");
-            program.Uniform("HistoryReady", false);
             program.Uniform("CurrViewProjection", viewProj);
             program.Uniform("PrevViewProjection", viewProj);
         }
         else
         {
             Debug.Out("[Velocity] No camera available; motion vectors will be zeroed.");
-            program.Uniform("HistoryReady", false);
             program.Uniform("CurrViewProjection", Matrix4x4.Identity);
             program.Uniform("PrevViewProjection", Matrix4x4.Identity);
         }

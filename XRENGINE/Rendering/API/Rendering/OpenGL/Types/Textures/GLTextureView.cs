@@ -16,7 +16,7 @@ namespace XREngine.Rendering.OpenGL
         public override ETextureTarget TextureTarget => Data.TextureTarget;
 
         private IGLTexture? GetViewedTexture()
-            => !Renderer.TryGetAPIRenderObject(Data.GetViewedTexture(), out var apiObject) || apiObject is not IGLTexture apiViewed ? null : apiViewed;
+            => Renderer.GetOrCreateAPIRenderObject(Data.GetViewedTexture()) is IGLTexture apiViewed ? apiViewed : null;
 
         protected override void SetParameters()
         {

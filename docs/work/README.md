@@ -11,6 +11,9 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 - [Vulkan CPU Octree + Screen UI DAG TODO](backlog/vulkan-cpu-octree-dag-todo.md)
 - [Indirect GPU Rendering TODO](backlog/IndirectGPURendering-TODO.md)
 - [AOT TODO For Final Game Builds](todo/aot-final-game-builds.md)
+- [HBAO And HBAO+ Implementation TODO](todo/hbao-hbao-plus-implementation-todo.md)
+- [Non-HBAO AO Remediation TODO](todo/non-hbao-ambient-occlusion-remediation.md)
+- [Voxel Cone Tracing And VXAO Implementation TODO](todo/voxel-cone-tracing-and-vxao-implementation-todo.md)
 
 ## Design & Investigations
 - [Indirect GPU Rendering Architecture](design/IndirectGPURendering-Design.md)
@@ -18,6 +21,10 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 - [Vulkan Command Buffer Refactor](design/vulkan-command-buffer-refactor.md)
 - [GPU Physics Chain Compatibility](design/gpu-physics-chain-compatibility.md)
 - [GPU Physics Chain Engine Verification](design/gpu-physics-chain-engine-verification.md)
+- [HBAO And HBAO+ Implementation Plan](design/hbao-hbao-plus-implementation-plan.md)
+- [GTAO Implementation Plan](design/gtao-implementation-plan.md)
+- [Non-HBAO AO Audit](design/non-hbao-ambient-occlusion-audit.md)
+- [VXAO Implementation Plan](design/vxao-implementation-plan.md)
 - [Slang Shader Cross-Compile Plan](design/slang-shader-cross-compile-plan.md)
 - [Runtime Modularization And Bootstrap Extraction Plan](design/runtime-modularization-plan.md)
 - [Phase 1 Execution Checklist - Runtime Bootstrap Extraction](design/runtime-modularization-phase1-checklist.md)

@@ -100,6 +100,9 @@ namespace XREngine.Rendering.OpenGL
                 _separatedVertexProgram?.Destroy();
                 _separatedVertexProgram = null;
 
+                _forcedGeneratedVertexProgram?.Destroy();
+                _forcedGeneratedVertexProgram = null;
+
                 _combinedProgram?.Destroy();
                 _combinedProgram = null;
 

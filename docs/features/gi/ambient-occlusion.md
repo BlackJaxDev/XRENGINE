@@ -4,17 +4,18 @@ Ambient Occlusion (AO) simulates the soft shadows that occur in crevices, corner
 
 ## AO Types
 
-The engine supports seven ambient occlusion algorithms:
+The engine currently exposes eight user-facing ambient occlusion modes. One historical SAO enum value remains as a compatibility alias, but it is no longer shown as a separate editor choice because it maps to the same simplified prototype path.
 
 | Type | Description | Performance | Quality |
 |------|-------------|-------------|---------|
-| `ScreenSpace` | Classic SSAO from depth buffer | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
+| `ScreenSpace` | SSAO from the depth buffer | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
 | `HorizonBased` | HBAO-style horizon tracing | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
 | `HorizonBasedPlus` | Enhanced HBAO+ algorithm | ⭐⭐⭐ | ⭐⭐⭐⭐ |
-| `ScalableAmbientObscurance` | SAO algorithm | ⭐⭐⭐⭐ | ⭐⭐⭐ |
-| `MultiScaleVolumetricObscurance` | MSVO for large-scale AO | ⭐⭐⭐ | ⭐⭐⭐⭐ |
-| `MultiViewAmbientOcclusion` | Uses multiple depth views | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| `SpatialHashRaytraced` | Ray-marched with spatial hashing | ⭐⭐ | ⭐⭐⭐⭐⭐ |
+| `GroundTruthAmbientOcclusion` | Experimental GTAO gather + denoise path | ⭐⭐⭐ | ⭐⭐⭐ |
+| `VoxelAmbientOcclusion` | Planned VXAO family slot backed by an honest neutral stub today | ⭐ | ⭐ |
+| `MultiRadiusObscurancePrototype` | Simplified multi-radius obscurance prototype | ⭐⭐⭐ | ⭐⭐ |
+| `MultiViewCustom` | Custom multi-view AO path | ⭐⭐⭐ | ⭐⭐⭐ |
+| `SpatialHashExperimental` | Ray-marched AO with spatial hashing reuse | ⭐⭐ | ⭐⭐⭐ |
 
 ## Configuration
 
@@ -65,15 +66,12 @@ aoSettings.Iterations = 1;         // Denoising blur passes
 
 ## Horizon-Based AO
 
-HBAO traces the horizon in screen space for more accurate occlusion:
+Classic HBAO is currently deferred. Keep using HBAO+ unless you are implementing a dedicated reference or debug path:
 
 ```csharp
 aoSettings.Type = AmbientOcclusionSettings.EType.HorizonBased;
 
-// HBAO-specific
-aoSettings.Distance = 1.0f;          // Ray march distance
-aoSettings.DistanceIntensity = 1.0f; // Falloff rate
-aoSettings.Thickness = 0.5f;         // Occluder thickness assumption
+// Currently renders neutral AO and logs that the classic HBAO path is deferred.
 ```
 
 ## Horizon-Based Plus (HBAO+)
@@ -85,34 +83,59 @@ aoSettings.Type = AmbientOcclusionSettings.EType.HorizonBasedPlus;
 // Same settings as HBAO with additional internal optimizations
 ```
 
-## Scalable Ambient Obscurance
+## Ground-Truth Ambient Occlusion (GTAO)
 
-SAO algorithm optimized for scalability:
-
-```csharp
-aoSettings.Type = AmbientOcclusionSettings.EType.ScalableAmbientObscurance;
-
-// SAO-specific
-aoSettings.SamplesPerPixel = 3.0f; // Samples per pixel
-```
-
-## Multi-Scale Volumetric Obscurance
-
-MSVO handles both small and large-scale occlusion:
+GTAO now has a real slice-based horizon gather and edge-aware denoise path. It should still be treated as experimental until it is validated against canonical GTAO expectations under motion, thin geometry, and screen-edge stress cases.
 
 ```csharp
-aoSettings.Type = AmbientOcclusionSettings.EType.MultiScaleVolumetricObscurance;
+aoSettings.Type = AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion;
 
-// MSVO automatically handles multiple scales
-aoSettings.SecondaryRadius = 1.6f; // Secondary (larger) radius
+// GTAO-specific settings
+aoSettings.GTAOSliceCount = 3;
+aoSettings.GTAOStepsPerSlice = 6;
+aoSettings.GTAOFalloffStartRatio = 0.4f;
+aoSettings.GTAODenoiseEnabled = true;
+aoSettings.GTAODenoiseRadius = 4;
+aoSettings.GTAODenoiseSharpness = 4.0f;
+aoSettings.GTAOUseInputNormals = true;
 ```
 
-## Multi-View AO
+## Voxel Ambient Occlusion (VXAO)
+
+VXAO is now an explicit planned AO family in the default pipeline, but it is not implemented yet. Selecting it currently routes to a neutral stub while preserving a dedicated settings contract for future voxel work.
+
+```csharp
+aoSettings.Type = AmbientOcclusionSettings.EType.VoxelAmbientOcclusion;
+
+// Planned VXAO settings contract
+aoSettings.VXAOVoxelGridResolution = 128;
+aoSettings.VXAOCoverageExtent = 24.0f;
+aoSettings.VXAOVoxelOpacityScale = 1.0f;
+aoSettings.VXAOTemporalReuseEnabled = true;
+aoSettings.VXAOCombineWithScreenSpaceDetail = true;
+aoSettings.VXAODetailBlend = 0.35f;
+```
+
+Treat VXAO as roadmap scaffolding until the renderer owns a real voxelization plus cone-tracing path for AO.
+
+## Multi-Radius AO Prototype
+
+This is the current simplified obscurance prototype path. It is not a canonical SAO implementation, and the old `ScalableAmbientObscurance` and `MultiScaleVolumetricObscurance` names now exist only as compatibility aliases.
+
+```csharp
+aoSettings.Type = AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype;
+
+// Prototype path currently consumes only the shared bias/intensity settings
+aoSettings.Intensity = 1.0f;
+aoSettings.Bias = 0.05f;
+```
+
+## Multi-View AO (Custom)
 
 Uses information from multiple depth views for improved accuracy:
 
 ```csharp
-aoSettings.Type = AmbientOcclusionSettings.EType.MultiViewAmbientOcclusion;
+aoSettings.Type = AmbientOcclusionSettings.EType.MultiViewCustom;
 
 // Multi-view specific
 aoSettings.MultiViewBlend = 0.6f;  // Blend factor between views
@@ -121,12 +144,12 @@ aoSettings.MultiViewSpread = 0.5f; // View separation
 
 Best for VR/stereo rendering where multiple views are already available.
 
-## Spatial Hash Raytraced
+## Spatial Hash AO (Experimental)
 
 Ray-marched AO using spatial hashing for acceleration:
 
 ```csharp
-aoSettings.Type = AmbientOcclusionSettings.EType.SpatialHashRaytraced;
+aoSettings.Type = AmbientOcclusionSettings.EType.SpatialHashExperimental;
 
 // Spatial hash settings
 aoSettings.SpatialHashCellSize = 0.07f;    // Grid cell size (smin)
@@ -135,7 +158,7 @@ aoSettings.SpatialHashSteps = 8;           // Ray march steps
 aoSettings.SpatialHashJitterScale = 0.35f; // Sample jittering
 ```
 
-Provides the highest quality but is computationally expensive.
+Experimental path. Quality and stability still need validation before it should be treated as a production default.
 
 ## Denoising
 
@@ -168,9 +191,9 @@ aoSettings.Rings = 3.0f;  // Fewer sampling rings
 
 | Platform | Recommended Type |
 |----------|------------------|
-| High-end Desktop | `SpatialHashRaytraced` or `MultiViewAmbientOcclusion` |
+| High-end Desktop | `HorizonBasedPlus` |
 | Mid-range Desktop | `HorizonBasedPlus` |
-| VR | `MultiViewAmbientOcclusion` (reuses stereo views) |
+| VR | `MultiViewCustom` |
 | Mobile | `ScreenSpace` at 0.5x resolution |
 
 ## Visual Debugging

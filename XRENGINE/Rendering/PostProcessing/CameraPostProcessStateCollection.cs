@@ -177,7 +177,7 @@ public sealed class PipelinePostProcessState
 public sealed class PostProcessStageState : IDisposable
 {
     private Dictionary<string, object?> _values = new(StringComparer.OrdinalIgnoreCase);
-    private Dictionary<string, PropertyInfo> _backingProperties = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, PropertyPathAccessor> _backingProperties = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _backingSync = new();
     private IXRNotifyPropertyChanged? _backingNotifier;
     private bool _suppressBackingCallbacks;
@@ -273,12 +273,11 @@ public sealed class PostProcessStageState : IDisposable
         BackingInstance = Activator.CreateInstance(descriptor.BackingType);
 
         // Build backing property map off-thread then publish under lock to avoid concurrent mutations.
-        var backingMap = new Dictionary<string, PropertyInfo>(StringComparer.OrdinalIgnoreCase);
+        var backingMap = new Dictionary<string, PropertyPathAccessor>(StringComparer.OrdinalIgnoreCase);
         foreach (var parameter in descriptor.Parameters)
         {
-            var prop = descriptor.BackingType.GetProperty(parameter.Name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
-            if (prop is not null && prop.CanWrite)
-                backingMap[parameter.Name] = prop;
+            if (PropertyPathAccessor.TryCreate(descriptor.BackingType, parameter.Name, out var accessor))
+                backingMap[parameter.Name] = accessor;
         }
         lock (_backingSync)
         {
@@ -291,7 +290,7 @@ public sealed class PostProcessStageState : IDisposable
             notifier.PropertyChanged += OnBackingPropertyChanged;
         }
 
-        KeyValuePair<string, PropertyInfo>[]? propsSnapshot;
+        KeyValuePair<string, PropertyPathAccessor>[]? propsSnapshot;
         object? backing;
         lock (_backingSync)
         {
@@ -304,11 +303,11 @@ public sealed class PostProcessStageState : IDisposable
 
         foreach (var (parameter, property) in propsSnapshot)
         {
-            if (parameter is null || !_values.TryGetValue(parameter, out var raw) || !TryCoerce(raw, property.PropertyType, out var coerced))
+            if (parameter is null || !_values.TryGetValue(parameter, out var raw) || !TryCoerce(raw, property.ValueType, out var coerced))
                 continue;
 
             _suppressBackingCallbacks = true;
-            property.SetValue(backing, coerced);
+            property.TrySetValue(backing, coerced);
             _suppressBackingCallbacks = false;
         }
     }
@@ -316,7 +315,7 @@ public sealed class PostProcessStageState : IDisposable
     private void PushValueToBacking<T>(string parameterName, T value)
     {
         object? backing;
-        PropertyInfo? property;
+        PropertyPathAccessor? property;
         lock (_backingSync)
         {
             backing = BackingInstance;
@@ -325,11 +324,11 @@ public sealed class PostProcessStageState : IDisposable
         if (backing is null || property is null)
             return;
 
-        if (!TryCoerce(value, property.PropertyType, out var coerced))
+        if (!TryCoerce(value, property.ValueType, out var coerced))
             return;
 
         _suppressBackingCallbacks = true;
-        property.SetValue(backing, coerced);
+        property.TrySetValue(backing, coerced);
         _suppressBackingCallbacks = false;
     }
 
@@ -488,6 +487,98 @@ public sealed class PostProcessStageState : IDisposable
         lock (_backingSync)
         {
             _backingProperties = new(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private sealed class PropertyPathAccessor
+    {
+        private readonly PropertyInfo[] _chain;
+
+        private PropertyPathAccessor(string path, PropertyInfo[] chain)
+        {
+            Path = path;
+            _chain = chain;
+        }
+
+        public string Path { get; }
+        public Type ValueType => _chain[^1].PropertyType;
+
+        public static bool TryCreate(Type rootType, string path, out PropertyPathAccessor? accessor)
+        {
+            ArgumentNullException.ThrowIfNull(rootType);
+            ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+            string[] segments = path.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (segments.Length == 0)
+            {
+                accessor = null;
+                return false;
+            }
+
+            Type currentType = rootType;
+            PropertyInfo[] chain = new PropertyInfo[segments.Length];
+
+            for (int i = 0; i < segments.Length; i++)
+            {
+                PropertyInfo? property = currentType.GetProperty(segments[i], BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+                if (property is null)
+                {
+                    accessor = null;
+                    return false;
+                }
+
+                if (i == segments.Length - 1)
+                {
+                    if (!property.CanWrite)
+                    {
+                        accessor = null;
+                        return false;
+                    }
+                }
+                else if (!property.CanRead)
+                {
+                    accessor = null;
+                    return false;
+                }
+
+                chain[i] = property;
+                currentType = property.PropertyType;
+            }
+
+            accessor = new PropertyPathAccessor(path, chain);
+            return true;
+        }
+
+        public bool TrySetValue(object root, object? value)
+        {
+            if (!TryResolveOwner(root, out var owner))
+                return false;
+
+            _chain[^1].SetValue(owner, value);
+            return true;
+        }
+
+        public bool TryGetValue(object root, out object? value)
+        {
+            value = null;
+            if (!TryResolveOwner(root, out var owner))
+                return false;
+
+            value = _chain[^1].GetValue(owner);
+            return true;
+        }
+
+        private bool TryResolveOwner(object current, out object? owner)
+        {
+            owner = current;
+            for (int i = 0; i < _chain.Length - 1; i++)
+            {
+                owner = _chain[i].GetValue(owner);
+                if (owner is null)
+                    return false;
+            }
+
+            return owner is not null;
         }
     }
 }

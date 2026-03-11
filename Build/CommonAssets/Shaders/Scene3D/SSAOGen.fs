@@ -1,5 +1,6 @@
 #version 450
 #extension GL_OVR_multiview2 : require
+#include "AOCommon.glsl"
 
 const float PI = 3.14159265359f;
 const float InvPI = 0.31831f;
@@ -8,7 +9,7 @@ layout(location = 0) out float OutIntensity;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2D Normal; //Normal
-uniform sampler2D SSAONoiseTexture; //SSAO Noise
+uniform sampler2D AONoiseTexture; // AO noise
 uniform sampler2D DepthView; //Depth
 
 uniform vec3 Samples[128];
@@ -18,13 +19,6 @@ uniform vec2 NoiseScale;
 
 uniform mat4 InverseViewMatrix;
 uniform mat4 ProjMatrix;
-
-vec3 ViewPosFromDepth(float depth, vec2 uv)
-{
-    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = inverse(ProjMatrix) * clipSpacePosition;
-    return viewSpacePosition.xyz / viewSpacePosition.w;
-}
 
 void main()
 {
@@ -37,9 +31,9 @@ void main()
     vec3 Normal = texture(Normal, uv).rgb;
     float Depth = texture(DepthView, uv).r;
 
-    vec3 FragPosVS = ViewPosFromDepth(Depth, uv);
+    vec3 FragPosVS = AOViewPosFromDepth(Depth, uv, ProjMatrix);
 
-    vec3 randomVec = vec3(texture(SSAONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
+    vec3 randomVec = vec3(texture(AONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
     vec3 viewNormal = normalize((inverse(InverseViewMatrix) * vec4(Normal, 0.0f)).rgb);
     vec3 viewTangent = normalize(randomVec - viewNormal * dot(randomVec, viewNormal));
     vec3 viewBitangent = cross(viewNormal, viewTangent);
@@ -62,7 +56,7 @@ void main()
         offset.xyz /= offset.w;
         offset.xyz = offset.xyz * 0.5f + 0.5f;
 
-        sampleDepth = ViewPosFromDepth(texture(DepthView, offset.xy).r, offset.xy).z;
+        sampleDepth = AOViewPosFromDepth(texture(DepthView, offset.xy).r, offset.xy, ProjMatrix).z;
 
         occlusion += (sampleDepth >= noiseSample.z + bias ? smoothstep(0.0f, 1.0f, Radius / abs(FragPosVS.z - sampleDepth)) : 0.0f);
     }

@@ -1,0 +1,373 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using MemoryPack;
+using XREngine.Animation;
+using XREngine.Core.Files;
+using XREngine.Serialization;
+using YamlDotNet.Core;
+using YamlDotNet.Core.Events;
+using YamlDotNet.Serialization;
+
+namespace XREngine;
+
+internal static class AnimationClipCookedBinarySerializer
+{
+    public static bool CanHandle(Type type)
+        => type == typeof(AnimationClip);
+
+    public static void Write(CookedBinaryWriter writer, AnimationClip clip)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(clip);
+        writer.WriteValue(AnimationClipSerialization.CreateModel(clip));
+    }
+
+    public static AnimationClip Read(CookedBinaryReader reader)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+
+        AnimationClipSerializedModel? model = reader.ReadValue<AnimationClipSerializedModel>();
+        AnimationClip clip = new();
+        AnimationClipSerialization.ApplyModel(clip, model);
+        return clip;
+    }
+
+    public static long CalculateSize(AnimationClip clip)
+    {
+        ArgumentNullException.ThrowIfNull(clip);
+        return CookedBinarySerializer.CalculateSize(AnimationClipSerialization.CreateModel(clip));
+    }
+}
+
+internal static class AnimationClipMemoryPackRegistration
+{
+    [SuppressMessage("Usage", "CA2255:Module initializers should not be used in libraries", Justification = "AnimationClip needs formatter registration before direct MemoryPack serialization.")]
+    [ModuleInitializer]
+    internal static void Initialize()
+    {
+        if (!MemoryPackFormatterProvider.IsRegistered<AnimationClip>())
+            MemoryPackFormatterProvider.Register(new AnimationClipMemoryPackFormatter());
+    }
+
+    private sealed class AnimationClipMemoryPackFormatter : MemoryPackFormatter<AnimationClip>
+    {
+        public override void Serialize<TBufferWriter>(ref MemoryPackWriter<TBufferWriter> writer, scoped ref AnimationClip? value)
+        {
+            if (value is null)
+            {
+                writer.WriteNullObjectHeader();
+                return;
+            }
+
+            writer.WriteObjectHeader(1);
+            AnimationClip clip = value;
+            byte[] payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(clip));
+            writer.WriteUnmanagedArray(payload);
+        }
+
+        public override void Deserialize(ref MemoryPackReader reader, scoped ref AnimationClip? value)
+        {
+            if (!reader.TryReadObjectHeader(out byte count))
+            {
+                value = null;
+                return;
+            }
+
+            if (count != 1)
+                MemoryPackSerializationException.ThrowInvalidPropertyCount(1, count);
+
+            byte[]? payload = reader.ReadUnmanagedArray<byte>();
+            if (payload is null || payload.Length == 0)
+            {
+                value = new AnimationClip();
+                return;
+            }
+
+            AnimationClip? clip = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
+                () => CookedBinarySerializer.Deserialize(typeof(AnimationClip), payload) as AnimationClip);
+
+            value = clip ?? new AnimationClip();
+        }
+    }
+}
+
+[YamlTypeConverter]
+public sealed class AnimationClipYamlTypeConverter : IYamlTypeConverter
+{
+    public bool Accepts(Type type)
+        => type == typeof(AnimationClip);
+
+    public object? ReadYaml(IParser parser, Type type, ObjectDeserializer rootDeserializer)
+    {
+        if (parser.TryConsume<Scalar>(out var scalar))
+        {
+            if (scalar.Value is null || scalar.Value == "~" || string.Equals(scalar.Value, "null", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            throw new YamlException($"Unexpected scalar while deserializing {nameof(AnimationClip)}: '{scalar.Value}'.");
+        }
+
+        AnimationClipSerializedModel? model = rootDeserializer(typeof(AnimationClipSerializedModel)) as AnimationClipSerializedModel;
+        AnimationClip clip = new();
+        AnimationClipSerialization.ApplyModel(clip, model);
+        return clip;
+    }
+
+    public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer)
+    {
+        if (value is null)
+        {
+            emitter.Emit(new Scalar("~"));
+            return;
+        }
+
+        if (value is not AnimationClip clip)
+            throw new YamlException($"Expected {nameof(AnimationClip)} but got '{value.GetType()}'.");
+
+        serializer(AnimationClipSerialization.CreateModel(clip), typeof(AnimationClipSerializedModel));
+    }
+}
+
+internal static class AnimationClipSerialization
+{
+    private static readonly PropertyInfo? XRObjectIdProperty = typeof(XREngine.Data.Core.XRObjectBase)
+        .GetProperty(nameof(XREngine.Data.Core.XRObjectBase.ID), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+    private static readonly PropertyInfo? AnimationMemberParentClipProperty = typeof(AnimationMember)
+        .GetProperty(nameof(AnimationMember.ParentClip), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+    public static AnimationClipSerializedModel CreateModel(AnimationClip clip)
+    {
+        ArgumentNullException.ThrowIfNull(clip);
+
+        return new AnimationClipSerializedModel
+        {
+            AssetType = clip.GetType().FullName ?? clip.GetType().Name,
+            Id = clip.ID,
+            Name = clip.Name,
+            OriginalPath = clip.OriginalPath,
+            OriginalLastWriteTimeUtc = clip.OriginalLastWriteTimeUtc,
+            TraversalMethod = clip.TraversalMethod,
+            LengthInSeconds = clip.LengthInSeconds,
+            Looped = clip.Looped,
+            ClipKind = clip.ClipKind,
+            HasMuscleChannels = clip.HasMuscleChannels,
+            HasRootMotion = clip.HasRootMotion,
+            HasIKGoals = clip.HasIKGoals,
+            SampleRate = clip.SampleRate,
+            RootMember = CreateModel(clip.RootMember)
+        };
+    }
+
+    public static void ApplyModel(AnimationClip clip, AnimationClipSerializedModel? model)
+    {
+        ArgumentNullException.ThrowIfNull(clip);
+
+        if (model is null)
+        {
+            clip.RootMember = null;
+            clip.TotalAnimCount = 0;
+            return;
+        }
+
+        SetAssetId(clip, model.Id);
+        clip.Name = model.Name;
+        clip.OriginalPath = model.OriginalPath;
+        clip.OriginalLastWriteTimeUtc = model.OriginalLastWriteTimeUtc;
+        clip.TraversalMethod = model.TraversalMethod;
+        clip.Looped = model.Looped;
+        clip.LengthInSeconds = model.LengthInSeconds;
+        clip.ClipKind = model.ClipKind;
+        clip.HasMuscleChannels = model.HasMuscleChannels;
+        clip.HasRootMotion = model.HasRootMotion;
+        clip.HasIKGoals = model.HasIKGoals;
+        clip.SampleRate = model.SampleRate ?? 30;
+
+        AnimationMember? rootMember = CreateRuntimeMember(model.RootMember);
+        clip.RootMember = rootMember;
+        clip.TotalAnimCount = AttachClip(rootMember, clip);
+    }
+
+    private static AnimationMemberSerializedModel? CreateModel(AnimationMember? member)
+    {
+        if (member is null)
+            return null;
+
+        List<AnimationMemberSerializedModel> children = new(member.Children.Count);
+        foreach (AnimationMember child in member.Children)
+        {
+            AnimationMemberSerializedModel? childModel = CreateModel(child);
+            if (childModel is not null)
+                children.Add(childModel);
+        }
+
+        return new AnimationMemberSerializedModel
+        {
+            MemberName = member.MemberName,
+            MemberType = member.MemberType,
+            Animation = AnimationPropertySerialization.CreateModel(member.Animation),
+            MethodArguments = CreateMethodArgumentModels(member.MethodArguments),
+            AnimatedMethodArgumentIndex = member.AnimatedMethodArgumentIndex,
+            CacheReturnValue = member.CacheReturnValue,
+            Children = children
+        };
+    }
+
+    private static AnimationMember? CreateRuntimeMember(AnimationMemberSerializedModel? model)
+    {
+        if (model is null)
+            return null;
+
+        AnimationMember member = new()
+        {
+            MemberName = model.MemberName ?? string.Empty,
+            MemberType = model.MemberType,
+            Animation = AnimationPropertySerialization.CreateRuntimeAnimation(model.Animation),
+            MethodArguments = CreateMethodArguments(model.MethodArguments),
+            AnimatedMethodArgumentIndex = model.AnimatedMethodArgumentIndex,
+            CacheReturnValue = model.CacheReturnValue
+        };
+
+        if (model.Children is not null)
+        {
+            foreach (AnimationMemberSerializedModel childModel in model.Children)
+            {
+                AnimationMember? child = CreateRuntimeMember(childModel);
+                if (child is not null)
+                    member.Children.Add(child);
+            }
+        }
+
+        return member;
+    }
+
+    private static void SetAssetId(AnimationClip clip, Guid id)
+    {
+        if (id == Guid.Empty || XRObjectIdProperty?.SetMethod is null)
+            return;
+
+        XRObjectIdProperty.SetValue(clip, id);
+    }
+
+    private static int AttachClip(AnimationMember? member, AnimationClip clip)
+    {
+        if (member is null)
+            return 0;
+
+        AnimationMemberParentClipProperty?.SetValue(member, clip);
+
+        int count = member.Animation is null ? 0 : 1;
+        foreach (AnimationMember child in member.Children)
+            count += AttachClip(child, clip);
+
+        return count;
+    }
+
+    private static List<SerializedMethodArgumentModel>? CreateMethodArgumentModels(object?[]? arguments)
+    {
+        if (arguments is null)
+            return null;
+
+        List<SerializedMethodArgumentModel> models = new(arguments.Length);
+        foreach (object? argument in arguments)
+        {
+            if (argument is null)
+            {
+                models.Add(new SerializedMethodArgumentModel());
+                continue;
+            }
+
+            Type runtimeType = argument.GetType();
+            models.Add(new SerializedMethodArgumentModel
+            {
+                TypeName = runtimeType.AssemblyQualifiedName,
+                Payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(argument))
+            });
+        }
+
+        return models;
+    }
+
+    private static object?[] CreateMethodArguments(List<SerializedMethodArgumentModel>? models)
+    {
+        if (models is null || models.Count == 0)
+            return [null];
+
+        object?[] arguments = new object?[models.Count];
+        for (int i = 0; i < models.Count; i++)
+        {
+            SerializedMethodArgumentModel model = models[i];
+            if (model.Payload is null || model.Payload.Length == 0 || string.IsNullOrWhiteSpace(model.TypeName))
+            {
+                arguments[i] = null;
+                continue;
+            }
+
+            Type runtimeType = Type.GetType(model.TypeName, throwOnError: false)
+                ?? throw new InvalidOperationException($"Failed to resolve method argument type '{model.TypeName}'.");
+            arguments[i] = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
+                () => CookedBinarySerializer.Deserialize(runtimeType, model.Payload));
+        }
+
+        return arguments;
+    }
+}
+
+internal sealed class AnimationClipSerializedModel
+{
+    [YamlMember(Alias = "__assetType", Order = -100)]
+    [MemoryPackIgnore]
+    public string? AssetType { get; set; }
+
+    public Guid Id { get; set; }
+
+    public string? Name { get; set; }
+
+    public string? OriginalPath { get; set; }
+
+    public DateTime? OriginalLastWriteTimeUtc { get; set; }
+
+    public EAnimTreeTraversalMethod TraversalMethod { get; set; }
+
+    public float LengthInSeconds { get; set; }
+
+    public bool Looped { get; set; }
+
+    public EAnimationClipKind ClipKind { get; set; }
+
+    public bool HasMuscleChannels { get; set; }
+
+    public bool HasRootMotion { get; set; }
+
+    public bool HasIKGoals { get; set; }
+
+    public int? SampleRate { get; set; }
+
+    public AnimationMemberSerializedModel? RootMember { get; set; }
+}
+
+internal sealed class AnimationMemberSerializedModel
+{
+    public string? MemberName { get; set; }
+
+    public EAnimationMemberType MemberType { get; set; }
+
+    public SerializedPropertyAnimationModel? Animation { get; set; }
+
+    public List<SerializedMethodArgumentModel>? MethodArguments { get; set; }
+
+    public int AnimatedMethodArgumentIndex { get; set; }
+
+    public bool CacheReturnValue { get; set; }
+
+    public List<AnimationMemberSerializedModel> Children { get; set; } = [];
+}
+
+internal sealed class SerializedMethodArgumentModel
+{
+    public string? TypeName { get; set; }
+
+    public byte[]? Payload { get; set; }
+}

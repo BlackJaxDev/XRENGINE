@@ -109,6 +109,9 @@ namespace XREngine.Rendering.OpenGL
                         _separatedVertexProgram?.Destroy();
                         _separatedVertexProgram = null;
 
+                        _forcedGeneratedVertexProgram?.Destroy();
+                        _forcedGeneratedVertexProgram = null;
+
                         if (!Engine.Rendering.Settings.CalculateSkinningInComputeShader)
                             DestroySkinnedBuffers();
 

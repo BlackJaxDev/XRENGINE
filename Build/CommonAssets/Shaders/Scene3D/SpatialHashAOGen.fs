@@ -2,6 +2,7 @@
 // https://interplayoflight.wordpress.com/2025/11/23/spatial-hashing-for-raytraced-ambient-occlusion
 #version 450
 #extension GL_OVR_multiview2 : require
+#include "AOCommon.glsl"
 
 const float PI = 3.14159265359f;
 
@@ -9,7 +10,7 @@ layout(location = 0) out float OutIntensity;
 layout(location = 0) in vec3 FragPos;
 
 uniform sampler2D Normal; //Normal
-uniform sampler2D SSAONoiseTexture; //Noise
+uniform sampler2D AONoiseTexture; //Noise
 uniform sampler2D DepthView; //Depth
 
 uniform vec3 Samples[128];
@@ -48,14 +49,6 @@ float HashToUnitFloat(uvec3 v)
     return float(Hash(v)) / float(0xffffffffu);
 }
 
-// Recover view-space position from a depth sample
-vec3 ViewPosFromDepth(float depth, vec2 uv)
-{
-    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = inverse(ProjMatrix) * clipSpacePosition;
-    return viewSpacePosition.xyz / viewSpacePosition.w;
-}
-
 void main()
 {
     vec2 uv = FragPos.xy;
@@ -66,9 +59,9 @@ void main()
 
     vec3 encodedNormal = texture(Normal, uv).rgb;
     float depth = texture(DepthView, uv).r;
-    vec3 fragPosVS = ViewPosFromDepth(depth, uv);
+    vec3 fragPosVS = AOViewPosFromDepth(depth, uv, ProjMatrix);
 
-    vec3 randomVec = vec3(texture(SSAONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
+    vec3 randomVec = vec3(texture(AONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
     vec3 viewNormal = normalize((inverse(InverseViewMatrix) * vec4(encodedNormal, 0.0f)).rgb);
     vec3 viewTangent = normalize(randomVec - viewNormal * dot(randomVec, viewNormal));
     vec3 viewBitangent = cross(viewNormal, viewTangent);
@@ -96,7 +89,7 @@ void main()
                 break;
 
             float sceneDepth = texture(DepthView, sampleUV).r;
-            float sceneDepthVS = ViewPosFromDepth(sceneDepth, sampleUV).z;
+            float sceneDepthVS = AOViewPosFromDepth(sceneDepth, sampleUV, ProjMatrix).z;
             float expectedDepth = samplePos.z;
 
             if (sceneDepthVS < expectedDepth + Thickness)

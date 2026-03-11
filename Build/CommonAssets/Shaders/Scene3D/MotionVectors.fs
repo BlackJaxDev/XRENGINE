@@ -8,7 +8,6 @@ uniform mat4 ModelMatrix;
 uniform mat4 PrevModelMatrix;
 uniform mat4 CurrViewProjection;
 uniform mat4 PrevViewProjection;
-uniform bool HistoryReady;
 
 vec4 Project(mat4 vp, mat4 model, vec3 localPosition)
 {
@@ -17,13 +16,6 @@ vec4 Project(mat4 vp, mat4 model, vec3 localPosition)
 
 void main()
 {
-    // Early out if we don't have valid history data
-    if (!HistoryReady)
-    {
-        OutVelocity = vec2(0.0f);
-        return;
-    }
-
     vec4 currClip = Project(CurrViewProjection, ModelMatrix, FragPosLocal);
     vec4 prevClip = Project(PrevViewProjection, PrevModelMatrix, FragPosLocal);
 

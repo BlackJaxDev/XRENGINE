@@ -21,6 +21,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Animation;
 using XREngine.Components;
 using YamlDotNet.Serialization;
 using XREngine.Core;
@@ -590,6 +591,30 @@ public static class CookedBinarySerializer
             writer.Write(list.Count);
             foreach (object? item in list)
                 WriteValue(writer, item, allowCustom, callbacks);
+            return;
+        }
+
+        if (allowCustom && value is AnimationClip animationClip)
+        {
+            writer.Write((byte)CookedBinaryTypeMarker.CustomObject);
+            WriteTypeName(writer, runtimeType);
+            AnimationClipCookedBinarySerializer.Write(writer, animationClip);
+            return;
+        }
+
+        if (allowCustom && value is BlendTree blendTree && BlendTreeCookedBinarySerializer.CanHandle(runtimeType))
+        {
+            writer.Write((byte)CookedBinaryTypeMarker.CustomObject);
+            WriteTypeName(writer, runtimeType);
+            BlendTreeCookedBinarySerializer.Write(writer, blendTree);
+            return;
+        }
+
+        if (allowCustom && value is AnimStateMachine stateMachine)
+        {
+            writer.Write((byte)CookedBinaryTypeMarker.CustomObject);
+            WriteTypeName(writer, runtimeType);
+            AnimStateMachineCookedBinarySerializer.Write(writer, stateMachine);
             return;
         }
 
@@ -1173,10 +1198,20 @@ public static class CookedBinarySerializer
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
-    private static ICookedBinarySerializable? ReadCustomObject(CookedBinaryReader reader, Type? expectedType, CookedBinarySerializationCallbacks? callbacks)
+    private static object? ReadCustomObject(CookedBinaryReader reader, Type? expectedType, CookedBinarySerializationCallbacks? callbacks)
     {
         string typeName = reader.ReadString();
         Type targetType = ResolveType(typeName) ?? expectedType ?? throw new InvalidOperationException($"Failed to resolve cooked asset type '{typeName}'.");
+
+        if (AnimationClipCookedBinarySerializer.CanHandle(targetType))
+            return AnimationClipCookedBinarySerializer.Read(reader);
+
+        if (BlendTreeCookedBinarySerializer.CanHandle(targetType))
+            return BlendTreeCookedBinarySerializer.Read(targetType, reader);
+
+        if (AnimStateMachineCookedBinarySerializer.CanHandle(targetType))
+            return AnimStateMachineCookedBinarySerializer.Read(reader);
+
         if (CreateInstance(targetType) is not ICookedBinarySerializable instance)
             throw new InvalidOperationException($"Type '{targetType}' does not implement {nameof(ICookedBinarySerializable)}.");
 
@@ -2375,6 +2410,24 @@ public static class CookedBinarySerializer
                 AddBytes(sizeof(int));
                 foreach (object? item in list)
                     AddValue(item, allowCustom);
+                return;
+            }
+
+            if (allowCustom && value is AnimationClip animationClip)
+            {
+                AddBytes(SizeOfTypeName(runtimeType) + AnimationClipCookedBinarySerializer.CalculateSize(animationClip));
+                return;
+            }
+
+            if (allowCustom && value is BlendTree blendTree && BlendTreeCookedBinarySerializer.CanHandle(runtimeType))
+            {
+                AddBytes(SizeOfTypeName(runtimeType) + BlendTreeCookedBinarySerializer.CalculateSize(blendTree));
+                return;
+            }
+
+            if (allowCustom && value is AnimStateMachine stateMachine)
+            {
+                AddBytes(SizeOfTypeName(runtimeType) + AnimStateMachineCookedBinarySerializer.CalculateSize(stateMachine));
                 return;
             }
 

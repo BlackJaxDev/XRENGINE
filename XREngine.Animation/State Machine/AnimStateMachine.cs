@@ -7,7 +7,7 @@ using static XREngine.Animation.AnimLayer;
 
 namespace XREngine.Animation
 {
-    [MemoryPackable]
+    [MemoryPackable(GenerateType.NoGenerate)]
     public partial class AnimStateMachine : XRAsset
     {
         public enum AnimParameterType : byte
