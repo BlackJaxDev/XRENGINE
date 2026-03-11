@@ -155,6 +155,14 @@ The **Load Keys from ENV** button reads:
 - `GEMINI_API_KEY`
 - `GITHUB_TOKEN`
 
+### Realtime Visual Context
+
+When the MCP Assistant uses the OpenAI Realtime WebSocket path, the session exposes a built-in screenshot function tool named `request_view_screenshot` during active response generation.
+
+- The model can request the current editor view.
+- The request can target a specific camera via `camera_node_id` or `camera_name`.
+- Results are returned immediately as both structured tool output and inline image input, so the model can continue reasoning against the fresh visual state in the same exchange.
+
 ---
 
 ## Protocol
@@ -181,6 +189,45 @@ Authorization: Bearer <McpServerAuthToken>
 - If `McpServerReadOnly` is enabled, mutating tools are blocked.
 - `McpServerAllowedTools` and `McpServerDeniedTools` can be used to enforce per-tool policy.
 - If `McpServerRateLimitEnabled` is enabled, per-client requests above quota return `429` with `Retry-After`.
+
+### Permission Model
+
+Each tool is classified by risk and checked against the configured auto-approve policy before invocation.
+
+#### Permission levels
+
+| Level | Value | Meaning |
+|-------|-------|---------|
+| `ReadOnly` | `0` | Queries, inspection, screenshots, and other no-side-effect operations |
+| `Mutate` | `1` | In-memory state changes such as node creation or property edits |
+| `Destructive` | `2` | Disk writes, deletes, world replacement, or other destructive operations |
+| `Arbitrary` | `3` | Arbitrary method or expression execution |
+
+#### Auto-approve policies
+
+These policies are exposed in **Global Editor Preferences → MCP Server**.
+
+| Policy | Effect |
+|--------|--------|
+| `AlwaysAsk` | Prompt for every tool call |
+| `AllowReadOnly` | Auto-approve `ReadOnly`; prompt for `Mutate` and above. This is the default. |
+| `AllowMutate` | Auto-approve `ReadOnly` and `Mutate`; prompt for `Destructive` and above |
+| `AllowDestructive` | Prompt only for `Arbitrary` |
+| `AllowAll` | Never prompt |
+
+#### Resolution rules
+
+- `McpToolRegistry.ResolvePermissionLevel()` uses explicit `XRMcp.Permission` metadata when present.
+- If a tool omits explicit metadata, the registry falls back to a name-based heuristic, for example `get_` and `list_` default to `ReadOnly`, while `delete_` defaults to `Destructive`.
+- `McpServerHost` checks the effective level before dispatch and enqueues an approval request when the current policy requires one.
+- The ImGui permission prompt shows the tool name, description, arguments, and risk badge, and supports session-scoped remembered decisions per tool.
+
+### Filesystem Sandboxing
+
+- Script and game-asset tools are sandboxed to `Engine.Assets.GameAssetsPath`.
+- Config file tools are sandboxed to the active project's `Config/` directory.
+- Path traversal attempts and absolute paths outside the allowed roots are rejected.
+- Read-only mode blocks write, delete, import, compile, and other mutating file-backed operations.
 
 ### Health Status Endpoint
 
@@ -561,6 +608,20 @@ The MCP implementation consists of the following classes:
 | <xref:XREngine.Editor.Mcp.McpWorldResolver>     | Resolves active world instance                 |
 | <xref:XREngine.Editor.Mcp.EditorMcpActions>     | Tool implementations (partial class)           |
 
+### Tool Organization
+
+The tool surface is split across focused `EditorMcpActions.*.cs` partials under `XREngine.Editor/Mcp/Actions/`.
+
+| File | Primary responsibility |
+|------|------------------------|
+| `EditorMcpActions.TypeSystem.cs` | Runtime type inspection and discovery |
+| `EditorMcpActions.Scripting.cs` | Game script CRUD, compilation, and scaffolding |
+| `EditorMcpActions.GameAssets.cs` | Game asset file-system and engine-aware asset operations |
+| `EditorMcpActions.LiveInspection.cs` | XRBase instance reflection, mutation, and method invocation |
+| `EditorMcpActions.Settings.cs` | Game, editor, and engine settings/configuration |
+| `EditorMcpActions.SceneAuthoring.cs` | Prefab workflows, batch scene edits, and scene cloning |
+| `EditorMcpActions.ExtendedWorkflow.cs` | Integrity checks, snapshots, transactions, reference queries, and editor commands |
+
 ### Adding New Tools
 
 To add a new MCP tool:
@@ -574,6 +635,13 @@ To add a new MCP tool:
 4. Use `[McpName("param_name")]` and `[Description("...")]` on parameters
 5. Add XML documentation summary for docfx
 6. Return `Task<McpToolResponse>`
+
+Additional contributor conventions:
+
+- Prefer the most specific existing partial file for the tool category rather than expanding unrelated files.
+- Use `CancellationToken` for async or potentially long-running I/O.
+- File-backed tools must preserve the path sandbox guarantees described above.
+- Tools that execute arbitrary methods or expressions should be tagged with `McpPermissionLevel.Arbitrary` and a clear `PermissionReason`.
 
 ```csharp
 /// <summary>

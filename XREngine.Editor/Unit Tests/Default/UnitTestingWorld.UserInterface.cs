@@ -28,17 +28,17 @@ public static partial class EditorUnitTests
     {
         private static readonly bool DockFPSTopLeft = false;
         private static readonly Queue<float> _fpsAvg = new();
-        private static float _lastSampledRenderTimestamp = -1.0f;
+        private static long _lastSampledRenderTimestampTicks = -1L;
 
         private static UIEditorComponent? _editorComponent = null;
 
         private static void TickFPS(UITextComponent t)
         {
             // Only sample once per actual render frame to avoid duplicate stale samples
-            float renderTimestamp = Engine.Time.Timer.Render.LastTimestamp;
-            if (renderTimestamp != _lastSampledRenderTimestamp)
+            long renderTimestampTicks = Engine.Time.Timer.Render.LastTimestampTicks;
+            if (renderTimestampTicks != _lastSampledRenderTimestampTicks)
             {
-                _lastSampledRenderTimestamp = renderTimestamp;
+                _lastSampledRenderTimestampTicks = renderTimestampTicks;
                 _fpsAvg.Enqueue(1.0f / Engine.Time.Timer.Render.Delta);
                 if (_fpsAvg.Count > 60)
                     _fpsAvg.Dequeue();

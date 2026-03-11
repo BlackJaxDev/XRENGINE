@@ -60,6 +60,10 @@ public sealed class AnimationClipInspector : IXRAssetInspector
             if (ImGui.SmallButton("Copy Path##AnimationClip"))
                 ImGui.SetClipboardText(clip.FilePath);
         }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Open Clip Editor##AnimationClip"))
+            EditorImGuiUI.OpenAnimationClipEditor(clip);
     }
 
     private static void DrawClipSummary(AnimationClip clip)

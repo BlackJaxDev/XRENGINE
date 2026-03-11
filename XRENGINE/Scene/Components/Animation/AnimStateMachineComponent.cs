@@ -106,7 +106,7 @@ namespace XREngine.Components
             if (humanoid is not null && !humanoid.IsAnimatedPosePreviewActive)
                 return;
 
-            StateMachine.EvaluationTick(this, Engine.Delta);
+            StateMachine.EvaluationTick(this, Engine.Time.Timer.Update.DeltaTicks);
 
             // Keep schema in sync before sending any indexed changes.
             ReplicateParameterSchema(force: false);

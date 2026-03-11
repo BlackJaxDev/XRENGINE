@@ -34,9 +34,11 @@ namespace XREngine.Animation
         public IntKeyframe()
             : this(0.0f, 0, 0, EVectorInterpType.Smooth) { }
         public IntKeyframe(int frameIndex, float FPS, int inValue, int outValue, int inTangent, int outTangent, EVectorInterpType type)
-            : this(frameIndex / FPS, inValue, outValue, inTangent, outTangent, type) { }
+            : this(GetSecondForAuthoredFrame(frameIndex, FPS), inValue, outValue, inTangent, outTangent, type)
+            => TrySetAuthoredFrameIndex(frameIndex, FPS);
         public IntKeyframe(int frameIndex, float FPS, int inoutValue, int inoutTangent, EVectorInterpType type)
-            : this(frameIndex / FPS, inoutValue, inoutValue, inoutTangent, inoutTangent, type) { }
+            : this(GetSecondForAuthoredFrame(frameIndex, FPS), inoutValue, inoutValue, inoutTangent, inoutTangent, type)
+            => TrySetAuthoredFrameIndex(frameIndex, FPS);
         public IntKeyframe(float second, int inoutValue, int inoutTangent, EVectorInterpType type)
             : this(second, inoutValue, inoutValue, inoutTangent, inoutTangent, type) { }
         public IntKeyframe(float second, int inoutValue, int inTangent, int outTangent, EVectorInterpType type)

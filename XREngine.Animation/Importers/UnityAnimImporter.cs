@@ -955,26 +955,34 @@ namespace XREngine.Animation.Importers
                 LerpConstrainedFPS = LerpConstrained,
             };
 
+            if (TryCreateAuthoredCadence(length, fps, out var authoredCadence))
+                anim.SetAuthoredCadence(authoredCadence, notifyChanged: false);
+
             anim.Keyframes.PreInfinityMode = MapInfinityMode(curve.PreInfinity);
             anim.Keyframes.PostInfinityMode = MapInfinityMode(curve.PostInfinity);
 
             foreach (var k in curve.Keys)
-                anim.Keyframes.Add(CreateFloatKeyframe(k, valueScale, timeOffsetSeconds));
+                anim.Keyframes.Add(CreateFloatKeyframe(k, fps, valueScale, timeOffsetSeconds));
 
             return anim;
         }
 
-        private static FloatKeyframe CreateFloatKeyframe(CurveKey key, float valueScale, float timeOffsetSeconds)
+        private static FloatKeyframe CreateFloatKeyframe(CurveKey key, int fps, float valueScale, float timeOffsetSeconds)
         {
+            float normalizedTime = MathF.Max(0.0f, key.Time - timeOffsetSeconds);
             var kf = new FloatKeyframe
             {
                 SyncInOutValues = false,
                 SyncInOutTangentDirections = false,
                 SyncInOutTangentMagnitudes = false,
-                Second = MathF.Max(0.0f, key.Time - timeOffsetSeconds),
+                Second = normalizedTime,
                 InterpolationTypeIn = key.InInterpType,
                 InterpolationTypeOut = key.OutInterpType,
             };
+
+            if (TryGetAuthoredFrameIndex(normalizedTime, fps, out int authoredFrameIndex))
+                kf.AuthoredFrameIndex = authoredFrameIndex;
+
             kf.InValue = key.Value * valueScale;
             kf.OutValue = key.Value * valueScale;
             kf.InTangent = ConvertIncomingTangent(key.InSlope, valueScale);
@@ -987,6 +995,40 @@ namespace XREngine.Animation.Importers
             }
 
             return kf;
+        }
+
+        private static bool TryCreateAuthoredCadence(float lengthSeconds, int fps, out AuthoredCadence cadence)
+        {
+            cadence = default;
+            if (fps <= 0 || !float.IsFinite(lengthSeconds) || lengthSeconds <= 0.0f)
+                return false;
+
+            float authoredFrames = lengthSeconds * fps;
+            int roundedFrameCount = (int)MathF.Round(authoredFrames);
+            if (roundedFrameCount <= 0)
+                return false;
+
+            float normalizedLength = roundedFrameCount / (float)fps;
+            if (MathF.Abs(normalizedLength - lengthSeconds) > 0.0001f)
+                return false;
+
+            cadence = new AuthoredCadence(roundedFrameCount, fps);
+            return true;
+        }
+
+        private static bool TryGetAuthoredFrameIndex(float timeSeconds, int fps, out int frameIndex)
+        {
+            frameIndex = 0;
+            if (fps <= 0 || !float.IsFinite(timeSeconds) || timeSeconds < 0.0f)
+                return false;
+
+            float authoredFrame = timeSeconds * fps;
+            float roundedFrame = MathF.Round(authoredFrame);
+            if (MathF.Abs(authoredFrame - roundedFrame) > 0.0001f)
+                return false;
+
+            frameIndex = Math.Max(0, (int)roundedFrame);
+            return true;
         }
 
         private static float ConvertIncomingTangent(float slope, float valueScale)

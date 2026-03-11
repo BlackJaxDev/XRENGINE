@@ -586,6 +586,85 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
+    public void DrawComponentTimingsPanel(ref bool open, bool allowClose = true)
+    {
+        if (!open)
+            return;
+        if (allowClose)
+        {
+            if (!ImGui.Begin("Component Timings", ref open))
+            {
+                ImGui.End();
+                return;
+            }
+        }
+        else
+        {
+            if (!ImGui.Begin("Component Timings"))
+            {
+                ImGui.End();
+                return;
+            }
+        }
+
+        var frame = _source.LatestFrame;
+        var components = frame?.ComponentTimings;
+        if (components is null || components.Length == 0)
+        {
+            ImGui.TextDisabled("Waiting for component timing samples...");
+            ImGui.End();
+            return;
+        }
+
+        float totalMs = 0.0f;
+        for (int i = 0; i < components.Length; i++)
+            totalMs += components[i].ElapsedMs;
+
+        ImGui.Text($"Captured at {frame!.FrameTime:F3}s");
+        ImGui.Text($"Components with update work: {components.Length:N0}");
+        ImGui.Text($"Total measured component tick time: {totalMs:F3} ms");
+        ImGui.TextDisabled("Measures variable update tick delegates owned by scene components. Entries are pre-sorted by total time.");
+
+        float rowH = ImGui.GetTextLineHeightWithSpacing();
+        float estH = MathF.Min(18, components.Length) * rowH + rowH * 2;
+
+        if (ImGui.BeginTable("ComponentTimings", 7,
+            ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY,
+            new Vector2(-1f, estH)))
+        {
+            ImGui.TableSetupColumn("Component", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Scene Node", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Type", ImGuiTableColumnFlags.WidthFixed, 170f);
+            ImGui.TableSetupColumn("Time (ms)", ImGuiTableColumnFlags.WidthFixed, 90f);
+            ImGui.TableSetupColumn("Calls", ImGuiTableColumnFlags.WidthFixed, 55f);
+            ImGui.TableSetupColumn("Avg (us)", ImGuiTableColumnFlags.WidthFixed, 75f);
+            ImGui.TableSetupColumn("Groups", ImGuiTableColumnFlags.WidthFixed, 100f);
+            ImGui.TableHeadersRow();
+
+            foreach (var component in components)
+            {
+                float averageUs = component.CallCount > 0
+                    ? component.ElapsedMs * 1000.0f / component.CallCount
+                    : 0.0f;
+
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0); ImGui.TextUnformatted(component.ComponentName);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(component.ComponentId.ToString());
+                ImGui.TableSetColumnIndex(1); ImGui.TextUnformatted(component.SceneNodeName);
+                ImGui.TableSetColumnIndex(2); ImGui.TextUnformatted(component.ComponentType);
+                ImGui.TableSetColumnIndex(3); ImGui.Text($"{component.ElapsedMs:F3}");
+                ImGui.TableSetColumnIndex(4); ImGui.Text(component.CallCount.ToString());
+                ImGui.TableSetColumnIndex(5); ImGui.Text($"{averageUs:F1}");
+                ImGui.TableSetColumnIndex(6); ImGui.TextUnformatted(FormatTickGroupMask(component.TickGroupMask));
+            }
+
+            ImGui.EndTable();
+        }
+
+        ImGui.End();
+    }
+
     public void DrawBvhMetricsPanel(ref bool open, bool allowClose = true)
     {
         if (!open)
@@ -870,6 +949,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ref bool showFpsDropSpikes,
         ref bool showRenderStats,
         ref bool showThreadAllocations,
+        ref bool showComponentTimings,
         ref bool showBvhMetrics,
         ref bool showJobSystem,
         ref bool showMainThreadInvokes,
@@ -879,6 +959,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (showFpsDropSpikes) DrawFpsDropSpikesPanel(ref showFpsDropSpikes, allowClose);
         if (showRenderStats) DrawRenderStatsPanel(ref showRenderStats, allowClose);
         if (showThreadAllocations) DrawThreadAllocationsPanel(ref showThreadAllocations, allowClose);
+        if (showComponentTimings) DrawComponentTimingsPanel(ref showComponentTimings, allowClose);
         if (showBvhMetrics) DrawBvhMetricsPanel(ref showBvhMetrics, allowClose);
         if (showJobSystem) DrawJobSystemPanel(ref showJobSystem, allowClose);
         if (showMainThreadInvokes) DrawMainThreadInvokesPanel(ref showMainThreadInvokes, allowClose);
@@ -889,6 +970,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ref bool showFpsDropSpikes,
         ref bool showRenderStats,
         ref bool showThreadAllocations,
+        ref bool showComponentTimings,
         ref bool showBvhMetrics,
         ref bool showJobSystem,
         ref bool showMainThreadInvokes,
@@ -900,6 +982,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             ref showFpsDropSpikes,
             ref showRenderStats,
             ref showThreadAllocations,
+            ref showComponentTimings,
             ref showBvhMetrics,
             ref showJobSystem,
             ref showMainThreadInvokes,
@@ -1723,6 +1806,25 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (bytes < 1024) return $"{bytes} B";
         if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
         return $"{bytes / (1024.0 * 1024.0):F1} MB";
+    }
+
+    private static string FormatTickGroupMask(int tickGroupMask)
+    {
+        if (tickGroupMask == 0)
+            return "-";
+
+        string result = string.Empty;
+        if ((tickGroupMask & (1 << 0)) != 0)
+            result = "Normal";
+        if ((tickGroupMask & (1 << 1)) != 0)
+            result = result.Length == 0 ? "Late" : $"{result}, Late";
+        if ((tickGroupMask & (1 << 2)) != 0)
+            result = result.Length == 0 ? "PrePhysics" : $"{result}, PrePhysics";
+        if ((tickGroupMask & (1 << 3)) != 0)
+            result = result.Length == 0 ? "DuringPhysics" : $"{result}, DuringPhysics";
+        if ((tickGroupMask & (1 << 4)) != 0)
+            result = result.Length == 0 ? "PostPhysics" : $"{result}, PostPhysics";
+        return result.Length > 0 ? result : "-";
     }
 
     // ═══════════════════════════════════════════════════════════════

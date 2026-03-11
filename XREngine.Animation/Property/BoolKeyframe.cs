@@ -4,7 +4,8 @@
     {
         public BoolKeyframe() { }
         public BoolKeyframe(int frameIndex, float FPS, bool value)
-            : this(frameIndex / FPS, value) { }
+            : this(GetSecondForAuthoredFrame(frameIndex, FPS), value)
+            => TrySetAuthoredFrameIndex(frameIndex, FPS);
         public BoolKeyframe(float second, bool value) : base()
         {
             Second = second;

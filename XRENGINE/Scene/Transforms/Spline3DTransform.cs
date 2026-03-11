@@ -1,4 +1,5 @@
 ﻿using Extensions;
+using System.Diagnostics;
 using System.Numerics;
 using XREngine.Animation;
 using XREngine.Components;
@@ -9,6 +10,7 @@ namespace XREngine.Scene.Transforms
     public class Spline3DTransform : TransformBase
     {
         private PropAnimVector3? _spline = null;
+        private long _animationTicks = 0L;
         private float _animationSecond = 0.0f;
         private bool _animateOnActivate = true;
         private bool _loop = false;
@@ -40,7 +42,7 @@ namespace XREngine.Scene.Transforms
         public float AnimationSecond
         {
             get => _animationSecond;
-            set => SetField(ref _animationSecond, value);
+            set => SetAnimationTicks(SecondsToStopwatchTicks(value));
         }
         public bool Loop
         {
@@ -74,17 +76,46 @@ namespace XREngine.Scene.Transforms
             if (spline is null)
                 return;
 
-            AnimationSecond += Engine.Delta;
-            if (AnimationSecond <= spline.LengthInSeconds)
+            long nextTicks = _animationTicks + Math.Max(0L, Engine.Time.Timer.Update.DeltaTicks);
+            long splineLengthTicks = SecondsToStopwatchTicks(spline.LengthInSeconds);
+            if (nextTicks <= splineLengthTicks)
+            {
+                SetAnimationTicks(nextTicks);
                 return;
+            }
             
             if (Loop)
-                AnimationSecond -= spline.LengthInSeconds;
+                SetAnimationTicks(WrapStopwatchTicks(nextTicks, splineLengthTicks));
             else
             {
-                AnimationSecond = spline.LengthInSeconds;
+                SetAnimationTicks(splineLengthTicks);
                 StopAnimation();
             }
+        }
+
+        private void SetAnimationTicks(long ticks)
+        {
+            _animationTicks = Math.Max(0L, ticks);
+            SetField(ref _animationSecond, StopwatchTicksToSeconds(_animationTicks), nameof(AnimationSecond));
+        }
+
+        private static long SecondsToStopwatchTicks(double seconds)
+            => !double.IsFinite(seconds) || seconds == 0.0
+                ? 0L
+                : (long)Math.Round(Math.Max(0.0, seconds) * Stopwatch.Frequency);
+
+        private static float StopwatchTicksToSeconds(long ticks)
+            => (float)(Math.Max(0L, ticks) / (double)Stopwatch.Frequency);
+
+        private static long WrapStopwatchTicks(long valueTicks, long lengthTicks)
+        {
+            if (lengthTicks <= 0L)
+                return 0L;
+
+            long wrappedTicks = valueTicks % lengthTicks;
+            if (wrappedTicks < 0L)
+                wrappedTicks += lengthTicks;
+            return wrappedTicks;
         }
 
         public bool RotateToVelocity

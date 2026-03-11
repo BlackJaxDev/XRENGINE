@@ -98,6 +98,35 @@ namespace XREngine.UnitTests.Audio
             processor.Shutdown();
         }
 
+        [TestCase(0, 1024, 0)]
+        [TestCase(1, 1024, 1)]
+        [TestCase(1024, 1024, 1)]
+        [TestCase(1025, 1024, 2)]
+        [TestCase(4096, 1024, 4)]
+        public void SteamAudioProcessor_GetChunkCount_UsesCeilingDivision(int totalFrames, int frameSize, int expected)
+        {
+            SteamAudioProcessor.GetChunkCount(totalFrames, frameSize).ShouldBe(expected);
+        }
+
+        [Test]
+        public void SteamAudioProcessor_GetChunkLayout_MapsTailChunkWithoutDroppingFrames()
+        {
+            var firstChunk = SteamAudioProcessor.GetChunkLayout(chunkIndex: 0, totalFrames: 2050, frameSize: 1024, outputChannels: 2);
+            var secondChunk = SteamAudioProcessor.GetChunkLayout(chunkIndex: 1, totalFrames: 2050, frameSize: 1024, outputChannels: 2);
+            var tailChunk = SteamAudioProcessor.GetChunkLayout(chunkIndex: 2, totalFrames: 2050, frameSize: 1024, outputChannels: 2);
+
+            firstChunk.ShouldBe((0, 1024, 0, 2048));
+            secondChunk.ShouldBe((1024, 1024, 2048, 2048));
+            tailChunk.ShouldBe((2048, 2, 4096, 4));
+        }
+
+        [Test]
+        public void SteamAudioProcessor_GetChunkLayout_InvalidChunk_Throws()
+        {
+            Should.Throw<ArgumentOutOfRangeException>(() =>
+                SteamAudioProcessor.GetChunkLayout(chunkIndex: 1, totalFrames: 1024, frameSize: 1024, outputChannels: 2));
+        }
+
         #endregion
 
         #region AudioManager Combo Validation

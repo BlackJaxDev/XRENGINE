@@ -111,8 +111,11 @@ namespace XREngine.Rendering
         #endregion
 
         #region ImGui
-        private float _lastImGuiTimestamp = float.MinValue;
+        private long _lastImGuiTimestampTicks = long.MinValue;
         private readonly object _imguiRenderLock = new();
+
+        internal static bool ShouldSkipImGuiFrame(bool allowMultipleInFrame, long timestampTicks, long lastTimestampTicks)
+            => !allowMultipleInFrame && timestampTicks == lastTimestampTicks;
 
         protected interface IImGuiRendererBackend
         {
@@ -130,7 +133,7 @@ namespace XREngine.Rendering
             => null;
 
         protected void ResetImGuiFrameMarker()
-            => _lastImGuiTimestamp = float.MinValue;
+            => _lastImGuiTimestampTicks = long.MinValue;
 
         protected static void ConfigureImGuiDisplay(UICanvasComponent? canvas, XRViewport? viewport, XRCamera? camera)
         {
@@ -222,11 +225,11 @@ namespace XREngine.Rendering
             if (backend is null)
                 return false;
 
-            float timestamp = Engine.Time.Timer.Render.LastTimestamp;
-            if (!allowMultipleInFrame && MathF.Abs(timestamp - _lastImGuiTimestamp) <= float.Epsilon)
+            long timestampTicks = Engine.Time.Timer.Render.LastTimestampTicks;
+            if (ShouldSkipImGuiFrame(allowMultipleInFrame, timestampTicks, _lastImGuiTimestampTicks))
                 return false;
 
-            _lastImGuiTimestamp = timestamp;
+            _lastImGuiTimestampTicks = timestampTicks;
 
             lock (ImGuiContextTracker.SyncRoot)
             {

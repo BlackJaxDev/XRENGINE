@@ -4,6 +4,8 @@
 
 A standalone ImGui application (`XREngine.Profiler`) that runs in a separate process and renders the same profiler panel currently embedded in `XREngine.Editor`. The engine/editor sends telemetry over **UDP on localhost** with minimal sender-side overhead, and the profiler tool receives, deserializes, and visualizes it independently.
 
+When `XRE_PUBLISHED` is defined, the engine compiles a no-op profiler surface and omits the runtime profiler sender and allocation-tracking wiring so published game builds do not collect or emit profiler telemetry.
+
 ### Goals
 
 1. **Zero-copy sender path** — serialization happens on a dedicated background thread; the hot path (render/update/physics) is never blocked.
@@ -75,7 +77,7 @@ XREngine.Data/
 
 | ID | Name | Frequency | Description |
 |----|------|-----------|-------------|
-| `0x01` | `ProfilerFrame` | ~30 Hz | Full profiler tree snapshot (mirrors `ProfilerFrameSnapshot`) |
+| `0x01` | `ProfilerFrame` | ~30 Hz | Full profiler tree snapshot plus latest per-component update-tick timings |
 | `0x02` | `RenderStats` | ~30 Hz | Draw calls, triangles, VRAM, FBO bandwidth, octree, render-matrix |
 | `0x03` | `ThreadAllocations` | ~30 Hz | Per-thread GC allocation ring snapshot |
 | `0x04` | `BvhMetrics` | ~30 Hz | GPU BVH build/refit/cull/raycast counters and timings |
@@ -92,6 +94,7 @@ public partial class ProfilerFramePacket
     public float FrameTime;
     public ProfilerThreadData[] Threads;
     public Dictionary<int, float[]> ThreadHistory;  // threadId → sample ring
+    public ProfilerComponentTimingData[] ComponentTimings;
 }
 
 [MemoryPackable]
@@ -108,6 +111,18 @@ public partial class ProfilerNodeData
     public string Name;
     public float ElapsedMs;
     public ProfilerNodeData[] Children;
+}
+
+[MemoryPackable]
+public partial class ProfilerComponentTimingData
+{
+    public Guid ComponentId;
+    public string ComponentName;
+    public string ComponentType;
+    public string SceneNodeName;
+    public float ElapsedMs;
+    public int CallCount;
+    public int TickGroupMask;
 }
 
 [MemoryPackable]
@@ -303,7 +318,7 @@ All the aggregation/cache logic (`ProfilerRootMethodAggregate`, `AggregatedChild
 - [x] **3.2** Add project to `XRENGINE.sln`. ✅ Done previously.
 - [x] **3.3** Implement `Program.cs` — GLFW window creation (1440×900), OpenGL 3.3 core context, `ImGuiController` init, main loop. Supports port override via CLI arg or `XRE_PROFILER_PORT` env var.
 - [x] **3.4** Implement `UdpProfilerReceiver.cs` — background thread with `UdpClient.Receive`, MemoryPack deserialize by `MessageType`, volatile latest-snapshot storage, heartbeat-based connection detection, cumulative counters.
-- [x] **3.5** Implement `ProfilerImGuiApp.cs` — ImGui docking layout (DockBuilder P/Invoke), menu bar with connection indicator, 7 panels (Profiler Tree, Render Stats, Thread Allocations, BVH Metrics, Job System, Main Thread Invokes, Connection Info), dark theme. Also added `ImGuiDockBuilderNative.cs` (P/Invoke wrapper).
+- [x] **3.5** Implement `ProfilerImGuiApp.cs` — ImGui docking layout (DockBuilder P/Invoke), menu bar with connection indicator, profiler panels including Profiler Tree, FPS Drop Spikes, Render Stats, Thread Allocations, Component Timings, BVH Metrics, Job System, Main Thread Invokes, and Connection Info, plus dark theme. Also added `ImGuiDockBuilderNative.cs` (P/Invoke wrapper).
 
 ### Phase 4 — Profiler Panel Port
 

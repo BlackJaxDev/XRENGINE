@@ -4,6 +4,11 @@ namespace XREngine
 {
     public static partial class Engine
     {
+        public static long ElapsedTicks => Time.Timer.TimeTicks();
+        public static long StopwatchFrequency => EngineTimer.StopwatchTickFrequency;
+        public static long UndilatedDeltaTicks => Time.Timer.Update.DeltaTicks;
+        public static long DeltaTicks => ScaleStopwatchTicks(Time.Timer.Update.DeltaTicks, Time.Timer.Update.Dilation);
+        public static long FixedDeltaTicks => Time.Timer.FixedUpdateDeltaTicks;
         /// <summary>
         /// This delta is the time that has passed since the last update, in seconds.
         /// Not affected by time dilation.
@@ -37,6 +42,11 @@ namespace XREngine
         public static class Time
         {
             public static EngineTimer Timer { get; } = new EngineTimer();
+            public static long ElapsedTicks => Timer.TimeTicks();
+            public static long StopwatchFrequency => EngineTimer.StopwatchTickFrequency;
+            public static long UndilatedDeltaTicks => Timer.Update.DeltaTicks;
+            public static long DeltaTicks => ScaleStopwatchTicks(Timer.Update.DeltaTicks, Timer.Update.Dilation);
+            public static long FixedDeltaTicks => Timer.FixedUpdateDeltaTicks;
 
             static Time() => Timer = new EngineTimer();
 
@@ -92,5 +102,10 @@ namespace XREngine
                 Timer.VSync = vSync;
             }
         }
+
+        private static long ScaleStopwatchTicks(long deltaTicks, float speed)
+            => deltaTicks == 0L || !float.IsFinite(speed) || speed == 0.0f
+                ? 0L
+                : (long)Math.Round(deltaTicks * (double)speed);
     }
 }

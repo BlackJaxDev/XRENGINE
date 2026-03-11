@@ -25,3 +25,4 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 ## Notes
 - Treat these documents as working areas for active refactors and planning.
 - If you promote a design to shipped behavior, mirror key details into the relevant API or architecture doc.
+- Completed timing migration notes now live in [features/tick-based-animation-timing.md](../features/tick-based-animation-timing.md).

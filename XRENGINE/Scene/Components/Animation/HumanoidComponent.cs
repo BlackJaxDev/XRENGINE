@@ -11,6 +11,7 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Timers;
 
 namespace XREngine.Components.Animation
 {
@@ -724,19 +725,19 @@ namespace XREngine.Components.Animation
         }
 
         private bool _boneMappingComplete;
-        private float _nextRebindTime;
+        private long _nextRebindTicks;
         private bool? _lastBoneMappingComplete;
+
+        internal static bool ShouldAttemptRebind(bool boneMappingComplete, long nowTicks, long nextRebindTicks)
+            => !boneMappingComplete && nowTicks >= nextRebindTicks;
 
         private void EnsureBoneMapping()
         {
-            if (_boneMappingComplete)
+            long nowTicks = Engine.ElapsedTicks;
+            if (!ShouldAttemptRebind(_boneMappingComplete, nowTicks, _nextRebindTicks))
                 return;
 
-            float now = Engine.ElapsedTime;
-            if (now < _nextRebindTime)
-                return;
-
-            _nextRebindTime = now + 0.5f;
+            _nextRebindTicks = nowTicks + EngineTimer.SecondsToStopwatchTicks(0.5f);
             SetFromNode();
         }
 

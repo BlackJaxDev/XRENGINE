@@ -17,6 +17,9 @@ public sealed partial class ProfilerFramePacket
 
     /// <summary>Rolling history of per-thread total-time samples (threadId → float[]).</summary>
     public Dictionary<int, float[]> ThreadHistory { get; set; } = [];
+
+    /// <summary>Per-component timings captured from the latest update tick.</summary>
+    public ProfilerComponentTimingData[] ComponentTimings { get; set; } = [];
 }
 
 /// <summary>
@@ -39,4 +42,19 @@ public sealed partial class ProfilerNodeData
     public string Name { get; set; } = string.Empty;
     public float ElapsedMs { get; set; }
     public ProfilerNodeData[] Children { get; set; } = [];
+}
+
+/// <summary>
+/// Single component timing entry captured during an update tick.
+/// </summary>
+[MemoryPackable]
+public sealed partial class ProfilerComponentTimingData
+{
+    public Guid ComponentId { get; set; }
+    public string ComponentName { get; set; } = string.Empty;
+    public string ComponentType { get; set; } = string.Empty;
+    public string SceneNodeName { get; set; } = string.Empty;
+    public float ElapsedMs { get; set; }
+    public int CallCount { get; set; }
+    public int TickGroupMask { get; set; }
 }

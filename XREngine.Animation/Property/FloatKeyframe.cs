@@ -10,11 +10,14 @@ namespace XREngine.Animation
             : this(0.0f, 0.0f, 0.0f, EVectorInterpType.Linear) { }
 
         public FloatKeyframe(int frameIndex, float FPS, float inValue, float outValue, float inTangent, float outTangent, EVectorInterpType type)
-            : this(frameIndex / FPS, inValue, outValue, inTangent, outTangent, type) { }
+            : this(GetSecondForAuthoredFrame(frameIndex, FPS), inValue, outValue, inTangent, outTangent, type)
+            => TrySetAuthoredFrameIndex(frameIndex, FPS);
         public FloatKeyframe(int frameIndex, float FPS, float inoutValue, float inoutTangent, EVectorInterpType type)
-            : this(frameIndex / FPS, inoutValue, inoutTangent, type) { }
+            : this(GetSecondForAuthoredFrame(frameIndex, FPS), inoutValue, inoutTangent, type)
+            => TrySetAuthoredFrameIndex(frameIndex, FPS);
         public FloatKeyframe(int frameIndex, float FPS, float inoutValue, float inTangent, float outTangent, EVectorInterpType type)
-            : this(frameIndex / FPS, inoutValue, inTangent, outTangent, type) { }
+            : this(GetSecondForAuthoredFrame(frameIndex, FPS), inoutValue, inTangent, outTangent, type)
+            => TrySetAuthoredFrameIndex(frameIndex, FPS);
 
         public FloatKeyframe(float second, float inoutValue, float inoutTangent, EVectorInterpType type)
             : this(second, inoutValue, inoutValue, inoutTangent, inoutTangent, type) { }
@@ -292,6 +295,9 @@ namespace XREngine.Animation
         public override void ReadFromString(string str)
         {
             string[] parts = str.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            SyncInOutValues = false;
+            SyncInOutTangentDirections = false;
+            SyncInOutTangentMagnitudes = false;
             Second = float.Parse(parts[0]);
             InValue = float.Parse(parts[1]);
             OutValue = float.Parse(parts[2]);

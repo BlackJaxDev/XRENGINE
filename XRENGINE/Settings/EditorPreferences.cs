@@ -1245,8 +1245,22 @@ namespace XREngine
         [Description("Tracks GC allocations per engine thread/tick using GC.GetAllocatedBytesForCurrentThread(). Used by the Profiler panel.")]
         public bool EnableThreadAllocationTracking
         {
-            get => _enableThreadAllocationTracking;
-            set => SetField(ref _enableThreadAllocationTracking, value);
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableThreadAllocationTracking;
+#endif
+            }
+            set
+            {
+#if XRE_PUBLISHED
+                SetField(ref _enableThreadAllocationTracking, false);
+#else
+                SetField(ref _enableThreadAllocationTracking, value);
+#endif
+            }
         }
 
         [Category("Profiling")]
@@ -1254,11 +1268,22 @@ namespace XREngine
         [Description("When enabled, the code profiler records method timings for the Profiler panel. Disable to reduce overhead in hot paths.")]
         public bool EnableProfilerFrameLogging
         {
-            get => _enableProfilerFrameLogging;
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableProfilerFrameLogging;
+#endif
+            }
             set
             {
+#if XRE_PUBLISHED
+                SetField(ref _enableProfilerFrameLogging, false);
+#else
                 if (SetField(ref _enableProfilerFrameLogging, value))
                     Engine.Profiler.EnableFrameLogging = value;
+#endif
             }
         }
 
@@ -1267,11 +1292,23 @@ namespace XREngine
         [Description("When enabled, tracks per-frame rendering statistics (draw calls, triangles, etc.). Disable to reduce overhead.")]
         public bool EnableRenderStatisticsTracking
         {
-            get => _enableRenderStatisticsTracking;
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableRenderStatisticsTracking;
+#endif
+            }
             set
             {
+#if XRE_PUBLISHED
+                if (SetField(ref _enableRenderStatisticsTracking, false))
+                    Engine.Rendering.Stats.EnableTracking = false;
+#else
                 if (SetField(ref _enableRenderStatisticsTracking, value))
                     Engine.Rendering.Stats.EnableTracking = value;
+#endif
             }
         }
 
@@ -1331,9 +1368,19 @@ namespace XREngine
         [Description("When enabled, sends profiler telemetry over UDP to an external XREngine.Profiler instance on localhost. When disabled, zero overhead (no thread, no socket).")]
         public bool EnableProfilerUdpSending
         {
-            get => _enableProfilerUdpSending;
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableProfilerUdpSending;
+#endif
+            }
             set
             {
+#if XRE_PUBLISHED
+                SetField(ref _enableProfilerUdpSending, false);
+#else
                 if (SetField(ref _enableProfilerUdpSending, value))
                 {
                     if (value)
@@ -1346,6 +1393,7 @@ namespace XREngine
                         UdpProfilerSender.Stop();
                     }
                 }
+#endif
             }
         }
 

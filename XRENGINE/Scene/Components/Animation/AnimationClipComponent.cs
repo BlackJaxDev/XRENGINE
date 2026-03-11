@@ -6,12 +6,16 @@ using XREngine.Data;
 using XREngine.Data.Animation;
 using XREngine.Scene.Transforms;
 using Extensions;
+using System.Diagnostics;
 
 namespace XREngine.Components.Animation
 {
+    [XRComponentEditor("XREngine.Editor.ComponentEditors.AnimationClipComponentEditor")]
     public class AnimationClipComponent : XRComponent
     {
         private bool _initialized;
+        private bool _isPlaying;
+        private bool _isPaused;
         private readonly List<AnimationMember> _animatedMembers = [];
         private AnimationMember[] _animatedMembersSnapshot = [];
         private readonly Dictionary<AnimationMember, object?[]> _baselineMethodArguments = [];
@@ -52,6 +56,11 @@ namespace XREngine.Components.Animation
             get => _playbackTime;
             private set => SetField(ref _playbackTime, value);
         }
+
+        private long _playbackTimeTicks;
+
+        public bool IsPlaying => _isPlaying;
+        public bool IsPaused => _isPaused;
 
         private bool _suspendSiblingStateMachine = true;
         public bool SuspendSiblingStateMachine
@@ -135,8 +144,10 @@ namespace XREngine.Components.Animation
 
         private void Start()
         {
-            if (Animation is null || Animation.IsPlaying)
+            if (Animation is null || _isPlaying)
                 return;
+
+            _isPlaying = true;
 
             if (SuspendSiblingStateMachine && _suspendedSiblingAnimator is null && TryGetSiblingComponent<AnimStateMachineComponent>(out var animator) && animator is not null)
             {
@@ -151,9 +162,9 @@ namespace XREngine.Components.Animation
 
             // Bind members to this component/SceneNode via the anim state machine.
             // Seed the underlying property animations to a canonical clip time.
-            float initialTime = GetInitialPlaybackTime(Animation, Speed);
-            StartAllPropertyAnimations(Animation, initialTime);
-            PlaybackTime = initialTime;
+            long initialTicks = GetInitialPlaybackTicks(Animation, Speed);
+            StartAllPropertyAnimations(Animation, initialTicks);
+            SetPlaybackTimeTicks(initialTicks);
             ApplyAnimatedValues();
 
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
@@ -161,6 +172,8 @@ namespace XREngine.Components.Animation
 
         private void Stop()
         {
+            _isPlaying = false;
+            _isPaused = false;
             ClearHumanoidAnimationIKSolverGoals();
 
             if (Animation is not null)
@@ -216,9 +229,9 @@ namespace XREngine.Components.Animation
                 ResetRootMotionBaselineIfNeeded();
             EnsureInitialized();
 
-            float evaluationTime = NormalizePlaybackTime(timeSeconds, Animation, wrapLooped: false);
-            SetAllPropertyAnimationTimes(Animation, evaluationTime, wrapLooped: false);
-            PlaybackTime = evaluationTime;
+            long evaluationTicks = NormalizePlaybackTime(SecondsToStopwatchTicks(timeSeconds), Animation, wrapLooped: false);
+            SetAllPropertyAnimationTimes(Animation, evaluationTicks, wrapLooped: false);
+            SetPlaybackTimeTicks(evaluationTicks);
 
             if (!ShouldDriveSiblingHumanoidPose())
                 return;
@@ -232,14 +245,41 @@ namespace XREngine.Components.Animation
             }
         }
 
+        public void Play()
+        {
+            if (_isPlaying || _isPaused)
+                Stop();
+            Start();
+        }
+
+        public void StopPlayback()
+            => Stop();
+
+        public void Pause()
+        {
+            if (!_isPlaying || _isPaused)
+                return;
+            _isPaused = true;
+            UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
+        }
+
+        public void Resume()
+        {
+            if (!_isPlaying || !_isPaused)
+                return;
+            _isPaused = false;
+            RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
+        }
+
         private void TickAnimation()
         {
             if (Animation is null || !_initialized)
                 return;
 
-            float delta = Engine.Delta * Speed;
-            PlaybackTime = NormalizePlaybackTime(PlaybackTime + delta, Animation, wrapLooped: Animation.Looped);
-            SetAllPropertyAnimationTimes(Animation, PlaybackTime, wrapLooped: false);
+            long deltaTicks = ScaleStopwatchTicks(SecondsToStopwatchTicks(Engine.Delta), Speed);
+            long playbackTimeTicks = NormalizePlaybackTime(_playbackTimeTicks + deltaTicks, Animation, wrapLooped: Animation.Looped);
+            SetPlaybackTimeTicks(playbackTimeTicks);
+            SetAllPropertyAnimationTimes(Animation, playbackTimeTicks, wrapLooped: false);
 
             if (!ShouldDriveSiblingHumanoidPose())
                 return;
@@ -590,38 +630,80 @@ namespace XREngine.Components.Animation
             || member.MemberName == "QuaternionZ"
             || member.MemberName == "QuaternionW");
 
-        private static float GetInitialPlaybackTime(AnimationClip clip, float speed)
-            => speed < 0.0f ? clip.LengthInSeconds : 0.0f;
+        private static long GetInitialPlaybackTicks(AnimationClip clip, float speed)
+            => speed < 0.0f ? GetClipLengthTicks(clip) : 0L;
 
-        private static void StartAllPropertyAnimations(AnimationClip clip, float initialTime)
+        private static void StartAllPropertyAnimations(AnimationClip clip, long initialTimeTicks)
         {
             foreach (var anim in clip.GetAllAnimations().Values)
             {
                 anim.Looped = clip.Looped;
                 anim.Start();
-                anim.Seek(initialTime, wrapLooped: false);
+                anim.Seek(initialTimeTicks, wrapLooped: false);
             }
         }
 
         private static void SetAllPropertyAnimationTimes(AnimationClip clip, float timeSeconds, bool wrapLooped)
+            => SetAllPropertyAnimationTimes(clip, SecondsToStopwatchTicks(timeSeconds), wrapLooped);
+
+        private static void SetAllPropertyAnimationTimes(AnimationClip clip, long timeTicks, bool wrapLooped)
         {
             foreach (var anim in clip.GetAllAnimations().Values)
             {
                 anim.Looped = clip.Looped;
                 if (anim.State == EAnimationState.Stopped)
                     anim.Start();
-                anim.Seek(timeSeconds, wrapLooped);
+                anim.Seek(timeTicks, wrapLooped);
             }
         }
 
         private static float NormalizePlaybackTime(float timeSeconds, AnimationClip clip, bool wrapLooped)
+            => StopwatchTicksToSeconds(NormalizePlaybackTime(SecondsToStopwatchTicks(timeSeconds), clip, wrapLooped));
+
+        private static long NormalizePlaybackTime(long timeTicks, AnimationClip clip, bool wrapLooped)
         {
-            if (clip.LengthInSeconds <= 0.0f)
-                return 0.0f;
+            long clipLengthTicks = GetClipLengthTicks(clip);
+            if (clipLengthTicks <= 0L)
+                return 0L;
 
             return wrapLooped
-                ? timeSeconds.RemapToRange(0.0f, clip.LengthInSeconds)
-                : Math.Clamp(timeSeconds, 0.0f, clip.LengthInSeconds);
+                ? WrapStopwatchTicks(timeTicks, clipLengthTicks)
+                : Math.Clamp(timeTicks, 0L, clipLengthTicks);
+        }
+
+        private void SetPlaybackTimeTicks(long playbackTimeTicks)
+        {
+            _playbackTimeTicks = Math.Max(0L, playbackTimeTicks);
+            PlaybackTime = StopwatchTicksToSeconds(_playbackTimeTicks);
+        }
+
+        private static long GetClipLengthTicks(AnimationClip clip)
+            => clip.LengthInSeconds <= 0.0f
+                ? 0L
+                : SecondsToStopwatchTicks(clip.LengthInSeconds);
+
+        private static long SecondsToStopwatchTicks(double seconds)
+            => !double.IsFinite(seconds) || seconds == 0.0
+                ? 0L
+                : (long)Math.Round(seconds * Stopwatch.Frequency);
+
+        private static float StopwatchTicksToSeconds(long ticks)
+            => (float)(ticks / (double)Stopwatch.Frequency);
+
+        private static long ScaleStopwatchTicks(long deltaTicks, float speed)
+            => deltaTicks == 0L || !float.IsFinite(speed) || speed == 0.0f
+                ? 0L
+                : (long)Math.Round(deltaTicks * (double)speed);
+
+        private static long WrapStopwatchTicks(long valueTicks, long lengthTicks)
+        {
+            if (lengthTicks <= 0L)
+                return 0L;
+
+            long wrappedTicks = valueTicks % lengthTicks;
+            if (wrappedTicks < 0L)
+                wrappedTicks += lengthTicks;
+            return wrappedTicks;
         }
 
         private static void StopAllPropertyAnimations(AnimationClip clip)

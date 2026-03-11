@@ -18,6 +18,7 @@ using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
 using XREngine.Scene.Transforms;
+using XREngine.Timers;
 
 namespace XREngine.Components.Scene.Mesh
 {
@@ -54,7 +55,11 @@ namespace XREngine.Components.Scene.Mesh
         /// only the local AABB shape is recalculated at this cadence.
         /// </summary>
         private const float SkinnedBoundsRefreshInterval = 5.0f;
-        private float _lastSkinnedBoundsRefreshTime = float.NegativeInfinity;
+        private static readonly long SkinnedBoundsRefreshIntervalTicks = EngineTimer.SecondsToStopwatchTicks(SkinnedBoundsRefreshInterval);
+        private long _lastSkinnedBoundsRefreshTicks = long.MinValue;
+
+        internal static bool ShouldReuseSkinnedBounds(long nowTicks, long lastRefreshTicks)
+            => lastRefreshTicks != long.MinValue && Math.Max(0L, nowTicks - lastRefreshTicks) < SkinnedBoundsRefreshIntervalTicks;
 
         public Matrix4x4 SkinnedBvhLocalToWorldMatrix => _skinnedRootRenderMatrix;
         public Matrix4x4 SkinnedBvhWorldToLocalMatrix => _skinnedRootRenderMatrixInverse;
@@ -444,8 +449,8 @@ namespace XREngine.Components.Scene.Mesh
                 // Full recomputation is throttled to SkinnedBoundsRefreshInterval seconds.
                 if (_hasSkinnedBounds || _skinnedLocalBounds.Max != Vector3.Zero || _skinnedLocalBounds.Min != Vector3.Zero)
                 {
-                    float now = (float)Engine.ElapsedTime;
-                    if (now - _lastSkinnedBoundsRefreshTime < SkinnedBoundsRefreshInterval)
+                    long nowTicks = Engine.ElapsedTicks;
+                    if (ShouldReuseSkinnedBounds(nowTicks, _lastSkinnedBoundsRefreshTicks))
                     {
                         // Reuse existing local bounds shape but update the offset matrix
                         // so culling stays correct as the root bone moves.
@@ -467,12 +472,12 @@ namespace XREngine.Components.Scene.Mesh
                 // Try GPU path first if enabled
                 if (useGpu && TryComputeSkinnedBoundsOnGpu(out SkinnedMeshBoundsCalculator.Result gpuResult))
                 {
-                    _lastSkinnedBoundsRefreshTime = (float)Engine.ElapsedTime;
+                    _lastSkinnedBoundsRefreshTicks = Engine.ElapsedTicks;
                     return ApplySkinnedBoundsResult(gpuResult, markBvhDirty: true);
                 }
 
                 // Fall back to CPU path for debugging or when GPU fails
-                _lastSkinnedBoundsRefreshTime = (float)Engine.ElapsedTime;
+                _lastSkinnedBoundsRefreshTicks = Engine.ElapsedTicks;
                 return TryComputeSkinnedBoundsOnCpuLocked();
             }
         }

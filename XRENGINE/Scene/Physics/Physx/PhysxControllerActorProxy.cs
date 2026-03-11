@@ -2,6 +2,7 @@ using MagicPhysX;
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Scene;
+using XREngine.Timers;
 using static MagicPhysX.NativeMethods;
 
 namespace XREngine.Rendering.Physics.Physx
@@ -17,14 +18,17 @@ namespace XREngine.Rendering.Physics.Physx
         private readonly PxController* _controller;
         private Vector3 _lastPosition;
         private Vector3 _cachedLinearVelocity;
-        private float _lastRefreshTime;
+        private long _lastRefreshTicks;
 
         private (Vector3 position, Quaternion rotation) _cachedTransform;
+
+        internal static float DeltaTicksToSeconds(long currentTicks, long previousTicks)
+            => EngineTimer.TicksToSeconds(Math.Max(0L, currentTicks - previousTicks));
 
         public PhysxControllerActorProxy(PxController* controller)
         {
             _controller = controller;
-            _lastRefreshTime = 0;
+            _lastRefreshTicks = 0L;
             RefreshFromNative();
             _lastPosition = _cachedTransform.position;
         }
@@ -71,14 +75,14 @@ namespace XREngine.Rendering.Physics.Physx
             _cachedTransform = (newPosition, rotation);
 
             // Estimate velocity from position delta
-            float currentTime = Engine.ElapsedTime;
-            float dt = currentTime - _lastRefreshTime;
+            long currentTicks = Engine.ElapsedTicks;
+            float dt = DeltaTicksToSeconds(currentTicks, _lastRefreshTicks);
             if (dt > 0.0001f)
             {
                 _cachedLinearVelocity = (newPosition - _lastPosition) / dt;
             }
             _lastPosition = newPosition;
-            _lastRefreshTime = currentTime;
+            _lastRefreshTicks = currentTicks;
         }
 
         public (Vector3 position, Quaternion rotation) Transform

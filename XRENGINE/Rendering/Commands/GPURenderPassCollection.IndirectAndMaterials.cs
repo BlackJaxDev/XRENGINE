@@ -1040,7 +1040,7 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            _ = BvhGpuProfiler.Instance.ResolveAndPublish(Engine.Time.Timer.Render.LastTimestamp, _statsBuffer);
+            _ = BvhGpuProfiler.Instance.ResolveAndPublish(Engine.Time.Timer.Render.LastTimestampTicks, _statsBuffer);
             uint overflowCount = CheckOverflowFlags(scene);
             LogGpuStats(overflowCount);
         }

@@ -28,6 +28,8 @@ namespace XREngine.Audio.Steam
     /// </summary>
     public sealed class SteamAudioProcessor : IAudioEffectsProcessor
     {
+        private readonly object _syncRoot = new();
+
         // --- Global Phonon state ---
         private IPLContext _context;
         private IPLHRTF _hrtf;
@@ -162,18 +164,53 @@ namespace XREngine.Audio.Steam
             }
         }
 
+        internal static int GetChunkCount(int totalFrames, int frameSize)
+        {
+            if (totalFrames <= 0 || frameSize <= 0)
+                return 0;
+
+            return (totalFrames + frameSize - 1) / frameSize;
+        }
+
+        internal static (int InputOffset, int FrameCount, int OutputOffset, int OutputSampleCount) GetChunkLayout(
+            int chunkIndex,
+            int totalFrames,
+            int frameSize,
+            int outputChannels)
+        {
+            if (chunkIndex < 0)
+                throw new ArgumentOutOfRangeException(nameof(chunkIndex));
+            if (totalFrames < 0)
+                throw new ArgumentOutOfRangeException(nameof(totalFrames));
+            if (frameSize <= 0)
+                throw new ArgumentOutOfRangeException(nameof(frameSize));
+            if (outputChannels <= 0)
+                throw new ArgumentOutOfRangeException(nameof(outputChannels));
+
+            int inputOffset = chunkIndex * frameSize;
+            if (inputOffset >= totalFrames)
+                throw new ArgumentOutOfRangeException(nameof(chunkIndex));
+
+            int frameCount = Math.Min(frameSize, totalFrames - inputOffset);
+            int outputOffset = inputOffset * outputChannels;
+            int outputSampleCount = frameCount * outputChannels;
+            return (inputOffset, frameCount, outputOffset, outputSampleCount);
+        }
+
         // --- IAudioEffectsProcessor: Lifecycle ---
 
         public void Initialize(AudioEffectsSettings settings)
         {
-            if (_initialized)
-                return;
+            lock (_syncRoot)
+            {
+                if (_initialized)
+                    return;
 
-            // Create IPL context
-            var contextSettings = new IPLContextSettings();
-            var error = Phonon.iplContextCreate(ref contextSettings, ref _context);
-            if (error != IPLerror.IPL_STATUS_SUCCESS)
-                throw new InvalidOperationException($"Steam Audio: iplContextCreate failed with {error}. Is phonon.dll available?");
+                // Create IPL context
+                var contextSettings = new IPLContextSettings();
+                var error = Phonon.iplContextCreate(ref contextSettings, ref _context);
+                if (error != IPLerror.IPL_STATUS_SUCCESS)
+                    throw new InvalidOperationException($"Steam Audio: iplContextCreate failed with {error}. Is phonon.dll available?");
 
             // Audio settings — match engine sample rate and frame size
             _audioSettings = new IPLAudioSettings
@@ -252,84 +289,91 @@ namespace XREngine.Audio.Steam
                 origin = default,
             };
 
-            _initialized = true;
-            Debug.WriteLine($"[SteamAudioProcessor] Initialized (sampleRate={settings.SampleRate}, frameSize={settings.FrameSize}).");
+                _initialized = true;
+                Debug.WriteLine($"[SteamAudioProcessor] Initialized (sampleRate={settings.SampleRate}, frameSize={settings.FrameSize}).");
+            }
         }
 
         public void Shutdown()
         {
-            if (!_initialized)
-                return;
-
-            // Dispose all remaining source chains
-            foreach (var chain in _sources.Values)
-                chain.Dispose();
-            _sources.Clear();
-
-            // Detach probe batches
-            foreach (var pb in _probeBatches)
+            lock (_syncRoot)
             {
+                if (!_initialized)
+                    return;
+
+                // Dispose all remaining source chains
+                foreach (var chain in _sources.Values)
+                    chain.Dispose();
+                _sources.Clear();
+
+                // Detach probe batches
+                foreach (var pb in _probeBatches)
+                {
+                    if (_simulator.Handle != IntPtr.Zero)
+                        Phonon.iplSimulatorRemoveProbeBatch(_simulator, pb.Handle);
+                }
+                _probeBatches.Clear();
+
+                // Detach scene before releasing simulator
+                _scene = null;
+
+                // Release reflection mixer
+                if (_reflectionMixer.Handle != IntPtr.Zero)
+                    Phonon.iplReflectionMixerRelease(ref _reflectionMixer);
+
                 if (_simulator.Handle != IntPtr.Zero)
-                    Phonon.iplSimulatorRemoveProbeBatch(_simulator, pb.Handle);
+                    Phonon.iplSimulatorRelease(ref _simulator);
+                if (_hrtf.Handle != IntPtr.Zero)
+                    Phonon.iplHRTFRelease(ref _hrtf);
+                if (_context.Handle != IntPtr.Zero)
+                    Phonon.iplContextRelease(ref _context);
+
+                _initialized = false;
+                Debug.WriteLine("[SteamAudioProcessor] Shut down.");
             }
-            _probeBatches.Clear();
-
-            // Detach scene before releasing simulator
-            _scene = null;
-
-            // Release reflection mixer
-            if (_reflectionMixer.Handle != IntPtr.Zero)
-                Phonon.iplReflectionMixerRelease(ref _reflectionMixer);
-
-            if (_simulator.Handle != IntPtr.Zero)
-                Phonon.iplSimulatorRelease(ref _simulator);
-            if (_hrtf.Handle != IntPtr.Zero)
-                Phonon.iplHRTFRelease(ref _hrtf);
-            if (_context.Handle != IntPtr.Zero)
-                Phonon.iplContextRelease(ref _context);
-
-            _initialized = false;
-            Debug.WriteLine("[SteamAudioProcessor] Shut down.");
         }
 
         // --- IAudioEffectsProcessor: Tick ---
 
         public void Tick(float deltaTime)
         {
-            if (!_initialized)
-                return;
-
-            // Determine which simulation types to run.
-            // Reflections require a committed scene; pathing additionally
-            // requires at least one probe batch.  Running either without
-            // the prerequisite causes a native access-violation crash.
-            var flags = ActiveSimFlags;
-            bool hasScene = _scene != null;
-            bool hasProbes = _probeBatches.Count > 0;
-
-            // Update shared listener state for the simulator
-            var sharedInputs = new IPLSimulationSharedInputs
+            lock (_syncRoot)
             {
-                listener = _listenerCoords,
-                numRays = ReflectionRays,
-                numBounces = ReflectionBounces,
-                duration = ReflectionDuration,
-                order = MaxAmbisonicsOrder,
-                irradianceMinDistance = 1.0f,
-            };
-            Phonon.iplSimulatorSetSharedInputs(
-                _simulator,
-                flags,
-                ref sharedInputs);
+                if (!_initialized || _sources.Count == 0)
+                    return;
 
-            // Commit pending source changes and run simulation types
-            Phonon.iplSimulatorCommit(_simulator);
-            Phonon.iplSimulatorRunDirect(_simulator);
+                // Determine which simulation types to run.
+                // Reflections require a committed scene; pathing additionally
+                // requires at least one probe batch. Running either without
+                // the prerequisite causes a native access-violation crash.
+                var flags = ActiveSimFlags;
+                bool hasScene = _scene != null;
+                bool hasProbes = _probeBatches.Count > 0;
 
-            if (hasScene)
-                Phonon.iplSimulatorRunReflections(_simulator);
-            if (hasScene && hasProbes)
-                Phonon.iplSimulatorRunPathing(_simulator);
+                // Update shared listener state for the simulator
+                var sharedInputs = new IPLSimulationSharedInputs
+                {
+                    listener = _listenerCoords,
+                    numRays = ReflectionRays,
+                    numBounces = ReflectionBounces,
+                    duration = ReflectionDuration,
+                    order = MaxAmbisonicsOrder,
+                    irradianceMinDistance = 1.0f,
+                };
+                Phonon.iplSimulatorSetSharedInputs(
+                    _simulator,
+                    flags,
+                    ref sharedInputs);
+
+                // Commit pending source changes and run simulation types
+                Phonon.iplSimulatorCommit(_simulator);
+                Phonon.iplSimulatorRunDirect(_simulator);
+
+                if (hasScene)
+                    Phonon.iplSimulatorRunReflections(_simulator);
+                if (hasScene && hasProbes)
+                    Phonon.iplSimulatorRunPathing(_simulator);
+            }
         }
 
         // --- IAudioEffectsProcessor: Listener ---
@@ -339,42 +383,47 @@ namespace XREngine.Audio.Steam
             // Compute right from forward × up
             var right = Vector3.Cross(forward, up);
 
-            _listenerCoords = new IPLCoordinateSpace3
+            lock (_syncRoot)
             {
-                ahead = forward,
-                up = up,
-                right = right,
-                origin = position,
-            };
+                _listenerCoords = new IPLCoordinateSpace3
+                {
+                    ahead = forward,
+                    up = up,
+                    right = right,
+                    origin = position,
+                };
+            }
         }
 
         // --- IAudioEffectsProcessor: Per-source ---
 
         public EffectsSourceHandle AddSource(AudioEffectsSourceSettings settings)
         {
-            if (!_initialized)
-                return EffectsSourceHandle.Invalid;
-
-            var handleId = _nextHandleId++;
-            var chain = new SourceChain { Context = _context, Simulator = _simulator };
-
-            try
+            lock (_syncRoot)
             {
-                // Create source with all simulation capabilities
-                var simFlags = IPLSimulationFlags.IPL_SIMULATIONFLAGS_DIRECT
-                             | IPLSimulationFlags.IPL_SIMULATIONFLAGS_REFLECTIONS
-                             | IPLSimulationFlags.IPL_SIMULATIONFLAGS_PATHING;
+                if (!_initialized)
+                    return EffectsSourceHandle.Invalid;
 
-                // Create IPL source for all simulation types
-                var sourceSettings = new IPLSourceSettings
+                var handleId = _nextHandleId++;
+                var chain = new SourceChain { Context = _context, Simulator = _simulator };
+
+                try
                 {
-                    flags = simFlags,
-                };
-                var error = Phonon.iplSourceCreate(_simulator, ref sourceSettings, ref chain.Source);
-                if (error != IPLerror.IPL_STATUS_SUCCESS)
-                    throw new InvalidOperationException($"iplSourceCreate failed: {error}");
+                    // Create source with all simulation capabilities
+                    var simFlags = IPLSimulationFlags.IPL_SIMULATIONFLAGS_DIRECT
+                                 | IPLSimulationFlags.IPL_SIMULATIONFLAGS_REFLECTIONS
+                                 | IPLSimulationFlags.IPL_SIMULATIONFLAGS_PATHING;
 
-                Phonon.iplSourceAdd(chain.Source, _simulator);
+                    // Create IPL source for all simulation types
+                    var sourceSettings = new IPLSourceSettings
+                    {
+                        flags = simFlags,
+                    };
+                    var error = Phonon.iplSourceCreate(_simulator, ref sourceSettings, ref chain.Source);
+                    if (error != IPLerror.IPL_STATUS_SUCCESS)
+                        throw new InvalidOperationException($"iplSourceCreate failed: {error}");
+
+                    Phonon.iplSourceAdd(chain.Source, _simulator);
 
                 // Set initial source inputs
                 chain.SourceCoords = new IPLCoordinateSpace3
@@ -453,49 +502,57 @@ namespace XREngine.Audio.Steam
                 error = Phonon.iplAudioBufferAllocate(_context, 2, _audioSettings.frameSize, ref chain.PathOutputBuffer);
                 if (error != IPLerror.IPL_STATUS_SUCCESS)
                     throw new InvalidOperationException($"iplAudioBufferAllocate (path output) failed: {error}");
-            }
-            catch
-            {
-                chain.Dispose();
-                throw;
-            }
+                }
+                catch
+                {
+                    chain.Dispose();
+                    throw;
+                }
 
-            _sources[handleId] = chain;
-            return new EffectsSourceHandle(handleId);
+                _sources[handleId] = chain;
+                return new EffectsSourceHandle(handleId);
+            }
         }
 
         public void RemoveSource(EffectsSourceHandle source)
         {
-            if (!source.IsValid || !_sources.Remove(source.Id, out var chain))
-                return;
+            SourceChain? chain;
+            lock (_syncRoot)
+            {
+                if (!source.IsValid || !_sources.Remove(source.Id, out chain))
+                    return;
+            }
 
             chain.Dispose();
         }
 
         public void SetSourcePose(EffectsSourceHandle source, Vector3 position, Vector3 forward)
         {
-            if (!_initialized || !source.IsValid || !_sources.TryGetValue(source.Id, out var chain))
-                return;
-
-            var up = Vector3.UnitY;
-            var right = Vector3.Cross(forward, up);
-            if (right.LengthSquared() < 1e-6f)
+            lock (_syncRoot)
             {
-                // forward is nearly parallel to up — pick an alternate up
-                up = Vector3.UnitX;
-                right = Vector3.Cross(forward, up);
+                if (!_initialized || !source.IsValid || !_sources.TryGetValue(source.Id, out var chain))
+                    return;
+
+                var up = Vector3.UnitY;
+                var right = Vector3.Cross(forward, up);
+                if (right.LengthSquared() < 1e-6f)
+                {
+                    // forward is nearly parallel to up — pick an alternate up
+                    up = Vector3.UnitX;
+                    right = Vector3.Cross(forward, up);
+                }
+                right = Vector3.Normalize(right);
+
+                chain.SourceCoords = new IPLCoordinateSpace3
+                {
+                    ahead = forward,
+                    up = up,
+                    right = right,
+                    origin = position,
+                };
+
+                SetSourceInputs(chain, ActiveSimFlags);
             }
-            right = Vector3.Normalize(right);
-
-            chain.SourceCoords = new IPLCoordinateSpace3
-            {
-                ahead = forward,
-                up = up,
-                right = right,
-                origin = position,
-            };
-
-            SetSourceInputs(chain, ActiveSimFlags);
         }
 
         /// <summary>
@@ -566,6 +623,153 @@ namespace XREngine.Audio.Steam
             Phonon.iplSourceSetInputs(chain.Source, flags, ref inputs);
         }
 
+        private void ProcessChunk(SourceChain chain, ReadOnlySpan<float> inputFrame, Span<float> outputFrame, bool hasScene, bool hasProbes)
+        {
+            int frameSize = _audioSettings.frameSize;
+
+            unsafe
+            {
+                float** inputChannels = (float**)chain.InputBuffer.data;
+                float* inputData = inputChannels[0];
+                inputFrame.CopyTo(new Span<float>(inputData, inputFrame.Length));
+                if (inputFrame.Length < frameSize)
+                    new Span<float>(inputData + inputFrame.Length, frameSize - inputFrame.Length).Clear();
+            }
+
+            var allFlags = IPLSimulationFlags.IPL_SIMULATIONFLAGS_DIRECT;
+            if (hasScene)
+                allFlags |= IPLSimulationFlags.IPL_SIMULATIONFLAGS_REFLECTIONS;
+            if (hasScene && hasProbes)
+                allFlags |= IPLSimulationFlags.IPL_SIMULATIONFLAGS_PATHING;
+
+            var simOutputs = new IPLSimulationOutputs();
+            Phonon.iplSourceGetOutputs(chain.Source, allFlags, ref simOutputs);
+
+            var directParams = simOutputs.direct;
+            directParams.flags = IPLDirectEffectFlags.IPL_DIRECTEFFECTFLAGS_APPLYDISTANCEATTENUATION
+                               | IPLDirectEffectFlags.IPL_DIRECTEFFECTFLAGS_APPLYAIRABSORPTION
+                               | IPLDirectEffectFlags.IPL_DIRECTEFFECTFLAGS_APPLYOCCLUSION
+                               | IPLDirectEffectFlags.IPL_DIRECTEFFECTFLAGS_APPLYTRANSMISSION;
+
+            Phonon.iplDirectEffectApply(
+                chain.DirectEffect,
+                ref directParams,
+                ref chain.InputBuffer,
+                ref chain.DirectOutputBuffer);
+
+            var direction = _context.CalculateRelativeDirection(
+                chain.SourceCoords.origin,
+                _listenerCoords.origin,
+                _listenerCoords.ahead,
+                _listenerCoords.up);
+
+            var binauralParams = new IPLBinauralEffectParams
+            {
+                direction = direction,
+                interpolation = IPLHRTFInterpolation.IPL_HRTFINTERPOLATION_BILINEAR,
+                spatialBlend = 1.0f,
+                hrtf = _hrtf,
+                peakDelays = IntPtr.Zero,
+            };
+
+            Phonon.iplBinauralEffectApply(
+                chain.BinauralEffect,
+                ref binauralParams,
+                ref chain.DirectOutputBuffer,
+                ref chain.BinauralOutputBuffer);
+
+            if (hasScene)
+            {
+                var reflParams = simOutputs.reflections;
+                reflParams.type = ReflectionType;
+                int ambiChannels = (MaxAmbisonicsOrder + 1) * (MaxAmbisonicsOrder + 1);
+                reflParams.numChannels = ambiChannels;
+                reflParams.irSize = _reflectionEffectSettings.irSize;
+
+                Phonon.iplReflectionEffectApply(
+                    chain.ReflectionEffect,
+                    ref reflParams,
+                    ref chain.InputBuffer,
+                    ref chain.ReflectionOutputBuffer,
+                    _reflectionMixer);
+
+                var decodeParams = new IPLAmbisonicsDecodeEffectParams
+                {
+                    order = MaxAmbisonicsOrder,
+                    hrtf = _hrtf,
+                    orientation = _listenerCoords,
+                    binaural = IPLbool.IPL_TRUE,
+                };
+
+                Phonon.iplAmbisonicsDecodeEffectApply(
+                    chain.AmbisonicsDecodeEffect,
+                    ref decodeParams,
+                    ref chain.ReflectionOutputBuffer,
+                    ref chain.ReflectionDecodedBuffer);
+            }
+
+            if (hasScene && hasProbes)
+            {
+                var pathParams = simOutputs.pathing;
+                pathParams.order = MaxAmbisonicsOrder;
+                pathParams.binaural = IPLbool.IPL_TRUE;
+                pathParams.hrtf = _hrtf;
+                pathParams.listener = _listenerCoords;
+
+                Phonon.iplPathEffectApply(
+                    chain.PathEffect,
+                    ref pathParams,
+                    ref chain.InputBuffer,
+                    ref chain.PathOutputBuffer);
+            }
+
+            int outputFrames = outputFrame.Length / 2;
+            unsafe
+            {
+                float** directPtrs = (float**)chain.BinauralOutputBuffer.data;
+                float* directLeft = directPtrs[0];
+                float* directRight = directPtrs[1];
+
+                float* reflectionLeft = null;
+                float* reflectionRight = null;
+                float* pathLeft = null;
+                float* pathRight = null;
+
+                if (hasScene)
+                {
+                    float** reflectionPtrs = (float**)chain.ReflectionDecodedBuffer.data;
+                    reflectionLeft = reflectionPtrs[0];
+                    reflectionRight = reflectionPtrs[1];
+                }
+
+                if (hasScene && hasProbes)
+                {
+                    float** pathPtrs = (float**)chain.PathOutputBuffer.data;
+                    pathLeft = pathPtrs[0];
+                    pathRight = pathPtrs[1];
+                }
+
+                for (int i = 0; i < outputFrames; i++)
+                {
+                    float left = directLeft[i];
+                    float right = directRight[i];
+                    if (reflectionLeft != null)
+                    {
+                        left += reflectionLeft[i];
+                        right += reflectionRight![i];
+                    }
+                    if (pathLeft != null)
+                    {
+                        left += pathLeft[i];
+                        right += pathRight![i];
+                    }
+
+                    outputFrame[i * 2] = left;
+                    outputFrame[(i * 2) + 1] = right;
+                }
+            }
+        }
+
         // --- IAudioEffectsProcessor: ProcessBuffer ---
 
         public void ProcessBuffer(
@@ -583,155 +787,37 @@ namespace XREngine.Audio.Steam
                 return;
             }
 
-            if (!_sources.TryGetValue(source.Id, out var chain))
+            lock (_syncRoot)
             {
-                input.CopyTo(output);
-                return;
-            }
-
-            int frameSize = _audioSettings.frameSize;
-
-            // Deinterleave mono input into the IPL input buffer
-            unsafe
-            {
-                float** inputChannels = (float**)chain.InputBuffer.data;
-                float* inputData = inputChannels[0];
-                int samplesToCopy = Math.Min(input.Length, frameSize);
-                input[..samplesToCopy].CopyTo(new Span<float>(inputData, samplesToCopy));
-                // Zero-fill remainder if input is shorter than frame
-                if (samplesToCopy < frameSize)
-                    new Span<float>(inputData + samplesToCopy, frameSize - samplesToCopy).Clear();
-            }
-
-            // Get simulation outputs — only request reflection/pathing when prerequisites are met
-            bool hasScene = _scene != null;
-            bool hasProbes = _probeBatches.Count > 0;
-            var allFlags = IPLSimulationFlags.IPL_SIMULATIONFLAGS_DIRECT;
-            if (hasScene)
-                allFlags |= IPLSimulationFlags.IPL_SIMULATIONFLAGS_REFLECTIONS;
-            if (hasScene && hasProbes)
-                allFlags |= IPLSimulationFlags.IPL_SIMULATIONFLAGS_PATHING;
-            var simOutputs = new IPLSimulationOutputs();
-            Phonon.iplSourceGetOutputs(chain.Source, allFlags, ref simOutputs);
-
-            // Apply direct effect (distance attenuation, air absorption, occlusion)
-            var directParams = simOutputs.direct;
-            directParams.flags = IPLDirectEffectFlags.IPL_DIRECTEFFECTFLAGS_APPLYDISTANCEATTENUATION
-                               | IPLDirectEffectFlags.IPL_DIRECTEFFECTFLAGS_APPLYAIRABSORPTION
-                               | IPLDirectEffectFlags.IPL_DIRECTEFFECTFLAGS_APPLYOCCLUSION
-                               | IPLDirectEffectFlags.IPL_DIRECTEFFECTFLAGS_APPLYTRANSMISSION;
-
-            Phonon.iplDirectEffectApply(
-                chain.DirectEffect,
-                ref directParams,
-                ref chain.InputBuffer,
-                ref chain.DirectOutputBuffer);
-
-            // Compute direction from listener to source for HRTF
-            var direction = _context.CalculateRelativeDirection(
-                chain.SourceCoords.origin,
-                _listenerCoords.origin,
-                _listenerCoords.ahead,
-                _listenerCoords.up);
-
-            // Apply binaural HRTF effect (mono → stereo)
-            var binauralParams = new IPLBinauralEffectParams
-            {
-                direction = direction,
-                interpolation = IPLHRTFInterpolation.IPL_HRTFINTERPOLATION_BILINEAR,
-                spatialBlend = 1.0f,
-                hrtf = _hrtf,
-                peakDelays = IntPtr.Zero,
-            };
-
-            Phonon.iplBinauralEffectApply(
-                chain.BinauralEffect,
-                ref binauralParams,
-                ref chain.DirectOutputBuffer,
-                ref chain.BinauralOutputBuffer);
-
-            // === Reflection effect (mono → ambisonics → stereo) ===
-            // Requires a committed scene for the IR data.
-            if (hasScene)
-            {
-                var reflParams = simOutputs.reflections;
-                reflParams.type = ReflectionType;
-                int ambiChannels = (MaxAmbisonicsOrder + 1) * (MaxAmbisonicsOrder + 1);
-                reflParams.numChannels = ambiChannels;
-                reflParams.irSize = _reflectionEffectSettings.irSize;
-
-                Phonon.iplReflectionEffectApply(
-                    chain.ReflectionEffect,
-                    ref reflParams,
-                    ref chain.InputBuffer,
-                    ref chain.ReflectionOutputBuffer,
-                    _reflectionMixer);
-
-                // Decode ambisonics reflection output to binaural stereo
-                var decodeParams = new IPLAmbisonicsDecodeEffectParams
+                if (!_initialized || !_sources.TryGetValue(source.Id, out var chain))
                 {
-                    order = MaxAmbisonicsOrder,
-                    hrtf = _hrtf,
-                    orientation = _listenerCoords,
-                    binaural = IPLbool.IPL_TRUE,
-                };
-
-                Phonon.iplAmbisonicsDecodeEffectApply(
-                    chain.AmbisonicsDecodeEffect,
-                    ref decodeParams,
-                    ref chain.ReflectionOutputBuffer,
-                    ref chain.ReflectionDecodedBuffer);
-            }
-
-            // === Path effect (mono → stereo spatialized) ===
-            // Requires both a scene and at least one probe batch.
-            if (hasScene && hasProbes)
-            {
-                var pathParams = simOutputs.pathing;
-                pathParams.order = MaxAmbisonicsOrder;
-                pathParams.binaural = IPLbool.IPL_TRUE;
-                pathParams.hrtf = _hrtf;
-                pathParams.listener = _listenerCoords;
-
-                Phonon.iplPathEffectApply(
-                    chain.PathEffect,
-                    ref pathParams,
-                    ref chain.InputBuffer,
-                    ref chain.PathOutputBuffer);
-            }
-
-            // === Mix direct + reflection + pathing into output ===
-            int outputSamples = Math.Min(output.Length / 2, frameSize);
-            unsafe
-            {
-                float** directPtrs = (float**)chain.BinauralOutputBuffer.data;
-                float* directL = directPtrs[0];
-                float* directR = directPtrs[1];
-
-                float* reflL = null, reflR = null;
-                float* pathL = null, pathR = null;
-
-                if (hasScene)
-                {
-                    float** reflPtrs = (float**)chain.ReflectionDecodedBuffer.data;
-                    reflL = reflPtrs[0];
-                    reflR = reflPtrs[1];
-                }
-                if (hasScene && hasProbes)
-                {
-                    float** pathPtrs = (float**)chain.PathOutputBuffer.data;
-                    pathL = pathPtrs[0];
-                    pathR = pathPtrs[1];
+                    input.CopyTo(output);
+                    return;
                 }
 
-                for (int i = 0; i < outputSamples; i++)
+                const int outputChannels = 2;
+                int frameSize = _audioSettings.frameSize;
+                int totalFrames = Math.Min(input.Length, output.Length / outputChannels);
+                if (totalFrames <= 0)
                 {
-                    float l = directL[i];
-                    float r = directR[i];
-                    if (reflL != null) { l += reflL[i]; r += reflR[i]; }
-                    if (pathL != null) { l += pathL[i]; r += pathR[i]; }
-                    output[i * 2]     = l;
-                    output[i * 2 + 1] = r;
+                    output.Clear();
+                    return;
+                }
+
+                output.Clear();
+
+                bool hasScene = _scene != null;
+                bool hasProbes = hasScene && _probeBatches.Count > 0;
+                int chunkCount = GetChunkCount(totalFrames, frameSize);
+                for (int chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++)
+                {
+                    var chunk = GetChunkLayout(chunkIndex, totalFrames, frameSize, outputChannels);
+                    ProcessChunk(
+                        chain,
+                        input.Slice(chunk.InputOffset, chunk.FrameCount),
+                        output.Slice(chunk.OutputOffset, chunk.OutputSampleCount),
+                        hasScene,
+                        hasProbes);
                 }
             }
         }
@@ -742,33 +828,34 @@ namespace XREngine.Audio.Steam
 
         public void SetScene(IAudioScene? scene)
         {
-            if (!_initialized)
-                return;
-
-            if (scene is null)
+            lock (_syncRoot)
             {
-                // Detach scene from simulator — occlusion rays will no longer hit geometry
-                _scene = null;
-                // Phonon requires a valid scene handle; passing a zeroed handle effectively detaches.
-                // The simulator will skip geometry-based effects (occlusion falls back to 1.0).
-                return;
+                if (!_initialized)
+                    return;
+
+                if (scene is null)
+                {
+                    // Detach scene from simulator — occlusion rays will no longer hit geometry.
+                    _scene = null;
+                    return;
+                }
+
+                if (scene is not SteamAudioScene steamScene)
+                    throw new ArgumentException(
+                        $"SteamAudioProcessor requires a {nameof(SteamAudioScene)}, got {scene.GetType().Name}.",
+                        nameof(scene));
+
+                if (!steamScene.IsCommitted)
+                    throw new InvalidOperationException(
+                        "Scene must be committed before attaching to the processor. Call scene.Commit() first.");
+
+                _scene = steamScene;
+                Phonon.iplSimulatorSetScene(_simulator, steamScene.Handle);
+                // Re-commit the simulator so it picks up the new scene immediately
+                Phonon.iplSimulatorCommit(_simulator);
+
+                Debug.WriteLine("[SteamAudioProcessor] Scene attached to simulator.");
             }
-
-            if (scene is not SteamAudioScene steamScene)
-                throw new ArgumentException(
-                    $"SteamAudioProcessor requires a {nameof(SteamAudioScene)}, got {scene.GetType().Name}.",
-                    nameof(scene));
-
-            if (!steamScene.IsCommitted)
-                throw new InvalidOperationException(
-                    "Scene must be committed before attaching to the processor. Call scene.Commit() first.");
-
-            _scene = steamScene;
-            Phonon.iplSimulatorSetScene(_simulator, steamScene.Handle);
-            // Re-commit the simulator so it picks up the new scene immediately
-            Phonon.iplSimulatorCommit(_simulator);
-
-            Debug.WriteLine("[SteamAudioProcessor] Scene attached to simulator.");
         }
 
         // --- IAudioEffectsProcessor: Capabilities ---
@@ -787,10 +874,13 @@ namespace XREngine.Audio.Steam
         /// <param name="sceneType">Ray-tracer backend to use (default: built-in).</param>
         public SteamAudioScene CreateScene(IPLSceneType sceneType = IPLSceneType.IPL_SCENETYPE_DEFAULT)
         {
-            if (!_initialized)
-                throw new InvalidOperationException("Processor must be initialized before creating a scene.");
+            lock (_syncRoot)
+            {
+                if (!_initialized)
+                    throw new InvalidOperationException("Processor must be initialized before creating a scene.");
 
-            return new SteamAudioScene(_context, sceneType);
+                return new SteamAudioScene(_context, sceneType);
+            }
         }
 
         /// <summary>The scene currently attached to the simulator, or null.</summary>
@@ -804,10 +894,13 @@ namespace XREngine.Audio.Steam
         /// </summary>
         public SteamAudioProbeBatch CreateProbeBatch()
         {
-            if (!_initialized)
-                throw new InvalidOperationException("Processor must be initialized before creating a probe batch.");
+            lock (_syncRoot)
+            {
+                if (!_initialized)
+                    throw new InvalidOperationException("Processor must be initialized before creating a probe batch.");
 
-            return new SteamAudioProbeBatch(_context);
+                return new SteamAudioProbeBatch(_context);
+            }
         }
 
         /// <summary>
@@ -818,18 +911,21 @@ namespace XREngine.Audio.Steam
         {
             ArgumentNullException.ThrowIfNull(batch);
 
-            if (!_initialized)
-                throw new InvalidOperationException("Processor must be initialized before adding probe batches.");
-            if (!batch.IsCommitted)
-                throw new InvalidOperationException("Probe batch must be committed before attaching to the simulator.");
+            lock (_syncRoot)
+            {
+                if (!_initialized)
+                    throw new InvalidOperationException("Processor must be initialized before adding probe batches.");
+                if (!batch.IsCommitted)
+                    throw new InvalidOperationException("Probe batch must be committed before attaching to the simulator.");
 
-            Phonon.iplSimulatorAddProbeBatch(_simulator, batch.Handle);
-            _probeBatches.Add(batch);
+                Phonon.iplSimulatorAddProbeBatch(_simulator, batch.Handle);
+                _probeBatches.Add(batch);
 
-            // Re-commit so the simulator picks up the new batch
-            Phonon.iplSimulatorCommit(_simulator);
+                // Re-commit so the simulator picks up the new batch
+                Phonon.iplSimulatorCommit(_simulator);
 
-            Debug.WriteLine($"[SteamAudioProcessor] Probe batch added ({batch.ProbeCount} probes). Total batches: {_probeBatches.Count}.");
+                Debug.WriteLine($"[SteamAudioProcessor] Probe batch added ({batch.ProbeCount} probes). Total batches: {_probeBatches.Count}.");
+            }
         }
 
         /// <summary>
@@ -839,14 +935,17 @@ namespace XREngine.Audio.Steam
         {
             ArgumentNullException.ThrowIfNull(batch);
 
-            if (!_initialized)
-                return;
-
-            if (_probeBatches.Remove(batch))
+            lock (_syncRoot)
             {
-                Phonon.iplSimulatorRemoveProbeBatch(_simulator, batch.Handle);
-                Phonon.iplSimulatorCommit(_simulator);
-                Debug.WriteLine($"[SteamAudioProcessor] Probe batch removed. Total batches: {_probeBatches.Count}.");
+                if (!_initialized)
+                    return;
+
+                if (_probeBatches.Remove(batch))
+                {
+                    Phonon.iplSimulatorRemoveProbeBatch(_simulator, batch.Handle);
+                    Phonon.iplSimulatorCommit(_simulator);
+                    Debug.WriteLine($"[SteamAudioProcessor] Probe batch removed. Total batches: {_probeBatches.Count}.");
+                }
             }
         }
 
@@ -862,10 +961,13 @@ namespace XREngine.Audio.Steam
         /// </summary>
         public SteamAudioBaker CreateBaker()
         {
-            if (!_initialized)
-                throw new InvalidOperationException("Processor must be initialized before creating a baker.");
+            lock (_syncRoot)
+            {
+                if (!_initialized)
+                    throw new InvalidOperationException("Processor must be initialized before creating a baker.");
 
-            return new SteamAudioBaker(_context);
+                return new SteamAudioBaker(_context);
+            }
         }
 
         // --- IDisposable ---

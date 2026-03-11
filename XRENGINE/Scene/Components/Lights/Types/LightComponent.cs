@@ -7,6 +7,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Scene.Transforms;
+using XREngine.Timers;
 
 namespace XREngine.Components.Capture.Lights.Types
 {
@@ -29,8 +30,11 @@ namespace XREngine.Components.Capture.Lights.Types
         private readonly List<FrustumIntersectionAabb> _cameraIntersections = new(6);
         private bool _previewBoundingVolume = false;
 
-        private float _lastMovedTime = 0.0f;
+        private long _lastMovedTicks;
         private uint _movementVersion = 0;
+
+        internal static float TimeSinceLastMovementSeconds(long currentTicks, long lastMovedTicks)
+            => EngineTimer.TicksToSeconds(Math.Max(0L, currentTicks - lastMovedTicks));
 
         /// <summary>
         /// Increments whenever the light's render transform changes.
@@ -43,7 +47,7 @@ namespace XREngine.Components.Capture.Lights.Types
         /// Seconds since the last observed movement of this light.
         /// </summary>
         [Browsable(false)]
-        public float TimeSinceLastMovement => MathF.Max(0.0f, Engine.ElapsedTime - _lastMovedTime);
+        public float TimeSinceLastMovement => TimeSinceLastMovementSeconds(Engine.ElapsedTicks, _lastMovedTicks);
 
         /// <summary>
         /// This matrix is the location of the center of the light source. Used for rendering the light mesh.
@@ -91,7 +95,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public LightComponent() : base()
         {
-            _lastMovedTime = Engine.ElapsedTime;
+            _lastMovedTicks = Engine.ElapsedTicks;
 
             XRMaterial mat = XRMaterial.CreateUnlitColorMaterialForward(new ColorF4(0.0f, 1.0f, 0.0f, 0.0f));
             mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
@@ -108,7 +112,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
-            _lastMovedTime = Engine.ElapsedTime;
+            _lastMovedTicks = Engine.ElapsedTicks;
             unchecked { _movementVersion++; }
             _shadowVolumeRC.WorldMatrix = _lightMatrix = MeshCenterAdjustMatrix * renderMatrix;
             base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);

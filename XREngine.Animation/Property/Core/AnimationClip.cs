@@ -11,6 +11,7 @@ namespace XREngine.Animation
     /// Represents a single animation clip that can be played with an AnimationClipComponent or an AnimStateMachineComponent.
     /// </summary>
     [XRAssetInspector("XREngine.Editor.AssetEditors.AnimationClipInspector")]
+    [XRAssetContextMenu("Open in Animation Clip Editor", "XREngine.Editor.UI.Tools.AnimationClipAssetMenuActions", "OpenInAnimationClipEditor")]
     [XR3rdPartyExtensions(typeof(XREngine.Data.XRDefault3rdPartyImportOptions), "vmd", "anim")]
     [MemoryPackable]
     public partial class AnimationClip : MotionBase
@@ -258,6 +259,11 @@ namespace XREngine.Animation
         public override void Tick(float delta)
         {
             TickPropertyAnimations(delta);
+        }
+
+        public override void Tick(long deltaTicks)
+        {
+            TickPropertyAnimations(deltaTicks);
         }
 
         public override bool Load3rdParty(string filePath)

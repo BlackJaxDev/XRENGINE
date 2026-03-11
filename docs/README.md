@@ -35,6 +35,12 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 ## Diagnostics
 - [Humanoid Pose Audit](features/humanoid-pose-audit.md)
 
+## Features
+- [Audio2Face-3D Component](features/audio2face-3d.md)
+- [Audio2Face-3D Engine Setup](features/audio2face-3d-engine-setup.md)
+- [Steam Audio Integration](features/steam-audio.md)
+- [Tick-Based Animation Timing](features/tick-based-animation-timing.md)
+
 ## Work Docs (WIP / TODO / Design)
 - [Work Docs Index](work/README.md)
 - Backlog: [Project TODO](work/backlog/todo.md), [Warnings Remediation Checklist](work/backlog/warnings-todo.md), [Vulkan TODO](work/backlog/VULKAN_TODO.md), [Indirect GPU Rendering TODO](work/backlog/IndirectGPURendering-TODO.md)

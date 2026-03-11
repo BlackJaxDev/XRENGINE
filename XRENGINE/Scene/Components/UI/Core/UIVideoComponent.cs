@@ -10,6 +10,7 @@ using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.VideoStreaming;
 using XREngine.Rendering.VideoStreaming.Interfaces;
+using XREngine.Timers;
 
 namespace XREngine.Rendering.UI
 {
@@ -561,7 +562,7 @@ namespace XREngine.Rendering.UI
 
         /// <summary>Returns the current engine elapsed time as .NET ticks (100 ns units).</summary>
         private static long GetEngineTimeTicks()
-            => (long)(Engine.ElapsedTime * TimeSpan.TicksPerSecond);
+            => EngineTimer.StopwatchTicksToTimeSpanTicks(Engine.ElapsedTicks);
 
         /// <summary>
         /// Finds the active renderer, checking the current renderer first,

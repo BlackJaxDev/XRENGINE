@@ -51,7 +51,20 @@ public sealed class ProfilerProtocolTests
             {
                 [1] = [1.0f, 2.0f, 3.0f],
                 [7] = [0.5f, 0.8f]
-            }
+            },
+            ComponentTimings =
+            [
+                new ProfilerComponentTimingData
+                {
+                    ComponentId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                    ComponentName = "PlayerMovement",
+                    ComponentType = "CharacterMovementComponent",
+                    SceneNodeName = "PlayerRoot",
+                    ElapsedMs = 1.75f,
+                    CallCount = 2,
+                    TickGroupMask = 3,
+                }
+            ]
         };
 
         var clone = RoundTrip(original);
@@ -67,15 +80,19 @@ public sealed class ProfilerProtocolTests
         clone.Threads[1].ThreadId.ShouldBe(7);
         clone.ThreadHistory.Count.ShouldBe(2);
         clone.ThreadHistory[1].ShouldBe(new[] { 1.0f, 2.0f, 3.0f });
+        clone.ComponentTimings.Length.ShouldBe(1);
+        clone.ComponentTimings[0].ComponentName.ShouldBe("PlayerMovement");
+        clone.ComponentTimings[0].TickGroupMask.ShouldBe(3);
     }
 
     [Test]
     public void ProfilerFramePacket_EmptyThreads_RoundTrip()
     {
-        var original = new ProfilerFramePacket { FrameTime = 0.0f, Threads = [], ThreadHistory = [] };
+        var original = new ProfilerFramePacket { FrameTime = 0.0f, Threads = [], ThreadHistory = [], ComponentTimings = [] };
         var clone = RoundTrip(original);
         clone.Threads.Length.ShouldBe(0);
         clone.ThreadHistory.Count.ShouldBe(0);
+        clone.ComponentTimings.Length.ShouldBe(0);
     }
 
     // ── RenderStatsPacket ──────────────────────────────────────────────
@@ -313,7 +330,20 @@ public sealed class ProfilerProtocolTests
                     RootNodes = [new ProfilerNodeData { Name = "Tick", ElapsedMs = 8.0f, Children = [] }]
                 }
             ],
-            ThreadHistory = new Dictionary<int, float[]> { [5] = [8.0f] }
+            ThreadHistory = new Dictionary<int, float[]> { [5] = [8.0f] },
+            ComponentTimings =
+            [
+                new ProfilerComponentTimingData
+                {
+                    ComponentId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                    ComponentName = "AvatarIK",
+                    ComponentType = "HumanoidComponent",
+                    SceneNodeName = "Avatar",
+                    ElapsedMs = 4.0f,
+                    CallCount = 1,
+                    TickGroupMask = 1,
+                }
+            ]
         };
 
         // Serialize
@@ -334,6 +364,7 @@ public sealed class ProfilerProtocolTests
         clone.ShouldNotBeNull();
         clone!.FrameTime.ShouldBe(99.9f);
         clone.Threads[0].RootNodes[0].Name.ShouldBe("Tick");
+        clone.ComponentTimings[0].ComponentType.ShouldBe("HumanoidComponent");
     }
 
     // ── helper ─────────────────────────────────────────────────────────

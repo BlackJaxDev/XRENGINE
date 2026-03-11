@@ -41,8 +41,32 @@ public static partial class EditorImGuiUI
         public Vector2 Pan = new(40, 40);
         public float Zoom = 1.0f;
         public int? SelectedNodeId;
+        public string PendingCommandTypeName = string.Empty;
         public readonly Dictionary<int, Vector2> NodePositions = new();
         public bool HasLayout;
+    }
+
+    private sealed class RenderPipelineTimelineLane
+    {
+        public required int Id { get; init; }
+        public required int LaneIndex { get; init; }
+        public required string Label { get; init; }
+        public required ViewportRenderCommandContainer Container { get; init; }
+        public required int StartOrder { get; set; }
+        public required int EndOrderExclusive { get; set; }
+        public int? ParentCommandId { get; init; }
+    }
+
+    private sealed class RenderPipelineTimelineStep
+    {
+        public required int Id { get; init; }
+        public required int LaneIndex { get; init; }
+        public required int OrderIndex { get; init; }
+        public required int ResumeOrderExclusive { get; init; }
+        public required ViewportRenderCommand Command { get; init; }
+        public required ViewportRenderCommandContainer Container { get; init; }
+        public required int CommandIndex { get; init; }
+        public required string[] BranchLabels { get; init; }
     }
 
     private sealed class GraphNodeId(int id)
@@ -55,6 +79,22 @@ public static partial class EditorImGuiUI
 
     private static readonly Dictionary<Guid, RenderPipelineGraphViewState> _renderPipelineGraphStates = new();
     private static readonly Dictionary<Guid, RenderPipelineCommandGraphViewState> _renderPipelineCommandGraphStates = new();
+    private static readonly Lazy<IReadOnlyList<Type>> _creatableRenderCommandTypes = new(DiscoverCreatableRenderCommandTypes);
+
+    private static int CompareTimelineLane(RenderPipelineTimelineLane left, RenderPipelineTimelineLane right)
+        => left.LaneIndex.CompareTo(right.LaneIndex);
+
+    private static int CompareTimelineStepByLaneAndIndex(RenderPipelineTimelineStep left, RenderPipelineTimelineStep right)
+    {
+        int laneCompare = left.LaneIndex.CompareTo(right.LaneIndex);
+        return laneCompare != 0 ? laneCompare : left.CommandIndex.CompareTo(right.CommandIndex);
+    }
+
+    private static int CompareTimelineStepByCommandIndex(RenderPipelineTimelineStep left, RenderPipelineTimelineStep right)
+        => left.CommandIndex.CompareTo(right.CommandIndex);
+
+    private static int CompareTimelineChildContainer((string Name, ViewportRenderCommandContainer Container) left, (string Name, ViewportRenderCommandContainer Container) right)
+        => StringComparer.Ordinal.Compare(left.Name, right.Name);
 
     private static void DrawRenderPipelineGraphPanel()
     {
@@ -89,7 +129,7 @@ public static partial class EditorImGuiUI
             if (ImGui.BeginTabItem("Commands"))
             {
                 DrawCommandGraphToolbar(pipeline, commandState);
-                DrawRenderPipelineCommandGraphCanvas(pipeline, commandState);
+                DrawRenderPipelineCommandTimelineEditor(pipeline, commandState);
                 ImGui.EndTabItem();
             }
 
@@ -192,12 +232,6 @@ public static partial class EditorImGuiUI
     {
         if (ImGui.BeginMenuBar())
         {
-            if (ImGui.MenuItem("Auto Layout"))
-            {
-                AutoLayoutCommandGraph(pipeline, state);
-                state.HasLayout = true;
-            }
-
             if (ImGui.MenuItem("Reset View"))
             {
                 state.Pan = new Vector2(40, 40);
@@ -216,9 +250,673 @@ public static partial class EditorImGuiUI
         int commandCount = pipeline.CommandChain?.Count ?? 0;
         ImGui.TextDisabled($"Commands: {commandCount}");
         ImGui.SameLine();
-        ImGui.TextDisabled("| Pan: RMB/MMB drag or Space+LMB | Zoom: Wheel (Ctrl=fast) | Drag nodes: LMB");
+        ImGui.TextDisabled("| Timeline: branch lanes run in parallel | Pan: RMB/MMB drag or Space+LMB | Zoom: Wheel");
         ImGui.Separator();
     }
+
+    private static void DrawRenderPipelineCommandTimelineEditor(RenderPipeline pipeline, RenderPipelineCommandGraphViewState state)
+    {
+        var root = pipeline.CommandChain;
+        if (root is null)
+        {
+            ImGui.TextDisabled("Pipeline has no CommandChain.");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(state.PendingCommandTypeName))
+            state.PendingCommandTypeName = _creatableRenderCommandTypes.Value.FirstOrDefault()?.FullName ?? string.Empty;
+
+        Vector2 available = ImGui.GetContentRegionAvail();
+        float leftWidth = MathF.Max(420f, available.X * 0.68f);
+
+        ImGui.BeginChild("##RenderPipelineCommandTimeline", new Vector2(leftWidth, 0), ImGuiChildFlags.Border);
+        DrawRenderPipelineCommandTimelineCanvas(root, state);
+        ImGui.EndChild();
+
+        ImGui.SameLine();
+
+        ImGui.BeginChild("##RenderPipelineCommandTimelineInspector", Vector2.Zero, ImGuiChildFlags.Border);
+        DrawRenderPipelineCommandSelectionInspector(root, state);
+        ImGui.EndChild();
+    }
+
+    private static void DrawRenderPipelineCommandTimelineCanvas(ViewportRenderCommandContainer root, RenderPipelineCommandGraphViewState view)
+    {
+        var timelineLayout = BuildTimelineLayout(root);
+        List<RenderPipelineTimelineLane> lanes = timelineLayout.Lanes;
+        List<RenderPipelineTimelineStep> steps = timelineLayout.Steps;
+
+        Dictionary<int, RenderPipelineTimelineStep> stepById = new(steps.Count);
+        foreach (RenderPipelineTimelineStep step in steps)
+            stepById[step.Id] = step;
+
+        Dictionary<int, RenderPipelineTimelineLane> laneById = new(lanes.Count);
+        foreach (RenderPipelineTimelineLane lane in lanes)
+            laneById[lane.Id] = lane;
+
+        Dictionary<ViewportRenderCommandContainer, List<RenderPipelineTimelineStep>> stepsByContainer = new();
+        foreach (RenderPipelineTimelineStep step in steps)
+        {
+            if (!stepsByContainer.TryGetValue(step.Container, out List<RenderPipelineTimelineStep>? containerSteps))
+            {
+                containerSteps = new List<RenderPipelineTimelineStep>();
+                stepsByContainer.Add(step.Container, containerSteps);
+            }
+
+            containerSteps.Add(step);
+        }
+        foreach (List<RenderPipelineTimelineStep> containerSteps in stepsByContainer.Values)
+            containerSteps.Sort(CompareTimelineStepByCommandIndex);
+
+        var io = ImGui.GetIO();
+
+        ImGui.BeginChild(
+            "##RenderPipelineCommandTimelineCanvas",
+            new Vector2(0, 0),
+            ImGuiChildFlags.None,
+            ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
+
+        var drawList = ImGui.GetWindowDrawList();
+        var canvasPos = ImGui.GetCursorScreenPos();
+        var canvasSize = ImGui.GetContentRegionAvail();
+
+        if (canvasSize.X < 1 || canvasSize.Y < 1)
+        {
+            ImGui.EndChild();
+            return;
+        }
+
+        ImGui.InvisibleButton(
+            "##RenderPipelineCommandTimelineCanvasBtn",
+            canvasSize,
+            ImGuiButtonFlags.MouseButtonLeft | ImGuiButtonFlags.MouseButtonMiddle | ImGuiButtonFlags.MouseButtonRight);
+
+        bool canvasHovered = ImGui.IsItemHovered();
+
+        if (canvasHovered && (ImGui.IsMouseDragging(ImGuiMouseButton.Middle, 0f) || ImGui.IsMouseDragging(ImGuiMouseButton.Right, 0f) || (ImGui.IsKeyDown(ImGuiKey.Space) && ImGui.IsMouseDragging(ImGuiMouseButton.Left, 0f))))
+            view.Pan += io.MouseDelta / MathF.Max(1e-6f, view.Zoom);
+
+        if (canvasHovered && Math.Abs(io.MouseWheel) > 1e-6f)
+        {
+            float prevZoom = view.Zoom;
+            float zoomBase = io.KeyCtrl ? 1.15f : 1.07f;
+            float nextZoom = Math.Clamp(view.Zoom * (float)Math.Pow(zoomBase, io.MouseWheel), 0.35f, 2.5f);
+            if (Math.Abs(nextZoom - prevZoom) > 1e-6f)
+            {
+                Vector2 mouseLocal = io.MousePos - canvasPos;
+                Vector2 worldBefore = (mouseLocal / prevZoom) - view.Pan;
+                view.Zoom = nextZoom;
+                Vector2 worldAfter = (mouseLocal / nextZoom) - view.Pan;
+                view.Pan += (worldAfter - worldBefore);
+            }
+        }
+
+        DrawTimelineGrid(drawList, canvasPos, canvasSize, view, lanes);
+        DrawTimelineLaneBands(drawList, canvasPos, view, lanes);
+        DrawTimelineConnectors(drawList, canvasPos, view, lanes, stepsByContainer, stepById, laneById);
+        DrawTimelineSteps(drawList, canvasPos, view, steps);
+        DrawTimelineLaneSelectors(drawList, canvasPos, view, lanes);
+
+        ImGui.EndChild();
+    }
+
+    private static void DrawRenderPipelineCommandSelectionInspector(ViewportRenderCommandContainer root, RenderPipelineCommandGraphViewState state)
+    {
+        var timelineLayout = BuildTimelineLayout(root);
+        List<RenderPipelineTimelineLane> lanes = timelineLayout.Lanes;
+        List<RenderPipelineTimelineStep> steps = timelineLayout.Steps;
+
+        RenderPipelineTimelineStep? selectedStep = state.SelectedNodeId.HasValue
+            ? steps.FirstOrDefault(step => step.Id == state.SelectedNodeId.Value)
+            : null;
+        RenderPipelineTimelineLane? selectedLane = state.SelectedNodeId.HasValue
+            ? lanes.FirstOrDefault(lane => lane.Id == state.SelectedNodeId.Value)
+            : null;
+
+        if (selectedStep is null && selectedLane is null)
+        {
+            ImGui.TextDisabled("Select a timeline block or branch lane to inspect and edit it.");
+            return;
+        }
+
+        if (selectedStep is not null)
+        {
+            ViewportRenderCommand command = selectedStep.Command;
+            ViewportRenderCommandContainer container = selectedStep.Container;
+            int itemCount = container.Count;
+
+            ImGui.TextUnformatted(command.GetType().Name);
+            ImGui.TextDisabled($"Lane Index: {selectedStep.LaneIndex}");
+            ImGui.TextDisabled($"Step Index: {selectedStep.CommandIndex + 1} / {itemCount}");
+            if (selectedStep.BranchLabels.Length > 0)
+                ImGui.TextDisabled($"Branches: {string.Join(", ", selectedStep.BranchLabels)}");
+
+            ImGui.Separator();
+            DrawTimelineCommandActions(state, selectedStep);
+            ImGui.Separator();
+
+            var visited = new HashSet<object>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            DrawInspectableObject(new InspectorTargetSet(new object[] { command }, command.GetType()), $"RenderPipelineTimelineCommand_{selectedStep.Id}", visited);
+            return;
+        }
+
+        if (selectedLane is not null)
+        {
+            ImGui.TextUnformatted(selectedLane.Label);
+            ImGui.TextDisabled($"Lane Index: {selectedLane.LaneIndex}");
+            ImGui.TextDisabled($"Commands: {selectedLane.Container.Count}");
+            ImGui.TextDisabled($"Branch Resources: {selectedLane.Container.BranchResources}");
+
+            ImGui.Separator();
+            DrawTimelineContainerActions(state, selectedLane.Container);
+            ImGui.Separator();
+
+            var visited = new HashSet<object>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            DrawInspectableObject(new InspectorTargetSet(new object[] { selectedLane.Container }, selectedLane.Container.GetType()), $"RenderPipelineTimelineLane_{selectedLane.Id}", visited);
+        }
+    }
+
+    private static void DrawTimelineCommandActions(RenderPipelineCommandGraphViewState state, RenderPipelineTimelineStep selectedStep)
+    {
+        ViewportRenderCommand command = selectedStep.Command;
+        ViewportRenderCommandContainer container = selectedStep.Container;
+
+        bool canMoveEarlier = selectedStep.CommandIndex > 0;
+        bool canMoveLater = selectedStep.CommandIndex < container.Count - 1;
+
+        if (!canMoveEarlier)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Move Earlier"))
+            MoveTimelineCommand(command, container, selectedStep.CommandIndex - 1, "Move Render Step Earlier");
+        if (!canMoveEarlier)
+            ImGui.EndDisabled();
+
+        ImGui.SameLine();
+
+        if (!canMoveLater)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Move Later"))
+            MoveTimelineCommand(command, container, selectedStep.CommandIndex + 1, "Move Render Step Later");
+        if (!canMoveLater)
+            ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        if (ImGui.Button("Remove Step"))
+            RemoveTimelineCommand(command, container, "Remove Render Step");
+
+        ImGui.Spacing();
+        DrawRenderCommandTypePicker("Timeline Command Type", state);
+
+        Type? replacementType = ResolveCreatableRenderCommandType(state.PendingCommandTypeName);
+        bool hasType = replacementType is not null;
+
+        if (!hasType)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Insert Before"))
+            InsertTimelineCommand(container, selectedStep.CommandIndex, replacementType!, state, "Insert Render Step Before");
+        if (!hasType)
+            ImGui.EndDisabled();
+
+        ImGui.SameLine();
+
+        if (!hasType)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Insert After"))
+            InsertTimelineCommand(container, selectedStep.CommandIndex + 1, replacementType!, state, "Insert Render Step After");
+        if (!hasType)
+            ImGui.EndDisabled();
+
+        ImGui.SameLine();
+
+        if (!hasType)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Replace Step"))
+            ReplaceTimelineCommand(command, container, replacementType!, state, "Replace Render Step");
+        if (!hasType)
+            ImGui.EndDisabled();
+    }
+
+    private static void DrawTimelineContainerActions(RenderPipelineCommandGraphViewState state, ViewportRenderCommandContainer container)
+    {
+        DrawRenderCommandTypePicker("Add Command Type", state);
+        Type? commandType = ResolveCreatableRenderCommandType(state.PendingCommandTypeName);
+        bool hasType = commandType is not null;
+
+        if (!hasType)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("Add To End"))
+            InsertTimelineCommand(container, container.Count, commandType!, state, "Add Render Step");
+        if (!hasType)
+            ImGui.EndDisabled();
+    }
+
+    private static void DrawRenderCommandTypePicker(string label, RenderPipelineCommandGraphViewState state)
+    {
+        IReadOnlyList<Type> commandTypes = _creatableRenderCommandTypes.Value;
+        if (commandTypes.Count == 0)
+        {
+            ImGui.TextDisabled("No parameterless render command types are available for insertion.");
+            return;
+        }
+
+        Type? selectedType = ResolveCreatableRenderCommandType(state.PendingCommandTypeName) ?? commandTypes[0];
+        state.PendingCommandTypeName = selectedType.FullName ?? selectedType.Name;
+
+        if (!ImGui.BeginCombo(label, selectedType.Name))
+            return;
+
+        foreach (Type commandType in commandTypes)
+        {
+            bool selected = string.Equals(state.PendingCommandTypeName, commandType.FullName, StringComparison.Ordinal);
+            string displayName = commandType.Name;
+            if (ImGui.Selectable(displayName, selected))
+                state.PendingCommandTypeName = commandType.FullName ?? commandType.Name;
+            if (selected)
+                ImGui.SetItemDefaultFocus();
+        }
+
+        ImGui.EndCombo();
+    }
+
+    private static IReadOnlyList<Type> DiscoverCreatableRenderCommandTypes()
+    {
+        return typeof(ViewportRenderCommand).Assembly
+            .GetTypes()
+            .Where(type =>
+                typeof(ViewportRenderCommand).IsAssignableFrom(type)
+                && !type.IsAbstract
+                && type.GetConstructor(Type.EmptyTypes) is not null)
+            .OrderBy(type => type.Name, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static Type? ResolveCreatableRenderCommandType(string? typeName)
+    {
+        if (string.IsNullOrWhiteSpace(typeName))
+            return null;
+
+        return _creatableRenderCommandTypes.Value.FirstOrDefault(type =>
+            string.Equals(type.FullName, typeName, StringComparison.Ordinal)
+            || string.Equals(type.Name, typeName, StringComparison.Ordinal));
+    }
+
+    private static ViewportRenderCommand? CreateRenderCommandInstance(Type type)
+    {
+        try
+        {
+            return Activator.CreateInstance(type) as ViewportRenderCommand;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex, $"Failed to create render command '{type.FullName}'.");
+            return null;
+        }
+    }
+
+    private static void MoveTimelineCommand(ViewportRenderCommand command, ViewportRenderCommandContainer container, int targetIndex, string description)
+    {
+        int originalIndex = container.IndexOf(command);
+        if (originalIndex < 0 || originalIndex == targetIndex)
+            return;
+
+        using var _ = Undo.BeginUserInteraction();
+        container.Move(command, targetIndex);
+        Undo.RecordStructuralChange(
+            description,
+            undoAction: () => container.Move(command, originalIndex),
+            redoAction: () => container.Move(command, targetIndex));
+    }
+
+    private static void RemoveTimelineCommand(ViewportRenderCommand command, ViewportRenderCommandContainer container, string description)
+    {
+        int originalIndex = container.IndexOf(command);
+        if (originalIndex < 0)
+            return;
+
+        using var _ = Undo.BeginUserInteraction();
+        container.RemoveAt(originalIndex);
+        Undo.RecordStructuralChange(
+            description,
+            undoAction: () => container.Insert(originalIndex, command),
+            redoAction: () =>
+            {
+                int currentIndex = container.IndexOf(command);
+                if (currentIndex >= 0)
+                    container.RemoveAt(currentIndex);
+            });
+    }
+
+    private static void InsertTimelineCommand(ViewportRenderCommandContainer container, int index, Type commandType, RenderPipelineCommandGraphViewState state, string description)
+    {
+        ViewportRenderCommand? inserted = CreateRenderCommandInstance(commandType);
+        if (inserted is null)
+            return;
+
+        int insertionIndex = Math.Clamp(index, 0, container.Count);
+
+        using var _ = Undo.BeginUserInteraction();
+        container.Insert(insertionIndex, inserted);
+        state.SelectedNodeId = GetStableGraphNodeId(inserted);
+        Undo.RecordStructuralChange(
+            description,
+            undoAction: () =>
+            {
+                int currentIndex = container.IndexOf(inserted);
+                if (currentIndex >= 0)
+                    container.RemoveAt(currentIndex);
+            },
+            redoAction: () => container.Insert(Math.Clamp(insertionIndex, 0, container.Count), inserted));
+    }
+
+    private static void ReplaceTimelineCommand(ViewportRenderCommand command, ViewportRenderCommandContainer container, Type replacementType, RenderPipelineCommandGraphViewState state, string description)
+    {
+        int originalIndex = container.IndexOf(command);
+        if (originalIndex < 0)
+            return;
+
+        ViewportRenderCommand? replacement = CreateRenderCommandInstance(replacementType);
+        if (replacement is null)
+            return;
+
+        using var _ = Undo.BeginUserInteraction();
+        container.ReplaceAt(originalIndex, replacement);
+        state.SelectedNodeId = GetStableGraphNodeId(replacement);
+        Undo.RecordStructuralChange(
+            description,
+            undoAction: () =>
+            {
+                int currentIndex = container.IndexOf(replacement);
+                if (currentIndex >= 0)
+                    container.ReplaceAt(currentIndex, command);
+            },
+            redoAction: () =>
+            {
+                int currentIndex = container.IndexOf(command);
+                if (currentIndex >= 0)
+                    container.ReplaceAt(currentIndex, replacement);
+            });
+    }
+
+    private static (List<RenderPipelineTimelineLane> Lanes, List<RenderPipelineTimelineStep> Steps) BuildTimelineLayout(ViewportRenderCommandContainer root)
+    {
+        List<RenderPipelineTimelineLane> builtLanes = new(16);
+        List<RenderPipelineTimelineStep> builtSteps = new(64);
+
+        int nextLaneIndex = 1;
+
+        _ = BuildTimelineLayoutRecursive(root, builtLanes, builtSteps, ref nextLaneIndex, laneIndex: 0, startOrder: 0, label: "CommandChain", parentCommandId: null);
+        builtLanes.Sort(CompareTimelineLane);
+        builtSteps.Sort(CompareTimelineStepByLaneAndIndex);
+
+        return (builtLanes, builtSteps);
+    }
+
+    private static int BuildTimelineLayoutRecursive(
+        ViewportRenderCommandContainer container,
+        List<RenderPipelineTimelineLane> lanes,
+        List<RenderPipelineTimelineStep> steps,
+        ref int nextLaneIndex,
+        int laneIndex,
+        int startOrder,
+        string label,
+        int? parentCommandId)
+    {
+        RenderPipelineTimelineLane lane = new()
+        {
+            Id = GetStableGraphNodeId(container),
+            LaneIndex = laneIndex,
+            Label = label,
+            Container = container,
+            StartOrder = startOrder,
+            EndOrderExclusive = startOrder + 1,
+            ParentCommandId = parentCommandId,
+        };
+        lanes.Add(lane);
+
+        int currentOrder = startOrder;
+        for (int commandIndex = 0; commandIndex < container.Count; commandIndex++)
+        {
+            ViewportRenderCommand command = container[commandIndex];
+            List<(string Name, ViewportRenderCommandContainer Container)> children = new();
+            foreach ((string Name, ViewportRenderCommandContainer? Container) child in EnumerateChildContainers(command))
+            {
+                if (child.Container is not null)
+                    children.Add((child.Name, child.Container));
+            }
+            children.Sort(CompareTimelineChildContainer);
+
+            int resumeOrderExclusive = currentOrder + 1;
+            for (int i = 0; i < children.Count; i++)
+            {
+                (string childLabel, ViewportRenderCommandContainer childContainer) = children[i];
+
+                int childLaneIndex = nextLaneIndex++;
+                int childEndOrder = BuildTimelineLayoutRecursive(childContainer, lanes, steps, ref nextLaneIndex, childLaneIndex, currentOrder + 1, childLabel, GetStableGraphNodeId(command));
+                resumeOrderExclusive = Math.Max(resumeOrderExclusive, childEndOrder);
+            }
+
+            string[] branchLabels = new string[children.Count];
+            for (int i = 0; i < children.Count; i++)
+                branchLabels[i] = children[i].Name;
+
+            steps.Add(new RenderPipelineTimelineStep
+            {
+                Id = GetStableGraphNodeId(command),
+                LaneIndex = laneIndex,
+                OrderIndex = currentOrder,
+                ResumeOrderExclusive = resumeOrderExclusive,
+                Command = command,
+                Container = container,
+                CommandIndex = commandIndex,
+                BranchLabels = branchLabels,
+            });
+
+            currentOrder = resumeOrderExclusive;
+        }
+
+        lane.EndOrderExclusive = Math.Max(startOrder + 1, currentOrder);
+        return lane.EndOrderExclusive;
+    }
+
+    private static void DrawTimelineGrid(ImDrawListPtr drawList, Vector2 canvasPos, Vector2 canvasSize, RenderPipelineCommandGraphViewState view, IReadOnlyList<RenderPipelineTimelineLane> lanes)
+    {
+        const float laneHeaderWidth = 170f;
+        const float orderStep = 220f;
+        const float laneHeight = 110f;
+
+        uint gridColor = ImGui.GetColorU32(ImGuiCol.Separator);
+        uint accentColor = ImGui.GetColorU32(ImGuiCol.PlotLines);
+        uint textColor = ImGui.GetColorU32(ImGuiCol.TextDisabled);
+
+        int maxOrder = Math.Max(1, lanes.Count == 0 ? 1 : lanes.Max(lane => lane.EndOrderExclusive));
+        int laneCount = Math.Max(1, lanes.Count);
+
+        for (int order = 0; order <= maxOrder; order++)
+        {
+            Vector2 top = TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth + (order * orderStep), 0f));
+            drawList.AddLine(top, new Vector2(top.X, top.Y + (laneCount * laneHeight * view.Zoom)), order == 0 ? accentColor : gridColor, order == 0 ? 2f : 1f);
+            drawList.AddText(top + new Vector2(6f, 6f), textColor, order.ToString());
+        }
+
+        for (int laneIndex = 0; laneIndex <= laneCount; laneIndex++)
+        {
+            Vector2 left = TimelineWorldToScreen(canvasPos, view, new Vector2(0f, laneIndex * laneHeight));
+            drawList.AddLine(left, new Vector2(left.X + (laneHeaderWidth + (maxOrder * orderStep)) * view.Zoom, left.Y), gridColor);
+        }
+
+        drawList.AddRect(
+            canvasPos,
+            canvasPos + canvasSize,
+            ImGui.GetColorU32(ImGuiCol.Border),
+            0f,
+            ImDrawFlags.None,
+            1f);
+    }
+
+    private static void DrawTimelineLaneBands(ImDrawListPtr drawList, Vector2 canvasPos, RenderPipelineCommandGraphViewState view, IReadOnlyList<RenderPipelineTimelineLane> lanes)
+    {
+        const float laneHeaderWidth = 170f;
+        const float orderStep = 220f;
+        const float laneHeight = 110f;
+        const float laneHeaderHeight = 26f;
+
+        uint laneColor = ImGui.GetColorU32(ImGuiCol.ChildBg);
+        uint laneHeaderColor = ImGui.GetColorU32(ImGuiCol.TitleBg);
+        uint laneBorderColor = ImGui.GetColorU32(ImGuiCol.Border);
+        uint selectedColor = ImGui.GetColorU32(ImGuiCol.PlotLinesHovered);
+
+        foreach (RenderPipelineTimelineLane lane in lanes)
+        {
+            Vector2 bandMin = TimelineWorldToScreen(canvasPos, view, new Vector2(0f, lane.LaneIndex * laneHeight + 8f));
+            Vector2 bandMax = TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth + (lane.EndOrderExclusive * orderStep), (lane.LaneIndex * laneHeight) + laneHeight - 12f));
+            drawList.AddRectFilled(bandMin, bandMax, laneColor, 8f * view.Zoom);
+            drawList.AddRect(bandMin, bandMax, lane.Id == view.SelectedNodeId ? selectedColor : laneBorderColor, 8f * view.Zoom, ImDrawFlags.None, 2f);
+
+            Vector2 headerMax = TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth, (lane.LaneIndex * laneHeight) + laneHeaderHeight + 8f));
+            drawList.AddRectFilled(bandMin, headerMax, laneHeaderColor, 8f * view.Zoom, ImDrawFlags.RoundCornersLeft | ImDrawFlags.RoundCornersTopLeft | ImDrawFlags.RoundCornersBottomLeft);
+            drawList.AddText(bandMin + new Vector2(10f, 5f) * view.Zoom, ImGui.GetColorU32(ImGuiCol.Text), lane.Label);
+            drawList.AddText(bandMin + new Vector2(10f, 28f) * view.Zoom, ImGui.GetColorU32(ImGuiCol.TextDisabled), lane.Container.BranchResources.ToString());
+        }
+    }
+
+    private static void DrawTimelineConnectors(
+        ImDrawListPtr drawList,
+        Vector2 canvasPos,
+        RenderPipelineCommandGraphViewState view,
+        IReadOnlyList<RenderPipelineTimelineLane> lanes,
+        IReadOnlyDictionary<ViewportRenderCommandContainer, List<RenderPipelineTimelineStep>> stepsByContainer,
+        IReadOnlyDictionary<int, RenderPipelineTimelineStep> stepById,
+        IReadOnlyDictionary<int, RenderPipelineTimelineLane> laneById)
+    {
+        const float laneHeaderWidth = 170f;
+        const float orderStep = 220f;
+        const float laneHeight = 110f;
+        const float stepWidth = 170f;
+        const float stepHeight = 58f;
+        const float stepYOffset = 38f;
+
+        uint sequenceColor = ImGui.GetColorU32(ImGuiCol.PlotLines);
+        uint branchColor = ImGui.GetColorU32(ImGuiCol.TextDisabled);
+
+        Vector2 GetStepStart(RenderPipelineTimelineStep step)
+            => TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth + (step.OrderIndex * orderStep), (step.LaneIndex * laneHeight) + stepYOffset + (stepHeight * 0.5f)));
+
+        Vector2 GetStepEnd(RenderPipelineTimelineStep step)
+            => TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth + (step.OrderIndex * orderStep) + stepWidth, (step.LaneIndex * laneHeight) + stepYOffset + (stepHeight * 0.5f)));
+
+        foreach (List<RenderPipelineTimelineStep> containerSteps in stepsByContainer.Values)
+        {
+            for (int i = 0; i < containerSteps.Count - 1; i++)
+            {
+                RenderPipelineTimelineStep current = containerSteps[i];
+                RenderPipelineTimelineStep next = containerSteps[i + 1];
+                Vector2 start = GetStepEnd(current);
+                Vector2 end = GetStepStart(next);
+                drawList.AddLine(start, end, sequenceColor, 2f);
+            }
+        }
+
+        foreach (RenderPipelineTimelineLane lane in lanes)
+        {
+            if (!lane.ParentCommandId.HasValue)
+                continue;
+
+            if (!stepById.TryGetValue(lane.ParentCommandId.Value, out RenderPipelineTimelineStep? parentStep) || parentStep is null)
+                continue;
+
+            Vector2 parentAnchor = TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth + (parentStep.OrderIndex * orderStep) + (stepWidth * 0.5f), (parentStep.LaneIndex * laneHeight) + stepYOffset + stepHeight));
+            Vector2 childAnchor = TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth + (lane.StartOrder * orderStep), (lane.LaneIndex * laneHeight) + stepYOffset + (stepHeight * 0.5f)));
+
+            float elbowX = MathF.Max(parentAnchor.X + (20f * view.Zoom), childAnchor.X - (30f * view.Zoom));
+            Vector2 elbowA = new(elbowX, parentAnchor.Y + (12f * view.Zoom));
+            Vector2 elbowB = new(elbowX, childAnchor.Y);
+            drawList.AddLine(parentAnchor, elbowA, branchColor, 2f);
+            drawList.AddLine(elbowA, elbowB, branchColor, 2f);
+            drawList.AddLine(elbowB, childAnchor, branchColor, 2f);
+
+            if (!laneById.TryGetValue(lane.Id, out var currentLaneValue))
+                continue;
+            RenderPipelineTimelineLane currentLane = currentLaneValue;
+
+            if (!stepsByContainer.TryGetValue(currentLane.Container, out var childStepsValue))
+                continue;
+            List<RenderPipelineTimelineStep> childSteps = childStepsValue;
+
+            if (childSteps.Count == 0)
+            {
+                Vector2 laneMarker = TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth + (lane.StartOrder * orderStep) - 14f, (lane.LaneIndex * laneHeight) + stepYOffset + (stepHeight * 0.5f)));
+                drawList.AddCircleFilled(laneMarker, 4f * view.Zoom, branchColor);
+            }
+        }
+    }
+
+    private static void DrawTimelineSteps(ImDrawListPtr drawList, Vector2 canvasPos, RenderPipelineCommandGraphViewState view, IReadOnlyList<RenderPipelineTimelineStep> steps)
+    {
+        const float laneHeaderWidth = 170f;
+        const float orderStep = 220f;
+        const float laneHeight = 110f;
+        const float stepWidth = 170f;
+        const float stepHeight = 58f;
+        const float stepYOffset = 38f;
+        const float rounding = 8f;
+
+        uint blockColor = ImGui.GetColorU32(ImGuiCol.FrameBg);
+        uint branchBlockColor = ImGui.GetColorU32(ImGuiCol.Header);
+        uint borderColor = ImGui.GetColorU32(ImGuiCol.Border);
+        uint selectedColor = ImGui.GetColorU32(ImGuiCol.PlotLinesHovered);
+        uint textColor = ImGui.GetColorU32(ImGuiCol.Text);
+        uint subTextColor = ImGui.GetColorU32(ImGuiCol.TextDisabled);
+
+        foreach (RenderPipelineTimelineStep step in steps)
+        {
+            Vector2 min = TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth + (step.OrderIndex * orderStep), (step.LaneIndex * laneHeight) + stepYOffset));
+            Vector2 max = TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth + (step.OrderIndex * orderStep) + stepWidth, (step.LaneIndex * laneHeight) + stepYOffset + stepHeight));
+            bool isSelected = view.SelectedNodeId == step.Id;
+
+            if (step.ResumeOrderExclusive > step.OrderIndex + 1)
+            {
+                Vector2 resumeMax = TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth + (step.ResumeOrderExclusive * orderStep) - 24f, (step.LaneIndex * laneHeight) + stepYOffset + stepHeight - 6f));
+                drawList.AddRectFilled(min + new Vector2((stepWidth + 6f) * view.Zoom, 18f * view.Zoom), resumeMax, ImGui.GetColorU32(ImGuiCol.TabUnfocused), 6f * view.Zoom);
+            }
+
+            drawList.AddRectFilled(min, max, step.BranchLabels.Length > 0 ? branchBlockColor : blockColor, rounding * view.Zoom);
+            drawList.AddRect(min, max, isSelected ? selectedColor : borderColor, rounding * view.Zoom, ImDrawFlags.None, 2f);
+
+            ImGui.SetCursorScreenPos(min);
+            ImGui.InvisibleButton($"##RenderPipelineTimelineStep{step.Id}", max - min);
+            if (ImGui.IsItemHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                view.SelectedNodeId = step.Id;
+
+            drawList.AddText(min + new Vector2(10f, 7f) * view.Zoom, textColor, step.Command.GetType().Name);
+            drawList.AddText(min + new Vector2(10f, 29f) * view.Zoom, subTextColor, $"#{step.CommandIndex + 1}");
+
+            if (step.BranchLabels.Length > 0)
+            {
+                string branchSummary = string.Join(" | ", step.BranchLabels);
+                drawList.AddText(min + new Vector2(36f, 29f) * view.Zoom, subTextColor, branchSummary);
+            }
+        }
+    }
+
+    private static void DrawTimelineLaneSelectors(ImDrawListPtr drawList, Vector2 canvasPos, RenderPipelineCommandGraphViewState view, IReadOnlyList<RenderPipelineTimelineLane> lanes)
+    {
+        const float laneHeaderWidth = 170f;
+        const float laneHeight = 110f;
+
+        foreach (RenderPipelineTimelineLane lane in lanes)
+        {
+            Vector2 min = TimelineWorldToScreen(canvasPos, view, new Vector2(0f, (lane.LaneIndex * laneHeight) + 8f));
+            Vector2 max = TimelineWorldToScreen(canvasPos, view, new Vector2(laneHeaderWidth, (lane.LaneIndex * laneHeight) + laneHeight - 12f));
+
+            ImGui.SetCursorScreenPos(min);
+            ImGui.InvisibleButton($"##RenderPipelineTimelineLane{lane.Id}", max - min);
+            if (ImGui.IsItemHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                view.SelectedNodeId = lane.Id;
+        }
+    }
+
+    private static Vector2 TimelineWorldToScreen(Vector2 canvasPos, RenderPipelineCommandGraphViewState view, Vector2 world)
+        => canvasPos + (world + view.Pan) * view.Zoom;
 
     private static void DrawRenderPipelineCommandGraphCanvas(RenderPipeline pipeline, RenderPipelineCommandGraphViewState view)
     {

@@ -109,6 +109,17 @@ namespace XREngine.Animation
             ApplyAnimationValues();
         }
 
+        public void EvaluationTick(object? rootObject, long deltaTicks)
+        {
+            for (int i = 0; i < Layers.Count; ++i)
+            {
+                AnimLayer layer = Layers[i];
+                layer.EvaluationTick(rootObject, deltaTicks, Variables);
+                CombineAnimationValues(layer);
+            }
+            ApplyAnimationValues();
+        }
+
         private void CombineAnimationValues(AnimLayer layer)
         {
             //Merge animation paths from the last layer into this layer

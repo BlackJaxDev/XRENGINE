@@ -499,6 +499,23 @@ namespace XREngine.Animation
                 curve.Animation?.Tick(delta);
         }
 
+        public void TickPropertyAnimations(long deltaTicks)
+        {
+            foreach (AnimationMember curve in _animatedCurves.Values)
+                curve.Animation?.Tick(deltaTicks);
+        }
+
+        public virtual void Tick(long deltaTicks)
+            => Tick(StopwatchTicksToSeconds(deltaTicks));
+
+        protected static long ScaleStopwatchTicks(long deltaTicks, float speed)
+            => deltaTicks == 0L || !float.IsFinite(speed) || speed == 0.0f
+                ? 0L
+                : (long)Math.Round(deltaTicks * (double)speed);
+
+        protected static float StopwatchTicksToSeconds(long deltaTicks)
+            => (float)(deltaTicks / (double)Stopwatch.Frequency);
+
         public abstract void Tick(float delta);
     }
 }

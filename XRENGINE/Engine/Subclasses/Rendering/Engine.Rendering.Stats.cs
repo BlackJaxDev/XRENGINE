@@ -317,7 +317,12 @@ namespace XREngine
                 /// When false, disables all per-frame statistics tracking to reduce overhead.
                 /// VRAM tracking remains enabled as it's not per-frame.
                 /// </summary>
-                public static bool EnableTracking { get; set; } = true;
+                public static bool EnableTracking { get; set; } =
+#if XRE_PUBLISHED
+                    false;
+#else
+                    true;
+#endif
 
                 /// <summary>
                 /// Whether render-matrix stats have been populated at least once.

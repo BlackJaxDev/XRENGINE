@@ -27,6 +27,7 @@ public static partial class EditorUnitTests
     public enum UnitTestWorldKind
     {
         Default,
+        AudioTesting,
         MathIntersections,
         MeshEditing,
         UberShader,
