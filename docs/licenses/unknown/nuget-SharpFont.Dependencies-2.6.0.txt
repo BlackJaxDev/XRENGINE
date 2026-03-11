@@ -1,0 +1,6 @@
+﻿License text could not be resolved locally for NuGet package 'SharpFont.Dependencies' (2.6.0).
+
+Resolved license: https://github.com/Robmaister/SharpFont.Dependencies/blob/master/LICENSE
+RepositoryUrl: 
+ProjectUrl: https://github.com/Robmaister/SharpFont.Dependencies
+

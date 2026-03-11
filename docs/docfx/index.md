@@ -1,6 +1,6 @@
 # XRENGINE Documentation
 
-Welcome to the XRENGINE documentation site. This site contains hand-written guides, architecture documentation, and auto-generated API reference from the C# projects in `XRENGINE.sln`.
+Welcome to the XRENGINE documentation site. This site contains hand-written guides, architecture documentation, and auto-generated API reference from the C# projects in `XRENGINE.slnx`.
 
 ## Quick Links
 

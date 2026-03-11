@@ -62,7 +62,7 @@ Solution build:
 
 ```powershell
 dotnet restore
-dotnet build XRENGINE.sln
+dotnet build XRENGINE.slnx
 ```
 
 Or build the Editor only:
@@ -137,7 +137,7 @@ There are also “prep” tasks used by the debug configurations:
 
 ## Launch Options (Visual Studio)
 
-Open `XRENGINE.sln`.
+Open `XRENGINE.slnx` (or `XRENGINE.sln`).
 
 ### Run / Debug the Editor
 

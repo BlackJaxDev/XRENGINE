@@ -52,6 +52,6 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - Many backlog files list outstanding tasks; check them before starting major refactors.
 
 ## Generated API Reference
-- The DocFX project lives in `docs/docfx/docfx.json` and targets `XRENGINE.sln` to produce a browsable API site from XML doc comments.
+- The DocFX project lives in `docs/docfx/docfx.json` and targets `XRENGINE.slnx` to produce a browsable API site from XML doc comments.
 - Build the site: `dotnet tool restore` then `dotnet docfx docs/docfx/docfx.json`. Output stays in `docs/docfx/_site` (ignored by git).
 - Preview locally: `dotnet docfx docs/docfx/docfx.json --serve --port 8080` and open the served URL.
