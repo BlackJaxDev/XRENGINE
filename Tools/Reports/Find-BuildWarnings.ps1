@@ -69,8 +69,12 @@ if (-not $NoBuild) {
     New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
     $buildTargets = [System.Collections.Generic.List[string]]::new()
+    $slnxPath = Join-Path $Root "XRENGINE.slnx"
     $slnPath = Join-Path $Root "XRENGINE.sln"
-    if (Test-Path $slnPath) {
+    if (Test-Path $slnxPath) {
+        $buildTargets.Add($slnxPath)
+    }
+    elseif (Test-Path $slnPath) {
         $buildTargets.Add($slnPath)
     }
     else {
@@ -88,7 +92,7 @@ if (-not $NoBuild) {
     }
 
     if ($buildTargets.Count -eq 0) {
-        Write-Error "No build target found. Expected XRENGINE.sln or one of the primary top-level projects under $Root"
+        Write-Error "No build target found. Expected XRENGINE.slnx / XRENGINE.sln or one of the primary top-level projects under $Root"
         return
     }
 

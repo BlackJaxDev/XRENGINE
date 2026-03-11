@@ -293,6 +293,50 @@ function Copy-LicenseFile([string]$relativePathFromDocsLicenses, [string]$source
     return ('licenses/{0}' -f ($relativePathFromDocsLicenses -replace '\\', '/'))
 }
 
+function Materialize-LicenseLink([string]$licLink, [string]$entityName, [string]$licSafe) {
+    # If the license link is an external HTTP URL, fetch its content and write a local file.
+    if (-not $licLink) { return $licLink }
+    if (-not (Is-AbsoluteHttpUrl -s $licLink)) { return $licLink }
+
+    $fetchedText = Try-ReadUrlText -url $licLink
+    if ($fetchedText) {
+        # Validate that the fetched content looks like license text, not a marketing/product page.
+        $det = Detect-LicenseFromText -text $fetchedText
+        if (-not $det) {
+            $lower = $fetchedText.ToLowerInvariant()
+            $hasLicenseIndicators = ($lower -match 'license|copyright|permission|warranty|redistribut|granted')
+            $hasMarketingIndicators = ($lower -match 'download|get started|watch trailer|sign up|notify me|buy now')
+            if ($hasMarketingIndicators -and -not $hasLicenseIndicators) {
+                # This is a product/marketing page, not a license. Keep the external link.
+                return $licLink
+            }
+        }
+
+        # Use just the leaf filename (without extension) to keep filenames short.
+        # Strip MSBuild variable prefixes like $(NvidiaRtxgiWinX64Dir) and redaction markers.
+        $cleanName = $entityName -replace '\$\([^)]+\)', '' -replace '<[^>]+>', ''
+        # GetFileNameWithoutExtension may fail on unusual chars; fallback to regex leaf extraction.
+        $leaf = $null
+        try { $leaf = [System.IO.Path]::GetFileNameWithoutExtension($cleanName) } catch { }
+        # If leaf is a glob wildcard or empty, use the parent directory name instead.
+        if (-not $leaf -or $leaf -match '^\*+$' -or $leaf -eq '_') {
+            try { $leaf = [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName($cleanName)) } catch { }
+        }
+        if (-not $leaf) {
+            # Grab the last segment after any slash or backslash, strip one extension.
+            if ($cleanName -match '(?:[\\/])([^\\/]+)$') { $leaf = $Matches[1] -replace '\.[^.]+$', '' }
+            else { $leaf = $cleanName -replace '\.[^.]+$', '' }
+        }
+        if (-not $leaf) { $leaf = $entityName }
+        $leaf = To-SafeFileName $leaf
+
+        $dstRel = ("fetched/{0}-{1}.txt" -f $leaf, $licSafe)
+        $localLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text $fetchedText
+        if ($localLink) { return $localLink }
+    }
+    return $licLink
+}
+
 function Format-LicenseCell([string]$licenseText, [string]$licenseLink) {
     $lt = if ($licenseText) { $licenseText } else { '(unknown)' }
     if ($licenseLink) {
@@ -475,6 +519,11 @@ function Resolve-NuGetLicenseFileText([string]$id, [string]$version, $meta) {
             $txt = Read-NupkgEntryText -nupkgPath $nupkg -entryName $licVal
             if (-not $txt) { $txt = Read-NuGetExtractedFileText -id $id -version $version -relativeOrFileName $licVal }
             return $txt
+        }
+        # If the license value is a URL, try to fetch its contents as license text.
+        if ($licVal -match '^https?://') {
+            $txt = Try-ReadUrlText -url $licVal
+            if ($txt) { return $txt }
         }
     }
 
@@ -691,6 +740,16 @@ function Resolve-NuGetLicense([string]$id, [string]$version, $meta) {
             # keep as last-resort signal
             return $licVal
         }
+        # If the license value is a URL, try to fetch it and detect the license type.
+        if (Is-AbsoluteHttpUrl -s $licVal) {
+            $spdx = Get-GitHubLicenseSpdxFromUrl -url $licVal
+            if ($spdx) { return $spdx }
+            $urlText = Try-ReadUrlText -url $licVal
+            if ($urlText) {
+                $det = Detect-LicenseFromText -text $urlText
+                if ($det) { return $det }
+            }
+        }
         return $licVal
     }
 
@@ -748,18 +807,27 @@ function Resolve-NuGetLicense([string]$id, [string]$version, $meta) {
 }
 
 # --- Collect solution projects ---
-$solutionPath = Join-Path $root 'XRENGINE.sln'
+$slnxPath = Join-Path $root 'XRENGINE.slnx'
+$slnPath = Join-Path $root 'XRENGINE.sln'
+$solutionPath = if (Test-Path -LiteralPath $slnxPath) { $slnxPath } elseif (Test-Path -LiteralPath $slnPath) { $slnPath } else { $null }
+
 $csproj = @()
-if (Test-Path -LiteralPath $solutionPath) {
+if ($solutionPath -and $solutionPath.EndsWith('.slnx')) {
+    [xml]$slnxXml = Get-Content -Raw -LiteralPath $solutionPath
+    $csprojRel = $slnxXml.SelectNodes('//Project/@Path') | ForEach-Object { $_.Value } | Where-Object { $_ -match '\.csproj$' } | Sort-Object -Unique
+    foreach ($p in $csprojRel) {
+        $full = Join-Path $root $p
+        if (Test-Path $full) { $csproj += (Resolve-Path -LiteralPath $full).Path }
+    }
+} elseif ($solutionPath) {
     $slnText = Get-Content -Raw -LiteralPath $solutionPath
     $csprojRel = [regex]::Matches($slnText, '"(?<p>[^"]+\.csproj)"') | ForEach-Object { $_.Groups['p'].Value } | Sort-Object -Unique
-
     foreach ($p in $csprojRel) {
         $full = Join-Path $root $p
         if (Test-Path $full) { $csproj += (Resolve-Path -LiteralPath $full).Path }
     }
 } else {
-    Write-Warning "Solution file '$solutionPath' was not found. Falling back to repository project scan."
+    Write-Warning "No solution file found (checked XRENGINE.slnx and XRENGINE.sln). Falling back to repository project scan."
     $csproj = Get-ChildItem -Path $root -Recurse -Filter *.csproj -File |
         Where-Object {
             $_.FullName -notmatch '[\\/]Build[\\/]Submodules[\\/]' -and
@@ -1149,6 +1217,7 @@ foreach ($s in $submodules) {
         $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text ("License file not detected locally for submodule '{0}'.`r`n`r`nURL: {1}`r`n" -f $s.Name, $s.Url)
     }
 
+    $licLink = Materialize-LicenseLink -licLink $licLink -entityName $s.Name -licSafe (To-SafeFileName $licText)
     $lic = Format-LicenseCell -licenseText $licText -licenseLink $licLink
     $url = if ($s.Url) { $s.Url } else { '(not detected)' }
     $lines.Add(("| {0} | {1} | {2} | {3} | {4} |" -f $s.Name, $s.Path, $owner, $lic, $url))
@@ -1180,6 +1249,7 @@ if ($nested.Count -gt 0) {
             $dstRel = ('unknown/nested-{0}.txt' -f (To-SafeFileName $n.Name))
             $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text ("License file not detected for nested dependency '{0}'.`r`n`r`nURL: {1}`r`n" -f $n.Name, $n.Url)
         }
+        $licLink = Materialize-LicenseLink -licLink $licLink -entityName $n.Name -licSafe (To-SafeFileName $licText)
         $lic = Format-LicenseCell -licenseText $licText -licenseLink $licLink
         $url = if ($n.Url) { $n.Url } else { '(unknown)' }
         $lines.Add(("| {0} | {1} | {2} | {3} | {4} |" -f $n.Name, $n.UsedBy, $owner, $lic, $url))
@@ -1220,7 +1290,13 @@ foreach ($pkg in ($packages.Values | Sort-Object Id)) {
     }
 
     if (-not $licLink -and $pkg.Meta -and $pkg.Meta.LicenseUrl -and (Is-AbsoluteHttpUrl -s $pkg.Meta.LicenseUrl)) {
-        $licLink = Convert-GitHubBlobUrlToRaw -url $pkg.Meta.LicenseUrl
+        # Try to fetch the license text from the URL and materialize a local file
+        # instead of linking to the raw external URL.
+        $fetchedText = Try-ReadUrlText -url $pkg.Meta.LicenseUrl
+        if ($fetchedText) {
+            $dstRel = ("nuget/{0}-{1}-{2}.txt" -f $pkgSafe, (To-SafeFileName $verForFile), $licSafe)
+            $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text $fetchedText
+        }
     }
 
     if (-not $licLink) {
@@ -1230,6 +1306,7 @@ foreach ($pkg in ($packages.Values | Sort-Object Id)) {
         $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text ("License text could not be resolved locally for NuGet package '{0}' ({1}).`r`n`r`nResolved license: {2}`r`nRepositoryUrl: {3}`r`nProjectUrl: {4}`r`n" -f $pkg.Id, $verForFile, $licText, $repoUrl, $projUrl)
     }
 
+    $licLink = Materialize-LicenseLink -licLink $licLink -entityName $pkg.Id -licSafe $licSafe
     $lic = Format-LicenseCell -licenseText $licText -licenseLink $licLink
     $usedBy = (($pkg.Projects | Sort-Object) -join ', ')
     $lines.Add(("| {0} | {1} | {2} | {3} | {4} |" -f $pkg.Id, $vers, $owner, $lic, $usedBy))
@@ -1271,6 +1348,7 @@ foreach ($r in ($refs | Sort-Object Project, Reference, HintPath)) {
         $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text ("License text not detected for assembly reference.`r`n`r`nProject: {0}`r`nReference: {1}`r`nHintPath: {2}`r`n" -f $r.Project, $refText, $hintText)
     }
 
+    $licLink = Materialize-LicenseLink -licLink $licLink -entityName $refText -licSafe (To-SafeFileName $licText)
     $lic = Format-LicenseCell -licenseText $licText -licenseLink $licLink
     $lines.Add(("| {0} | {1} | {2} | {3} | {4} |" -f $r.Project, $refText, $ownerText, $lic, $hintText))
 }
@@ -1293,9 +1371,11 @@ foreach ($b in ($binaries | Sort-Object Project, Path)) {
     $licLink = $resolved.LicenseLink
 
     if (-not $licLink) {
-        $dstRel = ('unknown/binary-item-{0}-{1}.txt' -f (To-SafeFileName $b.Project), (To-SafeFileName $pathText))
+        $binaryFileName = [System.IO.Path]::GetFileName($b.Path)
+        $dstRel = ('unknown/binary-item-{0}-{1}.txt' -f (To-SafeFileName $b.Project), (To-SafeFileName $binaryFileName))
         $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text ("License file not detected for referenced binary item.`r`n`r`nProject: {0}`r`nPath: {1}`r`n" -f $b.Project, $pathText)
     }
+    $licLink = Materialize-LicenseLink -licLink $licLink -entityName $pathText -licSafe (To-SafeFileName $licText)
     $lic = Format-LicenseCell -licenseText $licText -licenseLink $licLink
     $lines.Add(("| {0} | {1} | {2} | {3} | {4} | {5} |" -f $b.Project, $pathText, $ownerText, $lic, $linkText, $copyText))
 }
@@ -1318,6 +1398,7 @@ foreach ($f in $checkedBinaries) {
         $dstRel = ('unknown/checked-binary-{0}.txt' -f (To-SafeFileName $f.File))
         $licLink = Write-LicenseTextFile -relativePathFromDocsLicenses $dstRel -text ("License file not detected for checked-in binary.`r`n`r`nPath: {0}`r`nFile: {1}`r`n" -f $f.Path, $f.File)
     }
+    $licLink = Materialize-LicenseLink -licLink $licLink -entityName $f.File -licSafe (To-SafeFileName $licText)
     $lic = Format-LicenseCell -licenseText $licText -licenseLink $licLink
     $lines.Add(("| {0} | {1} | {2} | {3} |" -f $f.Path, $f.File, $owner, $lic))
 }

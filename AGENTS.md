@@ -68,7 +68,7 @@ When working on editor tooling or features, default to the ImGui path unless the
 
 - Full solution:
   - `dotnet restore`
-  - `dotnet build XRENGINE.sln`
+  - `dotnet build XRENGINE.slnx`
 - Editor only:
   - `dotnet build .\XREngine.Editor\XREngine.Editor.csproj`
 
