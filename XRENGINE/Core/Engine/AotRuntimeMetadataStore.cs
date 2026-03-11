@@ -52,6 +52,55 @@ public static class AotRuntimeMetadataStore
         return IgnoreCaseTypeCache.GetOrAdd(typeName, static key => ResolveTypeCore(key, ignoreCase: true));
     }
 
+    public static Type? ResolveType(int typeIndex)
+    {
+        AotRuntimeMetadata? metadata = Metadata;
+        if (metadata is null || typeIndex < 0 || typeIndex >= metadata.KnownTypeAssemblyQualifiedNames.Length)
+            return null;
+
+        string assemblyQualifiedName = metadata.KnownTypeAssemblyQualifiedNames[typeIndex];
+        return Type.GetType(assemblyQualifiedName, throwOnError: false, ignoreCase: false);
+    }
+
+    public static bool TryGetKnownTypeIndex(Type type, out int typeIndex)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+
+        string? assemblyQualifiedName = type.AssemblyQualifiedName;
+        if (string.IsNullOrWhiteSpace(assemblyQualifiedName))
+        {
+            typeIndex = -1;
+            return false;
+        }
+
+        return TryGetKnownTypeIndex(assemblyQualifiedName, out typeIndex);
+    }
+
+    public static bool TryGetKnownTypeIndex(string assemblyQualifiedName, out int typeIndex)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(assemblyQualifiedName);
+
+        AotRuntimeMetadata? metadata = Metadata;
+        if (metadata is null)
+        {
+            typeIndex = -1;
+            return false;
+        }
+
+        string[] knownTypes = metadata.KnownTypeAssemblyQualifiedNames;
+        for (int i = 0; i < knownTypes.Length; i++)
+        {
+            if (string.Equals(knownTypes[i], assemblyQualifiedName, StringComparison.Ordinal))
+            {
+                typeIndex = i;
+                return true;
+            }
+        }
+
+        typeIndex = -1;
+        return false;
+    }
+
     private static void EnsureLoaded()
     {
         if (_loaded)

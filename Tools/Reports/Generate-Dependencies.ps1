@@ -749,13 +749,25 @@ function Resolve-NuGetLicense([string]$id, [string]$version, $meta) {
 
 # --- Collect solution projects ---
 $solutionPath = Join-Path $root 'XRENGINE.sln'
-$slnText = Get-Content -Raw -LiteralPath $solutionPath
-$csprojRel = [regex]::Matches($slnText, '"(?<p>[^"]+\.csproj)"') | ForEach-Object { $_.Groups['p'].Value } | Sort-Object -Unique
-
 $csproj = @()
-foreach ($p in $csprojRel) {
-    $full = Join-Path $root $p
-    if (Test-Path $full) { $csproj += (Resolve-Path -LiteralPath $full).Path }
+if (Test-Path -LiteralPath $solutionPath) {
+    $slnText = Get-Content -Raw -LiteralPath $solutionPath
+    $csprojRel = [regex]::Matches($slnText, '"(?<p>[^"]+\.csproj)"') | ForEach-Object { $_.Groups['p'].Value } | Sort-Object -Unique
+
+    foreach ($p in $csprojRel) {
+        $full = Join-Path $root $p
+        if (Test-Path $full) { $csproj += (Resolve-Path -LiteralPath $full).Path }
+    }
+} else {
+    Write-Warning "Solution file '$solutionPath' was not found. Falling back to repository project scan."
+    $csproj = Get-ChildItem -Path $root -Recurse -Filter *.csproj -File |
+        Where-Object {
+            $_.FullName -notmatch '[\\/]Build[\\/]Submodules[\\/]' -and
+            $_.FullName -notmatch '[\\/]Submodules[\\/]' -and
+            $_.FullName -notmatch '[\\/]Samples[\\/]'
+        } |
+        ForEach-Object { $_.FullName } |
+        Sort-Object -Unique
 }
 
 # --- Parse csproj for packages, references, and copied binaries ---

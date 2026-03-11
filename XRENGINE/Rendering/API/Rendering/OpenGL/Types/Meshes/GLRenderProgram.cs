@@ -886,15 +886,19 @@ namespace XREngine.Rendering.OpenGL
                     Api.GetProgramBinary(bindingId, (uint)len, &binaryLength, &format, ptr);
                 }
                 BinaryProgram bin = (binary, format, binaryLength);
-                BinaryCache.TryAdd(Hash, bin);
+                var binaryCache = BinaryCache;
+                if (binaryCache is null)
+                    return;
+
+                binaryCache.TryAdd(Hash, bin);
                 WriteToBinaryShaderCache(bin);
             }
 
             private static ulong CalcHash(IEnumerable<string> enumerable)
             {
                 ulong hash = 17ul;
-                foreach (string item in enumerable)
-                    hash = hash * 31ul + GetDeterministicHashCode(item);
+                foreach (string? item in enumerable)
+                    hash = hash * 31ul + GetDeterministicHashCode(item ?? string.Empty);
                 return hash;
             }
 

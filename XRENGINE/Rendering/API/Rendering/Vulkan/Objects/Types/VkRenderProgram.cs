@@ -459,7 +459,16 @@ public unsafe partial class VulkanRenderer
         }
 
         public bool TryGetAutoUniformBlock(string name, out AutoUniformBlockInfo block)
-            => _autoUniformBlocks.TryGetValue(name, out block);
+        {
+            if (_autoUniformBlocks.TryGetValue(name, out AutoUniformBlockInfo? resolvedBlock) && resolvedBlock is not null)
+            {
+                block = resolvedBlock;
+                return true;
+            }
+
+            block = null!;
+            return false;
+        }
 
         /// <summary>
         /// Searches for an auto-uniform block by block name (in addition to
@@ -470,8 +479,13 @@ public unsafe partial class VulkanRenderer
         public bool TryGetAutoUniformBlockFuzzy(string name, uint set, uint binding, out AutoUniformBlockInfo block)
         {
             // 1. Try exact instance-name match first.
-            if (!string.IsNullOrWhiteSpace(name) && _autoUniformBlocks.TryGetValue(name, out block))
+            if (!string.IsNullOrWhiteSpace(name)
+                && _autoUniformBlocks.TryGetValue(name, out AutoUniformBlockInfo? resolvedBlock)
+                && resolvedBlock is not null)
+            {
+                block = resolvedBlock;
                 return true;
+            }
 
             // 2. Try matching by block name (struct type name from SPIR-V).
             if (!string.IsNullOrWhiteSpace(name))
@@ -1124,7 +1138,8 @@ public unsafe partial class VulkanRenderer
 
             if (binding.DescriptorType == DescriptorType.UniformBuffer &&
                 !string.IsNullOrWhiteSpace(binding.Name) &&
-                _autoUniformBlocks.TryGetValue(binding.Name, out AutoUniformBlockInfo block))
+                _autoUniformBlocks.TryGetValue(binding.Name, out AutoUniformBlockInfo? block) &&
+                block is not null)
             {
                 if (TryCreateAutoUniformBuffer(snapshot, block, out Silk.NET.Vulkan.Buffer autoBuffer, out DeviceMemory autoMemory))
                 {

@@ -24,7 +24,6 @@ namespace XREngine.Components
             private Process? _rvcProcess;
             private readonly string _rvcPythonPath;
             private readonly string _rvcScriptPath;
-            private bool _isInitialized = false;
 
             public RVCConverter(string modelPath, string indexPath = "", string rvcPythonPath = "python", string rvcScriptPath = "rvc")
             {
@@ -58,7 +57,6 @@ namespace XREngine.Components
                     if (_modelPath != value)
                     {
                         _modelPath = value;
-                        _isInitialized = false;
                         // Clear queue when model changes
                         lock (_queueLock)
                         {
@@ -76,7 +74,6 @@ namespace XREngine.Components
                     if (_indexPath != value)
                     {
                         _indexPath = value;
-                        _isInitialized = false;
                     }
                 }
             }

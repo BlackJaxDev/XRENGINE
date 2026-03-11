@@ -219,15 +219,17 @@ public sealed class ModelComponentEditor : IXRComponentEditor
         {
             foreach (var lod in runtimeMesh.LODs)
             {
-                XRMeshRenderer? renderer = lod.Renderer;
-                XRMesh? mesh = renderer?.Mesh;
+                if (lod.Renderer is not XRMeshRenderer renderer)
+                    continue;
+
+                XRMesh? mesh = renderer.Mesh;
                 if (mesh is null || !mesh.HasBlendshapes)
                     continue;
 
                 uint blendshapeCount = mesh.BlendshapeCount;
                 for (uint i = 0; i < blendshapeCount; i++)
                 {
-                    string name = mesh.BlendshapeNames[(int)i];
+                    string name = mesh.BlendshapeNames[(int)i] ?? $"Blendshape {i}";
                     if (!blendshapeValues.TryGetValue(name, out var values))
                     {
                         values = new List<float>();

@@ -31,7 +31,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         public StateObject? ActiveJitterHandle;
         public uint LastInternalWidth;
         public uint LastInternalHeight;
-        public ulong LastFrameCount;
+        public ulong LastFrameCount = 0;
     }
 
     internal readonly struct TemporalUniformData

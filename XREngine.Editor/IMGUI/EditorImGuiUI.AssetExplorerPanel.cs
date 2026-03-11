@@ -1351,8 +1351,11 @@ public static partial class EditorImGuiUI
 
         private static bool TryGetYamlKeys(string path, out HashSet<string> keys)
         {
-            if (_assetExplorerYamlKeyCache.TryGetValue(path, out keys))
+            if (_assetExplorerYamlKeyCache.TryGetValue(path, out HashSet<string>? cachedKeys) && cachedKeys is not null)
+            {
+                keys = cachedKeys;
                 return keys.Count > 0;
+            }
 
             keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 

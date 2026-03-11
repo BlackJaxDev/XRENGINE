@@ -18,8 +18,6 @@ public unsafe partial class VulkanRenderer
     private ulong[]? _swapchainImageTimelineValues;
     private ulong _acquireTimelineValue;
     private ulong _graphicsTimelineValue;
-    private ulong _presentTimelineValue;
-    private ulong _transferTimelineValue;
 
     /// <summary>
     /// Set to <c>true</c> when <c>VK_ERROR_DEVICE_LOST</c> is detected. Once the Vulkan
@@ -74,8 +72,6 @@ public unsafe partial class VulkanRenderer
                 Array.Clear(_swapchainImageTimelineValues);
             _acquireTimelineValue = 0;
             _graphicsTimelineValue = 0;
-            _presentTimelineValue = 0;
-            _transferTimelineValue = 0;
 
             throw new InvalidOperationException(
                 $"Vulkan device lost while waiting for timeline value {value}. Timeline state has been reset.");
@@ -115,8 +111,6 @@ public unsafe partial class VulkanRenderer
         _swapchainImageTimelineValues = null;
         _acquireTimelineValue = 0;
         _graphicsTimelineValue = 0;
-        _presentTimelineValue = 0;
-        _transferTimelineValue = 0;
     }
 
     private void CreateSyncObjects()

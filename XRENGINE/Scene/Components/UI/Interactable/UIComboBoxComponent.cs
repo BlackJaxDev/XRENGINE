@@ -8,6 +8,9 @@ namespace XREngine.Rendering.UI
         [Category("Events")]
         public event DelScrolling? Scrolled;
 
+        protected void OnScrolled(bool up)
+            => Scrolled?.Invoke(up);
+
         public UIComboBoxComponent()
         {
 

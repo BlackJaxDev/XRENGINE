@@ -135,7 +135,9 @@ public unsafe partial class VulkanRenderer
 
         private void AcquireImage()
         {
-            if (!string.IsNullOrWhiteSpace(Data.Name) && Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(Data.Name, out VulkanPhysicalImageGroup? group))
+            if (!string.IsNullOrWhiteSpace(Data.Name)
+                && Renderer.ResourceAllocator.TryGetPhysicalGroupForResource(Data.Name, out VulkanPhysicalImageGroup? group)
+                && group is not null)
             {
                 group.EnsureAllocated(Renderer);
                 _physicalGroup = group;

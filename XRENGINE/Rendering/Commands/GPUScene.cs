@@ -80,23 +80,6 @@ namespace XREngine.Rendering.Commands
     /// </remarks>
     public class GPUScene : XRBase, IGpuBvhProvider
     {
-        #region Internal Types
-
-        /// <summary>
-        /// Internal structure for tracking mesh index/vertex information.
-        /// </summary>
-        private struct MeshInfo
-        {
-            public uint IndexCount;
-            public uint FirstIndex;
-            public uint BaseVertex;
-            //public XRMesh SourceMesh;
-            //public uint MaterialID;
-            //public Matrix4x4 Transform;
-        }
-
-        #endregion
-
         #region Bounds Helpers
 
         private static float ComputeMaxAxisScale(in Matrix4x4 m)
@@ -264,9 +247,6 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Remaining log entries for command roundtrip mismatch warnings.</summary>
         private int _commandRoundtripMismatchLogBudget = 4;
-
-        /// <summary>Remaining log entries for command update details.</summary>
-        private int _commandUpdateLogBudget = 16;
 
         /// <summary>Remaining log entries for command update warnings/errors.</summary>
         private int _commandUpdateErrorLogBudget = 24;

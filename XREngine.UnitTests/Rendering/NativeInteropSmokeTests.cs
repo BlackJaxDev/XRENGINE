@@ -15,8 +15,10 @@ public class NativeInteropSmokeTests
         if (!TryFindNative("sl.interposer.dll", out string? path))
             Assert.Inconclusive("sl.interposer.dll was not found; Streamline DLSS cannot initialize. Place a recent Streamline redistributable next to the editor executable.");
 
-        if (!NativeLibrary.TryLoad(path, out nint handle))
-            Assert.Fail($"sl.interposer.dll located at '{path}' could not be loaded. Likely wrong architecture or missing dependencies.");
+        string resolvedPath = path ?? throw new AssertionException("Expected sl.interposer.dll path to be resolved.");
+
+        if (!NativeLibrary.TryLoad(resolvedPath, out nint handle))
+            Assert.Fail($"sl.interposer.dll located at '{resolvedPath}' could not be loaded. Likely wrong architecture or missing dependencies.");
 
         try
         {
@@ -42,8 +44,10 @@ public class NativeInteropSmokeTests
         if (!TryFindNative("RestirGI.Native.dll", out string? path))
             Assert.Inconclusive("RestirGI.Native.dll was not found. The NV ray tracing path will never activate without this binary built and deployed.");
 
-        if (!NativeLibrary.TryLoad(path, out nint handle))
-            Assert.Fail($"RestirGI.Native.dll located at '{path}' could not be loaded. Build the native project for the current platform and drop it next to the executable.");
+        string resolvedPath = path ?? throw new AssertionException("Expected RestirGI.Native.dll path to be resolved.");
+
+        if (!NativeLibrary.TryLoad(resolvedPath, out nint handle))
+            Assert.Fail($"RestirGI.Native.dll located at '{resolvedPath}' could not be loaded. Build the native project for the current platform and drop it next to the executable.");
 
         try
         {

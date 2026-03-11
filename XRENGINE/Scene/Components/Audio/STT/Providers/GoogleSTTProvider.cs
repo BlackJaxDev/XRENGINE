@@ -49,16 +49,21 @@ namespace XREngine.Components
                 var responseJson = await response.Content.ReadAsStringAsync();
                 var result = JsonSerializer.Deserialize<GoogleSTTResponse>(responseJson);
 
-                if (result?.Results?.Length > 0 && result.Results[0].Alternatives?.Length > 0)
+                var results = result?.Results;
+                if (results is { Length: > 0 })
                 {
-                    var transcript = result.Results[0].Alternatives[0];
-                    return new STTResult
+                    var alternatives = results[0].Alternatives;
+                    if (alternatives is { Length: > 0 })
                     {
-                        Success = true,
-                        Text = transcript.Transcript ?? string.Empty,
-                        Confidence = transcript.Confidence,
-                        IsFinal = true
-                    };
+                        var transcript = alternatives[0];
+                        return new STTResult
+                        {
+                            Success = true,
+                            Text = transcript.Transcript ?? string.Empty,
+                            Confidence = transcript.Confidence,
+                            IsFinal = true
+                        };
+                    }
                 }
 
                 return new STTResult { Success = false, Error = "No transcription results" };

@@ -57,7 +57,12 @@ namespace XREngine.Rendering
 
             // Resolve atlas output path via the import context —
             // the engine places auxiliary files in the correct cache directory automatically.
-            string atlasPath = context.ResolveAuxiliaryPath($"{name}.png");
+            string? atlasPath = context.ResolveAuxiliaryPath($"{name}.png");
+            if (string.IsNullOrWhiteSpace(atlasPath))
+            {
+                Debug.LogWarning($"Failed to resolve atlas output path for font '{filePath}'");
+                return false;
+            }
 
             // Load the font using SharpFont
             using Library lib = new();
@@ -75,7 +80,13 @@ namespace XREngine.Rendering
                     characters.Add(char.ConvertFromUtf32((int)codepoint));
             }
             Characters = characters;
-            SKTypeface typeface = SKTypeface.FromFile(filePath);
+            using SKTypeface? typeface = SKTypeface.FromFile(filePath);
+            if (typeface is null)
+            {
+                Debug.LogWarning($"Failed to load SKTypeface from '{filePath}'");
+                return false;
+            }
+
             GenerateFontAtlas(typeface, characters, atlasPath, FontDrawSize);
             return true;
         }
@@ -153,7 +164,6 @@ namespace XREngine.Rendering
                 IsDither = true,
                 BlendMode = SKBlendMode.SrcOver,
                 IsAntialias = true,
-                TextAlign = SKTextAlign.Left,
             };
 
             using SKFont font = new(typeface, textSize);

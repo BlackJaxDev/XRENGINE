@@ -201,7 +201,9 @@ namespace XREngine.Rendering
             public IDictionaryEnumerator GetEnumerator() => ((IDictionary)_buffers).GetEnumerator();
             public void Remove(object key) => ((IDictionary)_buffers).Remove(key);
             public void CopyTo(Array array, int index) => ((ICollection)_buffers).CopyTo(array, index);
+            #pragma warning disable SYSLIB0050
             public void GetObjectData(SerializationInfo info, StreamingContext context) => ((ISerializable)_buffers).GetObjectData(info, context);
+            #pragma warning restore SYSLIB0050
             public void OnDeserialization(object? sender) => ((IDeserializationCallback)_buffers).OnDeserialization(sender);
             IEnumerator<KeyValuePair<string, XRDataBuffer>> IEnumerable<KeyValuePair<string, XRDataBuffer>>.GetEnumerator() => ((IEnumerable<KeyValuePair<string, XRDataBuffer>>)_buffers).GetEnumerator();
             IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable)_buffers).GetEnumerator();

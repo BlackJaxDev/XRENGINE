@@ -158,15 +158,9 @@ namespace XREngine.Timers
         public DeltaManager Collect { get; } = new();
         public DeltaManager FixedUpdateManager { get; } = new();
 
-        private CancellationTokenSource? _cancelRenderTokenSource = null;
-
         private Task? UpdateTask = null;
         private Task? CollectVisibleTask = null;
-        private Task? RenderTask = null;
-        private Task? SingleTask = null;
         private Task? FixedUpdateTask = null;
-        // JobManager now runs its own worker threads; this task is no longer used.
-        private Task? JobManagerTask = null;
 
         //private static bool IsApplicationIdle() => NativeMethods.PeekMessage(out _, IntPtr.Zero, 0, 0, 0) == 0;
 
@@ -380,12 +374,6 @@ namespace XREngine.Timers
 
             //CollectVisibleTask?.Wait(-1);
             CollectVisibleTask = null;
-
-            //RenderTask?.Wait(-1);
-            RenderTask = null;
-
-            //SingleTask?.Wait(-1);
-            SingleTask = null;
 
             //FixedUpdateTask?.Wait(-1);
             FixedUpdateTask = null;

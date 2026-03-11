@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using System.Runtime.Serialization;
 using MemoryPack;
 using NUnit.Framework;
 using Shouldly;
@@ -40,7 +39,7 @@ namespace XREngine.UnitTests.Core
             RuntimeHelpers.RunClassConstructor(assetType.TypeHandle);
 
             // Use an uninitialized instance to avoid constructor side effects/cycles.
-            var instance = (XRAsset)FormatterServices.GetUninitializedObject(assetType);
+            var instance = (XRAsset)RuntimeHelpers.GetUninitializedObject(assetType);
 
             byte[] bytes = MemoryPackSerializer.Serialize(assetType, instance)!;
             bytes.Length.ShouldBeGreaterThan(0);

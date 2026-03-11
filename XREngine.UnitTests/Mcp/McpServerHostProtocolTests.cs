@@ -106,10 +106,10 @@ public class McpServerHostProtocolTests
         var invocation = ReadRequestBodyAsyncMethod.Invoke(null, [stream, 4, CancellationToken.None]);
         invocation.ShouldNotBeNull();
 
-        var task = invocation as Task<byte[]>;
-        task.ShouldNotBeNull();
+        Task<byte[]> task = invocation as Task<byte[]>
+            ?? throw new ShouldAssertException("Expected ReadRequestBodyAsync to return Task<byte[]>.");
 
-        await Should.ThrowAsync<InvalidDataException>(async () => _ = await task!);
+        await Should.ThrowAsync<InvalidDataException>(async () => _ = await task);
     }
 
     [Test]
@@ -122,10 +122,10 @@ public class McpServerHostProtocolTests
         var invocation = ReadRequestBodyAsyncMethod.Invoke(null, [stream, 128, cts.Token]);
         invocation.ShouldNotBeNull();
 
-        var task = invocation as Task<byte[]>;
-        task.ShouldNotBeNull();
+        Task<byte[]> task = invocation as Task<byte[]>
+            ?? throw new ShouldAssertException("Expected ReadRequestBodyAsync to return Task<byte[]>.");
 
-        await Should.ThrowAsync<OperationCanceledException>(async () => _ = await task!);
+        await Should.ThrowAsync<OperationCanceledException>(async () => _ = await task);
     }
 
     [Test]
@@ -137,7 +137,9 @@ public class McpServerHostProtocolTests
         bool allowed = (bool)(CanInvokeToolMethod.Invoke(null, call) ?? true);
 
         allowed.ShouldBeFalse();
-        ((string?)call[2]).ShouldContain("read-only");
+        string message = call[2] as string
+            ?? throw new ShouldAssertException("Expected CanInvokeTool to provide a read-only rejection message.");
+        message.ShouldContain("read-only");
     }
 
     private static async Task<object> InvokeHandleRpcAsync(JsonElement root, EditorPreferences prefs)
@@ -146,10 +148,10 @@ public class McpServerHostProtocolTests
         object? invocation = HandleRpcMethod.Invoke(host, [root, CancellationToken.None, prefs]);
         invocation.ShouldNotBeNull();
 
-        var task = invocation as Task<object?>;
-        task.ShouldNotBeNull();
+        Task<object?> task = invocation as Task<object?>
+            ?? throw new ShouldAssertException("Expected HandleRpcAsync to return Task<object?>.");
 
-        object? value = await task!;
+        object? value = await task;
         value.ShouldNotBeNull();
         return value!;
     }

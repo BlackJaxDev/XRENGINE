@@ -574,11 +574,9 @@ public sealed class GPULandscapeComponentEditor : IXRComponentEditor
         if (ImGui.DragFloat("Radius", ref state.BrushRadius, 0.1f, 0.1f, 1000.0f, "%.1f"))
             state.BrushRadius = MathF.Max(0.1f, state.BrushRadius);
 
-        if (ImGui.SliderFloat("Strength", ref state.BrushStrength, 0.0f, 1.0f, "%.3f"))
-            state.BrushStrength = state.BrushStrength;
+        ImGui.SliderFloat("Strength", ref state.BrushStrength, 0.0f, 1.0f, "%.3f");
 
-        if (ImGui.SliderFloat("Falloff", ref state.BrushFalloff, 0.0f, 1.0f, "%.3f"))
-            state.BrushFalloff = state.BrushFalloff;
+        ImGui.SliderFloat("Falloff", ref state.BrushFalloff, 0.0f, 1.0f, "%.3f");
 
         // Brush preview
         ImGui.Spacing();

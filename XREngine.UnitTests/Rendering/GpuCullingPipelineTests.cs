@@ -614,9 +614,6 @@ public class GpuCullingPipelineTests
     public void HiZCulling_MipLevelSelection_BasedOnScreenSize()
     {
         // Select appropriate Hi-Z mip level based on screen coverage
-        uint screenWidth = 1920;
-        uint screenHeight = 1080;
-        
         // Object covering ~32 pixels should use mip level 5 (32 = 2^5)
         uint pixelSize = 32;
         uint mipLevel = (uint)MathF.Log2(pixelSize);

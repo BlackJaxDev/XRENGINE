@@ -1,16 +1,27 @@
 using ImGuiNET;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Reflection;
 using System.Text;
+using XREngine;
+using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
+using XREngine.Core.Files;
 
 namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
     private const float HierarchyFocusCameraDurationSeconds = 0.35f;
+    private const string HierarchyDeepDuplicatePopupId = "Deep Duplicate Scene Nodes?";
 
     private static void DrawHierarchyPanel()
     {
@@ -22,6 +33,7 @@ public static partial class EditorImGuiUI
         }
 
         DrawWorldHierarchyTab();
+        DrawHierarchyDeepDuplicateConfirmation();
 
         // Handle asset drop on the entire hierarchy panel window.
         // Use GetWindowContentRegionMin/Max to create an invisible drop zone.
@@ -45,7 +57,6 @@ public static partial class EditorImGuiUI
 
     private static void HandleHierarchyModelAssetDrop(XRWorldInstance world)
     {
-        // Check if mouse was released while dragging a valid payload
         var payload = ImGui.GetDragDropPayload();
         if (payload.Data == IntPtr.Zero || payload.DataSize == 0)
             return;
@@ -272,6 +283,12 @@ public static partial class EditorImGuiUI
             if (ImGui.MenuItem("Rename"))
                 BeginHierarchyNodeRename(node);
 
+            if (ImGui.MenuItem("Duplicate"))
+                DuplicateHierarchyNodes(GetHierarchyDuplicateTargets(node), world, preserveAssetReferences: true);
+
+            if (ImGui.MenuItem("Deep Duplicate..."))
+                RequestHierarchyDeepDuplicate(GetHierarchyDuplicateTargets(node));
+
             if (ImGui.MenuItem("Delete"))
                 DeleteHierarchyNode(node, world, owningScene);
 
@@ -289,6 +306,580 @@ public static partial class EditorImGuiUI
 
         return nodeOpen;
     }
+
+    private static IReadOnlyList<SceneNode> GetHierarchyDuplicateTargets(SceneNode clickedNode)
+    {
+        IReadOnlyList<SceneNode> candidates = Selection.SceneNodes.Contains(clickedNode)
+            ? Selection.SceneNodes
+            : [clickedNode];
+
+        return FilterTopLevelHierarchyNodes(candidates);
+    }
+
+    private static IReadOnlyList<SceneNode> FilterTopLevelHierarchyNodes(IReadOnlyList<SceneNode> nodes)
+    {
+        if (nodes.Count == 0)
+            return Array.Empty<SceneNode>();
+
+        var uniqueNodes = new HashSet<SceneNode>(ReferenceEqualityComparer.Instance);
+        var orderedNodes = new List<SceneNode>(nodes.Count);
+        foreach (var node in nodes)
+        {
+            if (node is null || !uniqueNodes.Add(node))
+                continue;
+
+            orderedNodes.Add(node);
+        }
+
+        if (orderedNodes.Count <= 1)
+            return orderedNodes;
+
+        var selectedNodes = new HashSet<SceneNode>(orderedNodes, ReferenceEqualityComparer.Instance);
+        var topLevelNodes = new List<SceneNode>(orderedNodes.Count);
+        foreach (var node in orderedNodes)
+        {
+            if (!HasSelectedHierarchyAncestor(node, selectedNodes))
+                topLevelNodes.Add(node);
+        }
+
+        return topLevelNodes;
+    }
+
+    private static bool HasSelectedHierarchyAncestor(SceneNode node, HashSet<SceneNode> selectedNodes)
+    {
+        TransformBase? current = node.Transform.Parent;
+        while (current is not null)
+        {
+            if (current.SceneNode is SceneNode ancestor && selectedNodes.Contains(ancestor))
+                return true;
+
+            current = current.Parent;
+        }
+
+        return false;
+    }
+
+    private static void RequestHierarchyDeepDuplicate(IReadOnlyList<SceneNode> nodes)
+    {
+        var targets = FilterTopLevelHierarchyNodes(nodes);
+        if (targets.Count == 0)
+            return;
+
+        _nodesPendingDeepDuplicate = targets;
+        _assetsPendingDeepDuplicate = CollectDeepDuplicateAssets(targets);
+        _hierarchyDeepDuplicatePopupRequested = true;
+    }
+
+    private static void DrawHierarchyDeepDuplicateConfirmation()
+    {
+        if (_nodesPendingDeepDuplicate is null)
+            return;
+
+        if (_hierarchyDeepDuplicatePopupRequested)
+        {
+            ImGui.OpenPopup(HierarchyDeepDuplicatePopupId);
+            _hierarchyDeepDuplicatePopupRequested = false;
+        }
+
+        bool open = true;
+        if (ImGui.BeginPopupModal(HierarchyDeepDuplicatePopupId, ref open, ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            IReadOnlyList<SceneNode> nodes = _nodesPendingDeepDuplicate;
+            IReadOnlyList<XRAsset> assets = _assetsPendingDeepDuplicate ?? Array.Empty<XRAsset>();
+            int nodeCount = nodes.Count;
+            int assetCount = assets.Count;
+            bool canExecute = TryGetActiveWorldInstance() is not null;
+
+            ImGui.TextUnformatted(nodeCount == 1
+                ? $"Deep duplicate '{GetHierarchyNodeDisplayName(nodes[0])}'?"
+                : $"Deep duplicate {nodeCount} scene nodes?");
+
+            ImGui.PushTextWrapPos(520.0f);
+            if (assetCount == 0)
+            {
+                ImGui.TextDisabled("No nested assets will be cloned by this duplicate.");
+            }
+            else
+            {
+                ImGui.TextUnformatted(assetCount == 1
+                    ? "This duplicate will also clone the following asset:"
+                    : "This duplicate will also clone the following assets:");
+            }
+            ImGui.PopTextWrapPos();
+
+            if (assetCount > 0)
+            {
+                ImGui.Spacing();
+                if (ImGui.BeginChild("##DeepDuplicateAssets", new Vector2(560.0f, 220.0f), ImGuiChildFlags.Border))
+                {
+                    foreach (var asset in assets)
+                    {
+                        ImGui.BulletText(GetHierarchyDuplicateAssetSummary(asset));
+                    }
+                }
+                ImGui.EndChild();
+            }
+
+            if (!canExecute)
+            {
+                ImGui.Spacing();
+                ImGui.TextDisabled("No active world instance is available.");
+            }
+
+            ImGui.Separator();
+
+            if (!canExecute)
+                ImGui.BeginDisabled();
+
+            if (ImGui.Button("Deep Duplicate"))
+            {
+                var world = TryGetActiveWorldInstance();
+                if (world is not null)
+                    DuplicateHierarchyNodes(nodes, world, preserveAssetReferences: false);
+
+                ClearHierarchyDeepDuplicateRequest();
+                ImGui.CloseCurrentPopup();
+                if (!canExecute)
+                    ImGui.EndDisabled();
+                ImGui.EndPopup();
+                return;
+            }
+
+            if (!canExecute)
+                ImGui.EndDisabled();
+
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel"))
+            {
+                ImGui.CloseCurrentPopup();
+                ClearHierarchyDeepDuplicateRequest();
+            }
+
+            ImGui.EndPopup();
+        }
+
+        if (!open)
+            ClearHierarchyDeepDuplicateRequest();
+    }
+
+    private static void ClearHierarchyDeepDuplicateRequest()
+    {
+        _nodesPendingDeepDuplicate = null;
+        _assetsPendingDeepDuplicate = null;
+        _hierarchyDeepDuplicatePopupRequested = false;
+    }
+
+    private static IReadOnlyList<XRAsset> CollectDeepDuplicateAssets(IReadOnlyList<SceneNode> nodes)
+    {
+        var assets = new List<XRAsset>();
+        var discovered = new HashSet<XRAsset>(ReferenceEqualityComparer.Instance);
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+
+        foreach (var node in nodes)
+            CollectDeepDuplicateAssets(node, assets, discovered, visited);
+
+        return assets;
+    }
+
+    private static void CollectDeepDuplicateAssets(object? value, List<XRAsset> assets, HashSet<XRAsset> discovered, HashSet<object> visited)
+    {
+        if (value is null)
+            return;
+
+        if (value is XRAsset asset)
+        {
+            if (ShouldDeepDuplicateAsset(asset) && discovered.Add(asset))
+                assets.Add(asset);
+        }
+
+        Type type = value.GetType();
+        if (IsHierarchyTraversalLeafType(type) || !visited.Add(value))
+            return;
+
+        if (value is IDictionary dictionary)
+        {
+            foreach (DictionaryEntry entry in dictionary)
+            {
+                CollectDeepDuplicateAssets(entry.Key, assets, discovered, visited);
+                CollectDeepDuplicateAssets(entry.Value, assets, discovered, visited);
+            }
+
+            return;
+        }
+
+        if (value is IEnumerable enumerable && value is not string)
+        {
+            foreach (var item in enumerable)
+                CollectDeepDuplicateAssets(item, assets, discovered, visited);
+
+            return;
+        }
+
+        foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            if (!ShouldTraverseHierarchyProperty(property))
+                continue;
+
+            object? propertyValue;
+            try
+            {
+                propertyValue = property.GetValue(value);
+            }
+            catch
+            {
+                continue;
+            }
+
+            CollectDeepDuplicateAssets(propertyValue, assets, discovered, visited);
+        }
+
+        foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            if (!ShouldTraverseHierarchyField(field))
+                continue;
+
+            CollectDeepDuplicateAssets(field.GetValue(value), assets, discovered, visited);
+        }
+    }
+
+    private static void DuplicateHierarchyNodes(IReadOnlyList<SceneNode> nodes, XRWorldInstance world, bool preserveAssetReferences)
+    {
+        var targets = FilterTopLevelHierarchyNodes(nodes);
+        if (targets.Count == 0)
+            return;
+
+        using var interaction = Undo.BeginUserInteraction();
+        using var scope = Undo.BeginChange(targets.Count == 1 ? "Duplicate Node" : "Duplicate Nodes");
+
+        var previousSelection = Selection.SceneNodes;
+        var operations = new List<HierarchyDuplicateOperation>(targets.Count);
+        foreach (var node in targets)
+        {
+            var clone = SceneNodePrefabUtility.CloneHierarchy(node);
+            clone.Name = GenerateHierarchyDuplicateName(node);
+            if (preserveAssetReferences)
+                RestoreHierarchyAssetReferences(node, clone);
+
+            var operation = new HierarchyDuplicateOperation(
+                node,
+                clone,
+                node.Transform.Parent,
+                FindSceneForNode(node, world));
+
+            AttachDuplicatedNode(operation, world);
+            Undo.TrackSceneNode(clone);
+            MarkSceneHierarchyDirty(clone, operation.OwningScene, world);
+            operations.Add(operation);
+        }
+
+        Selection.SceneNodes = [.. operations.Select(static operation => operation.DuplicateNode)];
+
+        Undo.RecordStructuralChange(targets.Count == 1 ? "Duplicate Node" : "Duplicate Nodes",
+            undoAction: () =>
+            {
+                foreach (var operation in operations)
+                {
+                    DetachDuplicatedNode(operation, world);
+                    operation.DuplicateNode.IsActiveSelf = false;
+                }
+
+                Selection.SceneNodes = previousSelection;
+            },
+            redoAction: () =>
+            {
+                foreach (var operation in operations)
+                {
+                    AttachDuplicatedNode(operation, world);
+                    operation.DuplicateNode.IsActiveSelf = operation.Source.IsActiveSelf;
+                    Undo.TrackSceneNode(operation.DuplicateNode);
+                }
+
+                Selection.SceneNodes = [.. operations.Select(static operation => operation.DuplicateNode)];
+            });
+    }
+
+    private static void AttachDuplicatedNode(HierarchyDuplicateOperation operation, XRWorldInstance world)
+    {
+        if (operation.ParentTransform is not null)
+        {
+            operation.DuplicateNode.Transform.SetParent(operation.ParentTransform, false, EParentAssignmentMode.Immediate);
+            return;
+        }
+
+        operation.OwningScene?.RootNodes.Add(operation.DuplicateNode);
+        world.RootNodes.Add(operation.DuplicateNode);
+    }
+
+    private static void DetachDuplicatedNode(HierarchyDuplicateOperation operation, XRWorldInstance world)
+    {
+        if (operation.ParentTransform is not null)
+        {
+            operation.ParentTransform.RemoveChild(operation.DuplicateNode.Transform, EParentAssignmentMode.Immediate);
+            return;
+        }
+
+        world.RootNodes.Remove(operation.DuplicateNode);
+        operation.OwningScene?.RootNodes.Remove(operation.DuplicateNode);
+    }
+
+    private static void RestoreHierarchyAssetReferences(SceneNode source, SceneNode clone)
+    {
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        RestoreHierarchyAssetReferences(source, clone, visited);
+    }
+
+    private static void RestoreHierarchyAssetReferences(object? source, object? clone, HashSet<object> visited)
+    {
+        if (source is null || clone is null)
+            return;
+
+        Type type = source.GetType();
+        if (IsHierarchyTraversalLeafType(type) || !visited.Add(source))
+            return;
+
+        if (source is IDictionary sourceDictionary && clone is IDictionary cloneDictionary)
+        {
+            var sourceEntries = sourceDictionary.Cast<DictionaryEntry>().ToArray();
+            var cloneEntries = cloneDictionary.Cast<DictionaryEntry>().ToArray();
+            int count = Math.Min(sourceEntries.Length, cloneEntries.Length);
+            for (int i = 0; i < count; i++)
+            {
+                object? sourceValue = sourceEntries[i].Value;
+                object? cloneKey = cloneEntries[i].Key;
+                object? cloneValue = cloneEntries[i].Value;
+                if (sourceValue is XRAsset asset)
+                {
+                    cloneDictionary[cloneKey] = asset;
+                }
+                else
+                {
+                    RestoreHierarchyAssetReferences(sourceValue, cloneValue, visited);
+                }
+            }
+
+            return;
+        }
+
+        if (source is IList sourceList && clone is IList cloneList)
+        {
+            int count = Math.Min(sourceList.Count, cloneList.Count);
+            for (int i = 0; i < count; i++)
+            {
+                object? sourceItem = sourceList[i];
+                object? cloneItem = cloneList[i];
+                if (sourceItem is XRAsset asset)
+                {
+                    cloneList[i] = asset;
+                }
+                else
+                {
+                    RestoreHierarchyAssetReferences(sourceItem, cloneItem, visited);
+                }
+            }
+
+            return;
+        }
+
+        // Non-indexed enumerables (ISet<T>, ICollection<T> that aren't IList, etc.)
+        // We can't replace elements by index, but we can still walk the parallel
+        // enumerators and recurse into non-asset elements so asset references
+        // reachable *inside* set members are restored.
+        if (source is IEnumerable sourceEnumerable && clone is IEnumerable cloneEnumerable
+            && source is not string)
+        {
+            var sourceIter = sourceEnumerable.GetEnumerator();
+            var cloneIter = cloneEnumerable.GetEnumerator();
+            try
+            {
+                while (sourceIter.MoveNext() && cloneIter.MoveNext())
+                    RestoreHierarchyAssetReferences(sourceIter.Current, cloneIter.Current, visited);
+            }
+            finally
+            {
+                (sourceIter as IDisposable)?.Dispose();
+                (cloneIter as IDisposable)?.Dispose();
+            }
+
+            return;
+        }
+
+        foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            if (!ShouldTraverseHierarchyProperty(property))
+                continue;
+
+            object? sourceValue;
+            object? cloneValue;
+            try
+            {
+                sourceValue = property.GetValue(source);
+                cloneValue = property.GetValue(clone);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (sourceValue is XRAsset asset)
+            {
+                if (property.SetMethod is not null)
+                {
+                    try
+                    {
+                        property.SetValue(clone, asset);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            else
+            {
+                RestoreHierarchyAssetReferences(sourceValue, cloneValue, visited);
+            }
+        }
+
+        foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            if (!ShouldTraverseHierarchyField(field))
+                continue;
+
+            object? sourceValue = field.GetValue(source);
+            object? cloneValue = field.GetValue(clone);
+            if (sourceValue is XRAsset asset)
+            {
+                try
+                {
+                    field.SetValue(clone, asset);
+                }
+                catch
+                {
+                }
+            }
+            else
+            {
+                RestoreHierarchyAssetReferences(sourceValue, cloneValue, visited);
+            }
+        }
+    }
+
+    private static bool ShouldDeepDuplicateAsset(XRAsset asset)
+    {
+        if (!ReferenceEquals(asset.SourceAsset, asset))
+            return true;
+
+        return string.IsNullOrWhiteSpace(asset.FilePath) || !File.Exists(asset.FilePath);
+    }
+
+    private static bool IsHierarchyTraversalLeafType(Type type)
+    {
+        if (type.IsPrimitive || type.IsEnum)
+            return true;
+
+        if (type == typeof(string)
+            || type == typeof(decimal)
+            || type == typeof(Guid)
+            || type == typeof(DateTime)
+            || type == typeof(DateTimeOffset)
+            || type == typeof(TimeSpan))
+        {
+            return true;
+        }
+
+        if (typeof(Delegate).IsAssignableFrom(type) || type.IsPointer || type.IsByRef)
+            return true;
+
+        if (type.Namespace?.StartsWith("System", StringComparison.Ordinal) == true
+            && !typeof(IEnumerable).IsAssignableFrom(type)
+            && !typeof(XRAsset).IsAssignableFrom(type))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool ShouldTraverseHierarchyProperty(PropertyInfo property)
+    {
+        if (!property.CanRead
+            || property.GetIndexParameters().Length != 0
+            || property.IsDefined(typeof(YamlIgnoreAttribute), true))
+        {
+            return false;
+        }
+
+        Type propertyType = property.PropertyType;
+        return !typeof(Delegate).IsAssignableFrom(propertyType);
+    }
+
+    private static bool ShouldTraverseHierarchyField(FieldInfo field)
+    {
+        if (field.IsStatic || field.IsDefined(typeof(YamlIgnoreAttribute), true) || typeof(Delegate).IsAssignableFrom(field.FieldType))
+            return false;
+
+        return !field.IsInitOnly;
+    }
+
+    private static string GenerateHierarchyDuplicateName(SceneNode source)
+    {
+        string baseName = string.IsNullOrWhiteSpace(source.Name) ? SceneNode.DefaultName : source.Name!;
+
+        // Collect sibling names for uniqueness check
+        HashSet<string> siblingNames;
+        if (source.Transform.Parent is TransformBase parent)
+        {
+            siblingNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var child in parent.Children)
+            {
+                if (child?.SceneNode is SceneNode sibling && !ReferenceEquals(sibling, source))
+                    siblingNames.Add(sibling.Name ?? SceneNode.DefaultName);
+            }
+        }
+        else
+        {
+            siblingNames = [];
+        }
+
+        // Strip any existing " (N)" suffix to find the true base name
+        string coreName = baseName;
+        if (baseName.EndsWith(')'))
+        {
+            int parenOpen = baseName.LastIndexOf('(');
+            if (parenOpen > 0
+                && baseName[parenOpen - 1] == ' '
+                && int.TryParse(baseName.AsSpan(parenOpen + 1, baseName.Length - parenOpen - 2), out _))
+            {
+                coreName = baseName[..(parenOpen - 1)];
+            }
+        }
+
+        // Find the lowest available suffix
+        for (int i = 1; ; i++)
+        {
+            string candidate = $"{coreName} ({i})";
+            if (!siblingNames.Contains(candidate))
+                return candidate;
+        }
+    }
+
+    private static string GetHierarchyNodeDisplayName(SceneNode node)
+        => string.IsNullOrWhiteSpace(node.Name) ? SceneNode.DefaultName : node.Name!;
+
+    private static string GetHierarchyDuplicateAssetSummary(XRAsset asset)
+    {
+        string name = string.IsNullOrWhiteSpace(asset.Name) ? asset.GetType().Name : asset.Name!;
+        string location = string.IsNullOrWhiteSpace(asset.FilePath)
+            ? (ReferenceEquals(asset.SourceAsset, asset) ? "unsaved asset" : "embedded asset")
+            : asset.FilePath!;
+
+        return $"{name} ({asset.GetType().Name}) - {location}";
+    }
+
+    private sealed record HierarchyDuplicateOperation(
+        SceneNode Source,
+        SceneNode DuplicateNode,
+        TransformBase? ParentTransform,
+        XRScene? OwningScene);
 
     private static void UpdateHierarchySelection(SceneNode node)
     {
@@ -823,7 +1414,7 @@ public static partial class EditorImGuiUI
     {
         var targetWorld = world.TargetWorld;
         string worldName = targetWorld?.Name ?? "World";
-        string filePath = targetWorld?.FilePath;
+        string? filePath = targetWorld?.FilePath;
         string displayPath = string.IsNullOrEmpty(filePath) ? "(unsaved)" : filePath;
 
         // World name/file path header

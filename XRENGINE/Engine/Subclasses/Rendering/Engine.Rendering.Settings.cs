@@ -291,7 +291,6 @@ namespace XREngine
                 private ELoopType _recalcChildMatricesLoopType = ELoopType.Asynchronous;
                 private uint _lightProbeResolution = 512u;
                 private bool _lightProbesCaptureDepth = false;
-                private uint _lightProbeDepthResolution = 256u;
                 private bool _allowBinaryProgramCaching = true;
                 private bool _calculateBlendshapesInComputeShader = false;
                 private bool _calculateSkinningInComputeShader = false;

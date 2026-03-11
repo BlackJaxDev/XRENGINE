@@ -19,6 +19,7 @@ using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using XREngine.Components;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor;
 
@@ -4431,7 +4432,7 @@ public static partial class EditorImGuiUI
 
             if (hasChildren && open)
             {
-                var snapshot = children.ToArray();
+                var snapshot = children?.ToArray() ?? Array.Empty<TransformBase>();
                 foreach (var child in snapshot)
                 {
                     if (child?.SceneNode is SceneNode childNode)

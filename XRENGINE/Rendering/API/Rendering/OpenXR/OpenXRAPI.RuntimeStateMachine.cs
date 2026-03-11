@@ -156,6 +156,10 @@ public unsafe partial class OpenXRAPI
 
         if (renderer is OpenGLRenderer)
         {
+            var window = Window;
+            if (window is null)
+                return;
+
             if (_deferredOpenGlInit is not null)
                 return;
 
@@ -167,14 +171,18 @@ public unsafe partial class OpenXRAPI
                 if (_runtimeState != OpenXrRuntimeState.XrSystemReady)
                     return;
 
+                IXrGraphicsBinding? graphicsBinding = _graphicsBinding;
+                if (graphicsBinding is null)
+                    return;
+
                 Window.RenderViewportsCallback -= _deferredOpenGlInit;
                 _deferredOpenGlInit = null;
 
                 try
                 {
-                    _graphicsBinding.TryCreateSession(this, glRenderer);
+                    graphicsBinding.TryCreateSession(this, glRenderer);
                     CreateReferenceSpace();
-                    _graphicsBinding.CreateSwapchains(this, glRenderer);
+                    graphicsBinding.CreateSwapchains(this, glRenderer);
                     EnsureInputCreated();
                     SetRuntimeState(OpenXrRuntimeState.SessionCreated);
                 }
@@ -186,15 +194,19 @@ public unsafe partial class OpenXRAPI
                 }
             };
 
-            Window.RenderViewportsCallback += _deferredOpenGlInit;
+            window.RenderViewportsCallback += _deferredOpenGlInit;
             return;
         }
 
+        IXrGraphicsBinding? graphicsBinding = _graphicsBinding;
+        if (graphicsBinding is null)
+            return;
+
         try
         {
-            _graphicsBinding.TryCreateSession(this, renderer);
+            graphicsBinding.TryCreateSession(this, renderer);
             CreateReferenceSpace();
-            _graphicsBinding.CreateSwapchains(this, renderer);
+            graphicsBinding.CreateSwapchains(this, renderer);
             EnsureInputCreated();
             SetRuntimeState(OpenXrRuntimeState.SessionCreated);
         }

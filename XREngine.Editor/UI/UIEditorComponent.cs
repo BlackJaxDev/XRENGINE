@@ -77,7 +77,6 @@ public partial class UIEditorComponent : UIComponent
                 sn.IsActiveSelf = false;
     }
 
-    private InspectorPanel? _inspector;
     private HierarchyPanel? _hierarchy;
 
     public void RemakeChildren()

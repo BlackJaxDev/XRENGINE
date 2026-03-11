@@ -22,6 +22,7 @@ public sealed class Audio2Face3DComponentTests
         bool updated = component.TryUpdateLiveFrame(["JawOpen"], [0.25f, 0.5f], out string? error);
 
         updated.ShouldBeFalse();
+        error.ShouldNotBeNull();
         error.ShouldContain("weight count must match");
     }
 
@@ -47,6 +48,7 @@ public sealed class Audio2Face3DComponentTests
         bool updated = component.TryUpdateLiveEmotionFrame(["confused"], [0.5f], out string? error);
 
         updated.ShouldBeFalse();
+        error.ShouldNotBeNull();
         error.ShouldContain("Unsupported Audio2Emotion channel");
     }
 
@@ -106,6 +108,7 @@ public sealed class Audio2Face3DComponentTests
         bool parsed = Audio2Face3DComponent.TryParseCsvText(csv, out _, out var error);
 
         parsed.ShouldBeFalse();
+        error.ShouldNotBeNull();
         error.ShouldContain("earlier than the previous frame time");
     }
 }

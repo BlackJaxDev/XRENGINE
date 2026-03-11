@@ -1,6 +1,6 @@
 ﻿# Dependency Inventory
 
-Generated: 2026-02-26T16:15:01-08:00
+Generated: 2026-03-11T11:51:17-07:00
 Commit: (not a git repo)
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, and native/managed binaries that are referenced or shipped.
@@ -28,7 +28,7 @@ Notes:
 ## NuGet packages (direct)
 | Package | Version(s) | Owner (best-effort) | License (best-effort) | Used by |
 |---|---|---|---|---|
-| AssimpNetter | 6.0.2.1 | Saalvage | [MIT](licenses/nuget/AssimpNetter-6.0.2.1-MIT.txt) | XREngine.Animation.csproj, XREngine.Audio.csproj, XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Extensions.csproj, XREngine.Input.csproj, XREngine.Modeling.csproj, XREngine.Server.csproj, XREngine.VRClient.csproj |
+| AssimpNetter | 6.0.2.1 | Saalvage | [MIT](licenses/nuget/AssimpNetter-6.0.2.1-MIT.txt) | XREngine.Animation.csproj, XREngine.Audio.csproj, XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Extensions.csproj, XREngine.Input.csproj, XREngine.Modeling.csproj, XREngine.Runtime.Bootstrap.csproj, XREngine.Server.csproj, XREngine.VRClient.csproj |
 | BitsKit | 1.2.0 | barncastle | [MIT](licenses/nuget/BitsKit-1.2.0-MIT.txt) | XREngine.csproj |
 | DotnetNoise | 1.0.0 | Mr9Madness | [MIT](licenses/nuget/DotnetNoise-1.0.0-MIT.txt) | XREngine.csproj |
 | DXNET.XInput | 5.0.0 | lepoco | [MIT](licenses/nuget/DXNET.XInput-5.0.0-MIT.txt) | XREngine.Input.csproj |
@@ -41,16 +41,15 @@ Notes:
 | JoltPhysicsSharp | 2.20.1 | amerkoleci | [MIT](licenses/nuget/JoltPhysicsSharp-2.20.1-MIT.txt) | XREngine.csproj |
 | K4os.Compression.LZ4 | 1.3.8 | MiloszKrajewski | [MIT](licenses/nuget/K4os.Compression.LZ4-1.3.8-MIT.txt) | XREngine.Data.csproj |
 | LZMA-SDK | 22.1.1 | monemihir | [MIT](licenses/nuget/LZMA-SDK-22.1.1-MIT.txt) | XREngine.csproj, XREngine.Data.csproj |
-| Magick.NET.Core | 14.10.3 | dlemstra | [Apache-2.0](licenses/nuget/Magick.NET.Core-14.10.3-Apache-2.0.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj |
+| Magick.NET.Core | 14.10.4 | dlemstra | [Apache-2.0](licenses/nuget/Magick.NET.Core-14.10.4-Apache-2.0.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj |
 | Magick.NET.SystemDrawing | 8.0.16 | dlemstra | [Apache-2.0](licenses/nuget/Magick.NET.SystemDrawing-8.0.16-Apache-2.0.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Modeling.csproj |
-| Magick.NET-Q16-HDRI-AnyCPU | 14.10.3 | dlemstra | [Apache-2.0](licenses/nuget/Magick.NET-Q16-HDRI-AnyCPU-14.10.3-Apache-2.0.txt) | XREngine.Animation.csproj, XREngine.Extensions.csproj, XREngine.Server.csproj, XREngine.UnitTests.csproj, XREngine.VRClient.csproj |
+| Magick.NET-Q16-HDRI-AnyCPU | 14.10.4 | dlemstra | [Apache-2.0](licenses/nuget/Magick.NET-Q16-HDRI-AnyCPU-14.10.4-Apache-2.0.txt) | XREngine.Animation.csproj, XREngine.Extensions.csproj, XREngine.Server.csproj, XREngine.UnitTests.csproj, XREngine.VRClient.csproj |
 | MagicPhysX | 1.0.0 | Cysharp | [MIT](licenses/nuget/MagicPhysX-1.0.0-MIT.txt) | XREngine.csproj |
 | MathNet.Numerics | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Editor.csproj |
 | MathNet.Numerics.Providers.CUDA | 5.0.0 | mathnet | [MIT](licenses/nuget/MathNet.Numerics.Providers.CUDA-5.0.0-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Editor.csproj |
 | MemoryPack | 1.21.4 | Cysharp | [MIT](licenses/nuget/MemoryPack-1.21.4-MIT.txt) | XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Extensions.csproj, XREngine.Modeling.csproj, XREngine.Profiler.csproj, XREngine.Server.csproj |
 | Meshoptimizer.NET | 1.0.7 | BoyBaykiller | [MIT](licenses/nuget/Meshoptimizer.NET-1.0.7-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj, XREngine.Extensions.csproj, XREngine.Modeling.csproj, XREngine.UnitTests.csproj |
 | MIConvexHull | 1.1.19.1019 | DesignEngrLab | [MIT](licenses/nuget/MIConvexHull-1.1.19.1019-MIT.txt) | XREngine.csproj, XREngine.Modeling.csproj |
-| Microsoft.AspNetCore.Http | 2.3.9 | dotnet | [Apache-2.0](licenses/nuget/Microsoft.AspNetCore.Http-2.3.9-Apache-2.0.txt) | XREngine.Server.csproj |
 | Microsoft.Build | 18.3.3 | dotnet | [MIT](licenses/nuget/Microsoft.Build-18.3.3-MIT.txt) | XREngine.Editor.csproj |
 | Microsoft.Build.Framework | 18.3.3 | dotnet | [MIT](licenses/nuget/Microsoft.Build.Framework-18.3.3-MIT.txt) | XREngine.Editor.csproj |
 | Microsoft.Data.Sqlite.Core | 10.0.3 | dotnet | [MIT](licenses/nuget/Microsoft.Data.Sqlite.Core-10.0.3-MIT.txt) | XREngine.Server.csproj |
@@ -60,14 +59,14 @@ Notes:
 | NAudio.Sdl2 | 2.2.6 | alextnull | [MIT](licenses/nuget/NAudio.Sdl2-2.2.6-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj |
 | NAudio.Vorbis | 1.5.0 | naudio | [MIT](licenses/nuget/NAudio.Vorbis-1.5.0-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Data.csproj |
 | NDILibDotNetCoreBase | 2024.7.22.1 | eliaspuurunen | [MIT](licenses/nuget/NDILibDotNetCoreBase-2024.7.22.1-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj, XREngine.VRClient.csproj |
-| Newtonsoft.Json | 13.0.4 | JamesNK | [MIT](licenses/nuget/Newtonsoft.Json-13.0.4-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj, XREngine.Server.csproj |
+| Newtonsoft.Json | 13.0.4 | JamesNK | [MIT](licenses/nuget/Newtonsoft.Json-13.0.4-MIT.txt) | XREngine.csproj, XREngine.Editor.csproj, XREngine.Runtime.Bootstrap.csproj, XREngine.Server.csproj |
 | NUnit | 4.5.0 | nunit | [MIT](licenses/nuget/NUnit-4.5.0-MIT.txt) | XREngine.UnitTests.csproj |
 | NUnit3TestAdapter | 6.1.0 | nunit | [MIT](licenses/nuget/NUnit3TestAdapter-6.1.0-MIT.txt) | XREngine.UnitTests.csproj |
 | NVorbis | 0.10.5 | NVorbis | [MIT](licenses/nuget/NVorbis-0.10.5-MIT.txt) | XREngine.Audio.csproj, XREngine.csproj, XREngine.Data.csproj |
 | Raylib-cs | 7.0.2 | raylib-cs | [Zlib](licenses/nuget/Raylib-cs-7.0.2-Zlib.txt) | XREngine.csproj |
 | RestSharp | 113.1.0 | restsharp | [Apache-2.0](licenses/nuget/RestSharp-113.1.0-Apache-2.0.txt) | XREngine.csproj |
 | SharpCompress | 0.46.2 | adamhathcock | [MIT](licenses/nuget/SharpCompress-0.46.2-MIT.txt) | XREngine.Editor.csproj |
-| SharpFont | 4.0.1 | Robmaister | [MIT](licenses/nuget/SharpFont-4.0.1-MIT.txt) | XREngine.Data.csproj |
+| SharpFont | 4.0.1 | Robmaister | [https://github.com/Robmaister/SharpFont/blob/master/LICENSE](licenses/nuget/SharpFont-4.0.1-https___github.com_Robmaister_SharpFont_blob_master_LICENSE.txt) | XREngine.Data.csproj |
 | SharpFont.Dependencies | 2.6.0 | Robmaister | [https://github.com/Robmaister/SharpFont.Dependencies/blob/master/LICENSE](https://raw.githubusercontent.com/Robmaister/SharpFont.Dependencies/master/LICENSE) | XREngine.csproj, XREngine.Data.csproj, XREngine.Editor.csproj, XREngine.Server.csproj, XREngine.UnitTests.csproj, XREngine.VRClient.csproj |
 | SharpFont.NetStandard | 1.0.5 | vonderborch | [MIT](licenses/nuget/SharpFont.NetStandard-1.0.5-MIT.txt) | XREngine.csproj, XREngine.Data.csproj |
 | SharpZipLib | 1.4.2 | icsharpcode | [MIT](licenses/nuget/SharpZipLib-1.4.2-MIT.txt) | XREngine.Data.csproj |
@@ -142,7 +141,6 @@ Notes:
 | System.IdentityModel.Tokens.Jwt | 8.16.0 | AzureAD | [MIT](licenses/nuget/System.IdentityModel.Tokens.Jwt-8.16.0-MIT.txt) | XREngine.csproj, XREngine.Server.csproj |
 | System.IO.Hashing | 10.0.3 | dotnet | [MIT](licenses/nuget/System.IO.Hashing-10.0.3-MIT.txt) | XREngine.csproj |
 | System.Management | 10.0.3 | dotnet | [MIT](licenses/nuget/System.Management-10.0.3-MIT.txt) | XREngine.csproj |
-| System.Text.Json | 10.0.3 | dotnet | [MIT](licenses/nuget/System.Text.Json-10.0.3-MIT.txt) | XREngine.Animation.csproj, XREngine.Audio.csproj, XREngine.csproj, XREngine.Data.csproj, XREngine.Input.csproj, XREngine.Modeling.csproj |
 | UltralightNet | 1.3.0 | SupinePandora43 | [MIT](licenses/nuget/UltralightNet-1.3.0-MIT.txt) | XREngine.csproj |
 | UltralightNet.AppCore | 1.3.0 | SupinePandora43 | [MIT](licenses/nuget/UltralightNet.AppCore-1.3.0-MIT.txt) | XREngine.csproj |
 | Vecc.YamlDotNet.Analyzers.StaticGenerator | 16.3.0 | aaubry | [MIT](licenses/nuget/Vecc.YamlDotNet.Analyzers.StaticGenerator-16.3.0-MIT.txt) | XREngine.csproj |
@@ -183,5 +181,6 @@ Notes:
 | Path | File | Likely upstream/owner | License (best-effort) |
 |---|---|---|---|
 | XRENGINE/openvr_api.dll | openvr_api.dll | Valve (OpenVR/SteamVR) | [BSD-3-Clause](https://github.com/ValveSoftware/openvr/blob/master/LICENSE) |
+| XRENGINE/OVRLipSync.dll | OVRLipSync.dll | Meta Platforms, Inc. | [Proprietary (Oculus SDK License Agreement)](https://developers.meta.com/horizon/licenses/oculussdk/) |
 | XRENGINE/runtimes/win-x64/native/lib_coacd.dll | lib_coacd.dll | SarahWeiii (CoACD) | [MIT (see Build/Submodules/CoACD/LICENSE)](../Build/Submodules/CoACD/LICENSE) |
 | XRENGINE/runtimes/win-x64/native/libmagicphysx.dll | libmagicphysx.dll | Cysharp (MagicPhysX) / NVIDIA (PhysX 5) | [MIT (MagicPhysX) + NVIDIA PhysX 5 license](https://github.com/Cysharp/MagicPhysX/blob/main/LICENSE) |

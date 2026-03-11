@@ -182,20 +182,23 @@ public unsafe partial class OpenXRAPI
                 Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Wait => {waitResult}");
 
             // Render to the texture (OpenGL path only)
-            if (_gl is not null)
+            GL? gl = _gl;
+            uint[]? swapchainFramebuffers = _swapchainFramebuffers[viewIndex];
+            SwapchainImageOpenGLKHR* swapchainImages = _swapchainImagesGL[viewIndex];
+            if (gl is not null && swapchainFramebuffers is not null && swapchainImages != null)
             {
-                _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _swapchainFramebuffers[viewIndex][imageIndex]);
-                _gl.Viewport(0, 0, _viewConfigViews[viewIndex].RecommendedImageRectWidth, _viewConfigViews[viewIndex].RecommendedImageRectHeight);
+                gl.BindFramebuffer(FramebufferTarget.Framebuffer, swapchainFramebuffers[imageIndex]);
+                gl.Viewport(0, 0, _viewConfigViews[viewIndex].RecommendedImageRectWidth, _viewConfigViews[viewIndex].RecommendedImageRectHeight);
 
                 // Guard against GL state leakage between eyes (scissor/read buffers/masks are commonly left in a bad state
                 // by some passes and can make the second eye appear fully black).
-                _gl.Disable(EnableCap.ScissorTest);
-                _gl.ColorMask(true, true, true, true);
-                _gl.DepthMask(true);
+                gl.Disable(EnableCap.ScissorTest);
+                gl.ColorMask(true, true, true, true);
+                gl.DepthMask(true);
 
-                renderCallback(_swapchainImagesGL[viewIndex][imageIndex].Image, viewIndex);
+                renderCallback(swapchainImages[imageIndex].Image, viewIndex);
 
-                _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
             }
 
             // Setup projection view (only if we successfully acquired+waited the swapchain image).

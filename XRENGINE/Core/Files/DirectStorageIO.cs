@@ -381,7 +381,7 @@ public static class DirectStorageIO
                         };
                         dsRequest.UncompressedSize = (uint)req.Length;
 
-                        context.Queue.EnqueueRequest(dsRequest);
+                        context.Queue.EnqueueRequest(in dsRequest);
                     }
 
                     // Phase 3: Single submit for the entire batch + wait for completion.
@@ -568,9 +568,6 @@ public static class DirectStorageIO
         if (offset < 0)
             return false;
 
-        if (length > uint.MaxValue)
-            return false;
-
         lock (QueueLock)
         {
             using ComPtr<IDStorageFile> file = context.Factory.OpenFile<IDStorageFile>(filePath);
@@ -614,7 +611,7 @@ public static class DirectStorageIO
                 };
                 request.UncompressedSize = (uint)length;
 
-                context.Queue.EnqueueRequest(request);
+                context.Queue.EnqueueRequest(in request);
 
                 void* completedHandle = (void*)completedEvent.SafeWaitHandle.DangerousGetHandle();
                 context.Queue.EnqueueSetEvent(completedHandle);
@@ -664,7 +661,7 @@ public static class DirectStorageIO
         if (context is null)
             return false;
 
-        if (offset < 0 || length > uint.MaxValue)
+        if (offset < 0)
             return false;
 
         lock (QueueLock)
@@ -701,7 +698,7 @@ public static class DirectStorageIO
             };
             request.UncompressedSize = (uint)length;
 
-            context.Queue.EnqueueRequest(request);
+            context.Queue.EnqueueRequest(in request);
 
             void* eventHandle = (void*)completedEvent.SafeWaitHandle.DangerousGetHandle();
             context.Queue.EnqueueSetEvent(eventHandle);
@@ -805,7 +802,7 @@ public static class DirectStorageIO
             queueDesc.Device = null;
             queueDesc.Name = null;
 
-            ComPtr<IDStorageQueue1> queue = factory.CreateQueue<IDStorageQueue1>(queueDesc);
+            ComPtr<IDStorageQueue1> queue = factory.CreateQueue<IDStorageQueue1>(in queueDesc);
             if (queue.Handle == null)
             {
                 factory.Dispose();

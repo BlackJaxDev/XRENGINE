@@ -49,7 +49,7 @@ namespace XREngine.Rendering.Commands
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render begin (pass={0})", RenderPass);
             Dbg("Render begin", "Lifecycle");
 
-            if (!TryInitializeRender(scene, out XRCamera? camera))
+            if (!TryInitializeRender(scene, out XRCamera? camera) || camera is null)
             {
                 ClearPassPolicySnapshot();
                 return;

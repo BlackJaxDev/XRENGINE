@@ -682,7 +682,7 @@ namespace XREngine.Editor.Mcp
                     .Select(change => new
                     {
                         target = change.TargetDisplayName,
-                        targetType = change.TargetType.FullName ?? change.TargetType.Name,
+                        targetType = change.TargetType?.FullName ?? change.TargetType?.Name,
                         propertyName = change.PropertyName,
                         previousValue = change.PreviousValue?.ToString(),
                         newValue = change.NewValue?.ToString()

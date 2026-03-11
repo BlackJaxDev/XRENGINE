@@ -276,7 +276,7 @@ public sealed class PostProcessStageState : IDisposable
         var backingMap = new Dictionary<string, PropertyPathAccessor>(StringComparer.OrdinalIgnoreCase);
         foreach (var parameter in descriptor.Parameters)
         {
-            if (PropertyPathAccessor.TryCreate(descriptor.BackingType, parameter.Name, out var accessor))
+            if (PropertyPathAccessor.TryCreate(descriptor.BackingType, parameter.Name, out var accessor) && accessor is not null)
                 backingMap[parameter.Name] = accessor;
         }
         lock (_backingSync)

@@ -3,9 +3,10 @@
     Builds the XRENGINE solution and generates a categorised warning report.
 
 .DESCRIPTION
-    Runs 'dotnet build' on XRENGINE.sln, parses MSBuild warning output, and
-    writes a Markdown report to docs/work/audit/warnings.md grouped by project
-    and warning code with file/line references.
+    Runs 'dotnet build' on XRENGINE.sln when present, otherwise falls back to
+    the workspace's primary top-level entry projects, parses MSBuild warning
+    output, and writes a Markdown report to docs/work/audit/warnings.md grouped
+    by project and warning code with file/line references.
 
 .PARAMETER Root
     Repository root. Defaults to current directory.
@@ -67,24 +68,52 @@ $cacheFile = Join-Path $logDir "warning-docs-cache.json"
 if (-not $NoBuild) {
     New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
+    $buildTargets = [System.Collections.Generic.List[string]]::new()
     $slnPath = Join-Path $Root "XRENGINE.sln"
-    if (-not (Test-Path $slnPath)) {
-        Write-Error "Solution not found at $slnPath"
+    if (Test-Path $slnPath) {
+        $buildTargets.Add($slnPath)
+    }
+    else {
+        foreach ($relativePath in @(
+            "XREngine.Editor\XREngine.Editor.csproj",
+            "XREngine.Server\XREngine.Server.csproj",
+            "XREngine.VRClient\XREngine.VRClient.csproj",
+            "XREngine.UnitTests\XREngine.UnitTests.csproj"
+        )) {
+            $projectPath = Join-Path $Root $relativePath
+            if (Test-Path $projectPath) {
+                $buildTargets.Add($projectPath)
+            }
+        }
+    }
+
+    if ($buildTargets.Count -eq 0) {
+        Write-Error "No build target found. Expected XRENGINE.sln or one of the primary top-level projects under $Root"
         return
     }
 
-    Write-Host "Building $slnPath ($Configuration) ..." -ForegroundColor Cyan
-    $buildArgs = @(
-        "build", $slnPath,
-        "--configuration", $Configuration,
-        "/property:GenerateFullPaths=true",
-        "/consoleloggerparameters:NoSummary",
-        "-v", "quiet",
-        "/p:TreatWarningsAsErrors=false"
-    )
+    Remove-Item -Path $logFile -ErrorAction SilentlyContinue
+    $firstBuild = $true
+    foreach ($buildTarget in $buildTargets) {
+        Write-Host "Building $buildTarget ($Configuration) ..." -ForegroundColor Cyan
+        $buildArgs = @(
+            "build", $buildTarget,
+            "--configuration", $Configuration,
+            "/property:GenerateFullPaths=true",
+            "/consoleloggerparameters:NoSummary",
+            "-v", "quiet",
+            "/p:TreatWarningsAsErrors=false"
+        )
 
-    # Run build, capture all output (stdout + stderr) to log, ignore exit code
-    & dotnet @buildArgs 2>&1 | Out-File -FilePath $logFile -Encoding utf8
+        if (-not $firstBuild) {
+            "`r`n=== BUILD TARGET: $buildTarget ===`r`n" | Out-File -FilePath $logFile -Append -Encoding utf8
+        }
+
+        # Run build, capture all output (stdout + stderr) to log, ignore exit code
+        & dotnet @buildArgs 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
+        $firstBuild = $false
+    }
+
     Write-Host "Build complete. Log saved to $logFile" -ForegroundColor Green
 }
 else {
@@ -187,7 +216,7 @@ Write-Host "Parsed $($warnings.Count) raw warning(s)." -ForegroundColor Cyan
 
 # ── Deduplicate ─────────────────────────────────────────────────────────────
 # MSBuild can emit the same warning twice (multi-target, incremental rebuild, etc.)
-$seen = [System.Collections.Generic.HashSet[string]]::new()
+$seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 $unique = [System.Collections.Generic.List[object]]::new()
 
 foreach ($w in $warnings) {

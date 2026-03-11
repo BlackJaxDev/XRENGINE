@@ -127,7 +127,7 @@ namespace XREngine.Components.Animation
             private Vector3 _lastHeadTargetPos;
             private Vector3 _lastSpeedRootPos;
             private Vector3 _lastEndRootPos;
-            private float _rootLerpSpeed, _rootVelocityV;
+            private float _rootLerpSpeed;
             private float _animSpeed = 1f;
             private float _animSpeedV;
             private float _stopMoveTimer;
@@ -201,7 +201,6 @@ namespace XREngine.Components.Animation
                 _lastHeadTargetPos += delta;
             }
 
-            private float _lastVelLocalMag;
             public LayerMask _blockingLayers;
             public float _raycastRadius;
 

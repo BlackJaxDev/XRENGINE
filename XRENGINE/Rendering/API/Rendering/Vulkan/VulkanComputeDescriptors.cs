@@ -90,10 +90,16 @@ public unsafe partial class VulkanRenderer
             if (_computeDescriptorCaches is null || imageIndex >= _computeDescriptorCaches.Length)
                 return false;
 
-            ComputeDescriptorImageCache cache = _computeDescriptorCaches[imageIndex];
+            ComputeDescriptorImageCache? cache = _computeDescriptorCaches[imageIndex];
+            if (cache is null)
+                return false;
+
             ComputeDescriptorCacheKey key = new(schemaKey, bindingKey);
-            if (cache.CachedSets.TryGetValue(key, out descriptorSets))
+            if (cache.CachedSets.TryGetValue(key, out DescriptorSet[]? cachedDescriptorSets) && cachedDescriptorSets is not null)
+            {
+                descriptorSets = cachedDescriptorSets;
                 return true;
+            }
 
             if (!TryAllocateDescriptorSetBatch(cache, schemaKey, layouts, perAllocationPoolSizes, usesUpdateAfterBind, out descriptorSets))
                 return false;
@@ -153,6 +159,9 @@ public unsafe partial class VulkanRenderer
         };
 
         if (!TryCreateDescriptorPoolBlock(targetAllocations, layouts, perAllocationPoolSizes, usesUpdateAfterBind, out ComputeDescriptorPoolBlock? newBlock))
+            return false;
+
+        if (newBlock is null)
             return false;
 
         blocks.Add(newBlock);

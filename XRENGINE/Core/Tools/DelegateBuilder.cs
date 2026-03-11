@@ -8,7 +8,7 @@ namespace XREngine.Core.Tools
         public static T BuildDelegate<T>(MethodInfo method, params object[] missingParamValues)
         {
             if (missingParamValues.Length == 0 && TryCreateDirectDelegate(method, out T? directDelegate))
-                return directDelegate;
+                return directDelegate!;
 
             var queueMissingParams = new Queue<object>(missingParamValues);
 

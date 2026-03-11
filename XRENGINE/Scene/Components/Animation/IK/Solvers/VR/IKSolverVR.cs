@@ -257,9 +257,7 @@ namespace XREngine.Components.Animation
 
         private SolverTransforms? _solverTransforms = null;
 
-        private Vector3 _rootV;
-        private Vector3 _rootVelocity;
-        private Vector3 _bodyOffset;
+        private Vector3 _bodyOffset = Vector3.Zero;
         private int _supportLegIndex;
         private EQuality _lastQuality;
 
@@ -672,8 +670,6 @@ namespace XREngine.Components.Animation
             }
         }
 
-        private float _lastLocomotionWeight = 0.0f;
-
         public EQuality _quality = EQuality.Full;
         public EQuality Quality
         {
@@ -786,10 +782,7 @@ namespace XREngine.Components.Animation
 
         private LegSolver[] _legs = new LegSolver[2];
         private ArmSolver[] _arms = new ArmSolver[2];
-        private Vector3 _headPosition;
-        private Vector3 _headDeltaPosition;
         private Vector3 _raycastOriginPelvis;
-        private Vector3 _lastOffset;
 
         private SortedDictionary<float, List<(XRComponent? item, object? data)>> _raycastResults = [];
 

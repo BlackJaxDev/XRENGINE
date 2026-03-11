@@ -218,18 +218,18 @@ namespace XREngine.TriangleConverter
 		        //Try to extend the triangle in the 6 possible backward directions
 		        if (_BackwardSearch) 
                 {
-			        for (uint i = 0; i < 3; i++) 
+                		for (uint i = 0; i < 3; i++) 
                     {
-				        Strip Strip = BackExtendToStrip(Candidate, (TriOrder)i, false);
+                        Strip? Strip = BackExtendToStrip(Candidate, (TriOrder)i, false);
                         if (Strip != null)
-				            policy.Challenge(Strip, _TriHeap[Strip.Start], _Cache.HitCount);
+                            policy.Challenge(Strip, _TriHeap[Strip.Start], _Cache.HitCount);
 
                         _Cache = CacheBackup;
 			        }
 
 			        for (uint i = 0; i < 3; i++)
                     {
-				        Strip Strip = BackExtendToStrip(Candidate, (TriOrder)i, true);
+				        Strip? Strip = BackExtendToStrip(Candidate, (TriOrder)i, true);
                         if (Strip != null)
                             policy.Challenge(Strip, _TriHeap[Strip.Start], _Cache.HitCount);
 
@@ -284,7 +284,7 @@ namespace XREngine.TriangleConverter
 
             return new Strip(Start, StartOrder, Size);
         }
-        private	Strip BackExtendToStrip(uint Start, TriOrder Order, bool ClockWise)
+        private	Strip? BackExtendToStrip(uint Start, TriOrder Order, bool ClockWise)
         {
             _CurrentNodes = new List<ushort>();
             _checkNodes = true;
@@ -305,13 +305,13 @@ namespace XREngine.TriangleConverter
             }
 
             uint Size = 1;
-            GraphArray<Triangle>.Node Node = null;
+            GraphArray<Triangle>.Node? Node = null;
 
             //Loop while we can further extend the strip
             for (uint i = Start; !Cache || ((Size + 2) < CacheSize); Size++)
             {
                 Node = _Triangles[i];
-                var Link = BackLinkToNeighbour(Node, ClockWise, ref Order);
+                		var Link = BackLinkToNeighbour(Node, ClockWise, ref Order);
 
                 //Is it the end of the strip?
                 if (Link is null)
@@ -332,7 +332,7 @@ namespace XREngine.TriangleConverter
             //Simply return an empty strip in the case where the first triangle is clockwise.
             //Even though we could discard the first triangle and start from the next counterclockwise triangle,
             //this often leads to more lonely triangles afterward.
-            if (ClockWise)
+            if (ClockWise || Node is null)
                 return null;
 
             if (Cache)
@@ -358,7 +358,7 @@ namespace XREngine.TriangleConverter
             //}
             return true;
         }
-        private GraphArray<Triangle>.Arc LinkToNeighbour(GraphArray<Triangle>.Node Node, bool ClockWise, ref TriOrder Order, bool NotSimulation)
+        private GraphArray<Triangle>.Arc? LinkToNeighbour(GraphArray<Triangle>.Node Node, bool ClockWise, ref TriOrder Order, bool NotSimulation)
         {
             TriangleEdge Edge = LastEdge(Node._elem, Order);
             for (uint i = Node._begin; i < Node._end; i++)
@@ -394,7 +394,7 @@ namespace XREngine.TriangleConverter
             }
             return null;
         }
-        private GraphArray<Triangle>.Arc BackLinkToNeighbour(GraphArray<Triangle>.Node Node, bool ClockWise, ref TriOrder Order)
+        private GraphArray<Triangle>.Arc? BackLinkToNeighbour(GraphArray<Triangle>.Node Node, bool ClockWise, ref TriOrder Order)
         {
             TriangleEdge Edge = FirstEdge(Node._elem, Order);
             for (uint i = Node._begin; i < Node._end; i++)

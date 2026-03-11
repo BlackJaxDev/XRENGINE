@@ -224,11 +224,11 @@ namespace XREngine.Rendering.Vulkan
 
             private void CreateView()
             {
-                XRTexture viewedTexture = Data.GetViewedTexture();
+                XRTexture? viewedTexture = Data.GetViewedTexture();
                 if (viewedTexture is null)
                     throw new InvalidOperationException("Texture view requires a valid viewed texture.");
 
-                AbstractRenderAPIObject apiObject = Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true);
+                AbstractRenderAPIObject? apiObject = Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true);
                 if (apiObject is IVkTexelBufferDescriptorSource texelSource)
                 {
                     if (Data.TextureTarget != ETextureTarget.TextureBuffer)
@@ -310,11 +310,11 @@ namespace XREngine.Rendering.Vulkan
                 if (_texelBufferView.Handle != 0)
                     return;
 
-                XRTexture viewedTexture = Data.GetViewedTexture();
+                XRTexture? viewedTexture = Data.GetViewedTexture();
                 if (viewedTexture is null)
                     return;
 
-                AbstractRenderAPIObject apiObject = Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true);
+                AbstractRenderAPIObject? apiObject = Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true);
                 if (apiObject is not IVkImageDescriptorSource source)
                     return;
 

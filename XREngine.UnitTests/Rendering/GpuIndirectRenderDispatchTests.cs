@@ -246,8 +246,6 @@ public class GpuIndirectRenderDispatchTests
     [Test]
     public void CommandBuffer_FieldOffsets_MatchShaderLayout()
     {
-        const int COMMAND_FLOATS = 48;
-
         // World Matrix at offset 0-15
         int worldMatrixEnd = 16;
         worldMatrixEnd.ShouldBe(16);
@@ -262,14 +260,11 @@ public class GpuIndirectRenderDispatchTests
 
         // Individual fields
         int meshIdOffset = 36;
-        int submeshIdOffset = 37;
         int materialIdOffset = 38;
         int instanceCountOffset = 39;
         int renderPassOffset = 40;
-        int shaderProgramIdOffset = 41;
         int renderDistanceOffset = 42;
         int layerMaskOffset = 43;
-        int lodLevelOffset = 44;
         int flagsOffset = 45;
 
         meshIdOffset.ShouldBe(36);

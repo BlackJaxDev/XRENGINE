@@ -543,7 +543,7 @@ namespace XREngine.Rendering.Commands
 
         // Stats & flags & counts
         private XRDataBuffer? _statsBuffer;
-        private XRDataBuffer? _truncationFlagBuffer;
+        private XRDataBuffer? _truncationFlagBuffer = null;
         private XRDataBuffer? _culledCountBuffer;
         private XRDataBuffer? _drawCountBuffer;
         private XRDataBuffer? _cullingOverflowFlagBuffer;

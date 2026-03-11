@@ -982,7 +982,10 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
             foreach (var stageKey in category.StageKeys)
             {
-                if (!schema.TryGetStage(stageKey, out var stage) || !state.TryGetStage(stageKey, out var stageState))
+                if (!schema.TryGetStage(stageKey, out PostProcessStageDescriptor? stage) ||
+                    stage is null ||
+                    !state.TryGetStage(stageKey, out PostProcessStageState? stageState) ||
+                    stageState is null)
                     continue;
 
                 DrawSchemaStage(stage, stageState, component);
@@ -1507,8 +1510,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
     private sealed class DebugViewState
     {
-        public int SelectedPipelineIndex;
-        public string? SelectedFboName;
+        public int SelectedPipelineIndex = 0;
+        public string? SelectedFboName = null;
         public bool FlipPreview = true;
     }
 }

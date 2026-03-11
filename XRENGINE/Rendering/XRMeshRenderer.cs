@@ -274,12 +274,13 @@ namespace XREngine.Rendering
 
             protected override string? GenerateVertexShaderSource()
             {
-                var m = Parent?.Mesh;
-                if (m is null)
+                var parent = Parent;
+                var m = parent?.Mesh;
+                if (m is null || parent is null)
                     return null;
 
-                int maxInfluences = Parent.MaxMeshDeformInfluences;
-                bool optimizeToVec4 = Parent.OptimizeMeshDeformToVec4;
+                int maxInfluences = parent.MaxMeshDeformInfluences;
+                bool optimizeToVec4 = parent.OptimizeMeshDeformToVec4;
 
                 ShaderGeneratorBase generator;
                 if (UseOVRMultiView)
