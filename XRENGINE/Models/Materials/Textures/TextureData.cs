@@ -12,7 +12,6 @@ namespace XREngine.Rendering.Models.Materials.Textures
     {
         DataSource _data;
         EPixelFormat _pixelFormat;
-        EPixelType _pixelType;
 
         public VoidPtr Scan0 => _data.Address;
 
@@ -22,11 +21,9 @@ namespace XREngine.Rendering.Models.Materials.Textures
             {
                 case PixelFormat.Format32bppArgb:
                     _pixelFormat = EPixelFormat.Bgra;
-                    _pixelType = EPixelType.UnsignedByte;
                     break;
                 case PixelFormat.Format24bppRgb:
                     _pixelFormat = EPixelFormat.Bgr;
-                    _pixelType = EPixelType.UnsignedByte;
                     break;
             }
             BitmapData data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, bmp.PixelFormat);

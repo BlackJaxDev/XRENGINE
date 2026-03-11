@@ -70,7 +70,9 @@ internal static class EditorProjectInitializer
             GenerateProjectBuildFiles(normalizedDirectory, projectName, output);
 
             if (TryResolveRepositoryRoot(normalizedDirectory, out string? repoRoot) &&
+                !string.IsNullOrWhiteSpace(repoRoot) &&
                 TryResolveSamplesRoot(repoRoot, out string? samplesRoot) &&
+                !string.IsNullOrWhiteSpace(samplesRoot) &&
                 IsPathInside(normalizedDirectory, samplesRoot))
             {
                 UpdateSampleGamesSolution(samplesRoot, output);

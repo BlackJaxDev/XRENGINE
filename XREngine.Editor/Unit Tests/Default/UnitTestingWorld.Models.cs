@@ -95,7 +95,7 @@ public static partial class EditorUnitTests
                                 multiThread: true,
                                 rootTransformMatrix: GetOptionalRootTransformMatrix(model));
                             if (characterParentNode != null && node != null)
-                                characterParentNode.Transform.AddChild(node.Transform, false, true);
+                                characterParentNode.Transform.AddChild(node.Transform, false, EParentAssignmentMode.Immediate);
                             return node;
                         }
 

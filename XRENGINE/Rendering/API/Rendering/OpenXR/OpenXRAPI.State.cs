@@ -243,7 +243,6 @@ public unsafe partial class OpenXRAPI
     // and C# does not treat 'ref volatile-field' as volatile (CS0420). Use Volatile.Read/Write and Interlocked instead.
     private int _framePrepared;
     private int _frameSkipRender;
-    private bool _timerHooksInstalled;
 
     // Pending OpenXR frame (WaitFrame/BeginFrame done; views located) awaiting engine CollectVisible+SwapBuffers.
     private int _pendingXrFrame;

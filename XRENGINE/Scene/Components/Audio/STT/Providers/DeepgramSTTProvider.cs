@@ -39,16 +39,21 @@ namespace XREngine.Components
                 var responseJson = await response.Content.ReadAsStringAsync();
                 var result = JsonSerializer.Deserialize<DeepgramSTTResponse>(responseJson);
 
-                if (result?.Results?.Channels?.Length > 0 && result.Results.Channels[0].Alternatives?.Length > 0)
+                var channels = result?.Results?.Channels;
+                if (channels is { Length: > 0 })
                 {
-                    var transcript = result.Results.Channels[0].Alternatives[0];
-                    return new STTResult
+                    var alternatives = channels[0].Alternatives;
+                    if (alternatives is { Length: > 0 })
                     {
-                        Success = true,
-                        Text = transcript.Transcript ?? "",
-                        Confidence = transcript.Confidence ?? 1.0f,
-                        IsFinal = true
-                    };
+                        var transcript = alternatives[0];
+                        return new STTResult
+                        {
+                            Success = true,
+                            Text = transcript.Transcript ?? "",
+                            Confidence = transcript.Confidence ?? 1.0f,
+                            IsFinal = true
+                        };
+                    }
                 }
 
                 return new STTResult { Success = false, Error = "No transcription results" };

@@ -236,7 +236,7 @@ public static partial class EditorImGuiUI
             world.RootNodes.Add(node);
         }
 
-        string name = model.Name;
+        string? name = model.Name;
         if (string.IsNullOrWhiteSpace(name))
             name = Path.GetFileNameWithoutExtension(modelAssetPath);
         if (string.IsNullOrWhiteSpace(name))

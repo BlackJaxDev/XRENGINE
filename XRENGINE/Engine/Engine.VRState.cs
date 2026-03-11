@@ -1308,8 +1308,6 @@ namespace XREngine
             }
 
             private static StreamReader? _reader = null;
-            private static StreamWriter? _writer = null;
-            private static bool _waitingForInput = false;
 
             [RequiresUnreferencedCode("Calls System.Text.Json.JsonSerializer.Deserialize<TValue>(String, JsonSerializerOptions)")]
             [RequiresDynamicCode("Calls System.Text.Json.JsonSerializer.Deserialize<TValue>(String, JsonSerializerOptions)")]
@@ -1319,15 +1317,12 @@ namespace XREngine
                 try
                 {
                     PipeServer = new("VRInputPipe", PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-                    _waitingForInput = true;
                     await PipeServer!.WaitForConnectionAsync();
-                    _waitingForInput = false;
                     Debug.Out("VR input connection established.");
                     _reader = new(PipeServer);
                 }
                 catch (Exception ex)
                 {
-                    _waitingForInput = false;
                     Debug.LogException(ex, $"Error accepting VR input connection: {ex.Message}");
                 }
             }

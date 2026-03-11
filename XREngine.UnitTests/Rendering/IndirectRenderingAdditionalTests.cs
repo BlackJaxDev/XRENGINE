@@ -81,8 +81,8 @@ public class IndirectRenderingAdditionalTests : GpuTestBase
         gl.BufferData<uint>(BufferTargetARB.ElementArrayBuffer, initialIndices.AsSpan(), BufferUsageARB.DynamicDraw);
 
         // Verify initial sizes
-        gl.GetBufferParameter(BufferTargetARB.ArrayBuffer, BufferPNameARB.BufferSize, out int vboSize);
-        gl.GetBufferParameter(BufferTargetARB.ElementArrayBuffer, BufferPNameARB.BufferSize, out int eboSize);
+        gl.GetBufferParameter(BufferTargetARB.ArrayBuffer, BufferPNameARB.Size, out int vboSize);
+        gl.GetBufferParameter(BufferTargetARB.ElementArrayBuffer, BufferPNameARB.Size, out int eboSize);
 
         vboSize.ShouldBe(initialVertices.Length * sizeof(float));
         eboSize.ShouldBe(initialIndices.Length * sizeof(uint));
@@ -105,8 +105,8 @@ public class IndirectRenderingAdditionalTests : GpuTestBase
         gl.BufferData<uint>(BufferTargetARB.ElementArrayBuffer, expandedIndices.AsSpan(), BufferUsageARB.DynamicDraw);
 
         // Verify expanded sizes
-        gl.GetBufferParameter(BufferTargetARB.ArrayBuffer, BufferPNameARB.BufferSize, out int expandedVboSize);
-        gl.GetBufferParameter(BufferTargetARB.ElementArrayBuffer, BufferPNameARB.BufferSize, out int expandedEboSize);
+        gl.GetBufferParameter(BufferTargetARB.ArrayBuffer, BufferPNameARB.Size, out int expandedVboSize);
+        gl.GetBufferParameter(BufferTargetARB.ElementArrayBuffer, BufferPNameARB.Size, out int expandedEboSize);
 
         expandedVboSize.ShouldBe(expandedVertices.Length * sizeof(float));
         expandedEboSize.ShouldBe(expandedIndices.Length * sizeof(uint));

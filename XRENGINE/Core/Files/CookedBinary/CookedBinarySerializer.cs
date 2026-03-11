@@ -323,7 +323,7 @@ public sealed unsafe class CookedBinaryReader : IDisposable
     }
 }
 
-public static class CookedBinarySerializer
+public static partial class CookedBinarySerializer
 {
     internal const string ReflectionWarningMessage = "Cooked binary serialization relies on reflection and cannot be statically analyzed for trimming or AOT";
 
@@ -492,169 +492,13 @@ public static class CookedBinarySerializer
             return;
         }
 
-        // Fast path: O(1) lookup for known primitive/value types
-        if (PrimitiveWriters.TryGetValue(runtimeType, out var primitiveWriter))
+        foreach (var module in SerializationModules)
         {
-            primitiveWriter(writer, value);
-            return;
+            if (module.TryWrite(writer, value, runtimeType, allowCustom, callbacks))
+                return;
         }
 
-        // Handle byte[] separately (can't use typeof(byte[]) reliably for array subtype matching)
-        if (value is byte[] bytes)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.ByteArray);
-            writer.Write(bytes.Length);
-            writer.Write(bytes);
-            return;
-        }
-
-        if (value is DataSource dataSource)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.DataSource);
-            byte[] blob = dataSource.GetBytes();
-            writer.Write(blob.Length);
-            writer.Write(blob);
-            return;
-        }
-
-        // XREvent and XREvent<T> - serialize only persistent calls (runtime delegates are not serializable)
-        if (value is XREvent xrEvent)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.XREvent);
-            WriteXREventPersistentCalls(writer, xrEvent.PersistentCalls, allowCustom, callbacks);
-            return;
-        }
-
-        if (TryWriteGenericXREvent(writer, value, runtimeType, allowCustom, callbacks))
-            return;
-
-        // Nullable<T> - write the underlying value if present
-        if (TryWriteNullable(writer, value, runtimeType, allowCustom, callbacks))
-            return;
-
-        // ValueTuple - serialize tuple elements
-        if (TryWriteValueTuple(writer, value, runtimeType, allowCustom, callbacks))
-            return;
-
-        // Type reference
-        if (value is Type typeRef)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.TypeRef);
-            WriteTypeName(writer, typeRef);
-            return;
-        }
-
-        if (runtimeType.IsEnum)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Enum);
-            WriteTypeName(writer, runtimeType);
-            writer.Write(Convert.ToInt64(value, CultureInfo.InvariantCulture));
-            return;
-        }
-
-        if (runtimeType.IsArray && value is Array array)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Array);
-            Type elementType = runtimeType.GetElementType() ?? typeof(object);
-            WriteTypeName(writer, elementType);
-            writer.Write(array.Length);
-            foreach (object? item in array)
-            {
-                WriteValue(writer, item, allowCustom, callbacks);
-            }
-
-            return;
-        }
-
-        if (value is IDictionary dictionary)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.Dictionary);
-            WriteTypeName(writer, runtimeType);
-            writer.Write(dictionary.Count);
-            foreach (DictionaryEntry entry in dictionary)
-            {
-                WriteValue(writer, entry.Key, allowCustom, callbacks);
-                WriteValue(writer, entry.Value, allowCustom, callbacks);
-            }
-
-            return;
-        }
-
-        // HashSet<T> - must be before IList check since HashSet doesn't implement IList
-        if (TryWriteHashSet(writer, value, runtimeType, allowCustom, callbacks))
-            return;
-
-        if (value is IList list)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.List);
-            WriteTypeName(writer, runtimeType);
-            writer.Write(list.Count);
-            foreach (object? item in list)
-                WriteValue(writer, item, allowCustom, callbacks);
-            return;
-        }
-
-        if (allowCustom && value is AnimationClip animationClip)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.CustomObject);
-            WriteTypeName(writer, runtimeType);
-            AnimationClipCookedBinarySerializer.Write(writer, animationClip);
-            return;
-        }
-
-        if (allowCustom && value is BlendTree blendTree && BlendTreeCookedBinarySerializer.CanHandle(runtimeType))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.CustomObject);
-            WriteTypeName(writer, runtimeType);
-            BlendTreeCookedBinarySerializer.Write(writer, blendTree);
-            return;
-        }
-
-        if (allowCustom && value is AnimStateMachine stateMachine)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.CustomObject);
-            WriteTypeName(writer, runtimeType);
-            AnimStateMachineCookedBinarySerializer.Write(writer, stateMachine);
-            return;
-        }
-
-        if (allowCustom && value is ICookedBinarySerializable custom)
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.CustomObject);
-            WriteTypeName(writer, runtimeType);
-            custom.WriteCookedBinary(writer);
-            return;
-        }
-
-        // Blittable struct fallback: if the type is an unmanaged struct with sequential/explicit layout,
-        // serialize it directly via raw memory copy.
-        if (runtimeType.IsValueType && !runtimeType.IsPrimitive && !runtimeType.IsEnum && IsBlittableStruct(runtimeType))
-        {
-            writer.Write((byte)CookedBinaryTypeMarker.BlittableStruct);
-            WriteTypeName(writer, runtimeType);
-            int size = Marshal.SizeOf(runtimeType);
-            writer.Write(size);
-            WriteBlittableValue(writer, value, size);
-            return;
-        }
-
-        writer.Write((byte)CookedBinaryTypeMarker.Object);
-        WriteTypeName(writer, runtimeType);
-        if (TrySerializeWithMemoryPack(value, runtimeType, out byte[]? memPackBytes))
-        {
-            writer.Write((byte)CookedBinaryObjectEncoding.MemoryPack);
-            writer.Write(memPackBytes!.Length);
-            writer.Write(memPackBytes);
-        }
-        else
-        {
-            writer.Write((byte)CookedBinaryObjectEncoding.Reflection);
-            using var scope = EnterReflectionScope(value, out bool isCycle);
-            if (!isCycle)
-                WriteObjectContent(writer, value, runtimeType, allowCustom, callbacks);
-            else
-                writer.Write(0); // zero members to break the cycle
-        }
+        throw new NotSupportedException($"No cooked binary module handled '{runtimeType.FullName ?? runtimeType.Name}'.");
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
@@ -662,83 +506,14 @@ public static class CookedBinarySerializer
     internal static object? ReadValue(CookedBinaryReader reader, Type? expectedType, CookedBinarySerializationCallbacks? callbacks)
     {
         var marker = (CookedBinaryTypeMarker)reader.ReadByte();
-        var value = marker switch
+        object? value = null;
+        foreach (var module in SerializationModules)
         {
-            CookedBinaryTypeMarker.Null => null,
-            CookedBinaryTypeMarker.Boolean => reader.ReadBoolean(),
-            CookedBinaryTypeMarker.Byte => reader.ReadByte(),
-            CookedBinaryTypeMarker.SByte => reader.ReadSByte(),
-            CookedBinaryTypeMarker.Int16 => reader.ReadInt16(),
-            CookedBinaryTypeMarker.UInt16 => reader.ReadUInt16(),
-            CookedBinaryTypeMarker.Int32 => reader.ReadInt32(),
-            CookedBinaryTypeMarker.UInt32 => reader.ReadUInt32(),
-            CookedBinaryTypeMarker.Int64 => reader.ReadInt64(),
-            CookedBinaryTypeMarker.UInt64 => reader.ReadUInt64(),
-            CookedBinaryTypeMarker.Single => reader.ReadSingle(),
-            CookedBinaryTypeMarker.Double => reader.ReadDouble(),
-            CookedBinaryTypeMarker.Decimal => reader.ReadDecimal(),
-            CookedBinaryTypeMarker.Char => reader.ReadChar(),
-            CookedBinaryTypeMarker.String => reader.ReadString(),
-            CookedBinaryTypeMarker.Guid => new Guid(reader.ReadBytes(16)),
-            CookedBinaryTypeMarker.DateTime => DateTime.FromBinary(reader.ReadInt64()),
-            CookedBinaryTypeMarker.TimeSpan => new TimeSpan(reader.ReadInt64()),
-            CookedBinaryTypeMarker.ByteArray => ReadByteArray(reader),
-            CookedBinaryTypeMarker.Vector2 => new Vector2(reader.ReadSingle(), reader.ReadSingle()),
-            CookedBinaryTypeMarker.Vector3 => new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
-            CookedBinaryTypeMarker.Vector4 => new Vector4(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
-            CookedBinaryTypeMarker.Quaternion => new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
-            CookedBinaryTypeMarker.Matrix4x4 => ReadMatrix4x4(reader),
-            CookedBinaryTypeMarker.ColorF3 => new ColorF3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
-            CookedBinaryTypeMarker.ColorF4 => new ColorF4(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
-            
-            // High-priority additional types
-            CookedBinaryTypeMarker.Half => BitConverter.UInt16BitsToHalf(reader.ReadUInt16()),
-            CookedBinaryTypeMarker.DateTimeOffset => new DateTimeOffset(reader.ReadInt64(), TimeSpan.FromMinutes(reader.ReadInt16())),
-            CookedBinaryTypeMarker.DateOnly => DateOnly.FromDayNumber(reader.ReadInt32()),
-            CookedBinaryTypeMarker.TimeOnly => new TimeOnly(reader.ReadInt64()),
-            CookedBinaryTypeMarker.Plane => new System.Numerics.Plane(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
-            CookedBinaryTypeMarker.Uri => new Uri(reader.ReadString()),
-            CookedBinaryTypeMarker.TypeRef => ReadTypeRef(reader),
-            CookedBinaryTypeMarker.HashSet => ReadHashSet(reader, callbacks),
-            
-            // Geometry types
-            CookedBinaryTypeMarker.Segment => new Segment(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle())),
-            CookedBinaryTypeMarker.Ray => new Ray(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle())),
-            CookedBinaryTypeMarker.AABB => new AABB(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle())),
-            CookedBinaryTypeMarker.Sphere => new Sphere(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), reader.ReadSingle()),
-            CookedBinaryTypeMarker.Triangle => new Triangle(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()), new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle())),
-            CookedBinaryTypeMarker.Frustum => ReadFrustum(reader),
-            
-            // Medium-priority types
-            CookedBinaryTypeMarker.Version => Version.Parse(reader.ReadString()),
-            CookedBinaryTypeMarker.BigInteger => ReadBigInteger(reader),
-            CookedBinaryTypeMarker.Complex => new Complex(reader.ReadDouble(), reader.ReadDouble()),
-            CookedBinaryTypeMarker.IPAddress => ReadIPAddress(reader),
-            CookedBinaryTypeMarker.IPEndPoint => ReadIPEndPoint(reader),
-            CookedBinaryTypeMarker.Range => new Range(new Index(reader.ReadInt32(), reader.ReadBoolean()), new Index(reader.ReadInt32(), reader.ReadBoolean())),
-            CookedBinaryTypeMarker.Index => new Index(reader.ReadInt32(), reader.ReadBoolean()),
-            
-            // Low-priority types
-            CookedBinaryTypeMarker.BitArray => ReadBitArray(reader),
-            CookedBinaryTypeMarker.CultureInfo => CultureInfo.GetCultureInfo(reader.ReadString()),
-            CookedBinaryTypeMarker.Regex => new Regex(reader.ReadString(), (RegexOptions)reader.ReadInt32()),
-            
-            CookedBinaryTypeMarker.BlittableStruct => ReadBlittableStruct(reader),
-            CookedBinaryTypeMarker.XREvent => ReadXREvent(reader),
-            CookedBinaryTypeMarker.XREventGeneric => ReadXREventGeneric(reader),
-            CookedBinaryTypeMarker.Nullable => ReadNullable(reader, callbacks),
-            CookedBinaryTypeMarker.ValueTuple => ReadValueTuple(reader, callbacks),
-            CookedBinaryTypeMarker.Enum => ReadEnum(reader),
-            CookedBinaryTypeMarker.Array => ReadArray(reader, callbacks),
-            CookedBinaryTypeMarker.List => ReadList(reader, callbacks),
-            CookedBinaryTypeMarker.Dictionary => ReadDictionary(reader, callbacks),
-            CookedBinaryTypeMarker.CustomObject => ReadCustomObject(reader, expectedType, callbacks),
-            CookedBinaryTypeMarker.DataSource => ReadDataSource(reader),
-            CookedBinaryTypeMarker.Object => ReadObject(reader, callbacks),
-            _ => throw new NotSupportedException($"Unknown cooked binary marker '{marker}'.")
-        };
+            if (module.TryRead(marker, reader, expectedType, callbacks, out value))
+                return callbacks?.OnDeserializedValue?.Invoke(value) ?? value;
+        }
 
-        return callbacks?.OnDeserializedValue?.Invoke(value) ?? value;
+        throw new NotSupportedException($"Unknown cooked binary marker '{marker}'.");
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
@@ -2075,393 +1850,14 @@ public static class CookedBinarySerializer
             if (IsRuntimeOnlyType(value.GetType()))
                 return;
 
-            switch (value)
-            {
-                case bool:
-                    AddBytes(sizeof(bool));
-                    return;
-                case byte or sbyte:
-                    AddBytes(1);
-                    return;
-                case short or ushort:
-                    AddBytes(2);
-                    return;
-                case int or uint:
-                    AddBytes(4);
-                    return;
-                case long or ulong:
-                    AddBytes(8);
-                    return;
-                case float:
-                    AddBytes(4);
-                    return;
-                case double:
-                    AddBytes(8);
-                    return;
-                case decimal:
-                    AddBytes(16);
-                    return;
-                case char:
-                    AddBytes(sizeof(char));
-                    return;
-            }
-
-            if (value is string s)
-            {
-                AddBytes(SizeOfString(s));
-                return;
-            }
-
-            if (value is Guid)
-            {
-                AddBytes(16);
-                return;
-            }
-
-            if (value is DateTime or TimeSpan)
-            {
-                AddBytes(8);
-                return;
-            }
-
-            if (value is byte[] bytes)
-            {
-                AddBytes(sizeof(int) + bytes.Length);
-                return;
-            }
-
-            if (value is DataSource dataSource)
-            {
-                AddBytes(sizeof(int) + checked((int)dataSource.Length));
-                return;
-            }
-
-            // System.Numerics types - fixed sizes
-            if (value is Vector2)
-            {
-                AddBytes(sizeof(float) * 2);
-                return;
-            }
-
-            if (value is Vector3)
-            {
-                AddBytes(sizeof(float) * 3);
-                return;
-            }
-
-            if (value is Vector4 or Quaternion)
-            {
-                AddBytes(sizeof(float) * 4);
-                return;
-            }
-
-            if (value is Matrix4x4)
-            {
-                AddBytes(sizeof(float) * 16);
-                return;
-            }
-
-            // Color types - fixed sizes
-            if (value is ColorF3)
-            {
-                AddBytes(sizeof(float) * 3);
-                return;
-            }
-
-            if (value is ColorF4)
-            {
-                AddBytes(sizeof(float) * 4);
-                return;
-            }
-
-            // Half type (2 bytes)
-            if (value is Half)
-            {
-                AddBytes(2);
-                return;
-            }
-
-            // DateTimeOffset (8 + 2 bytes for ticks + offset)
-            if (value is DateTimeOffset)
-            {
-                AddBytes(sizeof(long) + sizeof(short));
-                return;
-            }
-
-            // DateOnly (4 bytes for day number)
-            if (value is DateOnly)
-            {
-                AddBytes(sizeof(int));
-                return;
-            }
-
-            // TimeOnly (8 bytes for ticks)
-            if (value is TimeOnly)
-            {
-                AddBytes(sizeof(long));
-                return;
-            }
-
-            // System.Numerics.Plane (4 floats)
-            if (value is System.Numerics.Plane)
-            {
-                AddBytes(sizeof(float) * 4);
-                return;
-            }
-
-            // Uri (string)
-            if (value is Uri uri)
-            {
-                AddBytes(SizeOfString(uri.OriginalString));
-                return;
-            }
-
-            // Geometry types
-            if (value is Segment)
-            {
-                AddBytes(sizeof(float) * 6); // 2 Vector3
-                return;
-            }
-
-            if (value is Ray)
-            {
-                AddBytes(sizeof(float) * 6); // 2 Vector3
-                return;
-            }
-
-            if (value is AABB)
-            {
-                AddBytes(sizeof(float) * 6); // 2 Vector3
-                return;
-            }
-
-            if (value is Sphere)
-            {
-                AddBytes(sizeof(float) * 4); // Vector3 + float
-                return;
-            }
-
-            if (value is Triangle)
-            {
-                AddBytes(sizeof(float) * 9); // 3 Vector3
-                return;
-            }
-
-            if (value is Frustum)
-            {
-                // 8 corners (3 floats each) - planes reconstructed on deserialize
-                AddBytes(sizeof(float) * 8 * 3);
-                return;
-            }
-
-            // Medium-priority types
-            if (value is Version version)
-            {
-                AddBytes(SizeOfString(version.ToString()));
-                return;
-            }
-
-            if (value is BigInteger bigInt)
-            {
-                byte[] bigIntBytes = bigInt.ToByteArray();
-                AddBytes(sizeof(int) + bigIntBytes.Length);
-                return;
-            }
-
-            if (value is Complex)
-            {
-                AddBytes(sizeof(double) * 2);
-                return;
-            }
-
-            if (value is IPAddress ip)
-            {
-                AddBytes(1 + ip.GetAddressBytes().Length); // length byte + address bytes
-                return;
-            }
-
-            if (value is IPEndPoint endPoint)
-            {
-                AddBytes(1 + endPoint.Address.GetAddressBytes().Length + sizeof(int)); // length byte + address + port
-                return;
-            }
-
-            if (value is Range)
-            {
-                AddBytes(sizeof(int) + sizeof(bool) + sizeof(int) + sizeof(bool)); // start value, start isFromEnd, end value, end isFromEnd
-                return;
-            }
-
-            if (value is Index)
-            {
-                AddBytes(sizeof(int) + sizeof(bool)); // value + isFromEnd
-                return;
-            }
-
-            // Low-priority types
-            if (value is BitArray bitArray)
-            {
-                int byteCount = (bitArray.Length + 7) / 8;
-                AddBytes(sizeof(int) + byteCount); // length + bytes
-                return;
-            }
-
-            if (value is CultureInfo culture)
-            {
-                AddBytes(SizeOfString(culture.Name));
-                return;
-            }
-
-            if (value is Regex regex)
-            {
-                AddBytes(SizeOfString(regex.ToString()) + sizeof(int)); // pattern + options
-                return;
-            }
-
-            // XREvent and XREvent<T>
-            if (value is XREvent xrEvent)
-            {
-                AddBytes(1); // marker
-                AddXRPersistentCallListSize(xrEvent.PersistentCalls);
-                return;
-            }
-
-            if (TryAddGenericXREventSize(value))
-                return;
-
             Type runtimeType = value.GetType();
-
-            // Nullable<T>
-            Type? nullableUnderlying = Nullable.GetUnderlyingType(runtimeType);
-            if (nullableUnderlying is not null)
+            foreach (var module in SerializationModules)
             {
-                AddBytes(1); // marker
-                AddBytes(SizeOfTypeName(nullableUnderlying));
-                AddBytes(sizeof(bool)); // hasValue
-                // For boxed nullable, value is always present if we got here
-                AddValue(value, allowCustom);
-                return;
+                if (module.TryAddSize(this, value, runtimeType, allowCustom))
+                    return;
             }
 
-            // ValueTuple
-            if (IsValueTupleType(runtimeType))
-            {
-                var tuple = (ITuple)value;
-                Type[] typeArgs = runtimeType.GetGenericArguments();
-                AddBytes(1); // marker
-                AddBytes(sizeof(int)); // count
-                for (int i = 0; i < tuple.Length; i++)
-                {
-                    AddBytes(SizeOfTypeName(typeArgs[i]));
-                    AddValue(tuple[i], allowCustom);
-                }
-                return;
-            }
-
-            // Type reference
-            if (value is Type typeRef)
-            {
-                AddBytes(SizeOfTypeName(typeRef));
-                return;
-            }
-
-            // HashSet<T>
-            if (runtimeType.IsGenericType && runtimeType.GetGenericTypeDefinition() == typeof(HashSet<>))
-            {
-                Type elementType = runtimeType.GetGenericArguments()[0];
-                AddBytes(SizeOfTypeName(elementType));
-                AddBytes(sizeof(int)); // count
-                foreach (object? item in (IEnumerable)value)
-                    AddValue(item, allowCustom);
-                return;
-            }
-
-            if (runtimeType.IsEnum)
-            {
-                AddBytes(SizeOfTypeName(runtimeType) + sizeof(long));
-                return;
-            }
-
-            if (runtimeType.IsArray && value is Array array)
-            {
-                Type elementType = runtimeType.GetElementType() ?? typeof(object);
-                AddBytes(SizeOfTypeName(elementType));
-                AddBytes(sizeof(int));
-                foreach (object? item in array)
-                    AddValue(item, allowCustom);
-                return;
-            }
-
-            if (value is IDictionary dictionary)
-            {
-                AddBytes(SizeOfTypeName(runtimeType));
-                AddBytes(sizeof(int));
-                foreach (DictionaryEntry entry in dictionary)
-                {
-                    AddValue(entry.Key, allowCustom);
-                    AddValue(entry.Value, allowCustom);
-                }
-                return;
-            }
-
-            if (value is IList list)
-            {
-                AddBytes(SizeOfTypeName(runtimeType));
-                AddBytes(sizeof(int));
-                foreach (object? item in list)
-                    AddValue(item, allowCustom);
-                return;
-            }
-
-            if (allowCustom && value is AnimationClip animationClip)
-            {
-                AddBytes(SizeOfTypeName(runtimeType) + AnimationClipCookedBinarySerializer.CalculateSize(animationClip));
-                return;
-            }
-
-            if (allowCustom && value is BlendTree blendTree && BlendTreeCookedBinarySerializer.CanHandle(runtimeType))
-            {
-                AddBytes(SizeOfTypeName(runtimeType) + BlendTreeCookedBinarySerializer.CalculateSize(blendTree));
-                return;
-            }
-
-            if (allowCustom && value is AnimStateMachine stateMachine)
-            {
-                AddBytes(SizeOfTypeName(runtimeType) + AnimStateMachineCookedBinarySerializer.CalculateSize(stateMachine));
-                return;
-            }
-
-            if (allowCustom && value is ICookedBinarySerializable custom)
-            {
-                AddBytes(SizeOfTypeName(runtimeType) + custom.CalculateCookedBinarySize());
-                return;
-            }
-
-            // Blittable struct fallback
-            if (runtimeType.IsValueType && !runtimeType.IsPrimitive && !runtimeType.IsEnum && IsBlittableStruct(runtimeType))
-            {
-                int structSize = Marshal.SizeOf(runtimeType);
-                AddBytes(SizeOfTypeName(runtimeType) + sizeof(int) + structSize);
-                return;
-            }
-
-            AddBytes(SizeOfTypeName(runtimeType));
-
-            if (TryGetMemoryPackLength(value, runtimeType, out int memoryPackLength))
-            {
-                AddBytes(1 + sizeof(int) + memoryPackLength);
-                return;
-            }
-
-            AddBytes(1); // encoding flag
-            using var scope = EnterReflectionScope(value, out bool isCycle);
-            if (isCycle)
-            {
-                AddBytes(sizeof(int)); // zero members marker to break the cycle
-                return;
-            }
-
-            AddObjectContent(value, runtimeType, allowCustom);
+            throw new NotSupportedException($"No cooked binary module handled '{runtimeType.FullName ?? runtimeType.Name}'.");
         }
 
         public void AddObjectContent(object instance, Type metadataType, bool allowCustom)
@@ -2484,7 +1880,7 @@ public static class CookedBinarySerializer
             }
         }
 
-        private void AddXRPersistentCallListSize(List<XRPersistentCall>? calls)
+        internal void AddXRPersistentCallListSize(List<XRPersistentCall>? calls)
         {
             AddBytes(sizeof(int)); // count
             if (calls is null || calls.Count == 0)
@@ -2510,7 +1906,7 @@ public static class CookedBinarySerializer
             }
         }
 
-        private bool TryAddGenericXREventSize(object value)
+        internal bool TryAddGenericXREventSize(object value)
         {
             var runtimeType = value.GetType();
             if (!runtimeType.IsGenericType || runtimeType.GetGenericTypeDefinition() != typeof(XREvent<>))
@@ -2525,7 +1921,7 @@ public static class CookedBinarySerializer
             return true;
         }
 
-        private void AddBytes(long count)
+        internal void AddBytes(long count)
             => _length = checked(_length + count);
     }
 

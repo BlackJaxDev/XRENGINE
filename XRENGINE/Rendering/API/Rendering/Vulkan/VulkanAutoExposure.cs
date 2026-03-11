@@ -10,7 +10,6 @@ public unsafe partial class VulkanRenderer
     private bool _autoExposureComputeInitialized;
     private XRRenderProgram? _autoExposureComputeProgram2D;
     private XRRenderProgram? _autoExposureComputeProgram2DArray;
-    private bool _autoExposureTextureInitialized;
 
     public override bool SupportsGpuAutoExposure
     {
@@ -168,8 +167,6 @@ public unsafe partial class VulkanRenderer
             if (oldLayout != Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal)
                 vkExposurePost.TransitionImageLayout(oldLayout, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal);
         }
-
-        _autoExposureTextureInitialized = true;
     }
 
     private bool ComputeSupportsGpuAutoExposure()
@@ -198,7 +195,6 @@ public unsafe partial class VulkanRenderer
         {
             vkExposure.Destroy();
             vkExposure.Generate();
-            _autoExposureTextureInitialized = false;
         }
 
         return (vkExposure.Usage & Silk.NET.Vulkan.ImageUsageFlags.StorageBit) != 0;
@@ -244,7 +240,6 @@ public unsafe partial class VulkanRenderer
         _autoExposureComputeProgram2D = null;
         _autoExposureComputeProgram2DArray = null;
         _autoExposureComputeInitialized = false;
-        _autoExposureTextureInitialized = false;
     }
 
     private const string AutoExposureComputeShaderSource2D = @"#version 460

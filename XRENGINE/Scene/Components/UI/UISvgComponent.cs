@@ -238,7 +238,7 @@ public class UISvgComponent : UIMaterialComponent
         SKMatrix matrix = SKMatrix.CreateScale(scaleX, scaleY);
         matrix = matrix.PostConcat(SKMatrix.CreateTranslation(translatedX, translatedY));
 
-        canvas.DrawPicture(picture, ref matrix);
+        canvas.DrawPicture(picture, in matrix);
         canvas.Flush();
 
         var pixelSpan = bitmap.GetPixelSpan();

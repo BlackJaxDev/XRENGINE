@@ -333,7 +333,6 @@ public unsafe partial class VulkanRenderer
         private readonly Dictionary<uint, VkDataBuffer> _vertexBuffersByBinding = new();
         private bool _buffersDirty = true;
         private bool _pipelineDirty = true;
-        private bool _meshDirty = true;
         private DescriptorPool _descriptorPool;
         private DescriptorSet[][]? _descriptorSets;
         private bool _descriptorDirty = true;
@@ -437,7 +436,6 @@ public unsafe partial class VulkanRenderer
                             MeshRenderer.Mesh.Buffers.Changed += OnMeshBuffersChanged;
                     }
 
-                    _meshDirty = true;
                     _pipelineDirty = true;
                     _buffersDirty = true;
                     _descriptorDirty = true;
@@ -452,7 +450,6 @@ public unsafe partial class VulkanRenderer
 
         private void OnMeshChanged(XRMesh? mesh)
         {
-            _meshDirty = true;
             _pipelineDirty = true;
             _buffersDirty = true;
             _descriptorDirty = true;

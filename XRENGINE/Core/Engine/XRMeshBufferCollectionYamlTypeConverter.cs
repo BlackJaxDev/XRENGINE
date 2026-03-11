@@ -41,7 +41,7 @@ namespace XREngine
             _skip = true;
             try
             {
-                var buffers = (EventDictionary<string, XRDataBuffer>)rootDeserializer(typeof(EventDictionary<string, XRDataBuffer>));
+                EventDictionary<string, XRDataBuffer>? buffers = rootDeserializer(typeof(EventDictionary<string, XRDataBuffer>)) as EventDictionary<string, XRDataBuffer>;
                 var collection = new XRMesh.BufferCollection
                 {
                     Buffers = buffers ?? []

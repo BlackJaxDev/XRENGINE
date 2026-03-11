@@ -136,7 +136,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!typeof(ViewportRenderCommand).IsAssignableFrom(t))
                 throw new ArgumentException("Type must be a subclass of ViewportRenderCommand.", nameof(t));
 
-            ViewportRenderCommand cmd = (ViewportRenderCommand)Activator.CreateInstance(t, arguments) ?? throw new ArgumentException("Type must have a public constructor with the specified arguments.", nameof(t));
+            ViewportRenderCommand cmd = Activator.CreateInstance(t, arguments) as ViewportRenderCommand
+                ?? throw new ArgumentException("Type must have a public constructor with the specified arguments.", nameof(t));
             Add(cmd);
             return cmd;
         }

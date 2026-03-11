@@ -318,15 +318,19 @@ internal static class ProjectBuilder
             Directory.Delete(staging, true);
         Directory.CreateDirectory(staging);
 
-        WriteCookedAsset(Engine.GameSettings ?? new GameStartupSettings(), Path.Combine(staging, StartupAssetName));
+        AotRuntimeMetadata? aotMetadata = context.Settings.PublishLauncherAsNativeAot
+            ? BuildAotRuntimeMetadata(configuration, platform)
+            : null;
+
+        WriteCookedAsset(Engine.GameSettings ?? new GameStartupSettings(), Path.Combine(staging, StartupAssetName), aotMetadata);
 
         if (Engine.EditorPreferences is not null)
-            WriteCookedAsset(Engine.EditorPreferences, Path.Combine(staging, XRProject.EngineSettingsFileName));
+            WriteCookedAsset(Engine.EditorPreferences, Path.Combine(staging, XRProject.EngineSettingsFileName), aotMetadata);
 
-        WriteCookedAsset(Engine.UserSettings ?? new UserSettings(), Path.Combine(staging, XRProject.UserSettingsFileName));
+        WriteCookedAsset(Engine.UserSettings ?? new UserSettings(), Path.Combine(staging, XRProject.UserSettingsFileName), aotMetadata);
 
-        if (context.Settings.PublishLauncherAsNativeAot)
-            WriteAotRuntimeMetadata(staging, configuration, platform);
+        if (aotMetadata is not null)
+            WriteAotRuntimeMetadata(staging, aotMetadata);
 
         Directory.CreateDirectory(Path.GetDirectoryName(context.ConfigArchivePath)!);
         try
@@ -349,9 +353,8 @@ internal static class ProjectBuilder
         }
     }
 
-    private static void WriteAotRuntimeMetadata(string stagingDirectory, string configuration, string platform)
+    private static void WriteAotRuntimeMetadata(string stagingDirectory, AotRuntimeMetadata metadata)
     {
-        AotRuntimeMetadata metadata = BuildAotRuntimeMetadata(configuration, platform);
         byte[] bytes = MemoryPackSerializer.Serialize(metadata);
         File.WriteAllBytes(Path.Combine(stagingDirectory, AotRuntimeMetadataFileName), bytes);
     }
@@ -884,10 +887,10 @@ internal static class ProjectBuilder
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static void WriteCookedAsset(object data, string destination)
+    private static void WriteCookedAsset(object data, string destination, AotRuntimeMetadata? aotMetadata = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-        var blob = CreateCookedBlob(data);
+        var blob = CreateCookedBlob(data, aotMetadata);
         WriteCookedBlob(destination, blob);
     }
 
@@ -986,11 +989,11 @@ internal static class ProjectBuilder
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static CookedAssetBlob CreateCookedBlob(object instance)
+    private static CookedAssetBlob CreateCookedBlob(object instance, AotRuntimeMetadata? aotMetadata = null)
     {
         ArgumentNullException.ThrowIfNull(instance);
         Type runtimeType = instance.GetType();
-        string typeName = runtimeType.AssemblyQualifiedName ?? runtimeType.FullName ?? runtimeType.Name;
+        string typeName = CookedAssetTypeReference.Encode(runtimeType, aotMetadata);
         byte[] payload = CookedBinarySerializer.Serialize(instance);
         return new CookedAssetBlob(typeName, CookedAssetFormat.BinaryV1, payload);
     }

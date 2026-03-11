@@ -557,7 +557,6 @@ namespace XREngine.Scene.Transforms
         }
 
         private Matrix4x4 _inverseRenderMatrix = Matrix4x4.Identity;
-        private volatile bool _inverseRenderMatrixDirty = true;
         private readonly object _inverseRenderMatrixLock = new();
 
         /// <summary>
@@ -584,7 +583,6 @@ namespace XREngine.Scene.Transforms
 */
                     var inverted = Matrix4x4.Invert(RenderMatrix, out var inv) ? inv : Matrix4x4.Identity;
                     _inverseRenderMatrix = inverted;
-                    _inverseRenderMatrixDirty = false;
                     return inverted;
                     /*
                 }
@@ -1153,7 +1151,6 @@ namespace XREngine.Scene.Transforms
 
         protected virtual void OnRenderMatrixChanged()
         {
-            _inverseRenderMatrixDirty = true;
             var handlers = RenderMatrixChanged;
             Engine.Rendering.Stats.RecordRenderMatrixChange(handlers);
             handlers?.Invoke(this, RenderMatrix);

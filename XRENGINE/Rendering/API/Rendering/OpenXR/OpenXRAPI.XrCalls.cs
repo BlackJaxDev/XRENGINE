@@ -294,9 +294,11 @@ public unsafe partial class OpenXRAPI
     {
         for (int i = 0; i < _viewCount; i++)
         {
-            if (_swapchainFramebuffers[i] is not null && _gl is not null)
-                foreach (var fbo in _swapchainFramebuffers[i])
-                    _gl.DeleteFramebuffer(fbo);
+            uint[]? swapchainFramebuffers = _swapchainFramebuffers[i];
+            var gl = _gl;
+            if (swapchainFramebuffers is not null && gl is not null)
+                foreach (var fbo in swapchainFramebuffers)
+                    gl.DeleteFramebuffer(fbo);
 
             if (_swapchainImagesGL[i] != null)
             {

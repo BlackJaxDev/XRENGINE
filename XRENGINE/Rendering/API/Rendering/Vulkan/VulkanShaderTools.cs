@@ -332,7 +332,7 @@ internal static class VulkanShaderAutoUniforms
         List<Match> declarationsToMove = [];
         foreach (string structType in requiredStructTypes)
         {
-            if (!declarationsByName.TryGetValue(structType, out Match declaration))
+            if (!declarationsByName.TryGetValue(structType, out Match? declaration) || declaration is null)
                 continue;
 
             if (declaration.Index >= threshold)

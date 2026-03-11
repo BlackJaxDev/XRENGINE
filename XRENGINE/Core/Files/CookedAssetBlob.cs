@@ -21,7 +21,7 @@ namespace XREngine.Core.Files
 
     public static class CookedAssetReader
     {
-        private const string ReflectionWarningMessage = "Cooked cooked asset loading relies on reflection and cannot be statically analyzed for trimming or AOT";
+        internal const string ReflectionWarningMessage = "Cooked cooked asset loading relies on reflection and cannot be statically analyzed for trimming or AOT";
 
         [RequiresUnreferencedCode(ReflectionWarningMessage)]
         [RequiresDynamicCode(ReflectionWarningMessage)]
@@ -69,36 +69,13 @@ namespace XREngine.Core.Files
         [RequiresDynamicCode(ReflectionWarningMessage)]
         private static object? DeserializeBinary(CookedAssetBlob blob, Type? expectedType)
         {
-            var resolvedType = ResolveType(blob.TypeName) ?? expectedType
+            var resolvedType = CookedAssetTypeReference.Resolve(blob.TypeName, expectedType)
                 ?? throw new InvalidOperationException($"Unable to resolve cooked asset type '{blob.TypeName}'.");
 
+            if (expectedType is not null && !expectedType.IsAssignableFrom(resolvedType))
+                throw new InvalidOperationException($"Cooked asset type '{resolvedType}' does not match expected type '{expectedType}'.");
+
             return CookedBinarySerializer.Deserialize(resolvedType, blob.Payload);
-        }
-
-        [RequiresUnreferencedCode(ReflectionWarningMessage)]
-        [RequiresDynamicCode(ReflectionWarningMessage)]
-        private static Type? ResolveType(string typeName)
-        {
-            if (string.IsNullOrWhiteSpace(typeName))
-                return null;
-
-            typeName = XRTypeRedirectRegistry.RewriteTypeName(typeName);
-
-            Type? resolved = AotRuntimeMetadataStore.ResolveType(typeName);
-            if (resolved is not null)
-                return resolved;
-
-            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
-                return null;
-
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                resolved = assembly.GetType(typeName, throwOnError: false, ignoreCase: false);
-                if (resolved is not null)
-                    return resolved;
-            }
-
-            return null;
         }
     }
 }

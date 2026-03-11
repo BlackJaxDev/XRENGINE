@@ -354,28 +354,30 @@ public unsafe partial class OpenXRAPI
             uint imageCount = 0;
             Api.EnumerateSwapchainImages(_swapchains[i], 0, &imageCount, null);
 
-            _swapchainImagesGL[i] = (SwapchainImageOpenGLKHR*)Marshal.AllocHGlobal((int)imageCount * sizeof(SwapchainImageOpenGLKHR));
+            SwapchainImageOpenGLKHR* swapchainImages = (SwapchainImageOpenGLKHR*)Marshal.AllocHGlobal((int)imageCount * sizeof(SwapchainImageOpenGLKHR));
+            _swapchainImagesGL[i] = swapchainImages;
 
             _swapchainImageCounts[i] = imageCount;
-            _swapchainFramebuffers[i] = new uint[imageCount];
+            uint[] framebuffers = new uint[imageCount];
+            _swapchainFramebuffers[i] = framebuffers;
 
             for (uint j = 0; j < imageCount; j++)
-                _swapchainImagesGL[i][j].Type = StructureType.SwapchainImageOpenglKhr;
+                swapchainImages[j].Type = StructureType.SwapchainImageOpenglKhr;
 
-            Api.EnumerateSwapchainImages(_swapchains[i], imageCount, &imageCount, (SwapchainImageBaseHeader*)_swapchainImagesGL[i]);
+            Api.EnumerateSwapchainImages(_swapchains[i], imageCount, &imageCount, (SwapchainImageBaseHeader*)swapchainImages);
 
             for (uint j = 0; j < imageCount; j++)
             {
                 uint fbo = _gl.GenFramebuffer();
                 _gl.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
                 // Attach without assuming the underlying texture target (2D vs 2DMS etc).
-                _gl.FramebufferTexture(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, _swapchainImagesGL[i][j].Image, 0);
+                _gl.FramebufferTexture(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, swapchainImages[j].Image, 0);
 
                 // Make the swapchain FBO robust against global ReadBuffer/DrawBuffers state changes.
                 // Some engine passes intentionally set ReadBuffer=None; if that leaks, subsequent operations can become no-ops.
                 _gl.NamedFramebufferDrawBuffers(fbo, 1, drawBuffers);
                 _gl.NamedFramebufferReadBuffer(fbo, GLEnum.ColorAttachment0);
-                _swapchainFramebuffers[i][j] = fbo;
+                framebuffers[j] = fbo;
             }
 
             Console.WriteLine($"Created swapchain {i} with {imageCount} images ({width}x{height})");

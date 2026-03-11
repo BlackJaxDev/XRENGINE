@@ -49,7 +49,6 @@ namespace XREngine.Scene
 
         private bool _capturing = false;
         private ITriangulation<LightProbeComponent, LightProbeCell>? _cells;
-        private XRMeshRenderer? _instancedCellRenderer;
         private readonly List<PreparedFrustum> _frustumScratch = new(6);
         private readonly ConcurrentQueue<SceneCaptureComponentBase> _captureQueue = new();
         private ConcurrentBag<SceneCaptureComponentBase> _captureBagUpdating = [];
@@ -887,8 +886,7 @@ namespace XREngine.Scene
             if (count <= 0)
                 return;
 
-            //_instancedCellRenderer!.Mesh.GetBuffer(0, probes.SelectMany(x => x.Vertices.Select(y => y.Transform.WorldTranslation)).ToArray());
-            _instancedCellRenderer!.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)count);
+            // The instanced cell renderer path is currently disabled until the dedicated probe-cell mesh is restored.
         }
 
         //public static XRMesh GenerateInstancedCellMesh()

@@ -1605,7 +1605,7 @@ public class GpuBvhAndIndirectIntegrationTests : GpuTestBase
     /// Creates GL context and also validates the GPU driver is real hardware
     /// (rejects software renderers).
     /// </summary>
-    private new (GL?, IWindow?) CreateGLContext()
+    private (GL?, IWindow?) CreateGLContext()
     {
         var (gl, window) = base.CreateGLContext();
         if (gl is not null)

@@ -6347,9 +6347,11 @@ argumentsStart
 argumentsEnd
 """);
 
+        string normalizedArgumentsJson = argumentsJson ?? "{}";
+
         if (string.Equals(toolName, "file_search", StringComparison.OrdinalIgnoreCase))
         {
-            string localResult = await ExecuteLocalFileSearchToolAsync(argumentsJson, ct);
+            string localResult = await ExecuteLocalFileSearchToolAsync(normalizedArgumentsJson, ct);
             LogAiTrace(
                 $"""
 [MCP Assistant Tool Call Local Result]
@@ -6364,7 +6366,7 @@ resultEnd
 
         if (string.Equals(toolName, "apply_patch", StringComparison.OrdinalIgnoreCase))
         {
-            string localResult = await ExecuteLocalApplyPatchToolAsync(argumentsJson, ct);
+            string localResult = await ExecuteLocalApplyPatchToolAsync(normalizedArgumentsJson, ct);
             LogAiTrace(
                 $"""
 [MCP Assistant Tool Call Local Result]
@@ -6379,7 +6381,7 @@ resultEnd
 
         ToolCallResult FinalizeToolResult(string resultText, string? imagePath = null)
         {
-            TryAutoFocusCameraForToolCall(toolName, argumentsJson, resultText);
+            TryAutoFocusCameraForToolCall(toolName, normalizedArgumentsJson, resultText);
 
             // If the result references an image file, encode it for multimodal feedback.
             string? resolvedImagePath = imagePath;
@@ -6405,7 +6407,7 @@ resultEnd
         JsonNode? argsNode;
         try
         {
-            argsNode = JsonNode.Parse(argumentsJson);
+            argsNode = JsonNode.Parse(normalizedArgumentsJson);
         }
         catch
         {

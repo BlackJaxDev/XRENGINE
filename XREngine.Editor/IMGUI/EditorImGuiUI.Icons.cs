@@ -116,7 +116,7 @@ public static partial class EditorImGuiUI
             SKMatrix matrix = SKMatrix.CreateScale(scale, scale);
             matrix = matrix.PostConcat(SKMatrix.CreateTranslation(translatedX, translatedY));
 
-            canvas.DrawPicture(picture, ref matrix);
+            canvas.DrawPicture(picture, in matrix);
             canvas.Flush();
 
             var pixelSpan = bitmap.GetPixelSpan();

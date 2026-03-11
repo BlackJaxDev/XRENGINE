@@ -212,22 +212,27 @@ public unsafe class OpenGLGPUDriver : IGPUDriver
                 }
                 bitmap.UnlockPixels();
 
-                _gl.TextureParameterI(textureId, TextureParameterName.TextureMinFilter, (int)GLEnum.Linear);
-                _gl.TextureParameterI(textureId, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
-                _gl.TextureParameterI(textureId, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
-                _gl.TextureParameterI(textureId, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
-                _gl.TextureParameterI(textureId, TextureParameterName.TextureWrapR, (int)GLEnum.Repeat);
+                int linear = (int)GLEnum.Linear;
+                int clampToEdge = (int)GLEnum.ClampToEdge;
+                int repeat = (int)GLEnum.Repeat;
+                _gl.TextureParameterI(textureId, TextureParameterName.TextureMinFilter, in linear);
+                _gl.TextureParameterI(textureId, TextureParameterName.TextureMagFilter, in linear);
+                _gl.TextureParameterI(textureId, TextureParameterName.TextureWrapS, in clampToEdge);
+                _gl.TextureParameterI(textureId, TextureParameterName.TextureWrapT, in clampToEdge);
+                _gl.TextureParameterI(textureId, TextureParameterName.TextureWrapR, in repeat);
             }
         }
         else
         {
+            int linear = (int)GLEnum.Linear;
+            int clampToEdge = (int)GLEnum.ClampToEdge;
             textureId = _gl.GenTexture();
             _gl.ActiveTexture(TextureUnit.Texture0);
             _gl.BindTexture(TextureTarget.Texture2D, textureId);
-            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)GLEnum.Linear);
-            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)GLEnum.Linear);
-            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)GLEnum.ClampToEdge);
-            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)GLEnum.ClampToEdge);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, linear);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, linear);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, clampToEdge);
+            _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, clampToEdge);
 
             if (isRT)
             {

@@ -680,7 +680,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (!pipelineNameByIdentity.ContainsKey(context.PipelineIdentity))
                 {
-                    string name = context.PipelineInstance?.Pipeline?.GetType().Name;
+                    string? name = context.PipelineInstance?.Pipeline?.GetType().Name;
                     if (string.IsNullOrWhiteSpace(name))
                         name = "UnknownPipeline";
                     pipelineNameByIdentity[context.PipelineIdentity] = name;

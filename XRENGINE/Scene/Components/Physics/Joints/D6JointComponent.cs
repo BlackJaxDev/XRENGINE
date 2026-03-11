@@ -41,8 +41,8 @@ namespace XREngine.Components.Physics
 
         // Linear limit (distance)
         private float _distanceLimitValue = float.MaxValue;
-        private float _distanceLimitRestitution;
-        private float _distanceLimitBounceThreshold;
+        private float _distanceLimitRestitution = 0.0f;
+        private float _distanceLimitBounceThreshold = 0.0f;
         private float _distanceLimitStiffness;
         private float _distanceLimitDamping;
 

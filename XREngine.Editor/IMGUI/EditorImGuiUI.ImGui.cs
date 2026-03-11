@@ -85,11 +85,14 @@ public static partial class EditorImGuiUI
         private static bool _componentTypeCacheDirty = true;
         private static SceneNode? _nodePendingRename;
         private static IReadOnlyList<SceneNode>? _nodesPendingAddComponent;
+        private static IReadOnlyList<SceneNode>? _nodesPendingDeepDuplicate;
+        private static IReadOnlyList<XRAsset>? _assetsPendingDeepDuplicate;
         private static string _componentPickerSearch = string.Empty;
         private static string? _componentPickerError;
 
         private static bool _addComponentPopupOpen;
         private static bool _addComponentPopupRequested;
+        private static bool _hierarchyDeepDuplicatePopupRequested;
 
         private static string _assetExplorerSearchTerm = string.Empty;
         private static AssetExplorerSearchScope _assetExplorerSearchScope = AssetExplorerSearchScope.Name;

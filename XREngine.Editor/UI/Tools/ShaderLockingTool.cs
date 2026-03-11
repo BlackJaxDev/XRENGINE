@@ -289,7 +289,10 @@ public partial class ShaderLockingTool : EditorPanel
             string op = match.Groups["op"].Value;
             string valueStr = match.Groups["value"].Value;
 
-            if (uniforms.TryGetValue(varName, out var info) && !info.IsAnimated)
+            if (uniforms.TryGetValue(varName, out UniformLockInfo? info) &&
+                info is not null &&
+                info.Value is not null &&
+                !info.IsAnimated)
             {
                 // Try to evaluate the condition
                 bool? conditionResult = EvaluateCondition(info.Value, op, valueStr);

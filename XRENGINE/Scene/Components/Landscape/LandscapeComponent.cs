@@ -1126,7 +1126,11 @@ public class LandscapeComponent : XRComponent, IRenderable
 
     private void UploadChunkData()
     {
-        _chunksBuffer?.SetDataRaw(_chunkData);
+        GPUTerrainChunk[]? chunkData = _chunkData;
+        if (chunkData is null)
+            return;
+
+        _chunksBuffer?.SetDataRaw(chunkData);
     }
 
     private void CleanupBuffers()

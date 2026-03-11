@@ -90,7 +90,9 @@ public unsafe partial class VulkanRenderer
         ulong dstOffset = 0)
     {
         // DIAGNOSTIC: bypass NV indirect copy to test if it's causing VBO data issues
-        return false;
+        bool bypassIndirectCopy = true;
+        if (bypassIndirectCopy)
+            return false;
 
         ulong srcAddress = GetBufferDeviceAddress(srcBuffer);
         ulong dstAddress = GetBufferDeviceAddress(dstBuffer);

@@ -26,7 +26,6 @@ public class ShaderAnalyzerWindow
     private bool _showByCategory = true;
     private string _categoryFilter = "";
     private bool _sortByOccurrences = false;
-    private int _selectedCategoryIndex = -1;
     private Vector2 _sourceScrollPos = Vector2.Zero;
 
     // Preset resolutions for invocation estimation

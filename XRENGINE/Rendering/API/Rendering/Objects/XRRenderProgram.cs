@@ -518,6 +518,35 @@ namespace XREngine.Rendering
             => UniformSetBoolVector4Requested?.Invoke(name, value);
 
         /// <summary>
+        /// Sends a bool[] property value to the shader program.
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="value"></param>
+        public void Uniform(string name, bool[] value)
+            => UniformSetBoolArrayRequested?.Invoke(name, value);
+        /// <summary>
+        /// Sends a BoolVector2[] property value to the shader program.
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="value"></param>
+        public void Uniform(string name, BoolVector2[] value)
+            => UniformSetBoolVector2ArrayRequested?.Invoke(name, value);
+        /// <summary>
+        /// Sends a BoolVector3[] property value to the shader program.
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="value"></param>
+        public void Uniform(string name, BoolVector3[] value)
+            => UniformSetBoolVector3ArrayRequested?.Invoke(name, value);
+        /// <summary>
+        /// Sends a BoolVector4[] property value to the shader program.
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="value"></param>
+        public void Uniform(string name, BoolVector4[] value)
+            => UniformSetBoolVector4ArrayRequested?.Invoke(name, value);
+
+        /// <summary>
         /// Sends a float property value to the shader program.
         /// </summary>
         /// <param name="name"></param>

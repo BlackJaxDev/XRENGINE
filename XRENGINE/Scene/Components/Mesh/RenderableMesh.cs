@@ -35,7 +35,6 @@ namespace XREngine.Components.Scene.Mesh
         private readonly object _relativeCacheLock = new();
         private readonly object _skinnedDataLock = new();
         private bool _skinnedBoundsDirty = true;
-        private bool _skinnedBvhDirty = true;
         private bool _hasSkinnedBounds;
         private bool _skinnedBoundsAreWorldSpace;
         private AABB _skinnedLocalBounds;
@@ -43,7 +42,7 @@ namespace XREngine.Components.Scene.Mesh
         private int _skinnedVertexCount;
         private BVH<Triangle>? _skinnedBvh;
         private Task<SkinnedMeshBvhScheduler.Result>? _skinnedBvhTask;
-        private int _skinnedBvhVersion;
+        private int _skinnedBvhVersion = 0;
         private bool _skinnedBvhScheduledOnce;
         private AABB _bindPoseBounds;
         private Matrix4x4 _skinnedRootRenderMatrix = Matrix4x4.Identity;
@@ -501,8 +500,6 @@ namespace XREngine.Components.Scene.Mesh
             _skinnedBoundsDirty = false;
             _hasSkinnedBounds = true;
             _skinnedBoundsAreWorldSpace = result.IsWorldSpace;
-            if (markBvhDirty)
-                _skinnedBvhDirty = true;
 
             SetSkinnedRootRenderMatrix(result.Basis);
             if (RenderInfo is not null)
@@ -658,7 +655,6 @@ namespace XREngine.Components.Scene.Mesh
 
                 ApplySkinnedBoundsResult(result.Bounds, markBvhDirty: false);
                 _skinnedBvh = result.Tree;
-                _skinnedBvhDirty = false;
                 tree = _skinnedBvh;
                 return true;
             }
@@ -666,7 +662,6 @@ namespace XREngine.Components.Scene.Mesh
             {
                 Debug.RenderingException(ex, "Skinned BVH compute path failed.");
                 _skinnedBvh = null;
-                _skinnedBvhDirty = false;
                 return true;
             }
             finally

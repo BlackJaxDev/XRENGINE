@@ -400,7 +400,6 @@ public unsafe partial class VulkanRenderer
 						}
 						_pipelines[key] = pipeline;
 						_pipelineDirty = false;
-						_meshDirty = false;
 						success = pipeline.Handle != 0;
 					}
 				}
