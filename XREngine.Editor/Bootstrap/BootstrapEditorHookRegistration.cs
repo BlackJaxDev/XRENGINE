@@ -1,0 +1,46 @@
+using XREngine.Components;
+using XREngine.Runtime.Bootstrap;
+using XREngine.Scene;
+
+namespace XREngine.Editor;
+
+public static class BootstrapEditorHookRegistration
+{
+    public static void Register()
+    {
+        BootstrapEditorBridge.Current ??= new EditorBootstrapBridge();
+    }
+
+    private sealed class EditorBootstrapBridge : IBootstrapEditorBridge
+    {
+        public void CreateEditorUi(SceneNode parent, CameraComponent? camera, PawnComponent? pawn)
+            => EditorUnitTests.UserInterface.CreateEditorUI(parent, camera, pawn);
+
+        public void EnableTransformToolForNode(SceneNode node)
+            => EditorUnitTests.UserInterface.EnableTransformToolForNode(node);
+
+        public void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
+            => EditorUnitTests.Models.ImportModels(desktopDir, rootNode, characterParentNode);
+
+        public PawnComponent? CreateFlyableCameraPawn(SceneNode cameraNode)
+            => cameraNode.AddComponent<EditorFlyingCameraPawnComponent>();
+
+        public XRWorld? CreateSpecializedWorld(UnitTestWorldKind worldKind, bool setUI, bool isServer)
+        {
+            EditorUnitTests.SyncTogglesFromRuntime();
+
+            XRWorld? world = worldKind switch
+            {
+                UnitTestWorldKind.AudioTesting => EditorUnitTests.CreateAudioTestingWorld(setUI, isServer),
+                UnitTestWorldKind.MathIntersections => EditorUnitTests.CreateMathIntersectionsWorld(setUI, isServer),
+                UnitTestWorldKind.MeshEditing => EditorUnitTests.CreateMeshEditingWorld(setUI, isServer),
+                UnitTestWorldKind.UberShader => EditorUnitTests.CreateUberShaderWorld(setUI, isServer),
+                UnitTestWorldKind.PhysxTesting => EditorUnitTests.CreatePhysxTestingWorld(setUI, isServer),
+                _ => null,
+            };
+
+            RuntimeBootstrapState.Settings = EditorUnitTests.Toggles.ToRuntimeSettings();
+            return world;
+        }
+    }
+}

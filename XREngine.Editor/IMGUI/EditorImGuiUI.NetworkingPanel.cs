@@ -10,7 +10,7 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
-        private static GameStartupSettings.ENetworkingType _netMode = GameStartupSettings.ENetworkingType.Local;
+        private static ENetworkingType _netMode = ENetworkingType.Local;
         private static string _netServerIp = "127.0.0.1";
         private static string _netMulticastGroupIp = "239.0.0.222";
         private static int _netMulticastPort = 5000;
@@ -45,7 +45,7 @@ public static partial class EditorImGuiUI
             ImGui.SameLine();
             if (ImGui.BeginCombo("##NetMode", _netMode.ToString()))
             {
-                foreach (GameStartupSettings.ENetworkingType val in Enum.GetValues(typeof(GameStartupSettings.ENetworkingType)))
+                foreach (ENetworkingType val in Enum.GetValues(typeof(ENetworkingType)))
                 {
                     bool selected = val == _netMode;
                     if (ImGui.Selectable(val.ToString(), selected))
@@ -185,7 +185,7 @@ public static partial class EditorImGuiUI
             Debug.Out($"[UI] Failed to dispose networking: {ex.Message}");
         }
 
-        GameStartupSettings settings = new() { NetworkingType = GameStartupSettings.ENetworkingType.Local };
+        GameStartupSettings settings = new() { NetworkingType = ENetworkingType.Local };
         Engine.ConfigureNetworking(settings);
     }
 }

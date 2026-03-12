@@ -205,7 +205,7 @@ namespace XREngine.Components.Animation
             if (!PoseBroadcastEnabled)
                 return;
 
-            if (Engine.Networking is not Engine.BaseNetworkingManager net)
+            if (Engine.Networking is not BaseNetworkingManager net)
                 return;
 
             if (Root is null || Humanoid is null)
@@ -378,7 +378,7 @@ namespace XREngine.Components.Animation
 
         private void SubscribeNetworking()
         {
-            if (Engine.Networking is not Engine.BaseNetworkingManager net)
+            if (Engine.Networking is not BaseNetworkingManager net)
                 return;
 
             net.HumanoidPoseFrameReceived += OnHumanoidPoseFrame;
@@ -386,7 +386,7 @@ namespace XREngine.Components.Animation
 
         private void UnsubscribeNetworking()
         {
-            if (Engine.Networking is not Engine.BaseNetworkingManager net)
+            if (Engine.Networking is not BaseNetworkingManager net)
                 return;
 
             net.HumanoidPoseFrameReceived -= OnHumanoidPoseFrame;

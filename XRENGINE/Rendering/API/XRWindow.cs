@@ -213,8 +213,8 @@ namespace XREngine.Rendering
                     VerifyTick();
                     if (!(Engine.Networking?.IsClient ?? false))
                         Engine.Networking?.ReplicateStateChange(
-                            new Engine.StateChangeInfo(
-                                Engine.EStateChangeType.WorldChange,
+                            new StateChangeInfo(
+                                EStateChangeType.WorldChange,
                                 JsonConvert.SerializeObject(EncodeWorldHierarchy())),
                             true,
                             true);

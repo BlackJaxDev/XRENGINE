@@ -89,7 +89,8 @@ namespace XREngine.Networking
             // accidentally pick unsupported/undesired values and render a black screen.
             var settings = UnitTestingWorldSettingsStore.Load(false);
             UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
-            XRWorld targetWorld = CreateWorld();
+            UnitTestingWorldSettingsStore.ApplyAudioOverrides(settings);
+            XRWorld targetWorld = BootstrapWorldFactory.CreateServerDefaultWorld();
 
             Engine.Run(GetEngineSettings(targetWorld), Engine.LoadOrGenerateGameState());
         }
@@ -168,29 +169,6 @@ namespace XREngine.Networking
             };
 
             _loadBalancerService.RegisterOrUpdate(server);
-        }
-
-        /// <summary>
-        /// Creates a test world with a variety of objects for testing purposes.
-        /// </summary>
-        /// <returns></returns>
-        public static XRWorld CreateWorld()
-        {
-            BootstrapRenderSettings.Apply();
-
-            var scene = new XRScene("Main Scene");
-            var rootNode = new SceneNode("Root Node");
-            scene.RootNodes.Add(rootNode);
-
-            SceneNode? characterPawnModelParentNode = BootstrapPawnFactory.CreatePlayerPawn(false, true, rootNode);
-
-            BootstrapLightingBuilder.AddDirLight(rootNode);
-            BootstrapLightingBuilder.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
-            BootstrapModelBuilder.AddSkybox(rootNode, null);
-            CreateConsoleUI(rootNode);
-            
-            var world = new XRWorld("Default World", scene);
-            return world;
         }
 
         static XRWorld CreateServerDebugWorld()

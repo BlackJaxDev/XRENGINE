@@ -53,6 +53,8 @@ namespace XREngine
                 if (_jobs != null)
                     return _jobs;
 
+                ConfigureJobManagerHooks();
+
                 // If something touches Engine.Jobs before Engine.Initialize(), we still need
                 // a functional job system. Create the default instance, but we will avoid
                 // later recreation to keep a single instance alive.
@@ -65,12 +67,13 @@ namespace XREngine
             }
             private set => _jobs = value;
         }
-        public static int? JobThreadId { get; internal set; }
 
         internal static void ConfigureJobManager(GameStartupSettings startupSettings)
         {
             if (_jobsConfigured)
                 return;
+
+            ConfigureJobManagerHooks();
 
             // If the job manager was created implicitly (accessed before Initialize), we
             // keep the single instance to honor "create once". Applying startup settings
@@ -82,7 +85,6 @@ namespace XREngine
                 return;
             }
 
-            JobThreadId = null;
             // Use EffectiveSettings to resolve User > Project > Engine cascade
             Jobs = new JobManager(
                 EffectiveSettings.JobWorkers,
@@ -91,6 +93,12 @@ namespace XREngine
                 EffectiveSettings.JobWorkerCap);
 
             _jobsConfigured = true;
+        }
+
+        private static void ConfigureJobManagerHooks()
+        {
+            JobManager.LogMessage = message => Debug.Out(EOutputVerbosity.Normal, message);
+            JobManager.ProfilerScopeFactory = static name => Engine.Profiler.Start(name);
         }
 
         public static GameState LoadOrGenerateGameState(

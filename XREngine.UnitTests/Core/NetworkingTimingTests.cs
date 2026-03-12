@@ -12,18 +12,18 @@ public sealed class NetworkingTimingTests
         long baseTicks = Stopwatch.Frequency * 60L * 60L * 12L;
         long laterTicks = baseTicks + Stopwatch.Frequency * 3L / 2L;
 
-        Engine.BaseNetworkingManager.TickDeltaToSeconds(laterTicks, baseTicks).ShouldBe(1.5d, 0.000000000001d);
+        BaseNetworkingManager.TickDeltaToSeconds(laterTicks, baseTicks).ShouldBe(1.5d, 0.000000000001d);
     }
 
     [Test]
     public void HasElapsed_UsesTickComparisonsForLongSessionIntervals()
     {
         long baseTicks = Stopwatch.Frequency * 60L * 60L * 24L;
-        long thresholdTicks = baseTicks + Engine.BaseNetworkingManager.SecondsToStopwatchTicks(3.0);
+        long thresholdTicks = baseTicks + BaseNetworkingManager.SecondsToStopwatchTicks(3.0);
         long beforeThresholdTicks = thresholdTicks - 1L;
 
-        Engine.BaseNetworkingManager.HasElapsed(beforeThresholdTicks, baseTicks, 3.0).ShouldBeFalse();
-        Engine.BaseNetworkingManager.HasElapsed(thresholdTicks, baseTicks, 3.0).ShouldBeTrue();
+        BaseNetworkingManager.HasElapsed(beforeThresholdTicks, baseTicks, 3.0).ShouldBeFalse();
+        BaseNetworkingManager.HasElapsed(thresholdTicks, baseTicks, 3.0).ShouldBeTrue();
     }
 
     [Test]
@@ -32,6 +32,6 @@ public sealed class NetworkingTimingTests
         long nowTicks = Stopwatch.Frequency * 60L * 60L * 36L;
         long expectedWindowStart = nowTicks - Stopwatch.Frequency;
 
-        Engine.BaseNetworkingManager.GetWindowStartTicks(nowTicks, 1.0).ShouldBe(expectedWindowStart);
+        BaseNetworkingManager.GetWindowStartTicks(nowTicks, 1.0).ShouldBe(expectedWindowStart);
     }
 }

@@ -22,6 +22,7 @@ using XREngine.Native;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using static XREngine.Engine;
@@ -29,7 +30,6 @@ using static XREngine.Rendering.XRWorldInstance;
 
 internal class Program
 {
-    private const string UnitTestingWorldSettingsFileName = "UnitTestingWorldSettings.json";
     private static readonly object s_startupTimerLock = new();
     private static Stopwatch? s_startupStopwatch;
     private static XRWindow? s_startupWindow;
@@ -108,10 +108,11 @@ internal class Program
         // Start vr pawn switcher to allow switching between desktop and VR pawns in the editor without restarting
         EditorOpenXrPawnSwitcher.Initialize();
 
-        // Load unit testing settings from JSON file into static toggles object that can be referenced throughout the editor and unit testing worlds.
-        EditorUnitTests.Toggles = LoadUnitTestingSettings(false);
-        ApplyUnitTestingWorldKindOverride(EditorUnitTests.Toggles);
-        ApplyAudioSettingsFromToggles(EditorUnitTests.Toggles);
+        UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.Load(false);
+        UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
+        UnitTestingWorldSettingsStore.ApplyAudioOverrides(settings);
+        EditorUnitTests.SyncTogglesFromRuntime();
+        BootstrapEditorHookRegistration.Register();
 
         // Retrieve the world, startup settings, and last game state to run the engine
         InitializeEditor(
@@ -150,14 +151,17 @@ internal class Program
         XRWorld targetWorld;
         if (mode == EWorldMode.UnitTesting)
         {
-            targetWorld = EditorUnitTests.CreateSelectedWorld(true, false);
+            targetWorld = BootstrapWorldFactory.CreateSelectedWorld(true, false);
             EngineDebug.Out("Loading Unit Testing World...");
         }
         else
         {
-            targetWorld = CreateDefaultEmptyWorld();
+            targetWorld = BootstrapWorldFactory.CreateDefaultEmptyWorld(true, false);
             EngineDebug.Out("Loading Default Empty World...");
         }
+
+        Undo.TrackWorld(targetWorld);
+        EditorUnitTests.SyncTogglesFromRuntime();
         return targetWorld;
     }
 
@@ -316,66 +320,6 @@ internal class Program
         return EWorldMode.Default;
     }
 
-    /// <summary>
-    /// Creates a default empty world with basic lighting and a camera.
-    /// </summary>
-    private static XRWorld CreateDefaultEmptyWorld()
-    {
-        EditorUnitTests.ApplyRenderSettingsFromToggles();
-
-        var scene = new XRScene("Main Scene");
-        var rootNode = new SceneNode("Root Node");
-        scene.RootNodes.Add(rootNode);
-
-        // Enable LAN discovery in the default world.
-        // This component auto-starts listening when activated.
-        rootNode.AddComponent<NetworkDiscoveryComponent>("Network Discovery");
-
-        EditorUnitTests.Toggles.VRPawn = false;
-        EditorUnitTests.Toggles.Locomotion = false;
-
-        SceneNode? characterPawnModelParentNode = EditorUnitTests.Pawns.CreatePlayerPawn(true, false, rootNode);
-
-        EditorUnitTests.Lighting.AddDirLight(rootNode);
-        EditorUnitTests.Lighting.AddLightProbes(rootNode, 1, 1, 1, 10, 10, 10, new Vector3(0.0f, 50.0f, 0.0f));
-        EditorUnitTests.Models.AddSkybox(rootNode, null);
-
-        AddDefaultGridFloor(rootNode);
-
-        var world = new XRWorld("Default World", scene);
-        Undo.TrackWorld(world);
-        return world;
-    }
-
-    private static void AddDefaultGridFloor(SceneNode rootNode)
-    {
-        var gridNode = rootNode.NewChild("GridFloor");
-        var debug = gridNode.AddComponent<DebugDrawComponent>()!;
-
-        const float extent = 50.0f;
-        const float step = 1.0f;
-        const int majorEvery = 10;
-        const float y = 0.0f;
-
-        for (float x = -extent; x <= extent; x += step)
-        {
-            int xi = (int)MathF.Round(x);
-            bool isAxis = xi == 0;
-            bool isMajor = (xi % majorEvery) == 0;
-            var color = isAxis ? ColorF4.White : isMajor ? ColorF4.Gray : ColorF4.DarkGray;
-            debug.AddLine(new Vector3(x, y, -extent), new Vector3(x, y, extent), color);
-        }
-
-        for (float z = -extent; z <= extent; z += step)
-        {
-            int zi = (int)MathF.Round(z);
-            bool isAxis = zi == 0;
-            bool isMajor = (zi % majorEvery) == 0;
-            var color = isAxis ? ColorF4.White : isMajor ? ColorF4.Gray : ColorF4.DarkGray;
-            debug.AddLine(new Vector3(-extent, y, z), new Vector3(extent, y, z), color);
-        }
-    }
-
     private static void TargetWorldInstance_AnyTransformWorldMatrixChanged(XRWorldInstance instance, TransformBase tfm, Matrix4x4 mtx)
     {
         if (PlayMode.IsEditing && !instance.TransitioningPlay && instance.PlayState == EPlayState.Playing)
@@ -406,56 +350,6 @@ internal class Program
         Converters = [new StringEnumConverter()]
     };
 
-    private static EditorUnitTests.Settings LoadUnitTestingSettings(bool writeBackAfterRead)
-    {
-        EditorUnitTests.Settings settings;
-
-        string dir = Environment.CurrentDirectory;
-        string fileName = UnitTestingWorldSettingsFileName;
-        string filePath = Path.Combine(dir, "Assets", fileName);
-
-        if (!File.Exists(filePath))
-            File.WriteAllText(filePath, JsonConvert.SerializeObject(settings = new EditorUnitTests.Settings(), Formatting.Indented));
-        else
-        {
-            string? content = File.ReadAllText(filePath);
-            if (content is not null)
-            {
-                settings = JsonConvert.DeserializeObject<EditorUnitTests.Settings>(content) ?? new EditorUnitTests.Settings();
-                if (writeBackAfterRead)
-                    File.WriteAllText(filePath, JsonConvert.SerializeObject(settings, Formatting.Indented));
-            }
-            else
-                settings = new EditorUnitTests.Settings();
-        }
-        return settings;
-    }
-
-    private static void ApplyUnitTestingWorldKindOverride(EditorUnitTests.Settings settings)
-    {
-        string? worldKindEnv = Environment.GetEnvironmentVariable("XRE_UNIT_TEST_WORLD_KIND");
-        if (string.IsNullOrWhiteSpace(worldKindEnv))
-            return;
-
-        if (Enum.TryParse<EditorUnitTests.UnitTestWorldKind>(worldKindEnv, true, out var kind))
-        {
-            settings.WorldKind = kind;
-            EngineDebug.Out($"Unit test world kind overridden to {kind} via XRE_UNIT_TEST_WORLD_KIND.");
-            return;
-        }
-
-        EngineDebug.Out($"Invalid XRE_UNIT_TEST_WORLD_KIND value '{worldKindEnv}'. Using {settings.WorldKind}.");
-    }
-
-    private static void ApplyAudioSettingsFromToggles(EditorUnitTests.Settings settings)
-    {
-        AudioSettings.AudioArchitectureV2 = settings.AudioArchitectureV2;
-        Engine.Audio.DefaultTransport = settings.AudioTransport;
-        Engine.Audio.DefaultEffects = settings.AudioEffects;
-
-        EngineDebug.Out($"Audio toggles applied: V2={AudioSettings.AudioArchitectureV2}, Transport={Engine.Audio.DefaultTransport}, Effects={Engine.Audio.DefaultEffects}");
-    }
-
     static EditorRenderInfo2D RenderInfo2DConstructor(IRenderable owner, RenderCommand[] commands)
         => new(owner, commands);
     static EditorRenderInfo3D RenderInfo3DConstructor(IRenderable owner, RenderCommand[] commands)
@@ -463,11 +357,12 @@ internal class Program
 
     private static VRGameStartupSettings<EVRActionCategory, EVRGameAction> CreateEditorStartupSettings()
     {
+        var unitTestSettings = RuntimeBootstrapState.Settings;
         int w = 1920;
         int h = 1080;
-        float updateHz = EditorUnitTests.Toggles.UpdateFPS;
-        float renderHz = EditorUnitTests.Toggles.RenderFPS;
-        float fixedHz = EditorUnitTests.Toggles.FixedFPS;
+        float updateHz = unitTestSettings.UpdateFPS;
+        float renderHz = unitTestSettings.RenderFPS;
+        float fixedHz = unitTestSettings.FixedFPS;
 
         int primaryX = NativeMethods.GetSystemMetrics(0);
         int primaryY = NativeMethods.GetSystemMetrics(1);
@@ -492,17 +387,17 @@ internal class Program
             DefaultUserSettings = new UserSettings()
             {
                 VSync = EVSyncMode.Off,
-                RenderLibrary = EditorUnitTests.Toggles.RenderAPI,
-                PhysicsLibrary = EditorUnitTests.Toggles.PhysicsAPI,
+                RenderLibrary = unitTestSettings.RenderAPI,
+                PhysicsLibrary = unitTestSettings.PhysicsAPI,
             },
-            GPURenderDispatch = EditorUnitTests.Toggles.GPURenderDispatch,
+            GPURenderDispatch = unitTestSettings.GPURenderDispatch,
             TargetUpdatesPerSecond = updateHz,
             TargetFramesPerSecond = renderHz,
             FixedFramesPerSecond = fixedHz,
-            NetworkingType = GameStartupSettings.ENetworkingType.Client,
-            AudioArchitectureV2Override = EditorUnitTests.Toggles.AudioArchitectureV2,
-            AudioTransportOverride = EditorUnitTests.Toggles.AudioTransport,
-            AudioEffectsOverride = EditorUnitTests.Toggles.AudioEffects,
+            NetworkingType = ENetworkingType.Client,
+            AudioArchitectureV2Override = unitTestSettings.AudioArchitectureV2,
+            AudioTransportOverride = unitTestSettings.AudioTransport,
+            AudioEffectsOverride = unitTestSettings.AudioEffects,
         };
 
         // Allow overriding the window title for multi-instance local testing.
@@ -520,7 +415,7 @@ internal class Program
         // Allow overriding networking mode via env var for quick local testing.
         string? netOverride = Environment.GetEnvironmentVariable("XRE_NET_MODE");
         if (!string.IsNullOrWhiteSpace(netOverride) &&
-            Enum.TryParse<GameStartupSettings.ENetworkingType>(netOverride, true, out var mode))
+            Enum.TryParse<ENetworkingType>(netOverride, true, out var mode))
         {
             settings.NetworkingType = mode;
             EngineDebug.Out($"Networking mode overridden to {mode} via XRE_NET_MODE.");
@@ -544,11 +439,11 @@ internal class Program
             EngineDebug.Out($"UDP multicast port overridden to {udpMulticastPort} via XRE_UDP_MULTICAST_PORT.");
         }
 
-        if (EditorUnitTests.Toggles.VRPawn && (!EditorUnitTests.Toggles.EmulatedVRPawn || EditorUnitTests.Toggles.PreviewVRStereoViews))
+        if (unitTestSettings.VRPawn && (!unitTestSettings.EmulatedVRPawn || unitTestSettings.PreviewVRStereoViews))
         {
             settings.RunVRInPlace = true;
             EditorVR.ApplyOpenVRSettings(settings);
-            settings.VRRuntime = EditorUnitTests.Toggles.UseOpenXR
+            settings.VRRuntime = unitTestSettings.UseOpenXR
                 ? EVRRuntime.OpenXR
                 : EVRRuntime.OpenVR;
         }

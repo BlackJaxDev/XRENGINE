@@ -6,6 +6,21 @@ namespace XREngine.Runtime.Bootstrap;
 
 public static class BootstrapModelBuilder
 {
+    public static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
+    {
+        if (!RuntimeBootstrapState.Settings.HasAnyModelsToImport)
+            return;
+
+        var editorBridge = BootstrapEditorBridge.Current;
+        if (editorBridge is null)
+        {
+            Debug.LogWarning("[BootstrapWorldFactory] Model import requested, but no bootstrap import hook is registered.");
+            return;
+        }
+
+        editorBridge.ImportModels(desktopDir, rootNode, characterParentNode);
+    }
+
     public static void AddSkybox(SceneNode rootNode, XRTexture2D? skyEquirect)
     {
         var skybox = new SceneNode(rootNode) { Name = "TestSkyboxNode" };

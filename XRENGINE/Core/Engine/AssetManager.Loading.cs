@@ -316,7 +316,7 @@ namespace XREngine
             if (Engine.Jobs.RemoteTransport?.IsConnected != true)
                 return false;
 
-            return Engine.Networking is Engine.ClientNetworkingManager or Engine.PeerToPeerNetworkingManager;
+            return Engine.Networking is ClientNetworkingManager or PeerToPeerNetworkingManager;
         }
 
         private async Task<bool> TryDownloadAssetFromRemoteAsync(string filePath, Type assetType, JobPriority priority, CancellationToken cancellationToken, IReadOnlyDictionary<string, string>? additionalMetadata = null)

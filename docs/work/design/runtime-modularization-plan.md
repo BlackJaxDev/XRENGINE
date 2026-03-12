@@ -13,7 +13,7 @@ This is a design document for the refactor, not an implementation record.
 
 Implementation companion:
 
-- [Phase 1 Execution Checklist](runtime-modularization-phase1-checklist.md)
+- [Runtime Modularization Phase 2 TODO](../todo/runtime-modularization-phase2-todo.md)
 
 ## Why This Refactor Exists
 

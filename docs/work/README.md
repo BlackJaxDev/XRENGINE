@@ -13,6 +13,7 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 - [AOT TODO For Final Game Builds](todo/aot-final-game-builds.md)
 - [HBAO And HBAO+ Implementation TODO](todo/hbao-hbao-plus-implementation-todo.md)
 - [Non-HBAO AO Remediation TODO](todo/non-hbao-ambient-occlusion-remediation.md)
+- [Runtime Modularization Phase 2 TODO](todo/runtime-modularization-phase2-todo.md)
 - [Voxel Cone Tracing And VXAO Implementation TODO](todo/voxel-cone-tracing-and-vxao-implementation-todo.md)
 
 ## Design & Investigations
@@ -27,7 +28,6 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 - [VXAO Implementation Plan](design/vxao-implementation-plan.md)
 - [Slang Shader Cross-Compile Plan](design/slang-shader-cross-compile-plan.md)
 - [Runtime Modularization And Bootstrap Extraction Plan](design/runtime-modularization-plan.md)
-- [Phase 1 Execution Checklist - Runtime Bootstrap Extraction](design/runtime-modularization-phase1-checklist.md)
 
 ## Notes
 - Treat these documents as working areas for active refactors and planning.

@@ -121,6 +121,7 @@
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Modeling\XREngine.Modeling.csproj" />
     <ProjectReference Include="..\XREngine.Profiler.UI\XREngine.Profiler.UI.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Bootstrap\XREngine.Runtime.Bootstrap.csproj" />
     <ProjectReference Include="..\XREngine\XREngine.csproj" />
   </ItemGroup>
 

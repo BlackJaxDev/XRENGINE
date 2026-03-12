@@ -4,12 +4,16 @@ using System.Collections.Generic;
 using System.Linq;
 using XREngine.Audio;
 using XREngine.Rendering.UI;
+using XREngine.Runtime.Bootstrap;
 
 namespace XREngine.Editor;
 
 public static partial class EditorUnitTests
 {
     public static Settings Toggles { get; set; } = new();
+
+    public static void SyncTogglesFromRuntime()
+        => Toggles = Settings.FromRuntime(RuntimeBootstrapState.Settings);
 
     public enum UnitTestModelImportKind
     {
@@ -207,5 +211,11 @@ public static partial class EditorUnitTests
         public float RenderFPS = 0.0f;
         public float UpdateFPS = 60.0f;
         public float FixedFPS = 30.0f;
+
+        public static Settings FromRuntime(UnitTestingWorldSettings settings)
+            => JsonConvert.DeserializeObject<Settings>(JsonConvert.SerializeObject(settings)) ?? new();
+
+        public UnitTestingWorldSettings ToRuntimeSettings()
+            => JsonConvert.DeserializeObject<UnitTestingWorldSettings>(JsonConvert.SerializeObject(this)) ?? new();
     }
 }

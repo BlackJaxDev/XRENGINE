@@ -30,9 +30,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
+    <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
     <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
   </ItemGroup>
 
