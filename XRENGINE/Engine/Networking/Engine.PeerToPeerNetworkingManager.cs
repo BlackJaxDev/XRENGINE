@@ -2,9 +2,7 @@
 
 namespace XREngine
 {
-    public static partial class Engine
-    {
-        public class PeerToPeerNetworkingManager : BaseNetworkingManager
+    public class PeerToPeerNetworkingManager : BaseNetworkingManager
         {
             public override bool IsServer => false;
             public override bool IsClient => false;
@@ -25,6 +23,7 @@ namespace XREngine
                 //Send to all peers
                 await ConsumeAndSendUDPQueue(UdpMulticastSender, MulticastEndPoint);
             }
+
         }
-    }
+
 }

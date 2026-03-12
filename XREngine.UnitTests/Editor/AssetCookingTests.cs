@@ -29,7 +29,7 @@ public class AssetCookingTests
 
             var startup = new GameStartupSettings
             {
-                NetworkingType = GameStartupSettings.ENetworkingType.Server,
+                NetworkingType = ENetworkingType.Server,
                 LogOutputToFile = false
             };
             string startupYaml = AssetManager.Serializer.Serialize(startup);

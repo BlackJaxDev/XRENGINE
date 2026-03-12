@@ -21,29 +21,34 @@ public static class BootstrapPawnFactory
     public static SceneNode? CreatePlayerPawn(bool setUI, bool isServer, SceneNode rootNode)
     {
         var settings = RuntimeBootstrapState.Settings;
-        _ = setUI;
 
         SceneNode? characterPawnModelParentNode = null;
         if (settings.VRPawn)
         {
             if (settings.Locomotion)
             {
-                characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, out var _, out _, out _, out _);
+                characterPawnModelParentNode = CreateCharacterVRPawn(rootNode, out var pawn, out _, out _, out _);
                 if (settings.AllowEditingInVR || settings.AddCameraVRPickup)
                 {
-                    SceneNode cameraNode = CreateCamera(rootNode, out _, null);
-                    _ = CreateDesktopCamera(cameraNode, isServer, settings.AllowEditingInVR && !settings.AddCameraVRPickup, settings.AddCameraVRPickup, false);
+                    SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
+                    var desktopPawn = CreateDesktopCamera(cameraNode, isServer, settings.AllowEditingInVR && !settings.AddCameraVRPickup, settings.AddCameraVRPickup, false);
+                    if (setUI)
+                        BootstrapEditorBridge.Current?.CreateEditorUi(rootNode, camComp, desktopPawn);
                 }
+                else if (setUI)
+                    BootstrapEditorBridge.Current?.CreateEditorUi(characterPawnModelParentNode, null, pawn);
             }
             else
                 CreateFlyingVRPawn(rootNode);
         }
         else if (settings.Locomotion)
-            characterPawnModelParentNode = CreateDesktopCharacterPawn(rootNode);
+            characterPawnModelParentNode = CreateDesktopCharacterPawn(rootNode, setUI);
         else
         {
-            SceneNode cameraNode = CreateCamera(rootNode, out _, null);
-            _ = CreateDesktopCamera(cameraNode, isServer, true, false, true);
+            SceneNode cameraNode = CreateCamera(rootNode, out var camComp, null);
+            var pawn = CreateDesktopCamera(cameraNode, isServer, true, false, true);
+            if (setUI)
+                BootstrapEditorBridge.Current?.CreateEditorUi(rootNode, camComp, pawn);
         }
 
         return characterPawnModelParentNode;
@@ -220,7 +225,6 @@ public static class BootstrapPawnFactory
     private static PawnComponent? CreateDesktopCamera(SceneNode cameraNode, bool isServer, bool flyable, bool addPhysicsBody, bool addListener)
     {
         var settings = RuntimeBootstrapState.Settings;
-        _ = isServer;
 
         if (addPhysicsBody)
         {
@@ -254,7 +258,10 @@ public static class BootstrapPawnFactory
         PawnComponent pawnComp;
         if (flyable)
         {
-            pawnComp = cameraNode.AddComponent<FlyingCameraPawnComponent>()!;
+            var editorBridge = !isServer ? BootstrapEditorBridge.Current : null;
+            pawnComp = editorBridge is not null
+                ? editorBridge.CreateFlyableCameraPawn(cameraNode) ?? cameraNode.AddComponent<FlyingCameraPawnComponent>()!
+                : cameraNode.AddComponent<FlyingCameraPawnComponent>()!;
             pawnComp.Name = "Desktop Camera Pawn (Flyable)";
         }
         else
@@ -267,7 +274,7 @@ public static class BootstrapPawnFactory
         return pawnComp;
     }
 
-    private static SceneNode CreateDesktopCharacterPawn(SceneNode rootNode)
+    private static SceneNode CreateDesktopCharacterPawn(SceneNode rootNode, bool setUI)
     {
         var settings = RuntimeBootstrapState.Settings;
 
@@ -312,6 +319,10 @@ public static class BootstrapPawnFactory
         characterComp.CameraComponent = camComp;
         characterComp.InputOrientationTransform = cameraNode.Transform;
         characterComp.ViewRotationTransform = cameraOffsetTfm;
+
+        if (setUI && camComp is not null)
+            BootstrapEditorBridge.Current?.CreateEditorUi(rootNode, camComp, characterComp);
+
         characterComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
 
         return footNode;

@@ -21,6 +21,7 @@ public enum StaticModelMaterialMode
 public enum UnitTestWorldKind
 {
     Default,
+    AudioTesting,
     MathIntersections,
     MeshEditing,
     UberShader,

@@ -9,7 +9,13 @@
   <Project Path="XREngine.Modeling/XREngine.Modeling.csproj" />
   <Project Path="XREngine.Profiler.UI/XREngine.Profiler.UI.csproj" />
   <Project Path="XREngine.Profiler/XREngine.Profiler.csproj" />
+  <Project Path="XREngine.Runtime.AnimationIntegration/XREngine.Runtime.AnimationIntegration.csproj" />
+  <Project Path="XREngine.Runtime.AudioIntegration/XREngine.Runtime.AudioIntegration.csproj" />
   <Project Path="XREngine.Runtime.Bootstrap/XREngine.Runtime.Bootstrap.csproj" />
+  <Project Path="XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" />
+  <Project Path="XREngine.Runtime.InputIntegration/XREngine.Runtime.InputIntegration.csproj" />
+  <Project Path="XREngine.Runtime.ModelingBridge/XREngine.Runtime.ModelingBridge.csproj" />
+  <Project Path="XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" />
   <Project Path="XREngine.Server/XREngine.Server.csproj" />
   <Project Path="XREngine.UnitTests/XREngine.UnitTests.csproj" />
   <Project Path="XREngine.VRClient/XREngine.VRClient.csproj" />

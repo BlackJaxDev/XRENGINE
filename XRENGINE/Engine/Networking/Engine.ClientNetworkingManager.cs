@@ -14,9 +14,7 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine
 {
-    public static partial class Engine
-    {
-        public class ClientNetworkingManager : BaseNetworkingManager
+    public class ClientNetworkingManager : BaseNetworkingManager
         {
             public override bool IsServer => false;
             public override bool IsClient => true;
@@ -50,7 +48,7 @@ namespace XREngine
 
                     if (_tickRegistered)
                     {
-                        Time.Timer.UpdateFrame -= TickClientNetwork;
+                        Engine.Time.Timer.UpdateFrame -= TickClientNetwork;
                         _tickRegistered = false;
                     }
 
@@ -145,7 +143,7 @@ namespace XREngine
                 if (_tickRegistered)
                     return;
 
-                Time.Timer.UpdateFrame += TickClientNetwork;
+                Engine.Time.Timer.UpdateFrame += TickClientNetwork;
                 _tickRegistered = true;
             }
 
@@ -196,7 +194,7 @@ namespace XREngine
 
             private void SendHeartbeat()
             {
-                foreach (var player in State.LocalPlayers)
+                foreach (var player in Engine.State.LocalPlayers)
                 {
                     if (player is null)
                         continue;
@@ -219,7 +217,7 @@ namespace XREngine
 
             private void SendLocalInputSnapshots()
             {
-                foreach (var player in State.LocalPlayers)
+                foreach (var player in Engine.State.LocalPlayers)
                 {
                     if (player is null)
                         continue;
@@ -245,7 +243,7 @@ namespace XREngine
 
             private void SendLocalTransformSnapshots()
             {
-                foreach (var player in State.LocalPlayers)
+                foreach (var player in Engine.State.LocalPlayers)
                 {
                     if (player is null)
                         continue;
@@ -274,7 +272,7 @@ namespace XREngine
 
             private void SendPlayerLeaveForLocals(string reason)
             {
-                foreach (var player in State.LocalPlayers)
+                foreach (var player in Engine.State.LocalPlayers)
                 {
                     if (player is null)
                         continue;
@@ -323,7 +321,7 @@ namespace XREngine
 
             private void AttachAssignmentToLocalPlayer(PlayerAssignment assignment)
             {
-                foreach (var player in State.LocalPlayers)
+                foreach (var player in Engine.State.LocalPlayers)
                 {
                     if (player is null)
                         continue;
@@ -371,7 +369,7 @@ namespace XREngine
 
                 var instance = XRWorldInstance.GetOrInitWorld(world);
 
-                foreach (var window in Windows)
+                foreach (var window in Engine.Windows)
                 {
                     if (window is null)
                         continue;
@@ -446,7 +444,7 @@ namespace XREngine
                     return;
 
                 // If this leave refers to a local player, clear the server index
-                foreach (var player in State.LocalPlayers)
+                foreach (var player in Engine.State.LocalPlayers)
                 {
                     if (player is null)
                         continue;
@@ -475,7 +473,7 @@ namespace XREngine
 
                 if (error.Fatal)
                 {
-                    foreach (var player in State.LocalPlayers)
+                    foreach (var player in Engine.State.LocalPlayers)
                     {
                         if (player is null)
                             continue;
@@ -525,8 +523,8 @@ namespace XREngine
                     ControlledPawn = pawn
                 };
 
-                if (!State.RemotePlayers.Contains(controller))
-                    State.RemotePlayers.Add(controller);
+                if (!Engine.State.RemotePlayers.Contains(controller))
+                    Engine.State.RemotePlayers.Add(controller);
 
                 var remote = new RemotePlayerState(serverPlayerIndex, controller, pawn);
                 _remotePlayers[serverPlayerIndex] = remote;
@@ -577,7 +575,7 @@ namespace XREngine
                     node.Destroy();
                 }
 
-                State.RemotePlayers.Remove(remote.Controller);
+                Engine.State.RemotePlayers.Remove(remote.Controller);
                 remote.Controller.Destroy();
             }
 
@@ -592,7 +590,7 @@ namespace XREngine
 
             private static XRWorldInstance? ResolvePrimaryWorldInstance()
             {
-                foreach (var window in Windows)
+                foreach (var window in Engine.Windows)
                 {
                     if (window?.TargetWorldInstance is not null)
                         return window.TargetWorldInstance;
@@ -632,8 +630,9 @@ namespace XREngine
             ~ClientNetworkingManager()
             {
                 if (_tickRegistered)
-                    Time.Timer.UpdateFrame -= TickClientNetwork;
+                    Engine.Time.Timer.UpdateFrame -= TickClientNetwork;
             }
+
         }
-    }
+
 }

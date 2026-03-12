@@ -11,11 +11,11 @@ namespace XREngine
     /// </summary>
     public sealed class RemoteJobNetworkingTransport : IRemoteJobTransport, IDisposable
     {
-        private readonly Engine.BaseNetworkingManager _networking;
+        private readonly BaseNetworkingManager _networking;
         private readonly ConcurrentDictionary<Guid, TaskCompletionSource<RemoteJobResponse>> _pending = new();
         private bool _disposed;
 
-        public RemoteJobNetworkingTransport(Engine.BaseNetworkingManager networking)
+        public RemoteJobNetworkingTransport(BaseNetworkingManager networking)
         {
             _networking = networking ?? throw new ArgumentNullException(nameof(networking));
             _networking.RemoteJobResponseReceived += OnResponse;

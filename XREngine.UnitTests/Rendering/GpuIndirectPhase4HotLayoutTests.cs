@@ -69,7 +69,7 @@ public sealed class GpuIndirectPhase4HotLayoutTests
     [Test]
     public void Phase4_ColdPayloadMigration_SourceContracts_ArePresent()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Rendering/Commands/GPUIndirectRenderCommand.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Commands/GPUIndirectRenderCommand.cs");
 
         source.ShouldContain("public struct GPUIndirectRenderCommandCold");
         source.ShouldContain("public GPUIndirectRenderCommandCold ToCold()");

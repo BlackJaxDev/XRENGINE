@@ -37,7 +37,7 @@ namespace XREngine.Components
         private bool _autoListen = true;
         private bool _useBroadcastFallback = true;
         private string _magicTag = DefaultMagicTag;
-        private GameStartupSettings.ENetworkingType _advertisedRole = GameStartupSettings.ENetworkingType.Server;
+        private ENetworkingType _advertisedRole = ENetworkingType.Server;
 
         /// <summary>
         /// Called when a new host/peer is discovered.
@@ -127,7 +127,7 @@ namespace XREngine.Components
         /// <summary>
         /// Role this instance advertises (Server -> clients connect; P2PClient -> peers connect as p2p clients).
         /// </summary>
-        public GameStartupSettings.ENetworkingType AdvertisedRole
+        public ENetworkingType AdvertisedRole
         {
             get => _advertisedRole;
             set => SetField(ref _advertisedRole, value);
@@ -215,11 +215,11 @@ namespace XREngine.Components
         /// <summary>
         /// Attempts to connect to a discovered host using the advertisement payload.
         /// </summary>
-        public Task<Engine.BaseNetworkingManager?> ConnectAsync(DiscoveryAnnouncement announcement, CancellationToken cancellationToken = default)
+        public Task<BaseNetworkingManager?> ConnectAsync(DiscoveryAnnouncement announcement, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(announcement);
 
-            var tcs = new TaskCompletionSource<Engine.BaseNetworkingManager?>();
+            var tcs = new TaskCompletionSource<BaseNetworkingManager?>();
 
             void ConnectAction()
             {
@@ -239,16 +239,16 @@ namespace XREngine.Components
             if (!enqueued && cancellationToken.IsCancellationRequested)
                 tcs.TrySetCanceled(cancellationToken);
 
-            cancellationToken.Register(static state => ((TaskCompletionSource<Engine.BaseNetworkingManager?>)state!).TrySetCanceled(), tcs);
+            cancellationToken.Register(static state => ((TaskCompletionSource<BaseNetworkingManager?>)state!).TrySetCanceled(), tcs);
             return tcs.Task;
         }
 
         /// <summary>
         /// Initializes this application as a server (or p2p host) using the advertised settings and starts networking.
         /// </summary>
-        public Task<Engine.BaseNetworkingManager?> StartServerAsync(GameStartupSettings? settings = null, CancellationToken cancellationToken = default)
+        public Task<BaseNetworkingManager?> StartServerAsync(GameStartupSettings? settings = null, CancellationToken cancellationToken = default)
         {
-            var tcs = new TaskCompletionSource<Engine.BaseNetworkingManager?>();
+            var tcs = new TaskCompletionSource<BaseNetworkingManager?>();
 
             void StartAction()
             {
@@ -269,7 +269,7 @@ namespace XREngine.Components
             if (!enqueued && cancellationToken.IsCancellationRequested)
                 tcs.TrySetCanceled(cancellationToken);
 
-            cancellationToken.Register(static state => ((TaskCompletionSource<Engine.BaseNetworkingManager?>)state!).TrySetCanceled(), tcs);
+            cancellationToken.Register(static state => ((TaskCompletionSource<BaseNetworkingManager?>)state!).TrySetCanceled(), tcs);
             return tcs.Task;
         }
 
@@ -284,9 +284,9 @@ namespace XREngine.Components
             settings.UdpClientRecievePort = announcement.UdpClientReceivePort;
             settings.NetworkingType = announcement.AdvertisedRole switch
             {
-                GameStartupSettings.ENetworkingType.Server => GameStartupSettings.ENetworkingType.Client,
-                GameStartupSettings.ENetworkingType.P2PClient => GameStartupSettings.ENetworkingType.P2PClient,
-                _ => GameStartupSettings.ENetworkingType.Local,
+                ENetworkingType.Server => ENetworkingType.Client,
+                ENetworkingType.P2PClient => ENetworkingType.P2PClient,
+                _ => ENetworkingType.Local,
             };
 
             return settings;
@@ -413,11 +413,11 @@ namespace XREngine.Components
             if (!string.IsNullOrWhiteSpace(preferred) && !string.Equals(preferred, "0.0.0.0", StringComparison.Ordinal))
                 return preferred;
 
-            foreach (string ip in Engine.BaseNetworkingManager.GetAllLocalIPv4(NetworkInterfaceType.Ethernet))
+            foreach (string ip in BaseNetworkingManager.GetAllLocalIPv4(NetworkInterfaceType.Ethernet))
                 if (!string.IsNullOrWhiteSpace(ip))
                     return ip;
 
-            foreach (string ip in Engine.BaseNetworkingManager.GetAllLocalIPv4(NetworkInterfaceType.Wireless80211))
+            foreach (string ip in BaseNetworkingManager.GetAllLocalIPv4(NetworkInterfaceType.Wireless80211))
                 if (!string.IsNullOrWhiteSpace(ip))
                     return ip;
 
@@ -519,24 +519,4 @@ namespace XREngine.Components
         }
     }
 
-    /// <summary>
-    /// Payload broadcast during discovery.
-    /// </summary>
-    public class DiscoveryAnnouncement
-    {
-        public string Magic { get; set; } = NetworkDiscoveryComponent.DefaultMagicTag;
-        public string BeaconId { get; set; } = string.Empty;
-        public string Host { get; set; } = string.Empty;
-        public string MulticastGroup { get; set; } = "239.0.0.222";
-        public int MulticastPort { get; set; }
-            = 5000;
-        public int UdpServerSendPort { get; set; }
-            = 5000;
-        public int UdpClientReceivePort { get; set; }
-            = 5001;
-        public long TimestampUtc { get; set; }
-            = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        public GameStartupSettings.ENetworkingType AdvertisedRole { get; set; }
-            = GameStartupSettings.ENetworkingType.Server;
-    }
 }

@@ -18,9 +18,7 @@ using XREngine.Timers;
 
 namespace XREngine
 {
-    public static partial class Engine
-    {
-        public enum EStateChangeType : byte
+    public enum EStateChangeType : byte
         {
             /// <summary>
             /// Invalid state change type.
@@ -123,8 +121,8 @@ namespace XREngine
             HumanoidPoseFrame,
         }
 
-        [MemoryPackable]
-        public sealed partial class StateChangeInfo
+    [MemoryPackable]
+    public sealed partial class StateChangeInfo
         {
             public StateChangeInfo() { }
             [MemoryPackConstructor]
@@ -138,7 +136,7 @@ namespace XREngine
             public string Data { get; set; } = string.Empty;
         }
 
-        public abstract class BaseNetworkingManager : XRBase, IDisposable
+    public abstract class BaseNetworkingManager : XRBase, IDisposable
         {
             internal static long CurrentEngineTicks()
                 => Engine.ElapsedTicks;
@@ -180,7 +178,7 @@ namespace XREngine
             protected BaseNetworkingManager(string? peerId = null)
             {
                 LocalPeerId = string.IsNullOrWhiteSpace(peerId) ? Guid.NewGuid().ToString("N") : peerId;
-                Time.Timer.UpdateFrame += OnUpdateFrame;
+                Engine.Time.Timer.UpdateFrame += OnUpdateFrame;
             }
             ~BaseNetworkingManager()
                 => Dispose(false);
@@ -200,7 +198,7 @@ namespace XREngine
                 if (disposing)
                 {
                     _consumeCts.Cancel();
-                    Time.Timer.UpdateFrame -= OnUpdateFrame;
+                    Engine.Time.Timer.UpdateFrame -= OnUpdateFrame;
 
                     _consumeCts.Dispose();
 
@@ -217,7 +215,7 @@ namespace XREngine
                 }
                 else
                 {
-                    Time.Timer.UpdateFrame -= OnUpdateFrame;
+                    Engine.Time.Timer.UpdateFrame -= OnUpdateFrame;
                     DisposeSockets();
                 }
             }
@@ -1424,7 +1422,7 @@ namespace XREngine
             //}
             #endregion
         }
-    }
+
     [MemoryPackable]
     internal partial record struct IdValue(string key, byte[] value)
     {

@@ -12,9 +12,7 @@ using XREngine.Input;
 
 namespace XREngine
 {
-    public static partial class Engine
-    {
-        public class ServerNetworkingManager : BaseNetworkingManager
+    public class ServerNetworkingManager : BaseNetworkingManager
         {
             public override bool IsServer => true;
             public override bool IsClient => false;
@@ -128,7 +126,7 @@ namespace XREngine
                         isNewPlayer = true;
                     }
 
-                    resolvedInstance = ServerInstanceResolver?.Invoke(request);
+                    resolvedInstance = Engine.ServerInstanceResolver?.Invoke(request);
                     connection.InstanceId = resolvedInstance?.InstanceId
                         ?? request.InstanceId
                         ?? (connection.InstanceId != Guid.Empty ? connection.InstanceId : Guid.NewGuid());
@@ -191,8 +189,8 @@ namespace XREngine
                         ControlledPawn = connection.Pawn
                     };
                     connection.Pawn.Controller = controller;
-                    if (!State.RemotePlayers.Contains(controller))
-                        State.RemotePlayers.Add(controller);
+                    if (!Engine.State.RemotePlayers.Contains(controller))
+                        Engine.State.RemotePlayers.Add(controller);
                 }
             }
 
@@ -351,7 +349,7 @@ namespace XREngine
 
             private static XRWorldInstance? ResolvePrimaryWorldInstance()
             {
-                foreach (var window in Windows)
+                foreach (var window in Engine.Windows)
                 {
                     if (window?.TargetWorldInstance is not null)
                         return window.TargetWorldInstance;
@@ -430,6 +428,7 @@ namespace XREngine
 
                 BroadcastServerError(error, compress: true, resendOnFailedAck: false);
             }
-        }
-    }
+
+            }
+
 }

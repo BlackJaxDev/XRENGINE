@@ -109,10 +109,10 @@ namespace XREngine
             switch (appType)
             {
                 default:
-                case GameStartupSettings.ENetworkingType.Local:
+                case ENetworkingType.Local:
                     Networking = null;
                     break;
-                case GameStartupSettings.ENetworkingType.Server:
+                case ENetworkingType.Server:
                     var server = new ServerNetworkingManager();
                     Networking = server;
                     server.Start(
@@ -120,7 +120,7 @@ namespace XREngine
                         startupSettings.UdpMulticastPort,
                         startupSettings.UdpClientRecievePort);
                     break;
-                case GameStartupSettings.ENetworkingType.Client:
+                case ENetworkingType.Client:
                     var client = new ClientNetworkingManager();
                     Networking = client;
                     client.Start(
@@ -129,7 +129,7 @@ namespace XREngine
                         IPAddress.Parse(startupSettings.ServerIP),
                         startupSettings.UdpServerSendPort);
                     break;
-                case GameStartupSettings.ENetworkingType.P2PClient:
+                case ENetworkingType.P2PClient:
                     var p2pClient = new PeerToPeerNetworkingManager();
                     Networking = p2pClient;
                     p2pClient.Start(
