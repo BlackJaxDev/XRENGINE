@@ -2,10 +2,8 @@
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Components;
 using XREngine.Components.Scene.Transforms;
-using XREngine.Core.Attributes;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
-using XREngine.Rendering;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
@@ -46,7 +44,7 @@ namespace XREngine.Scene
     /// </example>
     [Serializable]
     [MemoryPackable]
-    public sealed partial class SceneNode : XRWorldObjectBase, IPostCookedBinaryDeserialize
+    public sealed partial class SceneNode : RuntimeWorldObjectBase, IPostCookedBinaryDeserialize
     {
         #region Constants and Fields
 
@@ -170,7 +168,7 @@ namespace XREngine.Scene
         {
             Transform = transform ?? (TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform();
 
-            World = world as XRWorldInstance;
+            World = world;
             Name = name ?? DefaultName;
             ComponentsInternal.PostAnythingAdded += OnComponentAdded;
             ComponentsInternal.PostAnythingRemoved += OnComponentRemoved;

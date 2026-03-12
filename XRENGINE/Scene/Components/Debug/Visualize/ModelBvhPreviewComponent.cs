@@ -53,7 +53,7 @@ public sealed class ModelBvhPreviewComponent : DebugVisualize3DComponent
         set => SetField(ref _cullNodesAgainstCamera, value);
     }
 
-    protected internal override void OnComponentActivated()
+    protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
         _missingModelLogged = false;

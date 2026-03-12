@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Extensions;
@@ -461,7 +461,7 @@ public class LandscapeComponent : XRComponent, IRenderable
 
     #region Component Lifecycle
 
-    protected internal override void OnComponentActivated()
+    protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
 
@@ -487,7 +487,7 @@ public class LandscapeComponent : XRComponent, IRenderable
         RegisterTick(ETickGroup.DuringPhysics, ETickOrder.Scene, Update);
     }
 
-    protected internal override void OnComponentDeactivated()
+    protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
 
@@ -1385,9 +1385,9 @@ public class LandscapeComponent : XRComponent, IRenderable
     {
         // Get the active camera's world position
         // In a real implementation, this would query the rendering system
-        if (World?.RootNodes != null)
+        if (WorldAs<XREngine.Rendering.XRWorldInstance>() is { } world)
         {
-            foreach (var node in World.RootNodes)
+            foreach (var node in world.RootNodes)
             {
                 var camera = node.GetComponent<CameraComponent>();
                 if (camera != null)
@@ -1490,9 +1490,9 @@ public class LandscapeComponent : XRComponent, IRenderable
     private Vector4[] GetFrustumPlanes()
     {
         // Get frustum from active camera
-        if (World?.RootNodes != null)
+        if (WorldAs<XREngine.Rendering.XRWorldInstance>() is { } world)
         {
-            foreach (var node in World.RootNodes)
+            foreach (var node in world.RootNodes)
             {
                 var camera = node.GetComponent<CameraComponent>();
                 if (camera != null && camera.Camera != null)

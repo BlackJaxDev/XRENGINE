@@ -93,10 +93,10 @@ namespace XREngine.Data.Components.Scene
             }
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            Engine.VRState.ViewInformation = (LeftEyeCamera, RightEyeCamera, World, SceneNode);
+            Engine.VRState.ViewInformation = (LeftEyeCamera, RightEyeCamera, WorldAs<XREngine.Rendering.XRWorldInstance>(), SceneNode);
         }
     }
 }

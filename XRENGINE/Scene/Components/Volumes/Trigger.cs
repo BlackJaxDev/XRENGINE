@@ -41,12 +41,12 @@ namespace XREngine.Components.Scene.Volumes
 
         public HashSet<XRComponent> OverlappingComponents { get; } = [];
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             RegisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Scene, Tick);
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             UnregisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Scene, Tick);
             base.OnComponentDeactivated();
@@ -58,7 +58,7 @@ namespace XREngine.Components.Scene.Volumes
             if (!TrackContacts)
                 return;
 
-            var scene = World?.PhysicsScene;
+            var scene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
             if (scene is null)
                 return;
 

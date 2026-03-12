@@ -105,13 +105,13 @@ public class FaceMotion3DCaptureComponent : XRComponent
         set => SetField(ref _headLookScale, value);
     }
 
-    protected internal override void OnComponentActivated()
+    protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
         StartStreaming();
     }
 
-    protected internal override void OnComponentDeactivated()
+    protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
         StopStreaming();

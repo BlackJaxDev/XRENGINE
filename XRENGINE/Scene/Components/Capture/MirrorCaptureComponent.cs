@@ -108,13 +108,13 @@ namespace XREngine.Components.Lights
         private readonly XRFrameBuffer _renderFBO;
         protected XRFrameBuffer RenderFBO => _renderFBO;
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             InitializeForCapture();
             Engine.Time.Timer.SwapBuffers += SwapBuffers;
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             Engine.Time.Timer.SwapBuffers -= SwapBuffers;
@@ -220,7 +220,7 @@ namespace XREngine.Components.Lights
             _mirrorCamera = new(_mirrorTransform);
             Viewport = new XRViewport(null, width, height)
             {
-                WorldInstanceOverride = World,
+                WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>(),
                 Camera = _mirrorCamera,
                 SetRenderPipelineFromCamera = false,
                 AutomaticallyCollectVisible = false,

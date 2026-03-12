@@ -18,124 +18,6 @@ using XREngine.Timers;
 
 namespace XREngine
 {
-    public enum EStateChangeType : byte
-        {
-            /// <summary>
-            /// Invalid state change type.
-            /// </summary>
-            Invalid = 0,
-            /// <summary>
-            /// Sent by the server to all clients when the world changes.
-            /// Sent by a client to the server to request to change the world.
-            /// </summary>
-            WorldChange,
-            /// <summary>
-            /// Sent by the server to all clients when the game mode changes.
-            /// Sent by a client to the server to request to change the game mode.
-            /// </summary>
-            GameModeChange,
-            /// <summary>
-            /// Sent by the server to all clients when a pawn changes possession.
-            /// Sent by a client to the server to request to change possession of a pawn.
-            /// </summary>
-            PawnPossessionChange,
-            /// <summary>
-            /// Sent by the server to all clients when a world object is created.
-            /// Sent by a client to the server to request to create a world object.
-            /// </summary>
-            WorldObjectCreated,
-            /// <summary>
-            /// Sent by the server to all clients when a world object is destroyed.
-            /// Sent by a client to the server to request to destroy a world object.
-            /// </summary>
-            WorldObjectDestroyed,
-            /// <summary>
-            /// Sent by the server to all clients when a scene node is created.
-            /// Sent by a client to the server to request to create a scene node.
-            /// </summary>
-            SceneNodeCreated,
-            /// <summary>
-            /// Sent by the server to all clients when a scene node is destroyed.
-            /// Sent by a client to the server to request to destroy a scene node.
-            /// </summary>
-            SceneNodeDestroyed,
-            /// <summary>
-            /// Sent by the server to all clients when a component is created.
-            /// Sent by a client to the server to request to create a component.
-            /// </summary>
-            ComponentCreated,
-            /// <summary>
-            /// Sent by the server to all clients when a component is destroyed.
-            /// Sent by a client to the server to request to destroy a component.
-            /// </summary>
-            ComponentDestroyed,
-            /// <summary>
-            /// Sent by a client to the server to request to join the game.
-            /// Sent by the server to all clients when a player joins.
-            /// </summary>
-            PlayerJoin,
-            /// <summary>
-            /// Sent by the server to confirm the authoritative player slot for a joining client.
-            /// </summary>
-            PlayerAssignment,
-            /// <summary>
-            /// Sent by a client to the server to request to join the game.
-            /// Sent by the server to all clients when a player leaves.
-            /// </summary>
-            PlayerLeave,
-            /// <summary>
-            /// Heartbeat to keep a connection alive and update liveness state.
-            /// </summary>
-            Heartbeat,
-            /// <summary>
-            /// Sent by a client to the server with the latest local input values.
-            /// </summary>
-            PlayerInputSnapshot,
-            /// <summary>
-            /// Sent by the server to all clients to update the transform of a player.
-            /// </summary>
-            PlayerTransformUpdate,
-            /// <summary>
-            /// Sent by a client to the server to receive updates for player (usually if they're close enough to be relevant).
-            /// </summary>
-            RequestPlayerUpdates,
-            /// <summary>
-            /// Sent by a client to the server to stop receiving updates for a player.
-            /// </summary>
-            UnrequestPlayerUpdates,
-            /// <summary>
-            /// Sent by a client to request remote job execution (e.g., remote asset load).
-            /// </summary>
-            RemoteJobRequest,
-            /// <summary>
-            /// Sent by the remote host in response to a remote job request.
-            /// </summary>
-            RemoteJobResponse,
-            /// <summary>
-            /// Server-to-client error/status message (HTTP-like codes).
-            /// </summary>
-            ServerError,
-            /// <summary>
-            /// High-density VR humanoid pose packet (baseline or delta).
-            /// </summary>
-            HumanoidPoseFrame,
-        }
-
-    [MemoryPackable]
-    public sealed partial class StateChangeInfo
-        {
-            public StateChangeInfo() { }
-            [MemoryPackConstructor]
-            public StateChangeInfo(EStateChangeType type, string data)
-            {
-                Type = type;
-                Data = data;
-            }
-
-            public EStateChangeType Type { get; set; }
-            public string Data { get; set; } = string.Empty;
-        }
-
     public abstract class BaseNetworkingManager : XRBase, IDisposable
         {
             internal static long CurrentEngineTicks()
@@ -589,7 +471,7 @@ namespace XREngine
             /// </summary>
             /// <param name="obj"></param>
             /// <param name="compress"></param>
-            public void ReplicateObject(XRWorldObjectBase obj, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
+            public void ReplicateObject(RuntimeWorldObjectBase obj, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 var bytes = MemoryPackSerializer.Serialize(obj);
                 //var bytes = Encoding.UTF8.GetBytes(AssetManager.Serializer.Serialize(obj));
@@ -603,7 +485,7 @@ namespace XREngine
             /// <param name="value"></param>
             /// <param name="idStr"></param>
             /// <param name="compress"></param>
-            public void ReplicateData(XRWorldObjectBase obj, byte[] value, string idStr, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
+            public void ReplicateData(RuntimeWorldObjectBase obj, byte[] value, string idStr, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 IdValue data = new(idStr, value);
                 var bytes = MemoryPackSerializer.Serialize(data);
@@ -619,7 +501,7 @@ namespace XREngine
             /// <param name="propName"></param>
             /// <param name="value"></param>
             /// <param name="compress"></param>
-            public void ReplicatePropertyUpdated<T>(XRWorldObjectBase obj, string? propName, T value, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
+            public void ReplicatePropertyUpdated<T>(RuntimeWorldObjectBase obj, string? propName, T value, bool compress, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
             {
                 var bytes1 = MemoryPackSerializer.Serialize(value);
                 IdValue data = new(propName ?? string.Empty, bytes1);
@@ -1055,7 +937,7 @@ namespace XREngine
                     return;
                 }
 
-                if (!XRObjectBase.ObjectsCache.TryGetValue(id, out var obj) || obj is not XRWorldObjectBase worldObj)
+                if (!XRObjectBase.ObjectsCache.TryGetValue(id, out var obj) || obj is not RuntimeWorldObjectBase worldObj)
                     return;
 
                 switch (type)
@@ -1063,8 +945,8 @@ namespace XREngine
                     case EBroadcastType.Object:
                         {
                             //string dataStr = Encoding.UTF8.GetString(data, dataOffset, dataLen);
-                            //var newObj = AssetManager.Deserializer.Deserialize(dataStr, worldObj.GetType()) as XRWorldObjectBase;
-                            var newObj = MemoryPackSerializer.Deserialize<XRWorldObjectBase>(data.AsSpan(dataOffset, dataLen));
+                            //var newObj = AssetManager.Deserializer.Deserialize(dataStr, worldObj.GetType()) as RuntimeWorldObjectBase;
+                            var newObj = MemoryPackSerializer.Deserialize<RuntimeWorldObjectBase>(data.AsSpan(dataOffset, dataLen));
 
                             if (newObj is not null)
                                 worldObj.CopyFrom(newObj);

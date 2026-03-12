@@ -440,11 +440,11 @@ namespace XREngine.Components.Capture.Lights
 
         #region Component Lifecycle
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
-            var world = World;
+            var world = WorldAs<XREngine.Rendering.XRWorldInstance>();
             if (world is not null)
             {
                 if (_registeredWorld is not null && _registeredWorld != world)
@@ -460,7 +460,7 @@ namespace XREngine.Components.Capture.Lights
             }
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
 

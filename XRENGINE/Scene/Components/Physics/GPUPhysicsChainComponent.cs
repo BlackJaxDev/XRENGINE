@@ -1,4 +1,4 @@
-using Extensions;
+﻿using Extensions;
 using Silk.NET.OpenGL;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
@@ -276,7 +276,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
 
     #region Component Lifecycle
 
-    protected internal override void OnComponentActivated()
+    protected override void OnComponentActivated()
     {
         // Only load shaders if not using batched dispatcher
         if (!UseBatchedDispatcher)
@@ -308,7 +308,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         OnValidate();
     }
 
-    protected internal override void OnComponentDeactivated()
+    protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
         

@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using System.Diagnostics;
 using System.Numerics;
 using XREngine.Animation;
@@ -22,7 +22,7 @@ namespace XREngine.Scene.Transforms
         public Spline3DTransform() : base() { }
         public Spline3DTransform(PropAnimVector3? spline) : base() => Spline = spline;
 
-        protected internal override void OnSceneNodeActivated()
+        protected override void OnSceneNodeActivated()
         {
             base.OnSceneNodeActivated();
             if (AnimateOnActivate)

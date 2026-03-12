@@ -7,6 +7,7 @@ using XREngine;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Input.Devices;
+using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -1124,7 +1125,7 @@ public static class Undo
             {
                 // If transform has a world and doesn't force manual recalc, mark dirty
                 // Otherwise, force immediate recalculation
-                if (transform.World is { } world && !transform.ForceManualRecalc)
+                if (transform.World is XRWorldInstance world && !transform.ForceManualRecalc)
                     world.AddDirtyTransform(transform);
                 else
                     transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);

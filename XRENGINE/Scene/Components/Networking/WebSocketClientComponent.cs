@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -173,7 +173,7 @@ namespace XREngine.Components
             await socket.SendAsync(payload, messageType, true, cancellationToken).ConfigureAwait(false);
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             _manualDisconnect = false;
@@ -181,7 +181,7 @@ namespace XREngine.Components
                 _ = RunConnectionLoopAsync(forceReconnect: false, CancellationToken.None);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             _manualDisconnect = true;

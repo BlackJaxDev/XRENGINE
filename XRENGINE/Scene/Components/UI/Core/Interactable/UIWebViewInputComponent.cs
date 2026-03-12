@@ -25,13 +25,13 @@ namespace XREngine.Rendering.UI
             InteractOnButtonDown = false;
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             _webView = GetSiblingComponent<UIWebViewComponent>(true);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             _webView = null;
             base.OnComponentDeactivated();

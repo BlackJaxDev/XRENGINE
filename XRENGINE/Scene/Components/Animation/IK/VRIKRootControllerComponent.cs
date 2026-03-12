@@ -41,14 +41,14 @@ namespace XREngine.Components.Animation
         /// </summary>
         private Transform? _rightFootTarget;
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             IKSolverComponent.Solver.OnPreUpdate += OnPreUpdate;
             Calibrate();
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             IKSolverComponent.Solver.OnPreUpdate -= OnPreUpdate;

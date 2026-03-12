@@ -1,4 +1,4 @@
-﻿using OpenVR.NET.Devices;
+using OpenVR.NET.Devices;
 using System.Numerics;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Scene.Transforms;
@@ -37,13 +37,13 @@ namespace XREngine.Data.Components.Scene
         /// </summary>
         public abstract VrDevice? Device { get; }
 
-        protected internal override void OnSceneNodeActivated()
+        protected override void OnSceneNodeActivated()
         {
             base.OnSceneNodeActivated();
             Engine.VRState.RecalcMatrixOnDraw += VRState_RecalcMatrixOnDraw;
             Engine.Time.Timer.PreUpdateFrame += MarkLocalModified;
         }
-        protected internal override void OnSceneNodeDeactivated()
+        protected override void OnSceneNodeDeactivated()
         {
             base.OnSceneNodeDeactivated();
             Engine.VRState.RecalcMatrixOnDraw -= VRState_RecalcMatrixOnDraw;

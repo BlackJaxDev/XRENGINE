@@ -20,6 +20,7 @@ namespace XREngine.Core.Attributes
                     return false;
                 }
             }
+
             return true;
         }
     }

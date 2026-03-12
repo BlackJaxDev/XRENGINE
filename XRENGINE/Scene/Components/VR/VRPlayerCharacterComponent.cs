@@ -285,7 +285,7 @@ namespace XREngine.Components.VR
 
         private readonly ManualResetEventSlim _calibrationUpdateFence = new(true);
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             ResolveDependencies();
@@ -294,7 +294,7 @@ namespace XREngine.Components.VR
             RegisterTick(ETickGroup.Normal, ETickOrder.Scene, UpdateTick);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
 

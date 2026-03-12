@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
@@ -201,7 +201,7 @@ namespace XREngine.Components.Lights
 
         private void RefreshRegistration()
         {
-            var world = World;
+            var world = WorldAs<XREngine.Rendering.XRWorldInstance>();
             bool shouldRegister = world is not null && HasValidCascades;
 
             if (_registeredWorld is not null && (!shouldRegister || _registeredWorld != world))

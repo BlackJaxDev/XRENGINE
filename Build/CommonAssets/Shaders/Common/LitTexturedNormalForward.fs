@@ -17,6 +17,7 @@ layout (location = 3) in vec3 FragTan;
 layout (location = 4) in vec2 FragUV0;
 
 #pragma snippet "ForwardLighting"
+#pragma snippet "AmbientOcclusionSampling"
 
 vec3 getNormalFromMap()
 {
@@ -38,7 +39,7 @@ vec3 getNormalFromMap()
 void main()
 {
     vec4 texColor = texture(Texture0, FragUV0);
-    float AmbientOcclusion = 1.0;
+    float AmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
 
     vec3 normal = getNormalFromMap();
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, texColor.rgb, MatSpecularIntensity, AmbientOcclusion);

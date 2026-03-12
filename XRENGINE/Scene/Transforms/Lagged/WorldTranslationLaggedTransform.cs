@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Scene.Transforms;
@@ -65,12 +65,12 @@ namespace XREngine.Components.Scene.Transforms
                 _interpPoint = Interp.Lerp(_currentPoint, _destPoint, Engine.SmoothedDelta, InterpSpeed);
             MarkWorldModified();
         }
-        protected internal override void OnSceneNodeActivated()
+        protected override void OnSceneNodeActivated()
         {
             _currentPoint = WorldMatrix.Translation;
             RegisterTick(ETickGroup.Normal, (int)ETickOrder.Scene, Tick);
         }
-        protected internal override void OnSceneNodeDeactivated()
+        protected override void OnSceneNodeDeactivated()
         {
             UnregisterTick(ETickGroup.Normal, (int)ETickOrder.Scene, Tick);
         }

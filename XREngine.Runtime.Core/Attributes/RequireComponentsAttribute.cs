@@ -19,11 +19,13 @@ namespace XREngine.Core.Attributes
                 if (!node.HasComponent(requiredType))
                     node.AddComponent(requiredType);
             }
+
             return true;
         }
 
         public IEnumerator<Type> GetEnumerator()
             => ((IEnumerable<Type>)RequiredComponents).GetEnumerator();
+
         IEnumerator IEnumerable.GetEnumerator()
             => RequiredComponents.GetEnumerator();
     }

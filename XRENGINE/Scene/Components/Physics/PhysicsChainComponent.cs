@@ -1,4 +1,4 @@
-using Extensions;
+﻿using Extensions;
 using JoltPhysicsSharp;
 using System;
 using System.Numerics;
@@ -38,7 +38,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         LogFault($"QueueRebuild:{reason}", $"Particle rebuild queued during simulation. Reason={reason}.");
     }
 
-    protected internal override void OnComponentActivated()
+    protected override void OnComponentActivated()
     {
         SetupParticles();
         RegisterTick(ETickGroup.PostPhysics, ETickOrder.Animation, FixedUpdate);
@@ -48,7 +48,7 @@ public partial class PhysicsChainComponent : XRComponent, IRenderable
         InitializeRootBoneTracking();
         OnValidate();
     }
-    protected internal override void OnComponentDeactivated()
+    protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
         InitTransforms();

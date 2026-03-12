@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using XREngine.Components.Scene.Mesh;
@@ -434,7 +434,7 @@ namespace XREngine.Components
                 ClearAppliedWeights();
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
@@ -461,7 +461,7 @@ namespace XREngine.Components
             RegisterTick(ETickGroup.Late, ETickOrder.Animation, UpdateBlendshapes);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             if (AudioSource is not null)
             {

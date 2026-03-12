@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using XREngine.Core.Attributes;
 
 namespace XREngine.Components
@@ -94,7 +94,7 @@ namespace XREngine.Components
             private set => SetField(ref _lastBridgeError, value ?? string.Empty);
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
@@ -109,7 +109,7 @@ namespace XREngine.Components
             }
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             ReleaseSession(markComponentDisconnected: true, error: null);
             UnregisterTick(ETickGroup.Late, ETickOrder.Animation, PumpBridge);

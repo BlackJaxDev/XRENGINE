@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.ComponentModel;
@@ -92,7 +92,7 @@ namespace XREngine.Components.Lights
 
         private void RefreshRegistration()
         {
-            var world = World;
+            var world = WorldAs<XREngine.Rendering.XRWorldInstance>();
             bool shouldRegister = world is not null && IsActiveInHierarchy && _volumeEnabled;
 
             if (_registeredWorld is not null && (!shouldRegister || _registeredWorld != world))

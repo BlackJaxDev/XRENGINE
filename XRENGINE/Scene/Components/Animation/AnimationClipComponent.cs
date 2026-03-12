@@ -712,14 +712,14 @@ namespace XREngine.Components.Animation
                 anim.Stop();
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
             if (Animation is not null && StartOnActivate)
                 Start();
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
 

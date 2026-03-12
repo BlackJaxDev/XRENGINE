@@ -60,7 +60,7 @@ namespace XREngine.Scene
         {
             foreach (XRComponent component in ComponentsInternal)
                 if (component.IsActive)
-                    component.OnComponentActivated();
+                    component.NotifyComponentActivated();
         }
 
         /// <summary>
@@ -69,7 +69,7 @@ namespace XREngine.Scene
         private void BeginPlayComponents()
         {
             foreach (XRComponent component in ComponentsInternal)
-                component.OnBeginPlay();
+                component.NotifyBeginPlay();
         }
 
         /// <summary>
@@ -79,7 +79,7 @@ namespace XREngine.Scene
         {
             foreach (XRComponent component in ComponentsInternal)
                 if (component.IsActive)
-                    component.OnComponentDeactivated();
+                    component.NotifyComponentDeactivated();
         }
 
         /// <summary>
@@ -88,7 +88,7 @@ namespace XREngine.Scene
         private void EndPlayComponents()
         {
             foreach (XRComponent component in ComponentsInternal)
-                component.OnEndPlay();
+                component.NotifyEndPlay();
         }
 
         /// <summary>
@@ -99,7 +99,7 @@ namespace XREngine.Scene
             if (_transform is null)
                 return;
 
-            _transform.OnSceneNodeActivated();
+            _transform.NotifySceneNodeActivated();
             foreach (var child in _transform.Children)
             {
                 var node = child?.SceneNode;
@@ -119,7 +119,7 @@ namespace XREngine.Scene
             if (_transform is null)
                 return;
 
-            _transform.OnSceneNodeBeginPlay();
+            _transform.NotifySceneNodeBeginPlay();
             foreach (var child in _transform.Children)
                 child?.SceneNode?.OnBeginPlay();
         }
@@ -132,7 +132,7 @@ namespace XREngine.Scene
             if (_transform is null)
                 return;
 
-            _transform.OnSceneNodeDeactivated();
+            _transform.NotifySceneNodeDeactivated();
             _transform.ClearTicks();
             foreach (var child in _transform.Children)
             {
@@ -153,7 +153,7 @@ namespace XREngine.Scene
             if (_transform is null)
                 return;
 
-            _transform.OnSceneNodeEndPlay();
+            _transform.NotifySceneNodeEndPlay();
             foreach (var child in _transform.Children)
                 child?.SceneNode?.OnEndPlay();
         }

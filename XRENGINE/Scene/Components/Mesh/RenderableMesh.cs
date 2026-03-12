@@ -79,7 +79,7 @@ namespace XREngine.Components.Scene.Mesh
             get => _currentLOD;
             private set => SetField(ref _currentLOD, value);
         }
-        public XRWorldInstance? World => Component.SceneNode.World;
+        public XRWorldInstance? World => Component.SceneNode.World as XRWorldInstance;
         public LinkedList<RenderableLOD> LODs { get; private set; } = new();
 
         private bool _renderBounds = Engine.EditorPreferences.Debug.RenderMesh3DBounds;

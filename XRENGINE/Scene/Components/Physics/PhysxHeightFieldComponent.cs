@@ -52,7 +52,7 @@ public class PhysxHeightFieldComponent : XRComponent
         set => SetField(ref _doubleSided, value);
     }
 
-    protected internal unsafe override void OnComponentActivated()
+    protected unsafe override void OnComponentActivated()
     {
         base.OnComponentActivated();
 
@@ -63,7 +63,7 @@ public class PhysxHeightFieldComponent : XRComponent
         IPhysicsGeometry.HeightField hf = new(HeightField.HeightFieldPtr, HeightScale, RowScale, ColumnScale, TightBounds, DoubleSided);
         RigidBodyComponent.RigidBody = new PhysxDynamicRigidBody(mat, hf, 1.0f);
     }
-    protected internal override void OnComponentDeactivated()
+    protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
     }

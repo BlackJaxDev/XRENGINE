@@ -18,6 +18,7 @@ layout (location = 1) in vec3 FragNorm;
 layout (location = 4) in vec2 FragUV0;
 
 #pragma snippet "ForwardLighting"
+#pragma snippet "AmbientOcclusionSampling"
 
 float XRE_ComputeOitWeight(float alpha)
 {
@@ -45,7 +46,7 @@ void main()
 
     vec3 normal = normalize(FragNorm);
     vec4 texColor = texture(Texture0, FragUV0);
-    float AmbientOcclusion = 1.0;
+    float AmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
     float specularMask = texture(Texture1, FragUV0).r;
     float specIntensity = MatSpecularIntensity * specularMask;
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, texColor.rgb, specIntensity, AmbientOcclusion);

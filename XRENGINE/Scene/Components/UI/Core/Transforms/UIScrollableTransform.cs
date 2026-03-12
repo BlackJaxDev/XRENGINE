@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 using XREngine.Data.Geometry;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
 {
@@ -76,7 +77,7 @@ namespace XREngine.Rendering.UI
         {
             base.OnResizeChildComponents(parentRegion);
         }
-        public override void VerifyPlacementInfo(UITransform childTransform, ref UIChildPlacementInfo? placementInfo)
+        public override void VerifyPlacementInfo(TransformBase childTransform, ref ITransformChildPlacementInfo? placementInfo)
         {
             base.VerifyPlacementInfo(childTransform, ref placementInfo);
         }

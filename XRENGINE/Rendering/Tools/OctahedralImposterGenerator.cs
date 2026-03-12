@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Threading;
@@ -75,7 +75,7 @@ public sealed class OctahedralImposterGenerator
         }
 
         // Use the component's existing world - it is already activated and visible
-        XRWorldInstance? world = component.World;
+        XRWorldInstance? world = component.WorldAs<XRWorldInstance>();
         if (world is null)
         {
             Debug.LogWarning("Cannot generate impostor: component has no world.");
@@ -323,8 +323,8 @@ public sealed class OctahedralImposterGenerator
             // Ordering matters: keep in sync with Build/CommonAssets/Shaders/Tools/OctahedralImposterBlend.fs.
             // The runtime shader relies on this exact layout when selecting sampler bindings.
             // 1. World axes (6)
-            // 2. Mid-axes (12) � 45� between the primary axes
-            // 3. Elevated diagonals (8) � 45� above/below the edge directions
+            // 2. Mid-axes (12) ï¿½ 45ï¿½ between the primary axes
+            // 3. Elevated diagonals (8) ï¿½ 45ï¿½ above/below the edge directions
 
             Vector3.UnitX,
             -Vector3.UnitX,

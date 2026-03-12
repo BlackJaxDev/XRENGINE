@@ -796,7 +796,7 @@ namespace XREngine.Components.Animation
             //if (_locomotion._weight <= 0f || _locomotion._blockingLayers == -1)
                 return Vector3.Zero;
 
-            //var physicsScene = Animator?.World?.PhysicsScene;
+            //var physicsScene = Animator?.WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
             //if (physicsScene is null)
             //    return Vector3.Zero;
 

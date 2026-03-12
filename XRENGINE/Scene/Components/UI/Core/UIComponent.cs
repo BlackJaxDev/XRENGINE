@@ -14,7 +14,7 @@ namespace XREngine.Rendering.UI
         [Browsable(false)]
         public UICanvasComponent? UserInterfaceCanvas => UITransform.GetCanvasComponent();
 
-        internal override void VerifyInterfacesOnStart()
+        protected override void VerifyInterfacesOnStart()
         {
             base.VerifyInterfacesOnStart();
 
@@ -34,7 +34,7 @@ namespace XREngine.Rendering.UI
             foreach (var obj in rend.RenderedObjects)
                 obj.UserInterfaceCanvas = canvas;
         }
-        internal override void VerifyInterfacesOnStop()
+        protected override void VerifyInterfacesOnStop()
         {
             base.VerifyInterfacesOnStop();
 

@@ -60,19 +60,19 @@ namespace XREngine.Components.Scene.Volumes
 				return;
 
 			int token = Interlocked.Increment(ref _loadToken);
-			Engine.EnqueueMainThreadTask(() => DetachIfLoaded(token, expectedWorld: World));
+			Engine.EnqueueMainThreadTask(() => DetachIfLoaded(token, expectedWorld: WorldAs<XREngine.Rendering.XRWorldInstance>()));
 		}
 
-		protected internal override void OnComponentDeactivated()
+		protected override void OnComponentDeactivated()
 		{
 			int token = Interlocked.Increment(ref _loadToken);
-			Engine.EnqueueMainThreadTask(() => DetachIfLoaded(token, expectedWorld: World));
+			Engine.EnqueueMainThreadTask(() => DetachIfLoaded(token, expectedWorld: WorldAs<XREngine.Rendering.XRWorldInstance>()));
 			base.OnComponentDeactivated();
 		}
 
 		private async Task LoadAndAttachAsync(int token)
 		{
-			XRWorldInstance? expectedWorld = World;
+			XRWorldInstance? expectedWorld = WorldAs<XREngine.Rendering.XRWorldInstance>();
 			if (expectedWorld is null)
 				return;
 

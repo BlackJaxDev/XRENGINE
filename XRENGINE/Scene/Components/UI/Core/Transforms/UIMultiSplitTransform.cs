@@ -1,6 +1,7 @@
 using Extensions;
 using System.Numerics;
 using XREngine.Data.Geometry;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
 {
@@ -264,7 +265,7 @@ namespace XREngine.Rendering.UI
 
         /// <summary>
         /// Old layout path: called from OnLocalMatrixChanged.
-        /// Kept for compatibility — the new ArrangeChildren path handles arrangement during the layout system pass.
+        /// Kept for compatibility - the new ArrangeChildren path handles arrangement during the layout system pass.
         /// </summary>
         protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
         {
@@ -473,10 +474,10 @@ namespace XREngine.Rendering.UI
             children[1].FitLayout(new(parentRegion.X, parentRegion.Y, parentRegion.Width, bottomSize));
         }
 
-        public override void VerifyPlacementInfo(UITransform childTransform, ref UIChildPlacementInfo? placementInfo)
+        public override void VerifyPlacementInfo(TransformBase childTransform, ref ITransformChildPlacementInfo? placementInfo)
         {
-            if (placementInfo is not UISplitChildPlacementInfo)
-                placementInfo = new UISplitChildPlacementInfo(childTransform);
+            if (childTransform is UITransform uiChildTransform && placementInfo is not UISplitChildPlacementInfo)
+                placementInfo = new UISplitChildPlacementInfo(uiChildTransform);
         }
 
         public class UISplitChildPlacementInfo(UITransform owner) : UIChildPlacementInfo(owner)

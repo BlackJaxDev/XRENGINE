@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Scene.Transforms;
@@ -34,9 +34,9 @@ namespace XREngine.Components.Scene.Transforms
             set => SetField(ref _invTransInterpSec, value);
         }
 
-        protected internal override void OnSceneNodeActivated()
+        protected override void OnSceneNodeActivated()
             => RegisterTick(ETickGroup.Normal, (int)ETickOrder.Logic, Tick);
-        protected internal override void OnSceneNodeDeactivated()
+        protected override void OnSceneNodeDeactivated()
             => UnregisterTick(ETickGroup.Normal, (int)ETickOrder.Logic, Tick);
 
         protected virtual void Tick()

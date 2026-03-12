@@ -6,7 +6,7 @@ Updated: 2026-03-12
 
 ## Current State
 
-- `Runtime.Core` already owns the jobs package, networking message contracts, startup/discovery contracts, AOT metadata, runtime world/tick contracts, the transform host service seam, `DefaultLayers`, and `XRTransformEditorAttribute`.
+- `Runtime.Core` already owns the jobs package, networking message contracts, startup/discovery contracts, AOT metadata, runtime world/tick contracts, the base scene graph (`SceneNode`, `XRComponent`, `TransformBase`, `Transform`), the transform host service seam, the runtime child-placement seam (`ITransformChildPlacementInfo`), `DefaultLayers`, `XRTransformEditorAttribute`, and host-independent networking state-change metadata (`EStateChangeType`, `StateChangeInfo`).
 - `Runtime.Rendering` already owns the indirect draw/policy structs, render-graph metadata, render-resource descriptors, post-process schema metadata, the video-streaming runtime package, the shared render-object ownership seam (`GenericRenderObject`, `AbstractRenderAPIObject`, `IRenderAPIObject`, `IRenderApiWrapperOwner`, `IRuntimeRenderObjectServices`, `RuntimeRenderObjectServices`), the shader asset/runtime loader seam (`IRuntimeShaderServices`, `RuntimeShaderServices`, `XRShader`, `ShaderHelper`), the render-program/buffer runtime slice (`XRRenderProgram`, `XRRenderProgramPipeline`, `XRDataBuffer`, `XRDataBufferView`, `EEngineUniform`, `EMemoryBarrierMask`, `IApiDataBuffer`, `IRenderTextureResource`), and the pure material render-policy types (`ETransparencyMode`, `RenderingParameters`, `BlendMode`, `DepthTest`, `StencilTest`, and related enums).
 - `Runtime.ModelingBridge` currently owns only modeling option/contract types.
 - `Runtime.AnimationIntegration`, `Runtime.AudioIntegration`, and `Runtime.InputIntegration` still do not own a real subsystem slice.
@@ -20,8 +20,8 @@ Updated: 2026-03-12
 - [x] Move the `UICanvasTransform` assignment rule out of `SceneNode`. Validation now lives in the host `RuntimeSceneNodeServices` bridge instead of base scene-graph code.
 - [x] Break `Transform`'s dependency on `TransformState` and `ETransformOrder` from `XREngine.Animation`. Those types now live in `XREngine.Data` as a lower-level runtime-owned contract, removing the `Transform -> Animation` project dependency.
 - [x] Break `TransformBase`'s dependency on `RenderInfo`, `IRenderable`, and debug-gizmo rendering. Transform debug rendering now goes through `IRuntimeTransformDebugHandle` created by `RuntimeTransformServices`.
-- [ ] After the four items above are done, move `SceneNode`, `XRComponent`, `TransformBase`, and `Transform` into `Runtime.Core`.
-- [ ] Resume the remaining host-independent `Engine/`, `Settings/`, and networking orchestration moves once the base scene-graph types no longer pin that code in `XRENGINE`.
+- [x] After the four items above are done, move `SceneNode`, `XRComponent`, `TransformBase`, and `Transform` into `Runtime.Core`.
+- [x] Resume the remaining host-independent `Engine/`, `Settings/`, and networking orchestration moves once the base scene-graph types no longer pin that code in `XRENGINE`. This pass moved the remaining host-independent state-change metadata into `Runtime.Core`, generalized runtime replication around `RuntimeWorldObjectBase`, and kept the remaining typed `XRWorldInstance` access in engine-side component adapters plus explicit engine-only casts instead of the runtime-owned scene graph.
 
 ### P0 - Runtime.Rendering
 
@@ -57,7 +57,8 @@ Updated: 2026-03-12
 - `IPostCookedBinaryDeserialize` now lives in `XREngine.Data`, and `SceneNodePrefabLink` now lives in `Runtime.Core`, so those support types no longer pin the scene graph to `XRENGINE`.
 - `TransformBase` no longer depends directly on `XRWorldInstance` for dirty-object publication or world-matrix publication.
 - `TransformBase.MatrixInfo` and `Transform` no longer reach directly into `Engine` for update delta, transform keyframe interval, render-thread state, or transform debug logging.
-- The remaining scene-graph move blocker is the typed `XRWorldInstance` world surface still relied on by many `XRComponent` / `TransformBase` subclasses across rendering, physics, audio, and capture code.
+- The remaining typed `XRWorldInstance` access is now isolated to engine-side code (`XRSceneComponent` plus explicit engine-only casts), so it is no longer a blocker for `Runtime.Core` scene-graph ownership.
+- The remaining `Engine/` and `Settings/` files under `XRENGINE` are host-specific or still depend on rendering, VR, editor, or application-layer concerns; they are no longer `P0 - Runtime.Core` blockers.
 - The shared `GenericRenderObject -> AbstractRenderAPIObject` chain already lives in `Runtime.Rendering`. The current rendering blocker is the higher `AbstractRenderer` / `XRWindow` layer.
 - The adapter projects are blocked by ownership boundaries, not by project-file setup.
 

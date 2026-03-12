@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Numerics;
 using XREngine.Audio;
 using XREngine.Audio.Steam;
@@ -47,7 +47,7 @@ public class SteamAudioGeometryComponent : XRComponent
         set
         {
             _material = value ?? SteamAudioMaterial.Default;
-            // If already registered we would need to re-add the mesh — mark dirty
+            // If already registered we would need to re-add the mesh â€” mark dirty
             if (_meshId.HasValue)
                 _dirty = true;
         }
@@ -83,7 +83,7 @@ public class SteamAudioGeometryComponent : XRComponent
     //  Lifecycle
     // ------------------------------------------------------------------
 
-    protected internal override void OnComponentActivated()
+    protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
         TryRegisterGeometry();
@@ -92,7 +92,7 @@ public class SteamAudioGeometryComponent : XRComponent
             RegisterTick(ETickGroup.Late, ETickOrder.Scene, DynamicTick);
     }
 
-    protected internal override void OnComponentDeactivated()
+    protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
         UnregisterGeometry();
@@ -122,7 +122,7 @@ public class SteamAudioGeometryComponent : XRComponent
         var scene = FindActiveScene();
         if (scene is null)
         {
-            Debug.Out("[SteamAudioGeometryComponent] No active SteamAudioScene found — skipping geometry registration.");
+            Debug.Out("[SteamAudioGeometryComponent] No active SteamAudioScene found â€” skipping geometry registration.");
             return;
         }
 
@@ -130,14 +130,14 @@ public class SteamAudioGeometryComponent : XRComponent
         var renderable = GetSiblingComponent<RenderableComponent>();
         if (renderable is null)
         {
-            Debug.Out("[SteamAudioGeometryComponent] No RenderableComponent sibling found — skipping.");
+            Debug.Out("[SteamAudioGeometryComponent] No RenderableComponent sibling found â€” skipping.");
             return;
         }
 
         // Collect vertex and triangle data from all mesh LODs
         if (!ExtractGeometry(renderable, out var vertices, out var indices))
         {
-            Debug.Out("[SteamAudioGeometryComponent] No triangle geometry available — skipping.");
+            Debug.Out("[SteamAudioGeometryComponent] No triangle geometry available â€” skipping.");
             return;
         }
 
@@ -267,7 +267,7 @@ public class SteamAudioGeometryComponent : XRComponent
         if (World is null)
             return null;
 
-        foreach (var listener in World.Listeners)
+        foreach (var listener in WorldAs<XREngine.Rendering.XRWorldInstance>()?.Listeners ?? [])
         {
             if (listener.EffectsProcessor is not SteamAudioProcessor processor)
                 continue;

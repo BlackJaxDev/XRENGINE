@@ -652,7 +652,7 @@ namespace XREngine.Components.Physics
             }
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             Debug.Physics("[DynamicRigidBodyComponent] Activating component on {0}", SceneNode?.Name ?? "<unnamed>");
@@ -677,7 +677,7 @@ namespace XREngine.Components.Physics
         /// Called when play mode begins. Resets the rigid body to its initial pose and clears velocities,
         /// but only if InitialPosition or InitialRotation were explicitly set.
         /// </summary>
-        protected internal override void OnBeginPlay()
+        protected override void OnBeginPlay()
         {
             base.OnBeginPlay();
             ResetToInitialPose();
@@ -710,7 +710,7 @@ namespace XREngine.Components.Physics
             }
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             Debug.Physics("[DynamicRigidBodyComponent] Deactivating component on {0}", SceneNode?.Name ?? "<unnamed>");
@@ -719,10 +719,10 @@ namespace XREngine.Components.Physics
 
         private void EnsureRigidBodyConstructed()
         {
-            if (!AutoCreateRigidBody || RigidBody is not null || World?.PhysicsScene is null)
+            if (!AutoCreateRigidBody || RigidBody is not null || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is null)
                 return;
 
-            RigidBody = World.PhysicsScene switch
+            RigidBody = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene switch
             {
                 PhysxScene => CreatePhysxDynamicRigidBody(),
                 JoltScene joltScene => CreateJoltDynamicRigidBody(joltScene),
@@ -1045,7 +1045,7 @@ namespace XREngine.Components.Physics
             if (!IsActive || RigidBody is null)
                 return;
 
-            var scene = World?.PhysicsScene;
+            var scene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
             if (scene is null)
                 return;
 
@@ -1088,7 +1088,7 @@ namespace XREngine.Components.Physics
             if (RigidBody is null)
                 return;
 
-            var scene = World?.PhysicsScene;
+            var scene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
             if (scene is null)
                 return;
 

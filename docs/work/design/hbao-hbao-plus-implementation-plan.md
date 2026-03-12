@@ -2,7 +2,7 @@
 
 Last Updated: 2026-03-11
 Current Status: `AmbientOcclusionSettings.EType.HorizonBased` and `HorizonBasedPlus` exist, but both currently alias to the Multi-View AO path rather than having dedicated implementations.
-Primary Goal: implement real HBAO+ as the default high-quality screen-space AO path in the default deferred pipeline, with optional classic HBAO as a reference/debug mode.
+Primary Goal: implement real HBAO+ as the default high-quality screen-space AO path in the default render pipeline, with optional classic HBAO as a reference/debug mode.
 
 ## Recommendation
 
@@ -22,7 +22,7 @@ The current AO plumbing is partially in place, but the Horizon-Based modes are n
 
 - `AmbientOcclusionSettings.EType` already includes `HorizonBased` and `HorizonBasedPlus`.
 - `DefaultRenderPipeline` already switches among AO branches before deferred light combine.
-- AO output is consumed as a single-channel visibility term in the deferred combine shader.
+- AO output is consumed as a single-channel visibility term in the deferred combine shader and by lit forward shader variants.
 - The schema-driven post-process UI already supports per-parameter visibility with `visibilityCondition`.
 
 The parts that are currently wrong for HBAO/HBAO+ are:

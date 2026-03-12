@@ -532,13 +532,13 @@ namespace XREngine.Rendering.UI
         // Component Lifecycle
         // ═══════════════════════════════════════════════════════════════
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             StartStreamingPipeline();
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             StopStreamingPipeline();

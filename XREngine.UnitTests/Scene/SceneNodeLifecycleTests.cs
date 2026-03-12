@@ -141,13 +141,13 @@ public class SceneNodeLifecycleTests
 
         public int EndPlayCount { get; private set; }
 
-        protected internal override void OnBeginPlay()
+        protected override void OnBeginPlay()
         {
             base.OnBeginPlay();
             BeginPlayCount++;
         }
 
-        protected internal override void OnEndPlay()
+        protected override void OnEndPlay()
         {
             base.OnEndPlay();
             EndPlayCount++;

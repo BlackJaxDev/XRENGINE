@@ -235,7 +235,7 @@ namespace XREngine.Components.Scene.Mesh
             }
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             AttachDebugHooks();
@@ -249,7 +249,7 @@ namespace XREngine.Components.Scene.Mesh
             RebuildAll();
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             CleanupResources();

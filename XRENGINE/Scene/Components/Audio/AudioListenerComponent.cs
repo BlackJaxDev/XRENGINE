@@ -76,14 +76,14 @@ namespace XREngine.Components
             }
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             MakeListener();
             RegisterTick(ETickGroup.Late, ETickOrder.Scene, UpdatePosition);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             DestroyListener();
@@ -95,13 +95,13 @@ namespace XREngine.Components
                 return;
 
             Listener = Engine.Audio.NewListener(Name);
-            World?.Listeners?.Add(Listener);
+            WorldAs<XREngine.Rendering.XRWorldInstance>()?.Listeners?.Add(Listener);
         }
 
         private void DestroyListener()
         {
             if (Listener is not null)
-                World?.Listeners?.Remove(Listener);
+                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Listeners?.Remove(Listener);
 
             Listener?.Dispose();
             Listener = null;

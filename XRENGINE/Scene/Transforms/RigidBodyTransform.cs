@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Physics;
@@ -358,8 +358,7 @@ namespace XREngine.Scene.Transforms
             if (RigidBody is not IAbstractDynamicRigidBody dynBody)
                 return;
 
-            var world = World;
-            if (world is null || !world.PhysicsEnabled)
+            if (World is not XREngine.Rendering.XRWorldInstance world || !world.PhysicsEnabled)
                 return;
 
             float minYDist = world.TargetWorld?.Settings?.PhysicsResetMinYDist ?? 0.0f;

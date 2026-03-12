@@ -147,8 +147,8 @@ public partial class UIEditorComponent : UIComponent
         HierarchyPanel hierarchy;
         using (Engine.Profiler.Start("UIEditorComponent.RemakeChildren.HierarchyPanel"))
             hierarchyNode.NewChild<HierarchyPanel>(out hierarchy);
-        if (World is not null)
-            hierarchy.RootNodes = [.. World.RootNodes];
+        if (WorldAs<XREngine.Rendering.XRWorldInstance>() is { } world)
+            hierarchy.RootNodes = [.. world.RootNodes];
         _hierarchy = hierarchy;
 
         var middleNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Scene");

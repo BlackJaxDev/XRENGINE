@@ -80,13 +80,13 @@ namespace XREngine.Components
             set => SetField(ref _enableVAD, value);
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             Microphone.BufferReceived += OnBufferReceived;
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             Microphone.BufferReceived -= OnBufferReceived;

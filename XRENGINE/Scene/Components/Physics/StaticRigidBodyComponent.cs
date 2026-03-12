@@ -243,7 +243,7 @@ namespace XREngine.Components.Physics
             }
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             EnsureRigidBodyConstructed();
@@ -263,7 +263,7 @@ namespace XREngine.Components.Physics
             TryRegisterRigidBodyWithScene();
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             RemoveRigidBodyFromScene();
@@ -271,10 +271,10 @@ namespace XREngine.Components.Physics
 
         private void EnsureRigidBodyConstructed()
         {
-            if (!AutoCreateRigidBody || RigidBody is not null || World?.PhysicsScene is null)
+            if (!AutoCreateRigidBody || RigidBody is not null || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is null)
                 return;
 
-            RigidBody = World.PhysicsScene switch
+            RigidBody = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene switch
             {
                 PhysxScene => CreatePhysxStaticRigidBody(),
                 JoltScene joltScene => CreateJoltStaticRigidBody(joltScene),
@@ -436,7 +436,7 @@ namespace XREngine.Components.Physics
             if (!IsActive || RigidBody is null)
                 return;
 
-            var scene = World?.PhysicsScene;
+            var scene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
             if (scene is null)
                 return;
 

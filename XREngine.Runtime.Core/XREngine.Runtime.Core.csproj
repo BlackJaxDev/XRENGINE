@@ -28,6 +28,7 @@
     <PackageReference Include="BitsKit" Version="1.2.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
   <ItemGroup>

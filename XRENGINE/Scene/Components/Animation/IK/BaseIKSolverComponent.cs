@@ -36,7 +36,7 @@ namespace XREngine.Components.Animation
         public bool _resetTransformsToDefault = true;
         private AnimStateMachineComponent? _animStateMachine;
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
@@ -47,7 +47,7 @@ namespace XREngine.Components.Animation
             Initialize();
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
 

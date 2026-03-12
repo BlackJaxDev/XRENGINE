@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
@@ -260,12 +260,12 @@ namespace XREngine.Components.Scene.Transforms
             current = Interp.Lerp(current, target, lerpTime);
         }
 
-        protected internal override void OnSceneNodeActivated()
+        protected override void OnSceneNodeActivated()
         {
             _currentMatrix = ParentWorldMatrix;
             RegisterTick(ETickGroup.Normal, (int)ETickOrder.Scene, Tick);
         }
-        protected internal override void OnSceneNodeDeactivated()
+        protected override void OnSceneNodeDeactivated()
         {
             UnregisterTick(ETickGroup.Normal, (int)ETickOrder.Scene, Tick);
         }

@@ -153,20 +153,20 @@ namespace XREngine.Components.Capture.Lights.Types
             base.OnTransformRenderWorldMatrixChanged(transform, renderMatrix);
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
             if (Type == ELightType.Dynamic)
-                World?.Lights.DynamicPointLights.Add(this);
+                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicPointLights.Add(this);
 
             for (int i = 0; i < _viewports.Length; i++)
-                _viewports[i].WorldInstanceOverride = World;
+                _viewports[i].WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>();
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             if (Type == ELightType.Dynamic)
-                World?.Lights.DynamicPointLights.Remove(this);
+                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicPointLights.Remove(this);
 
             for (int i = 0; i < _viewports.Length; i++)
                 _viewports[i].WorldInstanceOverride = null;
@@ -279,9 +279,9 @@ namespace XREngine.Components.Capture.Lights.Types
                 {
                     case nameof(Type):
                         if (Type == ELightType.Dynamic)
-                            World?.Lights.DynamicPointLights.Add(this);
+                            WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicPointLights.Add(this);
                         else
-                            World?.Lights.DynamicPointLights.Remove(this);
+                            WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicPointLights.Remove(this);
                         break;
                 }
             }

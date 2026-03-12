@@ -32,11 +32,11 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public XRCamera? ShadowCamera => _viewport.Camera;
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
-            _viewport.WorldInstanceOverride = World;
+            _viewport.WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>();
             XRCamera cam = new(GetShadowCameraParentTransform(), GetCameraParameters());
             var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
             if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
@@ -58,7 +58,7 @@ namespace XREngine.Components.Capture.Lights.Types
         protected virtual TransformBase GetShadowCameraParentTransform()
             => Transform;
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             _viewport.WorldInstanceOverride = null;
             _viewport.Camera = null;

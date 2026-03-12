@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -53,7 +53,7 @@ namespace XREngine.Rendering.UI
             }
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
@@ -61,7 +61,7 @@ namespace XREngine.Rendering.UI
             Engine.Time.Timer.CollectVisible += CollectVisible;
             Engine.Time.Timer.RenderFrame += Render;
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
 

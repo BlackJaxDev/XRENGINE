@@ -252,7 +252,7 @@ namespace XREngine.Components
             _screenSwapDiagCount++;
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             // Layout runs on UpdateFrame, BEFORE XRWorldInstance.PostUpdate (PostUpdateFrame).
@@ -264,7 +264,7 @@ namespace XREngine.Components
             UpdateWorldSpaceQuadData();
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             RemoveTimerHooks();

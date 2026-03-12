@@ -347,7 +347,7 @@ namespace XREngine.Rendering.UI
             return false;
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             if (_isOpen)

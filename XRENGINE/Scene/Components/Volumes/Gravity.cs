@@ -21,13 +21,13 @@ namespace XREngine.Components.Scene.Volumes
 
         private readonly HashSet<DynamicRigidBodyComponent> _affected = [];
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             RegisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Scene, ApplyGravityTick);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             UnregisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Scene, ApplyGravityTick);
             _affected.Clear();
@@ -39,7 +39,7 @@ namespace XREngine.Components.Scene.Volumes
             if (_affected.Count == 0)
                 return;
 
-            var scene = World?.PhysicsScene;
+            var scene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
             if (scene is null)
                 return;
 

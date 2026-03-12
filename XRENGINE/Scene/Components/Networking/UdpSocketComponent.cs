@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -185,7 +185,7 @@ namespace XREngine.Components
             return SendAsync(payload, cancellationToken);
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             _manualShutdown = false;
@@ -193,7 +193,7 @@ namespace XREngine.Components
                 _ = EnsureBoundAsync(CancellationToken.None);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             _manualShutdown = true;

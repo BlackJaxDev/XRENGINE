@@ -627,7 +627,7 @@ namespace XREngine.Components.Movement
             _capsuleRenderInfo.LocalCullingVolume = AABB.FromSize(new Vector3(radius * 2.0f, yHalfExtent * 2.0f, radius * 2.0f));
         }
 
-        protected internal unsafe override void OnComponentActivated()
+        protected unsafe override void OnComponentActivated()
         {
             // Character movement uses a PhysX CCT (controller) and wraps its hidden rigid actor.
             // Prevent the DynamicRigidBodyComponent base from auto-creating/registering a separate rigid body.
@@ -638,13 +638,13 @@ namespace XREngine.Components.Movement
             _subUpdateTick = GroundMovementTick;
             RegisterTick(TickInputWithPhysics ? ETickGroup.PrePhysics : ETickGroup.Late, (int)ETickOrder.Animation, MainUpdateTick);
 
-            var physicsScene = World?.PhysicsScene;
+            var physicsScene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
             if (physicsScene is null)
                 return;
 
             // Keep our transform driven by the controller after each physics step.
             // Without wrapping the controller actor as a rigid body, nothing else updates the RigidBodyTransform.
-            if (World?.PhysicsScene is { } sceneForEvents && _subscribedPhysicsScene != sceneForEvents)
+            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is { } sceneForEvents && _subscribedPhysicsScene != sceneForEvents)
             {
                 _subscribedPhysicsScene?.OnSimulationStep -= OnPhysicsSimulationStep;
                 sceneForEvents.OnSimulationStep += OnPhysicsSimulationStep;
@@ -723,7 +723,7 @@ namespace XREngine.Components.Movement
             }
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             _subUpdateTick = null;
             _subscribedPhysicsScene?.OnSimulationStep -= OnPhysicsSimulationStep;
@@ -893,7 +893,7 @@ namespace XREngine.Components.Movement
         private MovementModule.MovementContext CreateMovementContext(Vector3 inputDirection, float dt, bool isGrounded)
         {
             Vector3 gravity = Vector3.Zero;
-            if (World?.PhysicsScene is { } scene)
+            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is { } scene)
                 gravity = (GravityOverride ?? scene.Gravity) * MovementModule.GravityScale;
 
             return new MovementModule.MovementContext(
@@ -990,7 +990,7 @@ namespace XREngine.Components.Movement
 
         protected virtual unsafe Vector3 AirMovementTick(Vector3 posDelta)
         {
-            if (Controller is null || World?.PhysicsScene is not { } scene)
+            if (Controller is null || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is not { } scene)
                 return Vector3.Zero;
 
             float dt = DeltaTime;
@@ -1037,7 +1037,7 @@ namespace XREngine.Components.Movement
 
         protected virtual unsafe Vector3 SwimmingMovementTick(Vector3 posDelta)
         {
-            if (Controller is null || World?.PhysicsScene is not { } scene)
+            if (Controller is null || WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is not { } scene)
                 return Vector3.Zero;
 
             float dt = DeltaTime;

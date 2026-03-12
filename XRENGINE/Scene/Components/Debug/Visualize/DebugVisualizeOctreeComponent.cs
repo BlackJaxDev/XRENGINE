@@ -51,7 +51,7 @@ namespace XREngine.Components
             //void AddNodes((OctreeNodeBase node, bool intersects) d)
             //    => cameraNodes._octreeNodesUpdating.Add(d);
 
-            //World?.VisualScene?.RenderTree?.CollectVisibleNodes(camera?.WorldFrustum(), false, AddNodes);
+            //WorldAs<XREngine.Rendering.XRWorldInstance>()?.VisualScene?.RenderTree?.CollectVisibleNodes(camera?.WorldFrustum(), false, AddNodes);
         }
 
         protected override void Render()
@@ -69,7 +69,7 @@ namespace XREngine.Components
             void AddNodes((OctreeNodeBase node, bool intersects) d)
                 => list.Add(d);
 
-            World?.VisualScene?.RenderTree?.CollectVisibleNodes(camera?.WorldFrustum(), false, AddNodes);
+            WorldAs<XREngine.Rendering.XRWorldInstance>()?.VisualScene?.RenderTree?.CollectVisibleNodes(camera?.WorldFrustum(), false, AddNodes);
 
             foreach ((OctreeNodeBase node, bool intersects) in list)
                 Engine.Rendering.Debug.RenderAABB(

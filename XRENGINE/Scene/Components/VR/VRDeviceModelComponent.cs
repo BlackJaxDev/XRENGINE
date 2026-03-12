@@ -1,4 +1,4 @@
-﻿using OpenVR.NET.Devices;
+using OpenVR.NET.Devices;
 using System.Numerics;
 using Valve.VR;
 using XREngine.Components.Scene.Mesh;
@@ -13,7 +13,7 @@ namespace XREngine.Components.VR
     {
         public bool IsLoaded => Model is not null;
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
@@ -23,7 +23,7 @@ namespace XREngine.Components.VR
             Engine.VRState.OpenVRApi.DeviceDetected += DeviceDetected;
             VerifyDevices();
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             Engine.VRState.OpenVRApi.DeviceDetected -= DeviceDetected;

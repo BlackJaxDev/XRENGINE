@@ -39,6 +39,18 @@
         /// </summary>
         WeightedBlendedOitForward,
         /// <summary>
+        /// Use for exact per-pixel linked-list transparency insertion.
+        /// This pass records fragments into a linked-list storage buffer and is
+        /// resolved in a later fullscreen pass.
+        /// </summary>
+        PerPixelLinkedListForward,
+        /// <summary>
+        /// Use for exact depth-peeling transparency layer generation.
+        /// This pass peels one surviving transparent layer per iteration and is
+        /// resolved in a later fullscreen pass.
+        /// </summary>
+        DepthPeelingForward,
+        /// <summary>
         /// Renders on top of everything that has been previously rendered.
         /// </summary>
         OnTopForward,

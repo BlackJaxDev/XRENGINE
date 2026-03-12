@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -30,7 +30,7 @@ public class PhysicsChainCollider : PhysicsChainColliderBase, IRenderable
 
     public RenderInfo[] RenderedObjects { get; }
 
-    protected internal override void OnComponentActivated()
+    protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
         OnValidate();

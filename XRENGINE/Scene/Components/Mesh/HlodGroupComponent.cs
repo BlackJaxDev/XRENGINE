@@ -1,4 +1,4 @@
-using Extensions;
+﻿using Extensions;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -175,7 +175,7 @@ namespace XREngine.Components.Scene.Mesh
         [Browsable(false)]
         public RenderInfo[] RenderedObjects { get; private set; }
 
-        protected internal override void OnBeginPlay()
+        protected override void OnBeginPlay()
         {
             base.OnBeginPlay();
 

@@ -565,10 +565,10 @@ namespace XREngine.Rendering.UI
                 value += ItemSpacing;
         }
 
-        public override void VerifyPlacementInfo(UITransform childTransform, ref UIChildPlacementInfo? placementInfo)
+        public override void VerifyPlacementInfo(TransformBase childTransform, ref ITransformChildPlacementInfo? placementInfo)
         {
-            if (placementInfo is not UIListChildPlacementInfo)
-                placementInfo = new UIListChildPlacementInfo(childTransform);
+            if (childTransform is UITransform uiChildTransform && placementInfo is not UIListChildPlacementInfo)
+                placementInfo = new UIListChildPlacementInfo(uiChildTransform);
         }
 
         public override float GetMaxChildHeight()

@@ -24,7 +24,7 @@ namespace XREngine.Components.Animation
         private readonly Dictionary<EHumanoidValue, float> _rawHumanoidValues = [];
         private readonly object _muscleValuesLock = new();
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
@@ -32,7 +32,7 @@ namespace XREngine.Components.Animation
             RegisterTick(ETickGroup.Normal, ETickOrder.Scene, ApplyMusclePose);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
 
@@ -161,7 +161,7 @@ namespace XREngine.Components.Animation
                         float pitch = Interp.Lerp(Settings.LeftEyeDownUpRange.X, Settings.LeftEyeDownUpRange.Y, t);
                         Settings.SetValue(EHumanoidValue.LeftEyeDownUp, pitch);
 
-                        // LH→RH: negate yaw (Y) and pitch (X) to convert from Unity's left-handed convention.
+                        // LH?RH: negate yaw (Y) and pitch (X) to convert from Unity's left-handed convention.
                         Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
                         ApplyNeutralBindRelativeRotation(Left.Eye.Node, q);
                         break;
@@ -720,7 +720,7 @@ namespace XREngine.Components.Animation
             ApplyFingerMuscles(isLeft: true);
             ApplyFingerMuscles(isLeft: false);
 
-            // One-time diagnostic snapshot of muscle values → degree values.
+            // One-time diagnostic snapshot of muscle values ? degree values.
             LogMusclePoseSnapshot();
         }
 
@@ -1023,9 +1023,9 @@ namespace XREngine.Components.Animation
         private float MapMuscleToDeg(EHumanoidValue value, float muscle)
         {
             // Unity humanoid muscle mapping is piecewise-linear through zero:
-            //   muscle = -1  → minDeg
-            //   muscle =  0  → 0° (bind pose, no rotation)
-            //   muscle = +1  → maxDeg
+            //   muscle = -1  ? minDeg
+            //   muscle =  0  ? 0° (bind pose, no rotation)
+            //   muscle = +1  ? maxDeg
             // This ensures asymmetric ranges (e.g. knee: -10°..130°) don't
             // produce a non-zero rotation at rest (muscle=0).
             //const float maxMuscleMagnitude = 1.0f;
@@ -1124,13 +1124,13 @@ namespace XREngine.Components.Animation
 
             const float degToRad = MathF.PI / 180.0f;
 
-            // LH→RH conversion: Unity uses a left-handed coordinate system (Z = forward).
+            // LH?RH conversion: Unity uses a left-handed coordinate system (Z = forward).
             // Our engine uses right-handed OpenGL (Z = toward viewer).
-            // For the Z-flip transform M = diag(1,1,-1), a rotation R(axis, θ) in LH becomes
-            // R((-ax,-ay,az), θ) in RH. This means:
-            //   Rotation around X axis → negate angle
-            //   Rotation around Y axis → negate angle
-            //   Rotation around Z axis → angle stays
+            // For the Z-flip transform M = diag(1,1,-1), a rotation R(axis, ?) in LH becomes
+            // R((-ax,-ay,az), ?) in RH. This means:
+            //   Rotation around X axis ? negate angle
+            //   Rotation around Y axis ? negate angle
+            //   Rotation around Z axis ? angle stays
 
             Quaternion q;
             if (axisMapping.HasValue)
@@ -1282,7 +1282,7 @@ namespace XREngine.Components.Animation
                 }
             }
 
-            // LH→RH conversion: negate each muscle angle unless overridden per-axis.
+            // LH?RH conversion: negate each muscle angle unless overridden per-axis.
             float yawSign = skipBlanketNegateYaw ? 1.0f : -1.0f;
             float pitchSign = skipBlanketNegatePitch ? 1.0f : -1.0f;
             float rollSign = skipBlanketNegateRoll ? 1.0f : -1.0f;
@@ -1309,7 +1309,7 @@ namespace XREngine.Components.Animation
                 ApplyPosePreviewMode();
         }
 
-        protected internal override void AddedToSceneNode(SceneNode sceneNode)
+        protected override void AddedToSceneNode(SceneNode sceneNode)
         {
             base.AddedToSceneNode(sceneNode);
             SetFromNode();
@@ -1699,7 +1699,7 @@ namespace XREngine.Components.Animation
                 Settings.BoneAxisMappings.Clear();
             }
 
-            // ── Build avatar profile (replaces the old ComputeAutoAxisMappings) ──
+            // -- Build avatar profile (replaces the old ComputeAutoAxisMappings) --
             // This derives per-bone axis mappings with confidence scoring,
             // sets IsIKCalibrated based on overall confidence, and applies
             // conservative fallback when confidence is low.
@@ -1819,11 +1819,11 @@ namespace XREngine.Components.Animation
         /// Logs a one-time snapshot of the body-space basis axes derived from the avatar bind pose,
         /// the limb twist axes, and the swing axes passed into ApplyBindRelativeSwingTwistWorldAxes.
         /// Expected values for a well-formed T-pose import:
-        ///   bodyLeft    ≈ ( 1, 0,  0)  (avatar left, camera right)
-        ///   bodyUp      ≈ ( 0, 1,  0)
-        ///   bodyForward ≈ ( 0, 0,  1)  (avatar facing camera)
-        ///   armTwist    ≈ (±1, 0,  0)  (arm points sideways in T-pose)
-        ///   legTwist    ≈ ( 0,-1,  0)  (leg points downward)
+        ///   bodyLeft    ˜ ( 1, 0,  0)  (avatar left, camera right)
+        ///   bodyUp      ˜ ( 0, 1,  0)
+        ///   bodyForward ˜ ( 0, 0,  1)  (avatar facing camera)
+        ///   armTwist    ˜ (±1, 0,  0)  (arm points sideways in T-pose)
+        ///   legTwist    ˜ ( 0,-1,  0)  (leg points downward)
         /// </summary>
         private void LogBodyBasisDiagnostic(
             Vector3 bodyLeft,
@@ -1840,11 +1840,11 @@ namespace XREngine.Components.Animation
             static string V(Vector3 v) => $"({v.X,6:F3},{v.Y,6:F3},{v.Z,6:F3})";
 
             Debug.Animation("[BodyBasis] === One-time body-basis snapshot ===");
-            Debug.Animation($"[BodyBasis]  bodyLeft         {V(bodyLeft)}   expected ≈ ( 1, 0, 0)");
-            Debug.Animation($"[BodyBasis]  bodyUp           {V(bodyUp)}   expected ≈ ( 0, 1, 0)");
-            Debug.Animation($"[BodyBasis]  bodyForward      {V(bodyForward)}   expected ≈ ( 0, 0, 1)");
-            Debug.Animation($"[BodyBasis]  armTwistWorld    {V(armTwistAxisWorld)}   expected ≈ (±1, 0, 0)");
-            Debug.Animation($"[BodyBasis]  legTwistWorld    {V(legTwistAxisWorld)}   expected ≈ ( 0,-1, 0)");
+            Debug.Animation($"[BodyBasis]  bodyLeft         {V(bodyLeft)}   expected ˜ ( 1, 0, 0)");
+            Debug.Animation($"[BodyBasis]  bodyUp           {V(bodyUp)}   expected ˜ ( 0, 1, 0)");
+            Debug.Animation($"[BodyBasis]  bodyForward      {V(bodyForward)}   expected ˜ ( 0, 0, 1)");
+            Debug.Animation($"[BodyBasis]  armTwistWorld    {V(armTwistAxisWorld)}   expected ˜ (±1, 0, 0)");
+            Debug.Animation($"[BodyBasis]  legTwistWorld    {V(legTwistAxisWorld)}   expected ˜ ( 0,-1, 0)");
             Debug.Animation($"[BodyBasis]  armPitchAxis     {V(armPitchAxisWorld)}   (Down-Up axis for left arm-side limbs)");
             Debug.Animation($"[BodyBasis]  legPitchAxis     {V(legPitchAxisWorld)}   (Front-Back axis for both legs)");
             Debug.Animation("[BodyBasis] === End body-basis snapshot ===");
@@ -2010,7 +2010,7 @@ namespace XREngine.Components.Animation
         /// <summary>
         /// Applies root motion position as a bind-relative offset on the Hips bone.
         /// In Unity humanoid clips, RootT represents the body center (hips) position
-        /// in absolute body space (e.g. RootT.y ≈ 1.0 = hip height above ground).
+        /// in absolute body space (e.g. RootT.y ˜ 1.0 = hip height above ground).
         /// We capture the first frame as a baseline and apply only the delta so that
         /// the bind-pose translation isn't double-counted.
         /// </summary>
@@ -2077,7 +2077,7 @@ namespace XREngine.Components.Animation
         public Vector3 CurrentRawBodyPosition => _currentRawRootPosition;
         public Quaternion CurrentRawBodyRotation => Quaternion.Normalize(_currentRawRootRotation);
 
-        // ── Runtime debug overrides for muscle→rotation sign tuning ─────────
+        // -- Runtime debug overrides for muscle?rotation sign tuning ---------
         // These are NOT serialized. They let you flip axis signs at runtime
         // from the editor UI to quickly diagnose and fix retargeting issues.
 
@@ -2091,11 +2091,11 @@ namespace XREngine.Components.Animation
             public float YawSign;
             public float PitchSign;
             public float RollSign;
-            /// <summary>When true, negate the blanket LH→RH angle negation for the yaw (twist) axis.</summary>
+            /// <summary>When true, negate the blanket LH?RH angle negation for the yaw (twist) axis.</summary>
             public bool SkipBlanketNegateYaw;
-            /// <summary>When true, negate the blanket LH→RH angle negation for the pitch (front/back) axis.</summary>
+            /// <summary>When true, negate the blanket LH?RH angle negation for the pitch (front/back) axis.</summary>
             public bool SkipBlanketNegatePitch;
-            /// <summary>When true, negate the blanket LH→RH angle negation for the roll (left/right) axis.</summary>
+            /// <summary>When true, negate the blanket LH?RH angle negation for the roll (left/right) axis.</summary>
             public bool SkipBlanketNegateRoll;
             /// <summary>When true, swap the frontBack and leftRight world axes.</summary>
             public bool SwapPitchRollAxes;
@@ -2121,7 +2121,7 @@ namespace XREngine.Components.Animation
         public LimbSignOverrides DebugToesSigns = LimbSignOverrides.Default;
         public LimbSignOverrides DebugShoulderSigns = LimbSignOverrides.Default;
 
-        // ── End debug overrides ─────────────────────────────────────────────
+        // -- End debug overrides ---------------------------------------------
 
         /// <summary>
         /// Applies root motion rotation as a bind-relative rotation on the Hips bone.
