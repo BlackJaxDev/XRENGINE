@@ -24,6 +24,14 @@ public abstract partial class RenderPipeline : XRAsset
     [Browsable(false)]
     public List<XRRenderPipelineInstance> Instances { get; } = [];
 
+    /// <summary>
+    /// When true, <see cref="Engine.Rendering.ApplyRenderPipelinePreference"/> will not replace
+    /// this pipeline with the global debug/default preference. Use this for viewports that
+    /// require a specific pipeline (e.g., VR desktop mirror cameras that need deferred rendering).
+    /// </summary>
+    [Browsable(false)]
+    public bool OverrideProtected { get; set; }
+
     protected abstract Lazy<XRMaterial> InvalidMaterialFactory { get; }
 
     [Browsable(false)]

@@ -254,6 +254,7 @@ public unsafe partial class VulkanRenderer
         VkMeshRenderer Renderer,
         Viewport Viewport,
         Rect2D Scissor,
+        SampleCountFlags RasterizationSamples,
         bool DepthTestEnabled,
         bool DepthWriteEnabled,
         CompareOp DepthCompareOp,
@@ -265,6 +266,7 @@ public unsafe partial class VulkanRenderer
         CullModeFlags CullMode,
         FrontFace FrontFace,
         bool BlendEnabled,
+        bool AlphaToCoverageEnabled,
         BlendOp ColorBlendOp,
         BlendOp AlphaBlendOp,
         BlendFactor SrcColorBlendFactor,
@@ -308,6 +310,7 @@ public unsafe partial class VulkanRenderer
             Format DepthAttachmentFormat,
             ulong ProgramPipelineHash,
             ulong VertexLayoutHash,
+            SampleCountFlags RasterizationSamples,
             bool DepthTestEnabled,
             bool DepthWriteEnabled,
             CompareOp DepthCompareOp,
@@ -318,6 +321,7 @@ public unsafe partial class VulkanRenderer
             CullModeFlags CullMode,
             FrontFace FrontFace,
             bool BlendEnabled,
+            bool AlphaToCoverageEnabled,
             BlendOp ColorBlendOp,
             BlendOp AlphaBlendOp,
             BlendFactor SrcColorBlendFactor,
@@ -492,6 +496,7 @@ public unsafe partial class VulkanRenderer
             bool depthTestEnabled;
             bool depthWriteEnabled;
             CompareOp depthCompareOp;
+            SampleCountFlags rasterizationSamples = ResolveRasterizationSamples(target);
             if (matOpts?.DepthTest is { } dt && dt.Enabled != ERenderParamUsage.Unchanged)
             {
                 depthTestEnabled = dt.Enabled == ERenderParamUsage.Enabled;
@@ -509,12 +514,15 @@ public unsafe partial class VulkanRenderer
 
             // ── Blend ──
             bool blendEnabled;
+            bool alphaToCoverageEnabled;
             BlendOp colorBlendOp, alphaBlendOp;
             BlendFactor srcColor, dstColor, srcAlpha, dstAlpha;
             BlendMode? matBlend = matOpts is not null ? ResolveBlendMode(matOpts) : null;
+            bool requestedAlphaToCoverage = matOpts?.AlphaToCoverage == ERenderParamUsage.Enabled;
             if (matBlend is not null && matBlend.Enabled != ERenderParamUsage.Unchanged)
             {
                 blendEnabled = matBlend.Enabled == ERenderParamUsage.Enabled;
+                alphaToCoverageEnabled = requestedAlphaToCoverage && rasterizationSamples != SampleCountFlags.Count1Bit;
                 colorBlendOp = ToVulkanBlendOp(matBlend.RgbEquation);
                 alphaBlendOp = ToVulkanBlendOp(matBlend.AlphaEquation);
                 srcColor = ToVulkanBlendFactor(matBlend.RgbSrcFactor);
@@ -525,6 +533,7 @@ public unsafe partial class VulkanRenderer
             else
             {
                 blendEnabled = Renderer.GetBlendEnabled();
+                alphaToCoverageEnabled = Renderer.GetAlphaToCoverageEnabled() && rasterizationSamples != SampleCountFlags.Count1Bit;
                 colorBlendOp = Renderer.GetColorBlendOp();
                 alphaBlendOp = Renderer.GetAlphaBlendOp();
                 srcColor = Renderer.GetSrcColorBlendFactor();
@@ -537,6 +546,7 @@ public unsafe partial class VulkanRenderer
                 this,
                 Renderer.GetCurrentViewport(),
                 Renderer.GetCurrentScissor(),
+                rasterizationSamples,
                 depthTestEnabled,
                 depthWriteEnabled,
                 depthCompareOp,
@@ -548,6 +558,7 @@ public unsafe partial class VulkanRenderer
                 cullMode,
                 frontFace,
                 blendEnabled,
+                alphaToCoverageEnabled,
                 colorBlendOp,
                 alphaBlendOp,
                 srcColor,
@@ -570,6 +581,18 @@ public unsafe partial class VulkanRenderer
                 draw,
                 Renderer.CaptureFrameOpContext()));
         }
+
+        private static SampleCountFlags ResolveRasterizationSamples(XRFrameBuffer? target)
+            => target?.EffectiveSampleCount switch
+            {
+                >= 64u => SampleCountFlags.Count64Bit,
+                >= 32u => SampleCountFlags.Count32Bit,
+                >= 16u => SampleCountFlags.Count16Bit,
+                >= 8u => SampleCountFlags.Count8Bit,
+                >= 4u => SampleCountFlags.Count4Bit,
+                >= 2u => SampleCountFlags.Count2Bit,
+                _ => SampleCountFlags.Count1Bit,
+            };
     }
 }
 

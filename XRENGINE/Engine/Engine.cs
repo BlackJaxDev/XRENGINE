@@ -201,7 +201,10 @@ namespace XREngine
             // Wire up timer events for deferred processing
             Time.Timer.PostUpdateFrame += Timer_PostUpdateFrame;
             RuntimeWorldObjectServices.Current = new EngineRuntimeWorldObjectServices();
+            XREngine.Scene.RuntimeSceneNodeServices.Current = new EngineRuntimeSceneNodeServices();
             RuntimeTransformServices.Current = new EngineRuntimeTransformServices();
+            RuntimeRenderObjectServices.Current = new EngineRuntimeRenderObjectServices();
+            RuntimeShaderServices.Current = new EngineRuntimeShaderServices();
             RuntimeVideoStreamingServices.Current = new EngineRuntimeVideoStreamingServices();
 
             // Connect external profiling hooks for subsystems

@@ -183,7 +183,8 @@ namespace XREngine.Rendering
 
         private static bool IsManagedTransparencyRenderPass(int renderPass)
             => renderPass == (int)EDefaultRenderPass.MaskedForward ||
-               renderPass == (int)EDefaultRenderPass.TransparentForward;
+               renderPass == (int)EDefaultRenderPass.TransparentForward ||
+               renderPass == (int)EDefaultRenderPass.WeightedBlendedOitForward;
 
         private void PreShadersSet()
         {
@@ -282,6 +283,7 @@ namespace XREngine.Rendering
             bool blendEnabled = blend?.Enabled == ERenderParamUsage.Enabled;
             bool hasAlphaCutoff = Parameter<ShaderFloat>("AlphaCutoff") is not null;
             bool depthWrites = RenderOptions?.DepthTest?.UpdateDepth ?? true;
+            bool alphaToCoverage = RenderOptions?.AlphaToCoverage == ERenderParamUsage.Enabled;
 
             if (blendEnabled)
             {
@@ -293,6 +295,9 @@ namespace XREngine.Rendering
 
                 return ETransparencyMode.AlphaBlend;
             }
+
+            if (alphaToCoverage && hasAlphaCutoff && depthWrites)
+                return ETransparencyMode.AlphaToCoverage;
 
             if (hasAlphaCutoff && depthWrites)
                 return ETransparencyMode.Masked;
@@ -315,21 +320,42 @@ namespace XREngine.Rendering
             if (effectiveMode is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
                 EnsureAlphaCutoffParameter();
 
+            NormalizeTransparencyShaders(effectiveMode);
+
             switch (effectiveMode)
             {
                 case ETransparencyMode.Opaque:
                     RenderOptions.BlendModeAllDrawBuffers = BlendMode.Disabled();
+                    RenderOptions.BlendModesPerDrawBuffer = null;
+                    RenderOptions.AlphaToCoverage = ERenderParamUsage.Disabled;
                     RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
                     RenderOptions.DepthTest.UpdateDepth = true;
                     if (IsManagedTransparencyRenderPass(RenderPass))
                         RenderPass = _opaqueRenderPass;
                     break;
                 case ETransparencyMode.Masked:
-                case ETransparencyMode.AlphaToCoverage:
                     RenderOptions.BlendModeAllDrawBuffers = BlendMode.Disabled();
+                    RenderOptions.BlendModesPerDrawBuffer = null;
+                    RenderOptions.AlphaToCoverage = ERenderParamUsage.Disabled;
                     RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
                     RenderOptions.DepthTest.UpdateDepth = true;
                     RenderPass = (int)EDefaultRenderPass.MaskedForward;
+                    break;
+                case ETransparencyMode.AlphaToCoverage:
+                    RenderOptions.BlendModeAllDrawBuffers = BlendMode.Disabled();
+                    RenderOptions.BlendModesPerDrawBuffer = null;
+                    RenderOptions.AlphaToCoverage = ERenderParamUsage.Enabled;
+                    RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
+                    RenderOptions.DepthTest.UpdateDepth = true;
+                    RenderPass = (int)EDefaultRenderPass.MaskedForward;
+                    break;
+                case ETransparencyMode.WeightedBlendedOit:
+                    RenderOptions.BlendModeAllDrawBuffers = null;
+                    RenderOptions.BlendModesPerDrawBuffer = CreateWeightedBlendedOitBlendModes();
+                    RenderOptions.AlphaToCoverage = ERenderParamUsage.Disabled;
+                    RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
+                    RenderOptions.DepthTest.UpdateDepth = false;
+                    RenderPass = (int)EDefaultRenderPass.WeightedBlendedOitForward;
                     break;
                 case ETransparencyMode.Additive:
                     RenderOptions.BlendModeAllDrawBuffers = new BlendMode()
@@ -340,6 +366,8 @@ namespace XREngine.Rendering
                         AlphaSrcFactor = EBlendingFactor.SrcAlpha,
                         AlphaDstFactor = EBlendingFactor.One,
                     };
+                    RenderOptions.BlendModesPerDrawBuffer = null;
+                    RenderOptions.AlphaToCoverage = ERenderParamUsage.Disabled;
                     RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
                     RenderOptions.DepthTest.UpdateDepth = false;
                     RenderPass = (int)EDefaultRenderPass.TransparentForward;
@@ -353,12 +381,16 @@ namespace XREngine.Rendering
                         AlphaSrcFactor = EBlendingFactor.One,
                         AlphaDstFactor = EBlendingFactor.OneMinusSrcAlpha,
                     };
+                    RenderOptions.BlendModesPerDrawBuffer = null;
+                    RenderOptions.AlphaToCoverage = ERenderParamUsage.Disabled;
                     RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
                     RenderOptions.DepthTest.UpdateDepth = false;
                     RenderPass = (int)EDefaultRenderPass.TransparentForward;
                     break;
                 default:
                     RenderOptions.BlendModeAllDrawBuffers = BlendMode.EnabledTransparent();
+                    RenderOptions.BlendModesPerDrawBuffer = null;
+                    RenderOptions.AlphaToCoverage = ERenderParamUsage.Disabled;
                     RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
                     RenderOptions.DepthTest.UpdateDepth = false;
                     RenderPass = (int)EDefaultRenderPass.TransparentForward;
@@ -366,6 +398,47 @@ namespace XREngine.Rendering
             }
 
             SyncAlphaCutoffParameter();
+        }
+
+        private static Dictionary<uint, BlendMode> CreateWeightedBlendedOitBlendModes()
+            => new()
+            {
+                [0u] = new BlendMode
+                {
+                    Enabled = ERenderParamUsage.Enabled,
+                    RgbSrcFactor = EBlendingFactor.One,
+                    RgbDstFactor = EBlendingFactor.One,
+                    AlphaSrcFactor = EBlendingFactor.One,
+                    AlphaDstFactor = EBlendingFactor.One,
+                },
+                [1u] = new BlendMode
+                {
+                    Enabled = ERenderParamUsage.Enabled,
+                    RgbSrcFactor = EBlendingFactor.Zero,
+                    RgbDstFactor = EBlendingFactor.OneMinusSrcColor,
+                    AlphaSrcFactor = EBlendingFactor.Zero,
+                    AlphaDstFactor = EBlendingFactor.OneMinusSrcAlpha,
+                },
+            };
+
+        private void NormalizeTransparencyShaders(ETransparencyMode effectiveMode)
+        {
+            if (Shaders.Count == 0)
+                return;
+
+            for (int i = 0; i < Shaders.Count; i++)
+            {
+                XRShader? shader = Shaders[i];
+                if (shader is null || shader.Type != EShaderType.Fragment)
+                    continue;
+
+                XRShader? replacement = effectiveMode == ETransparencyMode.WeightedBlendedOit
+                    ? ShaderHelper.GetWeightedBlendedOitForwardVariant(shader)
+                    : ShaderHelper.GetStandardForwardVariant(shader);
+
+                if (replacement is not null)
+                    Shaders[i] = replacement;
+            }
         }
 
         private void EnsureAlphaCutoffParameter()

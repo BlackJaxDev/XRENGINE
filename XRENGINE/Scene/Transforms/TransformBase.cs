@@ -10,11 +10,8 @@ using XREngine.Core.Files;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
-using XREngine.Rendering.Commands;
-using XREngine.Rendering.Info;
 using XREngine.Rendering.UI;
 using YamlDotNet.Serialization;
-using static XREngine.Engine.Rendering;
 
 namespace XREngine.Scene.Transforms
 {
@@ -25,7 +22,7 @@ namespace XREngine.Scene.Transforms
     /// </summary>
     [Serializable]
     [MemoryPackable(GenerateType.NoGenerate)]
-    public abstract partial class TransformBase : XRWorldObjectBase, IRenderable, IPostCookedBinaryDeserialize
+    public abstract partial class TransformBase : XRWorldObjectBase, IPostCookedBinaryDeserialize
     {
         #region Delegates & Events
 
@@ -174,6 +171,7 @@ namespace XREngine.Scene.Transforms
         private float _selectionRadius = 0.01f;
         private Capsule? _capsule = null;
         private bool _immediateLocalMatrixRecalculation = true;
+        private readonly IRuntimeTransformDebugHandle? _debugHandle;
 
         #endregion
 
@@ -182,9 +180,6 @@ namespace XREngine.Scene.Transforms
         [YamlIgnore]
         [Browsable(false)]
         public bool HasChanged { get; protected set; } = false;
-
-        [Browsable(false)]
-        public RenderInfo[] RenderedObjects { get; }
 
         [YamlIgnore]
         [Browsable(false)]
@@ -668,9 +663,7 @@ namespace XREngine.Scene.Transforms
             _inverseLocalMatrix = Matrix4x4.Identity;
             _inverseWorldMatrix = Matrix4x4.Identity;
 
-            RenderInfo = RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OnTopForward, RenderDebug));
-            RenderInfo.Layer = DefaultLayers.GizmosIndex;
-            RenderedObjects = GetDebugRenderInfo();
+            _debugHandle = RuntimeTransformServices.Current?.CreateDebugHandle(this, RenderDebug);
             DebugRender = RuntimeTransformServices.Current?.RenderTransformDebugInfo ?? false;
 
             SetParent(parent, false, EParentAssignmentMode.Immediate);
@@ -731,22 +724,22 @@ namespace XREngine.Scene.Transforms
             => $"{GetType().GetFriendlyName()} ({SceneNode?.Name ?? Name ?? "<no name>"})";
 
         public Vector3 GetWorldUp()
-            => Engine.IsRenderThread ? RenderUp : WorldUp;
+            => RuntimeTransformServices.Current?.IsRenderThread == true ? RenderUp : WorldUp;
 
         public Vector3 GetWorldRight()
-            => Engine.IsRenderThread ? RenderRight : WorldRight;
+            => RuntimeTransformServices.Current?.IsRenderThread == true ? RenderRight : WorldRight;
 
         public Vector3 GetWorldForward()
-            => Engine.IsRenderThread ? RenderForward : WorldForward;
+            => RuntimeTransformServices.Current?.IsRenderThread == true ? RenderForward : WorldForward;
 
         public Vector3 GetWorldTranslation()
-            => Engine.IsRenderThread ? RenderTranslation : WorldTranslation;
+            => RuntimeTransformServices.Current?.IsRenderThread == true ? RenderTranslation : WorldTranslation;
 
         public Quaternion GetWorldRotation()
-            => Engine.IsRenderThread ? RenderRotation : WorldRotation;
+            => RuntimeTransformServices.Current?.IsRenderThread == true ? RenderRotation : WorldRotation;
 
         public Quaternion GetInverseWorldRotation()
-            => Engine.IsRenderThread ? InverseRenderRotation : InverseWorldRotation;
+            => RuntimeTransformServices.Current?.IsRenderThread == true ? InverseRenderRotation : InverseWorldRotation;
 
         /// <summary>
         /// Used to verify if the placement info for a child is the right type before being returned to the requester.
@@ -1234,8 +1227,7 @@ namespace XREngine.Scene.Transforms
                         World = w;
                     break;
                 case nameof(World):
-                    foreach (var obj in RenderedObjects)
-                        obj.WorldInstance = World;
+                    _debugHandle?.UpdateWorld(World);
                     MarkWorldModified();
                     if (SceneNode is not null)
                         SceneNode.World = World;
@@ -1261,7 +1253,7 @@ namespace XREngine.Scene.Transforms
                     }
                     break;
                 case nameof(SelectionRadius):
-                    MakeCapsule();
+                    RemakeCapsule();
                     break;
             }
         }
@@ -1295,6 +1287,7 @@ namespace XREngine.Scene.Transforms
 
             //Detach from world
             World = null;
+            _debugHandle?.Dispose();
 
             //Clear event handlers to prevent memory leaks
             LocalMatrixChanged = null;
@@ -1345,21 +1338,12 @@ namespace XREngine.Scene.Transforms
         [YamlIgnore]
         public bool DebugRender
         {
-            get => RenderedObjects.TryGet(0)?.IsVisible ?? false;
+            get => _debugHandle?.IsVisible ?? false;
             set
             {
-                foreach (var obj in RenderedObjects)
-                    obj.IsVisible = value;
+                if (_debugHandle is not null)
+                    _debugHandle.IsVisible = value;
             }
-        }
-
-        [RuntimeOnly]
-        protected RenderInfo3D RenderInfo { get; set; }
-
-        protected virtual RenderInfo[] GetDebugRenderInfo()
-        {
-            //RemakeCapsule();
-            return [RenderInfo];
         }
 
         protected virtual void RenderDebug()
@@ -1400,13 +1384,13 @@ namespace XREngine.Scene.Transforms
             bool axisAligned = RuntimeTransformServices.Current?.TransformCullingIsAxisAligned ?? false;
             if (axisAligned)
             {
-                RenderInfo.LocalCullingVolume = c.GetAABB(true);
-                RenderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
+                _debugHandle?.UpdateBounds(c.GetAABB(true), Matrix4x4.Identity);
             }
             else
             {
-                RenderInfo.LocalCullingVolume = c.GetAABB(false, true, out Quaternion dirToUp);
-                RenderInfo.CullingOffsetMatrix = Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(Quaternion.Inverse(dirToUp))) * Matrix4x4.CreateTranslation(c.Center);
+                _debugHandle?.UpdateBounds(
+                    c.GetAABB(false, true, out Quaternion dirToUp),
+                    Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(Quaternion.Inverse(dirToUp))) * Matrix4x4.CreateTranslation(c.Center));
             }
 
             Capsule = c;

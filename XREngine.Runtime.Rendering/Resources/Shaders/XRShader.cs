@@ -88,23 +88,16 @@ namespace XREngine.Rendering
 
         public override void Reload(string filePath)
         {
-            //string ext = Path.GetExtension(filePath);
-            //if (string.Equals(ext, ".asset", StringComparison.OrdinalIgnoreCase))
-            //{
-                // Native asset format - deserialize from YAML
-                var loaded = Engine.Assets.Load<XRShader>(filePath);
-                if (loaded is not null)
-                {
-                    Type = loaded.Type;
-                    Source = loaded.Source;
-                    GenerateAsync = loaded.GenerateAsync;
-                }
-            //}
-            //else
-            //{
-            //    // 3rd party shader file format
-            //    Load3rdParty(filePath);
-            //}
+            XRShader? loaded = RuntimeShaderServices.Current?.LoadAsset<XRShader>(filePath);
+            if (loaded is null)
+            {
+                RuntimeShaderServices.Current?.LogWarning($"Failed to reload shader asset '{filePath}'.");
+                return;
+            }
+
+            Type = loaded.Type;
+            Source = loaded.Source;
+            GenerateAsync = loaded.GenerateAsync;
         }
         public override bool Load3rdParty(string filePath)
         {

@@ -108,6 +108,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.MaskedForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
+            { (int)EDefaultRenderPass.WeightedBlendedOitForward, null },
             { (int)EDefaultRenderPass.OnTopForward, null },
             { (int)EDefaultRenderPass.PostRender, null }
         };
@@ -127,6 +128,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string LightCombineFBOName = "LightCombineFBO";
     public const string ForwardPassFBOName = "ForwardPassFBO";
     public const string ForwardPassMsaaFBOName = "ForwardPassMSAAFBO";
+    public const string TransparentSceneCopyFBOName = "TransparentSceneCopyFBO";
+    public const string TransparentAccumulationFBOName = "TransparentAccumulationFBO";
+    public const string TransparentResolveFBOName = "TransparentResolveFBO";
+    public const string TransparentAccumulationDebugFBOName = "TransparentAccumulationDebugFBO";
+    public const string TransparentRevealageDebugFBOName = "TransparentRevealageDebugFBO";
+    public const string TransparentOverdrawDebugFBOName = "TransparentOverdrawDebugFBO";
     public const string PostProcessFBOName = "PostProcessFBO";
     public const string PostProcessOutputTextureName = "PostProcessOutputTexture";
     public const string PostProcessOutputFBOName = "PostProcessOutputFBO";
@@ -167,6 +174,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string DepthStencilTextureName = "DepthStencil";
     public const string DiffuseTextureName = "LightingTexture";
     public const string HDRSceneTextureName = "HDRSceneTex";
+    public const string TransparentSceneCopyTextureName = "TransparentSceneCopyTex";
+    public const string TransparentAccumTextureName = "TransparentAccumTex";
+    public const string TransparentRevealageTextureName = "TransparentRevealageTex";
     //public const string HDRSceneTexture2Name = "HDRSceneTex2";
     public const string AutoExposureTextureName = "AutoExposureTex";
     public const string BloomBlurTextureName = "BloomBlurTexture";
@@ -215,6 +225,24 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private bool EnableTransformIdVisualization
         => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransformId;
+
+    private bool EnableTransparencyAccumulationVisualization
+        => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransparencyAccumulation;
+
+    private bool EnableTransparencyRevealageVisualization
+        => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransparencyRevealage;
+
+    private bool EnableTransparencyOverdrawVisualization
+        => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransparencyOverdrawHeatmap;
+
+    private string? ActiveTransparencyDebugFboName
+        => EnableTransparencyAccumulationVisualization
+            ? TransparentAccumulationDebugFBOName
+            : EnableTransparencyRevealageVisualization
+                ? TransparentRevealageDebugFBOName
+                : EnableTransparencyOverdrawVisualization
+                    ? TransparentOverdrawDebugFBOName
+                    : null;
 
     private void HandleRenderingSettingsChanged()
     {
@@ -282,7 +310,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
         Chain(metadata, EDefaultRenderPass.DeferredDecals, EDefaultRenderPass.OpaqueDeferred);
         Chain(metadata, EDefaultRenderPass.OpaqueForward, EDefaultRenderPass.Background);
         Chain(metadata, EDefaultRenderPass.MaskedForward, EDefaultRenderPass.OpaqueForward);
-        Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.MaskedForward);
+        Chain(metadata, EDefaultRenderPass.WeightedBlendedOitForward, EDefaultRenderPass.MaskedForward);
+        Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.WeightedBlendedOitForward);
         Chain(metadata, EDefaultRenderPass.OnTopForward, EDefaultRenderPass.TransparentForward);
         Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.OnTopForward);
     }
@@ -310,6 +339,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     c.Add<VPRC_ForwardPlusLightCullingPass>();
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GPURenderDispatch);
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, GPURenderDispatch);
                 c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
@@ -447,6 +478,24 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 .UseLifetime(RenderResourceLifetime.Transient);
 
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TransparentSceneCopyFBOName,
+                CreateTransparentSceneCopyFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TransparentAccumulationFBOName,
+                CreateTransparentAccumulationFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TransparentResolveFBOName,
+                CreateTransparentResolveFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 RestirCompositeFBOName,
                 CreateRestirCompositeFBO,
                 GetDesiredFBOSizeInternal)
@@ -518,11 +567,6 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GPURenderDispatch);
 
-                //c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
-
                 if (enableComputePasses)
                 {
                     c.Add<VPRC_ReSTIRPass>();
@@ -542,9 +586,28 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     ForwardPassFBOName,
                     EReadBufferMode.ColorAttachment0,
                     blitColor: true,
-                    blitDepth: false,
+                    blitDepth: true,
                     blitStencil: true,
                     linearFilter: false);
+            }
+
+            c.Add<VPRC_RenderQuadToFBO>().SetTargets(ForwardPassFBOName, TransparentSceneCopyFBOName);
+            c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentAccumTextureName, ColorF4.Transparent);
+            c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentRevealageTextureName, ColorF4.White);
+            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(TransparentAccumulationFBOName, true, false, false, false)))
+            {
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, GPURenderDispatch);
+            }
+            c.Add<VPRC_RenderQuadFBO>().FrameBufferName = TransparentResolveFBOName;
+
+            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false, false)))
+            {
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
             }
 
             c.Add<VPRC_DepthTest>().Enable = false;
@@ -575,6 +638,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                         (int)EDefaultRenderPass.DeferredDecals,
                         (int)EDefaultRenderPass.OpaqueForward,
                         (int)EDefaultRenderPass.MaskedForward,
+                        (int)EDefaultRenderPass.WeightedBlendedOitForward,
                         (int)EDefaultRenderPass.TransparentForward,
                     });
                 c.Add<VPRC_DepthWrite>().Allow = true;
@@ -619,6 +683,30 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                     TransformIdDebugQuadFBOName,
                     CreateTransformIdDebugQuadFBO,
+                    GetDesiredFBOSizeInternal);
+            }
+
+            if (EnableTransparencyAccumulationVisualization)
+            {
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    TransparentAccumulationDebugFBOName,
+                    CreateTransparentAccumulationDebugFBO,
+                    GetDesiredFBOSizeInternal);
+            }
+
+            if (EnableTransparencyRevealageVisualization)
+            {
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    TransparentRevealageDebugFBOName,
+                    CreateTransparentRevealageDebugFBO,
+                    GetDesiredFBOSizeInternal);
+            }
+
+            if (EnableTransparencyOverdrawVisualization)
+            {
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    TransparentOverdrawDebugFBOName,
+                    CreateTransparentOverdrawDebugFBO,
                     GetDesiredFBOSizeInternal);
             }
 
@@ -688,6 +776,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     // Debug visualization is produced by a quad shader; present it directly.
                     c.Add<VPRC_RenderQuadToFBO>().SetTargets(TransformIdDebugQuadFBOName, null);
                 }
+                else if (ActiveTransparencyDebugFboName is not null)
+                {
+                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(ActiveTransparencyDebugFboName, null);
+                }
                 else
                 {
                     string finalSource = EnableFxaa ? FxaaFBOName : PostProcessFBOName;
@@ -713,6 +805,18 @@ public partial class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_RenderScreenSpaceUI>();
         return c;
     }
+
+    private string TransparentResolveShaderName()
+        => Stereo ? "TransparentResolveStereo.fs" : "TransparentResolve.fs";
+
+    private string TransparentAccumulationDebugShaderName()
+        => Stereo ? "TransparentAccumulationDebugStereo.fs" : "TransparentAccumulationDebug.fs";
+
+    private string TransparentRevealageDebugShaderName()
+        => Stereo ? "TransparentRevealageDebugStereo.fs" : "TransparentRevealageDebug.fs";
+
+    private string TransparentOverdrawDebugShaderName()
+        => Stereo ? "TransparentOverdrawDebugStereo.fs" : "TransparentOverdrawDebug.fs";
 
     private ViewportRenderCommandContainer CreateVendorUpscaleCommands(string sourceFboName)
     {
@@ -885,6 +989,24 @@ public partial class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             HDRSceneTextureName,
             CreateHDRSceneTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TransparentSceneCopyTextureName,
+            CreateTransparentSceneCopyTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TransparentAccumTextureName,
+            CreateTransparentAccumTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TransparentRevealageTextureName,
+            CreateTransparentRevealageTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 

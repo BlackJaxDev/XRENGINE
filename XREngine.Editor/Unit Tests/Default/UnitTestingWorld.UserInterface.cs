@@ -31,6 +31,14 @@ public static partial class EditorUnitTests
         private static long _lastSampledRenderTimestampTicks = -1L;
 
         private static UIEditorComponent? _editorComponent = null;
+        private static SceneNode? _vrStereoPreviewRoot;
+        private static UIMaterialComponent? _vrStereoPreviewLeft;
+        private static UIMaterialComponent? _vrStereoPreviewRight;
+        private static bool _vrStereoPreviewLeftWasArray;
+        private static bool _vrStereoPreviewRightWasArray;
+        private static XRTexture? _vrStereoPreviewLastLeft;
+        private static XRTexture? _vrStereoPreviewLastRight;
+        private static bool _vrStereoPreviewRefreshHooked;
 
         private static void TickFPS(UITextComponent t)
         {
@@ -282,6 +290,7 @@ public static partial class EditorUnitTests
             // to a camera (handled elsewhere via screenSpaceCamera?.UserInterface = canvas).
 
             SceneNode previewRoot = new(rootCanvasNode) { Name = "VR Stereo Preview" };
+            _vrStereoPreviewRoot = previewRoot;
             var previewTfm = previewRoot.SetTransform<UIBoundableTransform>();
             previewTfm.MinAnchor = new Vector2(0.0f, 0.0f);
             previewTfm.MaxAnchor = new Vector2(1.0f, 1.0f);
@@ -307,12 +316,12 @@ public static partial class EditorUnitTests
 
             var left = leftNode.AddComponent<UIMaterialComponent>()!;
             var right = rightNode.AddComponent<UIMaterialComponent>()!;
-
-            bool leftWasArray = false;
-            bool rightWasArray = false;
-
-            XRTexture? lastLeft = null;
-            XRTexture? lastRight = null;
+            _vrStereoPreviewLeft = left;
+            _vrStereoPreviewRight = right;
+            _vrStereoPreviewLeftWasArray = false;
+            _vrStereoPreviewRightWasArray = false;
+            _vrStereoPreviewLastLeft = null;
+            _vrStereoPreviewLastRight = null;
 
             // Hard gate: do not show unless VR pawn is enabled.
             if (!Toggles.VRPawn || !Toggles.PreviewVRStereoViews)
@@ -321,9 +330,32 @@ public static partial class EditorUnitTests
                 return;
             }
 
-            previewRoot.IsActiveSelf = true;
-            
-            // Prefer the single-pass textures when available.
+            EnsureVRStereoPreviewRefreshHooked();
+            RefreshVRStereoPreviewOverlay();
+        }
+
+        private static void EnsureVRStereoPreviewRefreshHooked()
+        {
+            if (_vrStereoPreviewRefreshHooked)
+                return;
+
+            _vrStereoPreviewRefreshHooked = true;
+            Engine.Time.Timer.RenderFrame += RefreshVRStereoPreviewOverlay;
+        }
+
+        private static void RefreshVRStereoPreviewOverlay()
+        {
+            if (_vrStereoPreviewRoot is null || _vrStereoPreviewLeft is null || _vrStereoPreviewRight is null)
+                return;
+
+            if (!Toggles.VRPawn || !Toggles.PreviewVRStereoViews)
+            {
+                _vrStereoPreviewRoot.IsActiveSelf = false;
+                return;
+            }
+
+            _vrStereoPreviewRoot.IsActiveSelf = true;
+
             XRTexture? leftTex;
             XRTexture? rightTex;
             bool isArray;
@@ -341,8 +373,8 @@ public static partial class EditorUnitTests
                 isArray = false;
             }
 
-            ApplyPreviewTexture(left, leftTex, isArray, ref leftWasArray, ref lastLeft);
-            ApplyPreviewTexture(right, rightTex, isArray, ref rightWasArray, ref lastRight);
+            ApplyPreviewTexture(_vrStereoPreviewLeft, leftTex, isArray, ref _vrStereoPreviewLeftWasArray, ref _vrStereoPreviewLastLeft);
+            ApplyPreviewTexture(_vrStereoPreviewRight, rightTex, isArray, ref _vrStereoPreviewRightWasArray, ref _vrStereoPreviewLastRight);
         }
 
         private static void ApplyPreviewTexture(

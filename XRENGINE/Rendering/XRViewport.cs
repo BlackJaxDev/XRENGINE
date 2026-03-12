@@ -88,6 +88,14 @@ namespace XREngine.Rendering
         private bool _allowUIRender = true;
 
         /// <summary>
+        /// When set, this external command collection is used for rendering instead of the pipeline instance's own commands.
+        /// This allows multiple viewports to share a single culling pass (e.g., VR two-pass + desktop mirror).
+        /// When non-null, <see cref="AutomaticallyCollectVisible"/> and <see cref="AutomaticallySwapBuffers"/>
+        /// should typically be set to false since the commands are managed externally.
+        /// </summary>
+        public RenderCommandCollection? MeshRenderCommandsOverride { get; set; }
+
+        /// <summary>
         /// When true, objects outside the camera's view frustum are culled (not rendered).
         /// Set to false to disable frustum culling (e.g., for shadow map rendering or omnidirectional cameras).
         /// </summary>
@@ -997,7 +1005,8 @@ namespace XREngine.Rendering
 
                 // Visibility-driven compute deformation (skinning/blendshapes).
                 // This runs on the render thread and uses the swapped (rendering) command buffers.
-                SkinningPrepassDispatcher.Instance.RunVisible(_renderPipeline.MeshRenderCommands);
+                var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+                SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
 
                 _renderPipeline.Render(
                     world.VisualScene,
@@ -1008,7 +1017,8 @@ namespace XREngine.Rendering
                     screenSpaceUI,
                     shadowPass,
                     false,
-                    forcedMaterial);
+                    forcedMaterial,
+                    meshRenderCommandsOverride: MeshRenderCommandsOverride);
 
                 if (!uiThroughPipeline)
                     RenderScreenSpaceUIOverlay(targetFbo);

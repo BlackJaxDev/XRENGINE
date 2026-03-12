@@ -40,7 +40,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_computeProgram.Shaders.Count <= 0)
                 return;
 
-            var textures = Textures?.Select(binding => (binding.Unit, binding.TextureFactory(), binding.Level, binding.Layer, binding.Access, binding.Format));
+            var textures = Textures?.Select(binding => (
+                binding.Unit,
+                (IRenderTextureResource)binding.TextureFactory(),
+                binding.Level,
+                binding.Layer,
+                binding.Access,
+                binding.Format));
             _computeProgram.DispatchCompute(X(), Y(), Z(), textures);
         }
 

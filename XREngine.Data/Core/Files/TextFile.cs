@@ -1,10 +1,9 @@
-﻿using MemoryPack;
+using MemoryPack;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json.Serialization;
 using XREngine.Data;
 using YamlDotNet.Serialization;
-using JsonIgnoreNewtonsoftAttribute = Newtonsoft.Json.JsonIgnoreAttribute;
-
 
 namespace XREngine.Core.Files
 {
@@ -30,7 +29,6 @@ namespace XREngine.Core.Files
         private Encoding _encoding = Encoding.Default;
         [YamlIgnore]
         [JsonIgnore]
-        [JsonIgnoreNewtonsoft]
         [MemoryPackIgnore]
         public Encoding Encoding
         {
@@ -140,7 +138,7 @@ namespace XREngine.Core.Files
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"Failed to read encoding from file {path}: {e.Message}");
+                Trace.TraceWarning($"Failed to read encoding from file {path}: {e.Message}");
                 return Encoding.Default;
             }
         }

@@ -1,10 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
-using XREngine.Components;
-using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Core;
-using XREngine.Rendering;
-using XREngine.Rendering.Info;
-using XREngine.Rendering.UI;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Scene
@@ -183,13 +178,11 @@ namespace XREngine.Scene
         /// </summary>
         public void SetTransform(TransformBase transform, ETransformSetFlags flags = ETransformSetFlags.Default)
         {
-            if (transform is UICanvasTransform && !TryGetComponent<UICanvasComponent>(out _))
+            if (!RuntimeSceneNodeServices.Current.TryValidateTransformAssignment(this, transform, out string? warningMessage))
             {
-                if (TryGetComponent<PawnComponent>(out _) || TryGetComponent<CameraComponent>(out _))
-                {
-                    Debug.LogWarning($"Ignoring attempt to assign UICanvasTransform to node '{Name}' because it has no UICanvasComponent.");
-                    return;
-                }
+                if (!string.IsNullOrWhiteSpace(warningMessage))
+                    RuntimeSceneNodeServices.Current.LogWarning(warningMessage);
+                return;
             }
 
             if (flags.HasFlag(ETransformSetFlags.ClearNewChildren))

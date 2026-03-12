@@ -748,6 +748,124 @@ public partial class DefaultRenderPipeline
         }
     }
 
+    private XRTexture CreateTransparentSceneCopyTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat,
+                EFrameBufferAttachment.ColorAttachment0);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.UWrap = ETexWrapMode.ClampToEdge;
+            t.VWrap = ETexWrapMode.ClampToEdge;
+            t.SamplerName = TransparentSceneCopyTextureName;
+            t.Name = TransparentSceneCopyTextureName;
+            return t;
+        }
+
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth,
+            InternalHeight,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.MinFilter = ETexMinFilter.Nearest;
+        texture.MagFilter = ETexMagFilter.Nearest;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = TransparentSceneCopyTextureName;
+        texture.Name = TransparentSceneCopyTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateTransparentAccumTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat,
+                EFrameBufferAttachment.ColorAttachment0);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.UWrap = ETexWrapMode.ClampToEdge;
+            t.VWrap = ETexWrapMode.ClampToEdge;
+            t.SamplerName = TransparentAccumTextureName;
+            t.Name = TransparentAccumTextureName;
+            return t;
+        }
+
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth,
+            InternalHeight,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.MinFilter = ETexMinFilter.Nearest;
+        texture.MagFilter = ETexMagFilter.Nearest;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = TransparentAccumTextureName;
+        texture.Name = TransparentAccumTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateTransparentRevealageTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.R16f,
+                EPixelFormat.Red,
+                EPixelType.HalfFloat,
+                EFrameBufferAttachment.ColorAttachment1);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.R16f;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.UWrap = ETexWrapMode.ClampToEdge;
+            t.VWrap = ETexWrapMode.ClampToEdge;
+            t.SamplerName = TransparentRevealageTextureName;
+            t.Name = TransparentRevealageTextureName;
+            return t;
+        }
+
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth,
+            InternalHeight,
+            EPixelInternalFormat.R16f,
+            EPixelFormat.Red,
+            EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment1);
+        texture.MinFilter = ETexMinFilter.Nearest;
+        texture.MagFilter = ETexMagFilter.Nearest;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SizedInternalFormat = ESizedInternalFormat.R16f;
+        texture.SamplerName = TransparentRevealageTextureName;
+        texture.Name = TransparentRevealageTextureName;
+        return texture;
+    }
+
     private XRTexture CreateAutoExposureTexture()
     {
         XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(

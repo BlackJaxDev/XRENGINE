@@ -11,7 +11,7 @@ namespace XREngine.Components.Scene.Transforms
     /// <summary>
     /// Typical 3rd person boom camera transform, with a trace sphere to prevent clipping through walls.
     /// </summary>
-    public class BoomTransform : TransformBase, IRenderable
+    public class BoomTransform : TransformBase
     {
         public delegate void DelDistanceChange(float newLength);
         public event DelDistanceChange? CurrentDistanceChanged;

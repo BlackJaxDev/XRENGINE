@@ -38,7 +38,7 @@ public static partial class EditorUnitTests
                             UserInterface.CreateEditorUI(rootNode, camComp, pawn2);
                     }
                     else if (setUI) //TODO: render ui on left or right controller when opened
-                        UserInterface.CreateEditorUI(characterPawnModelParentNode, null, pawn);
+                        UserInterface.CreateEditorUI(characterPawnModelParentNode, pawn.CameraComponent, pawn);
                 }
                 else
                     CreateFlyingVRPawn(rootNode, setUI);
@@ -295,6 +295,7 @@ public static partial class EditorUnitTests
             persp!.HorizontalFieldOfView = 50.0f;
             persp.NearZ = 0.1f;
             persp.FarZ = 100000.0f;
+            firstPersonCam.Camera.RenderPipeline = new DefaultRenderPipeline(false) { OverrideProtected = true };
             firstPersonCam.CullWithFrustum = true;
             if (pawn is null)
                 pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One);

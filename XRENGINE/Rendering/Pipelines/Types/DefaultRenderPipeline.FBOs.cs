@@ -154,6 +154,154 @@ public partial class DefaultRenderPipeline
         program.Uniform("ScreenHeight", (float)InternalHeight);
     }
 
+    private XRFrameBuffer CreateTransparentSceneCopyFBO()
+    {
+        var colorAttachment = EnsureTextureAttachment(TransparentSceneCopyTextureName, CreateTransparentSceneCopyTexture);
+        return new XRFrameBuffer((colorAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = TransparentSceneCopyFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateTransparentAccumulationFBO()
+    {
+        var accumAttachment = EnsureTextureAttachment(TransparentAccumTextureName, CreateTransparentAccumTexture);
+        var revealageAttachment = EnsureTextureAttachment(TransparentRevealageTextureName, CreateTransparentRevealageTexture);
+        var depthAttachment = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
+
+        return new XRFrameBuffer(
+            (accumAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (revealageAttachment, EFrameBufferAttachment.ColorAttachment1, 0, -1),
+            (depthAttachment, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = TransparentAccumulationFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateTransparentResolveFBO()
+    {
+        XRTexture[] references =
+        [
+            GetTexture<XRTexture>(TransparentSceneCopyTextureName)!,
+            GetTexture<XRTexture>(TransparentAccumTextureName)!,
+            GetTexture<XRTexture>(TransparentRevealageTextureName)!,
+        ];
+
+        XRMaterial material = new(
+            references,
+            XRShader.EngineShader(Path.Combine(SceneShaderPath, TransparentResolveShaderName()), EShaderType.Fragment))
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(material) { Name = TransparentResolveFBOName };
+        fbo.SettingUniforms += TransparentResolveFBO_SettingUniforms;
+
+        var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
+        fbo.SetRenderTargets((hdrAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+        return fbo;
+    }
+
+    private XRFrameBuffer CreateTransparentAccumulationDebugFBO()
+        => CreateTransparencyDebugFBO(
+            TransparentAccumulationDebugFBOName,
+            TransparentAccumulationDebugShaderName(),
+            TransparentAccumulationDebugFBO_SettingUniforms,
+            GetTexture<XRTexture>(TransparentAccumTextureName)!);
+
+    private XRFrameBuffer CreateTransparentRevealageDebugFBO()
+        => CreateTransparencyDebugFBO(
+            TransparentRevealageDebugFBOName,
+            TransparentRevealageDebugShaderName(),
+            TransparentRevealageDebugFBO_SettingUniforms,
+            GetTexture<XRTexture>(TransparentRevealageTextureName)!);
+
+    private XRFrameBuffer CreateTransparentOverdrawDebugFBO()
+        => CreateTransparencyDebugFBO(
+            TransparentOverdrawDebugFBOName,
+            TransparentOverdrawDebugShaderName(),
+            TransparentOverdrawDebugFBO_SettingUniforms,
+            GetTexture<XRTexture>(TransparentRevealageTextureName)!,
+            GetTexture<XRTexture>(TransparentAccumTextureName)!);
+
+    private XRFrameBuffer CreateTransparencyDebugFBO(
+        string name,
+        string shaderName,
+        DelSetUniforms setUniforms,
+        params XRTexture[] textures)
+    {
+        XRMaterial material = new(
+            textures,
+            XRShader.EngineShader(Path.Combine(SceneShaderPath, shaderName), EShaderType.Fragment))
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(material) { Name = name };
+        fbo.SettingUniforms += setUniforms;
+        return fbo;
+    }
+
+    private void TransparentResolveFBO_SettingUniforms(XRRenderProgram program)
+    {
+        XRTexture? sceneColor = GetTexture<XRTexture>(TransparentSceneCopyTextureName);
+        XRTexture? accum = GetTexture<XRTexture>(TransparentAccumTextureName);
+        XRTexture? revealage = GetTexture<XRTexture>(TransparentRevealageTextureName);
+        if (sceneColor is null || accum is null || revealage is null)
+            return;
+
+        program.Sampler(TransparentSceneCopyTextureName, sceneColor, 0);
+        program.Sampler(TransparentAccumTextureName, accum, 1);
+        program.Sampler(TransparentRevealageTextureName, revealage, 2);
+        program.Uniform("ScreenWidth", (float)InternalWidth);
+        program.Uniform("ScreenHeight", (float)InternalHeight);
+    }
+
+    private void TransparentAccumulationDebugFBO_SettingUniforms(XRRenderProgram program)
+    {
+        XRTexture? accum = GetTexture<XRTexture>(TransparentAccumTextureName);
+        if (accum is null)
+            return;
+
+        program.Sampler(TransparentAccumTextureName, accum, 0);
+    }
+
+    private void TransparentRevealageDebugFBO_SettingUniforms(XRRenderProgram program)
+    {
+        XRTexture? revealage = GetTexture<XRTexture>(TransparentRevealageTextureName);
+        if (revealage is null)
+            return;
+
+        program.Sampler(TransparentRevealageTextureName, revealage, 0);
+    }
+
+    private void TransparentOverdrawDebugFBO_SettingUniforms(XRRenderProgram program)
+    {
+        XRTexture? revealage = GetTexture<XRTexture>(TransparentRevealageTextureName);
+        XRTexture? accum = GetTexture<XRTexture>(TransparentAccumTextureName);
+        if (revealage is null || accum is null)
+            return;
+
+        program.Sampler(TransparentRevealageTextureName, revealage, 0);
+        program.Sampler(TransparentAccumTextureName, accum, 1);
+    }
+
     private XRFrameBuffer CreateForwardPassFBO()
     {
         XRTexture hdrSceneTex = GetTexture<XRTexture>(HDRSceneTextureName)!;
@@ -286,13 +434,24 @@ public partial class DefaultRenderPipeline
         }
     }
 
+    private IFrameBufferAttachement EnsureTextureAttachment(string textureName, Func<XRTexture> factory)
+    {
+        var texture = GetTexture<XRTexture>(textureName);
+        if (texture is IFrameBufferAttachement attachment)
+            return attachment;
+
+        // Texture missing from the cache — can occur when a transient FBO is rebuilt
+        // after a cache invalidation that didn't re-run the texture caching commands.
+        texture = factory();
+        SetTexture(texture);
+        return texture as IFrameBufferAttachement
+            ?? throw new InvalidOperationException($"Factory for '{textureName}' produced a non-FBO-attachable texture.");
+    }
+
     private XRFrameBuffer CreateVelocityFBO()
     {
-        if (GetTexture<XRTexture>(VelocityTextureName) is not IFrameBufferAttachement velocityAttachment)
-            throw new InvalidOperationException("Velocity texture is not an FBO-attachable texture.");
-
-        if (GetTexture<XRTexture>(DepthStencilTextureName) is not IFrameBufferAttachement depthAttachment)
-            throw new InvalidOperationException("Depth/Stencil texture is not an FBO-attachable texture.");
+        var velocityAttachment = EnsureTextureAttachment(VelocityTextureName, CreateVelocityTexture);
+        var depthAttachment = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
 
         return new XRFrameBuffer(
             (velocityAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
@@ -304,11 +463,8 @@ public partial class DefaultRenderPipeline
 
     private XRFrameBuffer CreateHistoryCaptureFBO()
     {
-        if (GetTexture<XRTexture>(HistoryColorTextureName) is not IFrameBufferAttachement colorAttachment)
-            throw new InvalidOperationException("History color texture is not an FBO-attachable texture.");
-
-        if (GetTexture<XRTexture>(HistoryDepthStencilTextureName) is not IFrameBufferAttachement depthAttachment)
-            throw new InvalidOperationException("History depth texture is not an FBO-attachable texture.");
+        var colorAttachment = EnsureTextureAttachment(HistoryColorTextureName, CreateHistoryColorTexture);
+        var depthAttachment = EnsureTextureAttachment(HistoryDepthStencilTextureName, CreateHistoryDepthStencilTexture);
 
         return new XRFrameBuffer(
             (colorAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
@@ -320,8 +476,7 @@ public partial class DefaultRenderPipeline
 
     private XRFrameBuffer CreateTemporalInputFBO()
     {
-        if (GetTexture<XRTexture>(TemporalColorInputTextureName) is not IFrameBufferAttachement colorAttachment)
-            throw new InvalidOperationException("Temporal color input texture is not FBO attachable.");
+        var colorAttachment = EnsureTextureAttachment(TemporalColorInputTextureName, CreateTemporalColorInputTexture);
 
         return new XRFrameBuffer((colorAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
@@ -357,11 +512,8 @@ public partial class DefaultRenderPipeline
 
         var fbo = new XRQuadFrameBuffer(material) { Name = TemporalAccumulationFBOName };
 
-        if (GetTexture<XRTexture>(HDRSceneTextureName) is not IFrameBufferAttachement filteredAttachment)
-            throw new InvalidOperationException("HDR scene texture is not FBO attachable.");
-
-        if (GetTexture<XRTexture>(TemporalExposureVarianceTextureName) is not IFrameBufferAttachement exposureAttachment)
-            throw new InvalidOperationException("Temporal exposure texture is not FBO attachable.");
+        var filteredAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
+        var exposureAttachment = EnsureTextureAttachment(TemporalExposureVarianceTextureName, CreateTemporalExposureVarianceTexture);
 
         fbo.SetRenderTargets(
             (filteredAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
@@ -373,8 +525,7 @@ public partial class DefaultRenderPipeline
 
     private XRFrameBuffer CreateMotionBlurCopyFBO()
     {
-        if (GetTexture<XRTexture>(MotionBlurTextureName) is not IFrameBufferAttachement attachment)
-            throw new InvalidOperationException("Motion blur texture is not FBO attachable.");
+        var attachment = EnsureTextureAttachment(MotionBlurTextureName, CreateMotionBlurTexture);
 
         return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
@@ -410,8 +561,7 @@ public partial class DefaultRenderPipeline
 
     private XRFrameBuffer CreateDepthOfFieldCopyFBO()
     {
-        if (GetTexture<XRTexture>(DepthOfFieldTextureName) is not IFrameBufferAttachement attachment)
-            throw new InvalidOperationException("Depth of field texture is not FBO attachable.");
+        var attachment = EnsureTextureAttachment(DepthOfFieldTextureName, CreateDepthOfFieldTexture);
 
         return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
@@ -447,8 +597,7 @@ public partial class DefaultRenderPipeline
 
     private XRFrameBuffer CreateHistoryExposureFBO()
     {
-        if (GetTexture<XRTexture>(HistoryExposureVarianceTextureName) is not IFrameBufferAttachement attachment)
-            throw new InvalidOperationException("History exposure texture is not FBO attachable.");
+        var attachment = EnsureTextureAttachment(HistoryExposureVarianceTextureName, CreateHistoryExposureVarianceTexture);
 
         return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
@@ -515,10 +664,13 @@ public partial class DefaultRenderPipeline
 
         var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat) { Name = LightCombineFBOName };
 
-        if (diffuseTexture is IFrameBufferAttachement attach)
-            lightCombineFBO.SetRenderTargets((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-        else
-            throw new InvalidOperationException("Diffuse texture is not an FBO-attachable texture.");
+        if (diffuseTexture is not IFrameBufferAttachement attach)
+        {
+            diffuseTexture = CreateLightingTexture();
+            SetTexture(diffuseTexture);
+            attach = (IFrameBufferAttachement)diffuseTexture;
+        }
+        lightCombineFBO.SetRenderTargets((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
 
         lightCombineFBO.SettingUniforms += LightCombineFBO_SettingUniforms;
         return lightCombineFBO;

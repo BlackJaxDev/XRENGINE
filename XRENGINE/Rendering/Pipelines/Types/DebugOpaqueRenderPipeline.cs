@@ -64,6 +64,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
             { (int)EDefaultRenderPass.OpaqueDeferred, _nearToFarSorter },
             { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.MaskedForward, _nearToFarSorter },
+            { (int)EDefaultRenderPass.WeightedBlendedOitForward, null },
             { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
             { (int)EDefaultRenderPass.OnTopForward, null },
             { (int)EDefaultRenderPass.PostRender, null },
@@ -101,6 +102,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 
                 // Transparent pass for world-space UI canvas quads and other alpha-blended geometry.
                 commands.Add<VPRC_DepthWrite>().Allow = false;
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, false);
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, false);
                 commands.Add<VPRC_DepthWrite>().Allow = true;
 
@@ -143,6 +145,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 
                 // Transparent pass for world-space UI canvas quads and other alpha-blended geometry.
                 commands.Add<VPRC_DepthWrite>().Allow = false;
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, false);
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, false);
                 commands.Add<VPRC_DepthWrite>().Allow = true;
 

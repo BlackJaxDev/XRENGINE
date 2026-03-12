@@ -324,7 +324,10 @@ namespace XREngine.Scene.Transforms
 
         private void InterpolateToTarget()
         {
-            float delta = SmoothingSpeed * Engine.Time.Timer.TargetUpdateFrequency * Engine.Time.Timer.Update.SmoothedDilatedDelta;
+            IRuntimeTransformServices? transformServices = RuntimeTransformServices.Current;
+            float delta = SmoothingSpeed
+                * (transformServices?.TargetUpdateFrequency ?? 0.0f)
+                * (transformServices?.SmoothedDilatedUpdateDeltaSeconds ?? 0.0f);
             if (TargetScale.HasValue)
             {
                 Scale = Vector3.Lerp(Scale, TargetScale.Value, delta);
@@ -404,7 +407,7 @@ namespace XREngine.Scene.Transforms
             Order = ETransformOrder.TRS;
 
             if (!Matrix4x4.Decompose(value, out Vector3 scale, out Quaternion rotation, out Vector3 translation))
-                Debug.Rendering("Failed to decompose matrix.");
+                RuntimeTransformServices.Current?.LogRendering("Failed to decompose matrix.");
 
             if (networkSmoothed)
             {

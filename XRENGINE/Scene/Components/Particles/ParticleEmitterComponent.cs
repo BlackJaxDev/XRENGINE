@@ -619,19 +619,22 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
         var vertShader = XRShader.EngineShader(
             Path.Combine("Common", "ParticleBillboard.vs"),
             EShaderType.Vertex);
-        var fragShader = XRShader.EngineShader(
-            Path.Combine("Common", "ParticleUnlit.fs"),
-            EShaderType.Fragment);
+        var particleTransparencyMode = BlendMode switch
+        {
+            EParticleBlendMode.Additive => Rendering.Models.Materials.ETransparencyMode.Additive,
+            EParticleBlendMode.Premultiplied => Rendering.Models.Materials.ETransparencyMode.WeightedBlendedOit,
+            EParticleBlendMode.AlphaBlend => Rendering.Models.Materials.ETransparencyMode.WeightedBlendedOit,
+            _ => Rendering.Models.Materials.ETransparencyMode.AlphaBlend,
+        };
+        string fragmentPath = particleTransparencyMode == Rendering.Models.Materials.ETransparencyMode.WeightedBlendedOit
+            ? Path.Combine("Common", "ParticleUnlitWeightedOit.fs")
+            : Path.Combine("Common", "ParticleUnlit.fs");
+        var fragShader = XRShader.EngineShader(fragmentPath, EShaderType.Fragment);
 
         var material = new XRMaterial(vertShader, fragShader)
         {
-            RenderPass = (int)EDefaultRenderPass.TransparentForward,
-            TransparencyMode = BlendMode switch
-            {
-                EParticleBlendMode.Additive => Rendering.Models.Materials.ETransparencyMode.Additive,
-                EParticleBlendMode.Premultiplied => Rendering.Models.Materials.ETransparencyMode.PremultipliedAlpha,
-                _ => Rendering.Models.Materials.ETransparencyMode.AlphaBlend,
-            }
+            RenderPass = Rendering.Models.Materials.ShaderHelper.ResolveTransparentRenderPass(particleTransparencyMode),
+            TransparencyMode = particleTransparencyMode
         };
 
         // Set blend mode based on property

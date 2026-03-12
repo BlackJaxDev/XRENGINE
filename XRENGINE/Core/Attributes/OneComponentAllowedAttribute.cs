@@ -1,4 +1,4 @@
-﻿using XREngine.Components;
+using XREngine.Components;
 using XREngine.Scene;
 
 namespace XREngine.Core.Attributes
@@ -11,11 +11,12 @@ namespace XREngine.Core.Attributes
     {
         public override bool VerifyComponentOnAdd(SceneNode node, XRComponent comp)
         {
-            foreach (var c in node.Components)
+            foreach (var component in node.Components)
             {
-                if (c.GetType() == comp.GetType())
+                if (component.GetType() == comp.GetType())
                 {
-                    Debug.LogWarning($"Cannot add component {comp.GetType().Name} to node {node.Name} because only one component of this type is allowed.");
+                    RuntimeSceneNodeServices.Current.LogWarning(
+                        $"Cannot add component {comp.GetType().Name} to node {node.Name} because only one component of this type is allowed.");
                     return false;
                 }
             }

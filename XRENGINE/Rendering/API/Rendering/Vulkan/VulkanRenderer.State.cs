@@ -89,6 +89,9 @@ public unsafe partial class VulkanRenderer
     internal bool GetBlendEnabled()
         => _state.GetBlendEnabled();
 
+    internal bool GetAlphaToCoverageEnabled()
+        => _state.GetAlphaToCoverageEnabled();
+
     internal BlendOp GetColorBlendOp()
         => _state.GetColorBlendOp();
 
@@ -167,6 +170,7 @@ public unsafe partial class VulkanRenderer
         public CullModeFlags CullMode { get; private set; } = CullModeFlags.BackBit;
         public FrontFace FrontFace { get; private set; } = FrontFace.CounterClockwise;
         public bool BlendEnabled { get; private set; }
+        public bool AlphaToCoverageEnabled { get; private set; }
         public BlendOp ColorBlendOp { get; private set; } = BlendOp.Add;
         public BlendOp AlphaBlendOp { get; private set; } = BlendOp.Add;
         public BlendFactor SrcColorBlendFactor { get; private set; } = BlendFactor.One;
@@ -321,6 +325,7 @@ public unsafe partial class VulkanRenderer
         public BlendFactor GetDstColorBlendFactor() => DstColorBlendFactor;
         public BlendFactor GetSrcAlphaBlendFactor() => SrcAlphaBlendFactor;
         public BlendFactor GetDstAlphaBlendFactor() => DstAlphaBlendFactor;
+        public bool GetAlphaToCoverageEnabled() => AlphaToCoverageEnabled;
         public bool GetStencilTestEnabled() => StencilTestEnabled;
         public StencilOpState GetFrontStencilState() => FrontStencilState;
         public StencilOpState GetBackStencilState() => BackStencilState;
@@ -416,6 +421,9 @@ public unsafe partial class VulkanRenderer
             SrcAlphaBlendFactor = srcAlpha;
             DstAlphaBlendFactor = dstAlpha;
         }
+
+        public void SetAlphaToCoverageEnabled(bool enabled)
+            => AlphaToCoverageEnabled = enabled;
 
         public void WriteClearValues(ClearValue* destination, uint attachmentCount)
         {

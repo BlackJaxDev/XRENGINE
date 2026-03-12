@@ -120,6 +120,9 @@ namespace XREngine.Components
                     }
                     PostPossess();
                     break;
+                case nameof(CameraComponent):
+                    LocalPlayerController?.RefreshViewportCamera();
+                    break;
             }
         }
 

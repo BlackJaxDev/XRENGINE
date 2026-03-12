@@ -1144,8 +1144,12 @@ public partial class DefaultRenderPipeline
         return stage?.TryGetBacking(out MotionBlurSettings? settings) == true ? settings : null;
     }
 
+    private static bool DisableHistoryBasedVrEffects()
+        => Engine.VRState.IsInVR && !Engine.Rendering.Settings.RenderVRSinglePassStereo;
+
     private static bool ShouldUseMotionBlur()
-        => GetMotionBlurSettings() is { Enabled: true };
+        => !DisableHistoryBasedVrEffects()
+        && GetMotionBlurSettings() is { Enabled: true };
 
     private static DepthOfFieldSettings? GetDepthOfFieldSettings()
     {
@@ -1296,7 +1300,7 @@ public partial class DefaultRenderPipeline
 
     private void TemporalAccumulationFBO_SettingUniforms(XRRenderProgram program)
     {
-        if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+        if (!DisableHistoryBasedVrEffects() && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
         {
             float width = Math.Max(1u, temporalData.Width);
             float height = Math.Max(1u, temporalData.Height);

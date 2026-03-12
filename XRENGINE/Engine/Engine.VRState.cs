@@ -18,6 +18,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.OpenGL;
 using XREngine.Scene;
@@ -143,7 +144,9 @@ namespace XREngine
             private static Frustum? _stereoCullingFrustum = null;
             public static Frustum? StereoCullingFrustum => _stereoCullingFrustum;
 
-            private static XRRenderPipelineInstance? _twoPassRenderPipeline = null;
+            private static XRRenderPipelineInstance? _twoPassLeftPipeline = null;
+            private static XRRenderPipelineInstance? _twoPassRightPipeline = null;
+            private static RenderCommandCollection? _sharedMeshRenderCommands = null;
 
             /// <summary>
             /// The distance between the eyes in meters.
@@ -579,7 +582,21 @@ namespace XREngine
                     RightEyeViewport!.WorldInstanceOverride = ViewInformation.World;
                 }
 
-                _twoPassRenderPipeline = new XRRenderPipelineInstance(new DefaultRenderPipeline(false));
+                var pipeline = new DefaultRenderPipeline(false);
+                _twoPassLeftPipeline = new XRRenderPipelineInstance(pipeline);
+                _twoPassRightPipeline = new XRRenderPipelineInstance(new DefaultRenderPipeline(false));
+                _sharedMeshRenderCommands = new RenderCommandCollection();
+                _sharedMeshRenderCommands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);
+
+                // Wire the desktop viewport to share the same culled commands instead of collecting independently.
+                var desktopViewport = window.Viewports.FirstOrDefault();
+                if (desktopViewport is not null)
+                {
+                    desktopViewport.AutomaticallyCollectVisible = false;
+                    desktopViewport.AutomaticallySwapBuffers = false;
+                    desktopViewport.MeshRenderCommandsOverride = _sharedMeshRenderCommands;
+                }
+
                 RecalculateStereoCullingFrustum();
             }
 
@@ -668,7 +685,7 @@ namespace XREngine
                     return;
                 }
 
-                if (_twoPassRenderPipeline is null)
+                if (_sharedMeshRenderCommands is null)
                     return;
 
                 //GetStereoCullingFrustum();
@@ -680,7 +697,7 @@ namespace XREngine
                     return;
 
                 ViewInformation.World?.VisualScene?.CollectRenderedItems(
-                    _twoPassRenderPipeline.MeshRenderCommands,
+                    _sharedMeshRenderCommands,
                     ViewInformation.LeftEyeCamera,
                     true,
                     null,
@@ -721,7 +738,7 @@ namespace XREngine
                     return;
                 }
 
-                _twoPassRenderPipeline?.MeshRenderCommands?.SwapBuffers();
+                _sharedMeshRenderCommands?.SwapBuffers();
                 //LeftEyeViewport?.SwapBuffers();
                 //RightEyeViewport?.SwapBuffers();
             }
@@ -768,7 +785,8 @@ namespace XREngine
                         var left = MakeFBOTexture(rW, rH);
                         var right = MakeFBOTexture(rW, rH);
                         RemakeTwoPass(Renderer!.XRWindow, rW, rH, left, right);
-                        _twoPassRenderPipeline?.DestroyCache();
+                        _twoPassLeftPipeline?.DestroyCache();
+                        _twoPassRightPipeline?.DestroyCache();
                     }
                 }
 
@@ -793,7 +811,7 @@ namespace XREngine
 
             private static void RenderTwoPass()
             {
-                if (_twoPassRenderPipeline is null)
+                if (_twoPassLeftPipeline is null || _twoPassRightPipeline is null || _sharedMeshRenderCommands is null)
                     return;
 
                 var lcam = ViewInformation.LeftEyeCamera;
@@ -805,9 +823,9 @@ namespace XREngine
                 if (scene is null)
                     return;
 
-                //Render the scene to left and right eyes separately
-                _twoPassRenderPipeline.Render(scene, lcam, null, LeftEyeViewport, VRLeftEyeRenderTarget, null, false, false, null, null);
-                _twoPassRenderPipeline.Render(scene, rcam, null, RightEyeViewport, VRRightEyeRenderTarget, null, false, false, null, null);
+                //Render the scene to left and right eyes separately, each with its own FBOs but sharing the same culled mesh commands
+                _twoPassLeftPipeline.Render(scene, lcam, null, LeftEyeViewport, VRLeftEyeRenderTarget, meshRenderCommandsOverride: _sharedMeshRenderCommands);
+                _twoPassRightPipeline.Render(scene, rcam, null, RightEyeViewport, VRRightEyeRenderTarget, meshRenderCommandsOverride: _sharedMeshRenderCommands);
 
                 //LeftEyeViewport?.Render(VRLeftEyeRenderTarget);
                 //RightEyeViewport?.Render(VRRightEyeRenderTarget);

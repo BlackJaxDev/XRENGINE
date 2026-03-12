@@ -276,9 +276,12 @@ namespace XREngine.Rendering.OpenGL
                 Api.BindBufferBase(GLEnum.ShaderStorageBuffer, index, glBuf.BindingId);
             }
 
-            private void BindImageTexture(uint unit, XRTexture texture, int level, bool layered, int layer, EImageAccess access, EImageFormat format)
+            private void BindImageTexture(uint unit, IRenderTextureResource texture, int level, bool layered, int layer, EImageAccess access, EImageFormat format)
             {
-                var glObj = Renderer.GetOrCreateAPIRenderObject(texture);
+                if (texture is not XRTexture xrTexture)
+                    return;
+
+                var glObj = Renderer.GetOrCreateAPIRenderObject(xrTexture);
                 if (glObj is not IGLTexture glTex)
                     return;
                 Api.BindImageTexture(unit, glTex.BindingId, level, layered, layer, ToGLEnum(access), ToGLEnum(format));
@@ -341,7 +344,7 @@ namespace XREngine.Rendering.OpenGL
                 uint x,
                 uint y,
                 uint z,
-                IEnumerable<(uint unit, XRTexture texture, int level, int? layer, EImageAccess access, EImageFormat format)>? textures = null)
+                IEnumerable<(uint unit, IRenderTextureResource texture, int level, int? layer, EImageAccess access, EImageFormat format)>? textures = null)
             {
                 if (!IsLinked)
                 {
@@ -1511,6 +1514,12 @@ namespace XREngine.Rendering.OpenGL
             #endregion
 
             #region Samplers
+            public void Sampler(int location, IRenderTextureResource texture, int textureUnit)
+            {
+                if (texture is XRTexture xrTexture)
+                    Sampler(location, xrTexture, textureUnit);
+            }
+
             public void Sampler(int location, XRTexture texture, int textureUnit)
             {
                 var glObj = Renderer.GetOrCreateAPIRenderObject(texture);
@@ -1518,6 +1527,12 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 Sampler(location, glTex, textureUnit);
+            }
+
+            public void Sampler(string name, IRenderTextureResource texture, int textureUnit)
+            {
+                if (texture is XRTexture xrTexture)
+                    Sampler(name, xrTexture, textureUnit);
             }
 
             public void Sampler(string name, XRTexture texture, int textureUnit)

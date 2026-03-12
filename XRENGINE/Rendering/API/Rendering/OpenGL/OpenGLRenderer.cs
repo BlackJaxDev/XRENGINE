@@ -3575,6 +3575,7 @@ void main()
             ApplyCulling(parameters);
             ApplyDepth(parameters);
             ApplyBlending(parameters);
+            ApplyAlphaToCoverage(parameters);
             ApplyStencil(parameters);
             //Alpha testing is done in-shader
         }
@@ -3697,6 +3698,25 @@ void main()
             }
             else
                 Api.Disable(EnableCap.Blend);
+        }
+
+        private void ApplyAlphaToCoverage(RenderingParameters r)
+        {
+            bool enabled = r.AlphaToCoverage == ERenderParamUsage.Enabled && IsAlphaToCoverageSupportedForCurrentTarget();
+            if (enabled)
+                Api.Enable(EnableCap.SampleAlphaToCoverage);
+            else
+                Api.Disable(EnableCap.SampleAlphaToCoverage);
+        }
+
+        private static bool IsAlphaToCoverageSupportedForCurrentTarget()
+        {
+            XRFrameBuffer? outputFbo = Engine.Rendering.State.RenderingTargetOutputFBO;
+            if (outputFbo is not null)
+                return outputFbo.IsMultisampled;
+
+            return Engine.Rendering.Settings.AntiAliasingMode == XREngine.EAntiAliasingMode.Msaa
+                && Engine.Rendering.Settings.MsaaSampleCount > 1u;
         }
 
         private void ApplyCulling(RenderingParameters r)

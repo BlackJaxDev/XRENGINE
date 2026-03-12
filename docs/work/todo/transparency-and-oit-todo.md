@@ -1,7 +1,7 @@
 # Transparency and OIT Implementation TODO
 
 Last Updated: 2026-03-11
-Current Status: Phase 0 and Phase 0.5 implemented, Phase 1 masked-pass plumbing implemented, scene validation pending
+Current Status: Phase 0 and Phase 0.5 implemented, Phase 1 masked-pass plumbing implemented, Phase 2 alpha-to-coverage state path implemented, scene validation pending
 Scope: implement the transparency architecture defined in the [design plan](../design/transparency-and-oit-implementation-plan.md).
 
 ## Current Reality
@@ -175,15 +175,15 @@ Outcome: masked material edges are smooth under MSAA without sacrificing depth c
 
 ### 2.1 Backend State Support
 
-- [ ] Add alpha-to-coverage enable/disable to OpenGL rendering state
-- [ ] Add alpha-to-coverage enable/disable to Vulkan rendering state (when backend reaches parity)
-- [ ] Add `AlphaToCoverage` mode to `RenderingParameters` or equivalent state object
+- [x] Add alpha-to-coverage enable/disable to OpenGL rendering state
+- [x] Add alpha-to-coverage enable/disable to Vulkan rendering state and pipeline sample-count parity for masked/A2C draws
+- [x] Add `AlphaToCoverage` mode to `RenderingParameters` or equivalent state object
 
 ### 2.2 Material Integration
 
-- [ ] When `TransparencyMode == AlphaToCoverage` and MSAA is active, enable A2C state on draw
+- [x] When `TransparencyMode == AlphaToCoverage` and MSAA is active, enable A2C state on draw
 - [ ] Ensure fragment shader outputs alpha correctly for coverage conversion
-- [ ] When MSAA is disabled, fall back to `Masked` with `AlphaCutoff`
+- [x] When MSAA is disabled, fall back to `Masked` with `AlphaCutoff`
 
 ### 2.3 Validation
 
