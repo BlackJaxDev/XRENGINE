@@ -358,11 +358,11 @@ namespace XREngine.Components
                     //    break;
                     case nameof(DefaultRenderTarget):
                         if (DefaultRenderTarget is not null && World is not null)
-                            World.FramebufferCameras.Remove(this);
+                            WorldAs<XREngine.Rendering.XRWorldInstance>()?.FramebufferCameras.Remove(this);
                         break;
                     case nameof(World):
                         if (DefaultRenderTarget is not null && World is not null)
-                            World.FramebufferCameras.Remove(this);
+                            WorldAs<XREngine.Rendering.XRWorldInstance>()?.FramebufferCameras.Remove(this);
                         break;
                     case nameof(UserInterface):
                             if (UserInterface is not null)
@@ -383,13 +383,13 @@ namespace XREngine.Components
             {
                 case nameof(DefaultRenderTarget):
                     if (DefaultRenderTarget is not null && World is not null)
-                        if (!World.FramebufferCameras.Contains(this))
-                            World.FramebufferCameras.Add(this);
+                        if (!(WorldAs<XREngine.Rendering.XRWorldInstance>()?.FramebufferCameras.Contains(this) ?? false))
+                            WorldAs<XREngine.Rendering.XRWorldInstance>()?.FramebufferCameras.Add(this);
                     break;
                 case nameof(World):
                     if (DefaultRenderTarget is not null && World is not null)
-                        if (!World.FramebufferCameras.Contains(this))
-                            World.FramebufferCameras.Add(this);
+                        if (!(WorldAs<XREngine.Rendering.XRWorldInstance>()?.FramebufferCameras.Contains(this) ?? false))
+                            WorldAs<XREngine.Rendering.XRWorldInstance>()?.FramebufferCameras.Add(this);
                     break;
                 case nameof(UserInterface):
                     if (UserInterface is not null)
@@ -527,7 +527,7 @@ namespace XREngine.Components
         //    Frustum lastFrustum = Camera.WorldFrustum();
         //    bounces.Add(new View(Camera.WorldViewProjectionMatrix, lastFrustum));
         //    //Determine if there are any mirror components that intersect the camera frustum
-        //    if (World?.VisualScene?.RenderablesTree is not I3DRenderTree tree)
+        //    if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.VisualScene?.RenderablesTree is not I3DRenderTree tree)
         //        return bounces;
 
         //    SortedSet<RenderInfo3D> mirrors = [];

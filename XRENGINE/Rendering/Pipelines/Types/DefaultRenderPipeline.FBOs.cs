@@ -402,6 +402,24 @@ public partial class DefaultRenderPipeline
         return material;
     }
 
+    private XRMaterial CreateDepthNormalPrePassMaterial()
+    {
+        XRShader shader = XRShader.EngineShader(Path.Combine("Common", "DepthNormalPrePass.fs"), EShaderType.Fragment);
+        return new XRMaterial(Array.Empty<XRTexture?>(), shader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Enabled,
+                    Function = EComparison.Lequal,
+                    UpdateDepth = true,
+                },
+                RequiredEngineUniforms = EUniformRequirements.None
+            }
+        };
+    }
+
     private void MotionVectorsMaterial_SettingUniforms(XRMaterialBase material, XRRenderProgram program)
     {
         if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporal))
@@ -632,6 +650,27 @@ public partial class DefaultRenderPipeline
         };
 
         return new XRQuadFrameBuffer(material, false) { Name = DepthPreloadFBOName };
+    }
+
+    /// <summary>
+    /// Depth+normal FBO that shares the main DepthStencil and Normal textures.
+    /// Used to render forward opaque geometry depth and normals before the AO resolve,
+    /// so AO algorithms see both deferred and forward geometry.
+    /// </summary>
+    private XRFrameBuffer CreateForwardDepthPrePassFBO()
+    {
+        if (GetTexture<XRTexture>(DepthStencilTextureName) is not IFrameBufferAttachement dsAttach)
+            throw new InvalidOperationException("Depth/Stencil texture is not an FBO-attachable texture.");
+
+        if (GetTexture<XRTexture>(NormalTextureName) is not IFrameBufferAttachement normalAttach)
+            throw new InvalidOperationException("Normal texture is not an FBO-attachable texture.");
+
+        return new XRFrameBuffer(
+            (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = ForwardDepthPrePassFBOName
+        };
     }
 
     private XRFrameBuffer CreateLightCombineFBO()

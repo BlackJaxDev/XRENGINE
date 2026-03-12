@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
@@ -229,13 +229,13 @@ namespace XREngine.Components.Physics
 
         #region Lifecycle
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             CreateNativeJoint();
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             DestroyNativeJoint();
@@ -255,7 +255,7 @@ namespace XREngine.Components.Physics
 
         private void CreateNativeJoint()
         {
-            var scene = World?.PhysicsScene;
+            var scene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
             if (scene is null)
                 return;
 
@@ -288,7 +288,7 @@ namespace XREngine.Components.Physics
             if (_nativeJoint is null)
                 return;
 
-            var scene = World?.PhysicsScene;
+            var scene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene;
             if (scene is not null)
             {
                 scene.UnregisterJointComponent(_nativeJoint);

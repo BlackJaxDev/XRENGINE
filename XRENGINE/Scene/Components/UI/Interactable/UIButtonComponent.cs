@@ -1,4 +1,4 @@
-﻿using XREngine.Data.Colors;
+using XREngine.Data.Colors;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.UI
@@ -31,7 +31,7 @@ namespace XREngine.Rendering.UI
                 InteractAction -= action;
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 

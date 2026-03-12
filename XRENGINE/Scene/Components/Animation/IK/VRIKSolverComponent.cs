@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Core.Attributes;
@@ -168,7 +168,7 @@ namespace XREngine.Components.Animation
             base.InitializeSolver();
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             ApplyEnvironmentOverrides();
@@ -179,7 +179,7 @@ namespace XREngine.Components.Animation
             SubscribeNetworking();
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             Unregister();

@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using NAudio.SoundFont;
 using System.Numerics;
 using System.Reflection;
@@ -89,13 +89,13 @@ namespace XREngine.Rendering.UI
             TextComponent.Text = FormatText(Text);
             base.OnLostFocus();
         }
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             if (NativeMethods.TryDetermineSystemCapsLockState(out bool capsOn))
                 _capsLock = capsOn;
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
         }

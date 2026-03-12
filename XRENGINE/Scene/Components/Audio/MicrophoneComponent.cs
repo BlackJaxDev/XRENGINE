@@ -612,7 +612,7 @@ namespace XREngine.Components
         //    return data;
         //}
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
@@ -634,7 +634,7 @@ namespace XREngine.Components
             if (Capture)
                 StartCapture();
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             StopCapture();

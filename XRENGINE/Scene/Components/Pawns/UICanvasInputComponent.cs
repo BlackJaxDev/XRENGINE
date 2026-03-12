@@ -1,4 +1,4 @@
-using Extensions;
+﻿using Extensions;
 using System.Collections;
 using System.ComponentModel;
 using System.Linq;
@@ -598,7 +598,7 @@ namespace XREngine.Components
         }
 
         private bool _subscribedToTimer;
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             GetCameraCanvas()?.CanvasTransform.InvalidateLayout();
@@ -609,7 +609,7 @@ namespace XREngine.Components
                 _subscribedToTimer = true;
             }
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             if (_subscribedToTimer)
@@ -667,7 +667,7 @@ namespace XREngine.Components
                 }
                 else
                 {
-                    //Had mouse over and still does now — re-evaluate direct-over in case TopMost changed
+                    //Had mouse over and still does now â€” re-evaluate direct-over in case TopMost changed
                     bool shouldBeDirectlyOver = inter == TopMostInteractable;
                     if (inter.IsMouseDirectlyOver != shouldBeDirectlyOver)
                         inter.IsMouseDirectlyOver = shouldBeDirectlyOver;

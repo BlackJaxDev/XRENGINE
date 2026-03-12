@@ -1069,6 +1069,11 @@ namespace XREngine
         private bool _visualizeTransparencyAccumulation;
         private bool _visualizeTransparencyRevealage;
         private bool _visualizeTransparencyOverdrawHeatmap;
+        private bool _enableExactTransparencyTechniques;
+        private bool _visualizePerPixelLinkedListFragments;
+        private bool _visualizeDepthPeelingLayer;
+        private int _depthPeelingPreviewLayer;
+        private int _depthPeelingMaxLayers = 4;
         private bool _renderLightProbeTetrahedra = true;
         private float _debugTextMaxLifespan;
         private bool _enableThreadAllocationTracking;
@@ -1234,6 +1239,51 @@ namespace XREngine
         {
             get => _visualizeTransparencyOverdrawHeatmap;
             set => SetField(ref _visualizeTransparencyOverdrawHeatmap, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Enable Exact Transparency")]
+        [Description("If true, exact transparency prototype paths such as per-pixel linked lists and depth peeling are enabled. When false, exact transparency modes fall back to weighted blended OIT.")]
+        public bool EnableExactTransparencyTechniques
+        {
+            get => _enableExactTransparencyTechniques;
+            set => SetField(ref _enableExactTransparencyTechniques, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("PPLL Fragment Count Debug")]
+        [Description("If true, visualizes per-pixel linked-list fragment counts as a heatmap.")]
+        public bool VisualizePerPixelLinkedListFragments
+        {
+            get => _visualizePerPixelLinkedListFragments;
+            set => SetField(ref _visualizePerPixelLinkedListFragments, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Depth Peeling Layer Debug")]
+        [Description("If true, shows the currently selected depth-peeling layer instead of the resolved scene.")]
+        public bool VisualizeDepthPeelingLayer
+        {
+            get => _visualizeDepthPeelingLayer;
+            set => SetField(ref _visualizeDepthPeelingLayer, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Depth Peeling Preview Layer")]
+        [Description("Which peeled transparency layer should be displayed when depth-peeling debug visualization is enabled.")]
+        public int DepthPeelingPreviewLayer
+        {
+            get => _depthPeelingPreviewLayer;
+            set => SetField(ref _depthPeelingPreviewLayer, Math.Max(0, value));
+        }
+
+        [Category("Debug")]
+        [DisplayName("Depth Peeling Max Layers")]
+        [Description("Maximum number of peeled transparency layers to composite for the exact depth-peeling prototype.")]
+        public int DepthPeelingMaxLayers
+        {
+            get => _depthPeelingMaxLayers;
+            set => SetField(ref _depthPeelingMaxLayers, Math.Clamp(value, 1, 8));
         }
 
         [Category("Debug")]

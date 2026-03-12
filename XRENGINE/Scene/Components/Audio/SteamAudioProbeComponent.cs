@@ -184,7 +184,7 @@ public class SteamAudioProbeComponent : XRComponent
     //  Lifecycle
     // ------------------------------------------------------------------
 
-    protected internal override void OnComponentActivated()
+    protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
 
@@ -192,7 +192,7 @@ public class SteamAudioProbeComponent : XRComponent
             RegenerateProbes();
     }
 
-    protected internal override void OnComponentDeactivated()
+    protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
         DetachFromProcessor();
@@ -389,7 +389,7 @@ public class SteamAudioProbeComponent : XRComponent
         if (World is null)
             return null;
 
-        foreach (var listener in World.Listeners)
+        foreach (var listener in WorldAs<XREngine.Rendering.XRWorldInstance>()?.Listeners ?? [])
         {
             if (listener.EffectsProcessor is SteamAudioProcessor processor)
                 return processor;

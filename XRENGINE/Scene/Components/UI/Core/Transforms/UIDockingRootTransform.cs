@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Geometry;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 using static XREngine.Rendering.UI.UIDualSplitTransform;
 
 namespace XREngine.Rendering.UI
@@ -123,7 +124,7 @@ namespace XREngine.Rendering.UI
             Bottom?.FitLayout(new BoundingRectangleF(parentRegion.X, parentRegion.Y + parentRegion.Height - BottomSizeHeight, parentRegion.Width, BottomSizeHeight));
         }
 
-        public override void VerifyPlacementInfo(UITransform childTransform, ref UIChildPlacementInfo? placementInfo)
+        public override void VerifyPlacementInfo(TransformBase childTransform, ref ITransformChildPlacementInfo? placementInfo)
         {
             if (placementInfo is not UIDockingPlacementInfo)
                 placementInfo = new UIDockingPlacementInfo(this);

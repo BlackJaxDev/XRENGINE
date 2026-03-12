@@ -190,7 +190,7 @@ public static partial class EditorUnitTests
                 return;
             }
 
-            if (ballNode.World?.PhysicsScene is not PhysxScene physxScene)
+            if ((ballNode.World as XRWorldInstance)?.PhysicsScene is not PhysxScene physxScene)
             {
                 Debug.Physics("[UnitTestingWorld.Physics] Overlap probe skipped for {0}: PhysX scene unavailable", nodeLabel);
                 return;
@@ -277,7 +277,7 @@ public static partial class EditorUnitTests
         private static unsafe void ForceBallRaycastProbe(SceneNode ballNode, DynamicRigidBodyComponent ballComp, (Vector3 position, Quaternion rotation) pose)
         {
             string nodeLabel = NodeLabel(ballNode);
-            if (ballNode.World?.PhysicsScene is not PhysxScene physxScene)
+            if ((ballNode.World as XRWorldInstance)?.PhysicsScene is not PhysxScene physxScene)
             {
                 Debug.Physics("[UnitTestingWorld.Physics] Raycast probe skipped for {0}: PhysX scene unavailable", nodeLabel);
                 return;
@@ -332,7 +332,7 @@ public static partial class EditorUnitTests
                 return;
             }
 
-            if (floorNode.World?.PhysicsScene is not PhysxScene physxScene)
+            if ((floorNode.World as XRWorldInstance)?.PhysicsScene is not PhysxScene physxScene)
             {
                 Debug.Physics("[UnitTestingWorld.Physics] Floor overlap probe skipped: PhysX scene unavailable for {0}", nodeLabel);
                 return;

@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Core.Reflection.Attributes;
@@ -222,7 +222,7 @@ namespace XREngine.Components.Animation
             _renderInfo.Layer = DefaultLayers.GizmosIndex;
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             DestroyMuscleTexts();
             base.OnComponentDeactivated();

@@ -519,10 +519,10 @@ namespace XREngine.Rendering.UI
             x += left;
             y += bottom;
         }
-        public override void VerifyPlacementInfo(UITransform childTransform, ref UIChildPlacementInfo? placementInfo)
+        public override void VerifyPlacementInfo(TransformBase childTransform, ref ITransformChildPlacementInfo? placementInfo)
         {
-            if (placementInfo is not UIGridChildPlacementInfo)
-                placementInfo = new UIGridChildPlacementInfo(childTransform);
+            if (childTransform is UITransform uiChildTransform && placementInfo is not UIGridChildPlacementInfo)
+                placementInfo = new UIGridChildPlacementInfo(uiChildTransform);
         }
         protected override void OnChildAdded(TransformBase item)
         {

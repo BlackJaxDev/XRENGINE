@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Numerics;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Scene.Transforms;
@@ -219,7 +219,7 @@ namespace XREngine.Components.Animation
         private TransformBase GetEffectiveSourceTransform()
             => SourceTransform ?? Transform;
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             
@@ -229,7 +229,7 @@ namespace XREngine.Components.Animation
                 RegisterTick(ETickGroup.Normal, ETickOrder.Animation, UpdateParameters);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             

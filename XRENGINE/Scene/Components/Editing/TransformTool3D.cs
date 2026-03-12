@@ -1,4 +1,4 @@
-using Extensions;
+﻿using Extensions;
 using MagicPhysX;
 using System.Numerics;
 using XREngine.Components;
@@ -107,7 +107,7 @@ namespace XREngine.Scene.Components.Editing
         /// <returns></returns>
         public static TransformTool3D? GetInstance(TransformBase comp)
         {
-            XRWorldInstance? world = comp?.World;
+            XRWorldInstance? world = comp?.World as XRWorldInstance;
             if (world is null)
                 return null;
 
@@ -464,7 +464,7 @@ namespace XREngine.Scene.Components.Editing
             if (_targetSocket is not RigidBodyTransform rbt)
                 return;
 
-            if (rbt.World?.PhysicsScene is not PhysxScene phys)
+            if ((rbt.World as XRWorldInstance)?.PhysicsScene is not PhysxScene phys)
                 return;
 
             var rb = rbt.RigidBody as PhysxDynamicRigidBody;
@@ -477,7 +477,7 @@ namespace XREngine.Scene.Components.Editing
             if (_targetSocket is not RigidBodyTransform rbt)
                 return;
 
-            if (rbt.World?.PhysicsScene is not PhysxScene phys)
+            if ((rbt.World as XRWorldInstance)?.PhysicsScene is not PhysxScene phys)
                 return;
 
             var rb = rbt.RigidBody as PhysxDynamicRigidBody;

@@ -52,5 +52,7 @@ public static class GpuSortPolicy
 
     private static bool IsTransparentPass(int renderPass)
         => renderPass == (int)EDefaultRenderPass.DeferredDecals ||
-           renderPass == (int)EDefaultRenderPass.TransparentForward;
+           renderPass == (int)EDefaultRenderPass.TransparentForward ||
+           renderPass == (int)EDefaultRenderPass.PerPixelLinkedListForward ||
+           renderPass == (int)EDefaultRenderPass.DepthPeelingForward;
 }

@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -122,7 +122,7 @@ public class UISvgComponent : UIMaterialComponent
             RequestRasterization();
     }
 
-    protected internal override void OnComponentActivated()
+    protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
 
@@ -130,7 +130,7 @@ public class UISvgComponent : UIMaterialComponent
             RequestRasterization();
     }
 
-    protected internal override void OnComponentDeactivated()
+    protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
         ReleaseActiveTexture();

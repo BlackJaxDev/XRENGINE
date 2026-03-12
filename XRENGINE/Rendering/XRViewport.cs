@@ -173,7 +173,7 @@ namespace XREngine.Rendering
         /// Returns WorldInstanceOverride if set, otherwise falls back to the world containing the CameraComponent.
         /// Returns null if neither source provides a valid world (rendering will be skipped).
         /// </summary>
-        public XRWorldInstance? World => WorldInstanceOverride ?? CameraComponent?.SceneNode?.World;
+        public XRWorldInstance? World => WorldInstanceOverride ?? CameraComponent?.SceneNode?.World as XRWorldInstance;
 
         /// <summary>
         /// The screen-space bounding rectangle of this viewport in pixels.

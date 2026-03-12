@@ -29,6 +29,18 @@ namespace XREngine.Components
             set => SetField(ref _material, value);
         }
 
+        private bool _useForwardOit;
+        /// <summary>
+        /// When true, the decal renders in the forward weighted-blended OIT pass
+        /// instead of the deferred GBuffer pass, producing order-independent
+        /// soft-opacity compositing after lighting.
+        /// </summary>
+        public bool UseForwardOit
+        {
+            get => _useForwardOit;
+            set => SetField(ref _useForwardOit, value);
+        }
+
         /// <summary>
         /// Creates a new <see cref="DeferredDecalComponent"/>.
         /// </summary>
@@ -51,7 +63,7 @@ namespace XREngine.Components
                 return;
             
             HalfExtents = new Vector3(texture.Width * 0.5f, depth, texture.Height * 0.5f);
-            Material = CreateDefaulMaterial(texture);
+            Material = UseForwardOit ? CreateForwardOitMaterial(texture) : CreateDefaulMaterial(texture);
         }
         public void SetTexture(XRTexture2D texture)
         {
@@ -59,7 +71,7 @@ namespace XREngine.Components
                 return;
 
             HalfExtents = new Vector3(texture.Width * 0.5f, Math.Max(texture.Width, texture.Height) * 0.5f, texture.Height * 0.5f);
-            Material = CreateDefaulMaterial(texture);
+            Material = UseForwardOit ? CreateForwardOitMaterial(texture) : CreateDefaulMaterial(texture);
         }
 
         private Vector3 _halfExtents = Vector3.One;
@@ -79,6 +91,9 @@ namespace XREngine.Components
             {
                 case nameof(HalfExtents):
                     UpdateRenderCommandMatrix();
+                    break;
+                case nameof(UseForwardOit):
+                    RecreateActiveMaterial();
                     break;
             }
         }
@@ -102,6 +117,12 @@ namespace XREngine.Components
         /// <returns></returns>
         public static XRShader GetDefaultShader()
             => XRShader.EngineShader(Path.Combine("Scene3D", "DeferredDecal.fs"), EShaderType.Fragment);
+
+        /// <summary>
+        /// Gets the engine's forward OIT shader for decals rendered with weighted-blended OIT.
+        /// </summary>
+        public static XRShader GetForwardOitShader()
+            => XRShader.EngineShader(Path.Combine("Scene3D", "DeferredDecalForwardWeightedOit.fs"), EShaderType.Fragment);
 
         /// <summary>
         /// Generates a basic decal material that projects a single texture onto surfaces. Texture may use transparency.
@@ -133,7 +154,62 @@ namespace XREngine.Components
             };
         }
 
-        protected internal override void OnComponentActivated()
+        /// <summary>
+        /// Generates a decal material that renders in the forward weighted-blended OIT pass.
+        /// The decal is projected onto surfaces using the depth buffer and composited
+        /// after lighting with order-independent transparency.
+        /// </summary>
+        /// <param name="albedo">The texture to project as a decal.</param>
+        /// <returns>The <see cref="XRMaterial"/> to be used with a <see cref="DeferredDecalComponent"/> in OIT mode.</returns>
+        public static XRMaterial CreateForwardOitMaterial(XRTexture2D albedo)
+        {
+            XRTexture?[] decalRefs =
+            [
+                null, //unused (no GBuffer albedo needed)
+                null, //unused (no GBuffer normal needed)
+                null, //unused (no GBuffer RMSI needed)
+                null, //Viewport's Depth texture (bound at runtime)
+                albedo
+            ];
+            ShaderVar[] decalVars = [];
+            var mat = new XRMaterial(decalVars, decalRefs, GetForwardOitShader())
+            {
+                Name = "MAT_DeferredDecalOit",
+                TransparencyMode = ETransparencyMode.WeightedBlendedOit,
+                RenderOptions = new RenderingParameters
+                {
+                    CullMode = ECullMode.Front,
+                    RequiredEngineUniforms = EUniformRequirements.Camera,
+                }
+            };
+            return mat;
+        }
+
+        /// <summary>
+        /// Recreates the material if a texture is already assigned,
+        /// switching between deferred and forward OIT modes.
+        /// </summary>
+        private void RecreateActiveMaterial()
+        {
+            // Find the decal albedo texture from the current material (slot 4)
+            if (Material?.Textures is not { Count: > 4 } textures || textures[4] is not XRTexture2D albedo)
+                return;
+
+            Material = UseForwardOit ? CreateForwardOitMaterial(albedo) : CreateDefaulMaterial(albedo);
+            RenderCommandDecal.RenderPass = UseForwardOit
+                ? (int)EDefaultRenderPass.WeightedBlendedOitForward
+                : (int)EDefaultRenderPass.DeferredDecals;
+
+            // If already active, rebind the mesh renderer
+            if (IsActiveInHierarchy && Material is not null)
+            {
+                RenderCommandDecal.Mesh?.Destroy();
+                RenderCommandDecal.Mesh = new XRMeshRenderer(XRMesh.Shapes.SolidBox(-Vector3.One, Vector3.One), Material);
+                RenderCommandDecal.Mesh.SettingUniforms += DecalManager_SettingUniforms;
+            }
+        }
+
+        protected override void OnComponentActivated()
         {
             if (Material is null)
                 return;
@@ -153,18 +229,31 @@ namespace XREngine.Components
             if (pipeline is null)
                 return;
 
-            var albedoOpacityTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.AlbedoOpacityTextureName);
-            var normalTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.NormalTextureName);
-            var rmseTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.RMSETextureName);
             var depthViewTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.DepthViewTextureName);
-
-            if (albedoOpacityTexture is null || normalTexture is null || rmseTexture is null || depthViewTexture is null)
+            if (depthViewTexture is null)
                 return;
 
-            matProg.Sampler("Texture0", albedoOpacityTexture, 0);
-            matProg.Sampler("Texture1", normalTexture, 1);
-            matProg.Sampler("Texture2", rmseTexture, 2);
-            matProg.Sampler("Texture3", depthViewTexture, 3);
+            if (UseForwardOit)
+            {
+                // Forward OIT path: only depth + box uniforms needed
+                matProg.Sampler("DepthView", depthViewTexture, 3);
+            }
+            else
+            {
+                // Deferred GBuffer path: bind all GBuffer textures
+                var albedoOpacityTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.AlbedoOpacityTextureName);
+                var normalTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.NormalTextureName);
+                var rmseTexture = pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.RMSETextureName);
+
+                if (albedoOpacityTexture is null || normalTexture is null || rmseTexture is null)
+                    return;
+
+                matProg.Sampler("Texture0", albedoOpacityTexture, 0);
+                matProg.Sampler("Texture1", normalTexture, 1);
+                matProg.Sampler("Texture2", rmseTexture, 2);
+                matProg.Sampler("Texture3", depthViewTexture, 3);
+            }
+
             matProg.Uniform("BoxWorldMatrix", Transform.RenderMatrix);
             matProg.Uniform("BoxHalfScale", HalfExtents);
         }

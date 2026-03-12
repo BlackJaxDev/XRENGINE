@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Components;
 
 namespace XREngine.Scene.Transforms

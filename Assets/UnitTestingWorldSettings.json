@@ -65,7 +65,7 @@
 
   "ModelsToImport": [
     {
-      "Enabled": true,
+      "Enabled": false,
       "Kind": "Animated",
       "Path": "misc\\Mitsuki.fbx",
       "ImportFlags": "Triangulate, FlipUVs",

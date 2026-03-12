@@ -571,7 +571,9 @@ namespace XREngine
             {
                 if (remote.Pawn.SceneNode is { } node)
                 {
-                    node.World?.RootNodes.Remove(node);
+                    if (node.World is XRWorldInstance nodeWorld)
+                        nodeWorld.RootNodes.Remove(node);
+
                     node.Destroy();
                 }
 

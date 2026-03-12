@@ -27,22 +27,13 @@ internal sealed class EngineRuntimeWorldObjectServices : IRuntimeWorldObjectServ
         => SyncRenderableWorldBinding(worldObject, worldContext, isActiveInHierarchy);
 
     public void ReplicateObject(RuntimeWorldObjectBase worldObject, bool compress, bool resendOnFailedAck, float maxAckWaitSec)
-    {
-        if (worldObject is XRWorldObjectBase runtimeObject)
-            Engine.Networking?.ReplicateObject(runtimeObject, compress, resendOnFailedAck, maxAckWaitSec);
-    }
+        => Engine.Networking?.ReplicateObject(worldObject, compress, resendOnFailedAck, maxAckWaitSec);
 
     public void ReplicatePropertyUpdated<T>(RuntimeWorldObjectBase worldObject, string? propertyName, T value, bool compress, bool resendOnFailedAck, float maxAckWaitSec)
-    {
-        if (worldObject is XRWorldObjectBase runtimeObject)
-            Engine.Networking?.ReplicatePropertyUpdated(runtimeObject, propertyName, value, compress, resendOnFailedAck, maxAckWaitSec);
-    }
+        => Engine.Networking?.ReplicatePropertyUpdated(worldObject, propertyName, value, compress, resendOnFailedAck, maxAckWaitSec);
 
     public void ReplicateData(RuntimeWorldObjectBase worldObject, byte[] data, string id, bool compress, bool resendOnFailedAck, float maxAckWaitSec)
-    {
-        if (worldObject is XRWorldObjectBase runtimeObject)
-            Engine.Networking?.ReplicateData(runtimeObject, data, id, compress, resendOnFailedAck, maxAckWaitSec);
-    }
+        => Engine.Networking?.ReplicateData(worldObject, data, id, compress, resendOnFailedAck, maxAckWaitSec);
 
     private static void SyncRenderableWorldBinding(RuntimeWorldObjectBase worldObject, IRuntimeWorldContext? worldContext, bool isActiveInHierarchy)
     {

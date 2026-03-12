@@ -1,4 +1,4 @@
-using Extensions;
+﻿using Extensions;
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Components;
@@ -165,13 +165,13 @@ namespace XREngine.Components.Animation
             set => SetField(ref _updateInLateTick, value);
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             RegisterTick(GetTickGroup(), ETickOrder.Animation, UpdateBlendshapes);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             UnregisterTick(GetTickGroup(), ETickOrder.Animation, UpdateBlendshapes);

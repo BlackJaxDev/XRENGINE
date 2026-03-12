@@ -220,6 +220,30 @@ if (usingRadianceCascades || usingReSTIR)
     aoSettings.Intensity = 0.5f; // Softer AO to complement GI
 ```
 
+## Forward Shader AO Integration
+
+AO is produced as a shared texture (`AmbientOcclusionTexture`) by the deferred pipeline and is consumed by both deferred and forward materials.
+
+### How Forward Shaders Sample AO
+
+All lit forward shader variants include a shared GLSL snippet (`AmbientOcclusionSampling.glsl`) that samples the AO texture at the fragment's screen-space position. The `Lights3DCollection` forward lighting path binds the AO texture (unit 14) and an `AmbientOcclusionEnabled` flag during `SetForwardLightingUniforms()`.
+
+### Forward Depth Pre-Pass
+
+A depth+normal pre-pass renders forward opaque geometry (`OpaqueForward` + `MaskedForward`) into the shared depth buffer **and** the GBuffer normal texture before the AO resolve step. This ensures all AO algorithms see both deferred and forward geometry depth and normals — forward meshes correctly generate ambient occlusion with proper surface orientation.
+
+The pre-pass uses a lightweight override material (`DepthNormalPrePass.fs`) that replaces each mesh's full lighting shader with a minimal fragment shader that outputs only the interpolated world-space normal. The engine-generated vertex program provides the `FragNorm` varying automatically. The override is applied via the `PushOverrideMaterial` / `PushForceShaderPipelines` / `PushForceGeneratedVertexProgram` stack (same mechanism used by the motion vectors pass).
+
+Pipeline ordering:
+
+1. **AO FBO setup** — AO pass commands create FBOs and textures (resource factory step)
+2. **Deferred geometry** — `OpaqueDeferred` + `DeferredDecals` render to the GBuffer/AO FBO, populating depth, normals, albedo, RMSE
+3. **Forward depth+normal pre-pass** — `OpaqueForward` + `MaskedForward` render with a depth-normal override material into the shared `DepthStencil` texture and `Normal` texture (no other color writes)
+4. **AO resolve** — The selected AO algorithm reads from the now-complete depth and normal buffers (containing both deferred and forward geometry) and produces the AO intensity texture
+5. **Forward color pass** — Forward meshes render again with full lighting, sampling the AO texture
+
+Normals are written in the same uncompressed world-space RGB16F format as the deferred GBuffer, so no encode/decode changes are needed — all AO algorithms that read the normal texture see consistent data.
+
 ## API Reference
 
 - <xref:XREngine.Rendering.AmbientOcclusionSettings> - Configuration class

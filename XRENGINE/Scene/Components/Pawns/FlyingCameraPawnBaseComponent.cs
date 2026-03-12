@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using System.ComponentModel;
 using XREngine.Input.Devices;
 using XREngine.Rendering.UI;
@@ -207,7 +207,7 @@ namespace XREngine.Components
 
         protected void OnShift(bool pressed)
         {
-            // Modifier keys are NOT gated by AllowKeyboardInput — they must always
+            // Modifier keys are NOT gated by AllowKeyboardInput � they must always
             // update so that Ctrl+right-click rotation works even when a UI element
             // has focus (e.g., after clicking a toolbar button).
             ShiftPressed = pressed;
@@ -307,12 +307,12 @@ namespace XREngine.Components
         protected virtual void OnLeftClick(bool pressed)
             => LeftClickPressed = pressed;
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             RegisterTick(ETickGroup.Normal, InputConsumptionTickOrder, Tick);
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             UnregisterTick(ETickGroup.Normal, InputConsumptionTickOrder, Tick);

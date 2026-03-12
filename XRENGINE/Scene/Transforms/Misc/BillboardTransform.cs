@@ -190,7 +190,7 @@ namespace XREngine.Scene.Transforms
 
         private XRCamera? _subscribedCamera;
 
-        protected internal override void OnSceneNodeActivated()
+        protected override void OnSceneNodeActivated()
         {
             base.OnSceneNodeActivated();
             var camera = Engine.State.MainPlayer.Viewport?.ActiveCamera;
@@ -207,7 +207,7 @@ namespace XREngine.Scene.Transforms
             _subscribedCamera.Transform.WorldMatrixChanged += CameraMoved;
             _subscribedCamera.Parameters.PropertyChanged += CameraParametersChanged;
         }
-        protected internal override void OnSceneNodeDeactivated()
+        protected override void OnSceneNodeDeactivated()
         {
             base.OnSceneNodeDeactivated();
             UnsubscribeFromCamera();

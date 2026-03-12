@@ -206,50 +206,50 @@ Outcome: general translucent materials (glass, particles, decals) render without
 
 ### 3.1 Pipeline Resources
 
-- [ ] Allocate `TransparentAccumTexture` (`RGBA16F`) in `DefaultRenderPipeline`
-- [ ] Allocate `TransparentRevealageTexture` (`R16F` or `R8`)
-- [ ] Add clear logic for both textures each frame
-- [ ] Add FBO or attachment setup for accumulation pass
+- [x] Allocate `TransparentAccumTexture` (`RGBA16F`) in `DefaultRenderPipeline`
+- [x] Allocate `TransparentRevealageTexture` (`R16F` or `R8`)
+- [x] Add clear logic for both textures each frame
+- [x] Add FBO or attachment setup for accumulation pass
 
 ### 3.2 Accumulation Pass
 
-- [ ] Add `TransparentAccumulation` pass after masked/opaque forward
-- [ ] Set blend state: additive on accumulation target, multiplicative on revealage target
-- [ ] Set depth test on, depth write off
-- [ ] Route all `WeightedBlendedOit` materials through this pass
+- [x] Add `TransparentAccumulation` pass after masked/opaque forward
+- [x] Set blend state: additive on accumulation target, multiplicative on revealage target
+- [x] Set depth test on, depth write off
+- [x] Route all `WeightedBlendedOit` materials through this pass
 
 ### 3.3 Resolve Pass
 
-- [ ] Add `TransparentResolve` fullscreen pass
-- [ ] Sample accumulation and revealage textures
-- [ ] Composite approximate transparent color over scene color
-- [ ] Position resolve after accumulation, before on-top/post-render
+- [x] Add `TransparentResolve` fullscreen pass
+- [x] Sample accumulation and revealage textures
+- [x] Composite approximate transparent color over scene color
+- [x] Position resolve after accumulation, before on-top/post-render
 
 ### 3.4 Shader Variants
 
-- [ ] Create OIT fragment output variant for standard forward-plus material
-- [ ] Output premultiplied weighted color + revealage instead of direct scene color
-- [ ] Resolve shader: compute final transparent contribution from accumulators
-- [ ] Choose and document the weight function (depth-based or constant)
+- [x] Create OIT fragment output variant for standard forward-plus material
+- [x] Output premultiplied weighted color + revealage instead of direct scene color
+- [x] Resolve shader: compute final transparent contribution from accumulators
+- [x] Choose and document the weight function (depth-based or constant)
 
 ### 3.5 Content Migration
 
-- [ ] Set glass materials to `WeightedBlendedOit`
-- [ ] Set particle materials to `WeightedBlendedOit` (or `Additive` where appropriate)
-- [ ] Set decal materials with soft opacity to `WeightedBlendedOit`
-- [ ] Keep UI overlays on existing path (no OIT)
+- [x] Set glass materials to `WeightedBlendedOit`
+- [x] Set particle materials to `WeightedBlendedOit` (or `Additive` where appropriate)
+- [x] Set decal materials with soft opacity to `WeightedBlendedOit`
+- [x] Keep UI overlays on existing path (no OIT)
 
 ### 3.6 GPU-Driven Integration
 
-- [ ] Verify accumulation pass uses indirect transparent draw list from Phase 0.5
-- [ ] Confirm no CPU-side sorting in the OIT path
-- [ ] Verify material batching is preserved (order-independent accumulation)
+- [x] Verify accumulation pass uses indirect transparent draw list from Phase 0.5
+- [x] Confirm no CPU-side sorting in the OIT path
+- [x] Verify material batching is preserved (order-independent accumulation)
 
 ### 3.7 Debug Views
 
-- [ ] Add debug view: accumulation buffer visualization
-- [ ] Add debug view: revealage buffer visualization
-- [ ] Add debug view: transparent overdraw heatmap
+- [x] Add debug view: accumulation buffer visualization
+- [x] Add debug view: revealage buffer visualization
+- [x] Add debug view: transparent overdraw heatmap
 
 ### 3.8 Validation
 
@@ -276,25 +276,25 @@ Outcome: decide whether weighted blended OIT is sufficient, or if an exact mode 
 
 ### 4.1 Prototype Selection
 
-- [ ] Choose prototype: per-pixel linked lists or depth peeling (linked lists recommended for coverage)
-- [ ] Implement behind a renderer debug setting (not default)
-- [ ] Verify backend support: storage buffers, atomics, image writes for chosen technique
+- [x] Choose prototype: per-pixel linked lists or depth peeling (implemented both behind debug controls)
+- [x] Implement behind a renderer debug setting (not default)
+- [x] Verify backend support: storage buffers, atomics, image writes for chosen technique
 
 ### 4.2 Per-Pixel Linked Lists (if chosen)
 
-- [ ] Add per-pixel head-pointer image/buffer
-- [ ] Add fragment node storage buffer with atomic allocator
-- [ ] Add per-frame clear/reset
-- [ ] Add compute resolve pass: walk lists, sort by depth, composite
-- [ ] Add overflow detection and debug heatmap
-- [ ] Define max fragment count policy
+- [x] Add per-pixel head-pointer image/buffer
+- [x] Add fragment node storage buffer with atomic allocator
+- [x] Add per-frame clear/reset
+- [x] Add compute resolve pass: walk lists, sort by depth, composite
+- [x] Add overflow detection and debug heatmap
+- [x] Define max fragment count policy
 
 ### 4.3 Depth Peeling (if chosen)
 
-- [ ] Add peel depth and layer color targets
-- [ ] Add repeated peel passes with depth comparison against prior peel
-- [ ] Add layer compositing pass
-- [ ] Add configurable max peel count
+- [x] Add peel depth and layer color targets
+- [x] Add repeated peel passes with depth comparison against prior peel
+- [x] Add layer compositing pass
+- [x] Add configurable max peel count
 
 ### 4.4 Quality Comparison
 
@@ -305,8 +305,8 @@ Outcome: decide whether weighted blended OIT is sufficient, or if an exact mode 
 
 ### 4.5 GPU-Driven Validation
 
-- [ ] Confirm exact mode uses indirect draw dispatch (no CPU sorting)
-- [ ] Confirm correctness comes from fragment storage / peel passes, not draw order
+- [x] Confirm exact mode uses indirect draw dispatch (no CPU sorting)
+- [x] Confirm correctness comes from fragment storage / peel passes, not draw order
 - [ ] Test with GPU-driven culling active
 
 Acceptance criteria:

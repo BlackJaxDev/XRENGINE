@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using XREngine.Components.Animation;
 using XREngine.Components.Movement;
 using XREngine.Components.Scene.Mesh;
@@ -43,7 +43,7 @@ namespace XREngine.Components
         protected abstract float ModelHeightMeters { get; }
         public abstract void ApplyMeasuredHeight(float modelHeight);
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             UpdateHeightScale();

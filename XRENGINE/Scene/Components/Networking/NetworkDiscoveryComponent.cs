@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -149,7 +149,7 @@ namespace XREngine.Components
         public IReadOnlyCollection<DiscoveryAnnouncement> KnownEndpoints
             => _discovered.Values.Select(static d => d.Announcement).ToArray();
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             EnsureCts();
@@ -160,7 +160,7 @@ namespace XREngine.Components
             RegisterTick();
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             StopAllDiscovery();

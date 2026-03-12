@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Extensions;
@@ -286,7 +286,7 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
 
     #region Component Lifecycle
 
-    protected internal override void OnComponentActivated()
+    protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
 
@@ -307,7 +307,7 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
             RegisterTick(ETickGroup.DuringPhysics, ETickOrder.Scene, Update);
     }
 
-    protected internal override void OnComponentDeactivated()
+    protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
 

@@ -40,7 +40,7 @@ namespace XREngine.Data.Components
             }
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             if (Server is null)
@@ -85,7 +85,7 @@ namespace XREngine.Data.Components
             });
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             StopServer();

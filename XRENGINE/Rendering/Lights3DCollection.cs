@@ -166,6 +166,18 @@ namespace XREngine.Scene
             const string spotArrayLegacy = "SpotLightData";
             const string pointArrayLegacy = "PointLightData";
 
+            const int forwardAmbientOcclusionUnit = 14;
+            XRTexture? ambientOcclusionTexture = null;
+            var currentPipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+            bool ambientOcclusionEnabled = currentPipeline is not null &&
+                currentPipeline.TryGetTexture(
+                    DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
+                    out ambientOcclusionTexture) && ambientOcclusionTexture is not null;
+            program.Uniform("AmbientOcclusionEnabled", ambientOcclusionEnabled);
+            program.Uniform(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, forwardAmbientOcclusionUnit);
+            if (ambientOcclusionEnabled)
+                program.Sampler(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, ambientOcclusionTexture!, forwardAmbientOcclusionUnit);
+
             // Forward materials bind their own textures at units [0..N) where N is the texture index.
             // Using a low fixed unit (like 4) for the shadow map collides with multi-texture materials
             // (e.g., Sponza) and manifests as "shadow" sampling a regular color texture.

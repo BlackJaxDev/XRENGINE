@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
@@ -231,7 +231,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 ShadowMap.Resize(width, height);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             ShadowMap?.Destroy();

@@ -82,14 +82,14 @@ namespace XREngine.Components.Animation
             set => SetField(ref _maxIterations, value);
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             if (SolveIK)
                 StartSolving();
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             if (SolveIK)

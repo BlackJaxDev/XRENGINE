@@ -181,7 +181,7 @@ namespace XREngine.Rendering.UI
             UpdateBackingSize();
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             Engine.Time.Timer.RenderFrame += RenderFrame;
@@ -189,7 +189,7 @@ namespace XREngine.Rendering.UI
             _pendingReinitialize = true;
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             Engine.Time.Timer.RenderFrame -= RenderFrame;

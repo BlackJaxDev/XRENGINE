@@ -4195,9 +4195,9 @@ public static partial class EditorImGuiUI
                 ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 32f);
                 ImGui.TableHeadersRow();
 
-                XRWorldInstance? world = (owner as XRComponent)?.SceneNode?.World
-                    ?? (owner as SceneNode)?.World
-                    ?? Selection.LastSceneNode?.World;
+                XRWorldInstance? world = (owner as XRComponent)?.SceneNode?.World as XRWorldInstance
+                    ?? (owner as SceneNode)?.World as XRWorldInstance
+                    ?? Selection.LastSceneNode?.World as XRWorldInstance;
 
                 for (int i = 0; i < calls.Count; i++)
                 {

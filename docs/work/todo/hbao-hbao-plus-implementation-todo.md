@@ -1,8 +1,8 @@
 # HBAO And HBAO+ Implementation TODO
 
 Last Updated: 2026-03-11
-Current Status: AO settings/schema de-entangling is in place, classic `HorizonBased` is explicitly deferred behind a neutral-AO stub branch, `HorizonBasedPlus` has a dedicated full-resolution HBAO+ gather path plus separable cross-bilateral blur, and the shared AO resource contract no longer uses the old `SSAO*` naming.
-Scope: Default deferred render pipeline only. This work covers AO settings, render-pipeline branch selection, AO passes, shaders, and editor-facing schema visibility for AO settings.
+Current Status: AO settings/schema de-entangling is in place, classic `HorizonBased` is explicitly deferred behind a neutral-AO stub branch, `HorizonBasedPlus` has a dedicated full-resolution HBAO+ gather path plus separable cross-bilateral blur, the shared AO resource contract no longer uses the old `SSAO*` naming, and lit forward shaders now sample the shared AO visibility texture.
+Scope: Default render pipeline AO generation and consumption. This work covers AO settings, render-pipeline branch selection, AO passes, deferred/lighted forward shader consumption, and editor-facing schema visibility for AO settings.
 
 ## Current Reality
 

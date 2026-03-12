@@ -1,4 +1,4 @@
-ï»¿using Extensions;
+using Extensions;
 using MemoryPack;
 using System.Numerics;
 using XREngine.Components.Movement;
@@ -26,7 +26,7 @@ namespace XREngine.Components
     /// <list type="bullet">
     /// <item>Supports keyboard (WASD), mouse, and gamepad input simultaneously</item>
     /// <item>Provides network state capture for multiplayer synchronization</item>
-    /// <item>View rotation is clamped to prevent gimbal lock (Â±89Â° pitch, Â±180Â° yaw)</item>
+    /// <item>View rotation is clamped to prevent gimbal lock (±89° pitch, ±180° yaw)</item>
     /// <item>Input sensitivity can be configured per-device type</item>
     /// </list>
     /// </remarks>
@@ -335,7 +335,7 @@ namespace XREngine.Components
         /// <summary>
         /// Called when the component is activated. Registers the movement input tick.
         /// </summary>
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             RegisterTick(ETickGroup.Normal, InputConsumptionTickOrder, TickMovementInput);
@@ -344,7 +344,7 @@ namespace XREngine.Components
         /// <summary>
         /// Called when the component is deactivated. Unregisters the movement input tick.
         /// </summary>
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             UnregisterTick(ETickGroup.Normal, InputConsumptionTickOrder, TickMovementInput);
@@ -723,7 +723,7 @@ namespace XREngine.Components
 
         /// <summary>
         /// Clamps pitch rotation to prevent camera flip-over (gimbal lock prevention).
-        /// Limits are Â±89 degrees to maintain a small buffer from vertical.
+        /// Limits are ±89 degrees to maintain a small buffer from vertical.
         /// </summary>
         private void ClampPitch()
         {
@@ -734,7 +734,7 @@ namespace XREngine.Components
         }
 
         /// <summary>
-        /// Wraps yaw rotation to stay within Â±180 degrees, preventing value overflow
+        /// Wraps yaw rotation to stay within ±180 degrees, preventing value overflow
         /// and ensuring consistent interpolation behavior.
         /// </summary>
         private void RemapYaw()

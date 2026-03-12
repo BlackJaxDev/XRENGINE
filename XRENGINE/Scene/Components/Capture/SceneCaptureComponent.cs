@@ -90,7 +90,7 @@ namespace XREngine.Components.Lights
             InitializeForCapture();
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             InitializeForCapture();
@@ -152,7 +152,7 @@ namespace XREngine.Components.Lights
                 cam.CullingMask = DefaultLayers.EverythingExceptGizmos;
                 Viewports[i] = new XRViewport(null, Resolution, Resolution)
                 {
-                    WorldInstanceOverride = World,
+                    WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>(),
                     Camera = cam,
                     RenderPipeline = Engine.Rendering.NewRenderPipeline(),
                     SetRenderPipelineFromCamera = false,
@@ -241,7 +241,7 @@ namespace XREngine.Components.Lights
             bool completedCycle = !_progressiveRenderEnabled || _currentFace == 0;
 
             if (!completedCycle)
-                World?.Lights?.QueueForCapture(this);
+                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights?.QueueForCapture(this);
 
             if (completedCycle && _environmentTextureCubemap is not null)
             {
@@ -454,6 +454,6 @@ namespace XREngine.Components.Lights
         }
 
         public void QueueCapture()
-            => World?.Lights?.QueueForCapture(this);
+            => WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights?.QueueForCapture(this);
     }
 }

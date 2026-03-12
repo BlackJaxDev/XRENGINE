@@ -62,7 +62,7 @@ namespace XREngine.Components
         private HumanoidComponent? GetHumanoidComponent()
             => Humanoid ?? (TryGetSiblingComponent<HumanoidComponent>(out var humanoid) ? humanoid : null);
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             StateMachine.Initialize(this);
@@ -83,7 +83,7 @@ namespace XREngine.Components
             _changedLastEval.Add(var);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);

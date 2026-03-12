@@ -371,7 +371,10 @@ namespace XREngine.Rendering.UI
         {
             get
             {
-                Parent?.VerifyPlacementInfo(this, ref _placementInfo);
+                ITransformChildPlacementInfo? placementInfo = _placementInfo;
+                Parent?.VerifyPlacementInfo(this, ref placementInfo);
+                if (!ReferenceEquals(_placementInfo, placementInfo))
+                    _placementInfo = placementInfo as UIChildPlacementInfo;
                 return _placementInfo;
             }
             set => SetField(ref _placementInfo, value);

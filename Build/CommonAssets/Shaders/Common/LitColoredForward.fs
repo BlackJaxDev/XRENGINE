@@ -13,12 +13,18 @@ layout (location = 0) in vec3 FragPos;
 layout (location = 1) in vec3 FragNorm;
 
 #pragma snippet "ForwardLighting"
+#pragma snippet "AmbientOcclusionSampling"
 
 void main()
 {
     vec3 normal = normalize(FragNorm);
 
-    vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, MatColor.rgb, MatSpecularIntensity, 1.0);
+    vec3 totalLight = XRENGINE_CalculateForwardLighting(
+        normal,
+        FragPos,
+        MatColor.rgb,
+        MatSpecularIntensity,
+        XRENGINE_SampleAmbientOcclusion());
 
     OutColor = MatColor * vec4(totalLight, 1.0);
 }

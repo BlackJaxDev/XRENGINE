@@ -34,7 +34,7 @@ namespace XREngine.Data.Components
         {
             Client = new OscClient("127.0.0.1", port);
         }
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             if (Client is null)

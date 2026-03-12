@@ -10,7 +10,6 @@ using XREngine.Core.Files;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
-using XREngine.Rendering.UI;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Scene.Transforms
@@ -22,7 +21,7 @@ namespace XREngine.Scene.Transforms
     /// </summary>
     [Serializable]
     [MemoryPackable(GenerateType.NoGenerate)]
-    public abstract partial class TransformBase : XRWorldObjectBase, IPostCookedBinaryDeserialize
+    public abstract partial class TransformBase : RuntimeWorldObjectBase, IPostCookedBinaryDeserialize
     {
         #region Delegates & Events
 
@@ -744,7 +743,7 @@ namespace XREngine.Scene.Transforms
         /// <summary>
         /// Used to verify if the placement info for a child is the right type before being returned to the requester.
         /// </summary>
-        public virtual void VerifyPlacementInfo(UITransform childTransform, ref UIChildPlacementInfo? placementInfo) { }
+        public virtual void VerifyPlacementInfo(TransformBase childTransform, ref ITransformChildPlacementInfo? placementInfo) { }
 
         /// <summary>
         /// Used by the physics system to derive a world matrix from a physics body into the components used by this transform.
@@ -1306,30 +1305,42 @@ namespace XREngine.Scene.Transforms
         /// <summary>
         /// Called when the scene node this transform is attached to is activated in the scene.
         /// </summary>
-        protected internal virtual void OnSceneNodeActivated()
+        protected virtual void OnSceneNodeActivated()
         {
         }
+
+        internal void NotifySceneNodeActivated()
+            => OnSceneNodeActivated();
 
         /// <summary>
         /// Called when play begins for the scene containing this transform.
         /// </summary>
-        protected internal virtual void OnSceneNodeBeginPlay()
+        protected virtual void OnSceneNodeBeginPlay()
         {
         }
+
+        internal void NotifySceneNodeBeginPlay()
+            => OnSceneNodeBeginPlay();
 
         /// <summary>
         /// Called when the scene node this transform is attached to is deactivated in the scene.
         /// </summary>
-        protected internal virtual void OnSceneNodeDeactivated()
+        protected virtual void OnSceneNodeDeactivated()
         {
         }
+
+        internal void NotifySceneNodeDeactivated()
+            => OnSceneNodeDeactivated();
 
         /// <summary>
         /// Called when play ends for the scene containing this transform.
         /// </summary>
-        protected internal virtual void OnSceneNodeEndPlay()
+        protected virtual void OnSceneNodeEndPlay()
         {
         }
+
+        internal void NotifySceneNodeEndPlay()
+            => OnSceneNodeEndPlay();
 
         #endregion
 

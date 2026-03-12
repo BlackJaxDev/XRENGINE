@@ -1,4 +1,4 @@
-﻿using BlobHandles;
+using BlobHandles;
 using OscCore;
 using System.Numerics;
 using XREngine.Components;
@@ -67,7 +67,7 @@ public class VMCCaptureComponent : VMCComponent
     //2.3-2.7: absolute position
     //2.8: head-relative position
 
-    protected internal override void OnComponentActivated()
+    protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
         Server = OscServer.GetOrCreate(VMC_Port);
@@ -389,7 +389,7 @@ public class VMCCaptureComponent : VMCComponent
     private void ApplyMidiCCButton(int button, bool active)
         => MidiCCButtonRecieved?.Invoke(button, active);
 
-    protected internal override void OnComponentDeactivated() => base.OnComponentDeactivated();
+    protected override void OnComponentDeactivated() => base.OnComponentDeactivated();
 
     private void ApplyBonePosition(string boneName, Vector3 position, Quaternion rotation)
     {

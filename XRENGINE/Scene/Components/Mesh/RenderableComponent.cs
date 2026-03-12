@@ -40,7 +40,7 @@ namespace XREngine.Components.Scene.Mesh
             RenderedObjects = [.. RenderedObjects, ri];
 
             if (IsActive)
-                ri.WorldInstance = World;
+                ri.WorldInstance = WorldAs<XREngine.Rendering.XRWorldInstance>();
         }
 
         public EventList<RenderableMesh> Meshes { get; private set; } = new EventList<RenderableMesh>() { ThreadSafe = true };
@@ -60,7 +60,7 @@ namespace XREngine.Components.Scene.Mesh
 
             // Ensure render infos are registered with the current world instance when active.
             // Without this, the VisualScene can end up tracking zero renderables after snapshot restore.
-            var world = World;
+            var world = WorldAs<XREngine.Rendering.XRWorldInstance>();
             foreach (var mesh in Meshes)
             {
                 var ri = mesh.RenderInfo;

@@ -27,13 +27,13 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _targets, value);
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             _timer = new GameTimer(this);
             _timer.StartMultiFire(UpdateText, TimeSpan.FromSeconds(1.0), -1, null, ETickGroup.Late, (int)ETickOrder.Scene);
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             _timer?.Cancel();

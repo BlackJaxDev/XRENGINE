@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Linq;
@@ -154,14 +154,14 @@ namespace XREngine.Components
             }
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             if (_autoStartOnActivate)
                 _ = RunStartAsync(CancellationToken.None);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             _ = RunStopAsync();

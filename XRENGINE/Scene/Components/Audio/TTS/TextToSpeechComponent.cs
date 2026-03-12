@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.ComponentModel;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;

@@ -161,7 +161,7 @@ public static partial class EditorUnitTests
             // while still being part of the world instance for rendering/ticking.
             if (parent.World is not null)
             {
-                parent.World.AddToEditorScene(rootCanvasNode);
+                (parent.World as XRWorldInstance)?.AddToEditorScene(rootCanvasNode);
             }
             else
             {
@@ -172,7 +172,7 @@ public static partial class EditorUnitTests
 
                     if (parent.World is not null)
                     {
-                        parent.World.AddToEditorScene(rootCanvasNode);
+                        (parent.World as XRWorldInstance)?.AddToEditorScene(rootCanvasNode);
 
                         // In unit-test world construction, UI components are often created before the
                         // root node is attached to a world. When the world arrives later, component

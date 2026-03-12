@@ -1,4 +1,4 @@
-using XREngine.Components;
+﻿using XREngine.Components;
 using XREngine.Core.Reflection.Attributes;
 
 namespace XREngine.Components.Animation
@@ -85,7 +85,7 @@ namespace XREngine.Components.Animation
             set => SetField(ref _sampleRateOverride, Math.Max(0, value));
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
@@ -93,7 +93,7 @@ namespace XREngine.Components.Animation
                 RegisterTick(ETickGroup.Late, ETickOrder.Scene, TryRunAudit);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             UnregisterTick(ETickGroup.Late, ETickOrder.Scene, TryRunAudit);
             base.OnComponentDeactivated();

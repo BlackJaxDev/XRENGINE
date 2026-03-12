@@ -18,19 +18,19 @@ namespace XREngine.Components.Physics
 
         public IAbstractPhysicsActor? PhysicsActor { get; }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
             if (World is not null && PhysicsActor is not null)
-                World.PhysicsScene.AddActor(PhysicsActor);
+                WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene.AddActor(PhysicsActor);
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
 
             if (World is not null && PhysicsActor is not null)
-                World.PhysicsScene.RemoveActor(PhysicsActor);
+                WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene.RemoveActor(PhysicsActor);
         }
 
         protected (Vector3 position, Quaternion rotation) GetSpawnPose()
@@ -158,7 +158,7 @@ namespace XREngine.Components.Physics
                         progress?.Report(ConvexHullGenerationProgress.FromCache(preparedHulls.Count));
                 }
 
-                if (World?.PhysicsScene is PhysxScene && PhysicsActor is PhysxActor)
+                if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene && PhysicsActor is PhysxActor)
                     await CreatePhysxConvexMeshesAsync(defaultParams, cachedHulls: preparedHulls, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)

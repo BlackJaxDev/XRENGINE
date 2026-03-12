@@ -1,4 +1,4 @@
-﻿using RiveSharp;
+using RiveSharp;
 using Silk.NET.OpenGL;
 using SkiaSharp;
 using System.Collections.Concurrent;
@@ -213,7 +213,7 @@ public class RiveUIComponent : UIInteractableComponent
         RenderInfo3D.RenderCommands.Add(new RenderCommandMethod3D((int)EDefaultRenderPass.PreRender, RenderFBO));
     }
 
-    protected internal override void OnComponentActivated()
+    protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
         RegisterTick(XREngine.Components.ETickGroup.Normal, XREngine.Components.ETickOrder.Scene, AdvanceScene);
@@ -237,7 +237,7 @@ public class RiveUIComponent : UIInteractableComponent
         _deltaLock.Exit();
     }
 
-    protected internal override void OnComponentDeactivated()
+    protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
         DestroySurface();

@@ -1,9 +1,10 @@
 ﻿using System.Numerics;
 using XREngine.Data.Core;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
 {
-    public abstract class UIChildPlacementInfo(UITransform owner) : XRBase
+    public abstract class UIChildPlacementInfo(UITransform owner) : XRBase, ITransformChildPlacementInfo
     {
         public UITransform Owner { get; } = owner;
 

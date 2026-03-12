@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Buffers;
 using System.IO;
 using System.Net.Security;
@@ -206,7 +206,7 @@ namespace XREngine.Components
             return SendAsync(payload, cancellationToken);
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             _manualDisconnect = false;
@@ -214,7 +214,7 @@ namespace XREngine.Components
                 _ = RunConnectionLoopAsync(forceReconnect: false, CancellationToken.None);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             _manualDisconnect = true;

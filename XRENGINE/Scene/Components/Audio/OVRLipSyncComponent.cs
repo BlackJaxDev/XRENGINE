@@ -107,7 +107,7 @@ namespace XREngine.Components
         internal static bool HasRecentAudioData(long currentTicks, long lastDirtyTicks)
             => Math.Max(0L, currentTicks - lastDirtyTicks) < DirtyWindowTicks;
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
@@ -412,7 +412,7 @@ namespace XREngine.Components
             return string.Concat(VisemeNamePrefix, sourceName, VisemeNameSuffix);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             if (AudioSource is not null)
             {

@@ -93,6 +93,9 @@ public abstract class RuntimeWorldObjectBase : XRObjectBase
         internal protected set => SetField(ref _world, value);
     }
 
+    public TWorld? WorldAs<TWorld>() where TWorld : class, IRuntimeWorldContext
+        => World as TWorld;
+
     [YamlIgnore]
     [Browsable(false)]
     [Category("Networking")]

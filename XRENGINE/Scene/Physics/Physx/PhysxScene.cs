@@ -332,7 +332,7 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 if (dyn.IsReleased)
                     continue;
-                if (dyn.OwningComponent?.World?.PhysicsScene != this)
+                if (dyn.OwningComponent?.WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene != this)
                     continue;
                 owned.Add(dyn);
             }
@@ -340,7 +340,7 @@ namespace XREngine.Rendering.Physics.Physx
             {
                 if (stat.IsReleased)
                     continue;
-                if (stat.OwningComponent?.World?.PhysicsScene != this)
+                if (stat.OwningComponent?.WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene != this)
                     continue;
                 owned.Add(stat);
             }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Numerics;
@@ -227,13 +227,13 @@ namespace XREngine.Components.Capture
             }
         }
 
-        protected internal override void OnBeginPlay()
+        protected override void OnBeginPlay()
         {
             base.OnBeginPlay();
             SpawnGrid();
         }
 
-        protected internal override void OnEndPlay()
+        protected override void OnEndPlay()
         {
             CleanupGrid();
             base.OnEndPlay();

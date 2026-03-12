@@ -11,7 +11,7 @@ using YamlDotNet.Serialization;
 namespace XREngine.Components
 {
     [Serializable]
-    public abstract class XRComponent : XRWorldObjectBase
+    public abstract class XRComponent : RuntimeWorldObjectBase
     {
         /// <summary>
         /// Global event for when a component is created.
@@ -283,17 +283,23 @@ namespace XREngine.Components
         /// Called when the component is made active.
         /// This is where ticks should register and connections to the world should be established.
         /// </summary>
-        protected internal virtual void OnComponentActivated()
+        protected virtual void OnComponentActivated()
         {
             VerifyInterfacesOnStart();
         }
 
+        internal void NotifyComponentActivated()
+            => OnComponentActivated();
+
         /// <summary>
         /// Called once when the owning scene begins play (scene loaded).
         /// </summary>
-        protected internal virtual void OnBeginPlay()
+        protected virtual void OnBeginPlay()
         {
         }
+
+        internal void NotifyBeginPlay()
+            => OnBeginPlay();
 
         /// <summary>
         /// If true, all registered ticks will be unregistered when the component is set to inactive.
@@ -310,32 +316,38 @@ namespace XREngine.Components
         /// <summary>
         /// Called when the component is made inactive.
         /// </summary>
-        protected internal virtual void OnComponentDeactivated()
+        protected virtual void OnComponentDeactivated()
         {
             VerifyInterfacesOnStop();
             if (UnregisterTicksOnStop)
                 ClearTicks();
         }
 
+        internal void NotifyComponentDeactivated()
+            => OnComponentDeactivated();
+
         /// <summary>
         /// Called once when the owning scene ends play (scene unloaded).
         /// </summary>
-        protected internal virtual void OnEndPlay()
+        protected virtual void OnEndPlay()
         {
         }
+
+        internal void NotifyEndPlay()
+            => OnEndPlay();
 
         /// <summary>
         /// This method is called when the component is set to active in the world.
         /// It will check for known engine interfaces set by the user and apply engine data to them.
         /// </summary>
-        internal virtual void VerifyInterfacesOnStart()
+        protected virtual void VerifyInterfacesOnStart()
             => RuntimeWorldObjectServices.Current?.OnRuntimeObjectActivated(this);
 
         /// <summary>
         /// This method is called when the component is set to inactive in the world.
         /// It will check for known engine interfaces set by the user and clear engine data from them.
         /// </summary>
-        internal virtual void VerifyInterfacesOnStop()
+        protected virtual void VerifyInterfacesOnStop()
             => RuntimeWorldObjectServices.Current?.OnRuntimeObjectDeactivated(this);
 
         protected override void OnDestroying()
@@ -356,14 +368,20 @@ namespace XREngine.Components
             ComponentDestroyed?.Invoke(this);
         }
 
-        internal protected virtual void RemovedFromSceneNode(SceneNode sceneNode)
+        protected virtual void RemovedFromSceneNode(SceneNode sceneNode)
         {
 
         }
 
-        internal protected virtual void AddedToSceneNode(SceneNode sceneNode)
+        internal void NotifyRemovedFromSceneNode(SceneNode sceneNode)
+            => RemovedFromSceneNode(sceneNode);
+
+        protected virtual void AddedToSceneNode(SceneNode sceneNode)
         {
 
         }
+
+        internal void NotifyAddedToSceneNode(SceneNode sceneNode)
+            => AddedToSceneNode(sceneNode);
     }
 }

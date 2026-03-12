@@ -168,7 +168,7 @@ internal static class LightComponentEditorShared
             ImGui.Separator();
 
             if (ImGui.Button("Bake Lightmaps"))
-                light.World?.Lights?.LightmapBaking?.RequestBake(light);
+                light.WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights?.LightmapBaking?.RequestBake(light);
 
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Queues a lightmap bake for Static meshes. (Lightmap rendering is scaffolded but not implemented yet.)");

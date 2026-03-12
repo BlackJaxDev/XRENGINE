@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using XREngine.Input.Devices;
 
 namespace XREngine.Rendering.UI
@@ -73,11 +73,11 @@ namespace XREngine.Rendering.UI
         {
             base.OnLostFocus();
         }
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
         }

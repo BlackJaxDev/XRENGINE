@@ -799,7 +799,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         // Create a temporary node for the debug camera
         _debugCameraNode = SceneNode.Parent is not null 
             ? SceneNode.Parent.NewChild("DebugCameraVisualization")
-            : SceneNode.World?.RootNodes.NewRootNode("DebugCameraVisualization");
+            : (SceneNode.World as XRWorldInstance)?.RootNodes.NewRootNode("DebugCameraVisualization");
         if (_debugCameraNode is null)
             return;
             
@@ -2036,8 +2036,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void ToggleEditorImGuiOverlay()
     {
-        var world = SceneNode?.World;
-        if (world is null)
+        if (SceneNode?.World is not XRWorldInstance world)
             return;
 
         // In ImGui-editor mode, F11 should only toggle profiler visibility.
@@ -2440,7 +2439,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private List<SceneNode> CollectFrustumSelection(Frustum frustum, bool containsOnly)
     {
         var selectedNodes = new HashSet<SceneNode>();
-        var scene = World?.VisualScene as VisualScene3D;
+        var scene = WorldAs<XREngine.Rendering.XRWorldInstance>()?.VisualScene as VisualScene3D;
         if (scene is null)
             return [];
 

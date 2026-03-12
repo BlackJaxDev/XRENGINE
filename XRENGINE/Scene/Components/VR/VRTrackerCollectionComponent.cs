@@ -11,14 +11,14 @@ namespace XREngine.Data.Components.Scene
     /// </summary>
     public class VRTrackerCollectionComponent : XRComponent
     {
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             ReverifyTrackedDevices();
             Engine.VRState.OpenVRApi.DeviceDetected += OnDeviceDetected;
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             Engine.VRState.OpenVRApi.DeviceDetected -= OnDeviceDetected;
             Trackers.Clear();

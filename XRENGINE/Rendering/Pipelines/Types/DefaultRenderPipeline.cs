@@ -31,6 +31,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private readonly Lazy<XRMaterial> _voxelConeTracingVoxelizationMaterial;
     private readonly Lazy<XRMaterial> _motionVectorsMaterial;
+    private readonly Lazy<XRMaterial> _depthNormalPrePassMaterial;
 
     private const float TemporalFeedbackMin = 0.05f;
     private const float TemporalFeedbackMax = 0.95f;
@@ -109,6 +110,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             { (int)EDefaultRenderPass.MaskedForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
             { (int)EDefaultRenderPass.WeightedBlendedOitForward, null },
+            { (int)EDefaultRenderPass.PerPixelLinkedListForward, null },
+            { (int)EDefaultRenderPass.DepthPeelingForward, null },
             { (int)EDefaultRenderPass.OnTopForward, null },
             { (int)EDefaultRenderPass.PostRender, null }
         };
@@ -154,6 +157,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string DepthOfFieldCopyFBOName = "DepthOfFieldCopyFBO";
     public const string DepthOfFieldFBOName = "DepthOfFieldFBO";
     public const string DepthPreloadFBOName = "DepthPreloadFBO";
+    public const string ForwardDepthPrePassFBOName = "ForwardDepthPrePassFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
     public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
     public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
@@ -218,6 +222,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         GlobalIlluminationMode = Engine.UserSettings.GlobalIlluminationMode;
         _voxelConeTracingVoxelizationMaterial = new Lazy<XRMaterial>(CreateVoxelConeTracingVoxelizationMaterial, LazyThreadSafetyMode.PublicationOnly);
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
+        _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
         Engine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
         ApplyAntiAliasingResolutionHint();
         CommandChain = GenerateCommandChain();
@@ -235,6 +240,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private bool EnableTransparencyOverdrawVisualization
         => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransparencyOverdrawHeatmap;
 
+    private bool EnablePerPixelLinkedListVisualization
+        => !Stereo && Engine.EditorPreferences.Debug.VisualizePerPixelLinkedListFragments;
+
+    private bool EnableDepthPeelingLayerVisualization
+        => !Stereo && Engine.EditorPreferences.Debug.VisualizeDepthPeelingLayer;
+
     private string? ActiveTransparencyDebugFboName
         => EnableTransparencyAccumulationVisualization
             ? TransparentAccumulationDebugFBOName
@@ -242,6 +253,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 ? TransparentRevealageDebugFBOName
                 : EnableTransparencyOverdrawVisualization
                     ? TransparentOverdrawDebugFBOName
+                    : EnablePerPixelLinkedListVisualization
+                        ? PpllFragmentCountDebugFBOName
+                        : EnableDepthPeelingLayerVisualization
+                            ? DepthPeelingDebugFBOName
                     : null;
 
     private void HandleRenderingSettingsChanged()
@@ -281,6 +296,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
     internal XRMaterial GetMotionVectorsMaterial()
         => _motionVectorsMaterial.Value;
 
+    internal XRMaterial GetDepthNormalPrePassMaterial()
+        => _depthNormalPrePassMaterial.Value;
+
     #region Command Chain Generation
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
@@ -311,7 +329,9 @@ public partial class DefaultRenderPipeline : RenderPipeline
         Chain(metadata, EDefaultRenderPass.OpaqueForward, EDefaultRenderPass.Background);
         Chain(metadata, EDefaultRenderPass.MaskedForward, EDefaultRenderPass.OpaqueForward);
         Chain(metadata, EDefaultRenderPass.WeightedBlendedOitForward, EDefaultRenderPass.MaskedForward);
-        Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.WeightedBlendedOitForward);
+        Chain(metadata, EDefaultRenderPass.PerPixelLinkedListForward, EDefaultRenderPass.WeightedBlendedOitForward);
+        Chain(metadata, EDefaultRenderPass.DepthPeelingForward, EDefaultRenderPass.PerPixelLinkedListForward);
+        Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.DepthPeelingForward);
         Chain(metadata, EDefaultRenderPass.OnTopForward, EDefaultRenderPass.TransparentForward);
         Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.OnTopForward);
     }
@@ -341,6 +361,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GPURenderDispatch);
                 c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, GPURenderDispatch);
                 c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
@@ -427,6 +449,23 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     c.Add<VPRC_DepthTest>().Enable = true;
                     c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GPURenderDispatch);
                     c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, GPURenderDispatch);
+            }
+
+            // Forward depth+normal pre-pass: render forward opaque geometry depth and normals
+            // before AO resolve, so AO algorithms see both deferred and forward geometry.
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                ForwardDepthPrePassFBOName,
+                CreateForwardDepthPrePassFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassFBOName, true, false, false, false)))
+            {
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = true;
+                c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(
+                    [(int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
+                    GPURenderDispatch);
             }
 
             c.Add<VPRC_DepthTest>().Enable = false;
@@ -602,6 +641,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             }
             c.Add<VPRC_RenderQuadFBO>().FrameBufferName = TransparentResolveFBOName;
 
+            AppendExactTransparencyCommands(c);
+
             using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false, false)))
             {
                 c.Add<VPRC_DepthTest>().Enable = true;
@@ -639,6 +680,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
                         (int)EDefaultRenderPass.OpaqueForward,
                         (int)EDefaultRenderPass.MaskedForward,
                         (int)EDefaultRenderPass.WeightedBlendedOitForward,
+                        (int)EDefaultRenderPass.PerPixelLinkedListForward,
+                        (int)EDefaultRenderPass.DepthPeelingForward,
                         (int)EDefaultRenderPass.TransparentForward,
                     });
                 c.Add<VPRC_DepthWrite>().Allow = true;
@@ -1009,6 +1052,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             CreateTransparentRevealageTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
+
+        CacheExactTransparencyTextures(c);
 
         // 1x1 exposure value texture (GPU auto exposure)
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(

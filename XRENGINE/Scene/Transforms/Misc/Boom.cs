@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using System.Numerics;
 using XREngine.Components.Physics;
 using XREngine.Data;
@@ -109,12 +109,12 @@ namespace XREngine.Components.Scene.Transforms
         /// </summary>
         public HashSet<XRComponent> IgnoredComponents => _ignoredComponents;
 
-        protected internal override void OnSceneNodeActivated()
+        protected override void OnSceneNodeActivated()
         {
             base.OnSceneNodeActivated();
             RegisterTick(ETickGroup.Late, (int)ETickOrder.Scene, Tick);
         }
-        //protected internal override void OnSceneNodeDeactivated()
+        //protected override void OnSceneNodeDeactivated()
         //{
         //    base.OnSceneNodeDeactivated();
         //    UnregisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Scene, Tick);
@@ -128,7 +128,7 @@ namespace XREngine.Components.Scene.Transforms
             lock (_traceOutput)
             {
                 _traceOutput.Clear();
-                World?.PhysicsScene?.SweepSingle(
+                (World as XREngine.Rendering.XRWorldInstance)?.PhysicsScene?.SweepSingle(
                     _traceSphere,
                     (ParentWorldMatrix.Translation, Quaternion.Identity),
                     Vector3.Transform(Globals.Backward, Parent?.WorldRotation ?? Quaternion.Identity),

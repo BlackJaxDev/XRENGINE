@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using System.Numerics;
 using Valve.VR;
 using XREngine.Data.Core;

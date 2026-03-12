@@ -1,4 +1,4 @@
-﻿using DotnetNoise;
+using DotnetNoise;
 using System.Numerics;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Scene.Transforms;
@@ -59,7 +59,7 @@ namespace XREngine.Components.Scene.Transforms
         private readonly Rotator _rotation = new();
         private readonly FastNoise _noise = new();
 
-        protected internal override void OnSceneNodeActivated()
+        protected override void OnSceneNodeActivated()
         {
             base.OnSceneNodeActivated();
             _time = 0.0f;
@@ -67,7 +67,7 @@ namespace XREngine.Components.Scene.Transforms
             RegisterTick(ETickGroup.Normal, (int)ETickOrder.Logic, NoiseTick);
         }
 
-        protected internal override void OnSceneNodeDeactivated()
+        protected override void OnSceneNodeDeactivated()
         {
             base.OnSceneNodeDeactivated();
             UnregisterTick(ETickGroup.Normal, (int)ETickOrder.Logic, NoiseTick);

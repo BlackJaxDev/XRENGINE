@@ -55,10 +55,10 @@ namespace XREngine.Scene
             comp.Destroyed += ComponentDestroyed;
 
             if (HasBegunPlay)
-                comp.OnBeginPlay();
+                comp.NotifyBeginPlay();
 
             if (comp.IsActive && IsActiveInHierarchy && World is not null)
-                comp.OnComponentActivated();
+                comp.NotifyComponentActivated();
         }
 
         /// <summary>
@@ -171,19 +171,19 @@ namespace XREngine.Scene
             component.Destroyed += ComponentDestroyed;
 
             if (HasBegunPlay)
-                component.OnBeginPlay();
+                component.NotifyBeginPlay();
 
             if (component.IsActive && IsActiveInHierarchy && World is not null)
-                component.OnComponentActivated();
+                component.NotifyComponentActivated();
         }
 
         private void StopComponentLifecycle(XRComponent component)
         {
             if (component.IsActive && IsActiveInHierarchy && World is not null)
-                component.OnComponentDeactivated();
+                component.NotifyComponentDeactivated();
 
             if (HasBegunPlay)
-                component.OnEndPlay();
+                component.NotifyEndPlay();
         }
 
         /// <summary>
@@ -488,7 +488,7 @@ namespace XREngine.Scene
         /// <param name="item">The component that was removed.</param>
         private void OnComponentRemoved(XRComponent item)
         {
-            item.RemovedFromSceneNode(this);
+            item.NotifyRemovedFromSceneNode(this);
             ComponentRemoved?.Invoke((this, item));
         }
 
@@ -504,7 +504,7 @@ namespace XREngine.Scene
             if (item.SceneNode is null)
                 item.ConstructionSetSceneNode(this);
 
-            item.AddedToSceneNode(this);
+            item.NotifyAddedToSceneNode(this);
             ApplyLayerToComponent(item);
             ComponentAdded?.Invoke((this, item));
         }

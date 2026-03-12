@@ -335,16 +335,16 @@ namespace XREngine.Components.Lights
             ShadowCameraTransform.Parent = Transform;
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             if (Type == ELightType.Dynamic)
-                World?.Lights.DynamicDirectionalLights.Add(this);
+                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicDirectionalLights.Add(this);
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             if (Type == ELightType.Dynamic)
-                World?.Lights.DynamicDirectionalLights.Remove(this);
+                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicDirectionalLights.Remove(this);
             base.OnComponentDeactivated();
         }
 
@@ -456,9 +456,9 @@ namespace XREngine.Components.Lights
                     break;
                 case nameof(Type):
                     if (Type == ELightType.Dynamic)
-                        World?.Lights.DynamicDirectionalLights.Add(this);
+                        WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicDirectionalLights.Add(this);
                     else
-                        World?.Lights.DynamicDirectionalLights.Remove(this);
+                        WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicDirectionalLights.Remove(this);
                     break;
             }
         }

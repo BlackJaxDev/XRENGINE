@@ -324,7 +324,7 @@ namespace XREngine.Components
                     return;
             }
 
-            if (World?.PhysicsScene is not PhysxScene px)
+            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is not PhysxScene px)
                 return;
 
             var handRB = left ? LeftHandRigidBody : RightHandRigidBody;
@@ -371,7 +371,7 @@ namespace XREngine.Components
             return joint;
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             if (RightHandRigidBody is null && RightHandTransform is not null)
@@ -380,7 +380,7 @@ namespace XREngine.Components
                 InitLeftHandBody();
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             if (RightHandRigidBody is not null)
@@ -414,7 +414,7 @@ namespace XREngine.Components
                 return;
 
             tfm.WorldMatrixChanged += LeftHandTransform_WorldMatrixChanged;
-            if (World?.PhysicsScene is PhysxScene px)
+            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
             {
                 LeftHandRigidBody?.Destroy();
                 LeftHandRigidBody = NewHandRigidBody(tfm);
@@ -428,7 +428,7 @@ namespace XREngine.Components
                 return;
 
             tfm.WorldMatrixChanged += RightHandTransform_WorldMatrixChanged;
-            if (World?.PhysicsScene is PhysxScene px)
+            if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
             {
                 RightHandRigidBody?.Destroy();
                 RightHandRigidBody = NewHandRigidBody(tfm);
@@ -462,13 +462,13 @@ namespace XREngine.Components
                         break;
                     case nameof(RightHandRigidBody):
                         {
-                            if (RightHandRigidBody is not null && World?.PhysicsScene is PhysxScene px)
+                            if (RightHandRigidBody is not null && WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
                                 px.RemoveActor(RightHandRigidBody);
                         }
                         break;
                     case nameof(LeftHandRigidBody):
                         {
-                            if (LeftHandRigidBody is not null && World?.PhysicsScene is PhysxScene px)
+                            if (LeftHandRigidBody is not null && WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
                                 px.RemoveActor(LeftHandRigidBody);
                         }
                         break;
@@ -502,7 +502,7 @@ namespace XREngine.Components
                     {
                         if (RightHandRigidBody is null)
                             break;
-                        if (World?.PhysicsScene is PhysxScene px)
+                        if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
                             px.AddActor(RightHandRigidBody);
                         RightHandRigidBody.KinematicTarget = (RightHandTransform?.WorldTranslation ?? Vector3.Zero, RightHandTransform?.WorldRotation ?? Quaternion.Identity);
                     }
@@ -511,7 +511,7 @@ namespace XREngine.Components
                     {
                         if (LeftHandRigidBody is null)
                             break;
-                        if (World?.PhysicsScene is PhysxScene px)
+                        if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
                             px.AddActor(LeftHandRigidBody);
                         LeftHandRigidBody.KinematicTarget = (LeftHandTransform?.WorldTranslation ?? Vector3.Zero, LeftHandTransform?.WorldRotation ?? Quaternion.Identity);
                     }
@@ -563,7 +563,7 @@ namespace XREngine.Components
 
             RightHandRigidBody.KinematicTarget = (tfm.WorldTranslation, tfm.WorldRotation);
 
-            //if (World?.PhysicsScene is PhysxScene px)
+            //if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
             //    RightHandOverlap = OverlapTest(tfm, px);
         }
 
@@ -575,7 +575,7 @@ namespace XREngine.Components
 
             LeftHandRigidBody.KinematicTarget = (tfm.WorldTranslation, tfm.WorldRotation);
 
-            //if (World?.PhysicsScene is PhysxScene px)
+            //if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene px)
             //    LeftHandOverlap = OverlapTest(tfm, px);
         }
 

@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using XREngine.Input.Devices.Types.OpenVR;
 using XREngine.Scene.Transforms;
 using static XREngine.Input.Devices.InputInterface;

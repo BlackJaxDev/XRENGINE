@@ -415,7 +415,7 @@ namespace XREngine.Components
             }
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
@@ -435,7 +435,7 @@ namespace XREngine.Components
             set => SetField(ref _playOnActivate, value);
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
 
@@ -730,7 +730,7 @@ namespace XREngine.Components
                 _lastExistenceCheckTime = DateTime.Now;
                 //There will usually only be one listener, but we support multiple for future-proofing
                 //Check if listener is within range, add and remove sources as needed
-                foreach (var listener in World.Listeners)
+                foreach (var listener in WorldAs<XREngine.Rendering.XRWorldInstance>()?.Listeners ?? [])
                 {
                     if (RelativeToListener)
                         AddSourceToListener(listener);

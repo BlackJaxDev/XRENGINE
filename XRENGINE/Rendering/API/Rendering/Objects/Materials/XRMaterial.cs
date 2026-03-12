@@ -184,7 +184,9 @@ namespace XREngine.Rendering
         private static bool IsManagedTransparencyRenderPass(int renderPass)
             => renderPass == (int)EDefaultRenderPass.MaskedForward ||
                renderPass == (int)EDefaultRenderPass.TransparentForward ||
-               renderPass == (int)EDefaultRenderPass.WeightedBlendedOitForward;
+               renderPass == (int)EDefaultRenderPass.WeightedBlendedOitForward ||
+               renderPass == (int)EDefaultRenderPass.PerPixelLinkedListForward ||
+               renderPass == (int)EDefaultRenderPass.DepthPeelingForward;
 
         private void PreShadersSet()
         {
@@ -311,18 +313,28 @@ namespace XREngine.Rendering
             return value is not ETransparencyMode.Opaque and not ETransparencyMode.Masked and not ETransparencyMode.AlphaToCoverage;
         }
 
+        private static bool ExactTransparencyEnabled
+            => Engine.EditorPreferences.Debug.EnableExactTransparencyTechniques;
+
+        private ETransparencyMode GetRuntimeTransparencyMode(ETransparencyMode effectiveMode)
+            => !ExactTransparencyEnabled && effectiveMode is ETransparencyMode.PerPixelLinkedList or ETransparencyMode.DepthPeeling
+                ? ETransparencyMode.WeightedBlendedOit
+                : effectiveMode;
+
         private void ApplyTransparencyState()
         {
             ETransparencyMode effectiveMode = GetEffectiveTransparencyMode();
+            ETransparencyMode runtimeMode = GetRuntimeTransparencyMode(effectiveMode);
             RenderOptions ??= new RenderingParameters();
             RenderOptions.DepthTest ??= new DepthTest();
 
-            if (effectiveMode is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
+            if (runtimeMode is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
                 EnsureAlphaCutoffParameter();
 
-            NormalizeTransparencyShaders(effectiveMode);
+            SettingUniforms -= ExactTransparencyShaderBindings.ConfigureMaterialProgram;
+            NormalizeTransparencyShaders(runtimeMode);
 
-            switch (effectiveMode)
+            switch (runtimeMode)
             {
                 case ETransparencyMode.Opaque:
                     RenderOptions.BlendModeAllDrawBuffers = BlendMode.Disabled();
@@ -356,6 +368,24 @@ namespace XREngine.Rendering
                     RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
                     RenderOptions.DepthTest.UpdateDepth = false;
                     RenderPass = (int)EDefaultRenderPass.WeightedBlendedOitForward;
+                    break;
+                case ETransparencyMode.PerPixelLinkedList:
+                    RenderOptions.BlendModeAllDrawBuffers = BlendMode.Disabled();
+                    RenderOptions.BlendModesPerDrawBuffer = null;
+                    RenderOptions.AlphaToCoverage = ERenderParamUsage.Disabled;
+                    RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
+                    RenderOptions.DepthTest.UpdateDepth = false;
+                    RenderPass = (int)EDefaultRenderPass.PerPixelLinkedListForward;
+                    SettingUniforms += ExactTransparencyShaderBindings.ConfigureMaterialProgram;
+                    break;
+                case ETransparencyMode.DepthPeeling:
+                    RenderOptions.BlendModeAllDrawBuffers = BlendMode.Disabled();
+                    RenderOptions.BlendModesPerDrawBuffer = null;
+                    RenderOptions.AlphaToCoverage = ERenderParamUsage.Disabled;
+                    RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
+                    RenderOptions.DepthTest.UpdateDepth = true;
+                    RenderPass = (int)EDefaultRenderPass.DepthPeelingForward;
+                    SettingUniforms += ExactTransparencyShaderBindings.ConfigureMaterialProgram;
                     break;
                 case ETransparencyMode.Additive:
                     RenderOptions.BlendModeAllDrawBuffers = new BlendMode()
@@ -432,9 +462,13 @@ namespace XREngine.Rendering
                 if (shader is null || shader.Type != EShaderType.Fragment)
                     continue;
 
-                XRShader? replacement = effectiveMode == ETransparencyMode.WeightedBlendedOit
-                    ? ShaderHelper.GetWeightedBlendedOitForwardVariant(shader)
-                    : ShaderHelper.GetStandardForwardVariant(shader);
+                XRShader? replacement = effectiveMode switch
+                {
+                    ETransparencyMode.WeightedBlendedOit => ShaderHelper.GetWeightedBlendedOitForwardVariant(shader),
+                    ETransparencyMode.PerPixelLinkedList => ShaderHelper.GetPerPixelLinkedListForwardVariant(shader),
+                    ETransparencyMode.DepthPeeling => ShaderHelper.GetDepthPeelingForwardVariant(shader),
+                    _ => ShaderHelper.GetStandardForwardVariant(shader),
+                };
 
                 if (replacement is not null)
                     Shaders[i] = replacement;

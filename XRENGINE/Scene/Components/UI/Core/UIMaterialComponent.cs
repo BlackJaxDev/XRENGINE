@@ -1,4 +1,4 @@
-﻿using Extensions;
+using Extensions;
 using System.Drawing;
 using System.Numerics;
 using XREngine.Components;
@@ -42,13 +42,13 @@ namespace XREngine.Rendering.UI
             }
         }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             RemakeMesh();
         }
 
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             Mesh?.Destroy();

@@ -78,16 +78,16 @@ namespace XREngine.Components.Capture.Lights.Types
         public SpotLightComponent()
             : this(100.0f, 60.0f, 30.0f, 1.0f, 1.0f) { }
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             if (Type == ELightType.Dynamic)
-                World?.Lights.DynamicSpotLights.Add(this);
+                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicSpotLights.Add(this);
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             if (Type == ELightType.Dynamic)
-                World?.Lights.DynamicSpotLights.Remove(this);
+                WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicSpotLights.Remove(this);
             base.OnComponentDeactivated();
         }
 
@@ -190,9 +190,9 @@ namespace XREngine.Components.Capture.Lights.Types
                     break;
                 case nameof(Type):
                     if (Type == ELightType.Dynamic)
-                        World?.Lights.DynamicSpotLights.Add(this);
+                        WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicSpotLights.Add(this);
                     else
-                        World?.Lights.DynamicSpotLights.Remove(this);
+                        WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicSpotLights.Remove(this);
                     break;
             }
         }

@@ -1,4 +1,4 @@
-﻿using XREngine.Data.Core;
+using XREngine.Data.Core;
 using XREngine.Input.Devices;
 
 namespace XREngine.Rendering.UI
@@ -7,12 +7,12 @@ namespace XREngine.Rendering.UI
     {
         public XREvent<ECurrentState>? OnStateChanged;
 
-        protected internal override void OnComponentActivated()
+        protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
             RegisterTick(Components.ETickGroup.Late, Components.ETickOrder.Scene, UpdateBox);
         }
-        protected internal override void OnComponentDeactivated()
+        protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             UnregisterTick(Components.ETickGroup.Late, Components.ETickOrder.Scene, UpdateBox);
