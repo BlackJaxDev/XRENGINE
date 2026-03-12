@@ -15,7 +15,7 @@ namespace XREngine.Rendering
     [MemoryPackUnion(5, typeof(XRTexture1D))]
     [MemoryPackUnion(6, typeof(XRTexture1DArray))]
     [MemoryPackUnion(7, typeof(XRTextureBuffer))]
-    public abstract partial class XRTexture : GenericRenderObject
+    public abstract partial class XRTexture : GenericRenderObject, IRenderTextureResource
     {
         /// <summary>
         /// Allocates a new empty image with the specified dimensions, format and type.

@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using XREngine.Components;
 using XREngine.Scene;
 
@@ -7,7 +7,6 @@ namespace XREngine.Core.Attributes
     /// <summary>
     /// Requires that a scene node has certain components for this component to operate correctly.
     /// </summary>
-    /// <param name="types"></param>
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = true)]
     public class RequireComponentsAttribute(params Type[] types) : XRComponentAttribute, IEnumerable<Type>
     {

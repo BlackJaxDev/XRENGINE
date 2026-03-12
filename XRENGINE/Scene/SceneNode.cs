@@ -6,8 +6,6 @@ using XREngine.Core.Attributes;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Rendering;
-using XREngine.Rendering.Info;
-using XREngine.Rendering.UI;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
@@ -136,7 +134,7 @@ namespace XREngine.Scene
         public SceneNode(SceneNode parent, string name, TransformBase? transform = null)
 #pragma warning restore CS8618
         {
-            Transform = transform ?? new Transform();
+            Transform = transform ?? (TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform();
             Transform.Parent = parent?.Transform;
 
             Name = name;
@@ -153,7 +151,7 @@ namespace XREngine.Scene
         public SceneNode(string name, TransformBase? transform = null)
 #pragma warning restore CS8618
         {
-            Transform = transform ?? new Transform();
+            Transform = transform ?? (TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform();
 
             Name = name;
             ComponentsInternal.PostAnythingAdded += OnComponentAdded;
@@ -167,12 +165,12 @@ namespace XREngine.Scene
         /// <param name="name">The display name for this node, or <c>null</c> to use <see cref="DefaultName"/>.</param>
         /// <param name="transform">The transform to use, or <c>null</c> to create a default <see cref="Transform"/>.</param>
 #pragma warning disable CS8618
-        public SceneNode(XRWorldInstance? world, string? name = null, TransformBase? transform = null)
+        public SceneNode(IRuntimeWorldContext? world, string? name = null, TransformBase? transform = null)
 #pragma warning restore CS8618
         {
-            Transform = transform ?? new Transform();
+            Transform = transform ?? (TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform();
 
-            World = world;
+            World = world as XRWorldInstance;
             Name = name ?? DefaultName;
             ComponentsInternal.PostAnythingAdded += OnComponentAdded;
             ComponentsInternal.PostAnythingRemoved += OnComponentRemoved;
@@ -323,7 +321,12 @@ namespace XREngine.Scene
         /// </summary>
         public TransformBase Transform
         {
-            get => _transform ?? SetTransform<Transform>();
+            get
+            {
+                if (_transform is null)
+                    SetTransform((TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform());
+                return _transform!;
+            }
             private set => SetField(ref _transform, value);
         }
 

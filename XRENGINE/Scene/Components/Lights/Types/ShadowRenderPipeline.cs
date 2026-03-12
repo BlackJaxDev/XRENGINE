@@ -33,6 +33,7 @@ namespace XREngine.Components.Lights
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.MaskedForward;
+                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.WeightedBlendedOitForward;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
                 }
             }
@@ -54,6 +55,7 @@ namespace XREngine.Components.Lights
                 { (int)EDefaultRenderPass.DeferredDecals, null },
                 { (int)EDefaultRenderPass.OpaqueForward, null },
                 { (int)EDefaultRenderPass.MaskedForward, null },
+                { (int)EDefaultRenderPass.WeightedBlendedOitForward, null },
                 { (int)EDefaultRenderPass.TransparentForward, null },
                 { (int)EDefaultRenderPass.OnTopForward, null },
                 { (int)EDefaultRenderPass.PostRender, null }

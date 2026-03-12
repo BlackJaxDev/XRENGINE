@@ -1,0 +1,349 @@
+{
+  "default_bindings": [
+    {
+      "controller_type": "knuckles",
+      "binding_url": "bindings_knuckles.json"
+    }
+  ],
+  "actions": [
+    {
+      "name": "/actions/Global/in/Interact",
+      "requirement": "mandatory",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/Global/in/Jump",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/Global/in/ToggleMute",
+      "requirement": "optional",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/Global/in/Grab",
+      "requirement": "mandatory",
+      "type": "vector1"
+    },
+    {
+      "name": "/actions/Global/in/PlayspaceDragLeft",
+      "requirement": "optional",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/Global/in/PlayspaceDragRight",
+      "requirement": "optional",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/Global/in/ToggleMenu",
+      "requirement": "mandatory",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/Global/in/ToggleQuickMenu",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/Global/in/ToggleAvatarMenu",
+      "requirement": "mandatory",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/Global/in/LeftHandPose",
+      "requirement": "mandatory",
+      "type": "pose"
+    },
+    {
+      "name": "/actions/Global/in/RightHandPose",
+      "requirement": "mandatory",
+      "type": "pose"
+    },
+    {
+      "name": "/actions/Global/in/Locomote",
+      "requirement": "mandatory",
+      "type": "vector2"
+    },
+    {
+      "name": "/actions/Global/in/Turn",
+      "requirement": "mandatory",
+      "type": "vector2"
+    }
+  ],
+  "action_sets": [
+    {
+      "name": "/actions/Global",
+      "usage": "leftright"
+    },
+    {
+      "name": "/actions/OneHanded",
+      "usage": "single"
+    },
+    {
+      "name": "/actions/QuickMenu",
+      "usage": "single"
+    },
+    {
+      "name": "/actions/Menu",
+      "usage": "single"
+    },
+    {
+      "name": "/actions/AvatarMenu",
+      "usage": "single"
+    }
+  ],
+  "localization": [
+    {
+      "/actions/Global": "Global",
+      "/actions/OneHanded": "One Handed",
+      "/actions/QuickMenu": "Quick Menu",
+      "/actions/Menu": "Menu",
+      "/actions/AvatarMenu": "Avatar Menu",
+      "/actions/Global/in/Interact": "Interact",
+      "/actions/Global/in/Jump": "Jump",
+      "/actions/Global/in/ToggleMute": "Toggle Mute",
+      "/actions/Global/in/Grab": "Grab",
+      "/actions/Global/in/PlayspaceDragLeft": "Playspace Drag Left",
+      "/actions/Global/in/PlayspaceDragRight": "Playspace Drag Right",
+      "/actions/Global/in/ToggleMenu": "Toggle Menu",
+      "/actions/Global/in/ToggleQuickMenu": "Toggle Quick Menu",
+      "/actions/Global/in/ToggleAvatarMenu": "Toggle Avatar Menu",
+      "/actions/Global/in/LeftHandPose": "Left Hand Pose",
+      "/actions/Global/in/RightHandPose": "Right Hand Pose",
+      "/actions/Global/in/Locomote": "Locomote",
+      "/actions/Global/in/Turn": "Turn",
+      "language_tag": "en_us"
+    },
+    {
+      "/actions/Global": "Global",
+      "/actions/OneHanded": "\u00C3\u20AC une main",
+      "/actions/QuickMenu": "Menu rapide",
+      "/actions/Menu": "Menu",
+      "/actions/AvatarMenu": "Menu de l\u0027avatar",
+      "/actions/Global/in/Interact": "Interagir",
+      "/actions/Global/in/Jump": "Sauter",
+      "/actions/Global/in/ToggleMute": "Activer/D\u00C3\u00A9sactiver le son",
+      "/actions/Global/in/Grab": "Saisir",
+      "/actions/Global/in/PlayspaceDragLeft": "Glisser l\u0027espace de jeu \u00C3\u00A0 gauche",
+      "/actions/Global/in/PlayspaceDragRight": "Glisser l\u0027espace de jeu \u00C3\u00A0 droite",
+      "/actions/Global/in/ToggleMenu": "Basculer le menu",
+      "/actions/Global/in/ToggleQuickMenu": "Basculer le menu rapide",
+      "/actions/Global/in/ToggleAvatarMenu": "Basculer le menu de l\u0027avatar",
+      "/actions/Global/in/LeftHandPose": "Pose de la main gauche",
+      "/actions/Global/in/RightHandPose": "Pose de la main droite",
+      "/actions/Global/in/Locomote": "Se d\u00C3\u00A9placer",
+      "/actions/Global/in/Turn": "Tourner",
+      "language_tag": "fr"
+    },
+    {
+      "/actions/Global": "Global",
+      "/actions/OneHanded": "Einh\u00C3\u00A4ndig",
+      "/actions/QuickMenu": "Schnellmen\u00C3\u00BC",
+      "/actions/Menu": "Men\u00C3\u00BC",
+      "/actions/AvatarMenu": "Avatar-Men\u00C3\u00BC",
+      "/actions/Global/in/Interact": "Interagieren",
+      "/actions/Global/in/Jump": "Springen",
+      "/actions/Global/in/ToggleMute": "Stummschaltung umschalten",
+      "/actions/Global/in/Grab": "Greifen",
+      "/actions/Global/in/PlayspaceDragLeft": "Playspace nach links ziehen",
+      "/actions/Global/in/PlayspaceDragRight": "Playspace nach rechts ziehen",
+      "/actions/Global/in/ToggleMenu": "Men\u00C3\u00BC umschalten",
+      "/actions/Global/in/ToggleQuickMenu": "Schnellmen\u00C3\u00BC umschalten",
+      "/actions/Global/in/ToggleAvatarMenu": "Avatar-Men\u00C3\u00BC umschalten",
+      "/actions/Global/in/LeftHandPose": "Linke Hand Pose",
+      "/actions/Global/in/RightHandPose": "Rechte Hand Pose",
+      "/actions/Global/in/Locomote": "Fortbewegen",
+      "/actions/Global/in/Turn": "Drehen",
+      "language_tag": "de"
+    },
+    {
+      "/actions/Global": "Global",
+      "/actions/OneHanded": "De una mano",
+      "/actions/QuickMenu": "Men\u00C3\u00BA r\u00C3\u00A1pido",
+      "/actions/Menu": "Men\u00C3\u00BA",
+      "/actions/AvatarMenu": "Men\u00C3\u00BA de avatar",
+      "/actions/Global/in/Interact": "Interactuar",
+      "/actions/Global/in/Jump": "Saltar",
+      "/actions/Global/in/ToggleMute": "Activar/Desactivar silencio",
+      "/actions/Global/in/Grab": "Agarrar",
+      "/actions/Global/in/PlayspaceDragLeft": "Arrastrar el espacio de juego a la izquierda",
+      "/actions/Global/in/PlayspaceDragRight": "Arrastrar el espacio de juego a la derecha",
+      "/actions/Global/in/ToggleMenu": "Alternar men\u00C3\u00BA",
+      "/actions/Global/in/ToggleQuickMenu": "Alternar men\u00C3\u00BA r\u00C3\u00A1pido",
+      "/actions/Global/in/ToggleAvatarMenu": "Alternar men\u00C3\u00BA de avatar",
+      "/actions/Global/in/LeftHandPose": "Pose de la mano izquierda",
+      "/actions/Global/in/RightHandPose": "Pose de la mano derecha",
+      "/actions/Global/in/Locomote": "Desplazarse",
+      "/actions/Global/in/Turn": "Girar",
+      "language_tag": "es"
+    },
+    {
+      "/actions/Global": "Global",
+      "/actions/OneHanded": "A una mano",
+      "/actions/QuickMenu": "Menu rapido",
+      "/actions/Menu": "Menu",
+      "/actions/AvatarMenu": "Menu avatar",
+      "/actions/Global/in/Interact": "Interagire",
+      "/actions/Global/in/Jump": "Saltare",
+      "/actions/Global/in/ToggleMute": "Attiva/Disattiva muto",
+      "/actions/Global/in/Grab": "Afferrare",
+      "/actions/Global/in/PlayspaceDragLeft": "Trascina lo spazio di gioco a sinistra",
+      "/actions/Global/in/PlayspaceDragRight": "Trascina lo spazio di gioco a destra",
+      "/actions/Global/in/ToggleMenu": "Attiva/Disattiva menu",
+      "/actions/Global/in/ToggleQuickMenu": "Attiva/Disattiva menu rapido",
+      "/actions/Global/in/ToggleAvatarMenu": "Attiva/Disattiva menu avatar",
+      "/actions/Global/in/LeftHandPose": "Posa della mano sinistra",
+      "/actions/Global/in/RightHandPose": "Posa della mano destra",
+      "/actions/Global/in/Locomote": "Muoversi",
+      "/actions/Global/in/Turn": "Girare",
+      "language_tag": "it"
+    },
+    {
+      "/actions/Global": "\u00E3\u201A\u00B0\u00E3\u0192\u00AD\u00E3\u0192\u00BC\u00E3\u0192\u0090\u00E3\u0192\u00AB",
+      "/actions/OneHanded": "\u00E7\u2030\u2021\u00E6\u2030\u2039",
+      "/actions/QuickMenu": "\u00E3\u201A\u00AF\u00E3\u201A\u00A4\u00E3\u0192\u0192\u00E3\u201A\u00AF\u00E3\u0192\u00A1\u00E3\u0192\u2039\u00E3\u0192\u00A5\u00E3\u0192\u00BC",
+      "/actions/Menu": "\u00E3\u0192\u00A1\u00E3\u0192\u2039\u00E3\u0192\u00A5\u00E3\u0192\u00BC",
+      "/actions/AvatarMenu": "\u00E3\u201A\u00A2\u00E3\u0192\u0090\u00E3\u201A\u00BF\u00E3\u0192\u00BC\u00E3\u0192\u00A1\u00E3\u0192\u2039\u00E3\u0192\u00A5\u00E3\u0192\u00BC",
+      "/actions/Global/in/Interact": "\u00E6\u201C\u008D\u00E4\u00BD\u0153",
+      "/actions/Global/in/Jump": "\u00E3\u201A\u00B8\u00E3\u0192\u00A3\u00E3\u0192\u00B3\u00E3\u0192\u2014",
+      "/actions/Global/in/ToggleMute": "\u00E3\u0192\u0178\u00E3\u0192\u00A5\u00E3\u0192\u00BC\u00E3\u0192\u02C6\u00E5\u02C6\u2021\u00E3\u201A\u0160\u00E6\u203A\u00BF\u00E3\u0081\u02C6",
+      "/actions/Global/in/Grab": "\u00E3\u0081\u00A4\u00E3\u0081\u2039\u00E3\u201A\u20AC",
+      "/actions/Global/in/PlayspaceDragLeft": "\u00E3\u0192\u2014\u00E3\u0192\u00AC\u00E3\u201A\u00A4\u00E3\u201A\u00B9\u00E3\u0192\u0161\u00E3\u0192\u00BC\u00E3\u201A\u00B9\u00E3\u201A\u2019\u00E5\u00B7\u00A6\u00E3\u0081\u00B8\u00E3\u0192\u2030\u00E3\u0192\u00A9\u00E3\u0192\u0192\u00E3\u201A\u00B0",
+      "/actions/Global/in/PlayspaceDragRight": "\u00E3\u0192\u2014\u00E3\u0192\u00AC\u00E3\u201A\u00A4\u00E3\u201A\u00B9\u00E3\u0192\u0161\u00E3\u0192\u00BC\u00E3\u201A\u00B9\u00E3\u201A\u2019\u00E5\u008F\u00B3\u00E3\u0081\u00B8\u00E3\u0192\u2030\u00E3\u0192\u00A9\u00E3\u0192\u0192\u00E3\u201A\u00B0",
+      "/actions/Global/in/ToggleMenu": "\u00E3\u0192\u00A1\u00E3\u0192\u2039\u00E3\u0192\u00A5\u00E3\u0192\u00BC\u00E5\u02C6\u2021\u00E3\u201A\u0160\u00E6\u203A\u00BF\u00E3\u0081\u02C6",
+      "/actions/Global/in/ToggleQuickMenu": "\u00E3\u201A\u00AF\u00E3\u201A\u00A4\u00E3\u0192\u0192\u00E3\u201A\u00AF\u00E3\u0192\u00A1\u00E3\u0192\u2039\u00E3\u0192\u00A5\u00E3\u0192\u00BC\u00E5\u02C6\u2021\u00E3\u201A\u0160\u00E6\u203A\u00BF\u00E3\u0081\u02C6",
+      "/actions/Global/in/ToggleAvatarMenu": "\u00E3\u201A\u00A2\u00E3\u0192\u0090\u00E3\u201A\u00BF\u00E3\u0192\u00BC\u00E3\u0192\u00A1\u00E3\u0192\u2039\u00E3\u0192\u00A5\u00E3\u0192\u00BC\u00E5\u02C6\u2021\u00E3\u201A\u0160\u00E6\u203A\u00BF\u00E3\u0081\u02C6",
+      "/actions/Global/in/LeftHandPose": "\u00E5\u00B7\u00A6\u00E6\u2030\u2039\u00E3\u0192\u009D\u00E3\u0192\u00BC\u00E3\u201A\u00BA",
+      "/actions/Global/in/RightHandPose": "\u00E5\u008F\u00B3\u00E6\u2030\u2039\u00E3\u0192\u009D\u00E3\u0192\u00BC\u00E3\u201A\u00BA",
+      "/actions/Global/in/Locomote": "\u00E7\u00A7\u00BB\u00E5\u2039\u2022",
+      "/actions/Global/in/Turn": "\u00E5\u203A\u017E\u00E8\u00BB\u00A2",
+      "language_tag": "ja"
+    },
+    {
+      "/actions/Global": "\u00EC\u00A0\u201E\u00EC\u2014\u00AD",
+      "/actions/OneHanded": "\u00ED\u2022\u0153 \u00EC\u2020\u0090",
+      "/actions/QuickMenu": "\u00EB\u00B9\u00A0\u00EB\u00A5\u00B8 \u00EB\u00A9\u201D\u00EB\u2030\u00B4",
+      "/actions/Menu": "\u00EB\u00A9\u201D\u00EB\u2030\u00B4",
+      "/actions/AvatarMenu": "\u00EC\u2022\u201E\u00EB\u00B0\u201D\u00ED\u0192\u20AC \u00EB\u00A9\u201D\u00EB\u2030\u00B4",
+      "/actions/Global/in/Interact": "\u00EC\u0192\u0081\u00ED\u02DC\u00B8\u00EC\u017E\u2018\u00EC\u0161\u00A9",
+      "/actions/Global/in/Jump": "\u00EC\u00A0\u0090\u00ED\u201D\u201E",
+      "/actions/Global/in/ToggleMute": "\u00EC\u009D\u0152\u00EC\u2020\u0152\u00EA\u00B1\u00B0 \u00EC\u00A0\u201E\u00ED\u2122\u02DC",
+      "/actions/Global/in/Grab": "\u00EC\u017E\u00A1\u00EA\u00B8\u00B0",
+      "/actions/Global/in/PlayspaceDragLeft": "\u00ED\u201D\u0152\u00EB\u00A0\u02C6\u00EC\u009D\u00B4 \u00EA\u00B3\u00B5\u00EA\u00B0\u201E\u00EC\u009D\u201E \u00EC\u2122\u00BC\u00EC\u00AA\u00BD\u00EC\u0153\u00BC\u00EB\u00A1\u0153 \u00EB\u201C\u0153\u00EB\u017E\u02DC\u00EA\u00B7\u00B8",
+      "/actions/Global/in/PlayspaceDragRight": "\u00ED\u201D\u0152\u00EB\u00A0\u02C6\u00EC\u009D\u00B4 \u00EA\u00B3\u00B5\u00EA\u00B0\u201E\u00EC\u009D\u201E \u00EC\u02DC\u00A4\u00EB\u00A5\u00B8\u00EC\u00AA\u00BD\u00EC\u0153\u00BC\u00EB\u00A1\u0153 \u00EB\u201C\u0153\u00EB\u017E\u02DC\u00EA\u00B7\u00B8",
+      "/actions/Global/in/ToggleMenu": "\u00EB\u00A9\u201D\u00EB\u2030\u00B4 \u00EC\u00A0\u201E\u00ED\u2122\u02DC",
+      "/actions/Global/in/ToggleQuickMenu": "\u00EB\u00B9\u00A0\u00EB\u00A5\u00B8 \u00EB\u00A9\u201D\u00EB\u2030\u00B4 \u00EC\u00A0\u201E\u00ED\u2122\u02DC",
+      "/actions/Global/in/ToggleAvatarMenu": "\u00EC\u2022\u201E\u00EB\u00B0\u201D\u00ED\u0192\u20AC \u00EB\u00A9\u201D\u00EB\u2030\u00B4 \u00EC\u00A0\u201E\u00ED\u2122\u02DC",
+      "/actions/Global/in/LeftHandPose": "\u00EC\u2122\u00BC\u00EC\u2020\u0090 \u00ED\u008F\u00AC\u00EC\u00A6\u02C6",
+      "/actions/Global/in/RightHandPose": "\u00EC\u02DC\u00A4\u00EB\u00A5\u00B8\u00EC\u2020\u0090 \u00ED\u008F\u00AC\u00EC\u00A6\u02C6",
+      "/actions/Global/in/Locomote": "\u00EC\u009D\u00B4\u00EB\u008F\u2122",
+      "/actions/Global/in/Turn": "\u00ED\u0161\u0152\u00EC\u00A0\u201E",
+      "language_tag": "ko"
+    },
+    {
+      "/actions/Global": "Globaal",
+      "/actions/OneHanded": "Eenhandig",
+      "/actions/QuickMenu": "Snelmenu",
+      "/actions/Menu": "Menu",
+      "/actions/AvatarMenu": "Avatar-menu",
+      "/actions/Global/in/Interact": "Interactie",
+      "/actions/Global/in/Jump": "Springen",
+      "/actions/Global/in/ToggleMute": "Geluid dempen in-/uitschakelen",
+      "/actions/Global/in/Grab": "Grijpen",
+      "/actions/Global/in/PlayspaceDragLeft": "Playspace naar links slepen",
+      "/actions/Global/in/PlayspaceDragRight": "Playspace naar rechts slepen",
+      "/actions/Global/in/ToggleMenu": "Menu in-/uitschakelen",
+      "/actions/Global/in/ToggleQuickMenu": "Snelmenu in-/uitschakelen",
+      "/actions/Global/in/ToggleAvatarMenu": "Avatar-menu in-/uitschakelen",
+      "/actions/Global/in/LeftHandPose": "Linkerhandpose",
+      "/actions/Global/in/RightHandPose": "Rechterhandpose",
+      "/actions/Global/in/Locomote": "Verplaatsen",
+      "/actions/Global/in/Turn": "Draaien",
+      "language_tag": "nl"
+    },
+    {
+      "/actions/Global": "Globalny",
+      "/actions/OneHanded": "Jednor\u00C4\u2122czny",
+      "/actions/QuickMenu": "Szybkie menu",
+      "/actions/Menu": "Menu",
+      "/actions/AvatarMenu": "Menu awatara",
+      "/actions/Global/in/Interact": "Wzajemne oddzialywanie",
+      "/actions/Global/in/Jump": "Skok",
+      "/actions/Global/in/ToggleMute": "Przelacz wyciszenie",
+      "/actions/Global/in/Grab": "Chwycic",
+      "/actions/Global/in/PlayspaceDragLeft": "Przeciagnij obszar gry w lewo",
+      "/actions/Global/in/PlayspaceDragRight": "Przeciagnij obszar gry w prawo",
+      "/actions/Global/in/ToggleMenu": "Przelacz menu",
+      "/actions/Global/in/ToggleQuickMenu": "Przelacz szybkie menu",
+      "/actions/Global/in/ToggleAvatarMenu": "Przelacz menu awatara",
+      "/actions/Global/in/LeftHandPose": "Pozycja lewej reki",
+      "/actions/Global/in/RightHandPose": "Pozycja prawej reki",
+      "/actions/Global/in/Locomote": "Poruszanie si\u00C4\u2122",
+      "/actions/Global/in/Turn": "Obr\u00C3\u00B3t",
+      "language_tag": "pl"
+    },
+    {
+      "/actions/Global": "Global",
+      "/actions/OneHanded": "De uma m\u00C3\u00A3o",
+      "/actions/QuickMenu": "Menu r\u00C3\u00A1pido",
+      "/actions/Menu": "Menu",
+      "/actions/AvatarMenu": "Menu de avatar",
+      "/actions/Global/in/Interact": "Interagir",
+      "/actions/Global/in/Jump": "Pular",
+      "/actions/Global/in/ToggleMute": "Alternar mudo",
+      "/actions/Global/in/Grab": "Agarrar",
+      "/actions/Global/in/PlayspaceDragLeft": "Arrastar o espa\u00C3\u00A7o de jogo para a esquerda",
+      "/actions/Global/in/PlayspaceDragRight": "Arrastar o espa\u00C3\u00A7o de jogo para a direita",
+      "/actions/Global/in/ToggleMenu": "Alternar menu",
+      "/actions/Global/in/ToggleQuickMenu": "Alternar menu r\u00C3\u00A1pido",
+      "/actions/Global/in/ToggleAvatarMenu": "Alternar menu de avatar",
+      "/actions/Global/in/LeftHandPose": "Pose da m\u00C3\u00A3o esquerda",
+      "/actions/Global/in/RightHandPose": "Pose da m\u00C3\u00A3o direita",
+      "/actions/Global/in/Locomote": "Locomover",
+      "/actions/Global/in/Turn": "Girar",
+      "language_tag": "pt"
+    },
+    {
+      "/actions/Global": "\u00D0\u201C\u00D0\u00BB\u00D0\u00BE\u00D0\u00B1\u00D0\u00B0\u00D0\u00BB\u00D1\u0152\u00D0\u00BD\u00D1\u2039\u00D0\u00B9",
+      "/actions/OneHanded": "\u00D0\u017E\u00D0\u00B4\u00D0\u00BD\u00D0\u00BE\u00D0\u00B9 \u00D1\u20AC\u00D1\u0192\u00D0\u00BA\u00D0\u00BE\u00D0\u00B9",
+      "/actions/QuickMenu": "\u00D0\u2018\u00D1\u2039\u00D1\u0081\u00D1\u201A\u00D1\u20AC\u00D0\u00BE\u00D0\u00B5 \u00D0\u00BC\u00D0\u00B5\u00D0\u00BD\u00D1\u017D",
+      "/actions/Menu": "\u00D0\u0153\u00D0\u00B5\u00D0\u00BD\u00D1\u017D",
+      "/actions/AvatarMenu": "\u00D0\u0153\u00D0\u00B5\u00D0\u00BD\u00D1\u017D \u00D0\u00B0\u00D0\u00B2\u00D0\u00B0\u00D1\u201A\u00D0\u00B0\u00D1\u20AC\u00D0\u00B0",
+      "/actions/Global/in/Interact": "\u00D0\u2019\u00D0\u00B7\u00D0\u00B0\u00D0\u00B8\u00D0\u00BC\u00D0\u00BE\u00D0\u00B4\u00D0\u00B5\u00D0\u00B9\u00D1\u0081\u00D1\u201A\u00D0\u00B2\u00D0\u00BE\u00D0\u00B2\u00D0\u00B0\u00D1\u201A\u00D1\u0152",
+      "/actions/Global/in/Jump": "\u00D0\u0178\u00D1\u20AC\u00D1\u2039\u00D0\u00B6\u00D0\u00BE\u00D0\u00BA",
+      "/actions/Global/in/ToggleMute": "\u00D0\u0178\u00D0\u00B5\u00D1\u20AC\u00D0\u00B5\u00D0\u00BA\u00D0\u00BB\u00D1\u017D\u00D1\u2021\u00D0\u00B8\u00D1\u201A\u00D1\u0152 \u00D0\u00B1\u00D0\u00B5\u00D0\u00B7 \u00D0\u00B7\u00D0\u00B2\u00D1\u0192\u00D0\u00BA\u00D0\u00B0",
+      "/actions/Global/in/Grab": "\u00D0\u00A1\u00D1\u2026\u00D0\u00B2\u00D0\u00B0\u00D1\u201A\u00D0\u00B8\u00D1\u201A\u00D1\u0152",
+      "/actions/Global/in/PlayspaceDragLeft": "\u00D0\u0178\u00D0\u00B5\u00D1\u20AC\u00D0\u00B5\u00D1\u201A\u00D0\u00B0\u00D1\u2030\u00D0\u00B8\u00D1\u201A\u00D1\u0152 \u00D0\u00B8\u00D0\u00B3\u00D1\u20AC\u00D0\u00BE\u00D0\u00B2\u00D0\u00BE\u00D0\u00B5 \u00D0\u00BF\u00D1\u20AC\u00D0\u00BE\u00D1\u0081\u00D1\u201A\u00D1\u20AC\u00D0\u00B0\u00D0\u00BD\u00D1\u0081\u00D1\u201A\u00D0\u00B2\u00D0\u00BE \u00D0\u00B2\u00D0\u00BB\u00D0\u00B5\u00D0\u00B2\u00D0\u00BE",
+      "/actions/Global/in/PlayspaceDragRight": "\u00D0\u0178\u00D0\u00B5\u00D1\u20AC\u00D0\u00B5\u00D1\u201A\u00D0\u00B0\u00D1\u2030\u00D0\u00B8\u00D1\u201A\u00D1\u0152 \u00D0\u00B8\u00D0\u00B3\u00D1\u20AC\u00D0\u00BE\u00D0\u00B2\u00D0\u00BE\u00D0\u00B5 \u00D0\u00BF\u00D1\u20AC\u00D0\u00BE\u00D1\u0081\u00D1\u201A\u00D1\u20AC\u00D0\u00B0\u00D0\u00BD\u00D1\u0081\u00D1\u201A\u00D0\u00B2\u00D0\u00BE \u00D0\u00B2\u00D0\u00BF\u00D1\u20AC\u00D0\u00B0\u00D0\u00B2\u00D0\u00BE",
+      "/actions/Global/in/ToggleMenu": "\u00D0\u0178\u00D0\u00B5\u00D1\u20AC\u00D0\u00B5\u00D0\u00BA\u00D0\u00BB\u00D1\u017D\u00D1\u2021\u00D0\u00B8\u00D1\u201A\u00D1\u0152 \u00D0\u00BC\u00D0\u00B5\u00D0\u00BD\u00D1\u017D",
+      "/actions/Global/in/ToggleQuickMenu": "\u00D0\u0178\u00D0\u00B5\u00D1\u20AC\u00D0\u00B5\u00D0\u00BA\u00D0\u00BB\u00D1\u017D\u00D1\u2021\u00D0\u00B8\u00D1\u201A\u00D1\u0152 \u00D0\u00B1\u00D1\u2039\u00D1\u0081\u00D1\u201A\u00D1\u20AC\u00D0\u00BE\u00D0\u00B5 \u00D0\u00BC\u00D0\u00B5\u00D0\u00BD\u00D1\u017D",
+      "/actions/Global/in/ToggleAvatarMenu": "\u00D0\u0178\u00D0\u00B5\u00D1\u20AC\u00D0\u00B5\u00D0\u00BA\u00D0\u00BB\u00D1\u017D\u00D1\u2021\u00D0\u00B8\u00D1\u201A\u00D1\u0152 \u00D0\u00BC\u00D0\u00B5\u00D0\u00BD\u00D1\u017D \u00D0\u00B0\u00D0\u00B2\u00D0\u00B0\u00D1\u201A\u00D0\u00B0\u00D1\u20AC\u00D0\u00B0",
+      "/actions/Global/in/LeftHandPose": "\u00D0\u0178\u00D0\u00BE\u00D0\u00B7\u00D0\u00B0 \u00D0\u00BB\u00D0\u00B5\u00D0\u00B2\u00D0\u00BE\u00D0\u00B9 \u00D1\u20AC\u00D1\u0192\u00D0\u00BA\u00D0\u00B8",
+      "/actions/Global/in/RightHandPose": "\u00D0\u0178\u00D0\u00BE\u00D0\u00B7\u00D0\u00B0 \u00D0\u00BF\u00D1\u20AC\u00D0\u00B0\u00D0\u00B2\u00D0\u00BE\u00D0\u00B9 \u00D1\u20AC\u00D1\u0192\u00D0\u00BA\u00D0\u00B8",
+      "/actions/Global/in/Locomote": "\u00D0\u0178\u00D0\u00B5\u00D1\u20AC\u00D0\u00B5\u00D0\u00B4\u00D0\u00B2\u00D0\u00B8\u00D0\u00B6\u00D0\u00B5\u00D0\u00BD\u00D0\u00B8\u00D0\u00B5",
+      "/actions/Global/in/Turn": "\u00D0\u0178\u00D0\u00BE\u00D0\u00B2\u00D0\u00BE\u00D1\u20AC\u00D0\u00BE\u00D1\u201A",
+      "language_tag": "ru"
+    },
+    {
+      "/actions/Global": "\u00E5\u2026\u00A8\u00E5\u00B1\u20AC",
+      "/actions/OneHanded": "\u00E5\u008D\u2022\u00E6\u2030\u2039",
+      "/actions/QuickMenu": "\u00E5\u00BF\u00AB\u00E6\u008D\u00B7\u00E8\u008F\u0153\u00E5\u008D\u2022",
+      "/actions/Menu": "\u00E8\u008F\u0153\u00E5\u008D\u2022",
+      "/actions/AvatarMenu": "\u00E5\u00A4\u00B4\u00E5\u0192\u008F\u00E8\u008F\u0153\u00E5\u008D\u2022",
+      "/actions/Global/in/Interact": "\u00E4\u00BA\u00A4\u00E4\u00BA\u2019",
+      "/actions/Global/in/Jump": "\u00E8\u00B7\u00B3\u00E8\u00B7\u0192",
+      "/actions/Global/in/ToggleMute": "\u00E5\u02C6\u2021\u00E6\u008D\u00A2\u00E9\u009D\u2122\u00E9\u0178\u00B3",
+      "/actions/Global/in/Grab": "\u00E6\u0160\u201C\u00E5\u008F\u2013",
+      "/actions/Global/in/PlayspaceDragLeft": "\u00E5\u0090\u2018\u00E5\u00B7\u00A6\u00E6\u2039\u2013\u00E5\u0160\u00A8\u00E6\u00B8\u00B8\u00E6\u02C6\u008F\u00E7\u00A9\u00BA\u00E9\u2014\u00B4",
+      "/actions/Global/in/PlayspaceDragRight": "\u00E5\u0090\u2018\u00E5\u008F\u00B3\u00E6\u2039\u2013\u00E5\u0160\u00A8\u00E6\u00B8\u00B8\u00E6\u02C6\u008F\u00E7\u00A9\u00BA\u00E9\u2014\u00B4",
+      "/actions/Global/in/ToggleMenu": "\u00E5\u02C6\u2021\u00E6\u008D\u00A2\u00E8\u008F\u0153\u00E5\u008D\u2022",
+      "/actions/Global/in/ToggleQuickMenu": "\u00E5\u02C6\u2021\u00E6\u008D\u00A2\u00E5\u00BF\u00AB\u00E6\u008D\u00B7\u00E8\u008F\u0153\u00E5\u008D\u2022",
+      "/actions/Global/in/ToggleAvatarMenu": "\u00E5\u02C6\u2021\u00E6\u008D\u00A2\u00E5\u00A4\u00B4\u00E5\u0192\u008F\u00E8\u008F\u0153\u00E5\u008D\u2022",
+      "/actions/Global/in/LeftHandPose": "\u00E5\u00B7\u00A6\u00E6\u2030\u2039\u00E5\u00A7\u00BF\u00E5\u0160\u00BF",
+      "/actions/Global/in/RightHandPose": "\u00E5\u008F\u00B3\u00E6\u2030\u2039\u00E5\u00A7\u00BF\u00E5\u0160\u00BF",
+      "/actions/Global/in/Locomote": "\u00E7\u00A7\u00BB\u00E5\u0160\u00A8",
+      "/actions/Global/in/Turn": "\u00E8\u00BD\u00AC\u00E5\u0090\u2018",
+      "language_tag": "zh"
+    }
+  ]
+}

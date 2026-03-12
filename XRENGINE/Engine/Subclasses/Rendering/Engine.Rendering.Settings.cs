@@ -1371,6 +1371,12 @@ namespace XREngine
                 if (applyAll || propertyName == nameof(EditorDebugOptions.VisualizeTransparencyClassificationOverlay))
                     ApplyRenderMeshBoundsSetting();
 
+                if (applyAll ||
+                    propertyName == nameof(EditorDebugOptions.VisualizeTransparencyAccumulation) ||
+                    propertyName == nameof(EditorDebugOptions.VisualizeTransparencyRevealage) ||
+                    propertyName == nameof(EditorDebugOptions.VisualizeTransparencyOverdrawHeatmap))
+                    ApplyRenderPipelinePreference();
+
                 if (applyAll || propertyName == nameof(EditorDebugOptions.RenderTransformDebugInfo))
                     ApplyTransformDebugSetting();
 

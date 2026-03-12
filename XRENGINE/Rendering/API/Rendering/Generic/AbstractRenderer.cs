@@ -21,7 +21,7 @@ namespace XREngine.Rendering
     /// <summary>
     /// An abstract window renderer handles rendering to a specific window using a specific graphics API.
     /// </summary>
-    public abstract unsafe class AbstractRenderer : XRBase//, IDisposable
+    public abstract unsafe class AbstractRenderer : XRBase, IRenderApiWrapperOwner//, IDisposable
     {
         #region Constants / Statics
         /// <summary>
@@ -50,7 +50,7 @@ namespace XREngine.Rendering
 
             //Set the initial object cache for this window of all existing render objects
             using (_roCacheLock.EnterScope())
-                _renderObjectCache = Engine.Rendering.CreateObjectsForNewRenderer(this);
+                _renderObjectCache = RuntimeRenderObjectServices.Current?.CreateObjectsForOwner(this) ?? [];
         }
 
         public IWindow Window => XRWindow.Window;
@@ -59,6 +59,17 @@ namespace XREngine.Rendering
         {
             get => _window;
             protected set => _window = value;
+        }
+
+        public string RenderApiWrapperOwnerName
+        {
+            get
+            {
+                string? title = XRWindow.Window?.Title;
+                return string.IsNullOrWhiteSpace(title)
+                    ? $"{GetType().Name}@{GetHashCode()}"
+                    : title;
+            }
         }
 
         public abstract void Initialize();

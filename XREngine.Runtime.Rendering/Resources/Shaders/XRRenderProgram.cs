@@ -387,11 +387,11 @@ namespace XREngine.Rendering
         public event Action<string, UVector3[]>? UniformSetUVector3ArrayRequested = null;
         public event Action<string, UVector4[]>? UniformSetUVector4ArrayRequested = null;
 
-        public event Action<string, XRTexture, int>? SamplerRequested = null;
-        public event Action<int, XRTexture, int>? SamplerRequestedByLocation = null;
+        public event Action<string, IRenderTextureResource, int>? SamplerRequested = null;
+        public event Action<int, IRenderTextureResource, int>? SamplerRequestedByLocation = null;
 
-        public event Action<uint, XRTexture, int, bool, int, EImageAccess, EImageFormat>? BindImageTextureRequested = null;
-        public event Action<uint, uint, uint, IEnumerable<(uint unit, XRTexture texture, int level, int? layer, EImageAccess access, EImageFormat format)>?>? DispatchComputeRequested = null;
+        public event Action<uint, IRenderTextureResource, int, bool, int, EImageAccess, EImageFormat>? BindImageTextureRequested = null;
+        public event Action<uint, uint, uint, IEnumerable<(uint unit, IRenderTextureResource texture, int level, int? layer, EImageAccess access, EImageFormat format)>?>? DispatchComputeRequested = null;
         public event Action<uint, XRDataBuffer>? BindBufferRequested = null;
 
         /// <summary>
@@ -790,14 +790,14 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="name"></param>
         /// <param name="value"></param>
-        public void Sampler(string name, XRTexture texture, int textureUnit)
+        public void Sampler(string name, IRenderTextureResource texture, int textureUnit)
             => SamplerRequested?.Invoke(name, texture, textureUnit);
         /// <summary>
         /// Sends a texture to the shader program.
         /// </summary>
         /// <param name="name"></param>
         /// <param name="value"></param>
-        public void Sampler(int location, XRTexture texture, int textureUnit)
+        public void Sampler(int location, IRenderTextureResource texture, int textureUnit)
             => SamplerRequestedByLocation?.Invoke(location, texture, textureUnit);
 
         public enum EImageAccess
@@ -851,7 +851,7 @@ namespace XREngine.Rendering
             RGBA32UI
         }
 
-        public void BindImageTexture(uint unit, XRTexture texture, int level, bool layered, int layer, EImageAccess access, EImageFormat format)
+        public void BindImageTexture(uint unit, IRenderTextureResource texture, int level, bool layered, int layer, EImageAccess access, EImageFormat format)
             => BindImageTextureRequested?.Invoke(unit, texture, level, layered, layer, access, format);
 
         /// <summary>
@@ -861,7 +861,7 @@ namespace XREngine.Rendering
         /// <param name="y"></param>
         /// <param name="z"></param>
         /// <param name="textures"></param>
-        public void DispatchCompute(uint x, uint y, uint z, IEnumerable<(uint unit, XRTexture texture, int level, int? layer, EImageAccess access, EImageFormat format)>? textures = null)
+        public void DispatchCompute(uint x, uint y, uint z, IEnumerable<(uint unit, IRenderTextureResource texture, int level, int? layer, EImageAccess access, EImageFormat format)>? textures = null)
             => DispatchComputeRequested?.Invoke(x, y, z, textures);
 
         public bool HasUniform(EEngineUniform uniformName)
@@ -889,10 +889,10 @@ namespace XREngine.Rendering
             uint y,
             uint z,
             EMemoryBarrierMask barrierMask,
-            IEnumerable<(uint unit, XRTexture texture, int level, int? layer, EImageAccess access, EImageFormat format)>? textures = null)
+            IEnumerable<(uint unit, IRenderTextureResource texture, int level, int? layer, EImageAccess access, EImageFormat format)>? textures = null)
         {
             DispatchCompute(x, y, z, textures);
-            AbstractRenderer.Current?.MemoryBarrier(barrierMask);
+            RuntimeRenderObjectServices.Current?.IssueMemoryBarrier(barrierMask);
         }
 
         private static string StripComments(string source)
@@ -1389,7 +1389,7 @@ namespace XREngine.Rendering
                 }
                 else if (!accumulator.Merge(declaration))
                 {
-                    Debug.LogWarning($"Uniform '{declaration.Name}' has conflicting declarations in shader '{GetShaderDisplayName(shader)}'.");
+                    RuntimeRenderObjectServices.Current?.LogWarning($"Uniform '{declaration.Name}' has conflicting declarations in shader '{GetShaderDisplayName(shader)}'.");
                 }
 
                 accumulator.RegisterStage(shader.Type);
@@ -1408,7 +1408,7 @@ namespace XREngine.Rendering
                 }
                 else if (!accumulator.Merge(declaration))
                 {
-                    Debug.LogWarning($"Texture '{declaration.Name}' has conflicting declarations in shader '{GetShaderDisplayName(shader)}'.");
+                    RuntimeRenderObjectServices.Current?.LogWarning($"Texture '{declaration.Name}' has conflicting declarations in shader '{GetShaderDisplayName(shader)}'.");
                 }
 
                 accumulator.RegisterStage(shader.Type);

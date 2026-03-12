@@ -345,26 +345,26 @@ public unsafe partial class VulkanRenderer
         private void Uniform(string name, UVector3[] value) => SetUniformValue(name, EShaderVarType._uvec3, value.ToArray(), true);
         private void Uniform(string name, UVector4[] value) => SetUniformValue(name, EShaderVarType._uvec4, value.ToArray(), true);
 
-        private void Sampler(string name, XRTexture texture, int textureUnit)
+        private void Sampler(string name, IRenderTextureResource texture, int textureUnit)
         {
-            if (texture is null)
+            if (texture is not XRTexture xrTexture)
                 return;
 
             uint unit = textureUnit < 0 ? 0u : (uint)textureUnit;
             lock (_bindingLock)
-                _samplersByUnit[unit] = texture;
+                _samplersByUnit[unit] = xrTexture;
         }
 
-        private void Sampler(int location, XRTexture texture, int textureUnit)
+        private void Sampler(int location, IRenderTextureResource texture, int textureUnit)
             => Sampler(location.ToString(), texture, textureUnit);
 
-        private void BindImageTexture(uint unit, XRTexture texture, int level, bool layered, int layer, XRRenderProgram.EImageAccess access, XRRenderProgram.EImageFormat format)
+        private void BindImageTexture(uint unit, IRenderTextureResource texture, int level, bool layered, int layer, XRRenderProgram.EImageAccess access, XRRenderProgram.EImageFormat format)
         {
-            if (texture is null)
+            if (texture is not XRTexture xrTexture)
                 return;
 
             lock (_bindingLock)
-                _imagesByUnit[unit] = new ProgramImageBinding(texture, level, layered, layer, access, format);
+                _imagesByUnit[unit] = new ProgramImageBinding(xrTexture, level, layered, layer, access, format);
         }
 
         private void BindBuffer(uint index, XRDataBuffer buffer)
@@ -382,7 +382,7 @@ public unsafe partial class VulkanRenderer
             uint x,
             uint y,
             uint z,
-            IEnumerable<(uint unit, XRTexture texture, int level, int? layer, XRRenderProgram.EImageAccess access, XRRenderProgram.EImageFormat format)>? textures = null)
+            IEnumerable<(uint unit, IRenderTextureResource texture, int level, int? layer, XRRenderProgram.EImageAccess access, XRRenderProgram.EImageFormat format)>? textures = null)
         {
             if (textures is not null)
             {

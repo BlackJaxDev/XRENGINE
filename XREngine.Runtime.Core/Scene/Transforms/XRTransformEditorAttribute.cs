@@ -1,5 +1,3 @@
-using System;
-
 namespace XREngine.Scene.Transforms;
 
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = true)]

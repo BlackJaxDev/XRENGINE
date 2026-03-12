@@ -73,8 +73,9 @@ namespace XREngine.Scene.Transforms
         private Matrix4x4 _lastReplicatedMatrix = Matrix4x4.Identity;
         public byte[] EncodeToBytes()
         {
-            _timeSinceLastKeyframe += Engine.Time.Timer.Update.Delta;
-            if (_timeSinceLastKeyframe > Engine.EffectiveSettings.TransformReplicationKeyframeIntervalSec)
+            IRuntimeTransformServices? transformServices = RuntimeTransformServices.Current;
+            _timeSinceLastKeyframe += transformServices?.UpdateDeltaSeconds ?? 0.0f;
+            if (_timeSinceLastKeyframe > (transformServices?.TransformReplicationKeyframeIntervalSeconds ?? float.MaxValue))
             {
                 _timeSinceLastKeyframe = 0;
                 return EncodeToBytes(false);
@@ -173,7 +174,7 @@ namespace XREngine.Scene.Transforms
         /// <param name="worldPosition"></param>
         /// <returns></returns>
         public Vector3 InverseTransformPoint(Vector3 worldPosition)
-            => InverseTransformPoint(worldPosition, Engine.IsRenderThread);
+            => InverseTransformPoint(worldPosition, RuntimeTransformServices.Current?.IsRenderThread ?? false);
 
         /// <summary>
         /// Transforms a local position to world space using the appropriate matrix based on the render thread state.
@@ -181,7 +182,7 @@ namespace XREngine.Scene.Transforms
         /// <param name="localPosition"></param>
         /// <returns></returns>
         public Vector3 TransformPoint(Vector3 localPosition)
-            => TransformPoint(localPosition, Engine.IsRenderThread);
+            => TransformPoint(localPosition, RuntimeTransformServices.Current?.IsRenderThread ?? false);
 
         /// <summary>
         /// Inversely transforms a world direction to local space using the appropriate matrix based on the render thread state.
@@ -189,7 +190,7 @@ namespace XREngine.Scene.Transforms
         /// <param name="worldDirection"></param>
         /// <returns></returns>
         public Vector3 InverseTransformDirection(Vector3 worldDirection)
-            => InverseTransformDirection(worldDirection, Engine.IsRenderThread);
+            => InverseTransformDirection(worldDirection, RuntimeTransformServices.Current?.IsRenderThread ?? false);
 
         /// <summary>
         /// Transforms a local direction to world space using the appropriate matrix based on the render thread state.
@@ -197,7 +198,7 @@ namespace XREngine.Scene.Transforms
         /// <param name="localDirection"></param>
         /// <returns></returns>
         public Vector3 TransformDirection(Vector3 localDirection)
-            => TransformDirection(localDirection, Engine.IsRenderThread);
+            => TransformDirection(localDirection, RuntimeTransformServices.Current?.IsRenderThread ?? false);
 
         /// <summary>
         /// Inversely transforms a world position to local space using the appropriate matrix based on the render thread state.

@@ -173,6 +173,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     private static bool ShouldUseTemporalJitter()
     {
+        if (Engine.VRState.IsInVR && !Engine.Rendering.Settings.RenderVRSinglePassStereo)
+            return false;
+
         var mode = Engine.Rendering.Settings.AntiAliasingMode;
         return mode == EAntiAliasingMode.Taa
             || mode == EAntiAliasingMode.Tsr;

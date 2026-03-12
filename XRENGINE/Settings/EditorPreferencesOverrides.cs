@@ -432,6 +432,9 @@ namespace XREngine
         private OverrideableSetting<bool> _visualizeTransformIdOverride = new();
         private OverrideableSetting<bool> _visualizeTransparencyModeOverlayOverride = new();
         private OverrideableSetting<bool> _visualizeTransparencyClassificationOverlayOverride = new();
+        private OverrideableSetting<bool> _visualizeTransparencyAccumulationOverride = new();
+        private OverrideableSetting<bool> _visualizeTransparencyRevealageOverride = new();
+        private OverrideableSetting<bool> _visualizeTransparencyOverdrawHeatmapOverride = new();
         private OverrideableSetting<bool> _renderLightProbeTetrahedraOverride = new();
         private OverrideableSetting<float> _debugTextMaxLifespanOverride = new();
         private OverrideableSetting<bool> _enableThreadAllocationTrackingOverride = new();
@@ -534,6 +537,24 @@ namespace XREngine
         {
             get => _visualizeTransparencyClassificationOverlayOverride;
             set => SetField(ref _visualizeTransparencyClassificationOverlayOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> VisualizeTransparencyAccumulationOverride
+        {
+            get => _visualizeTransparencyAccumulationOverride;
+            set => SetField(ref _visualizeTransparencyAccumulationOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> VisualizeTransparencyRevealageOverride
+        {
+            get => _visualizeTransparencyRevealageOverride;
+            set => SetField(ref _visualizeTransparencyRevealageOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> VisualizeTransparencyOverdrawHeatmapOverride
+        {
+            get => _visualizeTransparencyOverdrawHeatmapOverride;
+            set => SetField(ref _visualizeTransparencyOverdrawHeatmapOverride, value ?? new());
         }
 
         public OverrideableSetting<bool> RenderLightProbeTetrahedraOverride

@@ -22,6 +22,7 @@ namespace XREngine.Rendering.Models.Materials
         private bool _writeBlue = true;
         private bool _writeGreen = true;
         private bool _writeRed = true;
+        private ERenderParamUsage _alphaToCoverage = ERenderParamUsage.Disabled;
         private EUniformRequirements _requiredEngineUniforms = EUniformRequirements.None;
         private BlendMode? _blendModeAllDrawBuffers;
         private bool _excludeFromGpuIndirect;
@@ -66,6 +67,15 @@ namespace XREngine.Rendering.Models.Materials
         {
             get => _writeAlpha;
             set => SetField(ref _writeAlpha, value);
+        }
+        /// <summary>
+        /// Enables alpha-to-coverage when the active render target is multisampled.
+        /// Backends should ignore this when MSAA is unavailable for the current pass.
+        /// </summary>
+        public ERenderParamUsage AlphaToCoverage
+        {
+            get => _alphaToCoverage;
+            set => SetField(ref _alphaToCoverage, value);
         }
         /// <summary>
         /// Specifies the winding order of the triangles.

@@ -212,6 +212,7 @@ public unsafe partial class VulkanRenderer
 				useDynamicRendering ? depthAttachmentFormat : Format.Undefined,
 				programPipelineHash,
 				vertexLayoutHash,
+				draw.RasterizationSamples,
 				draw.DepthTestEnabled,
 				draw.DepthWriteEnabled,
 				draw.DepthCompareOp,
@@ -222,6 +223,7 @@ public unsafe partial class VulkanRenderer
 				draw.CullMode,
 				draw.FrontFace,
 				draw.BlendEnabled,
+				draw.AlphaToCoverageEnabled,
 				draw.ColorBlendOp,
 				draw.AlphaBlendOp,
 				draw.SrcColorBlendFactor,
@@ -283,8 +285,9 @@ public unsafe partial class VulkanRenderer
 				PipelineMultisampleStateCreateInfo multisampling = new()
 				{
 					SType = StructureType.PipelineMultisampleStateCreateInfo,
-					RasterizationSamples = SampleCountFlags.Count1Bit,
+					RasterizationSamples = draw.RasterizationSamples,
 					SampleShadingEnable = Vk.False,
+					AlphaToCoverageEnable = draw.AlphaToCoverageEnabled ? Vk.True : Vk.False,
 				};
 
 				PipelineDepthStencilStateCreateInfo depthStencil = new()

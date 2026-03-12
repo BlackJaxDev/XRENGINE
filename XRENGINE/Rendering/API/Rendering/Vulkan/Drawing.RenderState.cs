@@ -22,6 +22,7 @@ namespace XREngine.Rendering.Vulkan
             _state.SetColorMask(parameters.WriteRed, parameters.WriteGreen, parameters.WriteBlue, parameters.WriteAlpha);
             _state.SetCullMode(ToVulkanCullMode(ResolveCullMode(parameters.CullMode)));
             _state.SetFrontFace(ToVulkanFrontFace(ResolveWinding(parameters.Winding)));
+            _state.SetAlphaToCoverageEnabled(parameters.AlphaToCoverage == ERenderParamUsage.Enabled);
 
             // Apply depth test settings
             var depthTest = parameters.DepthTest;

@@ -1066,6 +1066,9 @@ namespace XREngine
         private bool _visualizeTransformId;
         private bool _visualizeTransparencyModeOverlay;
         private bool _visualizeTransparencyClassificationOverlay;
+        private bool _visualizeTransparencyAccumulation;
+        private bool _visualizeTransparencyRevealage;
+        private bool _visualizeTransparencyOverdrawHeatmap;
         private bool _renderLightProbeTetrahedra = true;
         private float _debugTextMaxLifespan;
         private bool _enableThreadAllocationTracking;
@@ -1204,6 +1207,33 @@ namespace XREngine
         {
             get => _visualizeTransparencyClassificationOverlay;
             set => SetField(ref _visualizeTransparencyClassificationOverlay, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Transparency Accumulation Debug")]
+        [Description("If true, shows the weighted blended OIT accumulation buffer.")]
+        public bool VisualizeTransparencyAccumulation
+        {
+            get => _visualizeTransparencyAccumulation;
+            set => SetField(ref _visualizeTransparencyAccumulation, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Transparency Revealage Debug")]
+        [Description("If true, shows the weighted blended OIT revealage buffer.")]
+        public bool VisualizeTransparencyRevealage
+        {
+            get => _visualizeTransparencyRevealage;
+            set => SetField(ref _visualizeTransparencyRevealage, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Transparency Overdraw Heatmap")]
+        [Description("If true, visualizes weighted blended transparency overdraw as a heatmap.")]
+        public bool VisualizeTransparencyOverdrawHeatmap
+        {
+            get => _visualizeTransparencyOverdrawHeatmap;
+            set => SetField(ref _visualizeTransparencyOverdrawHeatmap, value);
         }
 
         [Category("Debug")]
@@ -1437,6 +1467,9 @@ namespace XREngine
             VisualizeTransformId = source.VisualizeTransformId;
             VisualizeTransparencyModeOverlay = source.VisualizeTransparencyModeOverlay;
             VisualizeTransparencyClassificationOverlay = source.VisualizeTransparencyClassificationOverlay;
+            VisualizeTransparencyAccumulation = source.VisualizeTransparencyAccumulation;
+            VisualizeTransparencyRevealage = source.VisualizeTransparencyRevealage;
+            VisualizeTransparencyOverdrawHeatmap = source.VisualizeTransparencyOverdrawHeatmap;
             RenderLightProbeTetrahedra = source.RenderLightProbeTetrahedra;
             DebugTextMaxLifespan = source.DebugTextMaxLifespan;
             EnableThreadAllocationTracking = source.EnableThreadAllocationTracking;
@@ -1487,6 +1520,12 @@ namespace XREngine
                 VisualizeTransparencyModeOverlay = transparencyMode.Value;
             if (overrides.VisualizeTransparencyClassificationOverlayOverride is { HasOverride: true } transparencyClassification)
                 VisualizeTransparencyClassificationOverlay = transparencyClassification.Value;
+            if (overrides.VisualizeTransparencyAccumulationOverride is { HasOverride: true } transparencyAccumulation)
+                VisualizeTransparencyAccumulation = transparencyAccumulation.Value;
+            if (overrides.VisualizeTransparencyRevealageOverride is { HasOverride: true } transparencyRevealage)
+                VisualizeTransparencyRevealage = transparencyRevealage.Value;
+            if (overrides.VisualizeTransparencyOverdrawHeatmapOverride is { HasOverride: true } transparencyOverdraw)
+                VisualizeTransparencyOverdrawHeatmap = transparencyOverdraw.Value;
             if (overrides.RenderLightProbeTetrahedraOverride is { HasOverride: true } tetra)
                 RenderLightProbeTetrahedra = tetra.Value;
             if (overrides.DebugTextMaxLifespanOverride is { HasOverride: true } lifespan)

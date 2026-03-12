@@ -37,6 +37,25 @@ namespace XREngine.Rendering
 
         public uint Width => Targets?.FirstOrDefault().Target?.Width ?? 0u;
         public uint Height => Targets?.FirstOrDefault().Target?.Height ?? 0u;
+        public bool IsMultisampled => EffectiveSampleCount > 1u;
+        public uint EffectiveSampleCount
+        {
+            get
+            {
+                if (Targets is null || Targets.Length == 0)
+                    return 1u;
+
+                uint maxSampleCount = 1u;
+                foreach (var (target, _, _, _) in Targets)
+                {
+                    uint sampleCount = ResolveSampleCount(target);
+                    if (sampleCount > maxSampleCount)
+                        maxSampleCount = sampleCount;
+                }
+
+                return maxSampleCount;
+            }
+        }
 
         public EFrameBufferTextureTypeFlags TextureTypes
         {
@@ -55,6 +74,24 @@ namespace XREngine.Rendering
         }
 
         public event Action? Resized;
+
+        private static uint ResolveSampleCount(IFrameBufferAttachement attachment)
+            => attachment switch
+            {
+                XRRenderBuffer renderBuffer => renderBuffer.MultisampleCount > 1u ? renderBuffer.MultisampleCount : 1u,
+                XRTexture2D texture2D => texture2D.MultiSampleCount > 1u ? texture2D.MultiSampleCount : 1u,
+                XRTexture2DView textureView when textureView.Multisample
+                    => textureView.ViewedTexture.MultiSampleCount > 1u ? textureView.ViewedTexture.MultiSampleCount : 2u,
+                XRTexture2DArray texture2DArray when texture2DArray.MultiSample
+                    => texture2DArray.Textures.Length > 0 && texture2DArray.Textures[0].MultiSampleCount > 1u
+                        ? texture2DArray.Textures[0].MultiSampleCount
+                        : 2u,
+                XRTexture2DArrayView textureArrayView when textureArrayView.Multisample
+                    => textureArrayView.ViewedTexture.Textures.Length > 0 && textureArrayView.ViewedTexture.Textures[0].MultiSampleCount > 1u
+                        ? textureArrayView.ViewedTexture.Textures[0].MultiSampleCount
+                        : 2u,
+                _ => 1u,
+            };
 
         public virtual void Resize(uint width, uint height)
         {

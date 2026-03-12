@@ -202,12 +202,17 @@ namespace XREngine.Rendering.UI
         #endregion
 
         public RenderInfo2D DebugRenderInfo2D { get; private set; }
+        public RenderInfo[] RenderedObjects { get; }
 
         public UITransform() : this(null) { }
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
         public UITransform(TransformBase? parent) : base(parent)
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
         {
+            RenderedObjects =
+            [
+                DebugRenderInfo2D = RenderInfo2D.New(this, _debugRC = new RenderCommandMethod2D((int)EDefaultRenderPass.OnTopForward, RenderDebug))
+            ];
             Children.PostAnythingAdded += OnChildAdded;
             Children.PostAnythingRemoved += OnChildRemoved;
         }
@@ -219,9 +224,6 @@ namespace XREngine.Rendering.UI
 
         private RenderCommandMethod2D _debugRC;
         public RenderCommandMethod2D DebugRenderCommand => _debugRC;
-
-        protected override RenderInfo[] GetDebugRenderInfo()
-            => [DebugRenderInfo2D = RenderInfo2D.New(this, _debugRC = new RenderCommandMethod2D((int)EDefaultRenderPass.OnTopForward, RenderDebug))];
 
         protected override Matrix4x4 CreateLocalMatrix() => 
             Matrix4x4.CreateScale(Scale) * 

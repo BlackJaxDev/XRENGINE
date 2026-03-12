@@ -5,7 +5,7 @@ namespace XREngine.Core.Files;
 /// This runs after property notifications are re-enabled, so types can rebuild
 /// internal invariants that normally rely on property-changed callbacks.
 /// </summary>
-internal interface IPostCookedBinaryDeserialize
+public interface IPostCookedBinaryDeserialize
 {
     void OnPostCookedBinaryDeserialize();
 }

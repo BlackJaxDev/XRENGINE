@@ -14,7 +14,7 @@ public static class OpenVRExtensions
     public static Matrix4x4 ToNumerics(this HmdMatrix34_t matrix)
         => new(
             matrix.m0, matrix.m1, matrix.m2, matrix.m3,
-            matrix.m4, matrix.m4, matrix.m6, matrix.m7,
+            matrix.m4, matrix.m5, matrix.m6, matrix.m7,
             matrix.m8, matrix.m9, matrix.m10, matrix.m11,
             0, 0, 0, 1
         );

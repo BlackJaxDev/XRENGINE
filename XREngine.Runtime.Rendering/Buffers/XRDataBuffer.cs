@@ -1053,7 +1053,7 @@ namespace XREngine.Rendering
                     Print<double>();
                     break;
                 default:
-                    Debug.Out("Unsupported data type.");
+                    RuntimeRenderObjectServices.Current?.LogOutput("Unsupported data type.");
                     break;
             }
         }
@@ -1067,7 +1067,7 @@ namespace XREngine.Rendering
                 sb.Append(item);
                 sb.Append(' ');
             }
-            Debug.Out(sb.ToString());
+            RuntimeRenderObjectServices.Current?.LogOutput(sb.ToString());
         }
 
         public void BindTo(XRRenderProgram program, uint index)

@@ -172,7 +172,7 @@ namespace XREngine
             {
                 return (options?.OpacityMapMode ?? EOpacityMapMode.Auto) switch
                 {
-                    EOpacityMapMode.Blended => ETransparencyMode.AlphaBlend,
+                    EOpacityMapMode.Blended => ETransparencyMode.WeightedBlendedOit,
                     _ => ETransparencyMode.Masked,
                 };
             }
@@ -183,8 +183,8 @@ namespace XREngine
                 {
                     EDiffuseAlphaMode.Opaque => ETransparencyMode.Opaque,
                     EDiffuseAlphaMode.Masked => ETransparencyMode.Masked,
-                    EDiffuseAlphaMode.Blended => ETransparencyMode.AlphaBlend,
-                    _ => hasTransparentBlendHint ? ETransparencyMode.AlphaBlend : ETransparencyMode.Opaque,
+                    EDiffuseAlphaMode.Blended => ETransparencyMode.WeightedBlendedOit,
+                    _ => hasTransparentBlendHint ? ETransparencyMode.WeightedBlendedOit : ETransparencyMode.Opaque,
                 };
             }
 
@@ -262,7 +262,7 @@ namespace XREngine
                 ];
             }
 
-            mat.RenderPass = transp ? (int)EDefaultRenderPass.TransparentForward : (int)EDefaultRenderPass.OpaqueDeferred;
+            mat.RenderPass = transp ? ShaderHelper.ResolveTransparentRenderPass(transparencyMode) : (int)EDefaultRenderPass.OpaqueDeferred;
             mat.Name = name;
             mat.RenderOptions = new RenderingParameters()
             {
@@ -680,7 +680,7 @@ namespace XREngine
                     // Ensure Texture0 is the expected albedo for forward sampling.
                     mat.Textures = [diffuse];
                     mat.Shaders.Add(ShaderHelper.UnlitTextureFragForward()!);
-                    mat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                    mat.RenderPass = ShaderHelper.ResolveTransparentRenderPass(transparencyMode);
                 }
                 else
                 {
@@ -832,7 +832,7 @@ namespace XREngine
                 }
 
                 if (useTransparentBlend)
-                    mat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                    mat.RenderPass = ShaderHelper.ResolveTransparentRenderPass(transparencyMode);
                 else
                     mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
             }

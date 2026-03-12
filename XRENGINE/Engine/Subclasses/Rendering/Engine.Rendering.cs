@@ -69,7 +69,7 @@ namespace XREngine
                         {
                             List<AbstractRenderAPIObject> wrappers =
                             [
-                                .. obj.APIWrappers.Where(wrapper => ReferenceEquals(wrapper.Window, renderer.XRWindow))
+                                .. obj.APIWrappers.Where(wrapper => ReferenceEquals(wrapper.Owner, renderer))
                             ];
 
                             foreach (AbstractRenderAPIObject apiRO in wrappers)
@@ -123,6 +123,9 @@ namespace XREngine
                         viewport.RenderPipeline = NewRenderPipeline();
                         continue;
                     }
+
+                    if (pipeline.OverrideProtected)
+                        continue;
 
                     if (preferDebug)
                     {

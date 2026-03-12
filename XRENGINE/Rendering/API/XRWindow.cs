@@ -747,6 +747,7 @@ namespace XREngine.Rendering
                     useScenePanelMode = false;
                 bool mirrorByComposition =
                     Engine.VRState.IsInVR &&
+                    Engine.VRState.IsOpenXRActive &&
                     Engine.Rendering.Settings.RenderWindowsWhileInVR &&
                     Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures;
                 bool canRenderWindowViewports =

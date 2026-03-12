@@ -33,6 +33,12 @@
         /// </summary>
         TransparentForward,
         /// <summary>
+        /// Use for weighted blended order-independent transparency accumulation.
+        /// This pass writes into dedicated accumulation and revealage targets and
+        /// should not rely on painter's-order blending.
+        /// </summary>
+        WeightedBlendedOitForward,
+        /// <summary>
         /// Renders on top of everything that has been previously rendered.
         /// </summary>
         OnTopForward,

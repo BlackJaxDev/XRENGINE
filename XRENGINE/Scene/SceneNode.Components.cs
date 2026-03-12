@@ -1,8 +1,6 @@
 using XREngine.Components;
-using XREngine.Components.Scene.Transforms;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
-using XREngine.Rendering.Info;
 
 namespace XREngine.Scene
 {
@@ -15,7 +13,7 @@ namespace XREngine.Scene
         /// </summary>
         public T? AddComponent<T>(string? name = null) where T : XRComponent
         {
-            using var t = Engine.Profiler.Start();
+            using var scope = RuntimeSceneNodeServices.Current.StartProfileScope("SceneNode.AddComponent");
 
             var comp = XRComponent.New<T>(this);
             comp.World = World;
@@ -49,7 +47,7 @@ namespace XREngine.Scene
 
         private void AddComponent(XRComponent comp)
         {
-            using var t = Engine.Profiler.Start();
+            using var scope = RuntimeSceneNodeServices.Current.StartProfileScope("SceneNode.AddComponentInternal");
 
             ComponentsInternal.Add(comp);
 
@@ -551,21 +549,6 @@ namespace XREngine.Scene
         /// Gizmo layer objects are not affected by this method.
         /// </remarks>
         private void ApplyLayerToComponent(XRComponent component)
-        {
-            if (component is not IRenderable renderable)
-                return;
-
-            var targetLayer = Layer;
-            foreach (var ri in renderable.RenderedObjects)
-            {
-                if (ri is not RenderInfo3D ri3d)
-                    continue;
-
-                if (ri3d.Layer == DefaultLayers.GizmosIndex)
-                    continue;
-
-                ri3d.Layer = targetLayer;
-            }
-        }
+            => RuntimeSceneNodeServices.Current.ApplyLayerToComponent(this, component, Layer);
     }
 }

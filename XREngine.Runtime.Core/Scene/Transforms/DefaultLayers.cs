@@ -1,4 +1,3 @@
-﻿
 namespace XREngine.Components.Scene.Transforms
 {
     public class DefaultLayers

@@ -165,8 +165,11 @@ namespace XREngine.Components
                 case nameof(UIInteractableComponent.RegisterInputsOnFocus):
                     if (_focusedComponent is null)
                         break;
-                    
-                    var input = _owningPawn!.LocalPlayerController!.Input;
+
+                    var input = GetOwningInput();
+                    if (input is null)
+                        break;
+
                     if (_focusedComponent.RegisterInputsOnFocus)
                         _focusedComponent.RegisterInput(input);
                     else
@@ -184,7 +187,7 @@ namespace XREngine.Components
         /// </summary>
         private void UnlinkOwningPawn()
         {
-            if (_owningPawn is null || _owningPawn.LocalPlayerController == null)
+            if (_owningPawn is null)
                 return;
 
             _owningPawn.PropertyChanging -= OwningPawnPropertyChanging;
@@ -211,7 +214,7 @@ namespace XREngine.Components
 
         private void OwningPawnPropertyChanging(object? sender, IXRPropertyChangingEventArgs e)
         {
-            if (e.PropertyName != nameof(PawnComponent.LocalPlayerController))
+            if (e.PropertyName != nameof(PawnComponent.Controller))
                 return;
             
             UnlinkInput();
@@ -219,7 +222,7 @@ namespace XREngine.Components
 
         private void OwningPawnPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
-            if (e.PropertyName != nameof(PawnComponent.LocalPlayerController))
+            if (e.PropertyName != nameof(PawnComponent.Controller))
                 return;
             
             LinkInput();
@@ -228,7 +231,10 @@ namespace XREngine.Components
         private void LinkInput()
         {
             //Link input commands from the owning controller to this hud
-            var input = _owningPawn!.LocalPlayerController!.Input;
+            var input = GetOwningInput();
+            if (input is null)
+                return;
+
             input.TryUnregisterInput();
             input.InputRegistration += RegisterInput;
             if (FocusedComponent is not null && FocusedComponent.RegisterInputsOnFocus)
@@ -239,13 +245,19 @@ namespace XREngine.Components
         private void UnlinkInput()
         {
             //Unlink input commands from the owning controller to this hud
-            var input = _owningPawn!.LocalPlayerController!.Input;
+            var input = GetOwningInput();
+            if (input is null)
+                return;
+
             input.TryUnregisterInput();
             input.InputRegistration -= RegisterInput;
             if (FocusedComponent is not null && FocusedComponent.RegisterInputsOnFocus)
                 input.InputRegistration -= FocusedComponent.RegisterInput;
             input.TryRegisterInput();
         }
+
+        private InputInterface? GetOwningInput()
+            => _owningPawn?.LocalPlayerController?.Input;
 
         public void RegisterInput(InputInterface input)
         {
