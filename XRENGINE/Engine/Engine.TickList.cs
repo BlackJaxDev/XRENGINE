@@ -32,24 +32,22 @@ namespace XREngine
             /// </summary>
             public Action Tick { get; private set; }
 
-            public delegate void DelTick();
-
             private sealed class TickEntry
             {
-                public required DelTick Func { get; init; }
+                public required WorldTick Func { get; init; }
                 public XRComponent? ComponentOwner { get; init; }
             }
 
             private readonly List<TickEntry> _methods = [];
-            private readonly ConcurrentQueue<(bool Add, DelTick Func)> _queue = new();
+            private readonly ConcurrentQueue<(bool Add, WorldTick Func)> _queue = new();
             private bool _parallel = true;
             private readonly ETickGroup _group;
 
             public int Count => _methods.Count;
 
-            public void Add(DelTick tickMethod) 
+            public void Add(WorldTick tickMethod) 
                 => _queue.Enqueue((true, tickMethod));
-            public void Remove(DelTick tickMethod)
+            public void Remove(WorldTick tickMethod)
                 => _queue.Enqueue((false, tickMethod));
             private void ExecuteParallel()
             {
@@ -94,7 +92,7 @@ namespace XREngine
             private void Dequeue()
             {
                 //Add or remove the list of methods that tried to register to or unregister from this group while it was ticking.
-                while (!_queue.IsEmpty && _queue.TryDequeue(out (bool Add, DelTick Func) result))
+                while (!_queue.IsEmpty && _queue.TryDequeue(out (bool Add, WorldTick Func) result))
                 {
                     if (result.Add)
                     {
@@ -134,7 +132,7 @@ namespace XREngine
                 }
             }
 
-            private static XRComponent? ResolveComponentOwner(DelTick tickMethod)
+            private static XRComponent? ResolveComponentOwner(WorldTick tickMethod)
             {
                 if (tickMethod.Target is XRComponent component)
                     return component;
@@ -153,7 +151,7 @@ namespace XREngine
                 return null;
             }
 
-            private static string DescribeTick(DelTick tickMethod)
+            private static string DescribeTick(WorldTick tickMethod)
             {
                 try
                 {

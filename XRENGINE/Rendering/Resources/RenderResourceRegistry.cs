@@ -1,174 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Numerics;
-using XREngine.Data.Rendering;
-using XREngine.Rendering;
 
 namespace XREngine.Rendering.Resources;
-
-public enum RenderResourceLifetime
-{
-    Persistent,
-    Transient,
-    External
-}
-
-public enum RenderResourceSizeClass
-{
-    AbsolutePixels,
-    InternalResolution,
-    WindowResolution,
-    Custom
-}
-
-public readonly record struct RenderResourceSizePolicy(
-    RenderResourceSizeClass SizeClass,
-    float ScaleX = 1f,
-    float ScaleY = 1f,
-    uint Width = 0,
-    uint Height = 0)
-{
-    public static RenderResourceSizePolicy Absolute(uint width, uint height)
-        => new(RenderResourceSizeClass.AbsolutePixels, 1f, 1f, width, height);
-
-    public static RenderResourceSizePolicy Internal(float scale = 1f)
-        => new(RenderResourceSizeClass.InternalResolution, scale, scale);
-
-    public static RenderResourceSizePolicy Window(float scale = 1f)
-        => new(RenderResourceSizeClass.WindowResolution, scale, scale);
-
-    public static RenderResourceSizePolicy Custom(float scaleX, float scaleY)
-        => new(RenderResourceSizeClass.Custom, scaleX, scaleY);
-}
-
-public abstract record RenderResourceDescriptor(
-    string Name,
-    RenderResourceLifetime Lifetime,
-    RenderResourceSizePolicy SizePolicy);
-
-public sealed record TextureResourceDescriptor(
-    string Name,
-    RenderResourceLifetime Lifetime,
-    RenderResourceSizePolicy SizePolicy,
-    string? FormatLabel = null,
-    bool StereoCompatible = false,
-    uint ArrayLayers = 1,
-    bool SupportsAliasing = false,
-    bool RequiresStorageUsage = false)
-    : RenderResourceDescriptor(Name, Lifetime, SizePolicy)
-{
-    public static TextureResourceDescriptor FromTexture(XRTexture texture, RenderResourceLifetime lifetime = RenderResourceLifetime.Persistent)
-    {
-        Vector3 dims = texture.WidthHeightDepth;
-        uint width = (uint)Math.Max(1, (int)MathF.Round(dims.X));
-        uint height = (uint)Math.Max(1, (int)MathF.Round(dims.Y));
-        uint depth = (uint)Math.Max(1, (int)MathF.Round(dims.Z));
-
-        RenderResourceSizePolicy sizePolicy = RenderResourceSizePolicy.Absolute(width, height);
-        string format = ResolveFormat(texture);
-        bool stereo = TryGetStereoFlag(texture);
-
-        return new TextureResourceDescriptor(
-            texture.Name ?? string.Empty,
-            lifetime,
-            sizePolicy,
-            format,
-            stereo,
-            depth,
-            SupportsAliasing: lifetime == RenderResourceLifetime.Transient,
-            RequiresStorageUsage: texture.RequiresStorageUsage);
-    }
-
-    private static string ResolveFormat(XRTexture texture)
-        => texture switch
-        {
-            XRTexture2D tex2D => tex2D.SizedInternalFormat.ToString(),
-            XRTexture2DArray texArray => texArray.SizedInternalFormat.ToString(),
-            XRTexture3D tex3D => tex3D.SizedInternalFormat.ToString(),
-            XRTextureCube texCube => texCube.SizedInternalFormat.ToString(),
-            _ => texture.GetType().Name
-        };
-
-    private static bool TryGetStereoFlag(XRTexture texture)
-    {
-        if (texture is XRTexture2DArray texArray && texArray.OVRMultiViewParameters is { NumViews: > 1 })
-            return true;
-        return false;
-    }
-}
-
-public readonly record struct FrameBufferAttachmentDescriptor(
-    string ResourceName,
-    EFrameBufferAttachment Attachment,
-    int MipLevel,
-    int LayerIndex);
-
-public sealed record FrameBufferResourceDescriptor(
-    string Name,
-    RenderResourceLifetime Lifetime,
-    RenderResourceSizePolicy SizePolicy,
-    IReadOnlyList<FrameBufferAttachmentDescriptor> Attachments)
-    : RenderResourceDescriptor(Name, Lifetime, SizePolicy)
-{
-    public static FrameBufferResourceDescriptor FromFrameBuffer(
-        XRFrameBuffer frameBuffer,
-        RenderResourceLifetime lifetime = RenderResourceLifetime.Persistent)
-    {
-        uint width = Math.Max(frameBuffer.Width, 1u);
-        uint height = Math.Max(frameBuffer.Height, 1u);
-        RenderResourceSizePolicy sizePolicy = RenderResourceSizePolicy.Absolute(width, height);
-
-        List<FrameBufferAttachmentDescriptor> attachments = [];
-        if (frameBuffer.Targets is not null)
-        {
-            foreach (var (target, attachment, mipLevel, layerIndex) in frameBuffer.Targets)
-            {
-                string resourceName = target switch
-                {
-                    XRTexture tex => tex.Name ?? tex.GetDescribingName(),
-                    _ => target?.GetType().Name ?? string.Empty
-                };
-                attachments.Add(new FrameBufferAttachmentDescriptor(resourceName, attachment, mipLevel, layerIndex));
-            }
-        }
-
-        return new FrameBufferResourceDescriptor(
-            frameBuffer.Name ?? string.Empty,
-            lifetime,
-            sizePolicy,
-            attachments);
-    }
-}
-
-public sealed record BufferResourceDescriptor(
-    string Name,
-    RenderResourceLifetime Lifetime,
-    ulong SizeInBytes,
-    EBufferTarget Target,
-    EBufferUsage Usage,
-    bool SupportsAliasing = true)
-{
-    public static BufferResourceDescriptor FromBuffer(XRDataBuffer buffer, RenderResourceLifetime lifetime = RenderResourceLifetime.Persistent)
-    {
-        ArgumentNullException.ThrowIfNull(buffer);
-
-        string name = buffer.AttributeName;
-        if (string.IsNullOrWhiteSpace(name))
-            name = buffer.Name ?? string.Empty;
-
-        ulong size = Math.Max(buffer.Length, 1u);
-        bool supportsAliasing = lifetime == RenderResourceLifetime.Transient;
-
-        return new BufferResourceDescriptor(
-            name,
-            lifetime,
-            size,
-            buffer.Target,
-            buffer.Usage,
-            supportsAliasing);
-    }
-}
 
 public sealed class RenderTextureResource
 {
@@ -323,7 +157,7 @@ public sealed class RenderResourceRegistry
         ArgumentNullException.ThrowIfNull(texture);
         string name = texture.Name ?? throw new InvalidOperationException("Texture name must be set before binding to the registry.");
 
-        descriptor ??= TextureResourceDescriptor.FromTexture(texture);
+        descriptor ??= RenderResourceDescriptorFactory.FromTexture(texture);
         descriptor = descriptor with { Name = name };
 
         RenderTextureResource record = RegisterTextureDescriptor(descriptor);
@@ -335,7 +169,7 @@ public sealed class RenderResourceRegistry
         ArgumentNullException.ThrowIfNull(frameBuffer);
         string name = frameBuffer.Name ?? throw new InvalidOperationException("FrameBuffer name must be set before binding to the registry.");
 
-        descriptor ??= FrameBufferResourceDescriptor.FromFrameBuffer(frameBuffer);
+        descriptor ??= RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer);
         descriptor = descriptor with { Name = name };
 
         RenderFrameBufferResource record = RegisterFrameBufferDescriptor(descriptor);
@@ -350,7 +184,7 @@ public sealed class RenderResourceRegistry
         if (string.IsNullOrWhiteSpace(name))
             throw new InvalidOperationException("Data buffer attribute name must be set before binding to the registry.");
 
-        descriptor ??= BufferResourceDescriptor.FromBuffer(buffer);
+        descriptor ??= RenderResourceDescriptorFactory.FromBuffer(buffer);
         descriptor = descriptor with { Name = name };
 
         RenderBufferResource record = RegisterBufferDescriptor(descriptor);

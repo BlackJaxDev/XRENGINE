@@ -1,0 +1,87 @@
+#version 460 core
+
+layout(local_size_x = 256) in;
+
+const uint COMMAND_FLOATS = 48u;
+const uint METADATA_UINTS = 4u;
+
+layout(std430, binding = 0) readonly buffer CulledCommands { float culled[]; };
+layout(std430, binding = 1) readonly buffer CulledCountBuffer
+{
+    uint CulledCount;
+    uint CulledInstanceCount;
+    uint CulledOverflow;
+};
+layout(std430, binding = 2) readonly buffer TransparencyMetadataBuffer { uint metadata[]; };
+layout(std430, binding = 3) buffer MaskedVisibleIndices { uint maskedVisibleIndices[]; };
+layout(std430, binding = 4) buffer ApproximateVisibleIndices { uint approximateVisibleIndices[]; };
+layout(std430, binding = 5) buffer ExactVisibleIndices { uint exactVisibleIndices[]; };
+layout(std430, binding = 6) buffer TransparencyDomainCounts
+{
+    uint OpaqueOrOtherCount;
+    uint MaskedCount;
+    uint ApproximateCount;
+    uint ExactCount;
+};
+
+uniform int MaxVisibleCommands;
+
+const uint DOMAIN_OPAQUE_OR_OTHER = 0u;
+const uint DOMAIN_MASKED = 1u;
+const uint DOMAIN_APPROXIMATE = 2u;
+const uint DOMAIN_EXACT = 3u;
+
+uint ReadSourceCommandIndex(uint logicalIdx)
+{
+    uint base = logicalIdx * COMMAND_FLOATS;
+    return floatBitsToUint(culled[base + 47u]);
+}
+
+uint ReadDomain(uint sourceCommandIndex)
+{
+    uint base = sourceCommandIndex * METADATA_UINTS;
+    uint packedModeAndDomain = metadata[base + 0u];
+    return (packedModeAndDomain >> 16u) & 0xFFFFu;
+}
+
+void main()
+{
+    uint logicalIdx = gl_GlobalInvocationID.x;
+    uint total = CulledCount;
+
+    if (logicalIdx >= total || logicalIdx >= uint(MaxVisibleCommands))
+        return;
+
+    uint base = logicalIdx * COMMAND_FLOATS;
+    if (base + COMMAND_FLOATS > uint(culled.length()))
+        return;
+
+    uint sourceCommandIndex = ReadSourceCommandIndex(logicalIdx);
+    uint metadataBase = sourceCommandIndex * METADATA_UINTS;
+    if (metadataBase + METADATA_UINTS > uint(metadata.length()))
+    {
+        atomicAdd(OpaqueOrOtherCount, 1u);
+        return;
+    }
+
+    uint domain = ReadDomain(sourceCommandIndex);
+    if (domain == DOMAIN_MASKED)
+    {
+        uint outIndex = atomicAdd(MaskedCount, 1u);
+        maskedVisibleIndices[outIndex] = logicalIdx;
+    }
+    else if (domain == DOMAIN_APPROXIMATE)
+    {
+        uint outIndex = atomicAdd(ApproximateCount, 1u);
+        approximateVisibleIndices[outIndex] = logicalIdx;
+    }
+    else if (domain == DOMAIN_EXACT)
+    {
+        uint outIndex = atomicAdd(ExactCount, 1u);
+        exactVisibleIndices[outIndex] = logicalIdx;
+    }
+    else
+    {
+        atomicAdd(OpaqueOrOtherCount, 1u);
+    }
+}

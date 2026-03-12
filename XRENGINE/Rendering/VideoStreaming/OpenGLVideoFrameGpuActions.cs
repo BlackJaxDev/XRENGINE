@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using Silk.NET.OpenGL;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.OpenGL;
@@ -40,32 +39,7 @@ internal sealed class OpenGLVideoFrameGpuActions : IVideoFrameGpuActions
     private uint _lastTextureWidth;
     private uint _lastTextureHeight;
 
-    public bool TryPrepareOutput(XRMaterialFrameBuffer frameBuffer, XRMaterial? material, out uint framebufferId, out string? error)
-    {
-        error = null;
-        framebufferId = 0;
-
-        frameBuffer.Material = material;
-        frameBuffer.Generate();
-
-        if (frameBuffer.APIWrappers.OfType<GLFrameBuffer>().FirstOrDefault() is not GLFrameBuffer glFbo)
-        {
-            error = "Unable to locate GL framebuffer wrapper for streaming video output.";
-            return false;
-        }
-
-        glFbo.Generate();
-        framebufferId = glFbo.BindingId;
-        if (framebufferId == 0)
-        {
-            error = "GL framebuffer binding id is zero.";
-            return false;
-        }
-
-        return true;
-    }
-
-    public bool UploadVideoFrame(DecodedVideoFrame frame, XRTexture2D? targetTexture, out string? error)
+    public bool UploadVideoFrame(DecodedVideoFrame frame, object? targetTexture, out string? error)
     {
         error = null;
 
@@ -75,9 +49,9 @@ internal sealed class OpenGLVideoFrameGpuActions : IVideoFrameGpuActions
             return false;
         }
 
-        if (targetTexture is null)
+        if (targetTexture is not XRTexture2D xrTexture)
         {
-            error = "No target texture is available for OpenGL upload.";
+            error = "OpenGL video upload requires an XRTexture2D target.";
             return false;
         }
 
@@ -100,7 +74,7 @@ internal sealed class OpenGLVideoFrameGpuActions : IVideoFrameGpuActions
         uint requiredBytes = (uint)memory.Length;
 
         // --- Ensure the GL texture object exists and is the right size ---
-        var glTex = renderer.GenericToAPI<GLTexture2D>(targetTexture);
+        var glTex = renderer.GenericToAPI<GLTexture2D>(xrTexture);
         if (glTex is null)
         {
             error = "Failed to obtain GLTexture2D wrapper.";
@@ -242,12 +216,6 @@ internal sealed class OpenGLVideoFrameGpuActions : IVideoFrameGpuActions
 
         _pboSizeBytes = requiredBytes;
         _currentPboIndex = 0;
-    }
-
-    public void Present(IMediaStreamSession session, uint framebufferId)
-    {
-        session.SetTargetFramebuffer(framebufferId);
-        session.Present();
     }
 
     public void Dispose()

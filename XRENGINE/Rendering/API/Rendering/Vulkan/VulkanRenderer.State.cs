@@ -1349,7 +1349,7 @@ public unsafe partial class VulkanRenderer
         RenderResourceRegistry? registry = Engine.Rendering.State.CurrentResourceRegistry;
         if (registry is not null)
         {
-            BufferResourceDescriptor descriptor = BufferResourceDescriptor.FromBuffer(buffer, lifetime) with { Name = name };
+            BufferResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromBuffer(buffer, lifetime) with { Name = name };
             registry.BindBuffer(buffer, descriptor);
         }
     }

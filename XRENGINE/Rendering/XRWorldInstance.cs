@@ -31,7 +31,7 @@ namespace XREngine.Rendering
     /// This class handles all information pertaining to the rendering of a world.
     /// This object is assigned to a window and the window's renderer is responsible for applying the world's render data to the rendering API for that window.
     /// </summary>
-    public partial class XRWorldInstance : XRObjectBase
+    public partial class XRWorldInstance : XRObjectBase, IRuntimeWorldContext
     {
         private const float EdgeBarycentricThreshold = 0.12f;
         private const float VertexBarycentricThreshold = 0.08f;
@@ -485,6 +485,13 @@ namespace XREngine.Rendering
             PlayState == EPlayState.BeginningPlay || 
             PlayState == EPlayState.EndingPlay;
 
+        internal bool IsPlaySessionActive
+            => PlayState == EPlayState.BeginningPlay
+            || PlayState == EPlayState.Playing
+            || PlayState == EPlayState.Paused;
+
+        bool IRuntimeWorldContext.IsPlaySessionActive => IsPlaySessionActive;
+
         public void PausePlay()
         {
             if (PlayState != EPlayState.Playing)
@@ -812,6 +819,18 @@ namespace XREngine.Rendering
             UpdateDirtyDepthRange(transform.Depth);
         }
 
+        void IRuntimeWorldContext.AddDirtyRuntimeObject(RuntimeWorldObjectBase worldObject)
+        {
+            if (worldObject is TransformBase transform)
+                AddDirtyTransform(transform);
+        }
+
+        void IRuntimeWorldContext.EnqueueRuntimeWorldMatrixChange(RuntimeWorldObjectBase worldObject, Matrix4x4 worldMatrix)
+        {
+            if (worldObject is TransformBase transform)
+                EnqueueRenderTransformChange(transform, worldMatrix);
+        }
+
         private void UpdateDirtyDepthRange(int depth)
         {
             int currentMin;
@@ -996,7 +1015,7 @@ namespace XREngine.Rendering
         /// <param name="order">The order to execute the function within its group.</param>
         /// <param name="function">The function to execute per update tick.</param>
         /// <param name="pausedBehavior">If the function should even execute at all, depending on the pause state.</param>
-        public void RegisterTick(ETickGroup group, int order, TickList.DelTick function)
+        public void RegisterTick(ETickGroup group, int order, WorldTick function)
         {
             if (function is null)
                 return;
@@ -1007,7 +1026,7 @@ namespace XREngine.Rendering
         /// <summary>
         /// Stops running a tick method that was previously registered with the same parameters.
         /// </summary>
-        public void UnregisterTick(ETickGroup group, int order, TickList.DelTick function)
+        public void UnregisterTick(ETickGroup group, int order, WorldTick function)
         {
             if (function is null)
                 return;

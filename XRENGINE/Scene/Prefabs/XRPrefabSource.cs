@@ -171,6 +171,7 @@ namespace XREngine.Scene.Prefabs
             }
 
             using var importer = new ModelImporter(filePath, onCompleted: null, materialFactory: null);
+            importer.ImportOptions = opts;
 
             // Preserve the importer's default texture factory (it sets FilePath + schedules actual loads)
             // and only apply optional user remapping on top.
@@ -269,7 +270,7 @@ namespace XREngine.Scene.Prefabs
                     break;
             }
             mat.Name = name;
-            mat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
+            ModelImporter.ConfigureImportedTransparency(mat, textureList, textures);
 
             return mat;
         }

@@ -151,6 +151,7 @@ namespace XREngine.Rendering.Commands
             _cullingComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Culling/GPURenderCulling.comp", EShaderType.Compute));
             _buildKeysComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildKeys.comp", EShaderType.Compute));
             _buildGpuBatchesComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildBatches.comp", EShaderType.Compute));
+            _classifyTransparencyComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderClassifyTransparencyDomains.comp", EShaderType.Compute));
             //RadixIndexSortComputeShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Sorting/GPURenderRadixIndexSort.comp", EShaderType.Compute));
             _indirectRenderTaskShader = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderIndirect.comp", EShaderType.Compute));
             _buildHotCommandsProgram = new XRRenderProgram(true, false, ShaderHelper.LoadEngineShader("Compute/Indirect/GPURenderBuildHotCommands.comp", EShaderType.Compute));
@@ -439,6 +440,7 @@ namespace XREngine.Rendering.Commands
             // Ensure material IDs buffer exists for batching keys
             EnsureMaterialIDs(capacity);
             EnsureGpuDrivenBatchingBuffers(capacity);
+            EnsureTransparencyDomainBuffers(capacity);
             EnsureViewSetBuffers(capacity);
             _statsNeedsMap |= EnsureStatsBuffer();
 
@@ -850,6 +852,51 @@ namespace XREngine.Rendering.Commands
             EnsureBatchCountBuffer();
             EnsureInstanceDataBuffers(capacity);
             EnsureMaterialAggregationBuffer(1u);
+        }
+
+        private void EnsureTransparencyDomainBuffers(uint capacity)
+        {
+            EnsureTransparencyVisibleIndexBuffer(ref _maskedVisibleIndexBuffer, "MaskedVisibleIndices", capacity);
+            EnsureTransparencyVisibleIndexBuffer(ref _approximateTransparentVisibleIndexBuffer, "ApproxTransparentVisibleIndices", capacity);
+            EnsureTransparencyVisibleIndexBuffer(ref _exactTransparentVisibleIndexBuffer, "ExactTransparentVisibleIndices", capacity);
+
+            if (_transparencyDomainCountBuffer is null)
+            {
+                _transparencyDomainCountBuffer = new XRDataBuffer(
+                    "TransparencyDomainCounts",
+                    EBufferTarget.ShaderStorageBuffer,
+                    GPUTransparencyLayout.DomainCountBufferUIntCount,
+                    EComponentType.UInt,
+                    1,
+                    false,
+                    true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = false,
+                };
+                _transparencyDomainCountBuffer.Generate();
+                _transparencyDomainCountBuffer.SetDataRaw(new uint[GPUTransparencyLayout.DomainCountBufferUIntCount], (int)GPUTransparencyLayout.DomainCountBufferUIntCount);
+                _transparencyDomainCountBuffer.PushSubData();
+            }
+        }
+
+        private static void EnsureTransparencyVisibleIndexBuffer(ref XRDataBuffer? buffer, string name, uint capacity)
+        {
+            if (buffer is null)
+            {
+                buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, capacity, EComponentType.UInt, 1, false, true)
+                {
+                    Usage = EBufferUsage.DynamicCopy,
+                    DisposeOnPush = false,
+                    Resizable = true,
+                };
+                buffer.Generate();
+                return;
+            }
+
+            if (buffer.ElementCount < capacity)
+                buffer.Resize(capacity);
         }
 
         private void EnsureSortScratchBuffer(uint capacity)

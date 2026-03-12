@@ -82,7 +82,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private FrameBufferResourceDescriptor BuildDescriptor(XRFrameBuffer frameBuffer)
         {
-            FrameBufferResourceDescriptor descriptor = FrameBufferResourceDescriptor.FromFrameBuffer(frameBuffer, _lifetime);
+            FrameBufferResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromFrameBuffer(frameBuffer, _lifetime);
 
             if ((_sizePolicyOverride ?? InferSizePolicy()) is RenderResourceSizePolicy policy)
                 descriptor = descriptor with { SizePolicy = policy };

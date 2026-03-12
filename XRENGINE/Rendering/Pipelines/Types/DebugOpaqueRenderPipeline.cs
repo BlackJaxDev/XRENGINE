@@ -63,6 +63,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
             { (int)EDefaultRenderPass.Background, null },
             { (int)EDefaultRenderPass.OpaqueDeferred, _nearToFarSorter },
             { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
+            { (int)EDefaultRenderPass.MaskedForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
             { (int)EDefaultRenderPass.OnTopForward, null },
             { (int)EDefaultRenderPass.PostRender, null },
@@ -96,6 +97,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
                 commands.Add<VPRC_DepthWrite>().Allow = true;
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GpuRenderDispatch);
 
                 // Transparent pass for world-space UI canvas quads and other alpha-blended geometry.
                 commands.Add<VPRC_DepthWrite>().Allow = false;
@@ -137,6 +139,7 @@ public sealed class DebugOpaqueRenderPipeline : RenderPipeline
                 commands.Add<VPRC_DepthWrite>().Allow = true;
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GpuRenderDispatch);
                 commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
+                commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GpuRenderDispatch);
 
                 // Transparent pass for world-space UI canvas quads and other alpha-blended geometry.
                 commands.Add<VPRC_DepthWrite>().Allow = false;

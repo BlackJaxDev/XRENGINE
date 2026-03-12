@@ -27,6 +27,14 @@ namespace XREngine
                 private static int _lastFrameGpuCpuFallbackEvents;
                 private static int _lastFrameGpuCpuFallbackRecoveredCommands;
                 private static int _lastFrameForbiddenGpuFallbackEvents;
+                private static int _gpuTransparencyOpaqueOrOtherVisible;
+                private static int _gpuTransparencyMaskedVisible;
+                private static int _gpuTransparencyApproximateVisible;
+                private static int _gpuTransparencyExactVisible;
+                private static int _lastFrameGpuTransparencyOpaqueOrOtherVisible;
+                private static int _lastFrameGpuTransparencyMaskedVisible;
+                private static int _lastFrameGpuTransparencyApproximateVisible;
+                private static int _lastFrameGpuTransparencyExactVisible;
                 private static int _vulkanIndirectCountPathCalls;
                 private static int _vulkanIndirectNonCountPathCalls;
                 private static int _vulkanIndirectLoopFallbackCalls;
@@ -217,6 +225,14 @@ namespace XREngine
                 /// </summary>
                 public static int ForbiddenGpuFallbackEvents => _lastFrameForbiddenGpuFallbackEvents;
 
+                public static int GpuTransparencyOpaqueOrOtherVisible => _lastFrameGpuTransparencyOpaqueOrOtherVisible;
+
+                public static int GpuTransparencyMaskedVisible => _lastFrameGpuTransparencyMaskedVisible;
+
+                public static int GpuTransparencyApproximateVisible => _lastFrameGpuTransparencyApproximateVisible;
+
+                public static int GpuTransparencyExactVisible => _lastFrameGpuTransparencyExactVisible;
+
                 /// <summary>
                 /// Number of GPU buffers mapped for CPU access in the last completed frame.
                 /// </summary>
@@ -399,6 +415,10 @@ namespace XREngine
                     _lastFrameGpuCpuFallbackEvents = _gpuCpuFallbackEvents;
                     _lastFrameGpuCpuFallbackRecoveredCommands = _gpuCpuFallbackRecoveredCommands;
                     _lastFrameForbiddenGpuFallbackEvents = _forbiddenGpuFallbackEvents;
+                    _lastFrameGpuTransparencyOpaqueOrOtherVisible = _gpuTransparencyOpaqueOrOtherVisible;
+                    _lastFrameGpuTransparencyMaskedVisible = _gpuTransparencyMaskedVisible;
+                    _lastFrameGpuTransparencyApproximateVisible = _gpuTransparencyApproximateVisible;
+                    _lastFrameGpuTransparencyExactVisible = _gpuTransparencyExactVisible;
                     _lastFrameGpuMappedBuffers = _gpuMappedBuffers;
                     _lastFrameGpuReadbackBytes = _gpuReadbackBytes;
                     _lastFrameRtxIoDecompressCalls = _rtxIoDecompressCalls;
@@ -473,6 +493,10 @@ namespace XREngine
                     _gpuCpuFallbackEvents = 0;
                     _gpuCpuFallbackRecoveredCommands = 0;
                     _forbiddenGpuFallbackEvents = 0;
+                    _gpuTransparencyOpaqueOrOtherVisible = 0;
+                    _gpuTransparencyMaskedVisible = 0;
+                    _gpuTransparencyApproximateVisible = 0;
+                    _gpuTransparencyExactVisible = 0;
                     _gpuMappedBuffers = 0;
                     _gpuReadbackBytes = 0;
                     _rtxIoDecompressCalls = 0;
@@ -1047,6 +1071,21 @@ namespace XREngine
 
                     if (overflowCount > 0)
                         Interlocked.Add(ref _vulkanOverflowCount, overflowCount);
+                }
+
+                public static void RecordGpuTransparencyDomainCounts(
+                    uint opaqueOrOtherVisible,
+                    uint maskedVisible,
+                    uint approximateVisible,
+                    uint exactVisible)
+                {
+                    if (!EnableTracking)
+                        return;
+
+                    Interlocked.Exchange(ref _gpuTransparencyOpaqueOrOtherVisible, checked((int)opaqueOrOtherVisible));
+                    Interlocked.Exchange(ref _gpuTransparencyMaskedVisible, checked((int)maskedVisible));
+                    Interlocked.Exchange(ref _gpuTransparencyApproximateVisible, checked((int)approximateVisible));
+                    Interlocked.Exchange(ref _gpuTransparencyExactVisible, checked((int)exactVisible));
                 }
 
                 public enum EVulkanGpuDrivenStageTiming

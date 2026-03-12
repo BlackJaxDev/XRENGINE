@@ -28,6 +28,7 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
         }
 
         DrawHeader(material);
+        DrawTransparencySettings(material);
         DrawShaderList(material);
         DrawRenderOptions(material, visitedObjects);
         DrawUniforms(material);
@@ -40,6 +41,79 @@ public sealed partial class XRMaterialInspector : IXRAssetInspector
     {
         ImGui.TextUnformatted(material.Name ?? "<unnamed material>");
         ImGui.TextDisabled($"Render Pass: {DescribeRenderPass(material.RenderPass)}");
+
+        ETransparencyMode inferred = material.InferTransparencyMode();
+        if (inferred != material.TransparencyMode)
+            ImGui.TextDisabled($"Inferred: {inferred} | Explicit: {material.TransparencyMode}");
+    }
+
+    private static void DrawTransparencySettings(XRMaterial material)
+    {
+        if (!ImGui.CollapsingHeader("Transparency", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        ETransparencyMode transparencyMode = material.TransparencyMode;
+        if (ImGui.BeginCombo("Mode", transparencyMode.ToString()))
+        {
+            foreach (ETransparencyMode value in Enum.GetValues<ETransparencyMode>())
+            {
+                bool selected = value == transparencyMode;
+                if (ImGui.Selectable(value.ToString(), selected) && !selected)
+                {
+                    material.TransparencyMode = value;
+                    material.MarkDirty();
+                }
+
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+
+        if (material.TransparencyMode is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
+        {
+            float alphaCutoff = material.AlphaCutoff;
+            ImGui.SetNextItemWidth(-1f);
+            if (ImGui.SliderFloat("Alpha Cutoff", ref alphaCutoff, 0.0f, 1.0f))
+            {
+                material.AlphaCutoff = alphaCutoff;
+                material.MarkDirty();
+            }
+        }
+
+        int sortPriority = material.TransparentSortPriority;
+        ImGui.SetNextItemWidth(-1f);
+        if (ImGui.DragInt("Sort Priority", ref sortPriority))
+        {
+            material.TransparentSortPriority = sortPriority;
+            material.MarkDirty();
+        }
+
+        string overridePreview = material.TransparentTechniqueOverride?.ToString() ?? "<none>";
+        if (ImGui.BeginCombo("Technique Override", overridePreview))
+        {
+            bool isNoneSelected = material.TransparentTechniqueOverride is null;
+            if (ImGui.Selectable("<none>", isNoneSelected) && !isNoneSelected)
+            {
+                material.TransparentTechniqueOverride = null;
+                material.MarkDirty();
+            }
+            if (isNoneSelected)
+                ImGui.SetItemDefaultFocus();
+
+            foreach (ETransparencyMode value in Enum.GetValues<ETransparencyMode>())
+            {
+                bool selected = material.TransparentTechniqueOverride == value;
+                if (ImGui.Selectable(value.ToString(), selected) && !selected)
+                {
+                    material.TransparentTechniqueOverride = value;
+                    material.MarkDirty();
+                }
+            }
+
+            ImGui.EndCombo();
+        }
     }
 
     private static void DrawShaderList(XRMaterial material)

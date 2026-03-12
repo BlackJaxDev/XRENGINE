@@ -859,6 +859,19 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Log transparent visibility counts by domain.
+        /// </summary>
+        public static void LogTransparencyDomainStats(uint opaqueOrOther, uint masked, uint approximate, uint exact)
+        {
+            if (!IsEnabled(LogCategory.Stats, LogLevel.Info))
+                return;
+
+            Log(LogCategory.Stats, LogLevel.Info,
+                "Transparency Domains: opaqueOrOther={0}, masked={1}, approximate={2}, exact={3}",
+                opaqueOrOther, masked, approximate, exact);
+        }
+
+        /// <summary>
         /// Log session statistics summary.
         /// </summary>
         public static void LogSessionSummary()

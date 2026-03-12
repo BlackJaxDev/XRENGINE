@@ -112,7 +112,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private TextureResourceDescriptor BuildDescriptor(XRTexture texture)
         {
-            TextureResourceDescriptor descriptor = TextureResourceDescriptor.FromTexture(texture, _lifetime);
+            TextureResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromTexture(texture, _lifetime);
 
             if ((_sizePolicyOverride ?? InferSizePolicy()) is RenderResourceSizePolicy policy)
                 descriptor = descriptor with { SizePolicy = policy };

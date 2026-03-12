@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             (int)EDefaultRenderPass.OpaqueDeferred,
             (int)EDefaultRenderPass.DeferredDecals,
             (int)EDefaultRenderPass.OpaqueForward,
+            (int)EDefaultRenderPass.MaskedForward,
             (int)EDefaultRenderPass.TransparentForward,
             (int)EDefaultRenderPass.OnTopForward,
         ];

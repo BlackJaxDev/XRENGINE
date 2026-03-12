@@ -56,7 +56,10 @@ namespace XREngine.Scene
             comp.Destroying += ComponentDestroying;
             comp.Destroyed += ComponentDestroyed;
 
-            if (IsActiveInHierarchy && World is not null)
+            if (HasBegunPlay)
+                comp.OnBeginPlay();
+
+            if (comp.IsActive && IsActiveInHierarchy && World is not null)
                 comp.OnComponentActivated();
         }
 
@@ -117,6 +120,7 @@ namespace XREngine.Scene
             ComponentsInternal.Remove(comp);
             comp.Destroying -= ComponentDestroying;
             comp.Destroyed -= ComponentDestroyed;
+            StopComponentLifecycle(comp);
             comp.Destroy();
         }
 
@@ -132,6 +136,7 @@ namespace XREngine.Scene
             ComponentsInternal.Remove(comp);
             comp.Destroying -= ComponentDestroying;
             comp.Destroyed -= ComponentDestroyed;
+            StopComponentLifecycle(comp);
             comp.Destroy();
         }
 
@@ -150,9 +155,7 @@ namespace XREngine.Scene
             ComponentsInternal.Remove(component);
             component.Destroying -= ComponentDestroying;
             component.Destroyed -= ComponentDestroyed;
-
-            if (component.IsActive)
-                component.OnComponentDeactivated();
+            StopComponentLifecycle(component);
 
             return true;
         }
@@ -169,8 +172,20 @@ namespace XREngine.Scene
             component.Destroying += ComponentDestroying;
             component.Destroyed += ComponentDestroyed;
 
-            if (IsActiveInHierarchy && World is not null)
+            if (HasBegunPlay)
+                component.OnBeginPlay();
+
+            if (component.IsActive && IsActiveInHierarchy && World is not null)
                 component.OnComponentActivated();
+        }
+
+        private void StopComponentLifecycle(XRComponent component)
+        {
+            if (component.IsActive && IsActiveInHierarchy && World is not null)
+                component.OnComponentDeactivated();
+
+            if (HasBegunPlay)
+                component.OnEndPlay();
         }
 
         /// <summary>

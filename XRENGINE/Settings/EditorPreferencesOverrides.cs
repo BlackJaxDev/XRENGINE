@@ -430,6 +430,8 @@ namespace XREngine
         private OverrideableSetting<bool> _previewTracesOverride = new();
         private OverrideableSetting<bool> _renderCullingVolumesOverride = new();
         private OverrideableSetting<bool> _visualizeTransformIdOverride = new();
+        private OverrideableSetting<bool> _visualizeTransparencyModeOverlayOverride = new();
+        private OverrideableSetting<bool> _visualizeTransparencyClassificationOverlayOverride = new();
         private OverrideableSetting<bool> _renderLightProbeTetrahedraOverride = new();
         private OverrideableSetting<float> _debugTextMaxLifespanOverride = new();
         private OverrideableSetting<bool> _enableThreadAllocationTrackingOverride = new();
@@ -520,6 +522,18 @@ namespace XREngine
         {
             get => _visualizeTransformIdOverride;
             set => SetField(ref _visualizeTransformIdOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> VisualizeTransparencyModeOverlayOverride
+        {
+            get => _visualizeTransparencyModeOverlayOverride;
+            set => SetField(ref _visualizeTransparencyModeOverlayOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> VisualizeTransparencyClassificationOverlayOverride
+        {
+            get => _visualizeTransparencyClassificationOverlayOverride;
+            set => SetField(ref _visualizeTransparencyClassificationOverlayOverride, value ?? new());
         }
 
         public OverrideableSetting<bool> RenderLightProbeTetrahedraOverride

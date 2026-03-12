@@ -3,6 +3,8 @@ using XREngine.Audio;
 using XREngine.Data.Core;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
+using XREngine.Rendering.VideoStreaming;
+using XREngine.Scene.Transforms;
 using static XREngine.Rendering.XRWorldInstance;
 
 namespace XREngine
@@ -198,6 +200,9 @@ namespace XREngine
 
             // Wire up timer events for deferred processing
             Time.Timer.PostUpdateFrame += Timer_PostUpdateFrame;
+            RuntimeWorldObjectServices.Current = new EngineRuntimeWorldObjectServices();
+            RuntimeTransformServices.Current = new EngineRuntimeTransformServices();
+            RuntimeVideoStreamingServices.Current = new EngineRuntimeVideoStreamingServices();
 
             // Connect external profiling hooks for subsystems
             XREvent.ProfilingHook = ExternalProfilingHook;

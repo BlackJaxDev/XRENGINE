@@ -15,11 +15,13 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 - [Non-HBAO AO Remediation TODO](todo/non-hbao-ambient-occlusion-remediation.md)
 - [Runtime Modularization Phase 2 TODO](todo/runtime-modularization-phase2-todo.md)
 - [Voxel Cone Tracing And VXAO Implementation TODO](todo/voxel-cone-tracing-and-vxao-implementation-todo.md)
+- [Transparency And OIT Implementation TODO](todo/transparency-and-oit-todo.md)
 
 ## Design & Investigations
 - [Indirect GPU Rendering Architecture](design/IndirectGPURendering-Design.md)
 - [Vulkan Parity Report](design/vulkan-parity-report.md)
 - [Vulkan Command Buffer Refactor](design/vulkan-command-buffer-refactor.md)
+- [Transparency And OIT Implementation Plan](design/transparency-and-oit-implementation-plan.md)
 - [GPU Physics Chain Compatibility](design/gpu-physics-chain-compatibility.md)
 - [GPU Physics Chain Engine Verification](design/gpu-physics-chain-engine-verification.md)
 - [HBAO And HBAO+ Implementation Plan](design/hbao-hbao-plus-implementation-plan.md)

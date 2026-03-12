@@ -1365,6 +1365,12 @@ namespace XREngine
                 if (applyAll || propertyName == nameof(EditorDebugOptions.RenderMesh3DBounds))
                     ApplyRenderMeshBoundsSetting();
 
+                if (applyAll || propertyName == nameof(EditorDebugOptions.VisualizeTransparencyModeOverlay))
+                    ApplyRenderMeshBoundsSetting();
+
+                if (applyAll || propertyName == nameof(EditorDebugOptions.VisualizeTransparencyClassificationOverlay))
+                    ApplyRenderMeshBoundsSetting();
+
                 if (applyAll || propertyName == nameof(EditorDebugOptions.RenderTransformDebugInfo))
                     ApplyTransformDebugSetting();
 
@@ -1383,7 +1389,10 @@ namespace XREngine
 
             private static void ApplyRenderMeshBoundsSetting()
             {
-                bool renderBounds = Engine.EditorPreferences.Debug.RenderMesh3DBounds;
+                bool renderBounds =
+                    Engine.EditorPreferences.Debug.RenderMesh3DBounds ||
+                    Engine.EditorPreferences.Debug.VisualizeTransparencyModeOverlay ||
+                    Engine.EditorPreferences.Debug.VisualizeTransparencyClassificationOverlay;
 
                 void Apply()
                 {

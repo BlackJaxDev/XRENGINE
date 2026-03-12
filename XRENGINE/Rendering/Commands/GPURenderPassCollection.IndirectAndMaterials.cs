@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using XREngine.Data;
+using XREngine.Data.Rendering;
 using XREngine.Data.Lists.Unsafe;
 using XREngine.Rendering;
 using XREngine.Rendering.Compute;
@@ -64,6 +65,7 @@ namespace XREngine.Rendering.Commands
                 resetStopwatch.Elapsed);
 
             Cull(scene, camera);
+            ClassifyTransparencyDomains(scene);
 
             // Phase 2: do not early-out based on CPU-visible counters.
             // The default submission path uses GPU-written count buffers; a 0 count naturally results in no draws.
@@ -352,6 +354,53 @@ namespace XREngine.Rendering.Commands
             UpdateVisibleCountersFromBuffer();
 
             return ReadGpuBatchRanges();
+        }
+
+        private void ClassifyTransparencyDomains(GPUScene scene)
+        {
+            if (_classifyTransparencyComputeShader is null ||
+                _transparencyDomainCountBuffer is null ||
+                _maskedVisibleIndexBuffer is null ||
+                _approximateTransparentVisibleIndexBuffer is null ||
+                _exactTransparentVisibleIndexBuffer is null ||
+                _culledCountBuffer is null ||
+                scene.AllLoadedTransparencyMetadataBuffer is null)
+            {
+                MaskedVisibleCommandCount = 0u;
+                ApproximateTransparentVisibleCommandCount = 0u;
+                ExactTransparentVisibleCommandCount = 0u;
+                Engine.Rendering.Stats.RecordGpuTransparencyDomainCounts(0, 0, 0, 0);
+                return;
+            }
+
+            WriteUints(_transparencyDomainCountBuffer, 0u, 0u, 0u, 0u);
+
+            _classifyTransparencyComputeShader.Uniform("MaxVisibleCommands", (int)CommandCapacity);
+            CulledSceneToRenderBuffer.BindTo(_classifyTransparencyComputeShader, GPUTransparencyBindings.ClassifyInputCommands);
+            _culledCountBuffer.BindTo(_classifyTransparencyComputeShader, GPUTransparencyBindings.ClassifyCulledCount);
+            scene.AllLoadedTransparencyMetadataBuffer.BindTo(_classifyTransparencyComputeShader, GPUTransparencyBindings.ClassifyMetadata);
+            _maskedVisibleIndexBuffer.BindTo(_classifyTransparencyComputeShader, GPUTransparencyBindings.ClassifyMaskedVisibleIndices);
+            _approximateTransparentVisibleIndexBuffer.BindTo(_classifyTransparencyComputeShader, GPUTransparencyBindings.ClassifyApproximateVisibleIndices);
+            _exactTransparentVisibleIndexBuffer.BindTo(_classifyTransparencyComputeShader, GPUTransparencyBindings.ClassifyExactVisibleIndices);
+            _transparencyDomainCountBuffer.BindTo(_classifyTransparencyComputeShader, GPUTransparencyBindings.ClassifyDomainCounts);
+
+            uint dispatchCommands = IsCpuReadbackCountDisabledForPass()
+                ? CommandCapacity
+                : Math.Max(VisibleCommandCount, 1u);
+            uint groups = Math.Max(1, XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(dispatchCommands, 1u)).Item1);
+            _classifyTransparencyComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage);
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+
+            uint opaqueOrOtherCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.OpaqueOrOther);
+            MaskedVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.Masked);
+            ApproximateTransparentVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.TransparentApproximate);
+            ExactTransparentVisibleCommandCount = ReadUIntAt(_transparencyDomainCountBuffer, (uint)EGpuTransparencyDomain.TransparentExact);
+
+            Engine.Rendering.Stats.RecordGpuTransparencyDomainCounts(
+                opaqueOrOtherCount,
+                MaskedVisibleCommandCount,
+                ApproximateTransparentVisibleCommandCount,
+                ExactTransparentVisibleCommandCount);
         }
 
         private void DispatchBuildKeys()
@@ -1129,6 +1178,9 @@ namespace XREngine.Rendering.Commands
                          $"Draws={stats.Drawn} RejFrustum={stats.FrustumRejected} RejDist={stats.DistanceRejected} " +
                          $"CpuFallbackEvents={cpuFallbackEvents} CpuRecovered={cpuFallbackRecovered}");
 
+                Debug.Out($"{FormatDebugPrefix("Stats")} [Transparency] Masked={MaskedVisibleCommandCount} " +
+                         $"Approximate={ApproximateTransparentVisibleCommandCount} Exact={ExactTransparentVisibleCommandCount}");
+
                 EOcclusionCullingMode occlusionMode = ActiveOcclusionMode;
                 if (occlusionMode != EOcclusionCullingMode.Disabled)
                 {
@@ -1146,9 +1198,16 @@ namespace XREngine.Rendering.Commands
                 }
             }
 
+            LogTransparencyDomainStats(
+                (uint)Engine.Rendering.Stats.GpuTransparencyOpaqueOrOtherVisible,
+                (uint)Engine.Rendering.Stats.GpuTransparencyMaskedVisible,
+                (uint)Engine.Rendering.Stats.GpuTransparencyApproximateVisible,
+                (uint)Engine.Rendering.Stats.GpuTransparencyExactVisible);
+
             Dbg($"Stats in={stats.Input} culled={stats.Culled} draws={stats.Drawn} " +
                 $"frustumRej={stats.FrustumRejected} distRej={stats.DistanceRejected} " +
-                $"cpuFallbackEvents={cpuFallbackEvents} cpuRecovered={cpuFallbackRecovered}", "Stats");
+                $"cpuFallbackEvents={cpuFallbackEvents} cpuRecovered={cpuFallbackRecovered} " +
+                $"masked={MaskedVisibleCommandCount} approximate={ApproximateTransparentVisibleCommandCount} exact={ExactTransparentVisibleCommandCount}", "Stats");
         }
 
         private void LogMaterialBatches(GPUScene scene, List<HybridRenderingManager.DrawBatch> batches)
@@ -1230,6 +1289,10 @@ namespace XREngine.Rendering.Commands
             _instanceTransformBuffer?.Dispose();
             _instanceSourceIndexBuffer?.Dispose();
             _materialAggregationBuffer?.Dispose();
+            _maskedVisibleIndexBuffer?.Dispose();
+            _approximateTransparentVisibleIndexBuffer?.Dispose();
+            _exactTransparentVisibleIndexBuffer?.Dispose();
+            _transparencyDomainCountBuffer?.Dispose();
             _culledSceneToRenderBuffer?.Dispose();
             _occlusionCulledBuffer?.Dispose();
             _sourceHotCommandBuffer?.Dispose();
@@ -1250,6 +1313,7 @@ namespace XREngine.Rendering.Commands
             _cullingComputeShader?.Destroy();
             _buildKeysComputeShader?.Destroy();
             _buildGpuBatchesComputeShader?.Destroy();
+            _classifyTransparencyComputeShader?.Destroy();
             _indirectRenderTaskShader?.Destroy();
             _buildHotCommandsProgram?.Destroy();
             _indirectRenderer?.Destroy();

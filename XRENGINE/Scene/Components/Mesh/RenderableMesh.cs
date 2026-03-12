@@ -17,6 +17,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Scene.Transforms;
 using XREngine.Timers;
 
@@ -179,9 +180,31 @@ namespace XREngine.Components.Scene.Mesh
             if (Engine.Rendering.State.IsShadowPass)
                 return;
 
+            var debug = Engine.EditorPreferences.Debug;
+            bool showTransparencyModeOverlay = debug.VisualizeTransparencyModeOverlay;
+            bool showTransparencyClassificationOverlay = debug.VisualizeTransparencyClassificationOverlay;
+
+            XRMaterial? material = CurrentLODRenderer?.Material;
+            ColorF4 boundsColor = ColorF4.White;
+
+            if (showTransparencyModeOverlay && material is not null)
+                boundsColor = GetTransparencyModeColor(material.GetEffectiveTransparencyMode());
+            else if (showTransparencyClassificationOverlay && material is not null)
+                boundsColor = GetTransparencyClassificationColor(material.GetEffectiveTransparencyMode());
+
             var box = (RenderInfo as IOctreeItem)?.WorldCullingVolume;
             if (box is not null)
-                Engine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, ColorF4.White);
+            {
+                Engine.Rendering.Debug.RenderBox(box.Value.LocalHalfExtents, box.Value.LocalCenter, box.Value.Transform, false, boundsColor);
+
+                if (material is not null && (showTransparencyModeOverlay || showTransparencyClassificationOverlay))
+                {
+                    string label = showTransparencyModeOverlay
+                        ? material.GetEffectiveTransparencyMode().ToString()
+                        : GetTransparencyClassificationLabel(material.GetEffectiveTransparencyMode());
+                    Engine.Rendering.Debug.RenderText(box.Value.LocalCenter, label, boundsColor);
+                }
+            }
 
             if (RootBone is not null)
             {
@@ -191,6 +214,39 @@ namespace XREngine.Components.Scene.Mesh
                     Engine.Rendering.Debug.RenderText(rootTranslation, RootBone.Name, ColorF4.Black);
             }
         }
+
+        private static string GetTransparencyClassificationLabel(ETransparencyMode transparencyMode)
+            => transparencyMode switch
+            {
+                ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage => "Masked",
+                ETransparencyMode.Opaque => "Opaque",
+                _ => "Blended",
+            };
+
+        private static ColorF4 GetTransparencyClassificationColor(ETransparencyMode transparencyMode)
+            => transparencyMode switch
+            {
+                ETransparencyMode.Opaque => new ColorF4(0.6f, 0.6f, 0.6f, 1.0f),
+                ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage => new ColorF4(0.2f, 0.9f, 0.35f, 1.0f),
+                _ => new ColorF4(0.2f, 0.75f, 1.0f, 1.0f),
+            };
+
+        private static ColorF4 GetTransparencyModeColor(ETransparencyMode transparencyMode)
+            => transparencyMode switch
+            {
+                ETransparencyMode.Opaque => new ColorF4(0.6f, 0.6f, 0.6f, 1.0f),
+                ETransparencyMode.Masked => new ColorF4(0.2f, 0.9f, 0.35f, 1.0f),
+                ETransparencyMode.AlphaBlend => new ColorF4(0.2f, 0.75f, 1.0f, 1.0f),
+                ETransparencyMode.PremultipliedAlpha => new ColorF4(0.95f, 0.75f, 0.2f, 1.0f),
+                ETransparencyMode.Additive => new ColorF4(1.0f, 0.55f, 0.15f, 1.0f),
+                ETransparencyMode.WeightedBlendedOit => new ColorF4(0.8f, 0.3f, 1.0f, 1.0f),
+                ETransparencyMode.PerPixelLinkedList => new ColorF4(1.0f, 0.25f, 0.55f, 1.0f),
+                ETransparencyMode.DepthPeeling => new ColorF4(0.9f, 0.2f, 0.2f, 1.0f),
+                ETransparencyMode.Stochastic => new ColorF4(0.35f, 1.0f, 0.9f, 1.0f),
+                ETransparencyMode.AlphaToCoverage => new ColorF4(0.65f, 1.0f, 0.35f, 1.0f),
+                ETransparencyMode.TriangleSorted => new ColorF4(1.0f, 0.9f, 0.25f, 1.0f),
+                _ => ColorF4.White,
+            };
 
         private void SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
         {

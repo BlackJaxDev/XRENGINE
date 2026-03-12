@@ -9,7 +9,7 @@ XRENGINE composes behaviour through components that attach to `SceneNode`s. Each
 - Transform changes propagate through `OnTransformChanging` / `OnTransformChanged`. By default the component subscribes to `Transform.RenderMatrixChanged`, so renderable components receive render-thread matrices without polling. See [Transform Architecture](transforms.md) for device- and thread-safe matrix publication details.
 
 ## Tick Scheduling
-- All world objects, including components, inherit `RegisterTick` / `UnregisterTick` from `XRWorldObjectBase`. Components typically call `RegisterTick(ETickGroup, ETickOrder, Engine.TickList.DelTick)` inside `OnComponentActivated` and rely on the default `UnregisterTicksOnStop=true` to remove them when deactivated.
+- All world objects, including components, inherit `RegisterTick` / `UnregisterTick` from `XRWorldObjectBase`. Components typically call `RegisterTick(ETickGroup, ETickOrder, WorldTick)` inside `OnComponentActivated` and rely on the default `UnregisterTicksOnStop=true` to remove them when deactivated.
 - Tick groups reflect the engine’s frame stages: `Normal`, `Late`, `PrePhysics`, `DuringPhysics`, and `PostPhysics`. Each group is ordered by large integer bands (`Timers`, `Input`, `Animation`, `Logic`, `Scene`). Custom orders can be supplied by passing an explicit integer instead of `ETickOrder`.
 - `VerifyInterfacesOnStart` automatically binds `IRenderable.RenderedObjects` to the active world when a component becomes active; `VerifyInterfacesOnStop` clears those bindings on shutdown.
 

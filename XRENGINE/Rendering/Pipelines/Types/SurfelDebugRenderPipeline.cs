@@ -134,6 +134,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
             { (int)EDefaultRenderPass.OpaqueDeferred, _nearToFarSorter },
             { (int)EDefaultRenderPass.DeferredDecals, _farToNearSorter },
             { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
+            { (int)EDefaultRenderPass.MaskedForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
             { (int)EDefaultRenderPass.OnTopForward, null },
             { (int)EDefaultRenderPass.PostRender, null },
@@ -187,6 +188,8 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
                 if (enableComputePasses)
                     c.Add<VPRC_ForwardPlusLightCullingPass>();
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GpuRenderDispatch);
+                c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GpuRenderDispatch);
 
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
@@ -261,6 +264,8 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
                 if (enableComputePasses)
                     c.Add<VPRC_ForwardPlusLightCullingPass>();
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GpuRenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GpuRenderDispatch);
+                c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GpuRenderDispatch);
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GpuRenderDispatch);

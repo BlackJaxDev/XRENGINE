@@ -124,7 +124,6 @@ public sealed class StreamVariantInfo
             });
         }
 
-        // Sort highest bandwidth first
         variants.Sort((a, b) => b.Bandwidth.CompareTo(a.Bandwidth));
         return variants;
     }
@@ -152,8 +151,13 @@ public sealed class StreamVariantInfo
         start += fullKey.Length;
         int end = line.IndexOfAny([',', ' ', '\t'], start);
         string value = end >= 0 ? line[start..end] : line[start..];
-        return double.TryParse(value, System.Globalization.NumberStyles.Float,
-            System.Globalization.CultureInfo.InvariantCulture, out double result) ? result : 0;
+        return double.TryParse(
+            value,
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out double result)
+            ? result
+            : 0;
     }
 
     private static string ParseQuotedAttribute(string line, string key)
@@ -183,9 +187,11 @@ public sealed class StreamVariantInfo
         if (xIndex < 0)
             return (0, 0);
 
-        if (int.TryParse(value[..xIndex], out int w) &&
-            int.TryParse(value[(xIndex + 1)..], out int h))
-            return (w, h);
+        if (int.TryParse(value[..xIndex], out int width) &&
+            int.TryParse(value[(xIndex + 1)..], out int height))
+        {
+            return (width, height);
+        }
 
         return (0, 0);
     }

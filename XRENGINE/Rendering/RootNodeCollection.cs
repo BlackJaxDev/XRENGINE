@@ -39,7 +39,17 @@ namespace XREngine.Rendering
                 if (node is null)
                     return;
 
-                _rootNodes.Remove(node);
+                if (!_rootNodes.Remove(node))
+                    return;
+
+                if (_world.IsPlaySessionActive)
+                {
+                    if (node.IsActiveSelf)
+                        node.OnDeactivated();
+                    if (node.HasBegunPlay)
+                        node.OnEndPlay();
+                }
+
                 UncacheComponents(node);
 
                 if (node.Transform?.Parent is null && ReferenceEquals(node.World, _world))
@@ -55,6 +65,14 @@ namespace XREngine.Rendering
 
                 _rootNodes.Add(node);
                 CacheComponents(node);
+
+                if (_world.IsPlaySessionActive)
+                {
+                    if (!node.HasBegunPlay)
+                        node.OnBeginPlay();
+                    if (node.IsActiveSelf)
+                        node.OnActivated();
+                }
             }
 
             private void CacheComponents(SceneNode node)

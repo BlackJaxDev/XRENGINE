@@ -63,8 +63,40 @@ public static class ShaderHelper
     /// Supports Forward+ lighting with specular intensity modulation and alpha cutoff.
     /// Texture layout: Texture0=Albedo, Texture1=Normal, Texture2=Specular, Texture3=AlphaMask.
     /// </summary>
+    public static XRShader LitTextureNormalSpecFragForward()
+        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalSpecForward.fs"));
+
+    /// <summary>
+    /// Lit textured forward shader with normal map (Texture1) and alpha mask (Texture2).
+    /// Supports Forward+ lighting with alpha cutoff.
+    /// Texture layout: Texture0=Albedo, Texture1=Normal, Texture2=AlphaMask.
+    /// </summary>
+    public static XRShader LitTextureNormalAlphaFragForward()
+        => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalAlphaForward.fs"));
+
+    /// <summary>
+    /// Lit textured forward shader with normal map (Texture1), specular map (Texture2), and alpha mask (Texture3).
+    /// Supports Forward+ lighting with specular intensity modulation and alpha cutoff.
+    /// Texture layout: Texture0=Albedo, Texture1=Normal, Texture2=Specular, Texture3=AlphaMask.
+    /// </summary>
     public static XRShader LitTextureNormalSpecAlphaFragForward()
         => LoadEngineShader(Path.Combine("Common", "LitTexturedNormalSpecAlphaForward.fs"));
+
+    /// <summary>
+    /// Lit textured forward shader with specular map (Texture1).
+    /// Supports Forward+ lighting with specular intensity modulation.
+    /// Texture layout: Texture0=Albedo, Texture1=Specular.
+    /// </summary>
+    public static XRShader LitTextureSpecFragForward()
+        => LoadEngineShader(Path.Combine("Common", "LitTexturedSpecForward.fs"));
+
+    /// <summary>
+    /// Lit textured forward shader with alpha mask (Texture1).
+    /// Supports Forward+ lighting with alpha cutoff.
+    /// Texture layout: Texture0=Albedo, Texture1=AlphaMask.
+    /// </summary>
+    public static XRShader LitTextureAlphaFragForward()
+        => LoadEngineShader(Path.Combine("Common", "LitTexturedAlphaForward.fs"));
 
     /// <summary>
     /// Lit textured forward shader with specular map (Texture1) and alpha mask (Texture2).

@@ -6,6 +6,21 @@ using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Models;
 
+public enum EDiffuseAlphaMode
+{
+    Auto,
+    Opaque,
+    Masked,
+    Blended,
+}
+
+public enum EOpacityMapMode
+{
+    Auto,
+    Masked,
+    Blended,
+}
+
 public sealed class ModelImportOptions : IXR3rdPartyImportOptions
 {
     /// <summary>
@@ -118,6 +133,16 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     /// If true, treat the source file as Z-up (common in some DCCs).
     /// </summary>
     public bool ZUp { get; set; } = false;
+
+    /// <summary>
+    /// Controls how diffuse/base-color alpha should be interpreted during import.
+    /// </summary>
+    public EDiffuseAlphaMode DiffuseAlphaMode { get; set; } = EDiffuseAlphaMode.Auto;
+
+    /// <summary>
+    /// Controls how explicit opacity maps should be interpreted during import.
+    /// </summary>
+    public EOpacityMapMode OpacityMapMode { get; set; } = EOpacityMapMode.Auto;
 
     /// <summary>
     /// Enables Assimp's multithreading option.

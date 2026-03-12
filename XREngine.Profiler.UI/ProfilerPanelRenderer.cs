@@ -420,6 +420,18 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             ImGui.Text($"  Recovered Commands: {stats.GpuCpuFallbackRecoveredCommands:N0}");
         }
 
+        if (stats.GpuTransparencyMaskedVisible > 0 ||
+            stats.GpuTransparencyApproximateVisible > 0 ||
+            stats.GpuTransparencyExactVisible > 0)
+        {
+            ImGui.Separator();
+            ImGui.TextColored(new Vector4(0.2f, 0.8f, 1.0f, 1.0f), "Transparency Domains:");
+            ImGui.Text($"  Opaque/Other: {stats.GpuTransparencyOpaqueOrOtherVisible:N0}");
+            ImGui.Text($"  Masked: {stats.GpuTransparencyMaskedVisible:N0}");
+            ImGui.Text($"  Approximate: {stats.GpuTransparencyApproximateVisible:N0}");
+            ImGui.Text($"  Exact: {stats.GpuTransparencyExactVisible:N0}");
+        }
+
         ImGui.Separator();
         ImGui.Text("Vulkan Bind/Cache Churn:");
         ImGui.Text($"  Pipeline Binds: {stats.VulkanPipelineBinds:N0} (skipped {stats.VulkanPipelineBindSkips:N0})");

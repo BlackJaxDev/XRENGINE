@@ -40,7 +40,7 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
         {
             string directUrl = await ResolveYouTubeDirectUrlWithYtDlpAsync(trimmed, cancellationToken).ConfigureAwait(false);
             var (resolvedUrl, variants) = await SelectGenericPlaylistIfNeededAsync(directUrl, cancellationToken).ConfigureAwait(false);
-            Debug.Out($"Stream resolver: YouTube URL resolved via yt-dlp to: '{resolvedUrl}'");
+            Trace.WriteLine($"Stream resolver: YouTube URL resolved via yt-dlp to: '{resolvedUrl}'");
             return new ResolvedStream
             {
                 Url = resolvedUrl,
@@ -54,7 +54,7 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
         if (sourceKind == TwitchSourceKind.None)
         {
             var (resolvedUrl, variants) = await SelectGenericPlaylistIfNeededAsync(trimmed, cancellationToken).ConfigureAwait(false);
-            Debug.Out($"Stream resolver: non-Twitch URL resolved to: '{resolvedUrl}'");
+            Trace.WriteLine($"Stream resolver: non-Twitch URL resolved to: '{resolvedUrl}'");
             return new ResolvedStream
             {
                 Url = resolvedUrl,
@@ -65,7 +65,7 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
         }
 
         string target = sourceKind == TwitchSourceKind.Vod ? $"VOD '{vodId}'" : $"channel '{channel}'";
-        Debug.Out($"Stream resolver: Twitch {sourceKind} detected — {target}");
+        Trace.WriteLine($"Stream resolver: Twitch {sourceKind} detected - {target}");
 
         if (sourceKind == TwitchSourceKind.LiveChannel && string.IsNullOrWhiteSpace(channel))
             throw new InvalidOperationException("Twitch channel resolution produced an empty channel name.");
@@ -75,13 +75,13 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
 
         int retryCount = 0;
         (string token, string signature) = await RequestPlaybackTokenWithRetryAsync(sourceKind, channel, vodId, cancellationToken, retries => retryCount += retries).ConfigureAwait(false);
-        Debug.Out($"Stream resolver: Twitch token acquired (sig={signature[..Math.Min(8, signature.Length)]}...)");
+        Trace.WriteLine($"Stream resolver: Twitch token acquired (sig={signature[..Math.Min(8, signature.Length)]}...)");
 
         string masterPlaylistUrl = sourceKind == TwitchSourceKind.Vod
             ? BuildVodMasterPlaylistUrl(vodId!, token, signature)
             : BuildLiveMasterPlaylistUrl(channel!, token, signature);
         var (selectedUrl, twitchVariants) = await SelectBestPlaylistWithRetryAsync(masterPlaylistUrl, cancellationToken, retries => retryCount += retries).ConfigureAwait(false);
-        Debug.Out($"Stream resolver: Twitch variant selected: '{selectedUrl}'");
+        Trace.WriteLine($"Stream resolver: Twitch variant selected: '{selectedUrl}'");
 
         return new ResolvedStream
         {
@@ -441,11 +441,10 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
                 if (variants.Count > 0)
                 {
                     string selected = variants[0].Url;
-                    Debug.Out($"Stream resolver: generic master playlist -> selected variant '{selected}'");
+                    Trace.WriteLine($"Stream resolver: generic master playlist -> selected variant '{selected}'");
                     return (selected, variants);
                 }
 
-                // No STREAM-INF found — this is already a media playlist.
                 return (source, []);
             }
             catch when (attempt < maxAttempts)
@@ -454,7 +453,7 @@ internal sealed class TwitchHlsStreamResolver : IHlsStreamResolver
             }
         }
 
-        Debug.Out($"Stream resolver: generic HLS variant selection failed, using original URL '{source}'");
+        Trace.TraceWarning($"Stream resolver: generic HLS variant selection failed, using original URL '{source}'");
         return (source, []);
     }
 

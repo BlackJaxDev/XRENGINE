@@ -625,7 +625,13 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
 
         var material = new XRMaterial(vertShader, fragShader)
         {
-            RenderPass = (int)EDefaultRenderPass.TransparentForward
+            RenderPass = (int)EDefaultRenderPass.TransparentForward,
+            TransparencyMode = BlendMode switch
+            {
+                EParticleBlendMode.Additive => Rendering.Models.Materials.ETransparencyMode.Additive,
+                EParticleBlendMode.Premultiplied => Rendering.Models.Materials.ETransparencyMode.PremultipliedAlpha,
+                _ => Rendering.Models.Materials.ETransparencyMode.AlphaBlend,
+            }
         };
 
         // Set blend mode based on property

@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics.CodeAnalysis;
 
@@ -75,10 +73,12 @@ public sealed class RenderPipelinePostProcessSchema(
     IReadOnlyList<PostProcessCategoryDescriptor> categories)
 {
     public static RenderPipelinePostProcessSchema Empty { get; } = new(
-        new Dictionary<string, PostProcessStageDescriptor>(StringComparer.Ordinal),
+        new ReadOnlyDictionary<string, PostProcessStageDescriptor>(new Dictionary<string, PostProcessStageDescriptor>(StringComparer.Ordinal)),
         Array.Empty<PostProcessCategoryDescriptor>());
 
-    public IReadOnlyDictionary<string, PostProcessStageDescriptor> StagesByKey { get; } = stages ?? new Dictionary<string, PostProcessStageDescriptor>(StringComparer.Ordinal);
+    public IReadOnlyDictionary<string, PostProcessStageDescriptor> StagesByKey { get; } =
+        stages ?? new ReadOnlyDictionary<string, PostProcessStageDescriptor>(new Dictionary<string, PostProcessStageDescriptor>(StringComparer.Ordinal));
+
     public IReadOnlyList<PostProcessCategoryDescriptor> Categories { get; } = categories ?? Array.Empty<PostProcessCategoryDescriptor>();
 
     public bool TryGetStage(string key, out PostProcessStageDescriptor? descriptor)
