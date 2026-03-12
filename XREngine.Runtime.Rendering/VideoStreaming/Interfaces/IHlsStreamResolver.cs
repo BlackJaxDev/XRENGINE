@@ -17,7 +17,7 @@ public sealed class ResolvedStream
 
     /// <summary>
     /// All quality variants parsed from the master playlist, ordered highest
-    /// bandwidth first.  Empty when the source is already a media playlist.
+    /// bandwidth first. Empty when the source is already a media playlist.
     /// </summary>
     public IReadOnlyList<StreamVariantInfo> AvailableQualities { get; init; } = [];
 }

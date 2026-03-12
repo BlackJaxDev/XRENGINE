@@ -720,9 +720,15 @@ namespace XREngine.Rendering.Commands
 
             _allLoadedCommandsBuffer?.Destroy();
             _allLoadedCommandsBuffer = MakeCommandsInputBuffer();
+
+            _allLoadedTransparencyMetadataBuffer?.Destroy();
+            _allLoadedTransparencyMetadataBuffer = MakeTransparencyMetadataBuffer();
             
             _updatingCommandsBuffer?.Destroy();
             _updatingCommandsBuffer = MakeCommandsInputBuffer();
+
+            _updatingTransparencyMetadataBuffer?.Destroy();
+            _updatingTransparencyMetadataBuffer = MakeTransparencyMetadataBuffer();
         }
 
         /// <summary>
@@ -734,8 +740,12 @@ namespace XREngine.Rendering.Commands
             _meshDataBuffer = null;
             _allLoadedCommandsBuffer?.Destroy();
             _allLoadedCommandsBuffer = null;
+            _allLoadedTransparencyMetadataBuffer?.Destroy();
+            _allLoadedTransparencyMetadataBuffer = null;
             _updatingCommandsBuffer?.Destroy();
             _updatingCommandsBuffer = null;
+            _updatingTransparencyMetadataBuffer?.Destroy();
+            _updatingTransparencyMetadataBuffer = null;
 
             _atlasPositions?.Destroy();
             _atlasPositions = null;
@@ -844,6 +854,35 @@ namespace XREngine.Rendering.Commands
                         }
                     }
                 }
+
+                if (_updatingTransparencyMetadataBuffer is not null && _allLoadedTransparencyMetadataBuffer is not null)
+                {
+                    if (_allLoadedTransparencyMetadataBuffer.ElementCount < _updatingTransparencyMetadataBuffer.ElementCount)
+                        _allLoadedTransparencyMetadataBuffer.Resize(_updatingTransparencyMetadataBuffer.ElementCount);
+
+                    if (_updatingCommandCount > 0)
+                    {
+                        uint elementCount = _updatingCommandCount.ClampMax(_updatingTransparencyMetadataBuffer.ElementCount);
+                        uint elementSize = _updatingTransparencyMetadataBuffer.ElementSize;
+                        if (elementSize == 0)
+                            elementSize = TransparencyMetadataUIntCount * sizeof(uint);
+
+                        uint byteCount = elementCount * elementSize;
+
+                        if (_updatingTransparencyMetadataBuffer.TryGetAddress(out var srcMeta) &&
+                            _allLoadedTransparencyMetadataBuffer.TryGetAddress(out var dstMeta))
+                        {
+                            Memory.Move(dstMeta, srcMeta, byteCount);
+                            _allLoadedTransparencyMetadataBuffer.PushSubData(0, byteCount);
+                        }
+                        else
+                        {
+                            var metadata = _updatingTransparencyMetadataBuffer.GetDataArrayRawAtIndex<GPUTransparencyMetadata>(0, (int)elementCount);
+                            _allLoadedTransparencyMetadataBuffer.SetDataArrayRawAtIndex(0, metadata);
+                            _allLoadedTransparencyMetadataBuffer.PushSubData(0, byteCount);
+                        }
+                    }
+                }
                 
                 // Update the render count to match the updating count
                 TotalCommandCount = _updatingCommandCount;
@@ -877,6 +916,24 @@ namespace XREngine.Rendering.Commands
                 Usage = EBufferUsage.DynamicCopy,
                 DisposeOnPush = false,
                 Resizable = true
+            };
+            return buffer;
+        }
+
+        private static XRDataBuffer MakeTransparencyMetadataBuffer()
+        {
+            var buffer = new XRDataBuffer(
+                "RenderTransparencyMetadataBuffer",
+                EBufferTarget.ShaderStorageBuffer,
+                MinCommandCount,
+                EComponentType.UInt,
+                TransparencyMetadataUIntCount,
+                false,
+                true)
+            {
+                Usage = EBufferUsage.DynamicCopy,
+                DisposeOnPush = false,
+                Resizable = true,
             };
             return buffer;
         }
@@ -925,6 +982,9 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Index for overflow marker in the visible count buffer.</summary>
         public const uint VisibleCountOverflowIndex = 2;
+
+        /// <summary>Number of uint components per transparency metadata entry.</summary>
+        public const uint TransparencyMetadataUIntCount = 4;
 
         /// <summary>Minimum capacity for mesh data entries buffer.</summary>
         private const uint MinMeshDataEntries = 16;
@@ -982,20 +1042,28 @@ namespace XREngine.Rendering.Commands
         /// <summary>Render buffer - read by the render thread. Contains stable command data.</summary>
         private XRDataBuffer? _allLoadedCommandsBuffer;
 
+        /// <summary>Render buffer - read by the render thread. Contains stable per-command transparency metadata.</summary>
+        private XRDataBuffer? _allLoadedTransparencyMetadataBuffer;
+
         /// <summary>Updating buffer - written by Add/Remove operations. Swapped to render buffer.</summary>
         private XRDataBuffer? _updatingCommandsBuffer;
+
+        /// <summary>Updating buffer - written by Add/Remove operations. Swapped to render buffer.</summary>
+        private XRDataBuffer? _updatingTransparencyMetadataBuffer;
 
         /// <summary>
         /// Gets the render command buffer containing all commands for this scene.
         /// This buffer is read by the render thread and updated via <see cref="SwapCommandBuffers"/>.
         /// </summary>
         public XRDataBuffer AllLoadedCommandsBuffer => _allLoadedCommandsBuffer ??= MakeCommandsInputBuffer();
+        public XRDataBuffer AllLoadedTransparencyMetadataBuffer => _allLoadedTransparencyMetadataBuffer ??= MakeTransparencyMetadataBuffer();
         
         /// <summary>
         /// Gets the updating command buffer being written to by Add/Remove operations.
         /// Swapped with AllLoadedCommandsBuffer via <see cref="SwapCommandBuffers"/>.
         /// </summary>
         private XRDataBuffer UpdatingCommandsBuffer => _updatingCommandsBuffer ??= MakeCommandsInputBuffer();
+        private XRDataBuffer UpdatingTransparencyMetadataBuffer => _updatingTransparencyMetadataBuffer ??= MakeTransparencyMetadataBuffer();
 
         /// <summary>Collection of meshlets for meshlet-based rendering.</summary>
         private readonly MeshletCollection _meshlets = new();
@@ -1182,6 +1250,7 @@ namespace XREngine.Rendering.Commands
                         // Preserve the source command index so post-cull stages can map back to CPU-side data.
                         commandValue.Reserved1 = index;
                         UpdatingCommandsBuffer.SetDataRawAtIndex(index, commandValue);
+                        UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(m));
 
                         if (IsGpuSceneLoggingEnabled())
                         {
@@ -1589,8 +1658,10 @@ namespace XREngine.Rendering.Commands
             if (targetIndex < lastIndex)
             {
                 GPUIndirectRenderCommand lastCommand = UpdatingCommandsBuffer.GetDataRawAtIndex<GPUIndirectRenderCommand>(lastIndex);
+                GPUTransparencyMetadata lastMetadata = UpdatingTransparencyMetadataBuffer.GetDataRawAtIndex<GPUTransparencyMetadata>(lastIndex);
                 lastCommand.Reserved1 = targetIndex;
                 UpdatingCommandsBuffer.SetDataRawAtIndex(targetIndex, lastCommand);
+                UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(targetIndex, lastMetadata);
 
                 if (_commandIndexLookup.TryGetValue(lastIndex, out var movedCommand))
                 {
@@ -1633,9 +1704,13 @@ namespace XREngine.Rendering.Commands
 
             SceneLog($"Resizing updating command buffer from {currentCapacity} to {nextPowerOfTwo}.");
             UpdatingCommandsBuffer.Resize(nextPowerOfTwo);
+            UpdatingTransparencyMetadataBuffer.Resize(nextPowerOfTwo);
             uint newCapacity = UpdatingCommandsBuffer.ElementCount;
             if (newCapacity > currentCapacity)
+            {
                 ZeroUpdatingCommandRange(currentCapacity, newCapacity - currentCapacity);
+                ZeroUpdatingTransparencyMetadataRange(currentCapacity, newCapacity - currentCapacity);
+            }
         }
 
         private void ZeroUpdatingCommandRange(uint startIndex, uint count)
@@ -1660,6 +1735,25 @@ namespace XREngine.Rendering.Commands
                 SceneLog($"Zeroed updating command buffer range [{startIndex}, {end}) ({byteCount} bytes)");
         }
 
+        private void ZeroUpdatingTransparencyMetadataRange(uint startIndex, uint count)
+        {
+            if (count == 0)
+                return;
+
+            var blank = default(GPUTransparencyMetadata);
+            uint end = startIndex + count;
+            for (uint i = startIndex; i < end; ++i)
+                UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(i, blank);
+
+            uint elementSize = UpdatingTransparencyMetadataBuffer.ElementSize;
+            if (elementSize == 0)
+                elementSize = TransparencyMetadataUIntCount * sizeof(uint);
+
+            uint byteOffset = startIndex * elementSize;
+            uint byteCount = count * elementSize;
+            UpdatingTransparencyMetadataBuffer.PushSubData((int)byteOffset, byteCount);
+        }
+
         //TODO: Optimize to avoid frequent resizes (eg, remove and add right after each other at the boundary)
         private void VerifyCommandBufferSize(uint requiredSize)
         {
@@ -1670,9 +1764,13 @@ namespace XREngine.Rendering.Commands
 
             SceneLog($"Resizing command buffer from {currentCapacity} to {nextPowerOfTwo}.");
             AllLoadedCommandsBuffer.Resize(nextPowerOfTwo);
+            AllLoadedTransparencyMetadataBuffer.Resize(nextPowerOfTwo);
             uint newCapacity = AllLoadedCommandsBuffer.ElementCount;
             if (newCapacity > currentCapacity)
+            {
                 ZeroCommandRange(currentCapacity, newCapacity - currentCapacity);
+                ZeroTransparencyMetadataRange(currentCapacity, newCapacity - currentCapacity);
+            }
         }
 
         private void ZeroCommandRange(uint startIndex, uint count)
@@ -1695,6 +1793,25 @@ namespace XREngine.Rendering.Commands
 
             if (IsGpuSceneLoggingEnabled())
                 SceneLog($"Zeroed command buffer range [{startIndex}, {end}) ({byteCount} bytes)");
+        }
+
+        private void ZeroTransparencyMetadataRange(uint startIndex, uint count)
+        {
+            if (count == 0)
+                return;
+
+            var blank = default(GPUTransparencyMetadata);
+            uint end = startIndex + count;
+            for (uint i = startIndex; i < end; ++i)
+                AllLoadedTransparencyMetadataBuffer.SetDataRawAtIndex(i, blank);
+
+            uint elementSize = AllLoadedTransparencyMetadataBuffer.ElementSize;
+            if (elementSize == 0)
+                elementSize = TransparencyMetadataUIntCount * sizeof(uint);
+
+            uint byteOffset = startIndex * elementSize;
+            uint byteCount = count * elementSize;
+            AllLoadedTransparencyMetadataBuffer.PushSubData((int)byteOffset, byteCount);
         }
 
         #endregion
@@ -1746,6 +1863,8 @@ namespace XREngine.Rendering.Commands
             uint flags = 0;
             if (renderInfo is RenderInfo3D info3d && command is RenderCommandMesh3D)
             {
+                if (material.IsTransparentLike())
+                    flags |= (uint)GPUIndirectRenderFlags.Transparent;
                 if (info3d.CastsShadows)
                     flags |= (uint)GPUIndirectRenderFlags.CastShadow;
                 if (info3d.ReceivesShadows)
@@ -1877,6 +1996,8 @@ namespace XREngine.Rendering.Commands
                     uint flags = 0;
                     if (renderInfo is RenderInfo3D info3d)
                     {
+                        if (material.IsTransparentLike())
+                            flags |= (uint)GPUIndirectRenderFlags.Transparent;
                         if (info3d.CastsShadows)
                             flags |= (uint)GPUIndirectRenderFlags.CastShadow;
                         if (info3d.ReceivesShadows)
@@ -1885,6 +2006,7 @@ namespace XREngine.Rendering.Commands
                         updated.LayerMask = 1u << info3d.Layer;
                     }
                     updated.Flags = flags;
+                    UpdatingTransparencyMetadataBuffer.SetDataRawAtIndex(index, GPUTransparencyMetadata.FromMaterial(material));
 
                     if (existing.MeshID != newMeshID)
                     {

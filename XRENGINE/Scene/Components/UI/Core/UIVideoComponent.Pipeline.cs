@@ -70,7 +70,12 @@ namespace XREngine.Rendering.UI
 
             // Create the GPU upload helper for the active renderer.
             _gpuVideoActions?.Dispose();
-            _gpuVideoActions = VideoFrameGpuActionsFactory.Create(renderer);
+            _gpuVideoActions = RuntimeVideoStreamingServices.Current?.CreateVideoFrameGpuActions(renderer);
+            if (_gpuVideoActions is null)
+            {
+                Debug.UIWarning("Streaming playback requires a registered video GPU actions service.");
+                return;
+            }
 
             if (!HlsReferenceRuntime.EnsureStarted())
             {
@@ -149,7 +154,12 @@ namespace XREngine.Rendering.UI
             }
 
             _gpuVideoActions?.Dispose();
-            _gpuVideoActions = VideoFrameGpuActionsFactory.Create(renderer);
+            _gpuVideoActions = RuntimeVideoStreamingServices.Current?.CreateVideoFrameGpuActions(renderer);
+            if (_gpuVideoActions is null)
+            {
+                Debug.UIWarning("Streaming playback requires a registered video GPU actions service.");
+                return;
+            }
 
             if (!HlsReferenceRuntime.EnsureStarted())
             {

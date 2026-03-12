@@ -27,6 +27,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
             { (int)EDefaultRenderPass.PreRender, null },
             { (int)EDefaultRenderPass.Background, null },
             { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
+            { (int)EDefaultRenderPass.MaskedForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
             { (int)EDefaultRenderPass.OnTopForward, null },
             { (int)EDefaultRenderPass.PostRender, null }
@@ -76,6 +77,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.Background;
                 c.Add<VPRC_DepthWrite>().Allow = true;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.MaskedForward;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
@@ -110,6 +112,7 @@ public class UserInterfaceRenderPipeline : RenderPipeline
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.Background;
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.MaskedForward;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
                 c.Add<VPRC_RenderUIBatched>().RenderPass = (int)EDefaultRenderPass.OnTopForward;
             }

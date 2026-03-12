@@ -58,4 +58,21 @@ namespace XREngine.Rendering.Commands
         public static readonly uint SortKeyStride = (uint)Marshal.SizeOf<GPUSortKeyEntry>();
         public static readonly uint BatchRangeStride = (uint)Marshal.SizeOf<GPUBatchRangeEntry>();
     }
+
+    public static class GPUTransparencyBindings
+    {
+        public const int ClassifyInputCommands = 0;
+        public const int ClassifyCulledCount = 1;
+        public const int ClassifyMetadata = 2;
+        public const int ClassifyMaskedVisibleIndices = 3;
+        public const int ClassifyApproximateVisibleIndices = 4;
+        public const int ClassifyExactVisibleIndices = 5;
+        public const int ClassifyDomainCounts = 6;
+    }
+
+    public static class GPUTransparencyLayout
+    {
+        public const uint MetadataUIntCount = 4;
+        public const uint DomainCountBufferUIntCount = 4;
+    }
 }

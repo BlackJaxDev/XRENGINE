@@ -254,13 +254,10 @@ namespace XREngine.Components
             switch (propName)
             {
                 case nameof(World):
-                    // During snapshot restore/load, components can already be active-in-hierarchy
-                    // by the time their owning SceneNode assigns World. Re-bind render infos so
-                    // renderables are registered into the VisualScene.
-                    if (World is null)
-                        VerifyInterfacesOnStop();
-                    else if (IsActiveInHierarchy)
-                        VerifyInterfacesOnStart();
+                    RuntimeWorldObjectServices.Current?.OnRuntimeObjectWorldChanged(
+                        this,
+                        ((RuntimeWorldObjectBase)this).World,
+                        IsActiveInHierarchy);
                     break;
                 case nameof(IsActive):
                     if (IsActiveInHierarchy)
@@ -332,22 +329,14 @@ namespace XREngine.Components
         /// It will check for known engine interfaces set by the user and apply engine data to them.
         /// </summary>
         internal virtual void VerifyInterfacesOnStart()
-        {
-            if (this is IRenderable rend)
-                foreach (var obj in rend.RenderedObjects)
-                    obj.WorldInstance = World;
-        }
+            => RuntimeWorldObjectServices.Current?.OnRuntimeObjectActivated(this);
 
         /// <summary>
         /// This method is called when the component is set to inactive in the world.
         /// It will check for known engine interfaces set by the user and clear engine data from them.
         /// </summary>
         internal virtual void VerifyInterfacesOnStop()
-        {
-            if (this is IRenderable rend)
-                foreach (var obj in rend.RenderedObjects)
-                    obj.WorldInstance = null;
-        }
+            => RuntimeWorldObjectServices.Current?.OnRuntimeObjectDeactivated(this);
 
         protected override void OnDestroying()
         {
@@ -376,55 +365,5 @@ namespace XREngine.Components
         {
 
         }
-    }
-    public enum ETickGroup
-    {
-        /// <summary>
-        /// Variable update tick, occurs every frame.
-        /// </summary>
-        Normal,
-        /// <summary>
-        /// Variable update tick, occurs after the normal tick.
-        /// </summary>
-        Late,
-        /// <summary>
-        /// Fixed update tick, occurs before physics calculations.
-        /// </summary>
-        PrePhysics,
-        /// <summary>
-        /// Fixed update tick, occurs during physics calculations.
-        /// </summary>
-        DuringPhysics,
-        /// <summary>
-        /// Fixed update tick, occurs after physics calculations.
-        /// </summary>
-        PostPhysics,
-    }
-    /// <summary>
-    /// Cast to an int and add any value to change the order of ticks within a group.
-    /// These are default ticking groups for the default render pipeline, but you may use any values you wish that correspond to the render pipeline.
-    /// </summary>
-    public enum ETickOrder
-    {
-        /// <summary>
-        /// Timing events
-        /// </summary>
-        Timers = 0,
-        /// <summary>
-        /// Input consumption events
-        /// </summary>
-        Input = 200000,
-        /// <summary>
-        /// Animation evaluation events
-        /// </summary>
-        Animation = 400000,
-        /// <summary>
-        /// Gameplay logic events
-        /// </summary>
-        Logic = 600000,
-        /// <summary>
-        /// Scene hierarchy events
-        /// </summary>
-        Scene = 800000,
     }
 }

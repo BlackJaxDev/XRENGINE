@@ -13,6 +13,9 @@ namespace XREngine.Scene
     {
         #region Transform Management
 
+        private bool _parentChangeWasActiveInHierarchy;
+        private bool _parentChangeHadBegunPlay;
+
         /// <summary>
         /// Disconnects the current transform from this scene node.
         /// </summary>
@@ -26,6 +29,8 @@ namespace XREngine.Scene
 
             if (IsActiveInHierarchy)
                 DeactivateTransform();
+            if (HasBegunPlay)
+                EndPlayTransform();
             _transform.PropertyChanged -= TransformPropertyChanged;
             _transform.PropertyChanging -= TransformPropertyChanging;
             _transform.SceneNode = null;
@@ -48,6 +53,8 @@ namespace XREngine.Scene
             _transform.World = World;
             _transform.PropertyChanged += TransformPropertyChanged;
             _transform.PropertyChanging += TransformPropertyChanging;
+            if (HasBegunPlay)
+                BeginPlayTransform();
             if (IsActiveInHierarchy)
                 ActivateTransform();
         }
@@ -91,7 +98,11 @@ namespace XREngine.Scene
         /// <remarks>
         /// Override point for subclasses to react to parent changes before they occur.
         /// </remarks>
-        private void OnParentChanging() { }
+        private void OnParentChanging()
+        {
+            _parentChangeWasActiveInHierarchy = IsActiveInHierarchy;
+            _parentChangeHadBegunPlay = HasBegunPlay;
+        }
 
         /// <summary>
         /// Called after the parent of this node has changed.
@@ -101,11 +112,31 @@ namespace XREngine.Scene
         /// </remarks>
         private void OnParentChanged()
         {
-            World = Parent?.World;
-            if (IsActiveInHierarchy)
-                ActivateTransform();
-            else
-                DeactivateTransform();
+            bool wasActiveInHierarchy = _parentChangeWasActiveInHierarchy;
+            bool hadBegunPlay = _parentChangeHadBegunPlay;
+
+            SceneNode? newParent = Parent;
+            var newWorld = newParent?.World;
+            bool shouldHaveBegunPlay = newParent?.HasBegunPlay
+                ?? ((IRuntimeWorldContext?)newWorld)?.IsPlaySessionActive
+                ?? false;
+            bool shouldBeActiveInHierarchy = _isActiveSelf
+                && newWorld is not null
+                && (newParent is null || newParent.IsActiveInHierarchy);
+
+            if (wasActiveInHierarchy && !shouldBeActiveInHierarchy)
+                OnDeactivated();
+
+            if (hadBegunPlay && !shouldHaveBegunPlay)
+                OnEndPlay();
+
+            World = newWorld;
+
+            if (!hadBegunPlay && shouldHaveBegunPlay)
+                OnBeginPlay();
+
+            if (!wasActiveInHierarchy && shouldBeActiveInHierarchy)
+                OnActivated();
         }
 
         /// <summary>

@@ -190,7 +190,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                 if (!opened)
                 {
                     CleanupUnsafe();
-                    Debug.LogWarning($"FFmpeg failed to open any streams for URL: {url}");
+                    LogWarning($"FFmpeg failed to open any streams for URL: {url}");
                     return;
                 }
 
@@ -202,7 +202,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                 }
 
                 _running = true;
-                Debug.Out($"FFmpeg stream decoder opened: url='{url}', video={_videoStreamIndex}, audio={_audioStreamIndex}");
+                LogInfo($"FFmpeg stream decoder opened: url='{url}', video={_videoStreamIndex}, audio={_audioStreamIndex}");
 
                 _decodeThread = new Thread(DecodeLoop)
                 {
@@ -268,7 +268,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         }
         catch (Exception ex)
         {
-            Debug.LogException(ex, "FFmpeg decode loop");
+            LogException(ex, "FFmpeg decode loop");
             if (_running && !_disposed)
                 OnError?.Invoke($"Decode loop exception: {ex.Message}");
         }
@@ -665,7 +665,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             // av_find_input_format("hls"). Auto-detection works correctly
             // with this FFmpeg build.
             AVFormatContext* pFmt = _formatContext;
-            Debug.Out($"Streaming FFmpeg: avformat_open_input url='{url}' hls={hls}");
+            LogInfo($"Streaming FFmpeg: avformat_open_input url='{url}' hls={hls}");
 
             int result;
             try
@@ -690,7 +690,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
                 return false;
             }
 
-            Debug.Out("Streaming FFmpeg: avformat_open_input succeeded.");
+            LogInfo("Streaming FFmpeg: avformat_open_input succeeded.");
         }
         finally
         {
@@ -698,7 +698,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         }
 
         // ── Analyze stream info ──
-        Debug.Out("Streaming FFmpeg: avformat_find_stream_info...");
+        LogInfo("Streaming FFmpeg: avformat_find_stream_info...");
         if (ffmpeg.avformat_find_stream_info(_formatContext, null) < 0)
         {
             OnError?.Invoke("Failed to find stream info.");
@@ -709,7 +709,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             ? System.Runtime.InteropServices.Marshal.PtrToStringAnsi((nint)_formatContext->iformat->name)
             : null;
         long durationUs = _formatContext->duration;
-        Debug.Out($"Streaming FFmpeg: format='{fmtName}', nb_streams={_formatContext->nb_streams}, duration={durationUs}us");
+        LogInfo($"Streaming FFmpeg: format='{fmtName}', nb_streams={_formatContext->nb_streams}, duration={durationUs}us");
 
         // ── Select best video + audio streams ──
         // Try FFmpeg's heuristic first, then fall back to first-discovered.
@@ -728,7 +728,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             }
         }
 
-        Debug.Out($"Streaming FFmpeg: videoStream={_videoStreamIndex}, audioStream={_audioStreamIndex}");
+        LogInfo($"Streaming FFmpeg: videoStream={_videoStreamIndex}, audioStream={_audioStreamIndex}");
 
         if (_videoStreamIndex < 0 && _audioStreamIndex < 0)
         {
@@ -797,7 +797,7 @@ internal sealed class FFmpegStreamDecoder : IDisposable
         if (detectedFps is > 0)
         {
             OnVideoFrameRateDetected?.Invoke(detectedFps.Value);
-            Debug.Out($"Streaming FFmpeg: detected video fps={detectedFps.Value:F3}");
+            LogInfo($"Streaming FFmpeg: detected video fps={detectedFps.Value:F3}");
 
             long frameTicks = (long)Math.Round(TimeSpan.TicksPerSecond / detectedFps.Value);
             _videoFrameDurationTicks = Math.Clamp(frameTicks,
@@ -989,8 +989,8 @@ internal sealed class FFmpegStreamDecoder : IDisposable
 
         if (_videoMissingPtsStreak == 1 || _videoMissingPtsStreak % 300 == 0)
         {
-            Debug.Out($"[AV Video] Synthesizing PTS for frame(s): streak={_videoMissingPtsStreak}, " +
-                      $"stepMs={step / (double)TimeSpan.TicksPerMillisecond:F2}");
+            LogInfo($"[AV Video] Synthesizing PTS for frame(s): streak={_videoMissingPtsStreak}, " +
+                    $"stepMs={step / (double)TimeSpan.TicksPerMillisecond:F2}");
         }
 
         _lastVideoPtsTicks = _syntheticVideoPtsTicks;
@@ -1026,5 +1026,17 @@ internal sealed class FFmpegStreamDecoder : IDisposable
             ffmpeg.av_strerror(errorCode, ptr, (ulong)buf.Length);
             return new string((sbyte*)ptr).Trim('\0');
         }
+    }
+
+    private static void LogInfo(string message)
+        => Trace.WriteLine(message);
+
+    private static void LogWarning(string message)
+        => Trace.TraceWarning(message);
+
+    private static void LogException(Exception ex, string context)
+    {
+        Trace.TraceError($"{context}: {ex.Message}");
+        Trace.WriteLine(ex.ToString());
     }
 }

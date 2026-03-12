@@ -65,7 +65,7 @@ namespace XREngine.Timers
             OwningComponent.UnregisterTick(_tickGroup, _tickOrder, _tickAction);
         }
 
-        private Engine.TickList.DelTick? _tickAction;
+        private WorldTick? _tickAction;
         private ETickGroup _tickGroup;
         private int _tickOrder;
 

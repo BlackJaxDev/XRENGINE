@@ -13,6 +13,8 @@ namespace XREngine.Rendering
     [XRAssetInspector("XREngine.Editor.AssetEditors.XRMaterialInspector")]
     public class XRMaterial : XRMaterialBase
     {
+        private int _opaqueRenderPass = (int)EDefaultRenderPass.OpaqueForward;
+
         [Browsable(false)]
         [YamlIgnore]
         public IReadOnlyList<XRShader> FragmentShaders => _fragmentShaders;
@@ -108,6 +110,34 @@ namespace XREngine.Rendering
             set => SetField(ref _billboardMode, value);
         }
 
+        private ETransparencyMode _transparencyMode = ETransparencyMode.Opaque;
+        public ETransparencyMode TransparencyMode
+        {
+            get => _transparencyMode;
+            set => SetField(ref _transparencyMode, value);
+        }
+
+        private float _alphaCutoff = 0.5f;
+        public float AlphaCutoff
+        {
+            get => _alphaCutoff;
+            set => SetField(ref _alphaCutoff, value);
+        }
+
+        private int _transparentSortPriority;
+        public int TransparentSortPriority
+        {
+            get => _transparentSortPriority;
+            set => SetField(ref _transparentSortPriority, value);
+        }
+
+        private ETransparencyMode? _transparentTechniqueOverride;
+        public ETransparencyMode? TransparentTechniqueOverride
+        {
+            get => _transparentTechniqueOverride;
+            set => SetField(ref _transparentTechniqueOverride, value);
+        }
+
         /// <summary>
         /// Returns the currently rendering pipeline's invalid material.
         /// Returns null if the current rendering pipeline is not set or does not have an invalid material.
@@ -133,8 +163,27 @@ namespace XREngine.Rendering
                 case nameof(Shaders):
                     PostShadersSet();
                     break;
+                case nameof(RenderPass):
+                    if (!IsManagedTransparencyRenderPass(RenderPass))
+                        _opaqueRenderPass = RenderPass;
+                    break;
+                case nameof(TransparencyMode):
+                    ApplyTransparencyState();
+                    break;
+                case nameof(TransparentTechniqueOverride):
+                    ApplyTransparencyState();
+                    break;
+                case nameof(AlphaCutoff):
+                    SyncAlphaCutoffParameter();
+                    break;
             }
+
+            base.OnPropertyChanged(propName, prev, field);
         }
+
+        private static bool IsManagedTransparencyRenderPass(int renderPass)
+            => renderPass == (int)EDefaultRenderPass.MaskedForward ||
+               renderPass == (int)EDefaultRenderPass.TransparentForward;
 
         private void PreShadersSet()
         {
@@ -221,6 +270,120 @@ namespace XREngine.Rendering
                 : null;
 
             SyncParametersToShaderUniforms();
+            SyncAlphaCutoffParameter();
+        }
+
+        public ETransparencyMode GetEffectiveTransparencyMode()
+            => TransparentTechniqueOverride ?? TransparencyMode;
+
+        public ETransparencyMode InferTransparencyMode()
+        {
+            var blend = RenderOptions?.BlendModeAllDrawBuffers;
+            bool blendEnabled = blend?.Enabled == ERenderParamUsage.Enabled;
+            bool hasAlphaCutoff = Parameter<ShaderFloat>("AlphaCutoff") is not null;
+            bool depthWrites = RenderOptions?.DepthTest?.UpdateDepth ?? true;
+
+            if (blendEnabled)
+            {
+                if (blend!.RgbDstFactor == EBlendingFactor.One && blend.RgbSrcFactor == EBlendingFactor.SrcAlpha)
+                    return ETransparencyMode.Additive;
+
+                if (blend.RgbSrcFactor == EBlendingFactor.One && blend.RgbDstFactor == EBlendingFactor.OneMinusSrcAlpha)
+                    return ETransparencyMode.PremultipliedAlpha;
+
+                return ETransparencyMode.AlphaBlend;
+            }
+
+            if (hasAlphaCutoff && depthWrites)
+                return ETransparencyMode.Masked;
+
+            return ETransparencyMode.Opaque;
+        }
+
+        public bool IsTransparentLike(ETransparencyMode? mode = null)
+        {
+            ETransparencyMode value = mode ?? GetEffectiveTransparencyMode();
+            return value is not ETransparencyMode.Opaque and not ETransparencyMode.Masked and not ETransparencyMode.AlphaToCoverage;
+        }
+
+        private void ApplyTransparencyState()
+        {
+            ETransparencyMode effectiveMode = GetEffectiveTransparencyMode();
+            RenderOptions ??= new RenderingParameters();
+            RenderOptions.DepthTest ??= new DepthTest();
+
+            if (effectiveMode is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
+                EnsureAlphaCutoffParameter();
+
+            switch (effectiveMode)
+            {
+                case ETransparencyMode.Opaque:
+                    RenderOptions.BlendModeAllDrawBuffers = BlendMode.Disabled();
+                    RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
+                    RenderOptions.DepthTest.UpdateDepth = true;
+                    if (IsManagedTransparencyRenderPass(RenderPass))
+                        RenderPass = _opaqueRenderPass;
+                    break;
+                case ETransparencyMode.Masked:
+                case ETransparencyMode.AlphaToCoverage:
+                    RenderOptions.BlendModeAllDrawBuffers = BlendMode.Disabled();
+                    RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
+                    RenderOptions.DepthTest.UpdateDepth = true;
+                    RenderPass = (int)EDefaultRenderPass.MaskedForward;
+                    break;
+                case ETransparencyMode.Additive:
+                    RenderOptions.BlendModeAllDrawBuffers = new BlendMode()
+                    {
+                        Enabled = ERenderParamUsage.Enabled,
+                        RgbSrcFactor = EBlendingFactor.SrcAlpha,
+                        RgbDstFactor = EBlendingFactor.One,
+                        AlphaSrcFactor = EBlendingFactor.SrcAlpha,
+                        AlphaDstFactor = EBlendingFactor.One,
+                    };
+                    RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
+                    RenderOptions.DepthTest.UpdateDepth = false;
+                    RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                    break;
+                case ETransparencyMode.PremultipliedAlpha:
+                    RenderOptions.BlendModeAllDrawBuffers = new BlendMode()
+                    {
+                        Enabled = ERenderParamUsage.Enabled,
+                        RgbSrcFactor = EBlendingFactor.One,
+                        RgbDstFactor = EBlendingFactor.OneMinusSrcAlpha,
+                        AlphaSrcFactor = EBlendingFactor.One,
+                        AlphaDstFactor = EBlendingFactor.OneMinusSrcAlpha,
+                    };
+                    RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
+                    RenderOptions.DepthTest.UpdateDepth = false;
+                    RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                    break;
+                default:
+                    RenderOptions.BlendModeAllDrawBuffers = BlendMode.EnabledTransparent();
+                    RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
+                    RenderOptions.DepthTest.UpdateDepth = false;
+                    RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                    break;
+            }
+
+            SyncAlphaCutoffParameter();
+        }
+
+        private void EnsureAlphaCutoffParameter()
+        {
+            if (Parameter<ShaderFloat>("AlphaCutoff") is not null)
+                return;
+
+            ShaderVar[] parameters = Parameters ?? [];
+            Array.Resize(ref parameters, parameters.Length + 1);
+            parameters[^1] = new ShaderFloat(AlphaCutoff, "AlphaCutoff");
+            Parameters = parameters;
+        }
+
+        private void SyncAlphaCutoffParameter()
+        {
+            var alphaCutoff = Parameter<ShaderFloat>("AlphaCutoff");
+            if (alphaCutoff is not null)
+                alphaCutoff.SetValue(AlphaCutoff);
         }
 
         /// <summary>
@@ -603,8 +766,11 @@ result.a = fb.a * (1.0f - luminance(transparent.rgb) * transparency) + mat.a * (
         /// <param name="transparentRenderPass"></param>
         public void EnableTransparency(int transparentRenderPass = (int)EDefaultRenderPass.TransparentForward)
         {
+            if (RenderPass != transparentRenderPass && !IsManagedTransparencyRenderPass(RenderPass))
+                _opaqueRenderPass = RenderPass;
+
+            TransparencyMode = ETransparencyMode.AlphaBlend;
             RenderPass = transparentRenderPass;
-            RenderOptions.BlendModeAllDrawBuffers = BlendMode.EnabledTransparent();
         }
     }
 }

@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Rendering.VideoStreaming.Interfaces;
-using XREngine.Timers;
 
 namespace XREngine.Rendering.VideoStreaming;
 
@@ -121,7 +121,7 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
             OnAudioFrame = OnDecodedAudioFrame,
             OnVideoSizeChanged = (w, h) => VideoSizeChanged?.Invoke(w, h),
             OnVideoFrameRateDetected = OnVideoFrameRateDetected,
-            OnError = err => Debug.UIWarning($"Stream decoder error: {err}")
+            OnError = err => Trace.TraceWarning($"Stream decoder error: {err}")
         };
     }
 
@@ -544,8 +544,8 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Returns the current engine elapsed time converted to 100-nanosecond ticks.
+    /// Returns the current process monotonic time converted to 100-nanosecond ticks.
     /// </summary>
     private static long GetNowTicks()
-        => EngineTimer.StopwatchTicksToTimeSpanTicks(Engine.ElapsedTicks);
+        => (long)(Stopwatch.GetTimestamp() * ((double)TimeSpan.TicksPerSecond / Stopwatch.Frequency));
 }

@@ -1,4 +1,3 @@
-using System.Linq;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.VideoStreaming.Interfaces;
 using XREngine.Rendering.Vulkan;
@@ -20,25 +19,7 @@ namespace XREngine.Rendering.VideoStreaming;
 /// </summary>
 internal sealed class VulkanVideoFrameGpuActions : IVideoFrameGpuActions
 {
-    public bool TryPrepareOutput(XRMaterialFrameBuffer frameBuffer, XRMaterial? material, out uint framebufferId, out string? error)
-    {
-        error = null;
-        framebufferId = 0;
-
-        frameBuffer.Material = material;
-        frameBuffer.Generate();
-
-        if (frameBuffer.APIWrappers.OfType<VulkanRenderer.VkFrameBuffer>().FirstOrDefault() is not VulkanRenderer.VkFrameBuffer vkFbo)
-        {
-            error = "Unable to locate Vulkan framebuffer wrapper for streaming video output.";
-            return false;
-        }
-
-        vkFbo.Generate();
-        return true;
-    }
-
-    public bool UploadVideoFrame(DecodedVideoFrame frame, XRTexture2D? targetTexture, out string? error)
+    public bool UploadVideoFrame(DecodedVideoFrame frame, object? targetTexture, out string? error)
     {
         error = null;
 
@@ -48,9 +29,9 @@ internal sealed class VulkanVideoFrameGpuActions : IVideoFrameGpuActions
             return false;
         }
 
-        if (targetTexture is null)
+        if (targetTexture is not XRTexture2D xrTexture)
         {
-            error = "No target texture is available for Vulkan upload.";
+            error = "Vulkan video upload requires an XRTexture2D target.";
             return false;
         }
 
@@ -71,7 +52,7 @@ internal sealed class VulkanVideoFrameGpuActions : IVideoFrameGpuActions
         uint h = (uint)frame.Height;
 
         // Obtain the Vulkan texture wrapper.
-        var vkTex = renderer.GenericToAPI<VulkanRenderer.VkTexture2D>(targetTexture);
+        var vkTex = renderer.GenericToAPI<VulkanRenderer.VkTexture2D>(xrTexture);
         if (vkTex is null)
         {
             error = "Failed to obtain VkTexture2D wrapper.";
@@ -86,12 +67,6 @@ internal sealed class VulkanVideoFrameGpuActions : IVideoFrameGpuActions
         }
 
         return true;
-    }
-
-    public void Present(IMediaStreamSession session, uint framebufferId)
-    {
-        session.SetTargetFramebuffer(framebufferId);
-        session.Present();
     }
 
     public void Dispose()

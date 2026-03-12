@@ -1064,6 +1064,8 @@ namespace XREngine
         private bool _previewTraces;
         private bool _renderCullingVolumes;
         private bool _visualizeTransformId;
+        private bool _visualizeTransparencyModeOverlay;
+        private bool _visualizeTransparencyClassificationOverlay;
         private bool _renderLightProbeTetrahedra = true;
         private float _debugTextMaxLifespan;
         private bool _enableThreadAllocationTracking;
@@ -1184,6 +1186,24 @@ namespace XREngine
         {
             get => _visualizeTransformId;
             set => SetField(ref _visualizeTransformId, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Transparency Mode Overlay")]
+        [Description("If true, renders a color-coded overlay showing each mesh's explicit transparency mode.")]
+        public bool VisualizeTransparencyModeOverlay
+        {
+            get => _visualizeTransparencyModeOverlay;
+            set => SetField(ref _visualizeTransparencyModeOverlay, value);
+        }
+
+        [Category("Debug")]
+        [DisplayName("Transparency Classification Overlay")]
+        [Description("If true, renders a masked-vs-blended classification overlay for visible meshes.")]
+        public bool VisualizeTransparencyClassificationOverlay
+        {
+            get => _visualizeTransparencyClassificationOverlay;
+            set => SetField(ref _visualizeTransparencyClassificationOverlay, value);
         }
 
         [Category("Debug")]
@@ -1415,6 +1435,8 @@ namespace XREngine
             PreviewTraces = source.PreviewTraces;
             RenderCullingVolumes = source.RenderCullingVolumes;
             VisualizeTransformId = source.VisualizeTransformId;
+            VisualizeTransparencyModeOverlay = source.VisualizeTransparencyModeOverlay;
+            VisualizeTransparencyClassificationOverlay = source.VisualizeTransparencyClassificationOverlay;
             RenderLightProbeTetrahedra = source.RenderLightProbeTetrahedra;
             DebugTextMaxLifespan = source.DebugTextMaxLifespan;
             EnableThreadAllocationTracking = source.EnableThreadAllocationTracking;
@@ -1461,6 +1483,10 @@ namespace XREngine
                 RenderCullingVolumes = culling.Value;
             if (overrides.VisualizeTransformIdOverride is { HasOverride: true } transformId)
                 VisualizeTransformId = transformId.Value;
+            if (overrides.VisualizeTransparencyModeOverlayOverride is { HasOverride: true } transparencyMode)
+                VisualizeTransparencyModeOverlay = transparencyMode.Value;
+            if (overrides.VisualizeTransparencyClassificationOverlayOverride is { HasOverride: true } transparencyClassification)
+                VisualizeTransparencyClassificationOverlay = transparencyClassification.Value;
             if (overrides.RenderLightProbeTetrahedraOverride is { HasOverride: true } tetra)
                 RenderLightProbeTetrahedra = tetra.Value;
             if (overrides.DebugTextMaxLifespanOverride is { HasOverride: true } lifespan)

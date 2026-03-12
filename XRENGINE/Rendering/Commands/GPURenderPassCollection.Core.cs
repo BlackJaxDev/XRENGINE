@@ -522,6 +522,27 @@ namespace XREngine.Rendering.Commands
             private set => SetField(ref _visibleInstanceCount, value);
         }
 
+        private uint _maskedVisibleCommandCount = 0;
+        public uint MaskedVisibleCommandCount
+        {
+            get => _maskedVisibleCommandCount;
+            private set => SetField(ref _maskedVisibleCommandCount, value);
+        }
+
+        private uint _approximateTransparentVisibleCommandCount = 0;
+        public uint ApproximateTransparentVisibleCommandCount
+        {
+            get => _approximateTransparentVisibleCommandCount;
+            private set => SetField(ref _approximateTransparentVisibleCommandCount, value);
+        }
+
+        private uint _exactTransparentVisibleCommandCount = 0;
+        public uint ExactTransparentVisibleCommandCount
+        {
+            get => _exactTransparentVisibleCommandCount;
+            private set => SetField(ref _exactTransparentVisibleCommandCount, value);
+        }
+
         // SoA double buffers & related
         private XRDataBuffer? _soaBoundingSpheresA;
         private XRDataBuffer? _soaMetadataA;
@@ -553,6 +574,10 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _instanceTransformBuffer;
         private XRDataBuffer? _instanceSourceIndexBuffer;
         private XRDataBuffer? _materialAggregationBuffer;
+        private XRDataBuffer? _maskedVisibleIndexBuffer;
+        private XRDataBuffer? _approximateTransparentVisibleIndexBuffer;
+        private XRDataBuffer? _exactTransparentVisibleIndexBuffer;
+        private XRDataBuffer? _transparencyDomainCountBuffer;
         private bool _gpuBatchingPreparedThisFrame;
         public bool EnableGpuDrivenBatching { get; set; } = true;
         public bool EnableGpuDrivenInstancing { get; set; } = true;
@@ -563,6 +588,7 @@ namespace XREngine.Rendering.Commands
         //public bool UseMaterialBatchKey { get; set; } = false;
 
         private XRDataBuffer? _materialIDsBuffer;
+        private XRRenderProgram? _classifyTransparencyComputeShader;
 
         private GPUMaterialTable? _materialTable;
         public XRDataBuffer? MaterialTableBuffer => _materialTable?.Buffer;
@@ -615,6 +641,10 @@ namespace XREngine.Rendering.Commands
         public XRDataBuffer? IndirectOverflowFlagBuffer => _indirectOverflowFlagBuffer;
         public XRDataBuffer? TruncationFlagBuffer => _truncationFlagBuffer;
         public XRDataBuffer? StatsBuffer => _statsBuffer;
+        public XRDataBuffer? MaskedVisibleIndexBuffer => _maskedVisibleIndexBuffer;
+        public XRDataBuffer? ApproximateTransparentVisibleIndexBuffer => _approximateTransparentVisibleIndexBuffer;
+        public XRDataBuffer? ExactTransparentVisibleIndexBuffer => _exactTransparentVisibleIndexBuffer;
+        public XRDataBuffer? TransparencyDomainCountBuffer => _transparencyDomainCountBuffer;
         public uint CommandCapacity => _lastMaxCommands == 0u ? GPUScene.MinCommandCount : _lastMaxCommands;
 
         // Returns the current scene material map (ID -> XRMaterial)

@@ -32,6 +32,7 @@ namespace XREngine.Components.Lights
                     c.Add<VPRC_DepthWrite>().Allow = true;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                    c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.MaskedForward;
                     c.Add<VPRC_RenderMeshesPass>().RenderPass = (int)EDefaultRenderPass.TransparentForward;
                 }
             }
@@ -47,14 +48,15 @@ namespace XREngine.Components.Lights
             // gizmo) commands to shadow pipeline collections.
             return new()
             {
-                { -1, null }, //PreRender
-                { 0, null },  //Background  – not rendered, but accepted to avoid warnings
-                { 1, null },  //OpaqueDeferredLit
-                { 2, null },  //DeferredDecals – not rendered, but accepted to avoid warnings
-                { 3, null },  //OpaqueForward
-                { 4, null },  //TransparentForward
-                { 5, null },  //OnTopForward – not rendered, but accepted to avoid warnings
-                { 6, null }   //PostRender
+                { (int)EDefaultRenderPass.PreRender, null },
+                { (int)EDefaultRenderPass.Background, null },
+                { (int)EDefaultRenderPass.OpaqueDeferred, null },
+                { (int)EDefaultRenderPass.DeferredDecals, null },
+                { (int)EDefaultRenderPass.OpaqueForward, null },
+                { (int)EDefaultRenderPass.MaskedForward, null },
+                { (int)EDefaultRenderPass.TransparentForward, null },
+                { (int)EDefaultRenderPass.OnTopForward, null },
+                { (int)EDefaultRenderPass.PostRender, null }
             };
         }
     }

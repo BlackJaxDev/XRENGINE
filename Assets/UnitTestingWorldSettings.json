@@ -2,7 +2,7 @@
   "$id": "1",
   "WorldKind": "Default",
 
-  "UpdateFPS": 120.0,
+  "UpdateFPS": 60.0,
   "RenderFPS": 0.0,
   "FixedFPS": 30.0,
   "TickGroupedItemsInParallel": true,
@@ -36,12 +36,12 @@
   "Mirror": false,
   "Spline": false,
 
-  "EditorType": "Native",
+  "EditorType": "IMGUI",
   "CameraUIDrawSpaceOnInit": "Screen",
   "TransformTool": false,
   "EnableProfilerLogging": true,
   "RiveUI": false,
-  "VideoStreaming": true,
+  "VideoStreaming": false,
   "VideoStreamingAudio": true,
   "VideoStreamingUrl": "https://www.twitch.tv/videos/2718537827",
   "UltralightWebView": false,
@@ -65,7 +65,7 @@
 
   "ModelsToImport": [
     {
-      "Enabled": false,
+      "Enabled": true,
       "Kind": "Animated",
       "Path": "misc\\Mitsuki.fbx",
       "ImportFlags": "Triangulate, FlipUVs",
@@ -78,7 +78,7 @@
       }
     },
     {
-      "Enabled": false,
+      "Enabled": true,
       "Kind": "Static",
       "Path": "Models\\Sponza2\\Sponza.obj",
       "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",

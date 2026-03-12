@@ -56,6 +56,9 @@ public class AssetPackerTests
     private static string ReadAssetUtf8(string archive, string assetPath)
         => Encoding.UTF8.GetString(AssetPacker.GetAsset(archive, assetPath));
 
+    private static string ReadArchiveReaderUtf8(string archive, string assetPath)
+        => Encoding.UTF8.GetString(AssetArchiveReader.GetAsset(archive, assetPath));
+
     // ═══════════════════ V4 Format Basics ═════════════════════════════════
 
     [Test]
@@ -122,6 +125,38 @@ public class AssetPackerTests
         WriteUtf8(Path.Combine(sourceDir, "a.txt"), "alpha-v3");
         var stale = AssetPacker.GetStalePaths(pak, sourceDir);
         stale.ShouldContain("a.txt");
+    }
+
+    [Test]
+    public void AssetArchiveReader_ReadsHashBucketArchives()
+    {
+        string src = MakeSourceDir("src-reader-buckets",
+            ("a.txt", "alpha"),
+            ("nested/b.txt", "bravo"));
+        string pak = ArchivePath("reader-buckets.pak");
+
+        AssetPacker.Pack(src, pak, TocLookupMode.HashBuckets);
+
+        AssetArchiveReader.GetAssetPaths(pak).OrderBy(x => x).ToArray()
+            .ShouldBe(new[] { "a.txt", "nested/b.txt" });
+        ReadArchiveReaderUtf8(pak, "a.txt").ShouldBe("alpha");
+        ReadArchiveReaderUtf8(pak, "nested/b.txt").ShouldBe("bravo");
+    }
+
+    [Test]
+    public void AssetArchiveReader_ReadsSortedArchives()
+    {
+        string src = MakeSourceDir("src-reader-sorted",
+            ("z.txt", "zulu"),
+            ("nested/a.txt", "alpha"));
+        string pak = ArchivePath("reader-sorted.pak");
+
+        AssetPacker.Pack(src, pak, TocLookupMode.SortedByHash);
+
+        AssetArchiveReader.GetAssetPaths(pak).OrderBy(x => x).ToArray()
+            .ShouldBe(new[] { "nested/a.txt", "z.txt" });
+        ReadArchiveReaderUtf8(pak, "z.txt").ShouldBe("zulu");
+        ReadArchiveReaderUtf8(pak, "nested/a.txt").ShouldBe("alpha");
     }
 
     // ═══════════════════ Codec Selection — LZ4 ════════════════════════════

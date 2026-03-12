@@ -47,7 +47,8 @@ public static class GpuSortPolicy
 
     private static bool IsOpaquePass(int renderPass)
         => renderPass == (int)EDefaultRenderPass.OpaqueDeferred ||
-           renderPass == (int)EDefaultRenderPass.OpaqueForward;
+           renderPass == (int)EDefaultRenderPass.OpaqueForward ||
+           renderPass == (int)EDefaultRenderPass.MaskedForward;
 
     private static bool IsTransparentPass(int renderPass)
         => renderPass == (int)EDefaultRenderPass.DeferredDecals ||

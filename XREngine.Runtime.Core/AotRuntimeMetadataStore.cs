@@ -124,7 +124,7 @@ public static class AotRuntimeMetadataStore
 
         try
         {
-            byte[] bytes = AssetPacker.GetAsset(configArchivePath, MetadataFileName);
+            byte[] bytes = AssetArchiveReader.GetAsset(configArchivePath, MetadataFileName);
             return MemoryPackSerializer.Deserialize<AotRuntimeMetadata>(bytes);
         }
         catch (FileNotFoundException)

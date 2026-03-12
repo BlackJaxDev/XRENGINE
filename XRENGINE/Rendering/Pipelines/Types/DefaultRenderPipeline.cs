@@ -106,6 +106,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             { (int)EDefaultRenderPass.OpaqueDeferred, _nearToFarSorter },
             { (int)EDefaultRenderPass.DeferredDecals, _farToNearSorter },
             { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
+            { (int)EDefaultRenderPass.MaskedForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
             { (int)EDefaultRenderPass.OnTopForward, null },
             { (int)EDefaultRenderPass.PostRender, null }
@@ -280,7 +281,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
         Chain(metadata, EDefaultRenderPass.OpaqueDeferred, EDefaultRenderPass.PreRender);
         Chain(metadata, EDefaultRenderPass.DeferredDecals, EDefaultRenderPass.OpaqueDeferred);
         Chain(metadata, EDefaultRenderPass.OpaqueForward, EDefaultRenderPass.Background);
-        Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.OpaqueForward);
+        Chain(metadata, EDefaultRenderPass.MaskedForward, EDefaultRenderPass.OpaqueForward);
+        Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.MaskedForward);
         Chain(metadata, EDefaultRenderPass.OnTopForward, EDefaultRenderPass.TransparentForward);
         Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.OnTopForward);
     }
@@ -307,6 +309,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 if (enableComputePasses)
                     c.Add<VPRC_ForwardPlusLightCullingPass>();
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GPURenderDispatch);
+                c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
                 c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
@@ -336,7 +340,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_VoxelConeTracingPass>().SetOptions(VoxelConeTracingVolumeTextureName,
                 [
                     (int)EDefaultRenderPass.OpaqueDeferred,
-                    (int)EDefaultRenderPass.OpaqueForward
+                    (int)EDefaultRenderPass.OpaqueForward,
+                    (int)EDefaultRenderPass.MaskedForward
                 ],
                 GPURenderDispatch,
                 true);
@@ -511,8 +516,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 if (enableComputePasses)
                     c.Add<VPRC_ForwardPlusLightCullingPass>();
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GPURenderDispatch);
 
                 //c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = false;
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
                 c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
 
@@ -567,6 +574,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
                         (int)EDefaultRenderPass.OpaqueDeferred,
                         (int)EDefaultRenderPass.DeferredDecals,
                         (int)EDefaultRenderPass.OpaqueForward,
+                        (int)EDefaultRenderPass.MaskedForward,
                         (int)EDefaultRenderPass.TransparentForward,
                     });
                 c.Add<VPRC_DepthWrite>().Allow = true;

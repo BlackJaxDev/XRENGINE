@@ -19,24 +19,6 @@ using static XREngine.Engine.Rendering;
 namespace XREngine.Scene.Transforms
 {
     /// <summary>
-    /// Specifies how parent assignment should be performed.
-    /// </summary>
-    public enum EParentAssignmentMode
-    {
-        /// <summary>
-        /// Performs the parent assignment immediately on the calling thread with locking.
-        /// Use this when you need the hierarchy to be updated synchronously and can tolerate blocking.
-        /// </summary>
-        Immediate,
-        
-        /// <summary>
-        /// Queues the parent assignment to be processed during PostUpdate.
-        /// This is the safest option for multi-threaded scenarios as it doesn't block the render thread.
-        /// </summary>
-        Deferred,
-    }
-
-    /// <summary>
     /// Represents the basis for transforming a scene node in the hierarchy.
     /// Inherit from this class to create custom transformation implementations, or use the Transform class for default functionality.
     /// This class is thread-safe.
@@ -135,7 +117,7 @@ namespace XREngine.Scene.Transforms
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogException(ex, "Deferred parent reassignment callback threw.");
+                        RuntimeTransformServices.Current?.LogException(ex, "Deferred parent reassignment callback threw.");
                     }
                 }
             }
@@ -689,7 +671,7 @@ namespace XREngine.Scene.Transforms
             RenderInfo = RenderInfo3D.New(this, new RenderCommandMethod3D((int)EDefaultRenderPass.OnTopForward, RenderDebug));
             RenderInfo.Layer = DefaultLayers.GizmosIndex;
             RenderedObjects = GetDebugRenderInfo();
-            DebugRender = Engine.EditorPreferences.Debug.RenderTransformDebugInfo;
+            DebugRender = RuntimeTransformServices.Current?.RenderTransformDebugInfo ?? false;
 
             SetParent(parent, false, EParentAssignmentMode.Immediate);
         }
@@ -1047,7 +1029,7 @@ namespace XREngine.Scene.Transforms
             OnRenderMatrixChanged();
 
             if (recalcAllChildRenderMatrices)
-                return RecalculateRenderMatrixHierarchy(Engine.Rendering.Settings.RecalcChildMatricesLoopType);
+                return RecalculateRenderMatrixHierarchy(RuntimeTransformServices.Current?.ChildRecalculationLoopType ?? ELoopType.Sequential);
             else
                 return Task.CompletedTask;
         }
@@ -1086,7 +1068,7 @@ namespace XREngine.Scene.Transforms
         protected void MarkWorldModified()
         {
             Volatile.Write(ref _worldChanged, true);
-            World?.AddDirtyTransform(this);
+            ((RuntimeWorldObjectBase)this).World?.AddDirtyRuntimeObject(this);
             HasChanged = true;
         }
 
@@ -1126,7 +1108,7 @@ namespace XREngine.Scene.Transforms
 
         protected virtual void OnWorldMatrixChanged(Matrix4x4 worldMatrix)
         {
-            World?.EnqueueRenderTransformChange(this, worldMatrix);
+            ((RuntimeWorldObjectBase)this).World?.EnqueueRuntimeWorldMatrixChange(this, worldMatrix);
             WorldMatrixChanged?.Invoke(this, worldMatrix);
         }
 
@@ -1152,7 +1134,7 @@ namespace XREngine.Scene.Transforms
         protected virtual void OnRenderMatrixChanged()
         {
             var handlers = RenderMatrixChanged;
-            Engine.Rendering.Stats.RecordRenderMatrixChange(handlers);
+            RuntimeTransformServices.Current?.RecordRenderMatrixChange(handlers);
             handlers?.Invoke(this, RenderMatrix);
         }
 
@@ -1382,25 +1364,23 @@ namespace XREngine.Scene.Transforms
 
         protected virtual void RenderDebug()
         {
-            if (Engine.Rendering.State.IsShadowPass)
+            IRuntimeTransformServices? transformServices = RuntimeTransformServices.Current;
+            if (transformServices is null || transformServices.IsShadowPass)
                 return;
 
-            var debug = Engine.EditorPreferences.Debug;
-            var theme = Engine.EditorPreferences.Theme;
-
-            if (debug.RenderTransformLines)
-                Engine.Rendering.Debug.RenderLine(
+            if (transformServices.RenderTransformLines)
+                transformServices.RenderLine(
                     Parent?.RenderTranslation ?? Vector3.Zero,
                     RenderTranslation,
-                    theme.TransformLineColor);
+                    transformServices.TransformLineColor);
 
-            if (debug.RenderTransformPoints)
-                Engine.Rendering.Debug.RenderPoint(
+            if (transformServices.RenderTransformPoints)
+                transformServices.RenderPoint(
                     RenderTranslation,
-                    theme.TransformPointColor);
+                    transformServices.TransformPointColor);
 
-            if (debug.RenderTransformCapsules && Capsule is not null)
-                Engine.Rendering.Debug.RenderCapsule(Capsule.Value, theme.TransformCapsuleColor);
+            if (transformServices.RenderTransformCapsules && Capsule is not null)
+                transformServices.RenderCapsule(Capsule.Value, transformServices.TransformCapsuleColor);
         }
 
         private Capsule MakeCapsule()
@@ -1417,7 +1397,7 @@ namespace XREngine.Scene.Transforms
         {
             var c = MakeCapsule();
 
-            bool axisAligned = Engine.Rendering.Settings.TransformCullingIsAxisAligned;
+            bool axisAligned = RuntimeTransformServices.Current?.TransformCullingIsAxisAligned ?? false;
             if (axisAligned)
             {
                 RenderInfo.LocalCullingVolume = c.GetAABB(true);

@@ -23,7 +23,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// Render passes that should contribute to the voxel volume.
         /// </summary>
         public IReadOnlyList<int>? RenderPasses { get; set; }
-            = [(int)EDefaultRenderPass.OpaqueDeferred, (int)EDefaultRenderPass.OpaqueForward];
+            = [(int)EDefaultRenderPass.OpaqueDeferred, (int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward];
 
         private bool _gpuDispatch = true;
         public bool GpuDispatch

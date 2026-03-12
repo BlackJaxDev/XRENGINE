@@ -24,6 +24,11 @@
         /// </summary>
         OpaqueForward,
         /// <summary>
+        /// Use for masked cutout content that should depth test and depth write like opaque geometry
+        /// while remaining separate from deferred and alpha-blended passes.
+        /// </summary>
+        MaskedForward,
+        /// <summary>
         /// Use for all objects that use alpha translucency
         /// </summary>
         TransparentForward,

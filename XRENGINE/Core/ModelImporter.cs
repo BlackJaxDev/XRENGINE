@@ -31,6 +31,22 @@ namespace XREngine
     /// </summary>
     public class ModelImporter : IDisposable
     {
+        private sealed class ImportOptionsScope(ModelImportOptions? previous) : IDisposable
+        {
+            private readonly ModelImportOptions? _previous = previous;
+
+            public void Dispose() => _currentImportOptions.Value = _previous;
+
+            public static ImportOptionsScope Push(ModelImportOptions? options)
+            {
+                ModelImportOptions? previous = _currentImportOptions.Value;
+                _currentImportOptions.Value = options;
+                return new ImportOptionsScope(previous);
+            }
+        }
+
+        private static readonly AsyncLocal<ModelImportOptions?> _currentImportOptions = new();
+
         public readonly record struct ModelImporterResult(
             SceneNode? RootNode,
             IReadOnlyCollection<XRMaterial> Materials,
@@ -39,6 +55,7 @@ namespace XREngine
         public delegate XRMaterial DelMakeMaterialAction(XRTexture[] textureList, List<TextureSlot> textures, string name);
 
         public DelMakeMaterialAction MakeMaterialAction { get; set; } = MakeMaterialDefault;
+        public ModelImportOptions? ImportOptions { get; set; }
 
         public ModelImporter(string path, Action? onCompleted, DelMaterialFactory? materialFactory)
         {
@@ -47,6 +64,12 @@ namespace XREngine
             _onCompleted = onCompleted;
             _materialFactory = materialFactory ?? MaterialFactory;
         }
+
+        private static bool HasTransparentBlendHint(List<TextureSlot> textures)
+            => textures.Any(x => (x.Flags & 0x2) != 0);
+
+        private static bool HasOpacityMask(List<TextureSlot> textures)
+            => textures.Any(x => x.TextureType == TextureType.Opacity);
 
         /// <summary>
         /// Schedules an import job on the engine's job system.
@@ -121,12 +144,73 @@ namespace XREngine
 
         private XRMaterial MakeMaterialInternal(XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
+            using var _ = ImportOptionsScope.Push(ImportOptions);
             return MakeMaterialAction(textureList, textures, name);
+        }
+
+        private static XRTexture? GetDiffuseTexture(XRTexture[] textureList, List<TextureSlot> textures)
+        {
+            int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
+            if (diffuseIndex < 0)
+                diffuseIndex = Array.FindIndex(textureList, t => t is not null);
+            if (diffuseIndex < 0 || diffuseIndex >= textureList.Length)
+                return null;
+            return textureList[diffuseIndex];
+        }
+
+        private static bool IsTransparentLike(ETransparencyMode mode)
+            => mode is not ETransparencyMode.Opaque and not ETransparencyMode.Masked and not ETransparencyMode.AlphaToCoverage;
+
+        public static ETransparencyMode ResolveTransparencyMode(XRTexture[] textureList, List<TextureSlot> textures)
+        {
+            ModelImportOptions? options = _currentImportOptions.Value;
+            bool hasTransparentBlendHint = HasTransparentBlendHint(textures);
+            bool hasOpacityMask = HasOpacityMask(textures);
+            bool hasDiffuseAlpha = hasTransparentBlendHint || (GetDiffuseTexture(textureList, textures)?.HasAlphaChannel ?? false);
+
+            if (hasOpacityMask)
+            {
+                return (options?.OpacityMapMode ?? EOpacityMapMode.Auto) switch
+                {
+                    EOpacityMapMode.Blended => ETransparencyMode.AlphaBlend,
+                    _ => ETransparencyMode.Masked,
+                };
+            }
+
+            if (hasDiffuseAlpha)
+            {
+                return (options?.DiffuseAlphaMode ?? EDiffuseAlphaMode.Auto) switch
+                {
+                    EDiffuseAlphaMode.Opaque => ETransparencyMode.Opaque,
+                    EDiffuseAlphaMode.Masked => ETransparencyMode.Masked,
+                    EDiffuseAlphaMode.Blended => ETransparencyMode.AlphaBlend,
+                    _ => hasTransparentBlendHint ? ETransparencyMode.AlphaBlend : ETransparencyMode.Opaque,
+                };
+            }
+
+            return ETransparencyMode.Opaque;
+        }
+
+        public static void ConfigureImportedTransparency(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures)
+        {
+            ETransparencyMode mode = ResolveTransparencyMode(textureList, textures);
+            bool needsAlphaCutoff = mode is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage;
+
+            if (needsAlphaCutoff && mat.Parameter<ShaderFloat>("AlphaCutoff") is null)
+            {
+                var parameters = mat.Parameters ?? [];
+                Array.Resize(ref parameters, parameters.Length + 1);
+                parameters[^1] = new ShaderFloat(mat.AlphaCutoff, "AlphaCutoff");
+                mat.Parameters = parameters;
+            }
+
+            mat.TransparencyMode = mode;
         }
 
         public static XRMaterial MakeMaterialDefault(XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
-            bool transp = textures.Any(x => (x.Flags & 0x2) != 0 || x.TextureType == TextureType.Opacity);
+            ETransparencyMode transparencyMode = ResolveTransparencyMode(textureList, textures);
+            bool transp = IsTransparentLike(transparencyMode);
             bool hasAnyTexture = textureList.Any(x => x is not null);
 
             int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
@@ -192,6 +276,8 @@ namespace XREngine
                 //LineWidth = 5.0f,
                 BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
             };
+
+            ConfigureImportedTransparency(mat, textureList, textures);
 
             return mat;
         }
@@ -562,7 +648,8 @@ namespace XREngine
                 Debug.Out($"[MakeMaterialDeferred]   Slot[{i}]: Type={slot.TextureType}, Path='{slot.FilePath}', Loaded={(tex != null ? tex.Name : "NULL")}");
             }
 
-            bool transp = textures.Any(x => (x.Flags & 0x2) != 0 || x.TextureType == TextureType.Opacity);
+            ETransparencyMode transparencyMode = ResolveTransparencyMode(textureList, textures);
+            bool transp = IsTransparentLike(transparencyMode);
             bool hasNormal = textures.Any(x => x.TextureType == TextureType.Normals || x.TextureType == TextureType.Height);
             bool hasAnyTexture = textureList.Length > 0;
 
@@ -647,6 +734,8 @@ namespace XREngine
                 },
                 BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
             };
+
+            ConfigureImportedTransparency(mat, textureList, textures);
         }
 
         public static XRMaterial MakeMaterialDeferred(XRTexture[] textureList, List<TextureSlot> textures, string name)
@@ -658,7 +747,7 @@ namespace XREngine
 
         public static void MakeMaterialForwardPlusTextured(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
-            bool transp = textures.Any(x => (x.Flags & 0x2) != 0 || x.TextureType == TextureType.Opacity);
+            ETransparencyMode transparencyMode = ResolveTransparencyMode(textureList, textures);
 
             int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
             if (diffuseIndex < 0)
@@ -678,14 +767,23 @@ namespace XREngine
             bool hasNormal = normal is not null;
             bool hasSpecular = specular is not null;
             bool hasAlphaMask = alphaMask is not null;
+            bool useTransparentBlend = IsTransparentLike(transparencyMode);
 
             // Force a deterministic texture layout for the shader based on available maps:
             // With normal: Texture0=Albedo, Texture1=Normal, Texture2=Specular, Texture3=AlphaMask
             // Without normal: Texture0=Albedo, Texture1=Specular, Texture2=AlphaMask
-            if (hasNormal && (hasSpecular || hasAlphaMask))
+            if (hasNormal && hasSpecular && hasAlphaMask)
                 mat.Textures = [diffuse, normal, specular, alphaMask];
-            else if (!hasNormal && (hasSpecular || hasAlphaMask))
+            else if (hasNormal && hasSpecular)
+                mat.Textures = [diffuse, normal, specular];
+            else if (hasNormal && hasAlphaMask)
+                mat.Textures = [diffuse, normal, alphaMask];
+            else if (!hasNormal && hasSpecular && hasAlphaMask)
                 mat.Textures = [diffuse, specular, alphaMask];
+            else if (!hasNormal && hasSpecular)
+                mat.Textures = [diffuse, specular];
+            else if (!hasNormal && hasAlphaMask)
+                mat.Textures = [diffuse, alphaMask];
             else if (hasNormal)
                 mat.Textures = [diffuse, normal];
             else
@@ -697,32 +795,46 @@ namespace XREngine
             {
                 // Select the appropriate shader based on available maps
                 XRShader shader;
-                if (hasNormal && (hasSpecular || hasAlphaMask))
+                if (hasNormal && hasSpecular && hasAlphaMask)
                     shader = ShaderHelper.LitTextureNormalSpecAlphaFragForward();
-                else if (!hasNormal && (hasSpecular || hasAlphaMask))
+                else if (hasNormal && hasSpecular)
+                    shader = ShaderHelper.LitTextureNormalSpecFragForward();
+                else if (hasNormal && hasAlphaMask)
+                    shader = ShaderHelper.LitTextureNormalAlphaFragForward();
+                else if (!hasNormal && hasSpecular && hasAlphaMask)
                     shader = ShaderHelper.LitTextureSpecAlphaFragForward();
+                else if (!hasNormal && hasSpecular)
+                    shader = ShaderHelper.LitTextureSpecFragForward();
+                else if (!hasNormal && hasAlphaMask)
+                    shader = ShaderHelper.LitTextureAlphaFragForward();
                 else if (hasNormal)
                     shader = ShaderHelper.LitTextureNormalFragForward();
                 else
                     shader = ShaderHelper.LitTextureFragForward();
 
                 mat.Shaders.Add(shader);
-                mat.Parameters =
-                [
-                    new ShaderFloat(1.0f, "MatSpecularIntensity"),
-                    new ShaderFloat(32.0f, "MatShininess"),
-                    new ShaderFloat(0.5f, "AlphaCutoff"), // Default alpha cutoff threshold
-                ];
-
-                if (transp || diffuse.HasAlphaChannel || hasAlphaMask)
+                if (hasAlphaMask)
                 {
-                    transp = true;
-                    mat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                    mat.Parameters =
+                    [
+                        new ShaderFloat(1.0f, "MatSpecularIntensity"),
+                        new ShaderFloat(32.0f, "MatShininess"),
+                        new ShaderFloat(0.5f, "AlphaCutoff"),
+                    ];
                 }
                 else
                 {
-                    mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+                    mat.Parameters =
+                    [
+                        new ShaderFloat(1.0f, "MatSpecularIntensity"),
+                        new ShaderFloat(32.0f, "MatShininess"),
+                    ];
                 }
+
+                if (useTransparentBlend)
+                    mat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                else
+                    mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
             }
             else
             {
@@ -743,13 +855,15 @@ namespace XREngine
                 CullMode = ECullMode.Back,
                 DepthTest = new DepthTest()
                 {
-                    UpdateDepth = true,
+                    UpdateDepth = !useTransparentBlend,
                     Enabled = ERenderParamUsage.Enabled,
                     Function = EComparison.Less,
                 },
-                BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
+                BlendModeAllDrawBuffers = useTransparentBlend ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
                 RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights,
             };
+
+            ConfigureImportedTransparency(mat, textureList, textures);
         }
 
         public static XRMaterial MakeMaterialForwardPlusTextured(XRTexture[] textureList, List<TextureSlot> textures, string name)
