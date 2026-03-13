@@ -52,13 +52,23 @@ namespace XREngine
             var events = CaptureNode(reader);
 
             // 1) Prefer explicit discriminator.
-            if (TryGetTypeDiscriminator(events, out string? typeName) && TryResolveType(typeName!, out Type? concreteType))
+            if (TryGetTypeDiscriminator(events, out string? typeName))
             {
-                if (!expectedType.IsAssignableFrom(concreteType))
-                    throw new YamlException($"Polymorphic YAML type '{typeName}' is not assignable to '{expectedType.FullName}'.");
+                if (TryResolveType(typeName!, out Type? concreteType))
+                {
+                    if (!expectedType.IsAssignableFrom(concreteType))
+                        throw new YamlException($"Polymorphic YAML type '{typeName}' is not assignable to '{expectedType.FullName}'.");
 
-                value = nestedObjectDeserializer(new ReplayParser(events), concreteType);
-                return true;
+                    value = nestedObjectDeserializer(new ReplayParser(events), concreteType);
+                    return true;
+                }
+
+                // __type was present but couldn't be resolved. Throw a clear error rather than
+                // silently returning false (which would leave the parser in a corrupt state since
+                // CaptureNode already consumed the mapping events).
+                throw new YamlException(
+                    $"Polymorphic YAML discriminator '__type: {typeName}' could not be resolved to a known CLR type " +
+                    $"(expected base type: '{expectedType.FullName}'). Ensure the type is loaded and the name is correct.");
             }
 
             // 2) Back-compat fallback for legacy assets that predate __type.

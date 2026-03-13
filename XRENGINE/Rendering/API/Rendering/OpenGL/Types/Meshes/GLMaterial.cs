@@ -115,7 +115,7 @@ namespace XREngine.Rendering.OpenGL
                     var area = Engine.Rendering.State.RenderArea;
                     program.Uniform(EEngineUniform.ScreenWidth.ToString(), (float)area.Width);
                     program.Uniform(EEngineUniform.ScreenHeight.ToString(), (float)area.Height);
-                    //program.Uniform(EEngineUniform.ScreenOrigin.ToString(), new Vector2(0.0f, 0.0f));
+                    program.Uniform(EEngineUniform.ScreenOrigin.ToString(), new Vector2(area.X, area.Y));
                 }
 
                 if (reqs.HasFlag(EUniformRequirements.MousePosition))

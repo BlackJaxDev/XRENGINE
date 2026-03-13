@@ -1,7 +1,7 @@
 #version 450
 
 #ifdef XRENGINE_DEPTH_NORMAL_PREPASS
-layout (location = 0) out vec3 Normal;
+layout (location = 0) out vec2 Normal;
 #else
 layout (location = 0) out vec4 OutColor;
 #endif
@@ -29,6 +29,7 @@ layout (location = 4) in vec2 FragUV0;
 #pragma snippet "ForwardLighting"
 #pragma snippet "AmbientOcclusionSampling"
 #pragma snippet "ParallaxMapping"
+#pragma snippet "NormalEncoding"
 
 void main()
 {
@@ -57,7 +58,7 @@ void main()
         uv = FragUV0;
 
 #ifdef XRENGINE_DEPTH_NORMAL_PREPASS
-    Normal = normalize(normal);
+    Normal = XRENGINE_EncodeNormal(normal);
 #else
     vec4 texColor = texture(Texture0, uv);
     float AmbientOcclusion = XRENGINE_SampleAmbientOcclusion();

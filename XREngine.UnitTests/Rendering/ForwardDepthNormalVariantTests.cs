@@ -37,9 +37,10 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
         bool success = ForwardDepthNormalVariantFactory.TryCreateFragmentVariantSource(source, out string variantSource);
 
         success.ShouldBeTrue();
-        variantSource.ShouldContain("layout (location = 0) out vec3 Normal;");
+        variantSource.ShouldContain("layout (location = 0) out vec2 Normal;");
+        variantSource.ShouldContain("#pragma snippet \"NormalEncoding\"");
         variantSource.ShouldContain("vec3 getNormalFromMap()");
-        variantSource.ShouldContain("Normal = normalize(normal);");
+        variantSource.ShouldContain("Normal = XRENGINE_EncodeNormal(normal);");
         variantSource.ShouldNotContain("XRENGINE_CalculateForwardLighting");
         variantSource.ShouldNotContain("#pragma snippet \"ForwardLighting\"");
         variantSource.ShouldNotContain("#pragma snippet \"AmbientOcclusionSampling\"");
@@ -56,7 +57,7 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
         variantSource.ShouldContain("float alphaMask = texture(Texture2, FragUV0).r;");
         variantSource.ShouldContain("if (alphaMask < AlphaCutoff)");
         variantSource.ShouldContain("discard;");
-        variantSource.ShouldContain("Normal = normalize(normal);");
+        variantSource.ShouldContain("Normal = XRENGINE_EncodeNormal(normal);");
     }
 
     [Test]
@@ -84,7 +85,7 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
         variant.ShouldNotBeNull();
         string variantText = variant.Source.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
         variantText.ShouldContain("#define XRENGINE_DEPTH_NORMAL_PREPASS");
-        variantText.ShouldContain("layout (location = 0) out vec3 Normal;");
+        variantText.ShouldContain("layout (location = 0) out vec2 Normal;");
     }
 
     [Test]

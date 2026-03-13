@@ -140,16 +140,35 @@ public static class AotRuntimeMetadataStore
             return direct;
 
         AotRuntimeMetadata? metadata = Metadata;
-        if (metadata is null)
-            return null;
+        if (metadata is not null)
+        {
+            string? assemblyQualifiedName = metadata.KnownTypeAssemblyQualifiedNames
+                .FirstOrDefault(x => string.Equals(x, typeName, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+                    || string.Equals(TypeNameOnly(x), typeName, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
 
-        string? assemblyQualifiedName = metadata.KnownTypeAssemblyQualifiedNames
-            .FirstOrDefault(x => string.Equals(x, typeName, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
-                || string.Equals(TypeNameOnly(x), typeName, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+            if (!string.IsNullOrWhiteSpace(assemblyQualifiedName))
+            {
+                var fromMetadata = Type.GetType(assemblyQualifiedName, throwOnError: false, ignoreCase: ignoreCase);
+                if (fromMetadata is not null)
+                    return fromMetadata;
+            }
+        }
 
-        return string.IsNullOrWhiteSpace(assemblyQualifiedName)
-            ? null
-            : Type.GetType(assemblyQualifiedName, throwOnError: false, ignoreCase: ignoreCase);
+        // Fallback: scan loaded assemblies by FullName.
+        // Type.GetType(string) only searches the calling assembly and System.Private.CoreLib
+        // when given a namespace-qualified name without assembly qualifier, so types from other
+        // engine assemblies (e.g., the main XREngine assembly) won't be found without this scan.
+        if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+        {
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                var found = assembly.GetType(typeName, throwOnError: false, ignoreCase: ignoreCase);
+                if (found is not null)
+                    return found;
+            }
+        }
+
+        return null;
     }
 
     private static string TypeNameOnly(string assemblyQualifiedName)

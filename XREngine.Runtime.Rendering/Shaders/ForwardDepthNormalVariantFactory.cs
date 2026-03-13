@@ -112,15 +112,16 @@ public static class ForwardDepthNormalVariantFactory
 
     private static string InsertNormalOutputDeclaration(string source)
     {
-        const string normalOutput = "layout (location = 0) out vec3 Normal;";
+        const string normalOutput = "layout (location = 0) out vec2 Normal;";
+        const string normalEncodingSnippet = "#pragma snippet \"NormalEncoding\"";
 
         int versionLineEnd = source.IndexOf('\n');
         if (versionLineEnd < 0)
-            return normalOutput + Environment.NewLine + Environment.NewLine + source.TrimStart();
+            return normalOutput + Environment.NewLine + normalEncodingSnippet + Environment.NewLine + Environment.NewLine + source.TrimStart();
 
         string header = source[..(versionLineEnd + 1)];
         string body = source[(versionLineEnd + 1)..].TrimStart('\r', '\n');
-        return header + Environment.NewLine + normalOutput + Environment.NewLine + Environment.NewLine + body;
+        return header + Environment.NewLine + normalOutput + Environment.NewLine + normalEncodingSnippet + Environment.NewLine + Environment.NewLine + body;
     }
 
     private static bool TryRewriteMainBody(string source, out string rewrittenSource)
@@ -180,7 +181,7 @@ public static class ForwardDepthNormalVariantFactory
             builder.AppendLine();
         }
 
-        builder.Append("    Normal = normalize(")
+        builder.Append("    Normal = XRENGINE_EncodeNormal(")
             .Append(normalExpression.Trim())
             .AppendLine(");");
 

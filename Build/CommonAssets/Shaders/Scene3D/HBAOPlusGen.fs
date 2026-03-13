@@ -91,16 +91,16 @@ void main()
     {
         float angle = baseAngle + (2.0f * PI * float(directionIndex)) / float(DirectionCount);
         vec2 sampleDirection = vec2(cos(angle), sin(angle));
-        float directionHorizon = 0.0f;
+        float directionOcclusion = 0.0f;
 
         for (int stepIndex = 0; stepIndex < StepCount; ++stepIndex)
         {
             float sampleT = (float(stepIndex) + phase + 0.5f) / float(StepCount);
             vec2 sampleUV = uv + sampleDirection * texelSize * radiusPixels * sampleT;
-            directionHorizon = max(directionHorizon, SampleOcclusion(centerPos, centerNormal, sampleUV, radiusVS));
+            directionOcclusion += SampleOcclusion(centerPos, centerNormal, sampleUV, radiusVS);
         }
 
-        coarseOcclusion += directionHorizon;
+        coarseOcclusion += directionOcclusion / float(StepCount);
     }
 
     coarseOcclusion /= float(DirectionCount);
@@ -124,6 +124,7 @@ void main()
         detailOcclusion *= clamp(DetailAO, 0.0f, 5.0f) * 0.35f;
     }
 
-    float visibility = clamp(1.0f - coarseOcclusion - detailOcclusion, 0.0f, 1.0f);
+    float occlusion = clamp(coarseOcclusion * 1.75f + detailOcclusion, 0.0f, 1.0f);
+    float visibility = clamp(1.0f - occlusion, 0.0f, 1.0f);
     OutIntensity = pow(visibility, max(Power, 0.001f));
 }

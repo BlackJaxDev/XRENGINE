@@ -143,7 +143,7 @@ vec3 XRENGINE_CalcLightColor(BaseLight light, vec3 lightDirection, vec3 normal, 
     }
 
     float shadow = useShadow ? XRENGINE_ReadShadowMapDir(fragPos, normal, DiffuseFactor) : 1.0;
-    return (AmbientColor + (DiffuseColor + SpecularColor) * shadow) * ambientOcclusion;
+    return AmbientColor * ambientOcclusion + (DiffuseColor + SpecularColor) * shadow;
 }
 
 vec3 XRENGINE_CalcDirLight(DirLight light, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion, bool useShadow)
@@ -187,7 +187,7 @@ vec3 XRENGINE_CalcForwardPlusColor(vec3 lightColor, float diffuseIntensity, vec3
             SpecularColor = lightColor * spec * pow(SpecularFactor, 64.0);
     }
 
-    return (DiffuseColor + SpecularColor) * ambientOcclusion;
+    return DiffuseColor + SpecularColor;
 }
 
 vec3 XRENGINE_CalcForwardPlusPointLight(ForwardPlusLocalLight light, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion)
@@ -216,7 +216,7 @@ vec3 XRENGINE_CalcForwardPlusSpotLight(ForwardPlusLocalLight light, vec3 normal,
 // Call this from your fragment shader main() with your surface parameters
 vec3 XRENGINE_CalculateForwardLighting(vec3 normal, vec3 fragPos, vec3 albedo, float specularIntensity, float ambientOcclusion)
 {
-    vec3 totalLight = GlobalAmbient;
+    vec3 totalLight = GlobalAmbient * ambientOcclusion;
 
     // Directional lights (first one uses shadow map if available)
     for (int i = 0; i < DirLightCount; ++i)

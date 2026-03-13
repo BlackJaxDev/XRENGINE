@@ -115,7 +115,8 @@ vec3 ComputeSliceViewDirection(vec2 uv, float depth, vec3 centerPos, vec2 sliceD
 {
     vec2 texelSize = 1.0f / vec2(textureSize(DepthView, 0));
     vec2 offsetUv = clamp(uv + sliceDirection * texelSize * 2.0f, vec2(0.0f), vec2(1.0f));
-    vec3 offsetPos = ViewPosFromDepth(depth, offsetUv);
+    float offsetDepth = texture(DepthView, offsetUv).r;
+    vec3 offsetPos = ViewPosFromDepth(offsetDepth, offsetUv);
     vec3 sliceVector = offsetPos - centerPos;
     float sliceLengthSq = dot(sliceVector, sliceVector);
     if (sliceLengthSq <= 1e-6f)
@@ -191,5 +192,6 @@ void main()
     }
 
     visibility = clamp(visibility / float(sliceCount), 0.0f, 1.0f);
-    OutIntensity = pow(visibility, max(Power, 0.001f));
+    float occlusion = clamp((1.0f - visibility) * 1.75f, 0.0f, 1.0f);
+    OutIntensity = pow(1.0f - occlusion, max(Power, 0.001f));
 }
