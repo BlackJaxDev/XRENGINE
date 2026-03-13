@@ -54,13 +54,18 @@ float ReadShadowMap(in vec3 fragPos, in vec3 normal, in float diffuseFactor, in 
 
     vec4 fragPosLightSpace = lightMatrix * vec4(fragPos, 1.0);
     vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    fragCoord = fragCoord * vec3(0.5) + vec3(0.5);
-    float bias = max(maxBias * -diffuseFactor, minBias);
+    fragCoord = fragCoord * 0.5 + 0.5;
+
+    // Outside shadow map bounds: treat as fully lit
+    if (fragCoord.x < 0.0 || fragCoord.x > 1.0 ||
+        fragCoord.y < 0.0 || fragCoord.y > 1.0 ||
+        fragCoord.z < 0.0 || fragCoord.z > 1.0)
+        return 1.0;
+
+    float bias = max(maxBias * (1.0 - max(diffuseFactor, 0.0)), minBias);
 
     float depth = texture(ShadowMap, fragCoord.xy).r;
-    float shadow = (fragCoord.z - bias) > depth ? 0.0 : 1.0;        
-
-    return shadow;
+    return (fragCoord.z - bias) > depth ? 0.0 : 1.0;
 }
 
 float Attenuate(in float dist, in float radius)

@@ -1,6 +1,8 @@
 #version 450
 #extension GL_OVR_multiview2 : require
 
+#pragma snippet "NormalEncoding"
+
 const float PI = 3.14159265359f;
 
 layout(location = 0) out float OutIntensity;
@@ -62,7 +64,7 @@ void main()
     mat4 inverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
     mat4 projMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
 
-    vec3 normal = texture(Normal, vec3(uv, gl_ViewID_OVR)).rgb;
+    vec3 normal = XRENGINE_ReadNormal(Normal, vec3(uv, gl_ViewID_OVR));
     vec3 viewNormal = normalize((inverse(inverseViewMatrix) * vec4(normal, 0.0f)).rgb);
     float depth = texture(DepthView, vec3(uv, gl_ViewID_OVR)).r;
     vec3 position = ViewPosFromDepth(depth, uv, projMatrix);

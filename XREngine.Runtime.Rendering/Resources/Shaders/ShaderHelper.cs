@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.Threading.Tasks;
 using XREngine;
+using XREngine.Core.Files;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Models.Materials;
@@ -12,6 +13,9 @@ namespace XREngine.Rendering.Models.Materials;
 /// </summary>
 public static class ShaderHelper
 {
+    private const string DepthNormalPrePassDefine = "XRENGINE_DEPTH_NORMAL_PREPASS";
+    private const string ShadowCasterPassDefine = "XRENGINE_SHADOW_CASTER_PASS";
+
     private static IRuntimeShaderServices Services
         => RuntimeShaderServices.Current
         ?? throw new InvalidOperationException("RuntimeShaderServices.Current has not been configured.");
@@ -440,6 +444,71 @@ public static class ShaderHelper
             "DeferredDecalForwardWeightedOit.fs" => XRShader.EngineShader(Path.Combine("Scene3D", "DeferredDecal.fs"), EShaderType.Fragment),
             _ => null,
         };
+    }
+
+    public static XRShader? GetDepthNormalPrePassForwardVariant(XRShader? shader)
+    {
+        string? path = shader?.Source?.FilePath;
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        string fileName = Path.GetFileName(path);
+        return fileName switch
+        {
+            "LitTexturedNormalForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "LitTexturedNormalSpecForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "LitTexturedNormalAlphaForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "LitTexturedNormalSpecAlphaForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "LitTexturedSilhouettePOMForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            _ => null,
+        };
+    }
+
+    public static XRShader? GetShadowCasterForwardVariant(XRShader? shader)
+    {
+        XRShader? sourceShader = GetStandardForwardVariant(shader) ?? shader;
+
+        string? path = sourceShader?.Source?.FilePath;
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        string fileName = Path.GetFileName(path);
+        return fileName switch
+        {
+            "LitTexturedAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
+            "LitTexturedSpecAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
+            "LitTexturedNormalAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
+            "LitTexturedNormalSpecAlphaForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
+            "UnlitAlphaTexturedForward.fs" => CreateDefinedShaderVariant(sourceShader, ShadowCasterPassDefine),
+            _ => null,
+        };
+    }
+
+    private static XRShader? CreateDefinedShaderVariant(XRShader? shader, string defineName)
+    {
+        if (shader?.Source?.Text is not { Length: > 0 } source)
+            return null;
+
+        string variantSource = InjectDefineAfterVersion(source, defineName);
+        TextFile variantText = TextFile.FromText(variantSource);
+        variantText.FilePath = shader.Source?.FilePath;
+        variantText.Name = shader.Source?.Name;
+        return new XRShader(shader.Type, variantText)
+        {
+            Name = shader.Name,
+            GenerateAsync = shader.GenerateAsync,
+        };
+    }
+
+    private static string InjectDefineAfterVersion(string source, string defineName)
+    {
+        int versionLineEnd = source.IndexOf('\n');
+        if (versionLineEnd < 0)
+            return $"#define {defineName}{Environment.NewLine}{source}";
+
+        string header = source[..(versionLineEnd + 1)];
+        string body = source[(versionLineEnd + 1)..].TrimStart('\r', '\n');
+        return header + Environment.NewLine + $"#define {defineName}" + Environment.NewLine + Environment.NewLine + body;
     }
 
     public static int ResolveTransparentRenderPass(ETransparencyMode mode)

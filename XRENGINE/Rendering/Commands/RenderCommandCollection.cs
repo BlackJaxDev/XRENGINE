@@ -211,10 +211,8 @@ namespace XREngine.Rendering.Commands
                 return;
 
             foreach (var cmd in list)
-            {
                 if (cmd is IRenderCommandMesh)
                     cmd?.Render();
-            }
         }
         public void RenderGPU(int renderPass)
         {

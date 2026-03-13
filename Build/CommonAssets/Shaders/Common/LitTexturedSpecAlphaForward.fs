@@ -1,6 +1,10 @@
 #version 450
 
+#ifdef XRENGINE_SHADOW_CASTER_PASS
+layout (location = 0) out float Depth;
+#else
 layout (location = 0) out vec4 OutColor;
+#endif
 
 uniform float MatSpecularIntensity;
 uniform float MatShininess;
@@ -26,6 +30,9 @@ void main()
     if (alphaMask < AlphaCutoff)
         discard;
 
+#ifdef XRENGINE_SHADOW_CASTER_PASS
+    Depth = gl_FragCoord.z;
+#else
     vec3 normal = normalize(FragNorm);
     vec4 texColor = texture(Texture0, FragUV0);
     float AmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
@@ -37,4 +44,5 @@ void main()
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, texColor.rgb, specIntensity, AmbientOcclusion);
 
     OutColor = vec4(texColor.rgb * totalLight, texColor.a * alphaMask);
+#endif
 }

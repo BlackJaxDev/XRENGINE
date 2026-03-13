@@ -1249,9 +1249,13 @@ namespace XREngine.Rendering
         /// </summary>
         public RenderPipeline RenderPipeline
         {
-            get => _renderPipeline ?? SetFieldReturn(ref _renderPipeline, Engine.Rendering.NewRenderPipeline())!;
+            get => _renderPipeline ?? SetFieldReturn(ref _renderPipeline, CreateDefaultRenderPipeline())!;
             set => SetField(ref _renderPipeline, value);
         }
+
+        private static RenderPipeline CreateDefaultRenderPipeline()
+            => RuntimeRenderingHostServices.Current.CreateDefaultRenderPipeline() as RenderPipeline
+                ?? throw new InvalidOperationException("RuntimeRenderingHostServices.Current did not provide a default render pipeline.");
 
         /// <summary>
         /// Sets all camera-related shader uniforms for rendering.
@@ -1266,7 +1270,7 @@ namespace XREngine.Rendering
             Matrix4x4 renderMtx = tfm.RenderMatrix;
             Matrix4x4 projMtx = ProjectionMatrix;
 
-            bool stereoPass = Engine.Rendering.State.IsStereoPass;
+            bool stereoPass = RuntimeRenderingHostServices.Current.IsStereoPass;
             if (stereoPass)
             {
                 if (stereoLeftEye)

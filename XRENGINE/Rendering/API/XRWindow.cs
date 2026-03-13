@@ -18,7 +18,7 @@ namespace XREngine.Rendering
     /// Links a Silk.NET generated window to an API-specific engine renderer.
     /// </summary>
     [RuntimeOnly]
-    public sealed class XRWindow : XRBase, IDisposable
+    public sealed class XRWindow : XRBase, IRuntimeRenderWindowHost, IDisposable
     {
         #region Nested Types
 
@@ -54,7 +54,7 @@ namespace XREngine.Rendering
         private bool _isFocused = false;
 
         // Editor scene-panel presentation (dockable viewport panel) adapter.
-        private readonly XRWindowScenePanelAdapter _scenePanelAdapter = new();
+        private readonly IRuntimeWindowScenePanelAdapter _scenePanelAdapter;
 
         #endregion
 
@@ -184,6 +184,7 @@ namespace XREngine.Rendering
         public XRWindow(WindowOptions options, bool useNativeTitleBar)
         {
             _viewports.CollectionChanged += ViewportsChanged;
+            _scenePanelAdapter = RuntimeRenderingHostServices.Current.CreateWindowScenePanelAdapter();
 
             Silk.NET.Windowing.Window.PrioritizeGlfw();
             Window = Silk.NET.Windowing.Window.Create(options);
@@ -192,12 +193,7 @@ namespace XREngine.Rendering
             LinkWindow();
             Window.Initialize();
 
-            Renderer = Window.API.API switch
-            {
-                ContextAPI.OpenGL => new OpenGLRenderer(this, true),
-                ContextAPI.Vulkan => new VulkanRenderer(this, true),
-                _ => throw new Exception($"Unsupported API: {Window.API.API}"),
-            };
+            Renderer = (AbstractRenderer)RuntimeRenderingHostServices.Current.CreateRenderer(this, ToRuntimeGraphicsApiKind(Window.API.API));
         }
 
         #endregion
@@ -211,13 +207,7 @@ namespace XREngine.Rendering
             {
                 case nameof(TargetWorldInstance):
                     VerifyTick();
-                    if (!(Engine.Networking?.IsClient ?? false))
-                        Engine.Networking?.ReplicateStateChange(
-                            new StateChangeInfo(
-                                EStateChangeType.WorldChange,
-                                JsonConvert.SerializeObject(EncodeWorldHierarchy())),
-                            true,
-                            true);
+                    RuntimeRenderingHostServices.Current.ReplicateWindowTargetWorldChange(this);
                     break;
             }
         }
@@ -244,7 +234,7 @@ namespace XREngine.Rendering
         /// </summary>
         public void ResizeAllViewportsAccordingToPlayers()
         {
-            using var sample = Engine.Profiler.Start("XRWindow.ResizeAllViewportsAccordingToPlayers");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.ResizeAllViewportsAccordingToPlayers");
 
             LocalPlayerController[] players = [.. Viewports
                 .Select(x => x.AssociatedPlayer)
@@ -260,7 +250,7 @@ namespace XREngine.Rendering
 
         public void UpdateViewportSizes()
         {
-            using var sample = Engine.Profiler.Start("XRWindow.UpdateViewportSizes");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.UpdateViewportSizes");
             ResizeViewports(Window.Size);
         }
 
@@ -331,10 +321,10 @@ namespace XREngine.Rendering
 
         public void RenderViewports()
         {
-            using var sample = Engine.Profiler.Start("XRWindow.RenderViewports");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.RenderViewports");
             foreach (var viewport in Viewports)
             {
-                using var viewportSample = Engine.Profiler.Start($"XRViewport.Render[{viewport.Index}]");
+                using var viewportSample = RuntimeRenderingHostServices.Current.StartProfileScope($"XRViewport.Render[{viewport.Index}]");
                 viewport.Render();
             }
         }
@@ -350,10 +340,10 @@ namespace XREngine.Rendering
                 return;
             }
 
-            using var sample = Engine.Profiler.Start("XRWindow.RenderViewportsToFBO");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.RenderViewportsToFBO");
             foreach (var viewport in Viewports)
             {
-                using var viewportSample = Engine.Profiler.Start($"XRViewport.RenderToFBO[{viewport.Index}]");
+                using var viewportSample = RuntimeRenderingHostServices.Current.StartProfileScope($"XRViewport.RenderToFBO[{viewport.Index}]");
                 viewport.Render(targetFBO);
             }
         }
@@ -373,10 +363,10 @@ namespace XREngine.Rendering
 
         private void Window_Closing()
         {
-            if (!_isDisposing && !_isDisposed && Engine.WindowCloseRequested is not null)
+            if (!_isDisposing && !_isDisposed)
             {
-                var decision = Engine.WindowCloseRequested.Invoke(this);
-                if (decision != Engine.WindowCloseRequestResult.Allow)
+                bool allowClose = RuntimeRenderingHostServices.Current.AllowWindowClose(this);
+                if (!allowClose)
                 {
                     if (TryCancelCloseRequest())
                         return;
@@ -389,7 +379,7 @@ namespace XREngine.Rendering
             }
             finally
             {
-                Engine.RemoveWindow(this);
+                RuntimeRenderingHostServices.Current.RemoveWindow(this);
             }
         }
 
@@ -523,12 +513,12 @@ namespace XREngine.Rendering
 
         private void FramebufferResizeCallback(Vector2D<int> obj)
         {
-            using var sample = Engine.Profiler.Start("XRWindow.FramebufferResize");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.FramebufferResize");
 
             //Debug.Out("Window resized to {0}x{1}", obj.X, obj.Y);
             Viewports.ForEach(vp => vp.Resize((uint)obj.X, (uint)obj.Y, true));
 
-            _scenePanelAdapter.OnFramebufferResized(this, obj);
+            _scenePanelAdapter.OnFramebufferResized(this, obj.X, obj.Y);
 
             Renderer.FrameBufferInvalidated();
 
@@ -568,8 +558,7 @@ namespace XREngine.Rendering
             w.Load += Window_Load;
 
             // Subscribe to play mode transitions to invalidate scene panel resources
-            Engine.PlayMode.PreEnterPlay += OnPlayModeTransition;
-            Engine.PlayMode.PostExitPlay += OnPlayModeTransition;
+            RuntimeRenderingHostServices.Current.SubscribePlayModeTransitions(OnPlayModeTransition);
         }
 
         private void UnlinkWindow()
@@ -585,8 +574,7 @@ namespace XREngine.Rendering
             w.Load -= Window_Load;
 
             // Unsubscribe from play mode events
-            Engine.PlayMode.PreEnterPlay -= OnPlayModeTransition;
-            Engine.PlayMode.PostExitPlay -= OnPlayModeTransition;
+            RuntimeRenderingHostServices.Current.UnsubscribePlayModeTransitions(OnPlayModeTransition);
         }
 
         private void OnPlayModeTransition()
@@ -629,7 +617,7 @@ namespace XREngine.Rendering
 
         private void VerifyTick()
         {
-            using var sample = Engine.Profiler.Start("XRWindow.VerifyTick");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.VerifyTick");
 
             if (_isDisposed || _isDisposing)
                 return;
@@ -654,23 +642,21 @@ namespace XREngine.Rendering
 
         private void BeginTick()
         {
-            using var sample = Engine.Profiler.Start("XRWindow.BeginTick");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.BeginTick");
 
             Renderer.Initialize();
             _rendererInitialized = true;
-            Engine.Time.Timer.SwapBuffers += SwapBuffers;
-            Engine.Time.Timer.RenderFrame += RenderFrame;
+            RuntimeRenderingHostServices.Current.SubscribeWindowTickCallbacks(SwapBuffers, RenderFrame);
         }
 
         private void EndTick()
         {
-            using var sample = Engine.Profiler.Start("XRWindow.EndTick");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.EndTick");
 
-            Engine.Time.Timer.SwapBuffers -= SwapBuffers;
-            Engine.Time.Timer.RenderFrame -= RenderFrame;
+            RuntimeRenderingHostServices.Current.UnsubscribeWindowTickCallbacks(SwapBuffers, RenderFrame);
             Renderer.WaitForGpu();
             Renderer.DestroyCachedAPIRenderObjects();
-            Engine.Rendering.DestroyObjectsForRenderer(Renderer);
+            RuntimeRenderingHostServices.Current.DestroyObjectsForRenderer(Renderer);
             Renderer.CleanUp();
             _rendererInitialized = false;
             Window.DoEvents();
@@ -678,7 +664,7 @@ namespace XREngine.Rendering
 
         private void SwapBuffers()
         {
-            using var sample = Engine.Profiler.Start("XRWindow.SwapBuffers");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.SwapBuffers");
         }
 
         private void RenderFrame()
@@ -687,10 +673,10 @@ namespace XREngine.Rendering
             if (_isDisposed || _isDisposing)
                 return;
 
-            using var sample = Engine.Profiler.Start("XRWindow.Timer.RenderFrame");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Timer.RenderFrame");
 
             {
-                using var eventsSample = Engine.Profiler.Start("XRWindow.Timer.DoEvents");
+                using var eventsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Timer.DoEvents");
                 Window.DoEvents();
             }
 
@@ -699,7 +685,7 @@ namespace XREngine.Rendering
                 return;
 
             {
-                using var doRenderSample = Engine.Profiler.Start("XRWindow.Timer.DoRender");
+                using var doRenderSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.Timer.DoRender");
                 Window.DoRender();
             }
         }
@@ -720,13 +706,13 @@ namespace XREngine.Rendering
             if (_renderDisabledUntilUtc != default && DateTime.UtcNow < _renderDisabledUntilUtc)
                 return;
 
-            using var frameSample = Engine.Profiler.Start("XRWindow.RenderFrame");
+            using var frameSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.RenderFrame");
 
             // Reset per-frame rendering statistics at the start of each frame
-            Engine.Rendering.Stats.BeginFrame();
+            RuntimeRenderingHostServices.Current.BeginRenderStatsFrame();
 
             // Process any pending async buffer uploads within the frame budget
-            using (var uploadSample = Engine.Profiler.Start("XRWindow.ProcessPendingUploads"))
+            using (var uploadSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.ProcessPendingUploads"))
             {
                 Renderer.ProcessPendingUploads();
             }
@@ -736,28 +722,23 @@ namespace XREngine.Rendering
                 Renderer.Active = true;
                 AbstractRenderer.Current = Renderer;
 
-                bool useScenePanelMode =
-                    Engine.IsEditor &&
-                    Engine.EditorPreferences.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel;
-                bool forceFullViewport = string.Equals(
-                    Environment.GetEnvironmentVariable("XRE_FORCE_FULL_VIEWPORT"),
-                    "1",
-                    StringComparison.Ordinal);
+                bool useScenePanelMode = RuntimeRenderingHostServices.Current.IsWindowScenePanelPresentationEnabled;
+                bool forceFullViewport = RuntimeRenderingHostServices.Current.ForceFullViewport;
                 if (forceFullViewport)
                     useScenePanelMode = false;
                 bool mirrorByComposition =
-                    Engine.VRState.IsInVR &&
-                    Engine.VRState.IsOpenXRActive &&
-                    Engine.Rendering.Settings.RenderWindowsWhileInVR &&
-                    Engine.Rendering.Settings.VrMirrorComposeFromEyeTextures;
+                    RuntimeRenderingHostServices.Current.IsInVR &&
+                    RuntimeRenderingHostServices.Current.IsOpenXRActive &&
+                    RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR &&
+                    RuntimeRenderingHostServices.Current.VrMirrorComposeFromEyeTextures;
                 bool canRenderWindowViewports =
-                    !Engine.VRState.IsInVR ||
-                    (Engine.Rendering.Settings.RenderWindowsWhileInVR && !mirrorByComposition);
+                    !RuntimeRenderingHostServices.Current.IsInVR ||
+                    (RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR && !mirrorByComposition);
 
                 LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports, forceFullViewport);
                 ApplyForcedDebugOpaquePipelineOverride();
 
-                using (var preRenderSample = Engine.Profiler.Start("XRWindow.GlobalPreRender"))
+                using (var preRenderSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.GlobalPreRender"))
                 {
                     try
                     {
@@ -774,7 +755,7 @@ namespace XREngine.Rendering
                     }
                 }
 
-                using (var renderCallbackSample = Engine.Profiler.Start("XRWindow.RenderViewportsCallback"))
+                using (var renderCallbackSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.RenderViewportsCallback"))
                 {
                     RenderViewportsCallback?.Invoke();
                 }
@@ -799,7 +780,7 @@ namespace XREngine.Rendering
                         vpEx);
                 }
 
-                using (var postRenderSample = Engine.Profiler.Start("XRWindow.GlobalPostRender"))
+                using (var postRenderSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.GlobalPostRender"))
                 {
                     try
                     {
@@ -822,7 +803,7 @@ namespace XREngine.Rendering
                 // minimum clear to the background color and render the debug triangle + ImGui overlay.
                 Renderer.RenderWindow(delta);
 
-                using (var postViewportsSample = Engine.Profiler.Start("XRWindow.PostRenderViewportsCallback"))
+                using (var postViewportsSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.PostRenderViewportsCallback"))
                 {
                     PostRenderViewportsCallback?.Invoke();
                 }
@@ -862,10 +843,7 @@ namespace XREngine.Rendering
 
         private void ApplyForcedDebugOpaquePipelineOverride()
         {
-            bool forceDebugOpaque = string.Equals(
-                Environment.GetEnvironmentVariable("XRE_FORCE_DEBUG_OPAQUE_PIPELINE"),
-                "1",
-                StringComparison.Ordinal);
+            bool forceDebugOpaque = RuntimeRenderingHostServices.Current.ShouldForceDebugOpaquePipeline;
             if (!forceDebugOpaque)
                 return;
 
@@ -874,7 +852,9 @@ namespace XREngine.Rendering
                 if (viewport.RenderPipeline is DebugOpaqueRenderPipeline)
                     continue;
 
-                viewport.RenderPipeline = new DebugOpaqueRenderPipeline();
+                viewport.RenderPipeline = RuntimeRenderingHostServices.Current.CreateDebugOpaquePipelineOverride() as RenderPipeline;
+                if (viewport.RenderPipeline is null)
+                    continue;
                 Debug.RenderingEvery(
                     $"XRWindow.ForceDebugOpaque.{GetHashCode()}.{viewport.Index}",
                     TimeSpan.FromSeconds(2),
@@ -907,8 +887,8 @@ namespace XREngine.Rendering
                     keyBase + ".VRGated",
                     TimeSpan.FromSeconds(1),
                     "[RenderDiag] Window gated by VR. IsInVR={0}, RenderWindowsWhileInVR={1}",
-                    Engine.VRState.IsInVR,
-                    Engine.Rendering.Settings.RenderWindowsWhileInVR);
+                    RuntimeRenderingHostServices.Current.IsInVR,
+                    RuntimeRenderingHostServices.Current.RenderWindowsWhileInVR);
             }
 
             if (!ShouldBeRendering())
@@ -919,7 +899,7 @@ namespace XREngine.Rendering
                     "[RenderDiag] Window not rendering: Viewports={0}, TargetWorldInstanceNull={1}, PresentationMode={2}, CanRenderWindowViewports={3}",
                     Viewports.Count,
                     TargetWorldInstance is null,
-                    Engine.EditorPreferences.ViewportPresentationMode,
+                    RuntimeRenderingHostServices.Current.IsWindowScenePanelPresentationEnabled,
                     canRenderWindowViewports);
             }
 
@@ -999,7 +979,7 @@ namespace XREngine.Rendering
                     var fb = Window.FramebufferSize;
                     uint targetWidth = (uint)Math.Max(1, fb.X);
                     uint targetHeight = (uint)Math.Max(1, fb.Y);
-                    _ = Engine.VRState.OpenXRApi?.TryRenderDesktopMirrorComposition(targetWidth, targetHeight);
+                    RuntimeRenderingHostServices.Current.TryRenderDesktopMirrorComposition(targetWidth, targetHeight);
                 }
             }
         }
@@ -1026,7 +1006,7 @@ namespace XREngine.Rendering
 
         private XRViewport AddViewportForPlayer(LocalPlayerController? controller, bool autoSizeAllViewports)
         {
-            using var sample = Engine.Profiler.Start("XRWindow.AddViewportForPlayer");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.AddViewportForPlayer");
 
             XRViewport newViewport = XRViewport.ForTotalViewportCount(this, Viewports.Count);
             newViewport.AssociatedPlayer = controller;
@@ -1051,7 +1031,7 @@ namespace XREngine.Rendering
 
         private void ResizeViewports(Vector2D<int> obj)
         {
-            using var sample = Engine.Profiler.Start("XRWindow.ResizeViewports");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.ResizeViewports");
 
             void SetSize(XRViewport vp)
             {
@@ -1130,7 +1110,7 @@ namespace XREngine.Rendering
                     {
                         Renderer.WaitForGpu();
                         Renderer.DestroyCachedAPIRenderObjects();
-                        Engine.Rendering.DestroyObjectsForRenderer(Renderer);
+                        RuntimeRenderingHostServices.Current.DestroyObjectsForRenderer(Renderer);
                         Renderer.CleanUp();
                     }
                     catch
@@ -1193,5 +1173,16 @@ namespace XREngine.Rendering
         }
 
         #endregion
+
+        internal string? EncodeTargetWorldHierarchyJson()
+            => JsonConvert.SerializeObject(EncodeWorldHierarchy());
+
+        private static RuntimeGraphicsApiKind ToRuntimeGraphicsApiKind(ContextAPI api)
+            => api switch
+            {
+                ContextAPI.OpenGL => RuntimeGraphicsApiKind.OpenGL,
+                ContextAPI.Vulkan => RuntimeGraphicsApiKind.Vulkan,
+                _ => RuntimeGraphicsApiKind.Unknown,
+            };
     }
 }

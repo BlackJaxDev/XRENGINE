@@ -57,11 +57,11 @@ public sealed class AlphaToCoveragePhase2Tests
     [Test]
     public void Phase2_HostContracts_ArePresent()
     {
-        string materialSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Objects/Materials/XRMaterial.cs");
+        string materialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Materials/XRMaterial.cs");
         materialSource.ShouldContain("RenderOptions.AlphaToCoverage = ERenderParamUsage.Enabled;");
         materialSource.ShouldContain("if (alphaToCoverage && hasAlphaCutoff && depthWrites)");
 
-        string framebufferSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Objects/Render Targets/XRFrameBuffer.cs");
+        string framebufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/RenderTargets/XRFrameBuffer.cs");
         framebufferSource.ShouldContain("public bool IsMultisampled => EffectiveSampleCount > 1u;");
         framebufferSource.ShouldContain("XRRenderBuffer renderBuffer => renderBuffer.MultisampleCount > 1u ? renderBuffer.MultisampleCount : 1u");
 

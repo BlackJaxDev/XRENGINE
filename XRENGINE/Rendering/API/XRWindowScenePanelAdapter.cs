@@ -10,7 +10,7 @@ namespace XREngine.Rendering
     /// Adapter responsible for presenting a window's world rendering inside a dockable editor "scene panel" region.
     /// This intentionally avoids the term "viewport" to reduce ambiguity with XRViewport (player viewports).
     /// </summary>
-    internal sealed class XRWindowScenePanelAdapter : IDisposable
+    internal sealed class XRWindowScenePanelAdapter : IRuntimeWindowScenePanelAdapter
     {
         private XRTexture2D? _scenePanelTexture;
         private XRFrameBuffer? _scenePanelFBO;
@@ -72,6 +72,9 @@ namespace XREngine.Rendering
             if (framebufferSize.X > 0 && framebufferSize.Y > 0)
                 RestoreFullWindowSizing(window, framebufferSize.X, framebufferSize.Y);
         }
+
+        void IRuntimeWindowScenePanelAdapter.OnFramebufferResized(IRuntimeRenderWindowHost window, int framebufferWidth, int framebufferHeight)
+            => OnFramebufferResized((XRWindow)window, new Vector2D<int>(framebufferWidth, framebufferHeight));
 
         public bool TryRenderScenePanelMode(XRWindow window)
         {
@@ -153,11 +156,17 @@ namespace XREngine.Rendering
             return true;
         }
 
+        bool IRuntimeWindowScenePanelAdapter.TryRenderScenePanelMode(IRuntimeRenderWindowHost window)
+            => TryRenderScenePanelMode((XRWindow)window);
+
         public void EndScenePanelMode(XRWindow window)
         {
             RestoreFullWindowSizing(window);
             DestroyFBO();
         }
+
+        void IRuntimeWindowScenePanelAdapter.EndScenePanelMode(IRuntimeRenderWindowHost window)
+            => EndScenePanelMode((XRWindow)window);
 
         public void RestoreFullWindowSizing(XRWindow window)
         {

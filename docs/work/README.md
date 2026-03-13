@@ -22,6 +22,7 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 - [Vulkan Parity Report](design/vulkan-parity-report.md)
 - [Vulkan Command Buffer Refactor](design/vulkan-command-buffer-refactor.md)
 - [Transparency And OIT Implementation Plan](design/transparency-and-oit-implementation-plan.md)
+- [Surface Detail Import And Forward Shadow Debugging](design/surface-detail-and-forward-shadow-debugging.md)
 - [GPU Physics Chain Compatibility](design/gpu-physics-chain-compatibility.md)
 - [GPU Physics Chain Engine Verification](design/gpu-physics-chain-engine-verification.md)
 - [HBAO And HBAO+ Implementation Plan](design/hbao-hbao-plus-implementation-plan.md)

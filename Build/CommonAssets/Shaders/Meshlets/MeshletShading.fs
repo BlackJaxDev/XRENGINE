@@ -94,7 +94,7 @@ void main()
     {
         // Sample normal map and transform to world space
         vec3 normalMap = texture(textures[material.normalTextureID], in_texCoord).rgb * 2.0 - 1.0;
-        
+            
         vec3 T = normalize(in_tangent.xyz);
         vec3 N = normal;
         vec3 B = normalize(cross(N, T)) * in_tangent.w;

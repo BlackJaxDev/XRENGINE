@@ -184,11 +184,20 @@ namespace XREngine.Scene
             // Pick a dedicated high unit for forward shadow sampling.
             const int forwardShadowMapUnit = 15;
             XRTexture? forwardShadowTex = null;
+            Matrix4x4 primaryDirLightWorldToLightInvView = Matrix4x4.Identity;
+            Matrix4x4 primaryDirLightWorldToLightProj = Matrix4x4.Identity;
             if (DynamicDirectionalLights.Count > 0)
             {
                 var firstDirLight = DynamicDirectionalLights[0];
                 if (firstDirLight.CastsShadows && firstDirLight.ShadowMap?.Material?.Textures.Count > 0)
+                {
                     forwardShadowTex = firstDirLight.ShadowMap.Material.Textures[0];
+                    if (firstDirLight is OneViewLightComponent oneView && oneView.ShadowCamera is not null)
+                    {
+                        primaryDirLightWorldToLightInvView = oneView.ShadowCamera.Transform.RenderMatrix;
+                        primaryDirLightWorldToLightProj = oneView.ShadowCamera.ProjectionMatrix;
+                    }
+                }
                 else
                 {
                     // Debug: log why shadow map isn't available
@@ -201,26 +210,12 @@ namespace XREngine.Scene
             }
             bool shadowEnabled = forwardShadowTex != null;
             program.Uniform("ShadowMapEnabled", shadowEnabled);
+            program.Uniform("PrimaryDirLightWorldToLightInvViewMatrix", primaryDirLightWorldToLightInvView);
+            program.Uniform("PrimaryDirLightWorldToLightProjMatrix", primaryDirLightWorldToLightProj);
             if (!_loggedShadowMapEnabledOnce)
             {
                 _loggedShadowMapEnabledOnce = true;
                 Debug.Out($"[ForwardShadow] ShadowMapEnabled={shadowEnabled}, forwardShadowTex={forwardShadowTex?.GetType().Name ?? "null"}");
-            }
-
-            // Set light space matrix for UberShader shadow mapping
-            // This is set separately from the struct array uniforms for simpler UberShader integration
-            if (DynamicDirectionalLights.Count > 0)
-            {
-                var firstDirLight = DynamicDirectionalLights[0];
-                var shadowCam = firstDirLight.ShadowCamera;
-                if (shadowCam != null)
-                {
-                    Matrix4x4 lightView = shadowCam.Transform.InverseRenderMatrix;
-                    Matrix4x4 lightProj = shadowCam.ProjectionMatrix;
-                    // Use View * Proj order for correct GLSL interpretation (see DirectionalLightComponent.SetUniforms)
-                    Matrix4x4 lightViewProj = lightView * lightProj;
-                    program.Uniform("u_LightSpaceMatrix", lightViewProj);
-                }
             }
 
             // ALWAYS set the ShadowMap sampler to point to unit 15, even when shadows are disabled.

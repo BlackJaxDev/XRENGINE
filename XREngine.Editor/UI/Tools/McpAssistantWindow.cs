@@ -300,6 +300,7 @@ public sealed class McpAssistantWindow
     private readonly Dictionary<string, int> _openAiContextWindowByModel = new(StringComparer.OrdinalIgnoreCase);
     private int _openAiSelectedContextWindowTokens;
     private string _conversationSummary = string.Empty;
+    private int _historyCompactedThroughExclusive;
     private readonly List<McpUsageEntry> _mcpUsageHistory = [];
     /// <summary>
     /// Cache of loaded XRTexture2D objects for image preview thumbnails in tool call results.
@@ -497,6 +498,7 @@ public sealed class McpAssistantWindow
             {
                 ClearHistoryPreservingSentAssistantMessages();
                 _conversationSummary = string.Empty;
+                _historyCompactedThroughExclusive = 0;
             }
 
             if (ImGui.MenuItem("Clear MCP Usage History", null, false, _mcpUsageHistory.Count > 0))
@@ -653,7 +655,7 @@ public sealed class McpAssistantWindow
         if (ImGui.Checkbox("Auto summarize near context limit", ref autoSummarizeNearLimit))
             AutoSummarizeNearContextLimit = autoSummarizeNearLimit;
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("When enabled, the assistant asks the model to summarize prior context as the prompt approaches the selected model's context window.");
+            ImGui.SetTooltip("When enabled, the assistant automatically compacts older turns into a retained summary before new sends and still asks the model for an extra summary when long-running work approaches the selected model's context window.");
 
         bool autoCameraView = AutoCameraView;
         if (ImGui.Checkbox("Auto Camera View", ref autoCameraView))
@@ -2345,6 +2347,7 @@ public sealed class McpAssistantWindow
         {
             for (int attempt = 0; attempt <= maxAutoReprompts; attempt++)
             {
+                AutoCompactConversationContextIfNeeded(provider, trimmedPrompt, assistantMsg, minTailMessagesToKeep: 2);
                 bool requestSelfSummary = ShouldRequestSelfSummary(provider, trimmedPrompt, assistantMsg);
                 string promptForAttempt = BuildProviderPromptEnvelope(trimmedPrompt, assistantMsg, attempt, requestSelfSummary);
                 string priorContent = assistantMsg.Content;
@@ -2589,6 +2592,7 @@ public sealed class McpAssistantWindow
         {
             for (int attempt = 0; attempt <= maxAutoReprompts; attempt++)
             {
+                AutoCompactConversationContextIfNeeded(provider, trimmedPrompt, assistantMsg, minTailMessagesToKeep: 2);
                 bool requestSelfSummary = ShouldRequestSelfSummary(provider, trimmedPrompt, assistantMsg);
                 string promptForAttempt = BuildProviderPromptEnvelope(trimmedPrompt, assistantMsg, attempt, requestSelfSummary);
                 string priorContent = assistantMsg.Content;
@@ -2751,9 +2755,57 @@ public sealed class McpAssistantWindow
         if (contextWindowTokens <= 0)
             return false;
 
-        string context = BuildConversationContextBlock(assistantMsg, maxChars: 24_000);
+        int contextCharsBudget = ResolveConversationContextCharsBudget(provider, currentPrompt);
+        string context = BuildConversationContextBlock(assistantMsg, contextCharsBudget);
         int estimatedTokens = EstimateTokens(context) + EstimateTokens(currentPrompt);
         return estimatedTokens >= (int)(contextWindowTokens * ContextSummaryTriggerRatio);
+    }
+
+    private int ResolveConversationContextCharsBudget(ProviderType provider, string currentPrompt)
+    {
+        int contextWindowTokens = ResolveContextWindowTokens(provider);
+        if (contextWindowTokens <= 0)
+            return 24_000;
+
+        int responseReserveTokens = Math.Clamp(MaxTokens, 1_024, Math.Max(2_048, contextWindowTokens / 2));
+        int envelopeReserveTokens = Math.Clamp(contextWindowTokens / 20, 2_048, 24_000);
+        int promptTokens = EstimateTokens(currentPrompt);
+        int availableInputTokens = Math.Max(4_096, contextWindowTokens - responseReserveTokens - envelopeReserveTokens - promptTokens);
+        return Math.Max(16_000, availableInputTokens * 4);
+    }
+
+    private void AutoCompactConversationContextIfNeeded(ProviderType provider, string currentPrompt, ChatMessage? activeAssistantMessage, int minTailMessagesToKeep)
+    {
+        if (!AutoSummarizeNearContextLimit)
+            return;
+
+        if (_historyCompactedThroughExclusive < 0 || _historyCompactedThroughExclusive > _history.Count)
+            _historyCompactedThroughExclusive = Math.Clamp(_historyCompactedThroughExclusive, 0, _history.Count);
+
+        if (_history.Count <= Math.Max(1, minTailMessagesToKeep))
+            return;
+
+        int contextCharsBudget = ResolveConversationContextCharsBudget(provider, currentPrompt);
+        string fullContext = BuildConversationContextBlock(activeAssistantMessage, int.MaxValue / 4);
+        if (fullContext.Length <= contextCharsBudget)
+            return;
+
+        int minRawIndexToKeep = Math.Max(_historyCompactedThroughExclusive, _history.Count - Math.Max(1, minTailMessagesToKeep));
+        if (minRawIndexToKeep <= _historyCompactedThroughExclusive)
+            return;
+
+        int summaryBudget = Math.Clamp(contextCharsBudget / 6, 3_000, 24_000);
+        int rawBudget = Math.Max(2_048, contextCharsBudget - summaryBudget);
+        int newCutoff = FindRawHistoryCutoffForBudget(activeAssistantMessage, rawBudget, minRawIndexToKeep);
+        if (newCutoff <= _historyCompactedThroughExclusive)
+            return;
+
+        string compactedSummary = BuildCompactedConversationSummary(_historyCompactedThroughExclusive, newCutoff, summaryBudget);
+        if (string.IsNullOrWhiteSpace(compactedSummary))
+            return;
+
+        _conversationSummary = compactedSummary;
+        _historyCompactedThroughExclusive = newCutoff;
     }
 
     private int ResolveContextWindowTokens(ProviderType provider)
@@ -2797,10 +2849,9 @@ public sealed class McpAssistantWindow
 
     private string BuildProviderPromptEnvelope(string userPrompt, ChatMessage assistantMsg, int autoRepromptIndex, bool requestSelfSummary)
     {
-        int contextWindowTokens = ResolveContextWindowTokens((ProviderType)ProviderIndex);
-        int contextCharsBudget = contextWindowTokens > 0
-            ? Math.Clamp((int)(contextWindowTokens * 0.70f) * 4, 16_000, 220_000)
-            : 24_000;
+        ProviderType provider = (ProviderType)ProviderIndex;
+        int contextWindowTokens = ResolveContextWindowTokens(provider);
+        int contextCharsBudget = ResolveConversationContextCharsBudget(provider, userPrompt);
 
         string contextBlock = BuildConversationContextBlock(assistantMsg, contextCharsBudget);
         var sb = new StringBuilder();
@@ -2846,7 +2897,7 @@ public sealed class McpAssistantWindow
         return sb.ToString();
     }
 
-    private string BuildConversationContextBlock(ChatMessage activeAssistantMessage, int maxChars)
+    private string BuildConversationContextBlock(ChatMessage? activeAssistantMessage, int maxChars)
     {
         if (maxChars < 1024)
             maxChars = 1024;
@@ -2899,51 +2950,12 @@ public sealed class McpAssistantWindow
         // Build message lines from oldest->newest, then keep the tail that fits budget.
         // This preserves chronological append behavior while prioritizing recent context.
         var messageLines = new List<string>(_history.Count);
-        for (int i = _history.Count - 1; i >= 0; i--)
+        for (int i = _history.Count - 1; i >= _historyCompactedThroughExclusive; i--)
         {
             ChatMessage msg = _history[i];
-            string cleaned = StripProtocolMarkers(msg.Content);
-            ToolCallEntry[] toolCalls = SnapshotToolCalls(msg);
-
-            if (ReferenceEquals(msg, activeAssistantMessage)
-                && string.IsNullOrWhiteSpace(cleaned)
-                && toolCalls.Length == 0)
-            {
-                continue;
-            }
-
-            string line = $"{msg.Role.ToUpperInvariant()} [{msg.Timestamp:HH:mm:ss}]: ";
-            if (!string.IsNullOrWhiteSpace(cleaned))
-                line += Truncate(cleaned.Replace('\n', ' '), 8000);
-            else
-                line += "(tool-only response)";
-
-            if (toolCalls.Length > 0)
-            {
-                // Include tool names, arguments, and result summaries so the model
-                // retains IDs (node GUIDs, asset IDs, etc.) across continuation turns.
-                var toolParts = new List<string>(toolCalls.Length);
-                foreach (var tc in toolCalls)
-                {
-                    var part = tc.ToolName;
-                    if (!string.IsNullOrEmpty(tc.ArgsSummary))
-                        part += $"({tc.ArgsSummary})";
-                    if (!string.IsNullOrEmpty(tc.ContextResultSummary))
-                        part += $" -> {tc.ContextResultSummary}";
-                    else if (!string.IsNullOrEmpty(tc.ResultSummary))
-                        part += $" -> {tc.ResultSummary}";
-                    if (!string.IsNullOrEmpty(tc.ResultFilePath))
-                        part += $" [file:{tc.ResultFilePath}]";
-                    if (tc.IsError)
-                        part += " [ERROR]";
-                    toolParts.Add(part);
-                }
-                string toolSummary = string.Join("; ", toolParts);
-                if (!string.IsNullOrWhiteSpace(toolSummary))
-                    line += $" | tools: {Truncate(toolSummary, 8000)}";
-            }
-
-            messageLines.Add(line);
+            string? line = BuildConversationMessageLine(msg, activeAssistantMessage, messageCharLimit: 8000, toolSummaryCharLimit: 8000);
+            if (!string.IsNullOrWhiteSpace(line))
+                messageLines.Add(line);
         }
 
         messageLines.Reverse();
@@ -2975,6 +2987,108 @@ public sealed class McpAssistantWindow
             chunks.Add(selectedMessageLines.Pop());
 
         return string.Join("\n", chunks);
+    }
+
+    private int FindRawHistoryCutoffForBudget(ChatMessage? activeAssistantMessage, int rawCharsBudget, int minRawIndexToKeep)
+    {
+        int usedChars = 0;
+        for (int i = _history.Count - 1; i >= _historyCompactedThroughExclusive; i--)
+        {
+            string? line = BuildConversationMessageLine(_history[i], activeAssistantMessage, messageCharLimit: 8000, toolSummaryCharLimit: 8000);
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
+            if (usedChars + line.Length > rawCharsBudget)
+                return Math.Max(_historyCompactedThroughExclusive, Math.Min(i + 1, minRawIndexToKeep));
+
+            usedChars += line.Length;
+        }
+
+        return _historyCompactedThroughExclusive;
+    }
+
+    private string BuildCompactedConversationSummary(int startIndex, int endExclusive, int maxChars)
+    {
+        if (maxChars < 512)
+            maxChars = 512;
+
+        var lines = new List<string>(Math.Max(4, endExclusive - startIndex + 2));
+        if (!string.IsNullOrWhiteSpace(_conversationSummary))
+            lines.Add($"Earlier summary: {Truncate(_conversationSummary.Trim().Replace('\n', ' '), Math.Min(4_000, Math.Max(512, maxChars / 3)))}");
+
+        lines.Add($"Compacted {Math.Max(0, endExclusive - startIndex)} earlier messages:");
+
+        for (int i = startIndex; i < endExclusive; i++)
+        {
+            string? line = BuildConversationMessageLine(_history[i], activeAssistantMessage: null, messageCharLimit: 280, toolSummaryCharLimit: 320);
+            if (!string.IsNullOrWhiteSpace(line))
+                lines.Add(Truncate(line, 420));
+        }
+
+        var sb = new StringBuilder(Math.Min(maxChars, 8_192));
+        for (int i = 0; i < lines.Count; i++)
+        {
+            string line = lines[i];
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
+            string next = sb.Length == 0 ? line : $"\n{line}";
+            if (sb.Length + next.Length > maxChars)
+            {
+                if (sb.Length == 0)
+                    sb.Append(Truncate(line, maxChars));
+                break;
+            }
+
+            sb.Append(next);
+        }
+
+        return sb.ToString().Trim();
+    }
+
+    private static string? BuildConversationMessageLine(ChatMessage msg, ChatMessage? activeAssistantMessage, int messageCharLimit, int toolSummaryCharLimit)
+    {
+        string cleaned = StripProtocolMarkers(msg.Content);
+        ToolCallEntry[] toolCalls = SnapshotToolCalls(msg);
+
+        if (ReferenceEquals(msg, activeAssistantMessage)
+            && string.IsNullOrWhiteSpace(cleaned)
+            && toolCalls.Length == 0)
+        {
+            return null;
+        }
+
+        string line = $"{msg.Role.ToUpperInvariant()} [{msg.Timestamp:HH:mm:ss}]: ";
+        if (!string.IsNullOrWhiteSpace(cleaned))
+            line += Truncate(cleaned.Replace('\n', ' '), Math.Max(64, messageCharLimit));
+        else
+            line += "(tool-only response)";
+
+        if (toolCalls.Length > 0)
+        {
+            var toolParts = new List<string>(toolCalls.Length);
+            foreach (var tc in toolCalls)
+            {
+                var part = tc.ToolName;
+                if (!string.IsNullOrEmpty(tc.ArgsSummary))
+                    part += $"({tc.ArgsSummary})";
+                if (!string.IsNullOrEmpty(tc.ContextResultSummary))
+                    part += $" -> {tc.ContextResultSummary}";
+                else if (!string.IsNullOrEmpty(tc.ResultSummary))
+                    part += $" -> {tc.ResultSummary}";
+                if (!string.IsNullOrEmpty(tc.ResultFilePath))
+                    part += $" [file:{tc.ResultFilePath}]";
+                if (tc.IsError)
+                    part += " [ERROR]";
+                toolParts.Add(part);
+            }
+
+            string toolSummary = string.Join("; ", toolParts);
+            if (!string.IsNullOrWhiteSpace(toolSummary))
+                line += $" | tools: {Truncate(toolSummary, Math.Max(64, toolSummaryCharLimit))}";
+        }
+
+        return line;
     }
 
     private void CaptureContextSummary(ChatMessage assistantMsg)
@@ -5809,6 +5923,7 @@ public sealed class McpAssistantWindow
             || (string.Equals(m.Role, "assistant", StringComparison.OrdinalIgnoreCase)
                 && string.IsNullOrWhiteSpace(m.Content)
                 && m.ToolCalls.Count == 0));
+        _historyCompactedThroughExclusive = 0;
     }
 
     // ── MCP Local Proxy Helpers ──────────────────────────────────────────

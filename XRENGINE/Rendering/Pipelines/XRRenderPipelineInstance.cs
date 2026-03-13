@@ -57,7 +57,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
     private RenderPipeline? _pipeline;
     public RenderPipeline? Pipeline
     {
-        get => _pipeline ?? SetFieldReturn(ref _pipeline, Engine.Rendering.NewRenderPipeline());
+        get => _pipeline ?? SetFieldReturn(ref _pipeline, CreateDefaultRenderPipeline());
         set => SetField(ref _pipeline, value);
     }
 
@@ -116,6 +116,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
         return tags.Count == 0 ? string.Empty : $"[{string.Join(",", tags)}]";
     }
+
+    private static RenderPipeline CreateDefaultRenderPipeline()
+        => RuntimeRenderingHostServices.Current.CreateDefaultRenderPipeline() as RenderPipeline
+            ?? throw new InvalidOperationException("RuntimeRenderingHostServices.Current did not provide a default render pipeline.");
 
     /// <summary>
     /// Captures all textures in the pipeline and saves them to the specified directory.
@@ -309,7 +313,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
                 WarnIfScreenSpaceUiHasNoRenderCommand(userInterface, viewport);
                 BeginRenderGraphValidationFrame();
 
-                if (AbstractRenderer.Current is OpenGLRenderer)
+                if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL)
                 {
                     var passMetadata = Pipeline.PassMetadata;
                     if (passMetadata is { Count: > 0 })

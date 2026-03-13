@@ -7,7 +7,7 @@ Updated: 2026-03-12
 ## Current State
 
 - `Runtime.Core` already owns the jobs package, networking message contracts, startup/discovery contracts, AOT metadata, runtime world/tick contracts, the base scene graph (`SceneNode`, `XRComponent`, `TransformBase`, `Transform`), the transform host service seam, the runtime child-placement seam (`ITransformChildPlacementInfo`), `DefaultLayers`, `XRTransformEditorAttribute`, and host-independent networking state-change metadata (`EStateChangeType`, `StateChangeInfo`).
-- `Runtime.Rendering` already owns the indirect draw/policy structs, render-graph metadata, render-resource descriptors, post-process schema metadata, the video-streaming runtime package, the shared render-object ownership seam (`GenericRenderObject`, `AbstractRenderAPIObject`, `IRenderAPIObject`, `IRenderApiWrapperOwner`, `IRuntimeRenderObjectServices`, `RuntimeRenderObjectServices`), the shader asset/runtime loader seam (`IRuntimeShaderServices`, `RuntimeShaderServices`, `XRShader`, `ShaderHelper`), the render-program/buffer runtime slice (`XRRenderProgram`, `XRRenderProgramPipeline`, `XRDataBuffer`, `XRDataBufferView`, `EEngineUniform`, `EMemoryBarrierMask`, `IApiDataBuffer`, `IRenderTextureResource`), and the pure material render-policy types (`ETransparencyMode`, `RenderingParameters`, `BlendMode`, `DepthTest`, `StencilTest`, and related enums).
+- `Runtime.Rendering` already owns the indirect draw/policy structs, render-graph metadata, render-resource descriptors, post-process schema metadata, the video-streaming runtime package, the shared render-object ownership seam (`GenericRenderObject`, `AbstractRenderAPIObject`, `IRenderAPIObject`, `IRenderApiWrapperOwner`, `IRuntimeRenderObjectServices`, `RuntimeRenderObjectServices`), the shader asset/runtime loader seam (`IRuntimeShaderServices`, `RuntimeShaderServices`, `XRShader`, `ShaderHelper`), the render-program/buffer runtime slice (`XRRenderProgram`, `XRRenderProgramPipeline`, `XRDataBuffer`, `XRDataBufferView`, `EEngineUniform`, `EMemoryBarrierMask`, `IApiDataBuffer`, `IRenderTextureResource`), the lower rendering-object runtime surface (`XRTexture*`, `XRMaterial*`, `XRMesh`, `XRFrameBuffer`, `XRMaterialFrameBuffer`, `XRRenderBuffer`, `IFrameBufferAttachement`), the material shader-parameter types (`ShaderVar*`), cubemap mip runtime data (`CubeMipmap`), the concrete OpenGL/Vulkan video upload backends, the pure material render-policy types (`ETransparencyMode`, `RenderingParameters`, `BlendMode`, `DepthTest`, `StencilTest`, and related enums), and the higher rendering host-service seam for default pipeline creation, viewport/window automatic timing, renderer/window creation, scene-panel presentation, VR/editor render gating, and runtime render-loop coordination (`IRuntimeRenderingHostServices`, `IRuntimeRenderWindowHost`, `IRuntimeViewportHost`, `IRuntimeRendererHost`, `IRuntimeRenderPipelineHost`, `IRuntimeWindowScenePanelAdapter`).
 - `Runtime.ModelingBridge` currently owns only modeling option/contract types.
 - `Runtime.AnimationIntegration`, `Runtime.AudioIntegration`, and `Runtime.InputIntegration` still do not own a real subsystem slice.
 - `Runtime.Bootstrap` still references `XRENGINE` directly, so the project graph is not at the final Phase 2 target yet.
@@ -25,10 +25,13 @@ Updated: 2026-03-12
 
 ### P0 - Runtime.Rendering
 
-- [ ] Break the remaining `AbstractRenderer` / `XRWindow` ownership chain. Concrete wrapper creation, renderer caches, and window lifecycle are still coupled together in `XRENGINE`.
-- [ ] Continue the rendering runtime move after the shader/program/buffer slice: `XRTexture*`, `XRMaterial*`, and mesh runtime types still live in `XRENGINE`.
-- [ ] Move the concrete video upload backends: `OpenGLVideoFrameGpuActions` and `VulkanVideoFrameGpuActions`.
-- [ ] After those moves, continue with the higher rendering runtime surface: viewports, render pipelines, render passes, and broader render-thread/window coordination.
+- [x] Break the remaining `AbstractRenderer` / `XRWindow` ownership chain. Default pipeline creation, renderer construction, scene-panel presentation, VR/editor gating, timer hookup, window close/remove policy, and render-loop coordination now route through `RuntimeRenderingHostServices` instead of reaching directly into `Engine`.
+- [x] Continue the rendering runtime move after the shader/program/buffer slice: `XRTexture*`, `XRMaterial*`, mesh runtime types, their base framebuffer/renderbuffer runtime types, and shader-parameter support types now live in `Runtime.Rendering`.
+- [x] Move the concrete video upload backends: `OpenGLVideoFrameGpuActions` and `VulkanVideoFrameGpuActions`.
+- [x] After those moves, continue with the higher rendering runtime surface: viewports, render pipelines, render passes, and broader render-thread/window coordination. `XRViewport`, `XRCamera`, `XRRenderPipelineInstance`, `RenderPipeline`, `ViewportRenderCommandContainer`, `RenderCommand`, and `AbstractRenderer` now resolve the remaining host-owned defaults/timing/presentation policy through `RuntimeRenderingHostServices`, and targeted seam tests cover the new runtime boundary.
+
+Current follow-up detail:
+`XRViewport`, `RenderPipeline`, `XRRenderPipelineInstance`, `ViewportRenderCommandContainer`, `XRWindow`, and `AbstractRenderer` still physically compile from `XRENGINE`, but the P0 blocker is closed because their engine/editor/VR/default-pipeline/timer lifecycle policy now routes through runtime-owned host-service seams. A later cleanup pass can relocate those files/projects without re-breaking the runtime boundary.
 
 ### P1 - ModelingBridge
 
@@ -59,22 +62,21 @@ Updated: 2026-03-12
 - `TransformBase.MatrixInfo` and `Transform` no longer reach directly into `Engine` for update delta, transform keyframe interval, render-thread state, or transform debug logging.
 - The remaining typed `XRWorldInstance` access is now isolated to engine-side code (`XRSceneComponent` plus explicit engine-only casts), so it is no longer a blocker for `Runtime.Core` scene-graph ownership.
 - The remaining `Engine/` and `Settings/` files under `XRENGINE` are host-specific or still depend on rendering, VR, editor, or application-layer concerns; they are no longer `P0 - Runtime.Core` blockers.
-- The shared `GenericRenderObject -> AbstractRenderAPIObject` chain already lives in `Runtime.Rendering`. The current rendering blocker is the higher `AbstractRenderer` / `XRWindow` layer.
+- The shared `GenericRenderObject -> AbstractRenderAPIObject` chain and the lower rendering-object runtime surface now live in `Runtime.Rendering`. The higher window/viewport/pipeline layer is no longer a P0 boundary blocker because its host/editor/VR/default-pipeline lifecycle policy now routes through `RuntimeRenderingHostServices`.
+- The higher rendering window/viewport/pipeline layer no longer reaches directly into `Engine` for default pipelines, timer hookup, renderer construction, or editor/VR presentation policy; those concerns now flow through `RuntimeRenderingHostServices`.
 - The adapter projects are blocked by ownership boundaries, not by project-file setup.
 
 ## Suggested Execution Order
 
-1. Finish the remaining `Runtime.Core` scene-graph blockers.
-2. Finish the remaining `Runtime.Rendering` renderer/window ownership blockers.
-3. Move rendering-heavy mesh/material/shader/runtime types.
-4. Unblock `ModelingBridge` heavy implementations.
-5. Start populating `AnimationIntegration`, `AudioIntegration`, and `InputIntegration`.
-6. Remove the direct Bootstrap reference to `XRENGINE`.
-7. Clean up the remaining Editor-only bridge surface.
+1. Start the `ModelingBridge` heavy implementation move now that the rendering P0 boundary is closed.
+2. Populate the first coherent `AnimationIntegration`, `AudioIntegration`, and `InputIntegration` slices.
+3. Remove the direct Bootstrap reference to `XRENGINE`.
+4. Revisit the physical file/project relocation of the now-decoupled higher rendering types as cleanup, not as a P0 blocker.
+5. Clean up the remaining Editor-only bridge surface.
 
 ## Validation Baseline
 
-Latest green validation before this todo rewrite:
+Latest green validation:
 
 - `dotnet build .\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj`
 - `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj`
@@ -85,6 +87,8 @@ Latest green validation before this todo rewrite:
 - `dotnet test XREngine.UnitTests --filter StreamVariantInfoTests`
 - `dotnet test XREngine.UnitTests --filter VulkanTodoP2ValidationTests`
 - `dotnet test XREngine.UnitTests --filter AssetPackerTests`
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~ForwardDepthNormalVariantTests|FullyQualifiedName~XRMeshSerializationTests|FullyQualifiedName~AlphaToCoveragePhase2Tests"`
+- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter "FullyQualifiedName~RuntimeRenderingHostServicesTests|FullyQualifiedName~RenderRuntimeServicesTests|FullyQualifiedName~ForwardDepthNormalVariantTests"`
 
 ## Phase 2 Exit Criteria
 

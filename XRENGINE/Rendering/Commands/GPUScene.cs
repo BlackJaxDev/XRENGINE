@@ -467,8 +467,8 @@ namespace XREngine.Rendering.Commands
             {
                 positions[v] = mesh.GetPosition(v);
                 normals[v] = mesh.GetNormal(v);
-                var tan = mesh.GetTangent(v);
-                tangents[v] = new Vector4(tan, 1.0f);
+                var tan = mesh.GetTangentWithSign(v);
+                tangents[v] = tan;
                 uv0[v] = mesh.GetTexCoord(v, 0);
             }
 

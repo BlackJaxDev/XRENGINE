@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "NormalEncoding"
+
 const float PI = 3.14159265359f;
 const float InvPI = 0.31831f;
 

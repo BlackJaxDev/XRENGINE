@@ -987,11 +987,21 @@ public static partial class CookedBinarySerializer
         if (AnimStateMachineCookedBinarySerializer.CanHandle(targetType))
             return AnimStateMachineCookedBinarySerializer.Read(reader);
 
-        if (CreateInstance(targetType) is not ICookedBinarySerializable instance)
-            throw new InvalidOperationException($"Type '{targetType}' does not implement {nameof(ICookedBinarySerializable)}.");
+        if (CreateInstance(targetType) is ICookedBinarySerializable instance)
+        {
+            instance.ReadCookedBinary(reader);
+            return instance;
+        }
 
-        instance.ReadCookedBinary(reader);
-        return instance;
+        if (typeof(IRuntimeCookedBinarySerializable).IsAssignableFrom(targetType))
+        {
+            int payloadLength = reader.ReadInt32();
+            byte[] payload = reader.ReadBytes(payloadLength);
+            return RuntimeCookedBinarySerializer.Deserialize(targetType, payload);
+        }
+
+        throw new InvalidOperationException(
+            $"Type '{targetType}' does not implement {nameof(ICookedBinarySerializable)} or {nameof(IRuntimeCookedBinarySerializable)}.");
     }
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]

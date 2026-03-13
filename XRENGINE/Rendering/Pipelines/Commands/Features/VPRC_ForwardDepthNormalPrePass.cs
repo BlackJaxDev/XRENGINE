@@ -4,9 +4,9 @@ using XREngine.Rendering.Pipelines.Commands;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     /// <summary>
-    /// Renders forward opaque geometry with a depth+normal override material.
-    /// Writes world-space normals to color attachment 0 and depth to the depth/stencil attachment,
-    /// ensuring AO algorithms see both deferred and forward geometry.
+    /// Renders forward opaque and masked geometry into the shared depth+normal targets.
+    /// Uses per-material fragment variants when available so the pre-pass preserves each shader's
+    /// own normal evaluation path, with a generic override material left as fallback.
     /// </summary>
     public class VPRC_ForwardDepthNormalPrePass : ViewportRenderCommand
     {
@@ -21,15 +21,13 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
-            if (ParentPipeline is not DefaultRenderPipeline pipeline)
+            if (ParentPipeline is not DefaultRenderPipeline pipeline || _renderPasses.Count == 0)
                 return;
-
-            if (_renderPasses.Count == 0)
-                return;
-
+            
             var material = pipeline.GetDepthNormalPrePassMaterial();
 
             using var overrideTicket = ActivePipelineInstance.RenderState.PushOverrideMaterial(material);
+            using var variantTicket = ActivePipelineInstance.RenderState.PushUseDepthNormalMaterialVariants();
             using var pipelineTicket = ActivePipelineInstance.RenderState.PushForceShaderPipelines();
             using var generatedVertexTicket = ActivePipelineInstance.RenderState.PushForceGeneratedVertexProgram();
 
@@ -38,12 +36,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             foreach (int pass in _renderPasses)
-            {
                 if (_gpuDispatch)
                     commands.RenderGPU(pass);
                 else
                     commands.RenderCPU(pass);
-            }
         }
     }
 }

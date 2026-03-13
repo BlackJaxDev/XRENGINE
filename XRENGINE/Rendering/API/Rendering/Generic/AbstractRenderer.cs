@@ -21,7 +21,7 @@ namespace XREngine.Rendering
     /// <summary>
     /// An abstract window renderer handles rendering to a specific window using a specific graphics API.
     /// </summary>
-    public abstract unsafe class AbstractRenderer : XRBase, IRenderApiWrapperOwner//, IDisposable
+    public abstract unsafe class AbstractRenderer : XRBase, IRenderApiWrapperOwner, IRuntimeRendererHost//, IDisposable
     {
         #region Constants / Statics
         /// <summary>
@@ -226,7 +226,7 @@ namespace XREngine.Rendering
             if (!SupportsImGui)
                 return false;
 
-            if (Engine.Rendering.State.IsShadowPass)
+            if (RuntimeRenderingHostServices.Current.IsShadowPass)
                 return false;
 
             if (!ShouldRenderImGui(viewport))
@@ -236,7 +236,7 @@ namespace XREngine.Rendering
             if (backend is null)
                 return false;
 
-            long timestampTicks = Engine.Time.Timer.Render.LastTimestampTicks;
+            long timestampTicks = RuntimeRenderingHostServices.Current.LastRenderTimestampTicks;
             if (ShouldSkipImGuiFrame(allowMultipleInFrame, timestampTicks, _lastImGuiTimestampTicks))
                 return false;
 
@@ -253,7 +253,7 @@ namespace XREngine.Rendering
                     try
                     {
                         ConfigureImGuiDisplay(canvas, viewport, camera);
-                        backend.Update(Engine.Time.Timer.Render.Delta);
+                        backend.Update((float)RuntimeRenderingHostServices.Current.RenderDeltaSeconds);
                         frameStarted = true;
                         draw();
                         backend.Render();
@@ -398,13 +398,13 @@ namespace XREngine.Rendering
         #region Luminance / Exposure
 
         public bool CalcDotLuminance(XRTexture2D texture, out float dotLuminance, bool genMipmapsNow)
-            => CalcDotLuminance(texture, Engine.Rendering.Settings.DefaultLuminance, out dotLuminance, genMipmapsNow);
+            => CalcDotLuminance(texture, RuntimeRenderingHostServices.Current.DefaultLuminance, out dotLuminance, genMipmapsNow);
         public abstract bool CalcDotLuminance(XRTexture2D texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow);
         public float CalculateDotLuminance(XRTexture2D texture, bool generateMipmapsNow)
             => CalcDotLuminance(texture, out float dotLum, generateMipmapsNow) ? dotLum : 1.0f;
 
         public bool CalcDotLuminance(XRTexture2DArray texture, out float dotLuminance, bool genMipmapsNow)
-            => CalcDotLuminance(texture, Engine.Rendering.Settings.DefaultLuminance, out dotLuminance, genMipmapsNow);
+            => CalcDotLuminance(texture, RuntimeRenderingHostServices.Current.DefaultLuminance, out dotLuminance, genMipmapsNow);
         public abstract bool CalcDotLuminance(XRTexture2DArray texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow);
         public float CalculateDotLuminance(XRTexture2DArray texture, bool generateMipmapsNow)
             => CalcDotLuminance(texture, out float dotLum, generateMipmapsNow) ? dotLum : 1.0f;
@@ -425,11 +425,11 @@ namespace XREngine.Rendering
             => throw new NotSupportedException();
 
         public void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
-            => CalcDotLuminanceFrontAsync(region, withTransparency, Engine.Rendering.Settings.DefaultLuminance, callback);
+            => CalcDotLuminanceFrontAsync(region, withTransparency, RuntimeRenderingHostServices.Current.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
 
         public void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
-            => CalcDotLuminanceFrontAsyncCompute(region, withTransparency, Engine.Rendering.Settings.DefaultLuminance, callback);
+            => CalcDotLuminanceFrontAsyncCompute(region, withTransparency, RuntimeRenderingHostServices.Current.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsyncCompute(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
         #endregion
 
