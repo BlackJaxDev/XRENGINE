@@ -60,11 +60,11 @@ namespace XREngine.Rendering.Commands
         public event Action? PreRender;
         public event Action? PostRender;
 
-        private XREngine.Engine.CodeProfiler.ProfilerScope? _renderState;
+        private IDisposable? _renderState;
 
         protected void OnPreRender()
         {
-            _renderState = Engine.Profiler.Start("RenderCommand.Render");
+            _renderState = RuntimeRenderingHostServices.Current.StartProfileScope("RenderCommand.Render");
             
             PreRender?.Invoke();
         }

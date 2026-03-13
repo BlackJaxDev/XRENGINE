@@ -1,7 +1,9 @@
 #version 450
 
+#pragma snippet "NormalEncoding"
+
 layout (location = 0) out vec4 AlbedoOpacity;
-layout (location = 1) out vec3 Normal;
+layout (location = 1) out vec2 Normal;
 layout (location = 2) out vec4 RMSI;
 layout (location = 3) out uint TransformId;
 
@@ -27,7 +29,7 @@ void main()
     float m = 2.0f * sqrt(reflected.x * reflected.x + reflected.y * reflected.y + (reflected.z + 1.0f) * (reflected.z + 1.0f));
     vec2 matcapUV = vec2(reflected.x / m + 0.5f, reflected.y / m + 0.5f);
 
-    Normal = normalize(FragNorm);
+    Normal = XRENGINE_EncodeNormal(FragNorm);
     AlbedoOpacity = vec4(texture(Texture0, matcapUV).rgb * BaseColor, Opacity);
     RMSI = vec4(Roughness, Metallic, Specular, Emission);
 }

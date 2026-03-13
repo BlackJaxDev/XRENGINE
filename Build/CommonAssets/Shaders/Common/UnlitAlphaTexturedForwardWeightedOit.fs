@@ -5,7 +5,7 @@ layout (location = 1) out vec4 OutRevealage;
 layout (location = 4) in vec2 FragUV0;
 
 uniform sampler2D Texture0;
-uniform float AlphaThreshold = 0.1f;
+uniform float AlphaCutoff = 0.1f;
 
 float XRE_ComputeOitWeight(float alpha)
 {
@@ -16,7 +16,7 @@ float XRE_ComputeOitWeight(float alpha)
 void main()
 {
     vec4 color = texture(Texture0, FragUV0);
-    if (color.a < AlphaThreshold)
+    if (color.a < AlphaCutoff)
         discard;
 
     float alpha = clamp(color.a, 0.0, 1.0);

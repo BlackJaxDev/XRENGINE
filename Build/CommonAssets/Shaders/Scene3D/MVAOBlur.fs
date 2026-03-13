@@ -1,6 +1,8 @@
 #version 450
 #include "AOCommon.glsl"
 
+#pragma snippet "NormalEncoding"
+
 layout(location = 0) out float OutIntensity;
 layout(location = 0) in vec3 FragPos;
 
@@ -22,7 +24,7 @@ void main()
 
     float centerAO = texture(AmbientOcclusionTexture, uv).r;
     float centerDepth = texture(DepthView, uv).r;
-    vec3 centerNormal = normalize(texture(Normal, uv).rgb);
+    vec3 centerNormal = XRENGINE_ReadNormal(Normal, uv);
 
     float weightSum = 0.0f;
     float result = 0.0f;
@@ -36,7 +38,7 @@ void main()
 
             float sampleAO = texture(AmbientOcclusionTexture, sampleUV).r;
             float sampleDepth = texture(DepthView, sampleUV).r;
-            vec3 sampleNormal = normalize(texture(Normal, sampleUV).rgb);
+            vec3 sampleNormal = XRENGINE_ReadNormal(Normal, sampleUV);
 
             float depthWeight = exp(-abs(sampleDepth - centerDepth) * DepthPhi);
             float normalWeight = pow(max(dot(sampleNormal, centerNormal), 0.0f), NormalPhi);

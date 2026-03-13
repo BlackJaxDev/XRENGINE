@@ -224,11 +224,11 @@ public partial class DefaultRenderPipeline
             var t = XRTexture2DArray.CreateFrameBufferTexture(
                 2,
                 InternalWidth, InternalHeight,
-                EPixelInternalFormat.Rgb16f,
-                EPixelFormat.Rgb,
+                EPixelInternalFormat.RG16f,
+                EPixelFormat.Rg,
                 EPixelType.HalfFloat);
             t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Rgb16f;
+            t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
             t.OVRMultiViewParameters = new(0, 2u);
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
@@ -240,9 +240,10 @@ public partial class DefaultRenderPipeline
         {
             var t = XRTexture2D.CreateFrameBufferTexture(
                 InternalWidth, InternalHeight,
-                EPixelInternalFormat.Rgb16f,
-                EPixelFormat.Rgb,
+                EPixelInternalFormat.RG16f,
+                EPixelFormat.Rg,
                 EPixelType.HalfFloat);
+            t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.Name = NormalTextureName;

@@ -98,7 +98,7 @@ void main()
 
 	//Retrieve shading information from GBuffer textures
 	vec3 albedo = texture(AlbedoOpacity, uv).rgb;
-	vec3 normal = texture(Normal, uv).rgb;
+	vec3 normal = XRENGINE_ReadNormal(Normal, uv);
 	vec3 rms = texture(RMSE, uv).rgb;
 	float depth = texture(DepthView, uv).r;
 

@@ -39,6 +39,12 @@ uniform vec3 GlobalAmbient;
 // The layout(binding) ensures the sampler defaults to unit 15 even if runtime binding fails.
 layout(binding = 15) uniform sampler2D ShadowMap;
 uniform bool ShadowMapEnabled;
+uniform mat4 PrimaryDirLightWorldToLightInvViewMatrix;
+uniform mat4 PrimaryDirLightWorldToLightProjMatrix;
+uniform float ShadowBase;
+uniform float ShadowMult;
+uniform float ShadowBiasMin;
+uniform float ShadowBiasMax;
 
 uniform int DirLightCount; 
 uniform DirLight DirectionalLights[2];
@@ -79,16 +85,20 @@ float XRENGINE_Attenuate(float dist, float radius)
     return pow(clamp(1.0 - pow(dist / radius, 4.0), 0.0, 1.0), 2.0) / (dist * dist + 1.0);
 }
 
+float XRENGINE_GetShadowBias(float diffuseFactor)
+{
+    float mapped = pow(ShadowBase * (1.0 - max(diffuseFactor, 0.0)), ShadowMult);
+    return mix(ShadowBiasMin, ShadowBiasMax, mapped);
+}
+
 // Shadow map reading for primary directional light (uses standalone ShadowMap sampler)
-float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor, mat4 lightSpaceMatrix)
+float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
 {
     if (!ShadowMapEnabled)
         return 1.0;
 
-    float maxBias = 0.04;
-    float minBias = 0.001;
-
-    vec4 fragPosLightSpace = lightSpaceMatrix * vec4(fragPos, 1.0);
+    mat4 lightMatrix = PrimaryDirLightWorldToLightProjMatrix * inverse(PrimaryDirLightWorldToLightInvViewMatrix);
+    vec4 fragPosLightSpace = lightMatrix * vec4(fragPos, 1.0);
     vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
     fragCoord = fragCoord * 0.5 + 0.5;
 
@@ -98,10 +108,20 @@ float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor, 
         fragCoord.z < 0.0 || fragCoord.z > 1.0)
         return 1.0;
 
-    float bias = max(maxBias * (1.0 - max(diffuseFactor, 0.0)), minBias);
+    float bias = XRENGINE_GetShadowBias(diffuseFactor);
 
-    float depth = texture(ShadowMap, fragCoord.xy).r;
-    return (fragCoord.z - bias) > depth ? 0.0 : 1.0;
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / vec2(textureSize(ShadowMap, 0));
+    for (int x = -1; x <= 1; ++x)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            float pcfDepth = texture(ShadowMap, fragCoord.xy + vec2(x, y) * texelSize).r;
+            shadow += (fragCoord.z - bias) > pcfDepth ? 0.0 : 1.0;
+        }
+    }
+
+    return shadow * 0.111111111;
 }
 
 vec3 XRENGINE_CalcLightColor(BaseLight light, vec3 lightDirection, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion, bool useShadow)
@@ -122,7 +142,7 @@ vec3 XRENGINE_CalcLightColor(BaseLight light, vec3 lightDirection, vec3 normal, 
             SpecularColor = light.Color * spec * pow(SpecularFactor, 64.0);
     }
 
-    float shadow = useShadow ? XRENGINE_ReadShadowMapDir(fragPos, normal, DiffuseFactor, light.WorldToLightSpaceProjMatrix) : 1.0;
+    float shadow = useShadow ? XRENGINE_ReadShadowMapDir(fragPos, normal, DiffuseFactor) : 1.0;
     return (AmbientColor + (DiffuseColor + SpecularColor) * shadow) * ambientOcclusion;
 }
 

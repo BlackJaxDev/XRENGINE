@@ -1,6 +1,6 @@
 # Depth-Normal Pre-Pass Design
 
-> Status: **Phase 1 implemented (vertex normals only), Phase 2 proposed (normal-mapped normals)**
+> Status: **Phase 1 implemented (vertex normals only), octahedral RG16F compression implemented, Phase 2 proposed (normal-mapped normals)**
 
 ## Problem Statement
 
@@ -33,7 +33,7 @@ Deferred geometry (`OpaqueDeferred`, `DeferredDecals`) does **not** need a pre-p
 
 | File | Role |
 |------|------|
-| `Shaders/Common/DepthNormalPrePass.fs` | Override fragment shader — outputs `normalize(FragNorm)` to `location 0`, depth writes implicitly |
+| `Shaders/Common/DepthNormalPrePass.fs` | Override fragment shader — oct-encodes `normalize(FragNorm)` to `location 0`, depth writes implicitly |
 | `VPRC_ForwardDepthNormalPrePass.cs` | Pipeline command — pushes override material, forces generated vertex program, renders mesh passes |
 | `DefaultRenderPipeline.FBOs.cs` — `CreateForwardDepthPrePassFBO()` | FBO with `Normal` (color0) + `DepthStencil` (depth/stencil) attachments |
 | `DefaultRenderPipeline.FBOs.cs` — `CreateDepthNormalPrePassMaterial()` | Override material with `DepthNormalPrePass.fs`, depth test Lequal, depth write true |
@@ -56,7 +56,7 @@ This completely replaces each mesh's fragment shader with the pre-pass shader. T
 
 ```
 ForwardDepthPrePassFBO:
-  ColorAttachment0  →  Normal texture (RGB16F, shared with GBuffer)
+  ColorAttachment0  →  Normal texture (RG16F octahedral, shared with GBuffer)
   DepthStencil      →  DepthStencil texture (Depth24Stencil8, shared with GBuffer)
 ```
 
@@ -124,15 +124,19 @@ This would require changes to:
 A simpler variant: add a flag `PreserveOriginalTextures` on the override. When active, after the override material's shader program is bound, bind the original material's textures instead of the override material's (empty) textures.
 
 **Pros:**
-- Single pre-pass shader works for all meshes
+- Single pre-pass shader works for simple materials that follow the engine's standard texture slot conventions
 - No extra shader compilation
-- Original material's TBN, normal map, and UV coordinates all work naturally
 
 **Cons:**
+- Not robust enough for real material graphs or hand-authored shader logic
+- Fails to preserve shader-authored normal composition such as blending base and detail normal maps, animated normal distortion, triplanar normals, or procedural perturbation
+- Assumes the pre-pass shader can reconstruct the original shader's normal evaluation from texture slots alone, which is not generally true
 - Requires renderer-level changes (GLMeshRenderer, RenderingState)
 - The pre-pass shader must declare compatible texture uniforms (`Texture1` for normal map)
 - Must handle meshes that don't have a normal map (fallback to vertex normal)
 - Texture slot conventions must be consistent across all materials
+
+Because the normal result is often the output of shader logic rather than a direct texture fetch, this approach should be treated as a limited stopgap, not the target architecture.
 
 ### Approach C: Dual-Output Deferred Shaders (GBuffer Normal + Depth Pre-Pass Combined)
 
@@ -168,24 +172,42 @@ void main() {
 
 ### Recommended Path
 
-**Phase 2a — Approach B (Texture Passthrough Override)**
+**Phase 2a — Approach A (Depth-Normal Shader Variants)**
 
-This is the most pragmatic next step:
+The next implementation should be shader-derived, not texture-derived.
 
-1. Add `PushOverrideMaterialPreservingTextures(XRMaterial override)` to `RenderingState`
-2. In `GLMeshRenderer.Rendering.cs`, when this mode is active: use the override's shader program but bind the original material's textures
-3. Update `DepthNormalPrePass.fs` to declare `Texture1` (normal map) and `FragTan`/`FragBinorm`/`FragUV0` inputs, with a `uniform bool HasNormalMap` fallback
-4. The pre-pass material sets `HasNormalMap = false` as default; the renderer overrides it based on whether the original material has a texture at slot 1
+1. Add a depth-normal shader generation path that starts from the material's own fragment shader and strips it down to depth + normal output
+2. Preserve all material-authored normal logic, including layered normal maps, animated perturbation, detail normals, and other custom composition
+3. Reuse the existing generated vertex program so `FragNorm`, `FragTan`, `FragBinorm`, and UV varyings remain available when the mesh supports them
+4. Cache the resulting depth-normal shader variant per source shader to avoid recompiling every frame
 
-**Phase 2b — Approach C (Ifdef permutations)** as a long-term clean solution when the shader compilation infrastructure supports per-draw defines.
+This keeps the pre-pass result semantically aligned with the actual forward shading path.
+
+**Phase 2b — Approach C (`DEPTH_NORMAL_PREPASS` or equivalent compile-time mode)**
+
+Once the shader pipeline supports a clean compile-time mode switch, fold the variant system into the shader source itself:
+
+1. Add a shared convention for depth-normal output in forward shaders
+2. Compile a pre-pass variant from the same source file as the lit forward shader
+3. Keep one place where the shader defines how its final normal is produced
+4. Avoid duplicate shader files whose only difference is the output target
+
+Approach C is the cleaner long-term architecture because it makes the pre-pass an alternate output mode of the same shader, rather than a separate manually maintained shader.
+
+### Why Approach B Is Not Recommended
+
+Approach B cannot reliably reproduce the final shaded normal for materials whose normal is produced by shader logic instead of a single normal-map sample. Examples include:
+
+1. Combining a macro normal map with a tiled detail normal map
+2. Applying time-based or UV-scrolling distortion before unpacking the normal
+3. Mixing authored normals with procedural or animation-driven perturbations
+4. Selecting between multiple normal sources based on material features or masks
+
+In all of those cases, binding the original textures to a generic override shader still loses the material-specific math. The correct source of truth is the original shader logic, which is why Approach A and then C are the right direction.
 
 ## Normal Encoding
 
-### Current: Uncompressed RGB16F
-
-The GBuffer normal texture is `RGB16F` (3 × 16-bit float). All consumers read with `texture(Normal, uv).rgb` — no encoding or decoding. Normals are world-space, range `[-1, 1]`.
-
-### Future: Octahedral RG16F
+### Current: Octahedral RG16F
 
 Octahedral encoding maps a unit normal to 2 channels, saving 33% bandwidth:
 
@@ -208,14 +230,7 @@ vec3 OctDecode(vec2 f) {
 }
 ```
 
-This would require updating:
-- Normal texture format: `RGB16F` → `RG16F`
-- All deferred shader normal writes (11 shaders)
-- All forward pre-pass normal writes
-- All normal consumers: DeferredLightCombine, all AO passes, GI composites, decals, motion vectors, etc.
-- The `NormalMapping.glsl` snippet could gain `XRENGINE_EncodeNormal()` / `XRENGINE_DecodeNormal()` functions
-
-This is a separate effort from the pre-pass and should be evaluated independently based on bandwidth profiling.
+This implementation stores the shared GBuffer normal texture as `RG16F` and routes all deferred writes, forward pre-pass writes, and read-side consumers through shared `XRENGINE_EncodeNormal()` / `XRENGINE_DecodeNormal()` helpers.
 
 ## GBuffer Attachment Reference
 
@@ -224,7 +239,7 @@ For context, the AO FBO (which renders deferred geometry) has these attachments:
 | Attachment | Texture | Format | Pre-pass writes? |
 |---|---|---|---|
 | `ColorAttachment0` | AlbedoOpacity | RGBA16F | No |
-| `ColorAttachment1` | Normal | RGB16F | **Yes** (via separate pre-pass FBO) |
+| `ColorAttachment1` | Normal | RG16F | **Yes** (via separate pre-pass FBO) |
 | `ColorAttachment2` | RMSE | RGBA8 | No |
 | `ColorAttachment3` | TransformId | R32UI | No |
 | `DepthStencilAttachment` | DepthStencil | Depth24Stencil8 | **Yes** (via separate pre-pass FBO) |
@@ -246,8 +261,8 @@ This is the read-side complement to the depth-normal pre-pass write side.
 The pre-pass adds one extra rendering of forward opaque geometry per frame. This is typically a small set of meshes (most opaque geometry is deferred). The cost is:
 
 - **Vertex processing**: full transform + skinning — same as the later forward color pass
-- **Fragment processing**: minimal — single `normalize()` + a normal texture write
-- **Bandwidth**: one `RGB16F` write per pixel (normal) + depth write (already happens in color pass)
+- **Fragment processing**: minimal — single `normalize()` + oct encode + normal texture write
+- **Bandwidth**: one `RG16F` write per pixel (normal) + depth write (already happens in color pass)
 - **Draw call overhead**: same draw calls as the forward color pass, but with a lightweight override shader
 
 For scenes with few forward meshes, the cost is negligible. For scenes with many forward meshes, the pre-pass could be gated behind an AO quality setting.
@@ -256,6 +271,7 @@ For scenes with few forward meshes, the cost is negligible. For scenes with many
 
 - `Build/CommonAssets/Shaders/Common/DepthNormalPrePass.fs` — Pre-pass fragment shader
 - `Build/CommonAssets/Shaders/Snippets/AmbientOcclusionSampling.glsl` — Forward AO consumption
+- `Build/CommonAssets/Shaders/Snippets/NormalEncoding.glsl` — Shared octahedral encode/decode helpers
 - `Build/CommonAssets/Shaders/Snippets/NormalMapping.glsl` — Normal map utilities
 - `XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_ForwardDepthNormalPrePass.cs` — Pre-pass command
 - `XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs` — Pipeline orchestration

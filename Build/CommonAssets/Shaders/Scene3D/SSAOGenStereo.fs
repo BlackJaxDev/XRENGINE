@@ -3,6 +3,8 @@
 #include "AOCommon.glsl"
 //#extension GL_EXT_multiview_tessellation_geometry_shader : enable
 
+#pragma snippet "NormalEncoding"
+
 const float PI = 3.14159265359f;
 const float InvPI = 0.31831f;
 
@@ -36,7 +38,7 @@ void main()
     mat4 InverseViewMatrix = leftEye ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
     mat4 ProjMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
     
-    vec3 Normal = texture(Normal, uvi).rgb;
+    vec3 Normal = XRENGINE_ReadNormal(Normal, uvi);
     float Depth = texture(DepthView, uvi).r;
 
     vec3 FragPosVS = AOViewPosFromDepth(Depth, uv, ProjMatrix);

@@ -18,6 +18,24 @@ namespace XREngine.Rendering.OpenGL
                 var globalMaterialOverride = renderState?.GlobalMaterialOverride;
                 var pipelineOverrideMaterial = renderState?.OverrideMaterial;
 
+                if (renderState?.ShadowPass ?? false)
+                {
+                    XRMaterial? shadowSourceMaterial = localMaterialOverride ?? MeshRenderer.Material;
+                    XRMaterial? shadowVariant = shadowSourceMaterial?.ShadowCasterVariant;
+                    if (shadowVariant is not null)
+                        return (Renderer.GetOrCreateAPIRenderObject(shadowVariant) as GLMaterial)!;
+                }
+
+                if (renderState?.UseDepthNormalMaterialVariants ?? false)
+                {
+                    XRMaterial? depthNormalVariant = MeshRenderer.Material?.DepthNormalPrePassVariant;
+                    if (depthNormalVariant is not null)
+                        return (Renderer.GetOrCreateAPIRenderObject(depthNormalVariant) as GLMaterial)!;
+
+                    if (pipelineOverrideMaterial is not null)
+                        return (Renderer.GetOrCreateAPIRenderObject(pipelineOverrideMaterial) as GLMaterial)!;
+                }
+
                 var mat =
                     (globalMaterialOverride is null ? null : Renderer.GetOrCreateAPIRenderObject(globalMaterialOverride) as GLMaterial) ??
                     (pipelineOverrideMaterial is null ? null : Renderer.GetOrCreateAPIRenderObject(pipelineOverrideMaterial) as GLMaterial) ??

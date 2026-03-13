@@ -1,6 +1,8 @@
 #version 450
 #include "AOCommon.glsl"
 
+#pragma snippet "NormalEncoding"
+
 const float PI = 3.14159265359f;
 
 layout(location = 0) out float OutIntensity;
@@ -23,7 +25,7 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos)
 {
     if (UseInputNormals)
     {
-        vec3 worldNormal = texture(Normal, uv).rgb;
+        vec3 worldNormal = XRENGINE_ReadNormal(Normal, uv);
         return normalize((inverse(InverseViewMatrix) * vec4(worldNormal, 0.0f)).rgb);
     }
 

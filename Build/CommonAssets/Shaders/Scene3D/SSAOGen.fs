@@ -2,6 +2,8 @@
 #extension GL_OVR_multiview2 : require
 #include "AOCommon.glsl"
 
+#pragma snippet "NormalEncoding"
+
 const float PI = 3.14159265359f;
 const float InvPI = 0.31831f;
 
@@ -28,7 +30,7 @@ void main()
     //Normalize uv from [-1, 1] to [0, 1]
     uv = uv * 0.5f + 0.5f;
     
-    vec3 Normal = texture(Normal, uv).rgb;
+    vec3 Normal = XRENGINE_ReadNormal(Normal, uv);
     float Depth = texture(DepthView, uv).r;
 
     vec3 FragPosVS = AOViewPosFromDepth(Depth, uv, ProjMatrix);

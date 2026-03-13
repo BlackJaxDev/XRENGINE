@@ -1,7 +1,9 @@
 #version 450
 
+#pragma snippet "NormalEncoding"
+
 layout (location = 0) out vec4 AlbedoOpacity;
-layout (location = 1) out vec3 Normal;
+layout (location = 1) out vec2 Normal;
 layout (location = 2) out vec4 RMSI;
 layout (location = 3) out uint TransformId;
 
@@ -168,7 +170,7 @@ void main()
 
     vec3 albedo = texture(Texture0, uv).rgb * BaseColor;
 
-    Normal = n;
+    Normal = XRENGINE_EncodeNormal(n);
     AlbedoOpacity = vec4(albedo, Opacity);
     RMSI = vec4(Roughness, Metallic, Specular, Emission);
 }

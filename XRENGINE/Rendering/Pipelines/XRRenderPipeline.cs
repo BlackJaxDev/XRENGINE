@@ -19,7 +19,7 @@ namespace XREngine.Rendering;
 
 [XRAssetInspector("XREngine.Editor.AssetEditors.RenderPipelineInspector, XREngine.Editor")]
 [MemoryPackable(GenerateType.NoGenerate)]
-public abstract partial class RenderPipeline : XRAsset
+public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHost
 {
     [Browsable(false)]
     public List<XRRenderPipelineInstance> Instances { get; } = [];

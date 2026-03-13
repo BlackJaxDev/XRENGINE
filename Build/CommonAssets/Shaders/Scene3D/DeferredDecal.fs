@@ -1,7 +1,9 @@
 #version 450
 
+#pragma snippet "NormalEncoding"
+
 layout (location = 0) out vec4 OutAlbedoOpacity;
-layout (location = 1) out vec3 OutNormal;
+layout (location = 1) out vec2 OutNormal;
 layout (location = 2) out vec4 OutRMSI;
 
 uniform sampler2D AlbedoOpacity; //Screen AlbedoOpacity
@@ -33,7 +35,7 @@ void main()
 
 	//Retrieve shading information from GBuffer textures
 	vec4 albedo = texture(AlbedoOpacity, uv);
-	vec3 normal = texture(Normal, uv).rgb;
+	vec3 normal = XRENGINE_ReadNormal(Normal, uv);
 	vec4 rmsi = texture(RMSE, uv);
 	float depth = texture(DepthView, uv).r;
 
@@ -69,6 +71,6 @@ void main()
 	//decalRMSI = mix(rmsi, decalRMSI, decalAlbedo.a);
 
 	OutAlbedoOpacity = vec4(decalAlbedoOpacity.rgb, albedo.a);
-  	OutNormal = normal;
+	OutNormal = XRENGINE_EncodeNormal(normal);
 	OutRMSI = rmsi;
 }

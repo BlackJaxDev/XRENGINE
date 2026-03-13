@@ -100,7 +100,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 InputVars.Add(ECommonBufferType.Normal.ToString(), (location++, EShaderVarType._vec3));
 
             if (_useTangents)
-                InputVars.Add(ECommonBufferType.Tangent.ToString(), (location++, EShaderVarType._vec3));
+                InputVars.Add(ECommonBufferType.Tangent.ToString(), (location++, EShaderVarType._vec4));
 
             if (_useSkinningInputs && Mesh.HasSkinning && Engine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
             {
@@ -436,7 +436,7 @@ namespace XREngine.Rendering.Shaders.Generator
             if (hasTangents)
             {
                 Line($"vec3 {FinalTangentName} = vec3(0.0f);");
-                Line($"vec3 {BaseTangentName} = {ECommonBufferType.Tangent};");
+                Line($"vec3 {BaseTangentName} = {ECommonBufferType.Tangent}.xyz;");
             }
 
             Line();
@@ -471,7 +471,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 if (hasTangents)
                 {
                     Line($"{FragTanName} = normalize({NormalMatrixName} * {FinalTangentName});");
-                    Line($"vec3 {FinalBinormalName} = cross({FinalNormalName}, {FinalTangentName});");
+                    Line($"vec3 {FinalBinormalName} = cross({FinalNormalName}, {FinalTangentName}) * {ECommonBufferType.Tangent}.w;");
                     Line($"{FragBinormName} = normalize({NormalMatrixName} * {FinalBinormalName});");
                 }
             }

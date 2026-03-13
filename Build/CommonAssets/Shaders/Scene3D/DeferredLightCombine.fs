@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "NormalEncoding"
+
 const float PI = 3.14159265359f;
 const float InvPI = 0.31831f;
 // Reflection mip is derived from the texture's mip count; no fixed cap.
@@ -339,7 +341,7 @@ void main()
 	uv = uv * 0.5f + 0.5f;
 
         vec3 albedoColor = texture(AlbedoOpacity, uv).rgb;
-        vec3 normal = texture(Normal, uv).rgb;
+        vec3 normal = XRENGINE_ReadNormal(Normal, uv);
         vec4 rmse = texture(RMSE, uv);
         float ao = UseAmbientOcclusion ? texture(AmbientOcclusionTexture, uv).r : 1.0f;
         float depth = texture(DepthView, uv).r;

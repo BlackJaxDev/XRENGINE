@@ -2,6 +2,8 @@
 #extension GL_OVR_multiview2 : require
 //#extension GL_EXT_multiview_tessellation_geometry_shader : enable
 
+#pragma snippet "NormalEncoding"
+
 const float PI = 3.14159265359f;
 const float InvPI = 0.31831f;
 const float MAX_REFLECTION_LOD = 4.0f;
@@ -89,7 +91,7 @@ void main()
 	mat4 ProjMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
 
 	vec3 albedoColor = texture(AlbedoOpacity, uvi).rgb;
-	vec3 normal = texture(Normal, uvi).rgb;
+	vec3 normal = XRENGINE_ReadNormal(Normal, uvi);
 	vec3 rms = texture(RMSE, uvi).rgb;
 	float ao = UseAmbientOcclusion ? texture(AmbientOcclusionTexture, uvi).r : 1.0f;
 	float depth = texture(DepthView, uvi).r;

@@ -205,6 +205,7 @@ namespace XREngine
             RuntimeTransformServices.Current = new EngineRuntimeTransformServices();
             RuntimeRenderObjectServices.Current = new EngineRuntimeRenderObjectServices();
             RuntimeShaderServices.Current = new EngineRuntimeShaderServices();
+            RuntimeRenderingHostServices.Current = new EngineRuntimeRenderingHostServices();
             RuntimeVideoStreamingServices.Current = new EngineRuntimeVideoStreamingServices();
 
             // Connect external profiling hooks for subsystems

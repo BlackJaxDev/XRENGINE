@@ -638,6 +638,31 @@ namespace XREngine
             });
         }
 
+        private const int ImportedSurfaceDetailNormalMapMode = 0;
+        private const int ImportedSurfaceDetailHeightMapMode = 1;
+        private const float ImportedHeightMapScale = 2.0f;
+
+        private static int ResolveSurfaceDetailTextureIndex(List<TextureSlot> textures, out bool isHeightMap)
+        {
+            int normalIndex = textures.FindIndex(x => x.TextureType == TextureType.Normals);
+            if (normalIndex >= 0)
+            {
+                isHeightMap = false;
+                return normalIndex;
+            }
+
+            int heightIndex = textures.FindIndex(x => x.TextureType == TextureType.Height);
+            isHeightMap = heightIndex >= 0;
+            return heightIndex;
+        }
+
+        private static void AppendSurfaceDetailParameters(ref ShaderVar[] parameters, bool isHeightMap)
+        {
+            Array.Resize(ref parameters, parameters.Length + 2);
+            parameters[^2] = new ShaderInt(isHeightMap ? ImportedSurfaceDetailHeightMapMode : ImportedSurfaceDetailNormalMapMode, "NormalMapMode");
+            parameters[^1] = new ShaderFloat(isHeightMap ? ImportedHeightMapScale : 0.0f, "HeightMapScale");
+        }
+
         public static void MakeMaterialDeferred(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
             Debug.Out($"[MakeMaterialDeferred] Material '{name}' has {textures.Count} texture slots, {textureList.Length} textures loaded");
@@ -650,7 +675,6 @@ namespace XREngine
 
             ETransparencyMode transparencyMode = ResolveTransparencyMode(textureList, textures);
             bool transp = IsTransparentLike(transparencyMode);
-            bool hasNormal = textures.Any(x => x.TextureType == TextureType.Normals || x.TextureType == TextureType.Height);
             bool hasAnyTexture = textureList.Length > 0;
 
             int diffuseIndex = textures.FindIndex(x => x.TextureType == TextureType.Diffuse || x.TextureType == TextureType.BaseColor);
@@ -663,7 +687,8 @@ namespace XREngine
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
-            int normalIndex = textures.FindIndex(x => x.TextureType == TextureType.Normals || x.TextureType == TextureType.Height);
+            int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
+            bool hasNormal = normalIndex >= 0;
             Debug.Out($"[MakeMaterialDeferred] normalIndex: {normalIndex}");
 
             XRTexture? diffuse = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
@@ -703,6 +728,12 @@ namespace XREngine
                         new ShaderFloat(0.0f, "Metallic"),
                         new ShaderFloat(1.0f, "IndexOfRefraction"),
                     ];
+                    if (hasNormal && normal is not null)
+                    {
+                        var parameters = mat.Parameters;
+                        AppendSurfaceDetailParameters(ref parameters, usesHeightMap);
+                        mat.Parameters = parameters;
+                    }
                     mat.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
                 }
             }
@@ -755,7 +786,7 @@ namespace XREngine
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
-            int normalIndex = textures.FindIndex(x => x.TextureType == TextureType.Normals || x.TextureType == TextureType.Height);
+            int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
             int specularIndex = textures.FindIndex(x => x.TextureType == TextureType.Specular || x.TextureType == TextureType.Shininess);
             int alphaMaskIndex = textures.FindIndex(x => x.TextureType == TextureType.Opacity);
 
@@ -831,6 +862,13 @@ namespace XREngine
                     ];
                 }
 
+                if (hasNormal)
+                {
+                    var parameters = mat.Parameters;
+                    AppendSurfaceDetailParameters(ref parameters, usesHeightMap);
+                    mat.Parameters = parameters;
+                }
+
                 if (useTransparentBlend)
                     mat.RenderPass = ShaderHelper.ResolveTransparentRenderPass(transparencyMode);
                 else
@@ -881,7 +919,7 @@ namespace XREngine
             if (diffuseIndex < 0)
                 diffuseIndex = 0;
 
-            int normalIndex = textures.FindIndex(x => x.TextureType == TextureType.Normals || x.TextureType == TextureType.Height);
+            int normalIndex = textures.FindIndex(x => x.TextureType == TextureType.Normals);
 
             XRTexture? diffuseSrc = diffuseIndex >= 0 && diffuseIndex < textureList.Length ? textureList[diffuseIndex] : null;
             XRTexture? normalSrc = normalIndex >= 0 && normalIndex < textureList.Length ? textureList[normalIndex] : null;

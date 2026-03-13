@@ -189,6 +189,14 @@ public unsafe partial class VulkanRenderer
 			var globalMaterialOverride = renderState?.GlobalMaterialOverride;
 			var pipelineOverride = renderState?.OverrideMaterial;
 
+			if (renderState?.ShadowPass ?? false)
+			{
+				XRMaterial? shadowSourceMaterial = localOverride ?? MeshRenderer.Material;
+				XRMaterial? shadowVariant = shadowSourceMaterial?.ShadowCasterVariant;
+				if (shadowVariant is not null)
+					return shadowVariant;
+			}
+
 			return (globalMaterialOverride
 					?? pipelineOverride
 					?? localOverride

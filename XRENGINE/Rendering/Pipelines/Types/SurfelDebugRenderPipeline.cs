@@ -452,9 +452,10 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     {
         var t = XRTexture2D.CreateFrameBufferTexture(
             InternalWidth, InternalHeight,
-            EPixelInternalFormat.Rgb16f,
-            EPixelFormat.Rgb,
+            EPixelInternalFormat.RG16f,
+            EPixelFormat.Rg,
             EPixelType.HalfFloat);
+        t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
         t.MinFilter = ETexMinFilter.Nearest;
         t.MagFilter = ETexMagFilter.Nearest;
         t.Name = NormalTextureName;

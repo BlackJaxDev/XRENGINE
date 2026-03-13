@@ -35,6 +35,18 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public bool EnableCpuMaterialSort { get; set; } = false;
 
+        private static XRMaterial? ResolveEffectiveGpuMaterial(XRMaterial? sourceMaterial, XRMaterial? overrideMaterial, bool useDepthNormalMaterialVariants)
+        {
+            if (!useDepthNormalMaterialVariants)
+                return overrideMaterial ?? sourceMaterial;
+
+            XRMaterial? variant = sourceMaterial?.DepthNormalPrePassVariant;
+            if (variant is not null)
+                return variant;
+
+            return overrideMaterial ?? sourceMaterial;
+        }
+
         #endregion
 
         #region Main Render Pipeline
@@ -600,6 +612,9 @@ namespace XREngine.Rendering.Commands
 
             _materialTable ??= new GPUMaterialTable(128);
             bool allResident = true;
+            var renderState = Engine.Rendering.State.CurrentRenderingPipeline?.RenderState;
+            XRMaterial? overrideMaterial = renderState?.OverrideMaterial;
+            bool useDepthNormalMaterialVariants = renderState?.UseDepthNormalMaterialVariants ?? false;
 
             HashSet<uint> currentIds = [.. scene.MaterialMap.Keys];
             foreach (uint removedId in _lastMaterialTableIds)
@@ -612,7 +627,8 @@ namespace XREngine.Rendering.Commands
 
             foreach (var (materialId, material) in scene.MaterialMap)
             {
-                GPUMaterialEntry entry = BuildMaterialEntry(material, out bool resident);
+                XRMaterial? effectiveMaterial = ResolveEffectiveGpuMaterial(material, overrideMaterial, useDepthNormalMaterialVariants);
+                GPUMaterialEntry entry = BuildMaterialEntry(effectiveMaterial, out bool resident);
                 _materialTable.AddOrUpdate(materialId, entry);
                 allResident &= resident;
             }

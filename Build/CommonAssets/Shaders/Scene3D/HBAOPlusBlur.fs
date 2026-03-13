@@ -1,6 +1,8 @@
 #version 450
 #include "AOCommon.glsl"
 
+#pragma snippet "NormalEncoding"
+
 layout(location = 0) out float OutIntensity;
 layout(location = 0) in vec3 FragPos;
 
@@ -30,7 +32,7 @@ void main()
 
     vec2 texelSize = 1.0f / vec2(textureSize(HBAOInputTexture, 0));
     float centerDepth = texture(DepthView, uv).r;
-    vec3 centerNormal = normalize(texture(Normal, uv).rgb);
+    vec3 centerNormal = XRENGINE_ReadNormal(Normal, uv);
     float sigma = max(float(BlurRadius) * 0.5f, 1.0f);
     float sharpness = max(BlurSharpness, 0.001f);
 
@@ -45,7 +47,7 @@ void main()
         vec2 sampleUV = uv + BlurDirection * texelSize * float(offset);
         float sampleAO = texture(HBAOInputTexture, sampleUV).r;
         float sampleDepth = texture(DepthView, sampleUV).r;
-        vec3 sampleNormal = normalize(texture(Normal, sampleUV).rgb);
+        vec3 sampleNormal = XRENGINE_ReadNormal(Normal, sampleUV);
 
         float spatialWeight = AOGaussianWeight(float(offset * offset), sigma);
         float depthWeight = exp(-abs(sampleDepth - centerDepth) * (24.0f * sharpness));

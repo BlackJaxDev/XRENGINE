@@ -2,6 +2,8 @@
 #extension GL_OVR_multiview2 : require
 #include "AOCommon.glsl"
 
+#pragma snippet "NormalEncoding"
+
 layout(location = 0) out float OutIntensity;
 layout(location = 0) in vec3 FragPos;
 
@@ -31,7 +33,7 @@ void main()
 
     vec2 texelSize = 1.0f / textureSize(HBAOInputTexture, 0).xy;
     float centerDepth = texture(DepthView, vec3(uv, gl_ViewID_OVR)).r;
-    vec3 centerNormal = normalize(texture(Normal, vec3(uv, gl_ViewID_OVR)).rgb);
+    vec3 centerNormal = XRENGINE_ReadNormal(Normal, vec3(uv, gl_ViewID_OVR));
     float sigma = max(float(BlurRadius) * 0.5f, 1.0f);
     float sharpness = max(BlurSharpness, 0.001f);
 
@@ -46,7 +48,7 @@ void main()
         vec2 sampleUV = uv + BlurDirection * texelSize * float(offset);
         float sampleAO = texture(HBAOInputTexture, vec3(sampleUV, gl_ViewID_OVR)).r;
         float sampleDepth = texture(DepthView, vec3(sampleUV, gl_ViewID_OVR)).r;
-        vec3 sampleNormal = normalize(texture(Normal, vec3(sampleUV, gl_ViewID_OVR)).rgb);
+        vec3 sampleNormal = XRENGINE_ReadNormal(Normal, vec3(sampleUV, gl_ViewID_OVR));
 
         float spatialWeight = AOGaussianWeight(float(offset * offset), sigma);
         float depthWeight = exp(-abs(sampleDepth - centerDepth) * (24.0f * sharpness));

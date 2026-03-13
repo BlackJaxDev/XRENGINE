@@ -1,5 +1,7 @@
 #version 450 core
 
+#pragma snippet "NormalEncoding"
+
 layout(location = 0) out vec4 OutColor;
 
 uniform sampler2D RadianceCascadeGITexture;
@@ -10,11 +12,6 @@ uniform float ScreenHeight;
 
 const float DepthSharpness = 420.0;
 const float NormalPower = 4.0;
-
-vec3 DecodeNormal(vec3 encoded)
-{
-    return normalize(encoded * 2.0 - 1.0);
-}
 
 vec3 DepthAwareUpscale(vec2 uv)
 {
@@ -28,7 +25,7 @@ vec3 DepthAwareUpscale(vec2 uv)
     vec2 texel = 1.0 / giSize;
 
     float centerDepth = texture(DepthView, uv).r;
-    vec3 centerNormal = DecodeNormal(texture(Normal, uv).rgb);
+    vec3 centerNormal = XRENGINE_ReadNormal(Normal, uv);
 
     vec2 offsets[5] = vec2[](
         vec2(0.0, 0.0),
@@ -48,7 +45,7 @@ vec3 DepthAwareUpscale(vec2 uv)
         vec2 depthUv = clamp(uv + offset * texel * scale, vec2(0.0), vec2(1.0));
 
         float tapDepth = texture(DepthView, depthUv).r;
-        vec3 tapNormal = DecodeNormal(texture(Normal, depthUv).rgb);
+        vec3 tapNormal = XRENGINE_ReadNormal(Normal, depthUv);
 
         float wDepth = exp(-abs(tapDepth - centerDepth) * DepthSharpness);
         float wNormal = pow(max(dot(centerNormal, tapNormal), 0.0), NormalPower);

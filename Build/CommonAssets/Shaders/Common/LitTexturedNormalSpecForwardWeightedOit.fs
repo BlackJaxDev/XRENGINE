@@ -14,12 +14,13 @@ uniform sampler2D Texture2;
 
 layout (location = 0) in vec3 FragPos;
 layout (location = 1) in vec3 FragNorm;
-layout (location = 2) in vec3 FragBinorm;
-layout (location = 3) in vec3 FragTan;
+layout (location = 3) in vec3 FragBinorm;
+layout (location = 2) in vec3 FragTan;
 layout (location = 4) in vec2 FragUV0;
 
 #pragma snippet "ForwardLighting"
 #pragma snippet "AmbientOcclusionSampling"
+#pragma snippet "SurfaceDetailNormalMapping"
 
 float XRE_ComputeOitWeight(float alpha)
 {
@@ -41,13 +42,7 @@ void XRE_WriteWeightedBlendedOit(vec4 shadedColor)
 
 vec3 getNormalFromMap()
 {
-    vec3 normal = texture(Texture1, FragUV0).rgb;
-    normal = normalize(normal * 2.0 - 1.0);
-    vec3 T = normalize(FragTan);
-    vec3 N = normalize(FragNorm);
-    vec3 B = cross(N, T);
-    mat3 tbn = mat3(T, B, N);
-    return normalize(tbn * normal);
+    return XRENGINE_GetSurfaceDetailNormal(FragUV0, FragTan, FragBinorm, FragNorm);
 }
 
 void main()

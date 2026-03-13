@@ -23,7 +23,7 @@ namespace XREngine.Rendering
     /// Can either be a window or render texture.
     /// </summary>
     [RuntimeOnly]
-    public sealed class XRViewport : XRBase
+    public sealed class XRViewport : XRBase, IRuntimeViewportGrabSource, IRuntimeViewportHost
     {
         #region Fields
 
@@ -477,8 +477,8 @@ namespace XREngine.Rendering
                 viewport.ViewportCountChanged(
                     index,
                     totalViewportCount + 1,
-                    Engine.GameSettings.TwoPlayerViewportPreference,
-                    Engine.GameSettings.ThreePlayerViewportPreference);
+                    RuntimeRenderingHostServices.Current.TwoPlayerViewportPreference,
+                    RuntimeRenderingHostServices.Current.ThreePlayerViewportPreference);
 
             viewport.Index = index;
             return viewport;
@@ -545,11 +545,11 @@ namespace XREngine.Rendering
                 {
                     case nameof(AutomaticallySwapBuffers):
                         if (_automaticallySwapBuffers && _camera is not null)
-                            Engine.Time.Timer.SwapBuffers -= SwapBuffersAutomatic;
+                            RuntimeRenderingHostServices.Current.UnsubscribeViewportSwapBuffers(SwapBuffersAutomatic);
                         break;
                     case nameof(AutomaticallyCollectVisible):
                         if (_automaticallyCollectVisible && _camera is not null)
-                            Engine.Time.Timer.CollectVisible -= CollectVisibleAutomatic;
+                            RuntimeRenderingHostServices.Current.UnsubscribeViewportCollectVisible(CollectVisibleAutomatic);
                         break;
                     case nameof(Camera):
                         if (_camera is not null)
@@ -557,10 +557,10 @@ namespace XREngine.Rendering
                             _camera.Viewports.Remove(this);
 
                             if (AutomaticallySwapBuffers)
-                                Engine.Time.Timer.SwapBuffers -= SwapBuffersAutomatic;
+                                RuntimeRenderingHostServices.Current.UnsubscribeViewportSwapBuffers(SwapBuffersAutomatic);
 
                             if (AutomaticallyCollectVisible)
-                                Engine.Time.Timer.CollectVisible -= CollectVisibleAutomatic;
+                                RuntimeRenderingHostServices.Current.UnsubscribeViewportCollectVisible(CollectVisibleAutomatic);
                         }
                         break;
                 }
@@ -586,11 +586,11 @@ namespace XREngine.Rendering
             {
                 case nameof(AutomaticallySwapBuffers):
                     if (_automaticallySwapBuffers && _camera is not null)
-                        Engine.Time.Timer.SwapBuffers += SwapBuffersAutomatic;
+                        RuntimeRenderingHostServices.Current.SubscribeViewportSwapBuffers(SwapBuffersAutomatic);
                     break;
                 case nameof(AutomaticallyCollectVisible):
                     if (_automaticallyCollectVisible && _camera is not null)
-                        Engine.Time.Timer.CollectVisible += CollectVisibleAutomatic;
+                        RuntimeRenderingHostServices.Current.SubscribeViewportCollectVisible(CollectVisibleAutomatic);
                     break;
                 case nameof(Camera):
                     if (_camera is not null)
@@ -600,10 +600,10 @@ namespace XREngine.Rendering
                         SetAspectRatioToCamera();
 
                         if (AutomaticallySwapBuffers)
-                            Engine.Time.Timer.SwapBuffers += SwapBuffersAutomatic;
+                            RuntimeRenderingHostServices.Current.SubscribeViewportSwapBuffers(SwapBuffersAutomatic);
 
                         if (AutomaticallyCollectVisible)
-                            Engine.Time.Timer.CollectVisible += CollectVisibleAutomatic;
+                            RuntimeRenderingHostServices.Current.SubscribeViewportCollectVisible(CollectVisibleAutomatic);
                     }
                     if (SetRenderPipelineFromCamera)
                     {
@@ -665,7 +665,7 @@ namespace XREngine.Rendering
             bool allowScreenSpaceUICollectVisible = true,
             IVolume? collectionVolumeOverride = null)
         {
-            using var sample = Engine.Profiler.Start("XRViewport.CollectVisible");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.CollectVisible");
             
 /*
             Debug.RenderingEvery(
@@ -778,7 +778,7 @@ namespace XREngine.Rendering
         private static int s_vpScreenUIDiagCount = 0;
         private void CollectVisible_ScreenSpaceUI()
         {
-            using var sample = Engine.Profiler.Start("XRViewport.CollectVisible_ScreenSpaceUI");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.CollectVisible_ScreenSpaceUI");
 
             if (!AllowUIRender)
             {
@@ -836,7 +836,7 @@ namespace XREngine.Rendering
             RenderCommandCollection? renderCommandsOverride = null,
             bool allowScreenSpaceUISwap = true)
         {
-            using var sample = Engine.Profiler.Start($"XRViewport.SwapBuffers[{Index}]");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope($"XRViewport.SwapBuffers[{Index}]");
 
 /*
             Debug.RenderingEvery(
@@ -849,14 +849,14 @@ namespace XREngine.Rendering
                 AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
 */
             var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-            using (Engine.Profiler.Start("XRViewport.SwapBuffers.MeshCommands"))
+            using (RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.SwapBuffers.MeshCommands"))
             {
                 commandCollection.SwapBuffers();
             }
 
             if (allowScreenSpaceUISwap)
             {
-                using var uiSample = Engine.Profiler.Start("XRViewport.SwapBuffers.ScreenSpaceUI");
+                using var uiSample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.SwapBuffers.ScreenSpaceUI");
                 SwapBuffers_ScreenSpaceUI();
             }
         }
@@ -870,7 +870,7 @@ namespace XREngine.Rendering
             if (!AllowUIRender)
                 return;
 
-            using var sample = Engine.Profiler.Start("XRViewport.SwapBuffers_ScreenSpaceUI");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.SwapBuffers_ScreenSpaceUI");
 
             var ui = ResolveScreenSpaceUICanvas();
             if (ui is null)
@@ -887,7 +887,7 @@ namespace XREngine.Rendering
         /// </summary>
         private void SwapBuffersAutomatic()
         {
-            using var sample = Engine.Profiler.Start("XRViewport.SwapBuffersAutomatic");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.SwapBuffersAutomatic");
             SwapBuffers();
         }
 
@@ -921,7 +921,7 @@ namespace XREngine.Rendering
             bool shadowPass = false,
             XRMaterial? forcedMaterial = null)
         {
-            using var sample = Engine.Profiler.Start("XRViewport.Render");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.Render");
 
             XRCamera? camera = cameraOverride ?? ActiveCamera;
             if (camera is null)
@@ -973,7 +973,7 @@ namespace XREngine.Rendering
                     CameraComponent?.Camera.RenderPipeline is null);
             }
 
-            if (State.RenderingPipelineState?.ViewportStack.Contains(this) ?? false)
+            if (RuntimeRenderingHostServices.Current.IsViewportCurrentlyRendering(this))
             {
                 Debug.Rendering("Render recursion: Viewport is already currently rendering.");
                 return;
@@ -1050,7 +1050,7 @@ namespace XREngine.Rendering
                 return;
             }
 
-            if (State.RenderingPipelineState?.ViewportStack.Contains(this) ?? false)
+            if (RuntimeRenderingHostServices.Current.IsViewportCurrentlyRendering(this))
             {
                 Debug.Rendering("Render recursion: Viewport is already currently rendering.");
                 return;
@@ -1082,7 +1082,9 @@ namespace XREngine.Rendering
         private static int s_pipelineUiFallbackLogCount = 0;
         private bool ResolveUiThroughPipeline(out UICanvasComponent? screenSpaceUI)
         {
-            bool forceUiThroughPipeline = Window?.Renderer is VulkanRenderer || AbstractRenderer.Current is VulkanRenderer;
+            bool forceUiThroughPipeline =
+                RuntimeRenderingHostServices.Current.GetWindowRenderBackend(Window) == RuntimeGraphicsApiKind.Vulkan ||
+                RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
             bool wantThroughPipeline = forceUiThroughPipeline || (AssociatedPlayer?.RenderUIThroughPipeline ?? true);
 
             if (!wantThroughPipeline)

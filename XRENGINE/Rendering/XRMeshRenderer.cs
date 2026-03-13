@@ -1182,8 +1182,7 @@ namespace XREngine.Rendering
 
                 for (uint i = 0; i < deformerVertexCount; i++)
                 {
-                    var tan = deformerMesh.GetTangent(i);
-                    DeformerTangentsBuffer.SetVector4(i, new Vector4(tan, 0.0f));
+                    DeformerTangentsBuffer.SetVector4(i, deformerMesh.GetTangentWithSign(i));
                 }
 
                 Buffers.Add(DeformerTangentsBuffer.AttributeName, DeformerTangentsBuffer);
@@ -1447,8 +1446,7 @@ namespace XREngine.Rendering
             uint count = DeformerTangentsBuffer.ElementCount;
             for (uint i = 0; i < count; i++)
             {
-                var tan = deformerMesh.GetTangent(i);
-                DeformerTangentsBuffer.SetVector4(i, new Vector4(tan, 0.0f));
+                DeformerTangentsBuffer.SetVector4(i, deformerMesh.GetTangentWithSign(i));
             }
 
             _meshDeformInvalidated = true;

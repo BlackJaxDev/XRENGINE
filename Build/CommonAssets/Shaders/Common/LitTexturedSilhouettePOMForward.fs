@@ -1,6 +1,10 @@
 #version 450
 
+#ifdef XRENGINE_DEPTH_NORMAL_PREPASS
+layout (location = 0) out vec3 Normal;
+#else
 layout (location = 0) out vec4 OutColor;
+#endif
 
 uniform float MatSpecularIntensity;
 uniform float MatShininess;
@@ -52,10 +56,14 @@ void main()
     if (ParallaxSilhouette <= 0.5 && !pomValid)
         uv = FragUV0;
 
+#ifdef XRENGINE_DEPTH_NORMAL_PREPASS
+    Normal = normalize(normal);
+#else
     vec4 texColor = texture(Texture0, uv);
     float AmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
 
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, texColor.rgb, MatSpecularIntensity, AmbientOcclusion);
 
     OutColor = texColor * vec4(totalLight, 1.0);
+#endif
 }

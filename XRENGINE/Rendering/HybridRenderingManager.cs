@@ -79,6 +79,21 @@ namespace XREngine.Rendering
         Log(LogCategory.Draw, LogLevel.Debug, message.ToString());
     }
 
+        private static XRMaterial? ResolveEffectiveGpuMaterial(XRMaterial? sourceMaterial, XRMaterial? overrideMaterial)
+        {
+            bool useDepthNormalMaterialVariants =
+                Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.UseDepthNormalMaterialVariants ?? false;
+
+            if (!useDepthNormalMaterialVariants)
+                return overrideMaterial ?? sourceMaterial;
+
+            XRMaterial? variant = sourceMaterial?.DepthNormalPrePassVariant;
+            if (variant is not null)
+                return variant;
+
+            return overrideMaterial ?? sourceMaterial;
+        }
+
     /// <summary>
     /// Logs a GPU indirect debugging message for a specific category.
     /// </summary>
@@ -1049,7 +1064,8 @@ namespace XREngine.Rendering
             if (overrideMaterial is not null && logGpu)
                 GpuDebug("Override material active: {0}", overrideMaterial.Name ?? "<unnamed>");
 
-            XRMaterial? defaultMat = overrideMaterial ?? matMap.Values.FirstOrDefault() ?? XRMaterial.InvalidMaterial;
+            XRMaterial? defaultSourceMaterial = matMap.Values.FirstOrDefault() ?? XRMaterial.InvalidMaterial;
+            XRMaterial? defaultMat = ResolveEffectiveGpuMaterial(defaultSourceMaterial, overrideMaterial) ?? XRMaterial.InvalidMaterial;
             if (logGpu)
                 GpuDebug("Default material: {0}", defaultMat != null ? defaultMat.Name ?? "<unnamed>" : "null");
             
@@ -1637,7 +1653,7 @@ namespace XREngine.Rendering
                 if (hasTangents)
                 {
                     sb.AppendLine("    FragTan = normalize(normalMatrix * Tangent.xyz);");
-                    sb.AppendLine("    FragBinorm = normalize(cross(FragNorm, FragTan));");
+                    sb.AppendLine("    FragBinorm = normalize(cross(FragNorm, FragTan) * Tangent.w);");
                 }
             }
             else
@@ -2115,7 +2131,7 @@ namespace XREngine.Rendering
             if (hasNormals)
                 sb.AppendLine($"layout(location={location++}) in vec3 {ECommonBufferType.Normal};");
             if (hasTangents)
-                sb.AppendLine($"layout(location={location++}) in vec3 {ECommonBufferType.Tangent};");
+                sb.AppendLine($"layout(location={location++}) in vec4 {ECommonBufferType.Tangent};");
 
             var texCoordBindings = GetRendererBuffersWithPrefix(vaoRenderer, ECommonBufferType.TexCoord.ToString());
             foreach (string binding in texCoordBindings)
@@ -2175,8 +2191,8 @@ namespace XREngine.Rendering
                 sb.AppendLine("    FragNorm = normalize(normalMatrix * Normal);");
                 if (hasTangents)
                 {
-                    sb.AppendLine("    FragTan = normalize(normalMatrix * Tangent);");
-                    sb.AppendLine("    FragBinorm = normalize(cross(FragNorm, FragTan));");
+                    sb.AppendLine("    FragTan = normalize(normalMatrix * Tangent.xyz);");
+                    sb.AppendLine("    FragBinorm = normalize(cross(FragNorm, FragTan) * Tangent.w);");
                 }
             }
             else
@@ -2382,34 +2398,36 @@ namespace XREngine.Rendering
                     lookupMaterialId = cpuMaterialOrder[(int)batch.Offset];
 
                 XRMaterial? overrideMaterial = Engine.Rendering.State.OverrideMaterial;
-                bool usingOverrideMaterial = overrideMaterial is not null;
 
                 uint effectiveMaterialId = lookupMaterialId;
-                XRMaterial? material = null;
+                XRMaterial? sourceMaterial = null;
+                if (lookupMaterialId != 0)
+                    materialMap.TryGetValue(lookupMaterialId, out sourceMaterial);
 
-                if (usingOverrideMaterial)
-                {
-                    material = overrideMaterial;
-                    effectiveMaterialId = (uint)overrideMaterial!.GetHashCode();
-                }
-                else if (lookupMaterialId != 0)
-                {
-                    materialMap.TryGetValue(lookupMaterialId, out material);
-                }
+                XRMaterial? material = ResolveEffectiveGpuMaterial(sourceMaterial, overrideMaterial);
+                if (material is not null)
+                    effectiveMaterialId = (uint)material.GetHashCode();
 
-                if (!usingOverrideMaterial && material is null)
+                if (material is null)
                 {
                     string reason = lookupMaterialId == 0
                         ? "ID=0 (invalid)"
                         : "material not found in map";
                     GpuDebug($"Material lookup miss for ID={lookupMaterialId} (batch offset={batch.Offset}, count={effectiveCount}): {reason}");
-                    material = XRMaterial.InvalidMaterial;
-                }
 
-                if (material is null)
-                {
-                    Debug.LogWarning($"No material for MaterialID={lookupMaterialId}. Skipping batch of {effectiveCount} draws at offset {batch.Offset}.");
-                    continue;
+                    XRMaterial? invalidMaterial = XRMaterial.InvalidMaterial;
+                    if (invalidMaterial is null)
+                    {
+                        GpuWarn(
+                            LogCategory.Draw,
+                            "Skipping batch at offset={0}, count={1}: no invalid material fallback is available.",
+                            batch.Offset,
+                            effectiveCount);
+                        continue;
+                    }
+
+                    material = invalidMaterial;
+                    effectiveMaterialId = (uint)invalidMaterial.GetHashCode();
                 }
 
                 if (batch.Offset >= renderPasses.VisibleCommandCount)

@@ -192,6 +192,28 @@ public sealed partial class XRRenderPipelineInstance
             => _overrideMaterials.Pop();
 
         /// <summary>
+        /// When true, mesh renderers should prefer a cached per-material depth-normal fragment variant
+        /// instead of the original forward fragment shader during the depth+normal pre-pass.
+        /// </summary>
+        public bool UseDepthNormalMaterialVariants { get; private set; }
+        private int _useDepthNormalMaterialVariantsDepth;
+        public StateObject PushUseDepthNormalMaterialVariants()
+        {
+            _useDepthNormalMaterialVariantsDepth++;
+            UseDepthNormalMaterialVariants = true;
+            return StateObject.New(PopUseDepthNormalMaterialVariants);
+        }
+        private void PopUseDepthNormalMaterialVariants()
+        {
+            _useDepthNormalMaterialVariantsDepth--;
+            if (_useDepthNormalMaterialVariantsDepth <= 0)
+            {
+                _useDepthNormalMaterialVariantsDepth = 0;
+                UseDepthNormalMaterialVariants = false;
+            }
+        }
+
+        /// <summary>
         /// When true, camera projection matrices should be returned without jitter applied.
         /// Used by motion vectors pass to ensure consistent projections between vertex and fragment stages.
         /// </summary>

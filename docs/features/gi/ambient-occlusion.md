@@ -232,7 +232,7 @@ All lit forward shader variants include a shared GLSL snippet (`AmbientOcclusion
 
 A depth+normal pre-pass renders forward opaque geometry (`OpaqueForward` + `MaskedForward`) into the shared depth buffer **and** the GBuffer normal texture before the AO resolve step. This ensures all AO algorithms see both deferred and forward geometry depth and normals — forward meshes correctly generate ambient occlusion with proper surface orientation.
 
-The pre-pass uses a lightweight override material (`DepthNormalPrePass.fs`) that replaces each mesh's full lighting shader with a minimal fragment shader that outputs only the interpolated world-space normal. The engine-generated vertex program provides the `FragNorm` varying automatically. The override is applied via the `PushOverrideMaterial` / `PushForceShaderPipelines` / `PushForceGeneratedVertexProgram` stack (same mechanism used by the motion vectors pass).
+The pre-pass uses a lightweight override material (`DepthNormalPrePass.fs`) that replaces each mesh's full lighting shader with a minimal fragment shader that outputs an octahedrally encoded world-space normal into the shared `RG16F` normal texture. The engine-generated vertex program provides the `FragNorm` varying automatically. The override is applied via the `PushOverrideMaterial` / `PushForceShaderPipelines` / `PushForceGeneratedVertexProgram` stack (same mechanism used by the motion vectors pass).
 
 Pipeline ordering:
 
@@ -242,7 +242,7 @@ Pipeline ordering:
 4. **AO resolve** — The selected AO algorithm reads from the now-complete depth and normal buffers (containing both deferred and forward geometry) and produces the AO intensity texture
 5. **Forward color pass** — Forward meshes render again with full lighting, sampling the AO texture
 
-Normals are written in the same uncompressed world-space RGB16F format as the deferred GBuffer, so no encode/decode changes are needed — all AO algorithms that read the normal texture see consistent data.
+Normals are stored in the shared deferred GBuffer as octahedrally encoded `RG16F`, and all AO algorithms decode through the same helper path, so deferred and forward geometry still see a consistent world-space normal contract while using less bandwidth.
 
 ## API Reference
 

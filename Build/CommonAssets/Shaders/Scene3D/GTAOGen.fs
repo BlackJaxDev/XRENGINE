@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "NormalEncoding"
+
 const float PI = 3.14159265359f;
 const float HALF_PI = 1.57079632679f;
 
@@ -31,7 +33,7 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos)
 {
     if (UseInputNormals)
     {
-        vec3 worldNormal = texture(Normal, uv).rgb;
+        vec3 worldNormal = XRENGINE_ReadNormal(Normal, uv);
         return normalize((inverse(InverseViewMatrix) * vec4(worldNormal, 0.0f)).rgb);
     }
 

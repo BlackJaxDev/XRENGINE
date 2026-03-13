@@ -255,11 +255,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
         public void SwapBuffers()
         {
-            using var sample = Engine.Profiler.Start("ViewportRenderCommandContainer.SwapBuffers");
+            using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("ViewportRenderCommandContainer.SwapBuffers");
             for (int i = 0; i < _collecVisibleCommands.Count; i++)
             {
                 var command = _collecVisibleCommands[i];
-                using var commandSample = Engine.Profiler.Start($"ViewportRenderCommandContainer.Swap.{command.GetType().Name}");
+                using var commandSample = RuntimeRenderingHostServices.Current.StartProfileScope($"ViewportRenderCommandContainer.Swap.{command.GetType().Name}");
                 command.SwapBuffers();
             }
         }

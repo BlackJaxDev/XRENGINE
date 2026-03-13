@@ -2,6 +2,8 @@
 #extension GL_OVR_multiview2 : require
 #include "AOCommon.glsl"
 
+#pragma snippet "NormalEncoding"
+
 const float PI = 3.14159265359f;
 
 layout(location = 0) out float OutIntensity;
@@ -26,7 +28,7 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 inverseViewMatrix, mat4 projMat
 {
     if (UseInputNormals)
     {
-        vec3 worldNormal = texture(Normal, vec3(uv, gl_ViewID_OVR)).rgb;
+        vec3 worldNormal = XRENGINE_ReadNormal(Normal, vec3(uv, gl_ViewID_OVR));
         return normalize((inverse(inverseViewMatrix) * vec4(worldNormal, 0.0f)).rgb);
     }
 
