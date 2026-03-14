@@ -88,6 +88,33 @@ namespace XREngine.Rendering.Vulkan
                     return _samples;
                 }
             }
+            ImageLayout IVkImageDescriptorSource.TrackedImageLayout
+            {
+                get
+                {
+                    RefreshFromViewedTextureIfStale();
+
+                    XRTexture viewedTexture = Data.GetViewedTexture();
+                    if (viewedTexture is null)
+                        return ImageLayout.Undefined;
+
+                    return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
+                        ? source.TrackedImageLayout
+                        : ImageLayout.Undefined;
+                }
+            }
+            bool IVkImageDescriptorSource.UsesAllocatorImage
+            {
+                get
+                {
+                    XRTexture viewedTexture = Data.GetViewedTexture();
+                    if (viewedTexture is null)
+                        return false;
+
+                    return Renderer.GetOrCreateAPIRenderObject(viewedTexture, generateNow: true) is IVkImageDescriptorSource source
+                        && source.UsesAllocatorImage;
+                }
+            }
             ImageView IVkImageDescriptorSource.GetDepthOnlyDescriptorView()
             {
                 RefreshFromViewedTextureIfStale();

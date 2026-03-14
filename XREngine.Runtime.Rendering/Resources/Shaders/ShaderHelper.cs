@@ -392,7 +392,7 @@ public static class ShaderHelper
 
     public static XRShader? GetStandardForwardVariant(XRShader? shader)
     {
-        string? path = shader?.Source?.FilePath;
+        string? path = shader?.Source?.FilePath ?? shader?.FilePath;
         if (string.IsNullOrWhiteSpace(path))
             return null;
 
@@ -448,18 +448,28 @@ public static class ShaderHelper
 
     public static XRShader? GetDepthNormalPrePassForwardVariant(XRShader? shader)
     {
-        string? path = shader?.Source?.FilePath;
+        string? path = shader?.Source?.FilePath ?? shader?.FilePath;
         if (string.IsNullOrWhiteSpace(path))
             return null;
 
         string fileName = Path.GetFileName(path);
         return fileName switch
         {
+            "LitTexturedForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "LitTexturedAlphaForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "LitColoredForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "LitTexturedNormalForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "LitTexturedNormalSpecForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "LitTexturedNormalAlphaForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "LitTexturedNormalSpecAlphaForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "LitTexturedSpecForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "LitTexturedSpecAlphaForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             "LitTexturedSilhouettePOMForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "UnlitTexturedForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "UnlitTexturedStereoForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "UnlitTexturedArraySliceForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "UnlitAlphaTexturedForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
+            "UnlitColoredForward.fs" => CreateDefinedShaderVariant(shader, DepthNormalPrePassDefine),
             _ => null,
         };
     }
@@ -468,7 +478,7 @@ public static class ShaderHelper
     {
         XRShader? sourceShader = GetStandardForwardVariant(shader) ?? shader;
 
-        string? path = sourceShader?.Source?.FilePath;
+        string? path = sourceShader?.Source?.FilePath ?? sourceShader?.FilePath;
         if (string.IsNullOrWhiteSpace(path))
             return null;
 

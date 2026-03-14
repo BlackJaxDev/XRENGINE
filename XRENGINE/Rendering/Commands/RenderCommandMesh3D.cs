@@ -47,7 +47,13 @@ namespace XREngine.Rendering.Commands
         public Matrix4x4 WorldMatrix
         {
             get => _worldMatrix;
-            set => SetField(ref _worldMatrix, value);
+            set
+            {
+                SetField(ref _worldMatrix, value);
+
+                if (Engine.IsRenderThread)
+                    ApplyLateRenderThreadWorldMatrix(value);
+            }
         }
         public bool WorldMatrixIsModelMatrix
         {
@@ -140,6 +146,17 @@ namespace XREngine.Rendering.Commands
                 _renderHasPrevWorldMatrix = true;
                 _lastSubmittedModelMatrix = Matrix4x4.Identity;
                 _lastSubmittedModelMatrixValid = false;
+            }
+        }
+
+        internal void ApplyLateRenderThreadWorldMatrix(Matrix4x4 worldMatrix)
+        {
+            _renderWorldMatrix = worldMatrix;
+
+            if (_renderWorldMatrixIsModelMatrix && !_renderHasPrevWorldMatrix)
+            {
+                _renderPrevWorldMatrix = _lastSubmittedModelMatrixValid ? _lastSubmittedModelMatrix : worldMatrix;
+                _renderHasPrevWorldMatrix = true;
             }
         }
 

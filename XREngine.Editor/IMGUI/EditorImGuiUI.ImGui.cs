@@ -1157,6 +1157,9 @@ public static partial class EditorImGuiUI
                 if (ImGui.MenuItem("User Settings"))
                     OpenSettingsInInspector(Engine.UserSettings, "User Settings");
 
+                if (ImGui.MenuItem("Engine Settings"))
+                    OpenSettingsInInspector(Engine.Rendering.Settings, "Engine Settings");
+
                 if (ImGui.MenuItem("Game Settings"))
                     OpenSettingsInInspector(Engine.GameSettings, "Game Settings");
 

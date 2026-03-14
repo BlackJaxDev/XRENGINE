@@ -34,6 +34,17 @@ namespace XREngine
             bool preferHdrOutput = windowSettings.OutputHDR ?? Rendering.Settings.OutputHDR;
             var options = GetWindowOptions(windowSettings, preferHdrOutput);
 
+            Debug.Out(
+                "[StartupWindow] Creating window '{0}' state={1} pos=({2},{3}) size={4}x{5} api={6} targetWorld={7}",
+                windowSettings.WindowTitle ?? string.Empty,
+                windowSettings.WindowState,
+                windowSettings.X,
+                windowSettings.Y,
+                windowSettings.Width,
+                windowSettings.Height,
+                options.API.API,
+                windowSettings.TargetWorld?.Name ?? "<null>");
+
             XRWindow window;
             try
             {
@@ -51,8 +62,21 @@ namespace XREngine
             window.UpdateViewportSizes();
             _windows.Add(window);
 
+            Debug.Out(
+                "[StartupWindow] Window created hash={0} framebuffer={1}x{2} viewports={3}",
+                window.GetHashCode(),
+                window.Window.FramebufferSize.X,
+                window.Window.FramebufferSize.Y,
+                window.Viewports.Count);
+
             Rendering.ApplyRenderPipelinePreference();
             window.SetWorld(windowSettings.TargetWorld);
+
+            Debug.Out(
+                "[StartupWindow] Window world assigned hash={0} targetWorld={1} tickLinked={2}",
+                window.GetHashCode(),
+                window.TargetWorldInstance?.TargetWorld?.Name ?? "<null>",
+                window.IsTickLinked);
 
             return window;
         }

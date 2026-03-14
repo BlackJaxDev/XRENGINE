@@ -431,7 +431,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(AmbientOcclusionSettings.Type),
             PostProcessParameterKind.Int,
-            (int)AmbientOcclusionSettings.EType.ScreenSpace,
+            (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
             displayName: "Method",
             enumOptions: BuildAmbientOcclusionTypeOptions());
 

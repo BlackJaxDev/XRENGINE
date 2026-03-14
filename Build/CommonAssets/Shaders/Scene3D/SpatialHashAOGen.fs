@@ -61,6 +61,11 @@ void main()
 
     vec3 encodedNormal = XRENGINE_ReadNormal(Normal, uv);
     float depth = texture(DepthView, uv).r;
+    if (AOIsFarDepth(depth))
+    {
+        OutIntensity = 1.0f;
+        return;
+    }
     vec3 fragPosVS = AOViewPosFromDepth(depth, uv, ProjMatrix);
 
     vec3 randomVec = vec3(texture(AONoiseTexture, uv * NoiseScale).rg * 2.0f - 1.0f, 0.0f);
@@ -91,6 +96,13 @@ void main()
                 break;
 
             float sceneDepth = texture(DepthView, sampleUV).r;
+            if (AOIsFarDepth(sceneDepth))
+            {
+                traveled += stepLength;
+                if (traveled > MaxRayDistance)
+                    break;
+                continue;
+            }
             float sceneDepthVS = AOViewPosFromDepth(sceneDepth, sampleUV, ProjMatrix).z;
             float expectedDepth = samplePos.z;
 

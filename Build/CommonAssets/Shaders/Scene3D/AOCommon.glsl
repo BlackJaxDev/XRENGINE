@@ -1,3 +1,11 @@
+uniform int DepthMode;
+
+bool AOIsFarDepth(float depth)
+{
+    const float eps = 1e-6f;
+    return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
+}
+
 vec3 AOViewPosFromDepth(float depth, vec2 uv, mat4 projMatrix)
 {
     vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);

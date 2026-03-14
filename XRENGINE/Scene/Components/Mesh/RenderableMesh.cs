@@ -121,12 +121,18 @@ namespace XREngine.Components.Scene.Mesh
         void ComponentPropertyChanged(object? s, IXRPropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(RenderableComponent.Transform) && !Component.SceneNode.IsTransformNull)
+            {
+                Component.Transform.WorldMatrixChanged += Component_WorldMatrixPreviewChanged;
                 Component.Transform.RenderMatrixChanged += Component_WorldMatrixChanged;
+            }
         }
         void ComponentPropertyChanging(object? s, IXRPropertyChangingEventArgs e)
         {
             if (e.PropertyName == nameof(RenderableComponent.Transform) && !Component.SceneNode.IsTransformNull)
+            {
+                Component.Transform.WorldMatrixChanged -= Component_WorldMatrixPreviewChanged;
                 Component.Transform.RenderMatrixChanged -= Component_WorldMatrixChanged;
+            }
         }
 
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring as nullable.
@@ -258,7 +264,7 @@ namespace XREngine.Components.Scene.Mesh
             var rend = CurrentLODRenderer;
             bool skinned = (rend?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
             TransformBase tfm = skinned ? RootBone ?? Component.Transform : Component.Transform;
-            float distance = camera?.DistanceFromNearPlane(tfm.RenderTranslation) ?? 0.0f;
+            float distance = camera?.DistanceFromRenderNearPlane(tfm.RenderTranslation) ?? 0.0f;
 
             if (!passes.IsShadowPass)
                 UpdateLOD(distance);
@@ -276,13 +282,13 @@ namespace XREngine.Components.Scene.Mesh
                     // OR transform bind-pose through the root bone which has the correct hierarchy.
                     RenderInfo.LocalCullingVolume = _bindPoseBounds;
                     // Use root bone if available (it includes proper hierarchy), otherwise component transform
-                    RenderInfo.CullingOffsetMatrix = RootBone?.RenderMatrix ?? Component.Transform.RenderMatrix;
+                    RenderInfo.CullingOffsetMatrix = GetCurrentCullingBasisMatrix(RootBone ?? Component.Transform);
                 }
             }
             else
             {
                 RenderInfo.LocalCullingVolume = _bindPoseBounds;
-                RenderInfo.CullingOffsetMatrix = Component.Transform.RenderMatrix;
+                RenderInfo.CullingOffsetMatrix = GetCurrentCullingBasisMatrix(Component.Transform);
             }
 
             _rc.Mesh = rend;
@@ -344,10 +350,13 @@ namespace XREngine.Components.Scene.Mesh
             // The root bone's world matrix transforms from root bone local to world space.
             // Its inverse transforms from world space to root bone local space.
             // Fallback to component transform if no root bone.
-            return RootBone is not null 
-                ? RootBone.RenderMatrix 
-                : Component?.Transform.RenderMatrix ?? Matrix4x4.Identity;
+            return RootBone is not null
+                ? GetCurrentCullingBasisMatrix(RootBone)
+                : Component is not null ? GetCurrentCullingBasisMatrix(Component.Transform) : Matrix4x4.Identity;
         }
+
+        private static Matrix4x4 GetCurrentCullingBasisMatrix(TransformBase transform)
+            => Engine.IsRenderThread ? transform.RenderMatrix : transform.WorldMatrix;
 
         internal SkinnedMeshBoundsCalculator.Result EnsureLocalBounds(SkinnedMeshBoundsCalculator.Result result)
         {
@@ -727,7 +736,7 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         public void UpdateLOD(XRCamera camera)
-            => UpdateLOD(camera.DistanceFromNearPlane(Component.Transform.RenderTranslation));
+            => UpdateLOD(camera.DistanceFromRenderNearPlane(Component.Transform.RenderTranslation));
         public void UpdateLOD(float distanceToCamera)
         {
             if (LODs.Count == 0)
@@ -811,12 +820,16 @@ namespace XREngine.Components.Scene.Mesh
                 {
                     case nameof(RootBone):
                         if (RootBone is not null)
+                        {
+                            RootBone.WorldMatrixChanged -= RootBone_WorldMatrixPreviewChanged;
                             RootBone.RenderMatrixChanged -= RootBone_WorldMatrixChanged;
+                        }
                         break;
 
                     case nameof(Component):
                         if (Component is not null)
                         {
+                            Component.Transform.WorldMatrixChanged -= Component_WorldMatrixPreviewChanged;
                             Component.Transform.RenderMatrixChanged -= Component_WorldMatrixChanged;
                             Component.PropertyChanged -= ComponentPropertyChanged;
                             Component.PropertyChanging -= ComponentPropertyChanging;
@@ -835,14 +848,18 @@ namespace XREngine.Components.Scene.Mesh
                 case nameof(RootBone):
                     if (RootBone is not null)
                     {
+                        RootBone.WorldMatrixChanged += RootBone_WorldMatrixPreviewChanged;
                         RootBone.RenderMatrixChanged += RootBone_WorldMatrixChanged;
+                        RootBone_WorldMatrixPreviewChanged(RootBone, RootBone.WorldMatrix);
                         RootBone_WorldMatrixChanged(RootBone, RootBone.RenderMatrix);
                     }
                     break;
                 case nameof(Component):
                     if (Component is not null)
                     {
+                        Component.Transform.WorldMatrixChanged += Component_WorldMatrixPreviewChanged;
                         Component.Transform.RenderMatrixChanged += Component_WorldMatrixChanged;
+                        Component_WorldMatrixPreviewChanged(Component.Transform, Component.Transform.WorldMatrix);
                         Component_WorldMatrixChanged(Component.Transform, Component.Transform.RenderMatrix);
                         Component.PropertyChanged += ComponentPropertyChanged;
                         Component.PropertyChanging += ComponentPropertyChanging;
@@ -873,7 +890,24 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void RootBone_WorldMatrixChanged(TransformBase rootBone, Matrix4x4 renderMatrix)
         {
+            if (Engine.IsRenderThread)
+            {
+                ApplyImmediateRenderMatrixUpdate(componentMatrix: null, rootMatrix: renderMatrix);
+                return;
+            }
+
             MarkPendingRootBoneRenderMatrix(renderMatrix);
+        }
+
+        private void RootBone_WorldMatrixPreviewChanged(TransformBase rootBone, Matrix4x4 worldMatrix)
+        {
+            bool hasSkinning = (CurrentLOD?.Value?.Renderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            if (!hasSkinning)
+                return;
+
+            SetSkinnedRootRenderMatrix(worldMatrix);
+            if (RenderInfo is not null)
+                RenderInfo.CullingOffsetMatrix = worldMatrix;
         }
 
         /// <summary>
@@ -881,7 +915,51 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void Component_WorldMatrixChanged(TransformBase component, Matrix4x4 renderMatrix)
         {
+            if (Engine.IsRenderThread)
+            {
+                ApplyImmediateRenderMatrixUpdate(componentMatrix: renderMatrix, rootMatrix: null);
+                return;
+            }
+
             MarkPendingComponentRenderMatrix(renderMatrix);
+        }
+
+        private void Component_WorldMatrixPreviewChanged(TransformBase component, Matrix4x4 worldMatrix)
+        {
+            bool hasSkinning = (CurrentLOD?.Value?.Renderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            if (hasSkinning)
+            {
+                if (RootBone is not null)
+                    return;
+
+                SetSkinnedRootRenderMatrix(worldMatrix);
+            }
+
+            if (RenderInfo is not null)
+                RenderInfo.CullingOffsetMatrix = worldMatrix;
+        }
+
+        private void ApplyImmediateRenderMatrixUpdate(Matrix4x4? componentMatrix, Matrix4x4? rootMatrix)
+        {
+            bool hasSkinning = (CurrentLOD?.Value?.Renderer?.Mesh?.HasSkinning ?? false) && Engine.Rendering.Settings.AllowSkinning;
+            if (hasSkinning)
+            {
+                Matrix4x4 basis = RootBone is null
+                    ? componentMatrix ?? Component.Transform.RenderMatrix
+                    : rootMatrix ?? RootBone.RenderMatrix;
+
+                SetSkinnedRootRenderMatrix(basis);
+                if (RenderInfo is not null)
+                    RenderInfo.CullingOffsetMatrix = basis;
+
+                return;
+            }
+
+            Matrix4x4 matrix = componentMatrix ?? Component.Transform.RenderMatrix;
+            _rc?.ApplyLateRenderThreadWorldMatrix(matrix);
+
+            if (RenderInfo is not null)
+                RenderInfo.CullingOffsetMatrix = matrix;
         }
 
         private void MarkPendingComponentRenderMatrix(Matrix4x4 renderMatrix)

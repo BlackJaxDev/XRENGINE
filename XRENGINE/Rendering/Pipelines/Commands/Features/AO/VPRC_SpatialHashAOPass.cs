@@ -160,6 +160,18 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             Log($"Execute start: forceRebuild={forceRebuild}, last={state.LastWidth}x{state.LastHeight}, current={width}x{height}");
 
+            Debug.RenderingEvery(
+                $"AO.SpatialHash.Execute.{RuntimeHelpers.GetHashCode(instance)}",
+                TimeSpan.FromSeconds(1),
+                "[AO][SpatialHash] Execute forceRebuild={0} size={1}x{2} stereo={3} normal={4} depth={5} output={6}",
+                forceRebuild,
+                width,
+                height,
+                Stereo,
+                normalTex.Name ?? "null",
+                depthViewTex.Name ?? "null",
+                IntensityTextureName);
+
             if (forceRebuild || width != state.LastWidth || height != state.LastHeight)
             {
                 RegenerateResources(
@@ -478,6 +490,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgram.Uniform("InverseViewMatrix", inverseView);
             _computeProgram.Uniform("ViewMatrix", viewMatrix);
 
+            Debug.RenderingEvery(
+                $"AO.SpatialHash.DispatchMono.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",
+                TimeSpan.FromSeconds(1),
+                "[AO][SpatialHash] DispatchMono depthMode={0} frameIndex={1} size={2}x{3} radius={4} spp={5}",
+                camera?.DepthMode.ToString() ?? "null",
+                state.FrameIndex,
+                width,
+                height,
+                hashRadius,
+                spp);
+
             uint groupX = (uint)(width + LocalGroupSize - 1) / LocalGroupSize;
             uint groupY = (uint)(height + LocalGroupSize - 1) / LocalGroupSize;
             _computeProgram.DispatchCompute(groupX, groupY, 1u, EMemoryBarrierMask.TextureFetch | EMemoryBarrierMask.ShaderStorage);
@@ -570,6 +593,16 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgramStereo.Uniform("RightEyeProjMatrix", rightProjMatrix);
             _computeProgramStereo.Uniform("RightEyeInverseViewMatrix", rightInverseView);
             _computeProgramStereo.Uniform("RightEyeViewMatrix", rightViewMatrix);
+
+            Debug.RenderingEvery(
+                $"AO.SpatialHash.DispatchStereo.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",
+                TimeSpan.FromSeconds(1),
+                "[AO][SpatialHash] DispatchStereo frameIndex={0} size={1}x{2} radius={3} spp={4}",
+                state.FrameIndex,
+                width,
+                height,
+                hashRadius,
+                spp);
 
             uint groupX = (uint)(width + LocalGroupSize - 1) / LocalGroupSize;
             uint groupY = (uint)(height + LocalGroupSize - 1) / LocalGroupSize;

@@ -670,6 +670,13 @@ namespace XREngine.Rendering
             => Vector3.Distance(Transform.WorldTranslation, point);
 
         /// <summary>
+        /// The distance from the camera's published render position to the given point in world space.
+        /// Use this in collect/render paths that operate on render-space object transforms.
+        /// </summary>
+        public float DistanceFromRenderPosition(Vector3 point)
+            => Vector3.Distance(Transform.RenderTranslation, point);
+
+        /// <summary>
         /// Returns the distance from the camera's near plane to the given point.
         /// </summary>
         /// <param name="point"></param>
@@ -678,6 +685,17 @@ namespace XREngine.Rendering
         {
             Vector3 forward = GetWorldForward();
             Vector3 nearPoint = Transform.WorldTranslation + forward * Parameters.NearZ;
+            return GeoUtil.DistanceFrom.PlaneToPoint(forward, XRMath.GetPlaneDistance(nearPoint, forward), point);
+        }
+
+        /// <summary>
+        /// Returns the distance from the camera's published render near plane to the given point.
+        /// Use this in collect/render paths that operate on render-space object transforms.
+        /// </summary>
+        public float DistanceFromRenderNearPlane(Vector3 point)
+        {
+            Vector3 forward = Transform.RenderForward;
+            Vector3 nearPoint = Transform.RenderTranslation + forward * Parameters.NearZ;
             return GeoUtil.DistanceFrom.PlaneToPoint(forward, XRMath.GetPlaneDistance(nearPoint, forward), point);
         }
 
@@ -1205,8 +1223,8 @@ namespace XREngine.Rendering
         /// <param name="planar"></param>
         public float DistanceFrom(Vector3 point, bool planar)
             => planar
-                ? DistanceFromNearPlane(point)
-                : DistanceFromWorldPosition(point);
+                ? DistanceFromRenderNearPlane(point)
+                : DistanceFromRenderPosition(point);
 
         #endregion
 

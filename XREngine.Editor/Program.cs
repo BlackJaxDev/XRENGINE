@@ -3,9 +3,11 @@ using Newtonsoft.Json.Converters;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using EngineDebug = XREngine.Debug;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using XREngine;
@@ -31,11 +33,13 @@ using static XREngine.Rendering.XRWorldInstance;
 internal class Program
 {
     private static readonly object s_startupTimerLock = new();
+    private static readonly object s_bootstrapTraceLock = new();
     private static Stopwatch? s_startupStopwatch;
     private static XRWindow? s_startupWindow;
     private static int s_startupWindowHooked;
     private static int s_captureInFlight;
     private static int s_startupTimerStopped;
+    private static string? s_bootstrapTracePath;
 
     /// <summary>
     /// Determines which world to load on startup.
@@ -60,6 +64,8 @@ internal class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        WriteBootstrapTrace("Editor process entry.");
+
         if (TryRunCookCommonAssetsCommand(args))
             return;
 
@@ -71,12 +77,15 @@ internal class Program
 
         //Begin tracking how long editor startup takes, and log the time when the first non-black frame is rendered.
         StartEditorStartupTimer();
+        WriteBootstrapTrace("Startup timer initialized.");
 
         // Ensure support for legacy code pages needed by some third-party libraries (e.g., SharpFont).
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        WriteBootstrapTrace("Code pages provider registered.");
 
         // Initialize logging as early as possible to capture output from all subsystems, including during project initialization.
         InitLogging();
+        WriteBootstrapTrace("Engine logging initialized.");
 
         // Check for project initialization arguments and handle them if present. 
         // Returns false for failed initialization (e.g., missing or invalid parameters), 
@@ -85,6 +94,7 @@ internal class Program
             return;
 
         EngineDebug.Out("XREngine Editor starting...");
+        WriteBootstrapTrace("Editor startup continuing after project-init handling.");
 
         // Start undo/redo system
         Undo.Initialize();
@@ -118,9 +128,12 @@ internal class Program
         InitializeEditor(
             out VRGameStartupSettings<EVRActionCategory, EVRGameAction> startupSettings,
             out GameState gameState);
+        WriteBootstrapTrace($"Editor startup settings created. Windows={startupSettings.StartupWindows.Count}, RenderLibrary={startupSettings.DefaultUserSettings?.RenderLibrary}, VRInPlace={startupSettings.RunVRInPlace}");
 
         void BeforeWindowsCreated(GameStartupSettings settings, GameState __)
         {
+            WriteBootstrapTrace("BeforeCreateWindows callback entered.");
+
             // Unsubscribe self to ensure this only runs once, before the first window creation during engine startup
             Engine.BeforeCreateWindows -= BeforeWindowsCreated;
 
@@ -134,14 +147,23 @@ internal class Program
             // Assign the target world AFTER all settings have been applied and BEFORE windows are created, 
             // so that the render pipeline and other systems can be properly initialized.
             settings.StartupWindows[0].TargetWorld = GetTargetWorld(ResolveWorldMode(args));
+            WriteBootstrapTrace($"BeforeCreateWindows configured target world '{settings.StartupWindows[0].TargetWorld?.Name ?? "<null>"}'.");
         }
         Engine.BeforeCreateWindows += BeforeWindowsCreated;
         try
         {
+            WriteBootstrapTrace("Calling Engine.Run.");
             Engine.Run(startupSettings, gameState);
+            WriteBootstrapTrace("Engine.Run returned normally.");
+        }
+        catch (Exception ex)
+        {
+            WriteBootstrapTrace($"Engine.Run threw {ex.GetType().Name}: {ex.Message}");
+            throw;
         }
         finally
         {
+            WriteBootstrapTrace("Shutting down MCP host.");
             McpServerHost.Shutdown();
         }
     }
@@ -177,6 +199,40 @@ internal class Program
         XREngine.TraceListener.GlobalMessageCallback = PrintTraceToGeneralLog;
         XREngine.TraceListener.InstallGlobalListener();
         //ConsoleHelper.EnsureConsoleAttached();
+    }
+
+    private static void WriteBootstrapTrace(string message)
+    {
+        try
+        {
+            string timestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
+            string line = $"{timestamp} [editor-bootstrap] {message}{Environment.NewLine}";
+
+            lock (s_bootstrapTraceLock)
+            {
+                s_bootstrapTracePath ??= ResolveBootstrapTracePath();
+                File.AppendAllText(s_bootstrapTracePath, line);
+            }
+        }
+        catch
+        {
+            // Bootstrap tracing must never block startup.
+        }
+    }
+
+    private static string ResolveBootstrapTracePath()
+    {
+        try
+        {
+            string runDirectory = EngineDebug.EnsureLogRunDirectory();
+            return Path.Combine(runDirectory, "editor_bootstrap.log");
+        }
+        catch
+        {
+            string fallbackDirectory = Path.Combine(Path.GetTempPath(), "XREngine");
+            Directory.CreateDirectory(fallbackDirectory);
+            return Path.Combine(fallbackDirectory, $"editor_bootstrap_{Environment.ProcessId}.log");
+        }
     }
 
     private static void InitializeEditor(
@@ -358,8 +414,8 @@ internal class Program
     private static VRGameStartupSettings<EVRActionCategory, EVRGameAction> CreateEditorStartupSettings()
     {
         var unitTestSettings = RuntimeBootstrapState.Settings;
-        int w = 1920;
-        int h = 1080;
+        const int defaultWindowWidth = 1920;
+        const int defaultWindowHeight = 1080;
         float updateHz = unitTestSettings.UpdateFPS;
         float renderHz = unitTestSettings.RenderFPS;
         float fixedHz = unitTestSettings.FixedFPS;
@@ -367,6 +423,46 @@ internal class Program
         int primaryX = NativeMethods.GetSystemMetrics(0);
         int primaryY = NativeMethods.GetSystemMetrics(1);
         EngineDebug.Out("Primary monitor size: {0}x{1}", primaryX, primaryY);
+
+        RECT workArea = ResolvePrimaryWorkArea(primaryX, primaryY);
+        int workAreaWidth = Math.Max(1, workArea.right - workArea.left);
+        int workAreaHeight = Math.Max(1, workArea.bottom - workArea.top);
+        // Use 5% of each work-area dimension (min 64px) so the window looks
+        // clearly centered rather than filling nearly the whole screen.
+        int horizontalMargin = Math.Max(64, workAreaWidth / 20);
+        int verticalMargin = Math.Max(48, workAreaHeight / 20);
+        int maxClientWidth = Math.Max(1, workAreaWidth - (horizontalMargin * 2));
+        int maxClientHeight = Math.Max(1, workAreaHeight - (verticalMargin * 2));
+
+        double widthScale = (double)maxClientWidth / defaultWindowWidth;
+        double heightScale = (double)maxClientHeight / defaultWindowHeight;
+        double scale = Math.Min(1.0, Math.Min(widthScale, heightScale));
+
+        int w = Math.Max(1, (int)Math.Round(defaultWindowWidth * scale));
+        int h = Math.Max(1, (int)Math.Round(defaultWindowHeight * scale));
+        int startX = workArea.left + Math.Max(0, (workAreaWidth - w) / 2);
+        int startY = workArea.top + Math.Max(0, (workAreaHeight - h) / 2);
+
+        EngineDebug.Out(
+            "Primary work area resolved to ({0},{1})-({2},{3}) size={4}x{5}.",
+            workArea.left,
+            workArea.top,
+            workArea.right,
+            workArea.bottom,
+            workAreaWidth,
+            workAreaHeight);
+
+        EngineDebug.Out(
+            "Startup window bounds resolved to {0}x{1} at ({2},{3}) from requested {4}x{5}. scale={6:F3} margins={7}x{8}.",
+            w,
+            h,
+            startX,
+            startY,
+            defaultWindowWidth,
+            defaultWindowHeight,
+            scale,
+            horizontalMargin,
+            verticalMargin);
 
         var settings = new VRGameStartupSettings<EVRActionCategory, EVRGameAction>()
         {
@@ -378,8 +474,8 @@ internal class Program
                     WindowTitle = "XRE Editor",
                     WindowState = EWindowState.Windowed,
                     UseNativeTitleBar = true,
-                    X = primaryX / 2 - w / 2,
-                    Y = primaryY / 2 - h / 2,
+                    X = startX,
+                    Y = startY,
                     Width = w,
                     Height = h,
                 }
@@ -452,6 +548,32 @@ internal class Program
             settings.RunVRInPlace = false;
         }
         return settings;
+    }
+
+    private static RECT ResolvePrimaryWorkArea(int primaryWidth, int primaryHeight)
+    {
+        const uint SPI_GETWORKAREA = 0x0030;
+
+        IntPtr rectBuffer = IntPtr.Zero;
+        try
+        {
+            rectBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<RECT>());
+            Marshal.StructureToPtr(new RECT(0, 0, Math.Max(1, primaryWidth), Math.Max(1, primaryHeight)), rectBuffer, false);
+
+            if (NativeMethods.SystemParametersInfo(SPI_GETWORKAREA, 0, rectBuffer, 0))
+                return Marshal.PtrToStructure<RECT>(rectBuffer);
+        }
+        catch (Exception ex)
+        {
+            EngineDebug.LogWarning($"Failed to query primary work area; falling back to primary monitor bounds. {ex.Message}");
+        }
+        finally
+        {
+            if (rectBuffer != IntPtr.Zero)
+                Marshal.FreeHGlobal(rectBuffer);
+        }
+
+        return new RECT(0, 0, Math.Max(1, primaryWidth), Math.Max(1, primaryHeight));
     }
 
     private static bool TryGetIntEnv(string name, out int value)

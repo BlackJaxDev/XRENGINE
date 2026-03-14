@@ -6,7 +6,7 @@ namespace XREngine.Rendering
     public partial class AmbientOcclusionSettings : PostProcessSettings
     {
         private bool _enabled = true;
-        private EType _type = EType.ScreenSpace;
+        private EType _type = EType.GroundTruthAmbientOcclusion;
         private float _radius = 0.9f;
         private float _power = 1.4f;
         private float _bias = 0.05f;

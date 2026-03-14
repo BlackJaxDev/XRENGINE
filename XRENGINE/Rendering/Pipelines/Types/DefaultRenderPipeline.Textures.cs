@@ -52,6 +52,43 @@ public partial class DefaultRenderPipeline
         }
     }
 
+    private XRTexture CreateForwardPrePassDepthStencilTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Depth24Stencil8,
+                EPixelFormat.DepthStencil,
+                EPixelType.UnsignedInt248,
+                EFrameBufferAttachment.DepthStencilAttachment);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = ForwardPrePassDepthStencilTextureName;
+            t.SamplerName = ForwardPrePassDepthStencilTextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(InternalWidth, InternalHeight,
+                EPixelInternalFormat.Depth24Stencil8,
+                EPixelFormat.DepthStencil,
+                EPixelType.UnsignedInt248,
+                EFrameBufferAttachment.DepthStencilAttachment);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = ForwardPrePassDepthStencilTextureName;
+            t.SamplerName = ForwardPrePassDepthStencilTextureName;
+            return t;
+        }
+    }
+
     private XRTexture CreateDepthViewTexture()
     {
         if (Stereo)
@@ -248,6 +285,41 @@ public partial class DefaultRenderPipeline
             t.MagFilter = ETexMagFilter.Nearest;
             t.Name = NormalTextureName;
             t.SamplerName = NormalTextureName;
+            return t;
+        }
+    }
+
+    private XRTexture CreateForwardPrePassNormalTexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.RG16f,
+                EPixelFormat.Rg,
+                EPixelType.HalfFloat);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = ForwardPrePassNormalTextureName;
+            t.SamplerName = ForwardPrePassNormalTextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.RG16f,
+                EPixelFormat.Rg,
+                EPixelType.HalfFloat);
+            t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
+            t.MinFilter = ETexMinFilter.Nearest;
+            t.MagFilter = ETexMagFilter.Nearest;
+            t.Name = ForwardPrePassNormalTextureName;
+            t.SamplerName = ForwardPrePassNormalTextureName;
             return t;
         }
     }

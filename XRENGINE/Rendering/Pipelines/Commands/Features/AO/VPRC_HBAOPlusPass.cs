@@ -9,25 +9,25 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
-    public class VPRC_GTAOPass : ViewportRenderCommand
+    public class VPRC_HBAOPlusPass : ViewportRenderCommand
     {
         private static void Log(string message)
-            => Debug.Out(EOutputVerbosity.Normal, false, "[AO][GTAO] {0}", message);
+            => Debug.Out(EOutputVerbosity.Normal, false, "[AO][HBAO+] {0}", message);
 
-        private string GTAOGenShaderName()
-            => Stereo ? "GTAOGenStereo.fs" : "GTAOGen.fs";
+        private string HBAOPlusGenShaderName()
+            => Stereo ? "HBAOPlusGenStereo.fs" : "HBAOPlusGen.fs";
 
-        private string GTAOBlurShaderName()
-            => Stereo ? "GTAOBlurStereo.fs" : "GTAOBlur.fs";
+        private string HBAOPlusBlurShaderName()
+            => Stereo ? "HBAOPlusBlurStereo.fs" : "HBAOPlusBlur.fs";
 
         public string FinalIntensityTextureName { get; set; } = "AmbientOcclusionTexture";
-        public string RawIntensityTextureName { get; set; } = "GTAORawTexture";
-        public string IntermediateIntensityTextureName { get; set; } = "GTAOBlurIntermediateTexture";
-        public string InputSamplerName { get; set; } = "GTAOInputTexture";
+        public string RawIntensityTextureName { get; set; } = "HBAOPlusRawTexture";
+        public string IntermediateIntensityTextureName { get; set; } = "HBAOPlusBlurIntermediateTexture";
+        public string InputSamplerName { get; set; } = "HBAOInputTexture";
 
         public string GenerationFBOName { get; set; } = "AmbientOcclusionFBO";
         public string BlurFBOName { get; set; } = "AmbientOcclusionBlurFBO";
-        public string BlurIntermediateFBOName { get; set; } = "GTAOBlurIntermediateFBO";
+        public string BlurIntermediateFBOName { get; set; } = "HBAOPlusBlurIntermediateFBO";
         public string OutputFBOName { get; set; } = "GBufferFBO";
 
         public string NormalTextureName { get; set; } = "Normal";
@@ -105,7 +105,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 transformIdTex is null ||
                 depthStencilTex is null)
             {
-                Log("Missing required GBuffer textures; skipping GTAO resource refresh.");
+                Log("Missing required GBuffer textures; skipping HBAO+ resource refresh.");
                 return;
             }
 
@@ -127,6 +127,18 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (!forceRebuild && width == state.LastWidth && height == state.LastHeight)
                 return;
+
+            Debug.RenderingEvery(
+                $"AO.HBAOPlus.Execute.{RuntimeHelpers.GetHashCode(instance)}",
+                TimeSpan.FromSeconds(1),
+                "[AO][HBAO+] Execute forceRebuild={0} size={1}x{2} stereo={3} normal={4} depth={5} final={6}",
+                forceRebuild,
+                width,
+                height,
+                Stereo,
+                normalTex.Name ?? "null",
+                depthViewTex.Name ?? "null",
+                FinalIntensityTextureName);
 
             RegenerateFBOs(
                 instance,
@@ -179,8 +191,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             };
 
-            XRShader genShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, GTAOGenShaderName()), EShaderType.Fragment);
-            XRShader blurShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, GTAOBlurShaderName()), EShaderType.Fragment);
+            XRShader genShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, HBAOPlusGenShaderName()), EShaderType.Fragment);
+            XRShader blurShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, HBAOPlusBlurShaderName()), EShaderType.Fragment);
 
             XRMaterial genMaterial = new([normalTex, depthViewTex], genShader) { RenderOptions = renderParams };
             XRMaterial horizontalBlurMaterial = new([state.RawAoTexture, depthViewTex, normalTex], blurShader) { RenderOptions = renderParams };
@@ -202,13 +214,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                 throw new ArgumentException("DepthStencil texture must be an IFrameBufferAttachement");
 
             if (state.RawAoTexture is not IFrameBufferAttachement rawAoAttach)
-                throw new ArgumentException("Raw GTAO texture must be an IFrameBufferAttachement");
+                throw new ArgumentException("Raw HBAO+ texture must be an IFrameBufferAttachement");
 
             if (state.HorizontalBlurTexture is not IFrameBufferAttachement horizontalAoAttach)
-                throw new ArgumentException("Horizontal GTAO blur texture must be an IFrameBufferAttachement");
+                throw new ArgumentException("Horizontal HBAO+ blur texture must be an IFrameBufferAttachement");
 
             if (state.FinalAoTexture is not IFrameBufferAttachement finalAoAttach)
-                throw new ArgumentException("Final GTAO texture must be an IFrameBufferAttachement");
+                throw new ArgumentException("Final HBAO+ texture must be an IFrameBufferAttachement");
 
             XRQuadFrameBuffer genFbo = new(genMaterial, true,
                 (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
@@ -219,21 +231,21 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 Name = GenerationFBOName
             };
-            genFbo.SettingUniforms += GTAOGen_SetUniforms;
+            genFbo.SettingUniforms += HBAOPlusGen_SetUniforms;
 
             XRQuadFrameBuffer horizontalBlurFbo = new(horizontalBlurMaterial, true,
                 (rawAoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
             {
                 Name = BlurFBOName
             };
-            horizontalBlurFbo.SettingUniforms += GTAOHorizontalBlur_SetUniforms;
+            horizontalBlurFbo.SettingUniforms += HBAOPlusHorizontalBlur_SetUniforms;
 
             XRQuadFrameBuffer verticalBlurFbo = new(verticalBlurMaterial, true,
                 (horizontalAoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
             {
                 Name = BlurIntermediateFBOName
             };
-            verticalBlurFbo.SettingUniforms += GTAOVerticalBlur_SetUniforms;
+            verticalBlurFbo.SettingUniforms += HBAOPlusVerticalBlur_SetUniforms;
 
             XRFrameBuffer outputFbo = new((finalAoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
             {
@@ -286,7 +298,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             return aoTexture;
         }
 
-        private void GTAOGen_SetUniforms(XRRenderProgram program)
+        private void HBAOPlusGen_SetUniforms(XRRenderProgram program)
         {
             var camera = GetCurrentCamera();
             if (camera is null)
@@ -297,28 +309,48 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Engine.Rendering.State.IsStereoPass)
                 ActivePipelineInstance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
 
-            camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion);
+            camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.HorizonBasedPlus);
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
+            Debug.RenderingEvery(
+                $"AO.HBAOPlus.GenUniforms.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",
+                TimeSpan.FromSeconds(1),
+                "[AO][HBAO+] Gen depthMode={0} region={1}x{2} stereoPass={3}",
+                camera.DepthMode,
+                region.Width,
+                region.Height,
+                Engine.Rendering.State.IsStereoPass);
             program.Uniform(EEngineUniform.ScreenWidth.ToString(), region.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToString(), region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);
         }
 
-        private void GTAOHorizontalBlur_SetUniforms(XRRenderProgram program)
+        private void HBAOPlusHorizontalBlur_SetUniforms(XRRenderProgram program)
             => SetBlurUniforms(program, new Vector2(1.0f, 0.0f));
 
-        private void GTAOVerticalBlur_SetUniforms(XRRenderProgram program)
+        private void HBAOPlusVerticalBlur_SetUniforms(XRRenderProgram program)
             => SetBlurUniforms(program, new Vector2(0.0f, 1.0f));
 
         private void SetBlurUniforms(XRRenderProgram program, Vector2 direction)
         {
+            var camera = GetCurrentCamera();
+            if (camera is not null)
+                program.Uniform(EEngineUniform.DepthMode.ToString(), (int)camera.DepthMode);
+
+            Debug.RenderingEvery(
+                $"AO.HBAOPlus.BlurUniforms.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}.{direction}",
+                TimeSpan.FromSeconds(1),
+                "[AO][HBAO+] Blur direction=({0}, {1}) depthMode={2}",
+                direction.X,
+                direction.Y,
+                camera?.DepthMode.ToString() ?? "null");
+
             var settings = GetCurrentSettings();
             program.Uniform("BlurDirection", direction);
-            program.Uniform("DenoiseRadius", Math.Clamp(settings?.GTAODenoiseRadius ?? 4, 0, 16));
-            program.Uniform("DenoiseSharpness", settings?.GTAODenoiseSharpness is > 0.0f ? settings.GTAODenoiseSharpness : 4.0f);
-            program.Uniform("DenoiseEnabled", settings?.GTAODenoiseEnabled ?? true);
-            program.Uniform("UseInputNormals", settings?.GTAOUseInputNormals ?? true);
+            program.Uniform("BlurRadius", Math.Clamp(settings?.HBAOBlurRadius ?? 8, 0, 16));
+            program.Uniform("BlurSharpness", settings?.HBAOBlurSharpness is > 0.0f ? settings.HBAOBlurSharpness : 4.0f);
+            program.Uniform("BlurEnabled", settings?.HBAOBlurEnabled ?? true);
+            program.Uniform("UseInputNormals", settings?.HBAOUseInputNormals ?? true);
         }
 
         private AmbientOcclusionSettings? GetCurrentSettings()

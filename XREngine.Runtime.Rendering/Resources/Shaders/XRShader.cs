@@ -102,7 +102,7 @@ namespace XREngine.Rendering
         public override bool Load3rdParty(string filePath)
         {
             Type = ResolveType(Path.GetExtension(filePath));
-            TextFile file = new();
+            TextFile file = new(filePath);
             file.LoadText(filePath);
             Source = file;
             return true;
@@ -122,7 +122,7 @@ namespace XREngine.Rendering
         public override async Task<bool> Load3rdPartyAsync(string filePath)
         {
             Type = ResolveType(Path.GetExtension(filePath));
-            TextFile file = new();
+            TextFile file = new(filePath);
             await file.LoadTextAsync(filePath);
             Source = file;
             return true;

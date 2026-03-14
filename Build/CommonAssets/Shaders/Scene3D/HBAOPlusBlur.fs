@@ -1,5 +1,4 @@
 #version 450
-#include "AOCommon.glsl"
 
 #pragma snippet "NormalEncoding"
 
@@ -15,6 +14,13 @@ uniform int BlurRadius = 8;
 uniform float BlurSharpness = 4.0f;
 uniform bool BlurEnabled = true;
 uniform bool UseInputNormals = true;
+uniform int DepthMode;
+
+bool AOIsFarDepth(float depth)
+{
+    const float eps = 1e-6f;
+    return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
+}
 
 void main()
 {
@@ -32,6 +38,11 @@ void main()
 
     vec2 texelSize = 1.0f / vec2(textureSize(HBAOInputTexture, 0));
     float centerDepth = texture(DepthView, uv).r;
+    if (AOIsFarDepth(centerDepth))
+    {
+        OutIntensity = 1.0f;
+        return;
+    }
     vec3 centerNormal = XRENGINE_ReadNormal(Normal, uv);
     float sigma = max(float(BlurRadius) * 0.5f, 1.0f);
     float sharpness = max(BlurSharpness, 0.001f);
@@ -47,6 +58,8 @@ void main()
         vec2 sampleUV = uv + BlurDirection * texelSize * float(offset);
         float sampleAO = texture(HBAOInputTexture, sampleUV).r;
         float sampleDepth = texture(DepthView, sampleUV).r;
+        if (AOIsFarDepth(sampleDepth))
+            continue;
         vec3 sampleNormal = XRENGINE_ReadNormal(Normal, sampleUV);
 
         float spatialWeight = AOGaussianWeight(float(offset * offset), sigma);

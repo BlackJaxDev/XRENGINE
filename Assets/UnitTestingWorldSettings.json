@@ -65,11 +65,11 @@
 
   "ModelsToImport": [
     {
-      "Enabled": false,
+      "Enabled": true,
       "Kind": "Animated",
       "Path": "misc\\Mitsuki.fbx",
       "ImportFlags": "Triangulate, FlipUVs",
-      "Scale": 1.0,
+      "Scale": 0.03,
       "ZUp": false,
       "YawPitchRoll": {
         "Yaw": 0.0,
@@ -99,7 +99,7 @@
   "FaceMotion3D": false,
   "FaceTracking": false,
   "AnimationClipVMD": false,
-  "AnimationClipAnim": true,
+  "AnimationClipAnim": false,
   "AnimClipPath": "Assets\\Walks\\Sexy Walk.anim",
   "AnimLooped": true,
   "HumanoidPoseAuditEnabled": false,

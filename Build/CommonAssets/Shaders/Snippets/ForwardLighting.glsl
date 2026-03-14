@@ -143,7 +143,8 @@ vec3 XRENGINE_CalcLightColor(BaseLight light, vec3 lightDirection, vec3 normal, 
     }
 
     float shadow = useShadow ? XRENGINE_ReadShadowMapDir(fragPos, normal, DiffuseFactor) : 1.0;
-    return AmbientColor * ambientOcclusion + (DiffuseColor + SpecularColor) * shadow;
+    float directOcclusion = ambientOcclusion;
+    return (AmbientColor + (DiffuseColor + SpecularColor) * shadow) * directOcclusion;
 }
 
 vec3 XRENGINE_CalcDirLight(DirLight light, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion, bool useShadow)
@@ -187,7 +188,7 @@ vec3 XRENGINE_CalcForwardPlusColor(vec3 lightColor, float diffuseIntensity, vec3
             SpecularColor = lightColor * spec * pow(SpecularFactor, 64.0);
     }
 
-    return DiffuseColor + SpecularColor;
+    return (DiffuseColor + SpecularColor) * ambientOcclusion;
 }
 
 vec3 XRENGINE_CalcForwardPlusPointLight(ForwardPlusLocalLight light, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion)

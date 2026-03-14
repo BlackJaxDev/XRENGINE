@@ -612,7 +612,7 @@ namespace XREngine.Rendering.Commands
             ref Vector3 lastCameraPosition,
             ref Matrix4x4 lastProjection)
         {
-            Vector3 position = camera.Transform.WorldTranslation;
+            Vector3 position = camera.Transform.RenderTranslation;
             Matrix4x4 projection = camera.ProjectionMatrix;
 
             if (!hasCameraState)

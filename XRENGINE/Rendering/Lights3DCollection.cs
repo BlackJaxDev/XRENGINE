@@ -41,6 +41,7 @@ namespace XREngine.Scene
         private static XRTexture2D DummyShadowMap => _dummyShadowMap ??= new XRTexture2D(1, 1, ColorF4.White);
 
         private static bool _loggedForwardLightingOnce = false;
+        private static bool _loggedForwardAoBindingOnce = false;
         private static bool _loggedShadowMapEnabledOnce = false;
 
         #endregion
@@ -137,6 +138,11 @@ namespace XREngine.Scene
             // Camera position for specular calculations
             program.Uniform("CameraPosition", Engine.Rendering.State.RenderingCamera?.Transform.RenderTranslation ?? Vector3.Zero);
 
+            var area = Engine.Rendering.State.RenderArea;
+            program.Uniform(EEngineUniform.ScreenWidth.ToString(), (float)area.Width);
+            program.Uniform(EEngineUniform.ScreenHeight.ToString(), (float)area.Height);
+            program.Uniform(EEngineUniform.ScreenOrigin.ToString(), new Vector2(area.X, area.Y));
+
             program.Uniform("DirLightCount", DynamicDirectionalLights.Count);
             program.Uniform("PointLightCount", DynamicPointLights.Count);
             program.Uniform("SpotLightCount", DynamicSpotLights.Count);
@@ -174,9 +180,59 @@ namespace XREngine.Scene
                     DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
                     out ambientOcclusionTexture) && ambientOcclusionTexture is not null;
             program.Uniform("AmbientOcclusionEnabled", ambientOcclusionEnabled);
+            // Debug power exponent: set > 0 (e.g. 8) to dramatically exaggerate AO on forward objects.
+            // This lets us visually confirm the shader is sampling and applying the AO texture.
+            // 0 = normal behaviour.  Try 8.0 to make subtle AO extremely visible.
+            program.Uniform("DebugForwardAOPower", 8.0f);
             program.Uniform(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, forwardAmbientOcclusionUnit);
             if (ambientOcclusionEnabled)
                 program.Sampler(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, ambientOcclusionTexture!, forwardAmbientOcclusionUnit);
+            Debug.RenderingEvery(
+                "ForwardAO.Binding",
+                TimeSpan.FromSeconds(1),
+                "[ForwardAO] enabled={0} pipeline={1} texture={2} textureType={3} unit={4} screen={5}x{6} origin={7}",
+                ambientOcclusionEnabled,
+                currentPipeline?.GetType().Name ?? "null",
+                ambientOcclusionTexture?.Name ?? "null",
+                ambientOcclusionTexture?.GetType().Name ?? "null",
+                forwardAmbientOcclusionUnit,
+                area.Width,
+                area.Height,
+                new Vector2(area.X, area.Y));
+            if (ambientOcclusionEnabled)
+            {
+                var renderer = AbstractRenderer.Current;
+                if (renderer is not null && ambientOcclusionTexture is XRTexture2D aoTexture2D)
+                {
+                    // Read center pixel at mip 0 directly instead of CalcDotLuminance.
+                    // CalcDotLuminance uses glGenerateMipmap + reads the smallest mip level,
+                    // but framebuffer textures have maxLevel=0 (no mip chain), so the mip
+                    // readback always returns 0.
+                    float centerAo = renderer.ReadTextureCenterRedMip0(aoTexture2D);
+                    Debug.RenderingEvery(
+                        "ForwardAO.Content.2D",
+                        TimeSpan.FromSeconds(1),
+                        "[ForwardAO] centerAo={0:F4} size={1}x{2}",
+                        centerAo,
+                        aoTexture2D.Width,
+                        aoTexture2D.Height);
+                }
+                else if (ambientOcclusionTexture is XRTexture2DArray aoTexture2DArray)
+                {
+                    Debug.RenderingEvery(
+                        "ForwardAO.Content.2DArray",
+                        TimeSpan.FromSeconds(1),
+                        "[ForwardAO] texture2DArray size={0}x{1} layers={2}",
+                        aoTexture2DArray.Width,
+                        aoTexture2DArray.Height,
+                        aoTexture2DArray.Depth);
+                }
+            }
+            if (!_loggedForwardAoBindingOnce)
+            {
+                _loggedForwardAoBindingOnce = true;
+                Debug.Out($"[ForwardAO] Initial binding enabled={ambientOcclusionEnabled}, texture={ambientOcclusionTexture?.Name ?? "null"}, textureType={ambientOcclusionTexture?.GetType().Name ?? "null"}, screen={area.Width}x{area.Height}, origin=<{area.X}, {area.Y}>");
+            }
 
             // Forward materials bind their own textures at units [0..N) where N is the texture index.
             // Using a low fixed unit (like 4) for the shadow map collides with multi-texture materials

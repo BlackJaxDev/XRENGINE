@@ -11,6 +11,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 {
     public class VPRC_MSVO : ViewportRenderCommand
     {
+        private static void Log(string message)
+            => Debug.Out(EOutputVerbosity.Normal, false, "[AO][MSVO] {0}", message);
+
         private string MSVOGenShaderName()
             => Stereo ? "MSVOGenStereo.fs" : "MSVOGen.fs";
 
@@ -84,7 +87,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 rmseTex is null ||
                 transformIdTex is null ||
                 depthStencilTex is null)
+            {
+                Log("Missing required GBuffer textures; skipping MSVO resource refresh.");
                 return;
+            }
 
             var area = Engine.Rendering.State.RenderArea;
             int width = area.Width;
@@ -102,6 +108,18 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (!forceRebuild && width == state.LastWidth && height == state.LastHeight)
                 return;
+
+            Debug.RenderingEvery(
+                $"AO.MSVO.Execute.{RuntimeHelpers.GetHashCode(instance)}",
+                TimeSpan.FromSeconds(1),
+                "[AO][MSVO] Execute forceRebuild={0} size={1}x{2} stereo={3} normal={4} depth={5} output={6}",
+                forceRebuild,
+                width,
+                height,
+                Stereo,
+                normalTex.Name ?? "null",
+                depthViewTex.Name ?? "null",
+                MSVOIntensityTextureName);
 
             RegenerateFBOs(
                 instance,
@@ -262,6 +280,15 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             rc.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype);
 
+            Debug.RenderingEvery(
+                $"AO.MSVO.GenUniforms.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",
+                TimeSpan.FromSeconds(1),
+                "[AO][MSVO] Gen depthMode={0} region={1}x{2} stereoPass={3} scaleFactors={4}",
+                rc.DepthMode,
+                ActivePipelineInstance.RenderState.CurrentRenderRegion.Width,
+                ActivePipelineInstance.RenderState.CurrentRenderRegion.Height,
+                Engine.Rendering.State.IsStereoPass,
+                ScaleFactors);
             program.Uniform(EEngineUniform.ScreenWidth.ToString(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToString(), (float)ActivePipelineInstance.RenderState.CurrentRenderRegion.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);

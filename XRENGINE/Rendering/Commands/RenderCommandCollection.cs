@@ -114,6 +114,14 @@ namespace XREngine.Rendering.Commands
                 return _renderingPasses.Values.Sum(static pass => pass.Count);
         }
 
+        public int GetRenderingPassCommandCount(int renderPass)
+        {
+            using (_lock.EnterScope())
+                return _renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list)
+                    ? list.Count
+                    : 0;
+        }
+
         public void AddRangeCPU(IEnumerable<RenderCommand> renderCommands)
         {
             foreach (RenderCommand renderCommand in renderCommands)
@@ -476,8 +484,8 @@ namespace XREngine.Rendering.Commands
             Matrix4x4 view = camera.Transform.InverseRenderMatrix;
             Matrix4x4 projection = camera.ProjectionMatrix;
             Matrix4x4 viewProjection = projection * view;
-            Vector3 cameraPos = camera.Transform.WorldTranslation;
-            Vector3 cameraForward = camera.WorldForward;
+            Vector3 cameraPos = camera.Transform.RenderTranslation;
+            Vector3 cameraForward = camera.Transform.RenderForward;
 
             return new GPUViewConstants
             {

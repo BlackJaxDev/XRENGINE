@@ -898,7 +898,7 @@ namespace XREngine
                     Function = EComparison.Less,
                 },
                 BlendModeAllDrawBuffers = useTransparentBlend ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
-                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights,
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.ViewportDimensions,
             };
 
             ConfigureImportedTransparency(mat, textureList, textures);
@@ -990,7 +990,7 @@ namespace XREngine
                     Function = EComparison.Less,
                 },
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
-                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights,
+                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.ViewportDimensions,
             };
         }
 

@@ -134,6 +134,9 @@ namespace XREngine.Scene
         {
             base.GlobalCollectVisible();
             ProcessPendingRenderableOperations();
+
+            if (!_isGpuDispatchActive)
+                RenderTree.Swap();
         }
 
         public override void GlobalPreRender()

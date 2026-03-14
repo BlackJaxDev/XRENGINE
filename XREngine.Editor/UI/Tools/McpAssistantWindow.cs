@@ -129,6 +129,7 @@ public sealed class McpAssistantWindow
     private const string ContextSummaryStartMarker = "[[XRENGINE_CONTEXT_SUMMARY]]";
     private const string ContextSummaryEndMarker = "[[/XRENGINE_CONTEXT_SUMMARY]]";
     private const float ContextSummaryTriggerRatio = 0.80f;
+    private const float ContextToolReferenceBudgetRatio = 0.35f;
     private const float AutoCameraViewFocusDurationSeconds = 0.35f;
     private const int DefaultOpenAiContextWindowTokens = 400_000;
 
@@ -2347,7 +2348,7 @@ public sealed class McpAssistantWindow
         {
             for (int attempt = 0; attempt <= maxAutoReprompts; attempt++)
             {
-                AutoCompactConversationContextIfNeeded(provider, trimmedPrompt, assistantMsg, minTailMessagesToKeep: 2);
+                await AutoCompactConversationContextIfNeededAsync(provider, trimmedPrompt, assistantMsg, minTailMessagesToKeep: 2, _cts.Token);
                 bool requestSelfSummary = ShouldRequestSelfSummary(provider, trimmedPrompt, assistantMsg);
                 string promptForAttempt = BuildProviderPromptEnvelope(trimmedPrompt, assistantMsg, attempt, requestSelfSummary);
                 string priorContent = assistantMsg.Content;
@@ -2592,7 +2593,7 @@ public sealed class McpAssistantWindow
         {
             for (int attempt = 0; attempt <= maxAutoReprompts; attempt++)
             {
-                AutoCompactConversationContextIfNeeded(provider, trimmedPrompt, assistantMsg, minTailMessagesToKeep: 2);
+                await AutoCompactConversationContextIfNeededAsync(provider, trimmedPrompt, assistantMsg, minTailMessagesToKeep: 2, _cts.Token);
                 bool requestSelfSummary = ShouldRequestSelfSummary(provider, trimmedPrompt, assistantMsg);
                 string promptForAttempt = BuildProviderPromptEnvelope(trimmedPrompt, assistantMsg, attempt, requestSelfSummary);
                 string priorContent = assistantMsg.Content;
@@ -2774,7 +2775,7 @@ public sealed class McpAssistantWindow
         return Math.Max(16_000, availableInputTokens * 4);
     }
 
-    private void AutoCompactConversationContextIfNeeded(ProviderType provider, string currentPrompt, ChatMessage? activeAssistantMessage, int minTailMessagesToKeep)
+    private async Task AutoCompactConversationContextIfNeededAsync(ProviderType provider, string currentPrompt, ChatMessage? activeAssistantMessage, int minTailMessagesToKeep, CancellationToken ct)
     {
         if (!AutoSummarizeNearContextLimit)
             return;
@@ -2795,12 +2796,13 @@ public sealed class McpAssistantWindow
             return;
 
         int summaryBudget = Math.Clamp(contextCharsBudget / 6, 3_000, 24_000);
-        int rawBudget = Math.Max(2_048, contextCharsBudget - summaryBudget);
+        int toolBudget = Math.Clamp((int)(contextCharsBudget * ContextToolReferenceBudgetRatio), 4_000, 40_000);
+        int rawBudget = Math.Max(2_048, contextCharsBudget - summaryBudget - toolBudget);
         int newCutoff = FindRawHistoryCutoffForBudget(activeAssistantMessage, rawBudget, minRawIndexToKeep);
         if (newCutoff <= _historyCompactedThroughExclusive)
             return;
 
-        string compactedSummary = BuildCompactedConversationSummary(_historyCompactedThroughExclusive, newCutoff, summaryBudget);
+        string compactedSummary = await BuildCompactedConversationSummaryAsync(provider, _historyCompactedThroughExclusive, newCutoff, summaryBudget, ct);
         if (string.IsNullOrWhiteSpace(compactedSummary))
             return;
 
@@ -2947,13 +2949,21 @@ public sealed class McpAssistantWindow
             TryAddChunk(chunks, ref usedChars, maxChars, string.Join("\n", usageLines));
         }
 
+        int remainingForToolReferences = Math.Max(2_048, maxChars - usedChars);
+        if (remainingForToolReferences > 0)
+        {
+            int preferredToolBudget = Math.Clamp((int)(maxChars * ContextToolReferenceBudgetRatio), 4_000, 40_000);
+            string toolReferenceChunk = BuildToolResponseReferenceBlock(Math.Min(remainingForToolReferences, preferredToolBudget));
+            TryAddChunk(chunks, ref usedChars, maxChars, toolReferenceChunk);
+        }
+
         // Build message lines from oldest->newest, then keep the tail that fits budget.
         // This preserves chronological append behavior while prioritizing recent context.
         var messageLines = new List<string>(_history.Count);
         for (int i = _history.Count - 1; i >= _historyCompactedThroughExclusive; i--)
         {
             ChatMessage msg = _history[i];
-            string? line = BuildConversationMessageLine(msg, activeAssistantMessage, messageCharLimit: 8000, toolSummaryCharLimit: 8000);
+            string? line = BuildConversationMessageLine(msg, activeAssistantMessage, messageCharLimit: 8000, toolSummaryCharLimit: 8000, includeToolCalls: false);
             if (!string.IsNullOrWhiteSpace(line))
                 messageLines.Add(line);
         }
@@ -2994,7 +3004,7 @@ public sealed class McpAssistantWindow
         int usedChars = 0;
         for (int i = _history.Count - 1; i >= _historyCompactedThroughExclusive; i--)
         {
-            string? line = BuildConversationMessageLine(_history[i], activeAssistantMessage, messageCharLimit: 8000, toolSummaryCharLimit: 8000);
+            string? line = BuildConversationMessageLine(_history[i], activeAssistantMessage, messageCharLimit: 8000, toolSummaryCharLimit: 8000, includeToolCalls: false);
             if (string.IsNullOrWhiteSpace(line))
                 continue;
 
@@ -3007,7 +3017,31 @@ public sealed class McpAssistantWindow
         return _historyCompactedThroughExclusive;
     }
 
-    private string BuildCompactedConversationSummary(int startIndex, int endExclusive, int maxChars)
+    private async Task<string> BuildCompactedConversationSummaryAsync(ProviderType provider, int startIndex, int endExclusive, int maxChars, CancellationToken ct)
+    {
+        string transcript = BuildCompactedConversationTranscript(startIndex, endExclusive, Math.Clamp(maxChars * 6, 8_192, 96_000));
+        if (string.IsNullOrWhiteSpace(transcript))
+            return string.Empty;
+
+        try
+        {
+            string? aiSummary = await GenerateConversationSummaryAsync(provider, transcript, maxChars, ct);
+            if (!string.IsNullOrWhiteSpace(aiSummary))
+                return aiSummary.Trim();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"Failed to generate AI compaction summary: {ex.Message}");
+        }
+
+        return BuildCompactedConversationSummaryFallback(startIndex, endExclusive, maxChars);
+    }
+
+    private string BuildCompactedConversationSummaryFallback(int startIndex, int endExclusive, int maxChars)
     {
         if (maxChars < 512)
             maxChars = 512;
@@ -3020,7 +3054,7 @@ public sealed class McpAssistantWindow
 
         for (int i = startIndex; i < endExclusive; i++)
         {
-            string? line = BuildConversationMessageLine(_history[i], activeAssistantMessage: null, messageCharLimit: 280, toolSummaryCharLimit: 320);
+            string? line = BuildConversationMessageLine(_history[i], activeAssistantMessage: null, messageCharLimit: 280, toolSummaryCharLimit: 320, includeToolCalls: false);
             if (!string.IsNullOrWhiteSpace(line))
                 lines.Add(Truncate(line, 420));
         }
@@ -3046,7 +3080,101 @@ public sealed class McpAssistantWindow
         return sb.ToString().Trim();
     }
 
-    private static string? BuildConversationMessageLine(ChatMessage msg, ChatMessage? activeAssistantMessage, int messageCharLimit, int toolSummaryCharLimit)
+    private string BuildCompactedConversationTranscript(int startIndex, int endExclusive, int maxChars)
+    {
+        if (maxChars < 1_024)
+            maxChars = 1_024;
+
+        var sb = new StringBuilder(Math.Min(maxChars, 16_384));
+
+        if (!string.IsNullOrWhiteSpace(_conversationSummary))
+            sb.AppendLine($"Earlier summary: {Truncate(_conversationSummary.Trim().Replace('\n', ' '), Math.Min(maxChars / 3, 8_000))}");
+
+        sb.AppendLine("Transcript to summarize (tool responses are stored separately and must stay out of the summary):");
+
+        for (int i = startIndex; i < endExclusive; i++)
+        {
+            string? line = BuildConversationMessageLine(_history[i], activeAssistantMessage: null, messageCharLimit: 12_000, toolSummaryCharLimit: 0, includeToolCalls: false);
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
+            string next = sb.Length == 0 ? line : $"\n{line}";
+            if (sb.Length + next.Length > maxChars)
+            {
+                if (sb.Length == 0)
+                    sb.Append(Truncate(line, maxChars));
+                break;
+            }
+
+            sb.Append(next);
+        }
+
+        return sb.ToString().Trim();
+    }
+
+    private string BuildToolResponseReferenceBlock(int maxChars)
+    {
+        if (maxChars < 512)
+            maxChars = 512;
+
+        var lines = new List<string>();
+        for (int i = _history.Count - 1; i >= 0; i--)
+        {
+            ChatMessage message = _history[i];
+            ToolCallEntry[] toolCalls = SnapshotToolCalls(message);
+            if (toolCalls.Length == 0)
+                continue;
+
+            foreach (var toolCall in toolCalls)
+            {
+                string? line = BuildToolResponseReferenceLine(message, toolCall);
+                if (!string.IsNullOrWhiteSpace(line))
+                    lines.Add(line);
+            }
+        }
+
+        if (lines.Count == 0)
+            return string.Empty;
+
+        var sb = new StringBuilder(Math.Min(maxChars, 16_384));
+        sb.Append("TOOL RESPONSE REFERENCES:");
+
+        for (int i = 0; i < lines.Count; i++)
+        {
+            string next = $"\n{lines[i]}";
+            if (sb.Length + next.Length > maxChars)
+                break;
+
+            sb.Append(next);
+        }
+
+        return sb.ToString().Trim();
+    }
+
+    private static string? BuildToolResponseReferenceLine(ChatMessage message, ToolCallEntry toolCall)
+    {
+        string result = toolCall.ContextResultSummary;
+        if (string.IsNullOrWhiteSpace(result))
+            result = toolCall.ResultSummary;
+
+        if (string.IsNullOrWhiteSpace(result) && string.IsNullOrWhiteSpace(toolCall.ResultFilePath))
+            return null;
+
+        var sb = new StringBuilder();
+        sb.Append($"- {message.Timestamp:HH:mm:ss} {message.Role.ToUpperInvariant()} tool {toolCall.ToolName}");
+        if (!string.IsNullOrWhiteSpace(toolCall.ArgsSummary))
+            sb.Append($"({toolCall.ArgsSummary})");
+        if (!string.IsNullOrWhiteSpace(result))
+            sb.Append($": {result}");
+        if (!string.IsNullOrWhiteSpace(toolCall.ResultFilePath))
+            sb.Append($" [file:{toolCall.ResultFilePath}]");
+        if (toolCall.IsError)
+            sb.Append(" [ERROR]");
+
+        return sb.ToString();
+    }
+
+    private static string? BuildConversationMessageLine(ChatMessage msg, ChatMessage? activeAssistantMessage, int messageCharLimit, int toolSummaryCharLimit, bool includeToolCalls = true)
     {
         string cleaned = StripProtocolMarkers(msg.Content);
         ToolCallEntry[] toolCalls = SnapshotToolCalls(msg);
@@ -3064,7 +3192,7 @@ public sealed class McpAssistantWindow
         else
             line += "(tool-only response)";
 
-        if (toolCalls.Length > 0)
+        if (includeToolCalls && toolCalls.Length > 0)
         {
             var toolParts = new List<string>(toolCalls.Length);
             foreach (var tc in toolCalls)
@@ -3089,6 +3217,157 @@ public sealed class McpAssistantWindow
         }
 
         return line;
+    }
+
+    private async Task<string?> GenerateConversationSummaryAsync(ProviderType provider, string transcript, int maxChars, CancellationToken ct)
+    {
+        string summaryPrompt = BuildConversationSummaryPrompt(transcript, maxChars);
+        return provider switch
+        {
+            ProviderType.Codex => await RequestOpenAiConversationSummaryAsync(summaryPrompt, ct),
+            ProviderType.ClaudeCode => await RequestAnthropicConversationSummaryAsync(summaryPrompt, ct),
+            ProviderType.Gemini => await RequestOpenAiCompatibleConversationSummaryAsync(
+                baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
+                model: string.IsNullOrWhiteSpace(GeminiModel) ? "gemini-2.5-pro" : GeminiModel.Trim(),
+                configureAuth: req => req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", GeminiApiKey.Trim()),
+                prompt: summaryPrompt,
+                ct: ct),
+            ProviderType.GitHubModels => await RequestOpenAiCompatibleConversationSummaryAsync(
+                baseUrl: "https://models.inference.ai.azure.com/",
+                model: string.IsNullOrWhiteSpace(GitHubModelsModel) ? "openai/gpt-4.1" : GitHubModelsModel.Trim(),
+                configureAuth: req => req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", GitHubModelsToken.Trim()),
+                prompt: summaryPrompt,
+                ct: ct),
+            _ => null
+        };
+    }
+
+    private static string BuildConversationSummaryPrompt(string transcript, int maxChars)
+    {
+        int safeMaxChars = Math.Max(512, maxChars);
+        return $"""
+Summarize the earlier conversation turns for continuation context.
+
+Requirements:
+- Summarize only the user's prompts, constraints, corrections, and questions.
+- Summarize only the assistant's responses, completed work, conclusions, promises, and remaining work.
+- Do not summarize tool calls or tool results. They are preserved separately.
+- Keep important file names, IDs, settings, and decisions when they matter to future work.
+- Write concise continuation notes, not prose narration.
+- Keep the final summary under {safeMaxChars} characters.
+
+Conversation transcript:
+{transcript}
+""";
+    }
+
+    private async Task<string?> RequestOpenAiConversationSummaryAsync(string prompt, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(OpenAiApiKey))
+            return null;
+
+        string model = string.IsNullOrWhiteSpace(OpenAiModel) ? "gpt-5-codex" : OpenAiModel.Trim();
+        var payload = new JsonObject
+        {
+            ["model"] = model,
+            ["input"] = prompt,
+            ["instructions"] = "Return only the compacted conversation summary. Do not call tools.",
+            ["max_output_tokens"] = Math.Clamp(MaxTokens / 2, 256, 2048)
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses")
+        {
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", OpenAiApiKey.Trim());
+
+        using HttpResponseMessage response = await SharedHttp.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        string body = await response.Content.ReadAsStringAsync(ct);
+        return NormalizeGeneratedSummary(ExtractOpenAiResponseText(body));
+    }
+
+    private async Task<string?> RequestAnthropicConversationSummaryAsync(string prompt, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(AnthropicApiKey))
+            return null;
+
+        string model = string.IsNullOrWhiteSpace(AnthropicModel) ? "claude-sonnet-4-5" : AnthropicModel.Trim();
+        var payload = new JsonObject
+        {
+            ["model"] = model,
+            ["max_tokens"] = Math.Clamp(MaxTokens / 2, 256, 2048),
+            ["system"] = "Return only the compacted conversation summary. Do not call tools.",
+            ["messages"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = prompt
+                }
+            }
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages")
+        {
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
+        };
+        request.Headers.Add("x-api-key", AnthropicApiKey.Trim());
+        request.Headers.Add("anthropic-version", "2023-06-01");
+
+        using HttpResponseMessage response = await SharedHttp.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        string body = await response.Content.ReadAsStringAsync(ct);
+        return NormalizeGeneratedSummary(ExtractAnthropicResponseText(body));
+    }
+
+    private async Task<string?> RequestOpenAiCompatibleConversationSummaryAsync(string baseUrl, string model, Action<HttpRequestMessage> configureAuth, string prompt, CancellationToken ct)
+    {
+        var payload = new JsonObject
+        {
+            ["model"] = model,
+            ["messages"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["role"] = "system",
+                    ["content"] = "Return only the compacted conversation summary. Do not call tools."
+                },
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = prompt
+                }
+            },
+            ["max_tokens"] = Math.Clamp(MaxTokens / 2, 256, 2048)
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, baseUrl.TrimEnd('/') + "/chat/completions")
+        {
+            Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json")
+        };
+        configureAuth(request);
+
+        using HttpResponseMessage response = await SharedHttp.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        string body = await response.Content.ReadAsStringAsync(ct);
+        return NormalizeGeneratedSummary(ExtractOpenAiCompatibleResponseText(body));
+    }
+
+    private static string NormalizeGeneratedSummary(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        return StripProtocolMarkers(text)
+            .Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Trim();
     }
 
     private void CaptureContextSummary(ChatMessage assistantMsg)
@@ -3972,6 +4251,79 @@ public sealed class McpAssistantWindow
         catch (JsonException)
         {
             // Not JSON — return raw.
+        }
+
+        return body;
+    }
+
+    private static string ExtractAnthropicResponseText(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            JsonElement root = doc.RootElement;
+            if (root.TryGetProperty("content", out var contentEl) && contentEl.ValueKind == JsonValueKind.Array)
+            {
+                var sb = new StringBuilder();
+                foreach (JsonElement item in contentEl.EnumerateArray())
+                {
+                    if (item.TryGetProperty("type", out var typeEl)
+                        && string.Equals(typeEl.GetString(), "text", StringComparison.OrdinalIgnoreCase)
+                        && item.TryGetProperty("text", out var textEl)
+                        && textEl.ValueKind == JsonValueKind.String)
+                    {
+                        sb.Append(textEl.GetString());
+                    }
+                }
+
+                if (sb.Length > 0)
+                    return sb.ToString();
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return body;
+    }
+
+    private static string ExtractOpenAiCompatibleResponseText(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            JsonElement root = doc.RootElement;
+            if (root.TryGetProperty("choices", out var choicesEl)
+                && choicesEl.ValueKind == JsonValueKind.Array
+                && choicesEl.GetArrayLength() > 0)
+            {
+                JsonElement choice = choicesEl[0];
+                if (choice.TryGetProperty("message", out var messageEl)
+                    && messageEl.TryGetProperty("content", out var contentEl))
+                {
+                    if (contentEl.ValueKind == JsonValueKind.String)
+                        return contentEl.GetString() ?? body;
+
+                    if (contentEl.ValueKind == JsonValueKind.Array)
+                    {
+                        var sb = new StringBuilder();
+                        foreach (JsonElement block in contentEl.EnumerateArray())
+                        {
+                            if (block.TryGetProperty("text", out var textEl)
+                                && textEl.ValueKind == JsonValueKind.String)
+                            {
+                                sb.Append(textEl.GetString());
+                            }
+                        }
+
+                        if (sb.Length > 0)
+                            return sb.ToString();
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
         }
 
         return body;

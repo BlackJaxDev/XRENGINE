@@ -18,9 +18,16 @@ uniform int SliceCount = 3;
 uniform int StepsPerSlice = 6;
 uniform float FalloffStartRatio = 0.4f;
 uniform bool UseInputNormals = true;
+uniform int DepthMode;
 
 uniform mat4 InverseViewMatrix;
 uniform mat4 ProjMatrix;
+
+bool AOIsFarDepth(float depth)
+{
+    const float eps = 1e-6f;
+    return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
+}
 
 vec3 ViewPosFromDepth(float depth, vec2 uv)
 {
@@ -40,8 +47,12 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos)
     vec2 texelSize = 1.0f / vec2(textureSize(DepthView, 0));
     vec2 uvX = clamp(uv + vec2(texelSize.x, 0.0f), vec2(0.0f), vec2(1.0f));
     vec2 uvY = clamp(uv + vec2(0.0f, texelSize.y), vec2(0.0f), vec2(1.0f));
-    vec3 posX = ViewPosFromDepth(texture(DepthView, uvX).r, uvX);
-    vec3 posY = ViewPosFromDepth(texture(DepthView, uvY).r, uvY);
+    float depthX = texture(DepthView, uvX).r;
+    float depthY = texture(DepthView, uvY).r;
+    if (AOIsFarDepth(depthX) || AOIsFarDepth(depthY))
+        return vec3(0.0f, 0.0f, 1.0f);
+    vec3 posX = ViewPosFromDepth(depthX, uvX);
+    vec3 posY = ViewPosFromDepth(depthY, uvY);
     return normalize(cross(posX - centerPos, posY - centerPos));
 }
 
@@ -81,7 +92,10 @@ float UpdateHorizonAngle(
     if (sampleUV.x <= 0.0f || sampleUV.x >= 1.0f || sampleUV.y <= 0.0f || sampleUV.y >= 1.0f)
         return currentHorizon;
 
-    vec3 samplePos = ViewPosFromDepth(texture(DepthView, sampleUV).r, sampleUV);
+    float sampleDepth = texture(DepthView, sampleUV).r;
+    if (AOIsFarDepth(sampleDepth))
+        return currentHorizon;
+    vec3 samplePos = ViewPosFromDepth(sampleDepth, sampleUV);
     vec3 toSample = samplePos - centerPos;
     float distanceSq = dot(toSample, toSample);
     if (distanceSq <= 1e-6f)
@@ -116,6 +130,8 @@ vec3 ComputeSliceViewDirection(vec2 uv, float depth, vec3 centerPos, vec2 sliceD
     vec2 texelSize = 1.0f / vec2(textureSize(DepthView, 0));
     vec2 offsetUv = clamp(uv + sliceDirection * texelSize * 2.0f, vec2(0.0f), vec2(1.0f));
     float offsetDepth = texture(DepthView, offsetUv).r;
+    if (AOIsFarDepth(offsetDepth))
+        return normalize(vec3(sliceDirection, 0.0f));
     vec3 offsetPos = ViewPosFromDepth(offsetDepth, offsetUv);
     vec3 sliceVector = offsetPos - centerPos;
     float sliceLengthSq = dot(sliceVector, sliceVector);
@@ -133,6 +149,11 @@ void main()
     uv = uv * 0.5f + 0.5f;
 
     float depth = texture(DepthView, uv).r;
+    if (AOIsFarDepth(depth))
+    {
+        OutIntensity = 1.0f;
+        return;
+    }
     vec3 centerPos = ViewPosFromDepth(depth, uv);
     vec3 centerNormal = GetViewNormal(uv, centerPos);
 

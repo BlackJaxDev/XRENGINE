@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System;
 using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -35,11 +36,28 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (commands is null)
                 return;
 
+            var camera = ActivePipelineInstance.RenderState.SceneCamera;
+
             foreach (int pass in _renderPasses)
-                if (_gpuDispatch)
-                    commands.RenderGPU(pass);
-                else
-                    commands.RenderCPU(pass);
+            {
+                int count = commands.GetRenderingPassCommandCount(pass);
+                string passName = commands.TryGetPassMetadata(pass, out var metadata)
+                    ? metadata.Name
+                    : pass.ToString();
+                Debug.RenderingEvery(
+                    $"ForwardDepthPrePass.{pass}",
+                    TimeSpan.FromSeconds(1),
+                    "[ForwardDepthPrePass] pass={0} name={1} count={2} camera={3}",
+                    pass,
+                    passName,
+                    count,
+                    camera is not null);
+
+                // This pre-pass relies on override materials, generated vertex programs,
+                // and per-material depth-normal variants. Those are honored by the CPU
+                // draw path; the GPU-indirect path does not reliably preserve this state.
+                commands.RenderCPU(pass, false, camera);
+            }
         }
     }
 }
