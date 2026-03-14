@@ -60,6 +60,7 @@ public static class XRAssetGraphUtility
         var visitedObjects = new HashSet<object>(ReferenceEqualityComparer.Instance);
         var discoveredAssets = new HashSet<XRAsset>(AssetReferenceComparer.Instance);
 
+        _traversalCount = 0;
         TraverseObject(root, root, visitedObjects, discoveredAssets, 0);
 
         root.EmbeddedAssets.Set(discoveredAssets, reportRemoved: false, reportAdded: false, reportModified: false);
@@ -69,6 +70,7 @@ public static class XRAssetGraphUtility
     }
 
     private const int MaxTraversalDepth = 64;
+    private const int MaxTraversalCount = 100_000;
     
     [ThreadStatic]
     private static int _traversalCount;
@@ -88,6 +90,12 @@ public static class XRAssetGraphUtility
         if (_traversalCount % 10000 == 0)
         {
             Trace.WriteLine($"[XRAssetGraphUtility] TraverseObject count={_traversalCount}, depth={depth}, visited={visited.Count}, type={candidateType.FullName}");
+        }
+
+        if (_traversalCount > MaxTraversalCount)
+        {
+            Trace.WriteLine($"[XRAssetGraphUtility] Hard traversal limit {MaxTraversalCount} reached for asset='{root.FilePath ?? root.GetType().Name}', aborting");
+            return;
         }
 
         if (depth > MaxTraversalDepth)

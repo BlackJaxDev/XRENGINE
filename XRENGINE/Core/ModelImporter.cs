@@ -271,7 +271,7 @@ namespace XREngine
                 {
                     UpdateDepth = true,
                     Enabled = ERenderParamUsage.Enabled,
-                    Function = EComparison.Less,
+                    Function = EComparison.Lequal,
                 },
                 //LineWidth = 5.0f,
                 BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
@@ -761,7 +761,7 @@ namespace XREngine
                 {
                     UpdateDepth = true,
                     Enabled = ERenderParamUsage.Enabled,
-                    Function = EComparison.Less,
+                    Function = EComparison.Lequal,
                 },
                 BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
             };
@@ -895,7 +895,7 @@ namespace XREngine
                 {
                     UpdateDepth = !useTransparentBlend,
                     Enabled = ERenderParamUsage.Enabled,
-                    Function = EComparison.Less,
+                    Function = EComparison.Lequal,
                 },
                 BlendModeAllDrawBuffers = useTransparentBlend ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
                 RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.ViewportDimensions,
@@ -987,7 +987,7 @@ namespace XREngine
                 {
                     UpdateDepth = true,
                     Enabled = ERenderParamUsage.Enabled,
-                    Function = EComparison.Less,
+                    Function = EComparison.Lequal,
                 },
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
                 RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.ViewportDimensions,

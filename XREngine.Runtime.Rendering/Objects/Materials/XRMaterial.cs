@@ -334,6 +334,23 @@ namespace XREngine.Rendering
             SyncAlphaCutoffParameter();
         }
 
+        /// <summary>
+        /// Lazily creates the <see cref="XRMaterialBase.ShaderPipelineProgram"/> when it was
+        /// not created at material init time (because <c>AllowShaderPipelines</c> was false).
+        /// Called by passes that force-enable pipeline mode (e.g., forward depth-normal prepass).
+        /// </summary>
+        public void EnsureShaderPipelineProgram()
+        {
+            if (ShaderPipelineProgram is not null)
+                return;
+
+            var nonVertexShaders = Shaders.Where(x => x.Type != EShaderType.Vertex);
+            if (!nonVertexShaders.Any())
+                return;
+
+            ShaderPipelineProgram = new XRRenderProgram(true, true, nonVertexShaders);
+        }
+
         public ETransparencyMode GetEffectiveTransparencyMode()
             => TransparentTechniqueOverride ?? TransparencyMode;
 

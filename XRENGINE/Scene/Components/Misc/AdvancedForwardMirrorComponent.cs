@@ -36,7 +36,7 @@ namespace XREngine.Scene.Components.Misc
                 DepthTest = new DepthTest()
                 {
                     Enabled = ERenderParamUsage.Enabled,
-                    Function = XREngine.Rendering.Models.Materials.EComparison.Less,
+                    Function = XREngine.Rendering.Models.Materials.EComparison.Lequal,
                     UpdateDepth = true,
                 },
                 //Don't write to the color buffer, only the stencil buffer

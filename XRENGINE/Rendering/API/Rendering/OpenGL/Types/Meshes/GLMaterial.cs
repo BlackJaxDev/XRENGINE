@@ -60,7 +60,9 @@ namespace XREngine.Rendering.OpenGL
                 if (Data.RenderOptions != null)
                     Renderer.ApplyRenderParameters(Data.RenderOptions);
 
-                if (Engine.Rendering.Settings.AllowShaderPipelines)
+                bool usePipelines = Engine.Rendering.Settings.AllowShaderPipelines
+                    || (Engine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false);
+                if (usePipelines)
                     materialProgram ??= SeparableProgram;
 
                 if (materialProgram is null)

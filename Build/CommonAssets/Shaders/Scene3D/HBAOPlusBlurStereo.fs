@@ -1,6 +1,7 @@
 #version 460
 #extension GL_OVR_multiview2 : require
 
+#include "AOCommon.glsl"
 #pragma snippet "NormalEncoding"
 
 layout(location = 0) out float OutIntensity;
@@ -15,13 +16,6 @@ uniform int BlurRadius = 8;
 uniform float BlurSharpness = 4.0f;
 uniform bool BlurEnabled = true;
 uniform bool UseInputNormals = true;
-uniform int DepthMode;
-
-bool AOIsFarDepth(float depth)
-{
-    const float eps = 1e-6f;
-    return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
-}
 
 void main()
 {
