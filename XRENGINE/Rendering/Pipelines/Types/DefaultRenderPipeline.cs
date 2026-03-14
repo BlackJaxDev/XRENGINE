@@ -454,38 +454,18 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, GPURenderDispatch);
             }
 
-            // Forward depth+normal pre-pass: first render forward opaque geometry into a
-            // dedicated forward-only target for inspection/debugging.
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                ForwardDepthPrePassFBOName,
-                CreateForwardDepthPrePassFBO,
-                GetDesiredFBOSizeInternal)
-                .UseLifetime(RenderResourceLifetime.Transient);
-
-            // Replay the same pre-pass into the shared main GBuffer attachments so AO
-            // continues to see both deferred and forward geometry.
-            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
-                ForwardDepthPrePassMergeFBOName,
-                CreateForwardDepthPrePassMergeFBO,
-                GetDesiredFBOSizeInternal)
-                .UseLifetime(RenderResourceLifetime.Transient);
-
-            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassFBOName)))
+            // Forward depth+normal pre-pass
+            var prePassChoice = c.Add<VPRC_IfElse>();
+            prePassChoice.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
             {
-                c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(
-                    [(int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
-                    GPURenderDispatch);
-            }
-
-            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassMergeFBOName, true, false, false, false)))
-            {
-                c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(
-                    [(int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
-                    GPURenderDispatch);
+                // When sharing GBuffer targets, skip the dedicated forward-only FBO
+                // and render only into the merged GBuffer attachments.
+                var shareChoice = new ViewportRenderCommandContainer(this);
+                var shareIfElse = shareChoice.Add<VPRC_IfElse>();
+                shareIfElse.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
+                shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
+                shareIfElse.FalseCommands = CreateForwardPrePassSeparateCommands();
+                prePassChoice.TrueCommands = shareChoice;
             }
 
             c.Add<VPRC_DepthTest>().Enable = false;
@@ -1234,9 +1214,6 @@ public partial class DefaultRenderPipeline : RenderPipeline
         return container;
     }
 
-    private static void LogAo(string message)
-        => Debug.Out(EOutputVerbosity.Normal, false, "[AO][Pipeline] {0}", message);
-
     private ViewportRenderCommandContainer CreateMVAOPassCommands()
     {
         var container = new ViewportRenderCommandContainer(this)
@@ -1294,6 +1271,73 @@ public partial class DefaultRenderPipeline : RenderPipeline
         container.Add<VPRC_RenderQuadToFBO>().SetTargets(MotionBlurFBOName, ForwardPassFBOName);
 
         return container;
+    }
+
+    /// <summary>
+    /// Creates the forward pre-pass commands that render into both a dedicated
+    /// forward-only FBO and into the shared GBuffer attachments (separate + merge).
+    /// </summary>
+    private ViewportRenderCommandContainer CreateForwardPrePassSeparateCommands()
+    {
+        var c = new ViewportRenderCommandContainer(this);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            ForwardDepthPrePassFBOName,
+            CreateForwardDepthPrePassFBO,
+            GetDesiredFBOSizeInternal)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            ForwardDepthPrePassMergeFBOName,
+            CreateForwardDepthPrePassMergeFBO,
+            GetDesiredFBOSizeInternal)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassFBOName)))
+        {
+            c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = true;
+            c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(
+                [(int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
+                GPURenderDispatch);
+        }
+
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassMergeFBOName, true, false, false, false)))
+        {
+            c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = true;
+            c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(
+                [(int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
+                GPURenderDispatch);
+        }
+
+        return c;
+    }
+
+    /// <summary>
+    /// Creates the forward pre-pass commands that render directly into the GBuffer
+    /// normal and depth attachments, skipping the dedicated forward-only FBO.
+    /// </summary>
+    private ViewportRenderCommandContainer CreateForwardPrePassSharedCommands()
+    {
+        var c = new ViewportRenderCommandContainer(this);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            ForwardDepthPrePassMergeFBOName,
+            CreateForwardDepthPrePassMergeFBO,
+            GetDesiredFBOSizeInternal)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassMergeFBOName, true, false, false, false)))
+        {
+            c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = true;
+            c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(
+                [(int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
+                GPURenderDispatch);
+        }
+
+        return c;
     }
 
     private ViewportRenderCommandContainer CreateDepthOfFieldPassCommands()

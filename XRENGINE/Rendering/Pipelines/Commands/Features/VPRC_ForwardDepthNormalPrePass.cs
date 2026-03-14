@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System;
 using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -40,19 +39,6 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             foreach (int pass in _renderPasses)
             {
-                int count = commands.GetRenderingPassCommandCount(pass);
-                string passName = commands.TryGetPassMetadata(pass, out var metadata)
-                    ? metadata.Name
-                    : pass.ToString();
-                Debug.RenderingEvery(
-                    $"ForwardDepthPrePass.{pass}",
-                    TimeSpan.FromSeconds(1),
-                    "[ForwardDepthPrePass] pass={0} name={1} count={2} camera={3}",
-                    pass,
-                    passName,
-                    count,
-                    camera is not null);
-
                 // This pre-pass relies on override materials, generated vertex programs,
                 // and per-material depth-normal variants. Those are honored by the CPU
                 // draw path; the GPU-indirect path does not reliably preserve this state.

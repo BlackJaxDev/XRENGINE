@@ -1834,6 +1834,32 @@ public static partial class EditorImGuiUI
         private static string FormatIniBoolean(bool value)
             => value ? "1" : "0";
 
+        private static void TryEnsureSettingsAssetTracked(XRAsset asset, string title)
+        {
+            if (Engine.Assets is null)
+                return;
+
+            XRAsset rootAsset = asset.SourceAsset ?? asset;
+
+            if (rootAsset.ID != Guid.Empty
+                && Engine.Assets.TryGetAssetByID(rootAsset.ID, out XRAsset? existingById)
+                && !ReferenceEquals(existingById, rootAsset))
+            {
+                Debug.Out($"[EditorImGuiUI] Skipping EnsureTracked for '{title}' because asset ID '{rootAsset.ID}' is already tracked by '{existingById?.GetType().Name ?? "<unknown>"}'.");
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(rootAsset.FilePath)
+                && Engine.Assets.TryGetAssetByPath(rootAsset.FilePath, out XRAsset? existingByPath)
+                && !ReferenceEquals(existingByPath, rootAsset))
+            {
+                Debug.Out($"[EditorImGuiUI] Skipping EnsureTracked for '{title}' because path '{rootAsset.FilePath}' is already tracked by '{existingByPath?.GetType().Name ?? "<unknown>"}'.");
+                return;
+            }
+
+            Engine.Assets.EnsureTracked(rootAsset);
+        }
+
         private static void OpenSettingsInInspector(object? settingsRoot, string title)
         {
             if (settingsRoot is null)
@@ -1846,14 +1872,15 @@ public static partial class EditorImGuiUI
 
                 if (Engine.CurrentProject is not null)
                 {
-                    // Give well-known project settings a stable file path so Save works.
-                    if (asset is Engine.Rendering.EngineSettings && Engine.CurrentProject.EngineSettingsPath is string engineSettingsPath)
-                        asset.FilePath = engineSettingsPath;
-                    else if (title == "Build Settings" && Engine.CurrentProject.BuildSettingsPath is string buildSettingsPath)
+                    // Build Settings has a dedicated persisted asset file.
+                    // Engine Rendering Settings is currently a runtime settings object and should not
+                    // be rebound onto the project's engine_settings.asset path here because that path
+                    // is already used by EditorPreferencesOverrides in the current project flow.
+                    if (title == "Build Settings" && Engine.CurrentProject.BuildSettingsPath is string buildSettingsPath)
                         asset.FilePath = buildSettingsPath;
                 }
 
-                Engine.Assets.EnsureTracked(asset.SourceAsset);
+                TryEnsureSettingsAssetTracked(asset, title);
             }
 
             _showInspector = true;

@@ -128,18 +128,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!forceRebuild && width == state.LastWidth && height == state.LastHeight)
                 return;
 
-            Debug.RenderingEvery(
-                $"AO.HBAOPlus.Execute.{RuntimeHelpers.GetHashCode(instance)}",
-                TimeSpan.FromSeconds(1),
-                "[AO][HBAO+] Execute forceRebuild={0} size={1}x{2} stereo={3} normal={4} depth={5} final={6}",
-                forceRebuild,
-                width,
-                height,
-                Stereo,
-                normalTex.Name ?? "null",
-                depthViewTex.Name ?? "null",
-                FinalIntensityTextureName);
-
             RegenerateFBOs(
                 instance,
                 state,
@@ -312,14 +300,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.HorizonBasedPlus);
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
-            Debug.RenderingEvery(
-                $"AO.HBAOPlus.GenUniforms.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",
-                TimeSpan.FromSeconds(1),
-                "[AO][HBAO+] Gen depthMode={0} region={1}x{2} stereoPass={3}",
-                camera.DepthMode,
-                region.Width,
-                region.Height,
-                Engine.Rendering.State.IsStereoPass);
             program.Uniform(EEngineUniform.ScreenWidth.ToString(), region.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToString(), region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);
@@ -336,14 +316,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             var camera = GetCurrentCamera();
             if (camera is not null)
                 program.Uniform(EEngineUniform.DepthMode.ToString(), (int)camera.DepthMode);
-
-            Debug.RenderingEvery(
-                $"AO.HBAOPlus.BlurUniforms.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}.{direction}",
-                TimeSpan.FromSeconds(1),
-                "[AO][HBAO+] Blur direction=({0}, {1}) depthMode={2}",
-                direction.X,
-                direction.Y,
-                camera?.DepthMode.ToString() ?? "null");
 
             var settings = GetCurrentSettings();
             program.Uniform("BlurDirection", direction);

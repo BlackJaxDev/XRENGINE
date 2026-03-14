@@ -125,10 +125,51 @@ That pushes the likely fault domain away from shader text generation and toward 
 
 ## Next Steps
 
-1. Add pipeline validation and info-log reporting after binding the separable vertex and fragment programs.
-2. Verify whether the pipeline is actually complete and valid during the forced prepass path.
+1. ~~Add pipeline validation and info-log reporting after binding the separable vertex and fragment programs.~~ **Done.**
+2. ~~Verify whether the pipeline is actually complete and valid during the forced prepass path.~~ **Fix applied.**
 3. If the pipeline validates, inspect render-state differences for the prepass target itself.
 4. Remove temporary diagnostic logging once the root cause is confirmed.
+
+## Root Cause (Identified 2026-03-13)
+
+The forward prepass forces pipeline mode (`PushForceShaderPipelines`) while the runtime has `AllowShaderPipelines = false`. This caused three compounding failures:
+
+### 1. No `glUseProgram(0)` before pipeline bind
+
+When transitioning from combined-program rendering to pipeline rendering, OpenGL requires that `glUseProgram(0)` be called first. Without this, the previously active combined program overrides the pipeline per spec. `GetPipelinePrograms()` was calling `glBindProgramPipeline()` without clearing the active program.
+
+**Fix:** Added `Api.UseProgram(0)` at the start of `GetPipelinePrograms()`.
+
+### 2. Null `ShaderPipelineProgram` on materials
+
+When `AllowShaderPipelines = false` (the default), `XRMaterial.ShadersChanged()` sets `ShaderPipelineProgram = null`. The forward prepass forces pipeline mode, but every material's `SeparableProgram` is null, causing `GenerateVertexShader()` to fail because `materialProgram?.Link()` returns false.
+
+**Fix:** Added `XRMaterial.EnsureShaderPipelineProgram()` that lazily creates the separable program on-demand. Called from `GetPipelinePrograms()` before accessing `material.SeparableProgram`.
+
+### 3. Stale pipeline binding after prepass
+
+After the forward prepass finishes and the `ForceShaderPipelines` flag pops, subsequent combined-program draws had a stale `glBindProgramPipeline()` bound. While `glUseProgram(nonzero)` takes precedence, a stale pipeline is risky if any code later calls `glUseProgram(0)`.
+
+**Fix:** Added `Api.BindProgramPipeline(0)` in `GetCombinedProgram()` before calling `Use()`.
+
+### 4. No pipeline validation
+
+The engine never called `glValidateProgramPipeline`. Separable pipeline linking errors were silently ignored.
+
+**Fix:** Added `GLRenderProgramPipeline.Validate()` with info-log reporting. Called after successful stage binding in `GetPipelinePrograms()`.
+
+### 5. `GLMaterial.SetUniforms()` fallback guard
+
+The uniform-setting fallback `materialProgram ??= SeparableProgram` was guarded only by `AllowShaderPipelines`, not by the forced-pipeline flag. If the material program argument happened to be null, uniforms would not be set.
+
+**Fix:** Guard now also checks `ForceShaderPipelines`.
+
+### Files changed
+
+- `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Mesh Renderer/GLMeshRenderer.Shaders.cs`
+- `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLRenderProgramPipeline.cs`
+- `XRENGINE/Rendering/API/Rendering/OpenGL/Types/Meshes/GLMaterial.cs`
+- `XREngine.Runtime.Rendering/Objects/Materials/XRMaterial.cs`
 
 ## Short Answers To The User Questions
 

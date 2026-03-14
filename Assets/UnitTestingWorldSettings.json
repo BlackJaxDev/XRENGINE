@@ -65,11 +65,11 @@
 
   "ModelsToImport": [
     {
-      "Enabled": true,
+      "Enabled": false,
       "Kind": "Animated",
-      "Path": "misc\\Mitsuki.fbx",
-      "ImportFlags": "Triangulate, FlipUVs",
-      "Scale": 0.03,
+      "Path": "misc\\jax2026.fbx",
+      "ImportFlags": "Triangulate, FlipUVs, GenerateNormals, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes",
+      "Scale": 1.0,
       "ZUp": false,
       "YawPitchRoll": {
         "Yaw": 0.0,
@@ -99,7 +99,7 @@
   "FaceMotion3D": false,
   "FaceTracking": false,
   "AnimationClipVMD": false,
-  "AnimationClipAnim": false,
+  "AnimationClipAnim": true,
   "AnimClipPath": "Assets\\Walks\\Sexy Walk.anim",
   "AnimLooped": true,
   "HumanoidPoseAuditEnabled": false,

@@ -448,6 +448,8 @@ namespace XREngine
         private OverrideableSetting<EDebugShapePopulationMode> _debugShapePopulationModeOverride = new();
         private OverrideableSetting<EDebugVisualizerPopulationMode> _debugVisualizerPopulationModeOverride = new();
         private OverrideableSetting<EDebugPrimitiveBufferFormat> _debugPrimitiveBufferFormatOverride = new();
+        private OverrideableSetting<bool> _forwardDepthPrePassEnabledOverride = new();
+        private OverrideableSetting<bool> _forwardPrePassSharesGBufferTargetsOverride = new();
 
         public OverrideableSetting<bool> RenderMesh3DBoundsOverride
         {
@@ -633,6 +635,18 @@ namespace XREngine
         {
             get => _debugPrimitiveBufferFormatOverride;
             set => SetField(ref _debugPrimitiveBufferFormatOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ForwardDepthPrePassEnabledOverride
+        {
+            get => _forwardDepthPrePassEnabledOverride;
+            set => SetField(ref _forwardDepthPrePassEnabledOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> ForwardPrePassSharesGBufferTargetsOverride
+        {
+            get => _forwardPrePassSharesGBufferTargetsOverride;
+            set => SetField(ref _forwardPrePassSharesGBufferTargetsOverride, value ?? new());
         }
     }
 }

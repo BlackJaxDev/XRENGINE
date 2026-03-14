@@ -465,6 +465,11 @@ namespace XREngine
 
         #region Asset Caching and Tracking
 
+        /// <summary>
+        /// Tracks how many duplicate-ID warnings have been emitted (diagnostic, to be removed).
+        /// </summary>
+        private int _duplicateIdWarningCount;
+
         private void CacheAsset(XRAsset asset)
         {
             string path = asset.FilePath ?? string.Empty;
@@ -494,12 +499,29 @@ namespace XREngine
                     if (ReferenceEquals(existingAsset, asset))
                         return existingAsset;
 
-                    Debug.Out($"An asset with the ID {existingID} already exists in the asset manager. The new asset will be added to the list of assets with the same ID.");
+                    int count = System.Threading.Interlocked.Increment(ref _duplicateIdWarningCount);
+                    if (count <= 3)
+                    {
+                        string trace = Environment.StackTrace;
+                        Debug.Out(
+                            $"[DuplicateID #{count}] ID={existingID} type={asset.GetType().Name} " +
+                            $"path='{asset.FilePath}' name='{asset.Name}' " +
+                            $"existingType={existingAsset.GetType().Name} existingPath='{existingAsset.FilePath}' existingName='{existingAsset.Name}'\n" +
+                            $"Stack:\n{trace}");
+                    }
+                    else if (count == 4)
+                    {
+                        Debug.Out($"[DuplicateID] Suppressing further duplicate-ID warnings ({count}+ occurrences). Fix the root cause.");
+                    }
+                    // Suppress all further messages after #4.
                     return existingAsset;
                 }
                 LoadedAssetsByIDInternal.AddOrUpdate(asset.ID, asset, UpdateIDDict);
             }
 
+            // Unsubscribe first to prevent duplicate handler accumulation when
+            // CacheAsset is called repeatedly for the same asset instance.
+            asset.PropertyChanged -= AssetPropertyChanged;
             asset.PropertyChanged += AssetPropertyChanged;
         }
 

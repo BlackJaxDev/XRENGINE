@@ -1,5 +1,6 @@
 #version 450
 
+#include "AOCommon.glsl"
 #pragma snippet "NormalEncoding"
 
 layout(location = 0) out float OutIntensity;
@@ -11,13 +12,6 @@ uniform sampler2D Normal; // Normal
 
 uniform float DepthPhi = 4.0f;
 uniform float NormalPhi = 64.0f;
-uniform int DepthMode;
-
-bool AOIsFarDepth(float depth)
-{
-    const float eps = 1e-6f;
-    return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
-}
 
 void main()
 {

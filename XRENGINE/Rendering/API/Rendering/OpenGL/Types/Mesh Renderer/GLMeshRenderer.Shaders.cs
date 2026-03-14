@@ -77,7 +77,10 @@ namespace XREngine.Rendering.OpenGL
             {
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.GetPrograms");
                 bool forceShaderPipelines = Engine.Rendering.State.RenderingPipelineState?.ForceShaderPipelines ?? false;
-                bool usePipelines = (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines) || forceShaderPipelines;
+                bool materialDiffers = !ReferenceEquals(material, Material);
+                bool usePipelines = (Engine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines)
+                    || forceShaderPipelines
+                    || materialDiffers;
                 
                 return usePipelines
                     ? GetPipelinePrograms(material, out vertexProgram, out materialProgram)
@@ -103,6 +106,10 @@ namespace XREngine.Rendering.OpenGL
                     return false;
                 }
 
+                // Unbind any stale program pipeline left from a previous force-pipeline pass
+                // so the combined program takes full effect.
+                Api.BindProgramPipeline(0);
+
                 vertexProgram.Use();
                 Dbg("GetCombinedProgram: linked & in use", "Programs");
                 return true;
@@ -114,17 +121,31 @@ namespace XREngine.Rendering.OpenGL
             private bool GetPipelinePrograms(GLMaterial material, out GLRenderProgram? vertexProgram, out GLRenderProgram? materialProgram)
             {
                 using var prof = Engine.Profiler.Start("GLMeshRenderer.GetPipelinePrograms");
+
+                // OpenGL spec requires glUseProgram(0) before a program pipeline can take effect.
+                // Without this, any previously active combined program overrides the pipeline.
+                Api.UseProgram(0);
+
                 _pipeline ??= Renderer.GenericToAPI<GLRenderProgramPipeline>(new XRRenderProgramPipeline())!;
                 _pipeline.Bind();
                 _pipeline.Clear(EProgramStageMask.AllShaderBits);
+
+                // When AllowShaderPipelines is globally disabled, materials skip creating their
+                // ShaderPipelineProgram. Create it on-demand when a pass force-enables pipelines.
+                material.Data.EnsureShaderPipelineProgram();
 
                 materialProgram = material.SeparableProgram;
                 var mask = materialProgram?.Data?.GetShaderTypeMask() ?? EProgramStageMask.None;
                 bool includesVertexShader = mask.HasFlag(EProgramStageMask.VertexShaderBit);
 
-                return includesVertexShader
+                bool result = includesVertexShader
                     ? UseSuppliedVertexShader(out vertexProgram, materialProgram, mask)
                     : GenerateVertexShader(out vertexProgram, materialProgram, mask);
+
+                if (result)
+                    _pipeline.Validate();
+
+                return result;
             }
 
             /// <summary>
@@ -158,7 +179,7 @@ namespace XREngine.Rendering.OpenGL
                 bool forceGeneratedVertexProgram = Engine.Rendering.State.RenderingPipelineState?.ForceGeneratedVertexProgram ?? false;
                 vertexProgram = forceGeneratedVertexProgram
                     ? GetForcedGeneratedVertexProgram()
-                    : _separatedVertexProgram;
+                    : GetOrCreateSeparatedVertexProgram();
 
                 if (materialProgram?.Link() ?? false)
                     _pipeline!.Set(mask, materialProgram);
@@ -178,6 +199,27 @@ namespace XREngine.Rendering.OpenGL
 
                 Dbg("GenerateVertexShader: success", "Programs");
                 return true;
+            }
+
+            private GLRenderProgram? GetOrCreateSeparatedVertexProgram()
+            {
+                if (_separatedVertexProgram is not null)
+                    return _separatedVertexProgram;
+
+                var material = Material;
+                if (material is null)
+                    return null;
+
+                bool hasNoVertexShaders = material.Data.VertexShaders.Count == 0;
+
+                CreateSeparatedVertexProgram(
+                    ref _separatedVertexProgram,
+                    hasNoVertexShaders,
+                    material.Data.VertexShaders,
+                    Data.VertexShaderSelector,
+                    () => Data.VertexShaderSource ?? string.Empty);
+
+                return _separatedVertexProgram;
             }
 
             private GLRenderProgram? GetForcedGeneratedVertexProgram()

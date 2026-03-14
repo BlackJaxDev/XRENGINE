@@ -30,15 +30,6 @@ namespace XREngine.Rendering.OpenGL
                 {
                     XRMaterial? depthNormalVariant = MeshRenderer.Material?.DepthNormalPrePassVariant;
 
-                    Debug.RenderingEvery(
-                        $"GetRenderMaterial.DepthNormal.{MeshRenderer.Material?.Name}",
-                        TimeSpan.FromSeconds(2),
-                        "[GetRenderMaterial] UseDepthNormalVariants=true mat={0} variantNull={1} fragPath={2} overrideNull={3}",
-                        MeshRenderer.Material?.Name ?? "(null)",
-                        depthNormalVariant is null,
-                        MeshRenderer.Material?.FragmentShaders.FirstOrDefault()?.Source?.FilePath ?? MeshRenderer.Material?.FragmentShaders.FirstOrDefault()?.FilePath ?? "(nopath)",
-                        pipelineOverrideMaterial is null);
-
                     if (depthNormalVariant is not null)
                         return (Renderer.GetOrCreateAPIRenderObject(depthNormalVariant) as GLMaterial)!;
 

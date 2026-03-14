@@ -163,6 +163,31 @@ public static partial class EditorImGuiUI
         private static readonly Dictionary<Type, List<CollectionTypeDescriptor>> _propertyTypeDescriptorCache = new();
         private static readonly Dictionary<string, string> _propertyTypePickerSearch = new(StringComparer.Ordinal);
 
+        /// <summary>
+        /// XRAsset infrastructure members that should never appear in the generic property inspector.
+        /// Mirrors <see cref="XRAssetGraphUtility"/>'s InfrastructureMembers list.
+        /// </summary>
+        private static readonly HashSet<string> InspectorInfrastructureMembers = new(StringComparer.Ordinal)
+        {
+            nameof(XRAsset.SourceAsset),
+            nameof(XRAsset.EmbeddedAssets),
+            nameof(XRAsset.FilePath),
+            nameof(XRAsset.OriginalPath),
+            nameof(XRAsset.OriginalLastWriteTimeUtc),
+            nameof(XRAsset.SerializedAssetType),
+            nameof(XRAsset.Reloaded),
+            nameof(XRAsset.FileMapStream),
+            "FileMap",
+        };
+
+        private static readonly Type XRAssetType = typeof(XRAsset);
+
+        /// <summary>Maximum inspector property-tree recursion depth before bailing out.</summary>
+        private const int MaxInspectorDepth = 32;
+
+        [ThreadStatic]
+        private static int _inspectorDepth;
+
         // Property Editor Logic will be moved here
         private static void DrawSettingsObject(InspectorTargetSet targets, string label, string? description, HashSet<object> visited, bool defaultOpen, string? idOverride = null)
         {
@@ -259,8 +284,30 @@ public static partial class EditorImGuiUI
         private static void DrawSettingsProperties(InspectorTargetSet targets, HashSet<object> visited)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSettingsProperties");
+
+            if (_inspectorDepth >= MaxInspectorDepth)
+            {
+                ImGui.TextDisabled("<max inspector depth reached>");
+                return;
+            }
+
+            _inspectorDepth++;
+            try
+            {
+                DrawSettingsPropertiesCore(targets, visited);
+            }
+            finally
+            {
+                _inspectorDepth--;
+            }
+        }
+
+        private static void DrawSettingsPropertiesCore(InspectorTargetSet targets, HashSet<object> visited)
+        {
             object primary = targets.PrimaryTarget;
             Type type = targets.CommonType;
+
+            bool isXRAssetDerived = XRAssetType.IsAssignableFrom(type);
 
             string search = _inspectorPropertySearch ?? string.Empty;
             bool hasSearch = !string.IsNullOrWhiteSpace(search);
@@ -274,6 +321,10 @@ public static partial class EditorImGuiUI
                     var browsableAttr = p.GetCustomAttribute<BrowsableAttribute>();
 
                     if (browsableAttr != null && !browsableAttr.Browsable)
+                        return null;
+
+                    // Hide XRAsset infrastructure members from the inspector.
+                    if (isXRAssetDerived && InspectorInfrastructureMembers.Contains(p.Name))
                         return null;
 
                     string displayName = displayAttr?.DisplayName ?? p.Name.SplitCamelCase();
@@ -334,6 +385,11 @@ public static partial class EditorImGuiUI
 
                     // Support the engine's Unity-style attribute even if it's not used widely yet.
                     if (f.GetCustomAttribute<HideInInspectorAttribute>() is not null)
+                        return null;
+
+                    // Hide XRAsset infrastructure fields from the inspector.
+                    if (isXRAssetDerived && InspectorInfrastructureMembers.Contains(f.Name))
+                        return null;
                         return null;
 
                     string displayName = displayAttr?.DisplayName ?? f.Name.SplitCamelCase();
