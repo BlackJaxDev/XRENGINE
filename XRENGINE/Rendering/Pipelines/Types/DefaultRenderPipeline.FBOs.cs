@@ -653,11 +653,29 @@ public partial class DefaultRenderPipeline
     }
 
     /// <summary>
-    /// Depth+normal FBO that shares the main DepthStencil and Normal textures.
-    /// Used to render forward opaque geometry depth and normals before the AO resolve,
-    /// so AO algorithms see both deferred and forward geometry.
+    /// Dedicated forward-only depth+normal FBO for inspection/debugging.
+    /// This target is cleared before the forward pre-pass, so it contains only
+    /// opaque/masked forward geometry.
     /// </summary>
     private XRFrameBuffer CreateForwardDepthPrePassFBO()
+    {
+        var dsAttach = EnsureTextureAttachment(ForwardPrePassDepthStencilTextureName, CreateForwardPrePassDepthStencilTexture);
+        var normalAttach = EnsureTextureAttachment(ForwardPrePassNormalTextureName, CreateForwardPrePassNormalTexture);
+
+        return new XRFrameBuffer(
+            (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = ForwardDepthPrePassFBOName
+        };
+    }
+
+    /// <summary>
+    /// Shared depth+normal FBO that reuses the main GBuffer Normal + DepthStencil textures.
+    /// The forward pre-pass is replayed into this target without clearing so AO still sees
+    /// both deferred and forward geometry.
+    /// </summary>
+    private XRFrameBuffer CreateForwardDepthPrePassMergeFBO()
     {
         if (GetTexture<XRTexture>(DepthStencilTextureName) is not IFrameBufferAttachement dsAttach)
             throw new InvalidOperationException("Depth/Stencil texture is not an FBO-attachable texture.");
@@ -669,7 +687,7 @@ public partial class DefaultRenderPipeline
             (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
-            Name = ForwardDepthPrePassFBOName
+            Name = ForwardDepthPrePassMergeFBOName
         };
     }
 

@@ -158,6 +158,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string DepthOfFieldFBOName = "DepthOfFieldFBO";
     public const string DepthPreloadFBOName = "DepthPreloadFBO";
     public const string ForwardDepthPrePassFBOName = "ForwardDepthPrePassFBO";
+    public const string ForwardDepthPrePassMergeFBOName = "ForwardDepthPrePassMergeFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
     public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
     public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
@@ -170,12 +171,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string HBAOPlusRawTextureName = "HBAOPlusRawTexture";
     public const string HBAOPlusBlurIntermediateTextureName = "HBAOPlusBlurIntermediateTexture";
     public const string NormalTextureName = "Normal";
+    public const string ForwardPrePassNormalTextureName = "ForwardPrePassNormal";
     public const string DepthViewTextureName = "DepthView";
     public const string StencilViewTextureName = "StencilView";
     public const string AlbedoOpacityTextureName = "AlbedoOpacity";
     public const string RMSETextureName = "RMSE";
     public const string TransformIdTextureName = "TransformId";
     public const string DepthStencilTextureName = "DepthStencil";
+    public const string ForwardPrePassDepthStencilTextureName = "ForwardPrePassDepthStencil";
     public const string DiffuseTextureName = "LightingTexture";
     public const string HDRSceneTextureName = "HDRSceneTex";
     public const string TransparentSceneCopyTextureName = "TransparentSceneCopyTex";
@@ -451,15 +454,32 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, GPURenderDispatch);
             }
 
-            // Forward depth+normal pre-pass: render forward opaque geometry depth and normals
-            // before AO resolve, so AO algorithms see both deferred and forward geometry.
+            // Forward depth+normal pre-pass: first render forward opaque geometry into a
+            // dedicated forward-only target for inspection/debugging.
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 ForwardDepthPrePassFBOName,
                 CreateForwardDepthPrePassFBO,
                 GetDesiredFBOSizeInternal)
                 .UseLifetime(RenderResourceLifetime.Transient);
 
-            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassFBOName, true, false, false, false)))
+            // Replay the same pre-pass into the shared main GBuffer attachments so AO
+            // continues to see both deferred and forward geometry.
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                ForwardDepthPrePassMergeFBOName,
+                CreateForwardDepthPrePassMergeFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassFBOName)))
+            {
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = true;
+                c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(
+                    [(int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
+                    GPURenderDispatch);
+            }
+
+            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassMergeFBOName, true, false, false, false)))
             {
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = true;
@@ -887,6 +907,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            ForwardPrePassDepthStencilTextureName,
+            CreateForwardPrePassDepthStencilTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
         //Depth view texture
         //This is a view of the depth/stencil texture that only shows the depth values.
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
@@ -928,6 +954,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             NormalTextureName,
             CreateNormalTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            ForwardPrePassNormalTextureName,
+            CreateForwardPrePassNormalTexture,
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
@@ -1498,7 +1530,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             AmbientOcclusionSettings.EType.MultiViewCustom => (int)AmbientOcclusionSettings.EType.MultiViewCustom,
             AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype => (int)AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype,
             AmbientOcclusionSettings.EType.SpatialHashExperimental => (int)AmbientOcclusionSettings.EType.SpatialHashExperimental,
-            _ => (int)AmbientOcclusionSettings.EType.ScreenSpace,
+            _ => (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
         };
 
     #endregion

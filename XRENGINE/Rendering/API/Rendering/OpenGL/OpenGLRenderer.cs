@@ -1950,6 +1950,35 @@ void main()
             return true;
         }
 
+        /// <inheritdoc/>
+        public override unsafe float ReadTextureCenterRedMip0(XRTexture2D texture)
+        {
+            var glTex = GenericToAPI<GLTexture2D>(texture);
+            if (glTex is null || !glTex.IsGenerated)
+                return 0.0f;
+
+            uint w = texture.Width;
+            uint h = texture.Height;
+            if (w == 0 || h == 0)
+                return 0.0f;
+
+            // Read a single center pixel at mip 0 via glGetTextureSubImage (DSA, no binding changes).
+            int cx = (int)(w / 2);
+            int cy = (int)(h / 2);
+            float pixel = 0.0f;
+            Api.GetTextureSubImage(
+                glTex.BindingId,
+                0,              // mip level 0
+                cx, cy, 0,      // offset
+                1u, 1u, 1u,     // size: 1x1x1
+                GLObjectBase.ToGLEnum(EPixelFormat.Red),
+                GLObjectBase.ToGLEnum(EPixelType.Float),
+                (uint)sizeof(float),
+                &pixel);
+
+            return float.IsNaN(pixel) ? 0.0f : pixel;
+        }
+
         public override unsafe void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback)
         {
             using var prof = Engine.Profiler.Start("GLRenderer.CalcDotLuminanceFrontAsync");

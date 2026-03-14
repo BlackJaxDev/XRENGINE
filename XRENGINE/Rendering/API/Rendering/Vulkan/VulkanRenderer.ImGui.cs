@@ -32,7 +32,7 @@ public unsafe partial class VulkanRenderer
     private DescriptorPool _imguiDescriptorPool;
     private DescriptorSet _imguiFontDescriptorSet;
     private readonly Dictionary<nint, DescriptorSet> _imguiTextureDescriptorSets = [];
-    private readonly Dictionary<XRTexture, nint> _imguiRegisteredTextureIds = [];
+    private readonly Dictionary<XRTexture, ImGuiTextureRegistration> _imguiRegisteredTextures = [];
     private nint _nextImGuiTextureId = 2;
 
     private Image _imguiFontImage;
@@ -50,6 +50,15 @@ public unsafe partial class VulkanRenderer
     private ulong _imguiIndexBufferSize;
 
     protected override bool SupportsImGui => true;
+
+    private struct ImGuiTextureRegistration
+    {
+        public nint Id;
+        public DescriptorSet DescriptorSet;
+        public ulong ImageViewHandle;
+        public ulong SamplerHandle;
+        public ImageLayout ImageLayout;
+    }
 
     private sealed class VulkanImGuiBackend : IImGuiRendererBackend, IDisposable
     {
@@ -717,7 +726,7 @@ public unsafe partial class VulkanRenderer
 
         _imguiFontDescriptorSet = default;
         _imguiTextureDescriptorSets.Clear();
-        _imguiRegisteredTextureIds.Clear();
+        _imguiRegisteredTextures.Clear();
         _nextImGuiTextureId = 2;
         _imguiFontReady = false;
     }
@@ -1444,19 +1453,49 @@ public unsafe partial class VulkanRenderer
 
         EnsureImGuiFontResources();
 
-        if (_imguiRegisteredTextureIds.TryGetValue(texture, out nint existingId))
-            return (IntPtr)existingId;
-
-        if (GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
+        if (!TryResolveImGuiDescriptorBinding(texture, out ImageView descriptorView, out Sampler descriptorSampler, out ImageLayout descriptorLayout))
             return IntPtr.Zero;
 
-        DescriptorSet descriptorSet = AllocateImGuiDescriptorSetForSource(source);
+        if (_imguiRegisteredTextures.TryGetValue(texture, out ImGuiTextureRegistration registration))
+        {
+            if (!_imguiTextureDescriptorSets.TryGetValue(registration.Id, out DescriptorSet liveDescriptorSet)
+                || liveDescriptorSet.Handle == 0)
+            {
+                _imguiRegisteredTextures.Remove(texture);
+                _imguiTextureDescriptorSets.Remove(registration.Id);
+            }
+            else
+            {
+                registration.DescriptorSet = liveDescriptorSet;
+                if (registration.ImageViewHandle != descriptorView.Handle
+                    || registration.SamplerHandle != descriptorSampler.Handle
+                    || registration.ImageLayout != descriptorLayout)
+                {
+                    UpdateImGuiDescriptorSet(liveDescriptorSet, descriptorView, descriptorSampler, descriptorLayout);
+                    registration.ImageViewHandle = descriptorView.Handle;
+                    registration.SamplerHandle = descriptorSampler.Handle;
+                    registration.ImageLayout = descriptorLayout;
+                    _imguiRegisteredTextures[texture] = registration;
+                }
+
+                return (IntPtr)registration.Id;
+            }
+        }
+
+        DescriptorSet descriptorSet = AllocateImGuiDescriptorSet(descriptorView, descriptorSampler, descriptorLayout);
         if (descriptorSet.Handle == 0)
             return IntPtr.Zero;
 
         nint id = _nextImGuiTextureId++;
-        _imguiRegisteredTextureIds[texture] = id;
         _imguiTextureDescriptorSets[id] = descriptorSet;
+        _imguiRegisteredTextures[texture] = new ImGuiTextureRegistration
+        {
+            Id = id,
+            DescriptorSet = descriptorSet,
+            ImageViewHandle = descriptorView.Handle,
+            SamplerHandle = descriptorSampler.Handle,
+            ImageLayout = descriptorLayout,
+        };
         return (IntPtr)id;
     }
 
@@ -1472,9 +1511,9 @@ public unsafe partial class VulkanRenderer
         _imguiTextureDescriptorSets.Remove(id);
 
         XRTexture? keyToRemove = null;
-        foreach (var entry in _imguiRegisteredTextureIds)
+        foreach (var entry in _imguiRegisteredTextures)
         {
-            if (entry.Value == id)
+            if (entry.Value.Id == id)
             {
                 keyToRemove = entry.Key;
                 break;
@@ -1482,7 +1521,7 @@ public unsafe partial class VulkanRenderer
         }
 
         if (keyToRemove is not null)
-            _imguiRegisteredTextureIds.Remove(keyToRemove);
+            _imguiRegisteredTextures.Remove(keyToRemove);
 
         if (descriptorSet.Handle != 0)
             Api!.FreeDescriptorSets(device, _imguiDescriptorPool, 1, &descriptorSet);
@@ -1490,7 +1529,46 @@ public unsafe partial class VulkanRenderer
         return true;
     }
 
-    private DescriptorSet AllocateImGuiDescriptorSetForSource(IVkImageDescriptorSource source)
+    private bool TryResolveImGuiDescriptorBinding(XRTexture texture, out ImageView descriptorView, out Sampler descriptorSampler, out ImageLayout descriptorLayout)
+    {
+        descriptorView = default;
+        descriptorSampler = default;
+        descriptorLayout = ImageLayout.ShaderReadOnlyOptimal;
+
+        if (GetOrCreateAPIRenderObject(texture, generateNow: true) is not IVkImageDescriptorSource source)
+            return false;
+
+        descriptorView = ResolveImGuiDescriptorView(source);
+        descriptorSampler = source.DescriptorSampler;
+        descriptorLayout = ResolveImGuiDescriptorLayout(source);
+        return descriptorView.Handle != 0 && descriptorSampler.Handle != 0;
+    }
+
+    private static ImageView ResolveImGuiDescriptorView(IVkImageDescriptorSource source)
+    {
+        ImageView descriptorView = source.DescriptorView;
+        if (!IsCombinedDepthStencilFormat(source.DescriptorFormat))
+            return descriptorView;
+
+        ImageAspectFlags descriptorAspect = source.DescriptorAspect;
+        bool hasCombinedAspects = (descriptorAspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))
+            == (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit);
+        if (!hasCombinedAspects)
+            return descriptorView;
+
+        ImageView depthOnlyView = source.GetDepthOnlyDescriptorView();
+        return depthOnlyView.Handle != 0 ? depthOnlyView : descriptorView;
+    }
+
+    private static ImageLayout ResolveImGuiDescriptorLayout(IVkImageDescriptorSource source)
+        => source.TrackedImageLayout switch
+        {
+            ImageLayout.DepthStencilReadOnlyOptimal => ImageLayout.DepthStencilReadOnlyOptimal,
+            ImageLayout.ShaderReadOnlyOptimal => ImageLayout.ShaderReadOnlyOptimal,
+            _ => ImageLayout.ShaderReadOnlyOptimal,
+        };
+
+    private DescriptorSet AllocateImGuiDescriptorSet(ImageView descriptorView, Sampler descriptorSampler, ImageLayout descriptorLayout)
     {
         if (_imguiDescriptorPool.Handle == 0 || _imguiDescriptorSetLayout.Handle == 0)
             return default;
@@ -1507,11 +1585,17 @@ public unsafe partial class VulkanRenderer
         if (Api!.AllocateDescriptorSets(device, ref allocInfo, out DescriptorSet descriptorSet) != Result.Success)
             return default;
 
+        UpdateImGuiDescriptorSet(descriptorSet, descriptorView, descriptorSampler, descriptorLayout);
+        return descriptorSet;
+    }
+
+    private void UpdateImGuiDescriptorSet(DescriptorSet descriptorSet, ImageView descriptorView, Sampler descriptorSampler, ImageLayout descriptorLayout)
+    {
         DescriptorImageInfo imageInfo = new()
         {
-            Sampler = source.DescriptorSampler,
-            ImageView = source.DescriptorView,
-            ImageLayout = ImageLayout.ShaderReadOnlyOptimal
+            Sampler = descriptorSampler,
+            ImageView = descriptorView,
+            ImageLayout = descriptorLayout,
         };
 
         WriteDescriptorSet write = new()
@@ -1522,11 +1606,10 @@ public unsafe partial class VulkanRenderer
             DstArrayElement = 0,
             DescriptorType = DescriptorType.CombinedImageSampler,
             DescriptorCount = 1,
-            PImageInfo = &imageInfo
+            PImageInfo = &imageInfo,
         };
 
-        Api.UpdateDescriptorSets(device, 1, &write, 0, null);
-        return descriptorSet;
+        Api!.UpdateDescriptorSets(device, 1, &write, 0, null);
     }
 
     internal void DestroySwapchainImGuiResources()

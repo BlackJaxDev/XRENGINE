@@ -53,11 +53,34 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
 
         bool success = ForwardDepthNormalVariantFactory.TryCreateFragmentVariantSource(source, out string variantSource);
 
+        success.ShouldBeFalse();
+        variantSource.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void SpecularForwardShader_RemovesAmbientOcclusionSamplingFromVariant()
+    {
+        string source = LoadShaderSource("Common/LitTexturedSpecForward.fs");
+
+        bool success = ForwardDepthNormalVariantFactory.TryCreateFragmentVariantSource(source, out string variantSource);
+
         success.ShouldBeTrue();
-        variantSource.ShouldContain("float alphaMask = texture(Texture2, FragUV0).r;");
-        variantSource.ShouldContain("if (alphaMask < AlphaCutoff)");
-        variantSource.ShouldContain("discard;");
+        variantSource.ShouldContain("float specularMask = texture(Texture1, FragUV0).r;");
+        variantSource.ShouldContain("float specIntensity = MatSpecularIntensity * specularMask;");
         variantSource.ShouldContain("Normal = XRENGINE_EncodeNormal(normal);");
+        variantSource.ShouldNotContain("XRENGINE_SampleAmbientOcclusion");
+        variantSource.ShouldNotContain("#pragma snippet \"AmbientOcclusionSampling\"");
+    }
+
+    [Test]
+    public void MaskedSpecularForwardShader_RemovesAmbientOcclusionSamplingAndPreservesDiscard()
+    {
+        string source = LoadShaderSource("Common/LitTexturedSpecAlphaForward.fs");
+
+        bool success = ForwardDepthNormalVariantFactory.TryCreateFragmentVariantSource(source, out string variantSource);
+
+        success.ShouldBeFalse();
+        variantSource.ShouldBeEmpty();
     }
 
     [Test]
@@ -86,6 +109,34 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
         string variantText = variant.Source.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
         variantText.ShouldContain("#define XRENGINE_DEPTH_NORMAL_PREPASS");
         variantText.ShouldContain("layout (location = 0) out vec2 Normal;");
+    }
+
+    [Test]
+    public void ExplicitShaderModeVariant_InjectsDepthNormalDefine_ForMaskedSpecularForwardShader()
+    {
+        XRShader shader = XRShader.EngineShader("Common/LitTexturedSpecAlphaForward.fs", EShaderType.Fragment);
+
+        XRShader? variant = ShaderHelper.GetDepthNormalPrePassForwardVariant(shader);
+
+        variant.ShouldNotBeNull();
+        string variantText = variant.Source.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
+        variantText.ShouldContain("#define XRENGINE_DEPTH_NORMAL_PREPASS");
+        variantText.ShouldContain("layout (location = 0) out vec2 Normal;");
+        variantText.ShouldContain("float alphaMask = texture(Texture2, FragUV0).r;");
+    }
+
+    [Test]
+    public void ExplicitShaderModeVariant_InjectsDepthNormalDefine_ForUnlitMaskedForwardShader()
+    {
+        XRShader shader = XRShader.EngineShader("Common/UnlitAlphaTexturedForward.fs", EShaderType.Fragment);
+
+        XRShader? variant = ShaderHelper.GetDepthNormalPrePassForwardVariant(shader);
+
+        variant.ShouldNotBeNull();
+        string variantText = variant.Source.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
+        variantText.ShouldContain("#define XRENGINE_DEPTH_NORMAL_PREPASS");
+        variantText.ShouldContain("layout (location = 0) out vec2 Normal;");
+        variantText.ShouldContain("Normal = XRENGINE_EncodeNormal(normalize(FragNorm));");
     }
 
     [Test]

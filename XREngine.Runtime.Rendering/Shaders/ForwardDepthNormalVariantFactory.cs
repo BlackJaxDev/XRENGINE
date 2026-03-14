@@ -25,6 +25,14 @@ public static class ForwardDepthNormalVariantFactory
         "\\bvec3\\s+normal\\s*=\\s*(?<expression>.*?);",
         RegexOptions.Compiled | RegexOptions.Singleline);
 
+    private static readonly Regex AmbientOcclusionSamplingStatementRegex = new(
+        @"^\s*[^\n;]*XRENGINE_SampleAmbientOcclusion\s*\([^\n;]*\)\s*;\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static readonly Regex PreprocessorDirectiveRegex = new(
+        @"^\s*#(?:if|ifdef|ifndef|elif|else|endif)\b",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
     public static XRMaterial? CreateMaterialVariant(XRMaterial sourceMaterial)
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
@@ -156,6 +164,9 @@ public static class ForwardDepthNormalVariantFactory
         if (!totalLightMatch.Success)
             return false;
 
+        if (PreprocessorDirectiveRegex.IsMatch(body[..totalLightMatch.Index]))
+            return false;
+
         int callNameIndex = body.IndexOf(ForwardLightingFunction, totalLightMatch.Index, StringComparison.Ordinal);
         if (callNameIndex < 0)
             return false;
@@ -172,7 +183,7 @@ public static class ForwardDepthNormalVariantFactory
         string normalExpression = ResolveNormalExpression(body[..totalLightMatch.Index], callArguments);
 
         StringBuilder builder = new();
-        string prefix = body[..totalLightMatch.Index].TrimEnd();
+        string prefix = RemoveAmbientOcclusionSamplingStatements(body[..totalLightMatch.Index]).TrimEnd();
         if (!string.IsNullOrWhiteSpace(prefix))
         {
             foreach (string line in prefix.Split(["\r\n", "\n"], StringSplitOptions.None))
@@ -188,6 +199,9 @@ public static class ForwardDepthNormalVariantFactory
         replacementBody = builder.ToString();
         return true;
     }
+
+    private static string RemoveAmbientOcclusionSamplingStatements(string source)
+        => AmbientOcclusionSamplingStatementRegex.Replace(source, string.Empty);
 
     private static string ResolveNormalExpression(string bodyPrefix, string callArguments)
     {

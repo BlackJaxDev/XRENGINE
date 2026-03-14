@@ -1909,7 +1909,7 @@ namespace XREngine.Rendering.Commands
             if (shader is null)
                 return;
 
-            shader.Uniform("CameraPosition", camera.Transform.WorldTranslation);
+            shader.Uniform("CameraPosition", camera.Transform.RenderTranslation);
             shader.Uniform("MaxRenderDistance", camera.FarZ * camera.FarZ);
             shader.Uniform("CameraLayerMask", unchecked((uint)camera.CullingMask.Value));
             shader.Uniform("CurrentRenderPass", RenderPass);
@@ -1958,7 +1958,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             _debugDrawProgram.Uniform("CurrentRenderPass", RenderPass);
-            _debugDrawProgram.Uniform("CameraPosition", camera.Transform.WorldTranslation);
+            _debugDrawProgram.Uniform("CameraPosition", camera.Transform.RenderTranslation);
             _debugDrawProgram.Uniform("MaxRenderDistance", camera.FarZ);
             _debugDrawProgram.Uniform("InputCommandCount", (int)count);
             _debugDrawProgram.Uniform("CulledCommandCount", (int)ReadUInt(_culledCountBuffer));

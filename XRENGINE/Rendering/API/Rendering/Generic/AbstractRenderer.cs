@@ -413,6 +413,13 @@ namespace XREngine.Rendering
         public abstract void CalcDotLuminanceAsync(XRTexture2DArray texture, Action<bool, float> callback, Vector3 luminance, bool genMipmapsNow = true);
 
         /// <summary>
+        /// Reads the red channel of a 2D texture's center texel at mip 0.
+        /// Returns 0 if the texture is not generated.
+        /// Unlike CalcDotLuminance, this does NOT require mipmaps.
+        /// </summary>
+        public virtual float ReadTextureCenterRedMip0(XRTexture2D texture) => 0.0f;
+
+        /// <summary>
         /// True if this renderer supports updating and sampling auto exposure entirely on the GPU.
         /// </summary>
         public virtual bool SupportsGpuAutoExposure => false;

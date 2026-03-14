@@ -32,8 +32,12 @@ vec3 GetViewNormal(vec2 uv, vec3 centerPos)
     vec2 texelSize = 1.0f / vec2(textureSize(DepthView, 0));
     vec2 uvX = clamp(uv + vec2(texelSize.x, 0.0f), vec2(0.0f), vec2(1.0f));
     vec2 uvY = clamp(uv + vec2(0.0f, texelSize.y), vec2(0.0f), vec2(1.0f));
-    vec3 posX = AOViewPosFromDepth(texture(DepthView, uvX).r, uvX, ProjMatrix);
-    vec3 posY = AOViewPosFromDepth(texture(DepthView, uvY).r, uvY, ProjMatrix);
+    float depthX = texture(DepthView, uvX).r;
+    float depthY = texture(DepthView, uvY).r;
+    if (AOIsFarDepth(depthX) || AOIsFarDepth(depthY))
+        return vec3(0.0f, 0.0f, 1.0f);
+    vec3 posX = AOViewPosFromDepth(depthX, uvX, ProjMatrix);
+    vec3 posY = AOViewPosFromDepth(depthY, uvY, ProjMatrix);
     return normalize(cross(posX - centerPos, posY - centerPos));
 }
 
@@ -48,7 +52,10 @@ float SampleOcclusion(vec3 centerPos, vec3 centerNormal, vec2 sampleUV, float ra
     if (sampleUV.x <= 0.0f || sampleUV.x >= 1.0f || sampleUV.y <= 0.0f || sampleUV.y >= 1.0f)
         return 0.0f;
 
-    vec3 samplePos = AOViewPosFromDepth(texture(DepthView, sampleUV).r, sampleUV, ProjMatrix);
+    float sampleDepthRaw = texture(DepthView, sampleUV).r;
+    if (AOIsFarDepth(sampleDepthRaw))
+        return 0.0f;
+    vec3 samplePos = AOViewPosFromDepth(sampleDepthRaw, sampleUV, ProjMatrix);
     vec3 toSample = samplePos - centerPos;
     float distanceSq = dot(toSample, toSample);
     if (distanceSq <= 1e-6f)
@@ -72,6 +79,11 @@ void main()
     uv = uv * 0.5f + 0.5f;
 
     float depth = texture(DepthView, uv).r;
+    if (AOIsFarDepth(depth))
+    {
+        OutIntensity = 1.0f;
+        return;
+    }
     vec3 centerPos = AOViewPosFromDepth(depth, uv, ProjMatrix);
     vec3 centerNormal = GetViewNormal(uv, centerPos);
 

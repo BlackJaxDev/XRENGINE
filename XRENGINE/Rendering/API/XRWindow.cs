@@ -3,6 +3,8 @@ using Newtonsoft.Json;
 using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Windowing;
+using System.Threading;
+using System.Threading.Tasks;
 using XREngine.Core;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -36,6 +38,32 @@ namespace XREngine.Rendering
             public NodeRepresentation?[]? RootNodes { get; set; } = [];
         }
 
+        private sealed class WindowInitializationProbe : IDisposable
+        {
+            public string Title { get; }
+            public ContextAPI API { get; }
+            public bool UseNativeTitleBar { get; }
+            public long StartTimestamp { get; } = System.Diagnostics.Stopwatch.GetTimestamp();
+            public CancellationTokenSource CancellationSource { get; } = new();
+            public int Stage;
+
+            public WindowInitializationProbe(string title, ContextAPI api, bool useNativeTitleBar)
+            {
+                Title = title;
+                API = api;
+                UseNativeTitleBar = useNativeTitleBar;
+            }
+
+            public TimeSpan Elapsed
+                => System.Diagnostics.Stopwatch.GetElapsedTime(StartTimestamp);
+
+            public void Dispose()
+            {
+                CancellationSource.Cancel();
+                CancellationSource.Dispose();
+            }
+        }
+
         #endregion
 
         #region Events
@@ -55,6 +83,7 @@ namespace XREngine.Rendering
 
         // Editor scene-panel presentation (dockable viewport panel) adapter.
         private readonly IRuntimeWindowScenePanelAdapter _scenePanelAdapter;
+        private WindowInitializationProbe? _windowInitializationProbe;
 
         #endregion
 
@@ -186,14 +215,55 @@ namespace XREngine.Rendering
             _viewports.CollectionChanged += ViewportsChanged;
             _scenePanelAdapter = RuntimeRenderingHostServices.Current.CreateWindowScenePanelAdapter();
 
+            Debug.Out(
+                "[XRWindow] Constructing window title='{0}' size={1}x{2} pos=({3},{4}) api={5}",
+                options.Title,
+                options.Size.X,
+                options.Size.Y,
+                options.Position.X,
+                options.Position.Y,
+                options.API.API);
+
             Silk.NET.Windowing.Window.PrioritizeGlfw();
             Window = Silk.NET.Windowing.Window.Create(options);
             UseNativeTitleBar = useNativeTitleBar;
+            _windowInitializationProbe = new WindowInitializationProbe(options.Title ?? string.Empty, options.API.API, useNativeTitleBar);
+            StartWindowInitializationWatchdog(_windowInitializationProbe);
 
             LinkWindow();
-            Window.Initialize();
+            Debug.Out("[XRWindow] Calling Window.Initialize for hash={0}.", GetHashCode());
+            try
+            {
+                Window.Initialize();
+            }
+            finally
+            {
+                _windowInitializationProbe?.Dispose();
+                _windowInitializationProbe = null;
+            }
+
+            // GLFW does not reliably honor the position hint supplied via WindowOptions
+            // on Windows, so we force the requested position after initialization.
+            if (Window.Position != options.Position)
+            {
+                Debug.Out(
+                    "[XRWindow] Forcing position from ({0},{1}) to requested ({2},{3}) for hash={4}.",
+                    Window.Position.X,
+                    Window.Position.Y,
+                    options.Position.X,
+                    options.Position.Y,
+                    GetHashCode());
+                Window.Position = options.Position;
+            }
+
+            Debug.Out(
+                "[XRWindow] Window.Initialize completed for hash={0}. Framebuffer={1}x{2}",
+                GetHashCode(),
+                Window.FramebufferSize.X,
+                Window.FramebufferSize.Y);
 
             Renderer = (AbstractRenderer)RuntimeRenderingHostServices.Current.CreateRenderer(this, ToRuntimeGraphicsApiKind(Window.API.API));
+            Debug.Out("[XRWindow] Renderer created for hash={0}. RendererType={1}", GetHashCode(), Renderer.GetType().Name);
         }
 
         #endregion
@@ -354,12 +424,56 @@ namespace XREngine.Rendering
 
         private void Window_Load()
         {
+            if (_windowInitializationProbe is not null)
+                Volatile.Write(ref _windowInitializationProbe.Stage, 1);
+
+            Debug.Out("[XRWindow] Load event for hash={0}.", GetHashCode());
+
             //Task.Run(() =>
             //{
                 Input = Window.CreateInput();
                 Input.ConnectionChanged += Input_ConnectionChanged;
             //});
+
+            if (_windowInitializationProbe is not null)
+                Volatile.Write(ref _windowInitializationProbe.Stage, 2);
+
+            Debug.Out("[XRWindow] Input created for hash={0}.", GetHashCode());
         }
+
+        private void StartWindowInitializationWatchdog(WindowInitializationProbe probe)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5), probe.CancellationSource.Token);
+
+                    while (!probe.CancellationSource.IsCancellationRequested)
+                    {
+                        Debug.LogWarning($"[XRWindow] Window.Initialize still running after {probe.Elapsed.TotalMilliseconds:F0} ms. stage={DescribeWindowInitializationStage(Volatile.Read(ref probe.Stage))} title='{probe.Title}' api={probe.API} nativeTitleBar={probe.UseNativeTitleBar}");
+
+                        await Task.Delay(TimeSpan.FromSeconds(5), probe.CancellationSource.Token);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[XRWindow] Window init watchdog failed: {ex.Message}");
+                }
+            });
+        }
+
+        private static string DescribeWindowInitializationStage(int stage)
+            => stage switch
+            {
+                0 => "before-load-event",
+                1 => "load-event-before-input",
+                2 => "load-event-after-input",
+                _ => $"unknown-{stage}",
+            };
 
         private void Window_Closing()
         {
@@ -644,9 +758,13 @@ namespace XREngine.Rendering
         {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.BeginTick");
 
+            Debug.Out("[XRWindow] BeginTick hash={0} viewports={1} targetWorld={2}", GetHashCode(), Viewports.Count, TargetWorldInstance?.TargetWorld?.Name ?? "<null>");
+
             Renderer.Initialize();
             _rendererInitialized = true;
             RuntimeRenderingHostServices.Current.SubscribeWindowTickCallbacks(SwapBuffers, RenderFrame);
+
+            Debug.Out("[XRWindow] Tick callbacks subscribed hash={0}.", GetHashCode());
         }
 
         private void EndTick()

@@ -15,6 +15,13 @@ uniform int DenoiseRadius = 4;
 uniform float DenoiseSharpness = 4.0f;
 uniform bool DenoiseEnabled = true;
 uniform bool UseInputNormals = true;
+uniform int DepthMode;
+
+bool AOIsFarDepth(float depth)
+{
+    const float eps = 1e-6f;
+    return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
+}
 
 void main()
 {
@@ -32,6 +39,11 @@ void main()
 
     vec2 texelSize = 1.0f / textureSize(GTAOInputTexture, 0).xy;
     float centerDepth = texture(DepthView, vec3(uv, gl_ViewID_OVR)).r;
+    if (AOIsFarDepth(centerDepth))
+    {
+        OutIntensity = 1.0f;
+        return;
+    }
     vec3 centerNormal = XRENGINE_ReadNormal(Normal, vec3(uv, gl_ViewID_OVR));
     float sigma = max(float(DenoiseRadius) * 0.5f, 1.0f);
     float sharpness = max(DenoiseSharpness, 0.001f);
@@ -47,6 +59,8 @@ void main()
         vec2 sampleUV = clamp(uv + BlurDirection * texelSize * float(offset), vec2(0.0f), vec2(1.0f));
         float sampleAO = texture(GTAOInputTexture, vec3(sampleUV, gl_ViewID_OVR)).r;
         float sampleDepth = texture(DepthView, vec3(sampleUV, gl_ViewID_OVR)).r;
+        if (AOIsFarDepth(sampleDepth))
+            continue;
         vec3 sampleNormal = XRENGINE_ReadNormal(Normal, vec3(sampleUV, gl_ViewID_OVR));
 
         float spatialWeight = exp(-0.5f * float(offset * offset) / (sigma * sigma));

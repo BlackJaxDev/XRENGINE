@@ -1829,7 +1829,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             return false;
         }
 
-        previewTexture = GetIsolatedOpenGlPreviewTexture(previewTexture, mipLevel, layerIndex);
+        previewTexture = GetIsolatedOpenGlPreviewTexture(previewTexture, mipLevel, layerIndex, channel);
 
         var apiRenderObject = renderer.GetOrCreateAPIRenderObject(previewTexture);
         if (apiRenderObject is not IGLTexture || apiRenderObject is not OpenGLRenderer.GLObjectBase apiObject)
@@ -1846,22 +1846,32 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         }
 
         bool previewUsesView = previewTexture is XRTextureViewBase;
-        if (previewUsesView || channel != TextureChannelView.RGBA)
+        if (previewUsesView)
+        {
             ApplyChannelSwizzle(renderer, binding, channel);
-        ApplyPreviewSamplingState(renderer, binding);
+            ApplyPreviewSamplingState(renderer, binding);
+        }
+        // Never modify GL state on raw (non-view) texture handles — swizzle/sampling
+        // changes would leak into the live render pipeline.
         handle = (nint)binding;
         return true;
     }
 
-    private static XRTexture GetIsolatedOpenGlPreviewTexture(XRTexture texture, int mipLevel, int layerIndex)
+    private static XRTexture GetIsolatedOpenGlPreviewTexture(XRTexture texture, int mipLevel, int layerIndex, TextureChannelView channel)
     {
         switch (texture)
         {
             case XRTexture2D tex2D:
-                return GetOrCreate2DView(tex2D, mipLevel);
+                if (tex2D.Resizable)
+                    return tex2D; // Mutable storage: glTextureView requires immutable storage, fall back to raw texture.
+                return mipLevel > 0 || channel != TextureChannelView.RGBA
+                    ? GetOrCreate2DView(tex2D, mipLevel, channel)
+                    : tex2D;
 
             case XRTexture2DArray tex2DArray:
-                return GetOrCreateArrayView(tex2DArray, layerIndex, mipLevel);
+                if (tex2DArray.Resizable)
+                    return texture;
+                return GetOrCreateArrayView(tex2DArray, layerIndex, mipLevel, channel);
 
             case XRTextureViewBase:
                 return texture;
@@ -1900,7 +1910,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
     }
 
     private static readonly Dictionary<XRTexture, TexturePreviewState> PreviewStates = new(new TextureViewCacheKeyComparer());
-    private static readonly Dictionary<XRTexture, Dictionary<(int mip, int layer), XRTextureViewBase>> PreviewViews = new(new TextureViewCacheKeyComparer());
+    private static readonly Dictionary<XRTexture, Dictionary<(int mip, int layer, TextureChannelView channel), XRTextureViewBase>> PreviewViews = new(new TextureViewCacheKeyComparer());
 
     private static TexturePreviewState GetPreviewState(XRTexture texture)
     {
@@ -2005,12 +2015,12 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
                 int clampedMip = Math.Min(mipLevel, Math.Max(0, GetMipCount(arrayTex) - 1));
                 state.Layer = clampedLayer;
                 state.Mip = clampedMip;
-                return GetOrCreateArrayView(arrayTex, clampedLayer, clampedMip);
+                return GetOrCreateArrayView(arrayTex, clampedLayer, clampedMip, TextureChannelView.RGBA);
 
-            case XRTexture2D tex2D when state.Mip > 0 || state.Channel != TextureChannelView.RGBA:
+            case XRTexture2D tex2D when state.Mip > 0:
                 int clamped2DMip = Math.Min(mipLevel, Math.Max(0, GetMipCount(tex2D) - 1));
                 state.Mip = clamped2DMip;
-                return GetOrCreate2DView(tex2D, clamped2DMip);
+                return GetOrCreate2DView(tex2D, clamped2DMip, TextureChannelView.RGBA);
 
             case XRTexture2D tex2D:
                 state.Mip = 0;
@@ -2026,15 +2036,15 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         }
     }
 
-    private static XRTexture2DView GetOrCreate2DView(XRTexture2D texture, int mip)
+    private static XRTexture2DView GetOrCreate2DView(XRTexture2D texture, int mip, TextureChannelView channel)
     {
         if (!PreviewViews.TryGetValue(texture, out var views))
         {
-            views = new Dictionary<(int mip, int layer), XRTextureViewBase>();
+            views = new Dictionary<(int mip, int layer, TextureChannelView channel), XRTextureViewBase>();
             PreviewViews[texture] = views;
         }
 
-        var key = (mip, 0);
+        var key = (mip, 0, channel);
         if (views.TryGetValue(key, out var existing) && existing is XRTexture2DView cachedView)
         {
             cachedView.MinLevel = (uint)mip;
@@ -2047,15 +2057,15 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         return view;
     }
 
-    private static XRTexture2DArrayView GetOrCreateArrayView(XRTexture2DArray texture, int layer, int mip)
+    private static XRTexture2DArrayView GetOrCreateArrayView(XRTexture2DArray texture, int layer, int mip, TextureChannelView channel)
     {
         if (!PreviewViews.TryGetValue(texture, out var views))
         {
-            views = new Dictionary<(int mip, int layer), XRTextureViewBase>();
+            views = new Dictionary<(int mip, int layer, TextureChannelView channel), XRTextureViewBase>();
             PreviewViews[texture] = views;
         }
 
-        var key = (mip, layer);
+        var key = (mip, layer, channel);
         if (views.TryGetValue(key, out var existing) && existing is XRTexture2DArrayView cachedView)
         {
             cachedView.MinLevel = (uint)mip;

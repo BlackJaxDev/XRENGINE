@@ -16,9 +16,16 @@ uniform float Bias = 0.05f;
 uniform float Intensity = 1.0f;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
+uniform int DepthMode;
 
 uniform mat4 InverseViewMatrix;
 uniform mat4 ProjMatrix;
+
+bool AOIsFarDepth(float depth)
+{
+    const float eps = 1e-6f;
+    return DepthMode == 1 ? depth <= eps : depth >= 1.0f - eps;
+}
 
 vec3 ViewPosFromDepth(float depth, vec2 uv)
 {
@@ -41,6 +48,8 @@ float ComputeObscurance(vec3 pos, vec3 normal, float radius, vec2 texCoord)
 
         vec2 uv = texCoord + sampleOffset;
         float depth = texture(DepthView, uv).r;
+        if (AOIsFarDepth(depth))
+            continue;
         vec3 samplePos = ViewPosFromDepth(depth, uv);
         vec3 diff = samplePos - pos;
 
@@ -63,6 +72,11 @@ void main()
     vec3 normal = XRENGINE_ReadNormal(Normal, uv);
     vec3 viewNormal = normalize((inverse(InverseViewMatrix) * vec4(normal, 0.0f)).rgb);
     float depth = texture(DepthView, uv).r;
+    if (AOIsFarDepth(depth))
+    {
+        OutIntensity = 1.0f;
+        return;
+    }
     vec3 position = ViewPosFromDepth(depth, uv);
 
     float totalOcclusion = 0.0f;

@@ -164,6 +164,19 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
+            Debug.RenderingEvery(
+                $"AO.MVAO.Execute.{RuntimeHelpers.GetHashCode(instance)}",
+                TimeSpan.FromSeconds(1),
+                "[AO][MVAO] Execute forceRebuild={0} sizeChanged={1} size={2}x{3} stereo={4} normal={5} depth={6} output={7}",
+                forceRebuild,
+                sizeChanged,
+                width,
+                height,
+                Stereo,
+                normalTex.Name ?? "null",
+                depthViewTex.Name ?? "null",
+                IntensityTextureName);
+
             Log($"Executing MVAO regen force={forceRebuild} size={width}x{height} last={state.LastWidth}x{state.LastHeight}");
 
             RegenerateFBOs(
@@ -290,6 +303,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (depthStencilTex is not IFrameBufferAttachement depthStencilAttach)
                 throw new ArgumentException("DepthStencil texture must be an IFrameBufferAttachement");
 
+            if (aoTexture is not IFrameBufferAttachement aoAttach)
+                throw new ArgumentException("Ambient occlusion texture must be an IFrameBufferAttachement");
+
             XRQuadFrameBuffer mvaoGenFbo = new(mvaoGenMat, true,
                 (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
                 (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
@@ -300,9 +316,6 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Name = GenerationFBOName
             };
             mvaoGenFbo.SettingUniforms += MVAOGen_SetUniforms;
-
-            if (aoTexture is not IFrameBufferAttachement aoAttach)
-                throw new ArgumentException("Ambient occlusion texture must be an IFrameBufferAttachement");
 
             XRQuadFrameBuffer mvaoBlurFbo = new(mvaoBlurMat, true, (aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
             {
@@ -375,6 +388,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             camera.SetAmbientOcclusionUniforms(program, AmbientOcclusionSettings.EType.MultiViewCustom);
 
             var region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
+            Debug.RenderingEvery(
+                $"AO.MVAO.GenUniforms.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",
+                TimeSpan.FromSeconds(1),
+                "[AO][MVAO] Gen depthMode={0} region={1}x{2} stereoPass={3} kernelSize={4}",
+                camera.DepthMode,
+                region.Width,
+                region.Height,
+                Engine.Rendering.State.IsStereoPass,
+                _kernelSize);
             program.Uniform(EEngineUniform.ScreenWidth.ToString(), region.Width);
             program.Uniform(EEngineUniform.ScreenHeight.ToString(), region.Height);
             program.Uniform(EEngineUniform.ScreenOrigin.ToString(), 0.0f);
@@ -382,6 +404,16 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void MVAOBlur_SetUniforms(XRRenderProgram program)
         {
+            var camera = ActivePipelineInstance.RenderState.SceneCamera;
+            if (camera is not null)
+                program.Uniform(EEngineUniform.DepthMode.ToString(), (int)camera.DepthMode);
+
+            Debug.RenderingEvery(
+                $"AO.MVAO.BlurUniforms.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",
+                TimeSpan.FromSeconds(1),
+                "[AO][MVAO] Blur depthMode={0}",
+                camera?.DepthMode.ToString() ?? "null");
+
             var stage = ActivePipelineInstance.RenderState.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
             var settings = stage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true ? backing : null;
             float depthPhi = settings?.DepthPhi is > 0.0f ? settings.DepthPhi : 4.0f;

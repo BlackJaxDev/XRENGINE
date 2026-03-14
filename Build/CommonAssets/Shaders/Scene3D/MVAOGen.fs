@@ -36,6 +36,8 @@ float SampleAO(vec3 fragPosVS, vec3 samplePosVS)
         return 0.0f;
 
     float sampleDepth = texture(DepthView, sampleUV).r;
+    if (AOIsFarDepth(sampleDepth))
+        return 0.0f;
     vec3 sampleView = AOViewPosFromDepth(sampleDepth, sampleUV, ProjMatrix);
 
     float delta = sampleView.z - samplePosVS.z;
@@ -55,6 +57,11 @@ void main()
 
     vec3 normal = XRENGINE_ReadNormal(Normal, uv);
     float depth = texture(DepthView, uv).r;
+    if (AOIsFarDepth(depth))
+    {
+        OutIntensity = 1.0f;
+        return;
+    }
 
     vec3 fragPosVS = AOViewPosFromDepth(depth, uv, ProjMatrix);
 

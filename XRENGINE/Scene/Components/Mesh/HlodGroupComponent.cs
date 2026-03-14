@@ -249,7 +249,7 @@ namespace XREngine.Components.Scene.Mesh
             if (!Enabled || !_built)
                 return false;
 
-            float distance = camera.DistanceFromNearPlane(Transform.RenderTranslation);
+            float distance = camera.DistanceFromRenderNearPlane(Transform.RenderTranslation);
             if (IsImposterActive(distance))
                 return false;
 
@@ -269,7 +269,7 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private bool IsImposterActive(XRCamera camera)
-            => IsImposterActive(camera.DistanceFromNearPlane(Transform.RenderTranslation));
+            => IsImposterActive(camera.DistanceFromRenderNearPlane(Transform.RenderTranslation));
 
         private bool ShouldHideSources(float cameraDistance)
             => cameraDistance >= ProxyMinDistance;
@@ -286,7 +286,7 @@ namespace XREngine.Components.Scene.Mesh
                 ri.PreCollectCommandsCallback = (info, passes, cam) =>
                 {
                     // Preserve existing behavior (LOD selection, etc.), but skip when proxy is active.
-                    if (Enabled && _built && cam is not null && ShouldHideSources(cam.DistanceFromNearPlane(Transform.RenderTranslation)))
+                    if (Enabled && _built && cam is not null && ShouldHideSources(cam.DistanceFromRenderNearPlane(Transform.RenderTranslation)))
                         return false;
 
                     return prev?.Invoke(info, passes, cam) ?? true;
