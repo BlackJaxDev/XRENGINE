@@ -26,6 +26,7 @@ internal sealed class ProfilerImGuiApp : IDisposable
     private bool _showProfilerTree = true;
     private bool _showFpsDropSpikes = true;
     private bool _showRenderStats = true;
+    private bool _showGpuPipeline = true;
     private bool _showThreadAllocations = true;
     private bool _showComponentTimings = true;
     private bool _showBvhMetrics = true;
@@ -111,6 +112,7 @@ internal sealed class ProfilerImGuiApp : IDisposable
             ref _showProfilerTree,
             ref _showFpsDropSpikes,
             ref _showRenderStats,
+            ref _showGpuPipeline,
             ref _showThreadAllocations,
             ref _showComponentTimings,
             ref _showBvhMetrics,
@@ -135,6 +137,7 @@ internal sealed class ProfilerImGuiApp : IDisposable
             ImGui.MenuItem("Profiler Tree", null, ref _showProfilerTree);
             ImGui.MenuItem("FPS Drop Spikes", null, ref _showFpsDropSpikes);
             ImGui.MenuItem("Render Stats", null, ref _showRenderStats);
+            ImGui.MenuItem("GPU Pipeline", null, ref _showGpuPipeline);
             ImGui.MenuItem("Thread Allocations", null, ref _showThreadAllocations);
             ImGui.MenuItem("Component Timings", null, ref _showComponentTimings);
             ImGui.MenuItem("BVH Metrics", null, ref _showBvhMetrics);
@@ -298,6 +301,7 @@ internal sealed class ProfilerImGuiApp : IDisposable
         ImGuiDockBuilderNative.DockWindow("Profiler Tree", leftTopId);
         ImGuiDockBuilderNative.DockWindow("FPS Drop Spikes", leftBottomId);
         ImGuiDockBuilderNative.DockWindow("Render Stats", rightTopId);
+        ImGuiDockBuilderNative.DockWindow("GPU Pipeline", rightTopId);
         ImGuiDockBuilderNative.DockWindow("Thread Allocations", rightMidId);
         ImGuiDockBuilderNative.DockWindow("Component Timings", rightMidId);
         ImGuiDockBuilderNative.DockWindow("BVH Metrics", rightMidId);   // tabbed

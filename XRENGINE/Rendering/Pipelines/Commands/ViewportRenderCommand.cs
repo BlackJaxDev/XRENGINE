@@ -37,6 +37,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// If true, this command's CollectVisible and SwapBuffers methods will be called.
         /// </summary>
         public virtual bool NeedsCollecVisible => false;
+        public virtual string GpuProfilingName => GetType().Name;
         /// <summary>
         /// Executes the command.
         /// </summary>
@@ -82,7 +83,10 @@ namespace XREngine.Rendering.Pipelines.Commands
         public void ExecuteIfShould()
         {
             if (ShouldExecute)
+            {
+                using var gpuScope = RenderPipelineGpuProfiler.Instance.StartScope(this);
                 Execute();
+            }
             ShouldExecute = true;
         }
     }

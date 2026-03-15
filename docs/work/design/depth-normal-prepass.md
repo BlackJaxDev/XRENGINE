@@ -13,6 +13,8 @@ The fix is a pre-pass that renders forward geometry depth and normals into the s
 
 ## Current Implementation (Phase 1)
 
+The intended default path is to render the forward depth-normal pre-pass directly into the shared deferred `Normal` and `DepthStencil` targets before AO resolves. A separate forward-only target plus merge replay still exists as an alternate mode, but it is not the recommended default.
+
 ### What renders in the pre-pass
 
 **Forward geometry only** — `OpaqueForward` and `MaskedForward` passes.
@@ -35,7 +37,7 @@ Deferred geometry (`OpaqueDeferred`, `DeferredDecals`) does **not** need a pre-p
 |------|------|
 | `Shaders/Common/DepthNormalPrePass.fs` | Override fragment shader — oct-encodes `normalize(FragNorm)` to `location 0`, depth writes implicitly |
 | `VPRC_ForwardDepthNormalPrePass.cs` | Pipeline command — pushes override material, forces generated vertex program, renders mesh passes |
-| `DefaultRenderPipeline.FBOs.cs` — `CreateForwardDepthPrePassFBO()` | FBO with `Normal` (color0) + `DepthStencil` (depth/stencil) attachments |
+| `DefaultRenderPipeline.FBOs.cs` — `CreateForwardDepthPrePassMergeFBO()` | FBO with shared `Normal` (color0) + `DepthStencil` (depth/stencil) attachments |
 | `DefaultRenderPipeline.FBOs.cs` — `CreateDepthNormalPrePassMaterial()` | Override material with `DepthNormalPrePass.fs`, depth test Lequal, depth write true |
 | `DefaultRenderPipeline.cs` — constructor + lazy field | `_depthNormalPrePassMaterial` lazily constructed |
 | `DefaultRenderPipeline.cs` — `CreateViewportTargetCommands()` | Pre-pass inserted between deferred GBuffer rendering and AO resolve |
@@ -55,12 +57,14 @@ This completely replaces each mesh's fragment shader with the pre-pass shader. T
 ### FBO layout
 
 ```
-ForwardDepthPrePassFBO:
+ForwardDepthPrePassMergeFBO:
   ColorAttachment0  →  Normal texture (RG16F octahedral, shared with GBuffer)
   DepthStencil      →  DepthStencil texture (Depth24Stencil8, shared with GBuffer)
 ```
 
 No clear is performed on bind (`clearColor=false, clearDepth=false, clearStencil=false`) — the deferred pass has already populated both textures with deferred geometry data. The forward pre-pass only **adds** forward geometry on top.
+
+The optional separate forward-only pre-pass textures are retained for experimentation, but AO still samples the shared `Normal` and `DepthView` textures. That makes the shared-target path the correct default for normal operation.
 
 ### Limitation: vertex normals only
 

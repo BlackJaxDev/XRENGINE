@@ -194,6 +194,13 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             OctreeMoveCount = Engine.Rendering.Stats.OctreeMoveCount,
             OctreeRemoveCount = Engine.Rendering.Stats.OctreeRemoveCount,
             OctreeSkippedMoveCount = Engine.Rendering.Stats.OctreeSkippedMoveCount,
+            GpuRenderPipelineProfilingEnabled = Engine.Rendering.Stats.GpuRenderPipelineProfilingEnabled,
+            GpuRenderPipelineProfilingSupported = Engine.Rendering.Stats.GpuRenderPipelineProfilingSupported,
+            GpuRenderPipelineTimingsReady = Engine.Rendering.Stats.GpuRenderPipelineTimingsReady,
+            GpuRenderPipelineBackend = Engine.Rendering.Stats.GpuRenderPipelineBackend,
+            GpuRenderPipelineStatusMessage = Engine.Rendering.Stats.GpuRenderPipelineStatusMessage,
+            GpuRenderPipelineFrameMs = Engine.Rendering.Stats.GpuRenderPipelineFrameMs,
+            GpuRenderPipelineTimingRoots = Engine.Rendering.Stats.GetGpuRenderPipelineTimingRoots(),
         };
     }
 

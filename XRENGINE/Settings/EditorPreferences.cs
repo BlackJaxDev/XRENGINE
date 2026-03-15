@@ -1082,13 +1082,14 @@ namespace XREngine
         private bool _allowGpuCpuFallback = false;
         private bool _enableProfilerFrameLogging = true;
         private bool _enableRenderStatisticsTracking = true;
+        private bool _enableGpuRenderPipelineProfiling = false;
         private bool _enableUILayoutDebugLogging = false;
         private bool _enableProfilerUdpSending = false;
         private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.Tasks;
         private EDebugVisualizerPopulationMode _debugVisualizerPopulationMode = EDebugVisualizerPopulationMode.Tasks;
         private EDebugPrimitiveBufferFormat _debugPrimitiveBufferFormat = EDebugPrimitiveBufferFormat.Compressed;
         private bool _forwardDepthPrePassEnabled = true;
-        private bool _forwardPrePassSharesGBufferTargets;
+        private bool _forwardPrePassSharesGBufferTargets = true;
 
         [Category("Debug")]
         [DisplayName("Render 3D Mesh Bounds")]
@@ -1414,6 +1415,29 @@ namespace XREngine
             }
         }
 
+        [Category("Profiling")]
+        [DisplayName("Enable GPU Render-Pipeline Profiling")]
+        [Description("When enabled, records GPU timestamp timings for render-pipeline commands on the OpenGL backend for the Profiler panel.")]
+        public bool EnableGpuRenderPipelineProfiling
+        {
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableGpuRenderPipelineProfiling;
+#endif
+            }
+            set
+            {
+#if XRE_PUBLISHED
+                SetField(ref _enableGpuRenderPipelineProfiling, false);
+#else
+                SetField(ref _enableGpuRenderPipelineProfiling, value);
+#endif
+            }
+        }
+
         [Category("Debug")]
         [DisplayName("Enable UI Layout Debug Logging")]
         [Description("When enabled, logs verbose UI layout system measure/arrange passes to the UI log category.")]
@@ -1476,7 +1500,7 @@ namespace XREngine
 
         [Category("Forward Pre-Pass")]
         [DisplayName("Share GBuffer Targets")]
-        [Description("When enabled, the forward pre-pass renders directly into the deferred GBuffer normal and depth targets instead of separate textures with a merge step.")]
+        [Description("When enabled, the forward pre-pass renders directly into the deferred GBuffer normal and depth targets instead of separate textures with a merge step. This is the default and recommended mode.")]
         public bool ForwardPrePassSharesGBufferTargets
         {
             get => _forwardPrePassSharesGBufferTargets;
@@ -1548,6 +1572,7 @@ namespace XREngine
             AllowGpuCpuFallback = source.AllowGpuCpuFallback;
             EnableProfilerFrameLogging = source.EnableProfilerFrameLogging;
             EnableRenderStatisticsTracking = source.EnableRenderStatisticsTracking;
+            EnableGpuRenderPipelineProfiling = source.EnableGpuRenderPipelineProfiling;
             EnableUILayoutDebugLogging = source.EnableUILayoutDebugLogging;
             EnableProfilerUdpSending = source.EnableProfilerUdpSending;
             DebugShapePopulationMode = source.DebugShapePopulationMode;
@@ -1614,6 +1639,8 @@ namespace XREngine
                 EnableProfilerFrameLogging = profilerLogging.Value;
             if (overrides.EnableRenderStatisticsTrackingOverride is { HasOverride: true } statsTracking)
                 EnableRenderStatisticsTracking = statsTracking.Value;
+            if (overrides.EnableGpuRenderPipelineProfilingOverride is { HasOverride: true } gpuPipelineProfiling)
+                EnableGpuRenderPipelineProfiling = gpuPipelineProfiling.Value;
             if (overrides.EnableUILayoutDebugLoggingOverride is { HasOverride: true } uiLayoutDebug)
                 EnableUILayoutDebugLogging = uiLayoutDebug.Value;
             if (overrides.EnableProfilerUdpSendingOverride is { HasOverride: true } profilerUdp)

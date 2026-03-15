@@ -149,6 +149,13 @@ public static partial class Engine
             OctreeMoveCount = Rendering.Stats.OctreeMoveCount,
             OctreeRemoveCount = Rendering.Stats.OctreeRemoveCount,
             OctreeSkippedMoveCount = Rendering.Stats.OctreeSkippedMoveCount,
+            GpuRenderPipelineProfilingEnabled = Rendering.Stats.GpuRenderPipelineProfilingEnabled,
+            GpuRenderPipelineProfilingSupported = Rendering.Stats.GpuRenderPipelineProfilingSupported,
+            GpuRenderPipelineTimingsReady = Rendering.Stats.GpuRenderPipelineTimingsReady,
+            GpuRenderPipelineBackend = Rendering.Stats.GpuRenderPipelineBackend,
+            GpuRenderPipelineStatusMessage = Rendering.Stats.GpuRenderPipelineStatusMessage,
+            GpuRenderPipelineFrameMs = Rendering.Stats.GpuRenderPipelineFrameMs,
+            GpuRenderPipelineTimingRoots = Rendering.Stats.GetGpuRenderPipelineTimingRoots(),
         };
     }
 

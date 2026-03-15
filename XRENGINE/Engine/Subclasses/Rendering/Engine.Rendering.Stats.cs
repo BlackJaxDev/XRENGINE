@@ -401,11 +401,35 @@ namespace XREngine
                 /// </summary>
                 public static int FBOBindCount => _lastFrameFBOBindCount;
 
+                public static bool GpuRenderPipelineProfilingEnabled
+                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.Enabled;
+
+                public static bool GpuRenderPipelineProfilingSupported
+                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.Supported;
+
+                public static bool GpuRenderPipelineTimingsReady
+                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.Ready;
+
+                public static string GpuRenderPipelineBackend
+                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.BackendName;
+
+                public static string GpuRenderPipelineStatusMessage
+                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.StatusMessage;
+
+                public static double GpuRenderPipelineFrameMs
+                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.FrameMilliseconds;
+
+                public static Data.Profiling.GpuPipelineTimingNodeData[] GetGpuRenderPipelineTimingRoots()
+                    => RenderPipelineGpuProfiler.Instance.LatestSnapshot.Roots;
+
                 /// <summary>
                 /// Call this at the start of each frame to reset the counters.
                 /// </summary>
                 public static void BeginFrame()
                 {
+                    bool gpuPipelineProfilingEnabled = EnableTracking && Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
+                    RenderPipelineGpuProfiler.Instance.BeginFrame(State.RenderFrameId, gpuPipelineProfilingEnabled);
+
                     // Notify GPU dispatch logger of new frame for logging context
                     GpuDispatchLogger.BeginFrame();
                     

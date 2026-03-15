@@ -65,7 +65,7 @@
 
   "ModelsToImport": [
     {
-      "Enabled": false,
+      "Enabled": true,
       "Kind": "Animated",
       "Path": "misc\\jax2026.fbx",
       "ImportFlags": "Triangulate, FlipUVs, GenerateNormals, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes",
@@ -90,7 +90,7 @@
   "SoundNode": false,
   "Microphone": false,
   "AttachMicToAnimatedModel": true,
-  "AudioArchitectureV2": false,
+  "AudioArchitectureV2": true,
   "AudioTransport": "OpenAL",
   "AudioEffects": "SteamAudio",
 
