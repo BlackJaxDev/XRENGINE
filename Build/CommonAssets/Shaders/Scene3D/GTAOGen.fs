@@ -213,5 +213,5 @@ void main()
     }
 
     visibility = clamp(visibility / float(sliceCount), 0.0f, 1.0f);
-    OutIntensity = pow(visibility, max(Power, 0.001f));
+    OutIntensity = visibility;
 }

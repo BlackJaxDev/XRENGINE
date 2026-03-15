@@ -771,41 +771,42 @@ namespace XREngine.Rendering
                 CollectVisible_ScreenSpaceUI();
         }
 
+        //private static int s_vpScreenUIDiagCount = 0;
+        
         /// <summary>
         /// Collects screen space UI items into the canvas' render pipeline.
         /// If AllowUIRender is false, the camera component has no UI canvas, or the canvas is not set to screen space, this will do nothing.
         /// </summary>
-        private static int s_vpScreenUIDiagCount = 0;
         private void CollectVisible_ScreenSpaceUI()
         {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.CollectVisible_ScreenSpaceUI");
 
             if (!AllowUIRender)
             {
-                if (s_vpScreenUIDiagCount < 5)
-                    Debug.Out($"[VP:ScreenUI] CollectVisible skipped: AllowUIRender=false VP[{Index}]");
+                //if (s_vpScreenUIDiagCount < 5)
+                //    Debug.Out($"[VP:ScreenUI] CollectVisible skipped: AllowUIRender=false VP[{Index}]");
                 return;
             }
 
             UICanvasComponent? ui = ResolveScreenSpaceUICanvas();
             if (ui is null)
             {
-                if (s_vpScreenUIDiagCount < 5)
-                    Debug.Out($"[VP:ScreenUI] CollectVisible skipped: ui=null CameraComponent={CameraComponent?.GetHashCode()} VP[{Index}]");
+                //if (s_vpScreenUIDiagCount < 5)
+                //    Debug.Out($"[VP:ScreenUI] CollectVisible skipped: ui=null CameraComponent={CameraComponent?.GetHashCode()} VP[{Index}]");
                 return;
             }
 
             if (ui.CanvasTransform.DrawSpace == ECanvasDrawSpace.Screen)
             {
-                if (s_vpScreenUIDiagCount < 5)
-                    Debug.Out($"[VP:ScreenUI] CollectVisible dispatching to canvas. DrawSpace={ui.CanvasTransform.DrawSpace} active={ui.IsActive} VP[{Index}]");
-                s_vpScreenUIDiagCount++;
+                //if (s_vpScreenUIDiagCount < 5)
+                //    Debug.Out($"[VP:ScreenUI] CollectVisible dispatching to canvas. DrawSpace={ui.CanvasTransform.DrawSpace} active={ui.IsActive} VP[{Index}]");
+                //s_vpScreenUIDiagCount++;
                 ui?.CollectVisibleItemsScreenSpace(this);
             }
-            else if (s_vpScreenUIDiagCount < 5)
-            {
-                Debug.Out($"[VP:ScreenUI] CollectVisible skipped: DrawSpace={ui.CanvasTransform.DrawSpace} VP[{Index}]");
-            }
+            //else if (s_vpScreenUIDiagCount < 5)
+            //{
+            //    Debug.Out($"[VP:ScreenUI] CollectVisible skipped: DrawSpace={ui.CanvasTransform.DrawSpace} VP[{Index}]");
+            //}
         }
 
         /// <summary>

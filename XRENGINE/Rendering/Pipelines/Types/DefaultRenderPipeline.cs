@@ -1636,6 +1636,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
     {
         program.Uniform("UseAmbientOcclusion", ShouldUseAmbientOcclusion());
 
+        var aoStage = State.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+        float aoPower = (aoStage?.TryGetBacking(out AmbientOcclusionSettings? aoSettings) == true && aoSettings is not null)
+            ? aoSettings.Power
+            : 1.0f;
+        program.Uniform("AmbientOcclusionPower", aoPower);
+
         if (!UsesLightProbeGI)
             return;
 

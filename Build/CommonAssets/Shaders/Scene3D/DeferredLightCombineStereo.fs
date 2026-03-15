@@ -23,6 +23,7 @@ layout(binding = 6) uniform sampler2D BRDF;
 layout(binding = 7) uniform sampler2D Irradiance;
 layout(binding = 8) uniform sampler2D Prefilter;
 uniform bool UseAmbientOcclusion = true;
+uniform float AmbientOcclusionPower = 1.0f;
 vec2 EncodeOcta(vec3 dir)
 {
 	dir = normalize(dir);
@@ -93,7 +94,7 @@ void main()
 	vec3 albedoColor = texture(AlbedoOpacity, uvi).rgb;
 	vec3 normal = XRENGINE_ReadNormal(Normal, uvi);
 	vec3 rms = texture(RMSE, uvi).rgb;
-	float ao = UseAmbientOcclusion ? texture(AmbientOcclusionTexture, uvi).r : 1.0f;
+	float ao = UseAmbientOcclusion ? pow(texture(AmbientOcclusionTexture, uvi).r, max(AmbientOcclusionPower, 0.001f)) : 1.0f;
 	float depth = texture(DepthView, uvi).r;
 	vec3 InLo = texture(LightingTexture, uvi).rgb;
 	vec3 irradianceColor = SampleOcta(Irradiance, normal);

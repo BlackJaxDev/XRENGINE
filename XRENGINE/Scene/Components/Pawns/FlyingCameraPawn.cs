@@ -84,6 +84,7 @@ namespace XREngine.Components
 
         protected override void MouseMove(float x, float y)
         {
+            /*
             if ((Rotating || Translating) && (Math.Abs(x) > 0.001f || Math.Abs(y) > 0.001f))
             {
                 float now = Engine.Time.Timer.Time();
@@ -93,6 +94,7 @@ namespace XREngine.Components
                     _lastMouseMoveLogTime = now;
                 }
             }
+            */
 
             if (Rotating)
                 MouseRotate(x, y);
