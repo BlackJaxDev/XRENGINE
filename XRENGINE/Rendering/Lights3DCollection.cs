@@ -187,6 +187,8 @@ namespace XREngine.Scene
             program.Uniform(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, forwardAmbientOcclusionUnit);
             if (ambientOcclusionEnabled)
                 program.Sampler(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, ambientOcclusionTexture!, forwardAmbientOcclusionUnit);
+
+            /*
             Debug.RenderingEvery(
                 "ForwardAO.Binding",
                 TimeSpan.FromSeconds(1),
@@ -199,6 +201,7 @@ namespace XREngine.Scene
                 area.Width,
                 area.Height,
                 new Vector2(area.X, area.Y));
+            
             if (ambientOcclusionEnabled)
             {
                 var renderer = AbstractRenderer.Current;
@@ -233,6 +236,7 @@ namespace XREngine.Scene
                 _loggedForwardAoBindingOnce = true;
                 Debug.Out($"[ForwardAO] Initial binding enabled={ambientOcclusionEnabled}, texture={ambientOcclusionTexture?.Name ?? "null"}, textureType={ambientOcclusionTexture?.GetType().Name ?? "null"}, screen={area.Width}x{area.Height}, origin=<{area.X}, {area.Y}>");
             }
+            */
 
             // Forward materials bind their own textures at units [0..N) where N is the texture index.
             // Using a low fixed unit (like 4) for the shadow map collides with multi-texture materials

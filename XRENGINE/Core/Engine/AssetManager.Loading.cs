@@ -22,6 +22,7 @@ namespace XREngine
         private T? LoadCore<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath) where T : XRAsset, new()
         {
             T? file;
+            filePath = Path.GetFullPath(filePath);
 #if !DEBUG
             try
             {
@@ -70,6 +71,7 @@ namespace XREngine
         private XRAsset? LoadCore(string filePath, Type type)
         {
             XRAsset? file;
+            filePath = Path.GetFullPath(filePath);
 #if !DEBUG
             try
             {

@@ -75,14 +75,14 @@ namespace XREngine
 
             ConfigureJobManagerHooks();
 
-            // If the job manager was created implicitly (accessed before Initialize), we
-            // keep the single instance to honor "create once". Applying startup settings
-            // would require tearing down worker threads, which is exactly what we avoid.
+            // If the job manager was created implicitly (accessed before Initialize),
+            // shut down the default instance and replace it with a properly configured one
+            // so that startup settings (worker count, queue limits, etc.) take effect.
             if (_jobsCreatedImplicitly && _jobs != null)
             {
-                Debug.LogWarning("JobManager was created before configuration; skipping reconfiguration to avoid recreation. Startup job settings will be ignored for this run.");
-                _jobsConfigured = true;
-                return;
+                _jobs.Shutdown();
+                _jobs = null;
+                _jobsCreatedImplicitly = false;
             }
 
             // Use EffectiveSettings to resolve User > Project > Engine cascade

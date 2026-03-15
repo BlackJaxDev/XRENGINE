@@ -207,7 +207,7 @@ namespace XREngine.Components
 
         protected void OnShift(bool pressed)
         {
-            // Modifier keys are NOT gated by AllowKeyboardInput — they must always
+            // Modifier keys are NOT gated by AllowKeyboardInput ï¿½ they must always
             // update so that Ctrl+right-click rotation works even when a UI element
             // has focus (e.g., after clicking a toolbar button).
             ShiftPressed = pressed;
@@ -264,11 +264,10 @@ namespace XREngine.Components
 
             _rightClickPendingDragActivation = false;
             _rightClickDragging = true;
-            Debug.UI($"[TryActivatePendingRightClickDrag] Drag activated (retry), LinkedUICanvasInputs.Count={LinkedUICanvasInputs.Count}");
+            //Debug.UI($"[TryActivatePendingRightClickDrag] Drag activated (retry), LinkedUICanvasInputs.Count={LinkedUICanvasInputs.Count}");
 
             var controller = LocalPlayerController;
-            if (controller is not null)
-                controller.FocusedUIComponent = null;
+            controller?.FocusedUIComponent = null;
 
             return true;
         }
@@ -287,15 +286,14 @@ namespace XREngine.Components
                 bool hovering = IsHoveringUI();
                 _rightClickDragging = !hovering;
                 _rightClickPendingDragActivation = hovering; // retry in Tick if hover was stale
-                Debug.UI($"[OnRightClick] pressed, IsHoveringUI={hovering}, _rightClickDragging={_rightClickDragging}, LinkedUICanvasInputs.Count={LinkedUICanvasInputs.Count}");
+                //Debug.UI($"[OnRightClick] pressed, IsHoveringUI={hovering}, _rightClickDragging={_rightClickDragging}, LinkedUICanvasInputs.Count={LinkedUICanvasInputs.Count}");
 
                 // When right-clicking in the viewport (not over UI), clear the focused
                 // UI component so that keyboard input (WASD, arrows) is restored.
                 if (_rightClickDragging)
                 {
                     var controller = LocalPlayerController;
-                    if (controller is not null)
-                        controller.FocusedUIComponent = null;
+                    controller?.FocusedUIComponent = null;
                 }
             }
             else

@@ -107,7 +107,9 @@ namespace XREngine.Input
             }
             else
             {
-                Debug.Out($"[LocalPlayerController] UpdateViewportCamera: viewport is NULL, cannot bind camera. Pawn={_controlledPawn?.Name ?? "<null>"}");
+                // Viewport not yet assigned — this is normal during early startup
+                // when possession happens before window/viewport creation. The camera
+                // will be bound once the Viewport property is set.
                 Input.UpdateDevices(null, Engine.VRState.Actions);
             }
         }

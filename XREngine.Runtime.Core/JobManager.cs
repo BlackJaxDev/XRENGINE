@@ -722,7 +722,16 @@ namespace XREngine
             }
 
             if (job.UsesQueueSlot && _queueSlots != null)
-                _queueSlots.Release();
+            {
+                try
+                {
+                    _queueSlots.Release();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Shutdown already disposed the semaphore — slot release is moot.
+                }
+            }
         }
 
         private void Requeue(Job job)

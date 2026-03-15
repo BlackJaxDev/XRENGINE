@@ -127,6 +127,7 @@ namespace XREngine.Components
 
         private SceneNode _sceneNode;
         private bool _clearTicksOnStop = true;
+        private bool _componentActivated;
 
         /// <summary>
         /// Scene node refers to the node that this component is attached to.
@@ -261,9 +262,9 @@ namespace XREngine.Components
                     break;
                 case nameof(IsActive):
                     if (IsActiveInHierarchy)
-                        OnComponentActivated();
+                        TryActivateComponent();
                     else
-                        OnComponentDeactivated();
+                        TryDeactivateComponent();
                     break;
                 case nameof(SceneNode):
                     World = _sceneNode.World;
@@ -274,9 +275,31 @@ namespace XREngine.Components
 
                     // If IsActive was restored before SceneNode wiring, we may have skipped activation.
                     if (IsActiveInHierarchy)
-                        OnComponentActivated();
+                        TryActivateComponent();
                     break;
             }
+        }
+
+        /// <summary>
+        /// Ensures activation runs at most once until the component is deactivated.
+        /// </summary>
+        private void TryActivateComponent()
+        {
+            if (_componentActivated)
+                return;
+            _componentActivated = true;
+            OnComponentActivated();
+        }
+
+        /// <summary>
+        /// Ensures deactivation runs at most once until the component is activated again.
+        /// </summary>
+        private void TryDeactivateComponent()
+        {
+            if (!_componentActivated)
+                return;
+            _componentActivated = false;
+            OnComponentDeactivated();
         }
 
         /// <summary>
@@ -289,7 +312,7 @@ namespace XREngine.Components
         }
 
         internal void NotifyComponentActivated()
-            => OnComponentActivated();
+            => TryActivateComponent();
 
         /// <summary>
         /// Called once when the owning scene begins play (scene loaded).
@@ -324,7 +347,7 @@ namespace XREngine.Components
         }
 
         internal void NotifyComponentDeactivated()
-            => OnComponentDeactivated();
+            => TryDeactivateComponent();
 
         /// <summary>
         /// Called once when the owning scene ends play (scene unloaded).
