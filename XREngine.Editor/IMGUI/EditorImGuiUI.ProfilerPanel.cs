@@ -49,6 +49,7 @@ public static partial class EditorImGuiUI
     private static bool _showProfilerTree = true;
     private static bool _showFpsDropSpikes = true;
     private static bool _showRenderStats = true;
+    private static bool _showGpuPipeline = true;
     private static bool _showThreadAllocations = true;
     private static bool _showComponentTimings = true;
     private static bool _showBvhMetrics = true;
@@ -128,6 +129,13 @@ public static partial class EditorImGuiUI
                 ImGui.SetTooltip("When disabled, per-frame render statistics (draw calls, triangles) are not tracked.");
 
             ImGui.SameLine();
+            bool enableGpuPipelineProfiling = Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
+            if (ImGui.Checkbox("Enable GPU Pipeline Profiling", ref enableGpuPipelineProfiling))
+                Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling = enableGpuPipelineProfiling;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Collect GPU timestamp timings for generic render-pipeline commands when supported by the active renderer.");
+
+            ImGui.SameLine();
             bool enableAllocTracking = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
             if (ImGui.Checkbox("Enable Alloc Tracking", ref enableAllocTracking))
                 Engine.EditorPreferences.Debug.EnableThreadAllocationTracking = enableAllocTracking;
@@ -158,6 +166,7 @@ public static partial class EditorImGuiUI
             ImGui.SameLine(); ImGui.Checkbox("Tree", ref _showProfilerTree);
             ImGui.SameLine(); ImGui.Checkbox("Spikes", ref _showFpsDropSpikes);
             ImGui.SameLine(); ImGui.Checkbox("Render", ref _showRenderStats);
+            ImGui.SameLine(); ImGui.Checkbox("GPU", ref _showGpuPipeline);
             ImGui.SameLine(); ImGui.Checkbox("Allocs", ref _showThreadAllocations);
             ImGui.SameLine(); ImGui.Checkbox("Components", ref _showComponentTimings);
             ImGui.SameLine(); ImGui.Checkbox("BVH", ref _showBvhMetrics);
@@ -171,6 +180,7 @@ public static partial class EditorImGuiUI
             ref _showProfilerTree,
             ref _showFpsDropSpikes,
             ref _showRenderStats,
+            ref _showGpuPipeline,
             ref _showThreadAllocations,
             ref _showComponentTimings,
             ref _showBvhMetrics,
@@ -241,6 +251,7 @@ public static partial class EditorImGuiUI
         ImGuiDockBuilderNative.DockWindow("Profiler Tree", leftTopId);
         ImGuiDockBuilderNative.DockWindow("FPS Drop Spikes", leftBottomId);
         ImGuiDockBuilderNative.DockWindow("Render Stats", rightTopId);
+        ImGuiDockBuilderNative.DockWindow("GPU Pipeline", rightTopId);
         ImGuiDockBuilderNative.DockWindow("Thread Allocations", rightMidId);
         ImGuiDockBuilderNative.DockWindow("Component Timings", rightMidId);
         ImGuiDockBuilderNative.DockWindow("BVH Metrics", rightMidId);

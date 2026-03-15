@@ -1285,6 +1285,7 @@ namespace XREngine.Rendering
         public virtual void SetUniforms(XRRenderProgram program, bool stereoLeftEye = true)
         {
             var tfm = Transform;
+            Matrix4x4 viewMtx = tfm.InverseRenderMatrix;
             Matrix4x4 renderMtx = tfm.RenderMatrix;
             Matrix4x4 projMtx = ProjectionMatrix;
 
@@ -1293,17 +1294,20 @@ namespace XREngine.Rendering
             {
                 if (stereoLeftEye)
                 {
+                    program.Uniform(EEngineUniform.ViewMatrix.ToString(), viewMtx);
                     program.Uniform(EEngineUniform.LeftEyeInverseViewMatrix.ToString(), renderMtx);
                     program.Uniform(EEngineUniform.LeftEyeProjMatrix.ToString(), projMtx);
                 }
                 else
                 {
+                    program.Uniform(EEngineUniform.ViewMatrix.ToString(), viewMtx);
                     program.Uniform(EEngineUniform.RightEyeInverseViewMatrix.ToString(), renderMtx);
                     program.Uniform(EEngineUniform.RightEyeProjMatrix.ToString(), projMtx);
                 }
             }
             else
             {
+                program.Uniform(EEngineUniform.ViewMatrix.ToString(), viewMtx);
                 program.Uniform(EEngineUniform.InverseViewMatrix.ToString(), renderMtx);
                 program.Uniform(EEngineUniform.ProjMatrix.ToString(), projMtx);
             }

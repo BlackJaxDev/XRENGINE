@@ -443,6 +443,7 @@ namespace XREngine
         private OverrideableSetting<bool> _allowGpuCpuFallbackOverride = new();
         private OverrideableSetting<bool> _enableProfilerFrameLoggingOverride = new();
         private OverrideableSetting<bool> _enableRenderStatisticsTrackingOverride = new();
+        private OverrideableSetting<bool> _enableGpuRenderPipelineProfilingOverride = new();
         private OverrideableSetting<bool> _enableUILayoutDebugLoggingOverride = new();
         private OverrideableSetting<bool> _enableProfilerUdpSendingOverride = new();
         private OverrideableSetting<EDebugShapePopulationMode> _debugShapePopulationModeOverride = new();
@@ -605,6 +606,12 @@ namespace XREngine
         {
             get => _enableRenderStatisticsTrackingOverride;
             set => SetField(ref _enableRenderStatisticsTrackingOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> EnableGpuRenderPipelineProfilingOverride
+        {
+            get => _enableGpuRenderPipelineProfilingOverride;
+            set => SetField(ref _enableGpuRenderPipelineProfilingOverride, value ?? new());
         }
 
         public OverrideableSetting<bool> EnableUILayoutDebugLoggingOverride

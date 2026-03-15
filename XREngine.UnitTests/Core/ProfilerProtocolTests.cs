@@ -125,6 +125,31 @@ public sealed class ProfilerProtocolTests
             OctreeMoveCount = 20,
             OctreeRemoveCount = 5,
             OctreeSkippedMoveCount = 3,
+            GpuRenderPipelineProfilingEnabled = true,
+            GpuRenderPipelineProfilingSupported = true,
+            GpuRenderPipelineTimingsReady = true,
+            GpuRenderPipelineBackend = "OpenGL",
+            GpuRenderPipelineStatusMessage = string.Empty,
+            GpuRenderPipelineFrameMs = 3.25,
+            GpuRenderPipelineTimingRoots =
+            [
+                new GpuPipelineTimingNodeData
+                {
+                    Name = "DefaultRenderPipeline | Camera=MainCamera (XRCamera) | Viewport=Viewport#0 (1280x720)",
+                    ElapsedMs = 3.25,
+                    SampleCount = 1,
+                    Children =
+                    [
+                        new GpuPipelineTimingNodeData
+                        {
+                            Name = "VPRC_RenderMeshesPassCPU",
+                            ElapsedMs = 1.5,
+                            SampleCount = 1,
+                            Children = []
+                        }
+                    ]
+                }
+            ],
         };
 
         var clone = RoundTrip(original);
@@ -142,6 +167,13 @@ public sealed class ProfilerProtocolTests
         clone.RenderMatrixListenerCounts[0].Count.ShouldBe(500);
         clone.OctreeStatsReady.ShouldBeTrue();
         clone.OctreeAddCount.ShouldBe(10);
+        clone.GpuRenderPipelineProfilingEnabled.ShouldBeTrue();
+        clone.GpuRenderPipelineProfilingSupported.ShouldBeTrue();
+        clone.GpuRenderPipelineTimingsReady.ShouldBeTrue();
+        clone.GpuRenderPipelineBackend.ShouldBe("OpenGL");
+        clone.GpuRenderPipelineFrameMs.ShouldBe(3.25);
+        clone.GpuRenderPipelineTimingRoots.Length.ShouldBe(1);
+        clone.GpuRenderPipelineTimingRoots[0].Children.Length.ShouldBe(1);
     }
 
     // ── ThreadAllocationsPacket ────────────────────────────────────────

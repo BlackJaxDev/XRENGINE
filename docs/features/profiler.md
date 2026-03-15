@@ -103,15 +103,27 @@ A standalone Silk.NET window (GLFW + OpenGL 3.3 + ImGui with docking) that:
 
 1. Listens on the configured UDP port via `UdpProfilerReceiver` (background thread).
 2. Deserializes incoming packets and stores the latest snapshot per type (volatile refs).
-3. Renders 8 dockable panels via `ProfilerPanelRenderer`:
+3. Renders 9 dockable panels via `ProfilerPanelRenderer`:
    - **Profiler Tree** — call-tree hierarchy with root method graphs (`PlotLines`) and worst-frame tracking
    - **FPS Drop Spikes** — sortable table of frame-time anomalies with hottest call path
    - **Render Stats** — draw calls, VRAM, FBO bandwidth, render matrix, octree
+  - **GPU Pipeline** — generic render-pipeline command GPU timings, root history plots, and hierarchical pass breakdowns
    - **Thread Allocations** — per-phase GC allocation stats (last / avg / max KB)
    - **BVH Metrics** — build, refit, cull, raycast counts and timings
    - **Job System** — worker count, queue depth, per-priority wait times
    - **Main Thread Invokes** — cross-thread dispatch log
    - **Connection Info** — link status, packet counters, multi-instance source table
+
+### GPU Pipeline Timing
+
+The profiler can collect GPU timestamp timings around generic `ViewportRenderCommand`
+execution, which makes it possible to see where render-pipeline time is being spent
+without instrumenting each pass manually.
+
+- Enable it from the in-editor profiler window with **Enable GPU Pipeline Profiling**.
+- Results appear in the new **GPU Pipeline** panel in both the in-process and remote profilers.
+- The panel shows backend/status text, a resolved whole-frame GPU total, root-series history plots, and a hierarchical per-command timing tree.
+- Current backend support is **OpenGL**. Unsupported renderers report status text rather than falling back to CPU timings.
 
 ### Connection States
 
@@ -147,6 +159,9 @@ The VS Code task **Start-Editor-WithProfiler-NoDebug** does this automatically.
 In the editor's Settings panel, toggle **Enable Profiler UDP Sending** under
 Debug Options. This starts/stops the sender thread at runtime with zero residual
 overhead when off.
+
+The in-editor profiler window also exposes **Enable GPU Pipeline Profiling**,
+which turns on command-level GPU timestamp collection for supported renderers.
 
 ### Option 3: Programmatic
 
@@ -198,7 +213,7 @@ XREngine.Profiler/
 ├── Program.cs                   # Entry point (Silk.NET GLFW window)
 ├── UdpProfilerReceiver.cs       # Background receiver thread + multi-instance tracking
 ├── ProfilerImGuiApp.cs          # ImGui lifecycle, docking, menu bar, waiting overlay
-├── ProfilerPanelRenderer.cs     # All 8 panel draw methods + aggregation logic
+├── ProfilerPanelRenderer.cs     # All 9 panel draw methods + aggregation logic
 ├── ImGuiDockBuilderNative.cs    # P/Invoke wrapper for cimgui DockBuilder
 └── XREngine.Profiler.csproj     # Depends only on XREngine.Data (not the engine)
 ```

@@ -230,8 +230,13 @@ namespace XREngine.Components
 */
             }
 
-            // Ensure render-space matrices are updated when input changes.
-            tfm.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+            // Recalculate world matrix so same-frame game logic sees the new position.
+            // Do NOT use setRenderMatrixNow: the Update thread has no barrier against the
+            // Render thread, so directly writing RenderMatrix here races with mid-frame
+            // reads (deferred pass vs AO resolve see different camera positions, producing
+            // AO clipping artifacts during motion). The normal double-buffered path
+            // (EnqueueRenderTransformChange → GlobalSwapBuffers) is race-free.
+            tfm.RecalculateMatrices(forceWorldRecalc: true);
         }
 
         private bool IncrementRotation()

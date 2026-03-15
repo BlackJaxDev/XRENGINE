@@ -65,6 +65,24 @@ public sealed partial class RenderStatsPacket
     public int OctreeMoveCount { get; set; }
     public int OctreeRemoveCount { get; set; }
     public int OctreeSkippedMoveCount { get; set; }
+
+    // GPU render-pipeline command timings
+    public bool GpuRenderPipelineProfilingEnabled { get; set; }
+    public bool GpuRenderPipelineProfilingSupported { get; set; }
+    public bool GpuRenderPipelineTimingsReady { get; set; }
+    public string GpuRenderPipelineBackend { get; set; } = string.Empty;
+    public string GpuRenderPipelineStatusMessage { get; set; } = string.Empty;
+    public double GpuRenderPipelineFrameMs { get; set; }
+    public GpuPipelineTimingNodeData[] GpuRenderPipelineTimingRoots { get; set; } = [];
+}
+
+[MemoryPackable]
+public sealed partial class GpuPipelineTimingNodeData
+{
+    public string Name { get; set; } = string.Empty;
+    public double ElapsedMs { get; set; }
+    public int SampleCount { get; set; }
+    public GpuPipelineTimingNodeData[] Children { get; set; } = [];
 }
 
 /// <summary>

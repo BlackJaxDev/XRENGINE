@@ -2433,7 +2433,7 @@ namespace XREngine.Components.Animation
                 }
 
                 concrete.SetWorldTranslationRotation(translation, Quaternion.Normalize(rotation));
-                concrete.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+                concrete.RecalculateMatrices(forceWorldRecalc: true);
                 return;
             }
 
