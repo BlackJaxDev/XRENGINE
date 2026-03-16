@@ -21,11 +21,11 @@ public static partial class EditorUnitTests
         Animated,
     }
 
-    public enum StaticModelMaterialMode
+    public enum ModelImportMaterialMode
     {
         Deferred,
-        ForwardPlusTextured,
-        ForwardPlusUberShader,
+        Forward,
+        Uber,
     }
 
     public enum UnitTestWorldKind
@@ -114,13 +114,18 @@ public static partial class EditorUnitTests
         public bool AddPhysics = true;
         public int PhysicsBallCount = 10; //The number of physics balls to add to the scene.
 
-        //Models
-        public StaticModelMaterialMode StaticModelMaterialMode { get; set; } = StaticModelMaterialMode.Deferred;
-
         public class ModelImportSettings
         {
             public bool Enabled { get; set; } = true;
             public UnitTestModelImportKind Kind { get; set; } = UnitTestModelImportKind.Static;
+            public ModelImportMaterialMode MaterialMode { get; set; } = ModelImportMaterialMode.Deferred;
+            /// <summary>
+            /// When true and <see cref="MaterialMode"/> is <see cref="ModelImportMaterialMode.Deferred"/>,
+            /// materials whose textures have alpha channels will use forward (lit) shaders
+            /// instead of deferred shaders, giving proper transparency blending for those meshes.
+            /// Materials without alpha stay in the deferred pipeline.
+            /// </summary>
+            public bool UseForwardForTransparent { get; set; } = false;
             public string Path { get; set; } = string.Empty;
             public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
             public float Scale { get; set; } = 1.0f;

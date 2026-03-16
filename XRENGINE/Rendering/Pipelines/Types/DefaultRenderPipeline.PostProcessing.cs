@@ -329,9 +329,9 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(BloomSettings.Threshold),
             PostProcessParameterKind.Float,
-            1.0f,
+            0.0f,
             displayName: "Threshold",
-            min: 0.1f,
+            min: 0.0f,
             max: 5.0f,
             step: 0.01f);
 
@@ -354,9 +354,18 @@ public partial class DefaultRenderPipeline
             step: 0.01f);
 
         stage.AddParameter(
+            nameof(BloomSettings.Strength),
+            PostProcessParameterKind.Float,
+            0.04f,
+            displayName: "Bloom Strength",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.001f);
+
+        stage.AddParameter(
             nameof(BloomSettings.StartMip),
             PostProcessParameterKind.Int,
-            0,
+            1,
             displayName: "Start Mip (Quality)",
             min: 0,
             max: 4,
@@ -365,7 +374,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(BloomSettings.EndMip),
             PostProcessParameterKind.Int,
-            4,
+            1,
             displayName: "End Mip",
             min: 0,
             max: 4,
@@ -374,7 +383,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(BloomSettings.Lod0Weight),
             PostProcessParameterKind.Float,
-            0.6f,
+            0.0f,
             displayName: "LOD0 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -383,7 +392,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(BloomSettings.Lod1Weight),
             PostProcessParameterKind.Float,
-            0.5f,
+            1.0f,
             displayName: "LOD1 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -392,7 +401,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(BloomSettings.Lod2Weight),
             PostProcessParameterKind.Float,
-            0.35f,
+            0.0f,
             displayName: "LOD2 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -401,7 +410,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(BloomSettings.Lod3Weight),
             PostProcessParameterKind.Float,
-            0.2f,
+            0.0f,
             displayName: "LOD3 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -410,7 +419,7 @@ public partial class DefaultRenderPipeline
         stage.AddParameter(
             nameof(BloomSettings.Lod4Weight),
             PostProcessParameterKind.Float,
-            0.1f,
+            0.0f,
             displayName: "LOD4 Weight",
             min: 0.0f,
             max: 2.0f,
@@ -696,6 +705,30 @@ public partial class DefaultRenderPipeline
             PostProcessParameterKind.Bool,
             true,
             displayName: "Use Input Normals",
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.ThicknessHeuristic)),
+            PostProcessParameterKind.Float,
+            1.0f,
+            displayName: "Thickness Heuristic",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.MultiBounceEnabled)),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Multi-Bounce AO",
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.SpecularOcclusionEnabled)),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Specular Occlusion (GTSO)",
             visibilityCondition: IsGTAO);
 
         stage.AddParameter(

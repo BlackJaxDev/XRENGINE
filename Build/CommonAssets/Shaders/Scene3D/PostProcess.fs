@@ -72,9 +72,10 @@ uniform vec3 BrownConradyRadial;     // k1,k2,k3
 uniform vec2 BrownConradyTangential; // p1,p2
 
 // Bloom combine controls
-uniform int BloomStartMip = 0;
-uniform int BloomEndMip = 4;
-uniform float BloomLodWeights[5] = float[](0.6, 0.5, 0.35, 0.2, 0.1);
+uniform float BloomStrength = 0.04;
+uniform int BloomStartMip = 1;
+uniform int BloomEndMip = 1;
+uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.0, 0.0, 0.0);
 
 vec3 RGBtoHSV(vec3 c)
 {
@@ -304,14 +305,17 @@ void main()
       hdrSceneColor = SampleHDR(uv);
   }
   
-  //Add bloom mipmaps with configurable range/weights
-  int startMip = clamp(BloomStartMip, 0, 4);
-  int endMip = clamp(BloomEndMip, startMip, 4);
-  for (int lod = startMip; lod <= endMip; ++lod)
+  //Add bloom with configurable range/weights, scaled by overall strength
+  if (BloomStrength > 0.0f)
   {
-    float w = BloomLodWeights[lod];
-    if (w > 0.0f)
-      hdrSceneColor += SampleBloom(uv, float(lod)) * w;
+    int startMip = clamp(BloomStartMip, 0, 4);
+    int endMip = clamp(BloomEndMip, startMip, 4);
+    for (int lod = startMip; lod <= endMip; ++lod)
+    {
+      float w = BloomLodWeights[lod];
+      if (w > 0.0f)
+        hdrSceneColor += SampleBloom(uv, float(lod)) * w * BloomStrength;
+    }
   }
 
   //Tone mapping / HDR selection

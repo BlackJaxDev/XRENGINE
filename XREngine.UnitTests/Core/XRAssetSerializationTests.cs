@@ -2,6 +2,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
 using System.Collections.Generic;
+using XREngine.Data.Core;
 
 namespace XREngine.UnitTests.Core;
 
@@ -91,6 +92,27 @@ public sealed class XRAssetSerializationTests
         ((StubAsset)clone.Assets["second"]).Payload.ShouldBe("p-two");
     }
 
+    [Test]
+    public void YamlDeserializer_Preserves_OuterAnchorAliases_Inside_Nested_XRAsset()
+    {
+        const string yaml = """
+Name: Root
+Shared: &o0
+    Name: shared-ref
+Child:
+    Name: Child
+    Reference: *o0
+""";
+
+        var clone = AssetManager.Deserializer.Deserialize<AnchorContainerAsset>(yaml);
+
+        clone.ShouldNotBeNull();
+        clone.Shared.ShouldNotBeNull();
+        clone.Child.ShouldNotBeNull();
+        clone.Child.Reference.ShouldBeSameAs(clone.Shared);
+        clone.Child.Reference!.Name.ShouldBe("shared-ref");
+    }
+
     private sealed class StubAsset : XRAsset
     {
         public string? Payload { get; set; }
@@ -100,5 +122,20 @@ public sealed class XRAssetSerializationTests
     private sealed class StubAssetContainer : XRAsset
     {
         public Dictionary<string, XRAsset> Assets { get; set; } = new();
+    }
+
+    private sealed class AnchorContainerAsset : XRAsset
+    {
+        public NamedReference? Shared { get; set; }
+        public NestedAliasAsset? Child { get; set; }
+    }
+
+    private sealed class NestedAliasAsset : XRAsset
+    {
+        public NamedReference? Reference { get; set; }
+    }
+
+    private sealed class NamedReference : XRObjectBase
+    {
     }
 }

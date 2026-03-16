@@ -55,14 +55,11 @@ public static class VulkanFeatureProfile
             _ => false,
         };
 
+    // GPU render dispatch uses IndirectDrawOp which doesn't capture the target FBO
+    // and always ends the active render pass. Until the indirect draw path is
+    // integrated with Vulkan render passes, force CPU dispatch.
     private static bool ProfileAllowsGpuRenderDispatch
-        => ActiveProfile switch
-        {
-            EVulkanGpuDrivenProfile.ShippingFast => true,
-            EVulkanGpuDrivenProfile.DevParity => true,
-            EVulkanGpuDrivenProfile.Diagnostics => true,
-            _ => false,
-        };
+        => false;
 
     private static bool ProfileAllowsGpuBvh
         => ActiveProfile switch

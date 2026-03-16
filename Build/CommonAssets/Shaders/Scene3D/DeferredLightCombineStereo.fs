@@ -24,6 +24,21 @@ layout(binding = 7) uniform sampler2D Irradiance;
 layout(binding = 8) uniform sampler2D Prefilter;
 uniform bool UseAmbientOcclusion = true;
 uniform float AmbientOcclusionPower = 1.0f;
+uniform bool AmbientOcclusionMultiBounce = false;
+uniform bool SpecularOcclusionEnabled = false;
+
+vec3 MultiBounceAO(float ao, vec3 albedo)
+{
+    vec3 a = 2.0404f * albedo - 0.3324f;
+    vec3 b = -4.7951f * albedo + 0.6417f;
+    vec3 c = 2.7552f * albedo + 0.6903f;
+    return max(vec3(ao), ((a * ao + b) * ao + c) * ao);
+}
+
+float GTSpecularOcclusion(float NoV, float ao, float roughness)
+{
+    return clamp(pow(NoV + ao, exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao, 0.0f, 1.0f);
+}
 vec2 EncodeOcta(vec3 dir)
 {
 	dir = normalize(dir);
@@ -122,7 +137,10 @@ void main()
 	vec3 diffuse = irradianceColor * albedoColor;
 	vec3 prefilteredColor = SampleOctaLod(Prefilter, R, roughness * MAX_REFLECTION_LOD);
 	vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
-	vec3 ambient = (kD * diffuse + specular) * ao;
+
+	vec3 diffuseAO = AmbientOcclusionMultiBounce ? MultiBounceAO(ao, albedoColor) : vec3(ao);
+	float specOcclusion = SpecularOcclusionEnabled ? GTSpecularOcclusion(NoV, ao, roughness) : ao;
+	vec3 ambient = kD * diffuse * diffuseAO + specular * specOcclusion;
 
 	OutLo = ambient + InLo;
 }

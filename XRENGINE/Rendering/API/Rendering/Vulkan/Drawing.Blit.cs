@@ -105,6 +105,25 @@ namespace XREngine.Rendering.Vulkan
                 CaptureFrameOpContext()));
         }
 
+        public override void BlitWithDrawBuffer(
+            XRFrameBuffer? inFBO,
+            XRFrameBuffer? outFBO,
+            uint inW, uint inH,
+            uint outW, uint outH,
+            EReadBufferMode readBufferMode,
+            EReadBufferMode drawBufferMode,
+            bool colorBit, bool depthBit, bool stencilBit,
+            bool linearFilter)
+        {
+            // Vulkan does not use GL-style read/draw buffer selection;
+            // delegate to the standard Blit path.
+            Blit(inFBO, outFBO,
+                0, 0, inW, inH,
+                0, 0, outW, outH,
+                readBufferMode,
+                colorBit, depthBit, stencilBit, linearFilter);
+        }
+
         // =========== Image Resolution Helpers ===========
 
         private bool TryResolveBlitImage(

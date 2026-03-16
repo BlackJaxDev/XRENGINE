@@ -218,6 +218,24 @@ namespace XREngine.Rendering
             set => GroundTruth.FalloffStartRatio = value;
         }
 
+        public float GTAOThicknessHeuristic
+        {
+            get => GroundTruth.ThicknessHeuristic;
+            set => GroundTruth.ThicknessHeuristic = value;
+        }
+
+        public bool GTAOMultiBounceEnabled
+        {
+            get => GroundTruth.MultiBounceEnabled;
+            set => GroundTruth.MultiBounceEnabled = value;
+        }
+
+        public bool GTAOSpecularOcclusionEnabled
+        {
+            get => GroundTruth.SpecularOcclusionEnabled;
+            set => GroundTruth.SpecularOcclusionEnabled = value;
+        }
+
         public int VXAOVoxelGridResolution
         {
             get => Voxel.VoxelGridResolution;

@@ -317,6 +317,16 @@ public unsafe partial class VulkanRenderer
 				uint colorAttachmentCount = useDynamicRendering
 					? (colorAttachmentFormat != Format.Undefined ? 1u : 0u)
 					: Renderer.GetRenderPassColorAttachmentCount(renderPass);
+
+				Debug.VulkanEvery(
+					$"Vulkan.Pipeline.CacheMiss.{_program!.Data?.Name ?? "Unknown"}.{renderPass.Handle:X}.{colorAttachmentCount}",
+					TimeSpan.FromSeconds(2),
+					"[Vulkan] Pipeline cache miss: program='{0}' dynRendering={1} renderPass=0x{2:X} colorCount={3}",
+					_program!.Data?.Name ?? "Unknown",
+					useDynamicRendering,
+					renderPass.Handle,
+					colorAttachmentCount);
+
 				PipelineColorBlendAttachmentState[] blendAttachments = colorAttachmentCount == 0
 					? Array.Empty<PipelineColorBlendAttachmentState>()
 					: new PipelineColorBlendAttachmentState[colorAttachmentCount];

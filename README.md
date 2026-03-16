@@ -93,6 +93,7 @@ The Unit Testing World is configured by a JSON file and loaded on startup.
 - **Where the JSON is loaded from**: the Editor looks for `Assets/UnitTestingWorldSettings.json` relative to the process **working directory** (`Environment.CurrentDirectory`). In the provided VS Code launch configs, the working directory is set to the workspace root, so the file used is `Assets/UnitTestingWorldSettings.json`.
 - **What happens on load**: the JSON is deserialized into `UnitTestingWorld.Toggles` (type `UnitTestingWorld.Settings`). If the file doesn’t exist yet, a default one is written out.
 - **How it affects the world**: `UnitTestingWorld.CreateSelectedWorld(...)` switches on `Toggles.WorldKind` to choose which unit-test world factory to run, and the other toggle values control what gets added (models to import, lighting, physics, UI overlays, etc.).
+- **Per-model material selection**: each entry in `ModelsToImport` now owns its own `MaterialMode` value. Supported values are `Deferred`, `Forward`, and `Uber`, and they apply to both `Static` and `Animated` model imports.
 - **It also influences engine startup**: the Editor loads these toggles early so render/update settings (render API, tick rates, pipeline choices, etc.) can be applied consistently.
 
 ## Launch Options (VS Code)

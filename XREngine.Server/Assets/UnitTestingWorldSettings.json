@@ -13,7 +13,6 @@
   "GPURenderDispatch": false,
   "ForceDebugOpaquePipeline": false,
   "BackgroundShader": false,
-  "StaticModelMaterialMode": "ForwardPlusTextured",
   "RenderMeshBounds": false,
   "RenderPhysicsDebug": false,
   "VisualizeOctree": false,
@@ -64,6 +63,7 @@
     {
       "Enabled": true,
       "Kind": "Static",
+      "MaterialMode": "Forward",
       "Path": "Models\\Sponza\\sponza.obj",
       "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",
       "Scale": 0.01,

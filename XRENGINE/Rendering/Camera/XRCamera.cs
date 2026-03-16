@@ -171,6 +171,19 @@ namespace XREngine.Rendering
         private float _shadowCollectMaxDistance = float.PositiveInfinity;
 
         /// <summary>
+        /// Per-camera anti-aliasing mode override. When non-null, takes highest priority
+        /// over user, project, and engine AA settings for this camera's rendering.
+        /// </summary>
+        private EAntiAliasingMode? _antiAliasingModeOverride;
+
+        /// <summary>
+        /// Per-camera MSAA sample count override. When non-null, takes highest priority
+        /// over user, project, and engine MSAA sample count settings for this camera's rendering.
+        /// Only meaningful when AntiAliasingModeOverride is Msaa.
+        /// </summary>
+        private uint? _msaaSampleCountOverride;
+
+        /// <summary>
         /// The projection parameters (FOV, aspect ratio, near/far planes) for this camera.
         /// Can be perspective or orthographic depending on the parameter type.
         /// </summary>
@@ -307,6 +320,32 @@ namespace XREngine.Rendering
             get => _shadowCollectMaxDistance;
             set => SetField(ref _shadowCollectMaxDistance, value);
         }
+
+        /// <summary>
+        /// Per-camera anti-aliasing mode override.
+        /// When non-null, takes highest priority over user, project, and engine AA settings
+        /// for any frame rendered through this camera.
+        /// Set to null to fall back to the global settings cascade.
+        /// </summary>
+        public EAntiAliasingMode? AntiAliasingModeOverride
+        {
+            get => _antiAliasingModeOverride;
+            set => SetField(ref _antiAliasingModeOverride, value);
+        }
+
+        /// <summary>
+        /// Per-camera MSAA sample count override.
+        /// When non-null, takes highest priority over user, project, and engine MSAA settings
+        /// for any frame rendered through this camera.
+        /// Only meaningful when <see cref="AntiAliasingModeOverride"/> is <see cref="EAntiAliasingMode.Msaa"/>.
+        /// Set to null to fall back to the global settings cascade.
+        /// </summary>
+        public uint? MsaaSampleCountOverride
+        {
+            get => _msaaSampleCountOverride;
+            set => SetField(ref _msaaSampleCountOverride, value);
+        }
+
         /// <summary>
         /// Determines which layers this camera renders. Only renderables whose Layer
         /// is included in this mask will be collected during the visible pass.
@@ -523,8 +562,12 @@ namespace XREngine.Rendering
 
         /// <summary>
         /// Applies the current jitter offset to a projection matrix.
-        /// Modifies the appropriate matrix elements based on projection type
-        /// (orthographic vs perspective use different elements for translation).
+        /// The engine uploads matrices to OpenGL with <c>transpose = false</c>,
+        /// so System.Numerics row-major data is reinterpreted as column-major by GLSL.
+        /// For <c>gl_Position = mat * vec4(pos, 1.0)</c>:
+        ///   x = M11*px + M21*py + M31*pz + M41
+        /// The frustum center offset (perspective) lives in M31/M32, and the
+        /// translation offset (orthographic) lives in M41/M42.
         /// </summary>
         /// <param name="projection">The projection matrix to modify.</param>
         /// <returns>The jittered projection matrix.</returns>
@@ -539,13 +582,13 @@ namespace XREngine.Rendering
 
             if (Parameters is XROrthographicCameraParameters)
             {
-                projection.M14 += jitter.X;
-                projection.M24 += jitter.Y;
+                projection.M41 += jitter.X;
+                projection.M42 += jitter.Y;
             }
             else
             {
-                projection.M13 += jitter.X;
-                projection.M23 += jitter.Y;
+                projection.M31 += jitter.X;
+                projection.M32 += jitter.Y;
             }
 
             return projection;

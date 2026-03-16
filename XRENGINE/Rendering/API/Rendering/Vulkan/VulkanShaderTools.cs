@@ -171,7 +171,11 @@ internal static class VulkanShaderAutoUniforms
             StringComparison.Ordinal);
 
         if (!enableAutoUniformRewrite)
-            return new AutoUniformRewriteResult(RewriteOpaqueUniformBindings(source, shaderType), null);
+        {
+            string rewrittenEarly = RewriteOpaqueUniformBindings(source, shaderType);
+            rewrittenEarly = HoistOpaqueUniforms(rewrittenEarly);
+            return new AutoUniformRewriteResult(rewrittenEarly, null);
+        }
 
         Dictionary<string, uint> integralConstants = ParseIntegralConstants(source);
 
@@ -239,6 +243,7 @@ internal static class VulkanShaderAutoUniforms
         output.Append(source, lastIndex, source.Length - lastIndex);
         string rewritten = output.ToString();
         rewritten = RewriteOpaqueUniformBindings(rewritten, shaderType);
+        rewritten = HoistOpaqueUniforms(rewritten);
 
         if (members.Count == 0)
             return new AutoUniformRewriteResult(rewritten, null);
@@ -617,6 +622,63 @@ internal static class VulkanShaderAutoUniforms
         });
 
         return result;
+    }
+
+    /// <summary>
+    /// Moves opaque uniform declarations (samplers, images, etc.) that appear after
+    /// the first function definition to just before it. glslang (Vulkan/SPIR-V) requires
+    /// declarations to appear before their usage, unlike typical OpenGL GLSL compilers
+    /// which resolve global-scope symbols regardless of declaration order.
+    /// </summary>
+    private static string HoistOpaqueUniforms(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            return source;
+
+        int firstFuncIndex = FindFirstFunctionDefinitionIndex(source);
+        if (firstFuncIndex < 0)
+            return source;
+
+        var toHoist = new List<(int Start, int Length, string Line)>();
+        foreach (Match match in OpaqueUniformRegex.Matches(source))
+        {
+            if (match.Index < firstFuncIndex)
+                continue;
+
+            string glslType = match.Groups["type"].Value;
+            if (!IsOpaque(glslType))
+                continue;
+
+            toHoist.Add((match.Index, match.Length, match.Value.Trim()));
+        }
+
+        if (toHoist.Count == 0)
+            return source;
+
+        // Remove declarations from original positions (reverse order preserves indices).
+        var sb = new StringBuilder(source);
+        for (int i = toHoist.Count - 1; i >= 0; i--)
+        {
+            int start = toHoist[i].Start;
+            int end = start + toHoist[i].Length;
+            // Consume trailing newline so we don't leave blank lines.
+            if (end < sb.Length && sb[end] == '\r') end++;
+            if (end < sb.Length && sb[end] == '\n') end++;
+            sb.Remove(start, end - start);
+        }
+
+        // Build the hoisted block.
+        var hoisted = new StringBuilder();
+        foreach (var (_, _, line) in toHoist)
+            hoisted.AppendLine(line);
+
+        // Insert before the (updated) first function definition.
+        string modified = sb.ToString();
+        int insertPos = FindFirstFunctionDefinitionIndex(modified);
+        if (insertPos < 0)
+            insertPos = modified.Length;
+
+        return InsertAtPreferredLocation(modified, hoisted.ToString().TrimEnd(), insertPos);
     }
 
     private static string ApplyVulkanSourceFixups(string source)

@@ -458,6 +458,16 @@ namespace XREngine.Rendering
         public abstract void AllowDepthWrite(bool allow);
         public abstract void DepthFunc(EComparison always);
 
+        /// <summary>
+        /// Enables per-sample shading (GL_SAMPLE_SHADING) with the given minimum fraction.
+        /// When enabled with minValue=1.0, the fragment shader runs once per sample.
+        /// </summary>
+        public abstract void EnableSampleShading(float minValue);
+        /// <summary>
+        /// Disables per-sample shading (GL_SAMPLE_SHADING).
+        /// </summary>
+        public abstract void DisableSampleShading();
+
         public abstract void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ);
 
         public abstract void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback);
@@ -505,6 +515,33 @@ namespace XREngine.Rendering
                 outFBO.Width,
                 outFBO.Height,
                 readBufferMode,
+                colorBit,
+                depthBit,
+                stencilBit,
+                linearFilter);
+        }
+
+        /// <summary>
+        /// Blits a single color attachment between FBOs, selecting both read and draw buffers.
+        /// Use this for MSAA resolve of individual GBuffer attachments.
+        /// </summary>
+        public void BlitFBOToFBOSingleAttachment(
+            XRFrameBuffer inFBO,
+            XRFrameBuffer outFBO,
+            EReadBufferMode readBufferMode,
+            EReadBufferMode drawBufferMode,
+            bool colorBit, bool depthBit, bool stencilBit,
+            bool linearFilter)
+        {
+            BlitWithDrawBuffer(
+                inFBO,
+                outFBO,
+                inFBO.Width,
+                inFBO.Height,
+                outFBO.Width,
+                outFBO.Height,
+                readBufferMode,
+                drawBufferMode,
                 colorBit,
                 depthBit,
                 stencilBit,
@@ -682,6 +719,20 @@ namespace XREngine.Rendering
             int inX, int inY, uint inW, uint inH,
             int outX, int outY, uint outW, uint outH,
             EReadBufferMode readBufferMode,
+            bool colorBit, bool depthBit, bool stencilBit,
+            bool linearFilter);
+
+        /// <summary>
+        /// Blits between FBOs with explicit read and draw buffer selection.
+        /// Required for per-attachment MSAA resolve of multi-target FBOs.
+        /// </summary>
+        public abstract void BlitWithDrawBuffer(
+            XRFrameBuffer? inFBO,
+            XRFrameBuffer? outFBO,
+            uint inW, uint inH,
+            uint outW, uint outH,
+            EReadBufferMode readBufferMode,
+            EReadBufferMode drawBufferMode,
             bool colorBit, bool depthBit, bool stencilBit,
             bool linearFilter);
         #endregion

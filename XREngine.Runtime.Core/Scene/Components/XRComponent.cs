@@ -25,6 +25,7 @@ namespace XREngine.Components
 
         private bool _isActive = true;
         [Browsable(false)]
+        [DefaultValue(true)]
         public bool IsActive
         {
             get => _isActive;
@@ -330,6 +331,7 @@ namespace XREngine.Components
         /// True by default.
         /// </summary>
         [Browsable(false)]
+        [DefaultValue(true)]
         public bool UnregisterTicksOnStop
         {
             get => _clearTicksOnStop;

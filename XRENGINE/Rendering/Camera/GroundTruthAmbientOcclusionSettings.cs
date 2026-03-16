@@ -11,6 +11,9 @@ namespace XREngine.Rendering
         private float _denoiseSharpness = 4.0f;
         private bool _useInputNormals = true;
         private float _falloffStartRatio = 0.4f;
+        private float _thicknessHeuristic = 1.0f;
+        private bool _multiBounceEnabled = false;
+        private bool _specularOcclusionEnabled = false;
 
         public GroundTruthAmbientOcclusionSettings(AmbientOcclusionSettings owner)
             : base(owner, nameof(AmbientOcclusionSettings.GroundTruth))
@@ -59,6 +62,24 @@ namespace XREngine.Rendering
             set => SetValue(ref _falloffStartRatio, value, nameof(AmbientOcclusionSettings.GTAOFalloffStartRatio));
         }
 
+        public float ThicknessHeuristic
+        {
+            get => _thicknessHeuristic;
+            set => SetValue(ref _thicknessHeuristic, value, nameof(AmbientOcclusionSettings.GTAOThicknessHeuristic));
+        }
+
+        public bool MultiBounceEnabled
+        {
+            get => _multiBounceEnabled;
+            set => SetValue(ref _multiBounceEnabled, value, nameof(AmbientOcclusionSettings.GTAOMultiBounceEnabled));
+        }
+
+        public bool SpecularOcclusionEnabled
+        {
+            get => _specularOcclusionEnabled;
+            set => SetValue(ref _specularOcclusionEnabled, value, nameof(AmbientOcclusionSettings.GTAOSpecularOcclusionEnabled));
+        }
+
         public override void ApplyUniforms(XRRenderProgram program)
         {
             program.Uniform("Radius", PositiveOr(Owner.Radius, 2.0f));
@@ -67,6 +88,7 @@ namespace XREngine.Rendering
             program.Uniform("SliceCount", PositiveOr(SliceCount, 3));
             program.Uniform("StepsPerSlice", PositiveOr(StepsPerSlice, 6));
             program.Uniform("FalloffStartRatio", PositiveOr(FalloffStartRatio, 0.4f));
+            program.Uniform("ThicknessHeuristic", Math.Clamp(ThicknessHeuristic, 0.0f, 1.0f));
             program.Uniform("DenoiseEnabled", DenoiseEnabled);
             program.Uniform("DenoiseRadius", Math.Clamp(DenoiseRadius, 0, 16));
             program.Uniform("DenoiseSharpness", PositiveOr(DenoiseSharpness, 4.0f));

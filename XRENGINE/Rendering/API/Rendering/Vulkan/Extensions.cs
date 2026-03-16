@@ -72,6 +72,14 @@ namespace XREngine.Rendering.Vulkan
                 _renderPassColorAttachmentCounts.TryGetValue(renderPass.Handle, out uint count))
                 return count;
 
+            Debug.VulkanWarningEvery(
+                $"Vulkan.RenderPassColorCount.Fallback.{renderPass.Handle}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] GetRenderPassColorAttachmentCount fallback to 1 for render pass 0x{0:X} (handle={1}). Registered passes: {2}",
+                renderPass.Handle,
+                renderPass.Handle,
+                _renderPassColorAttachmentCounts.Count);
+
             return 1u;
         }
 

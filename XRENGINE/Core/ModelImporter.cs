@@ -699,13 +699,32 @@ namespace XREngine
 
             if (hasAnyTexture)
             {
-                if (transp || textureList.Any(x => x is not null && x.HasAlphaChannel))
+                if (transp)
                 {
                     transp = true;
-                    // Ensure Texture0 is the expected albedo for forward sampling.
+                    // Truly transparent materials cannot use the deferred GBuffer pass, so fall
+                    // back to a lit forward shader to preserve scene lighting while compositing
+                    // via the transparent pipeline (WBOIT, etc.).
                     mat.Textures = [diffuse];
-                    mat.Shaders.Add(ShaderHelper.UnlitTextureFragForward()!);
+                    mat.Shaders.Add(ShaderHelper.LitTextureFragForward());
+                    mat.Parameters =
+                    [
+                        new ShaderFloat(1.0f, "MatSpecularIntensity"),
+                        new ShaderFloat(32.0f, "MatShininess"),
+                    ];
                     mat.RenderPass = ShaderHelper.ResolveTransparentRenderPass(transparencyMode);
+                    mat.RenderOptions = new RenderingParameters()
+                    {
+                        CullMode = ECullMode.Back,
+                        DepthTest = new DepthTest()
+                        {
+                            UpdateDepth = false,
+                            Enabled = ERenderParamUsage.Enabled,
+                            Function = EComparison.Lequal,
+                        },
+                        BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
+                        RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.ViewportDimensions,
+                    };
                 }
                 else
                 {
@@ -754,17 +773,20 @@ namespace XREngine
             }
 
             mat.Name = name;
-            mat.RenderOptions = new RenderingParameters()
+            if (!transp)
             {
-                CullMode = ECullMode.Back,
-                DepthTest = new DepthTest()
+                mat.RenderOptions = new RenderingParameters()
                 {
-                    UpdateDepth = true,
-                    Enabled = ERenderParamUsage.Enabled,
-                    Function = EComparison.Lequal,
-                },
-                BlendModeAllDrawBuffers = transp ? BlendMode.EnabledTransparent() : BlendMode.Disabled(),
-            };
+                    CullMode = ECullMode.Back,
+                    DepthTest = new DepthTest()
+                    {
+                        UpdateDepth = true,
+                        Enabled = ERenderParamUsage.Enabled,
+                        Function = EComparison.Lequal,
+                    },
+                    BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                };
+            }
 
             ConfigureImportedTransparency(mat, textureList, textures);
         }
@@ -1411,18 +1433,50 @@ namespace XREngine
             if (count == 0)
                 return;
 
-            // Create the model/component once per node, then schedule a separate mesh action for each mesh index.
-            ModelComponent modelComponent = sceneNode.AddComponent<ModelComponent>()!;
-            Model model = new();
-            model.Meshes.ThreadSafe = true;
-            modelComponent.Name = node.Name;
-            modelComponent.Model = model;
+            bool importedRenderersGenerateAsync = ImportOptions?.GenerateMeshRenderersAsync ?? false;
+            bool splitSubmeshesIntoSeparateModelComponents = ImportOptions?.SplitSubmeshesIntoSeparateModelComponents ?? false;
+
+            ModelComponent CreateModelComponent(string componentName)
+            {
+                ModelComponent component = sceneNode.AddComponent<ModelComponent>()!;
+                Model componentModel = new();
+                componentModel.Meshes.ThreadSafe = true;
+                component.Name = componentName;
+                component.Model = componentModel;
+                return component;
+            }
+
+            Dictionary<int, Model>? targetModelsByMeshIndex = null;
+            Model? sharedModel = null;
+
+            if (splitSubmeshesIntoSeparateModelComponents)
+            {
+                targetModelsByMeshIndex = new Dictionary<int, Model>(count);
+                for (int i = 0; i < count; i++)
+                {
+                    int meshIndex = node.MeshIndices[i];
+                    Mesh assimpMesh = scene.Meshes[meshIndex];
+                    string componentName = string.IsNullOrWhiteSpace(assimpMesh.Name)
+                        ? $"{node.Name} SubMesh {i}"
+                        : assimpMesh.Name;
+                    targetModelsByMeshIndex[meshIndex] = CreateModelComponent(componentName).Model!;
+                }
+            }
+            else
+            {
+                sharedModel = CreateModelComponent(node.Name).Model;
+            }
+
+            Model ResolveTargetModel(int meshIndex)
+                => targetModelsByMeshIndex is not null
+                    ? targetModelsByMeshIndex[meshIndex]
+                    : sharedModel!;
 
             // Async processing publishes mesh additions on the swap thread so scene/render state is not
             // mutated from worker threads. The publish policy decides whether those additions are flushed
             // once at the end or streamed as contiguous source-order submeshes become ready.
-            ConcurrentDictionary<int, SubMesh>? pending = publishSubMeshesOnSwapThread
-                ? new ConcurrentDictionary<int, SubMesh>()
+            ConcurrentDictionary<int, (Model model, SubMesh subMesh)>? pending = publishSubMeshesOnSwapThread
+                ? new ConcurrentDictionary<int, (Model model, SubMesh subMesh)>()
                 : null;
 
             int[]? ordered = null;
@@ -1433,9 +1487,9 @@ namespace XREngine
                 if (pending is null || ordered is null)
                     return;
 
-                while (nextPublishOffset < ordered.Length && pending.TryRemove(ordered[nextPublishOffset], out var subMesh))
+                while (nextPublishOffset < ordered.Length && pending.TryRemove(ordered[nextPublishOffset], out var pendingSubMesh))
                 {
-                    model.Meshes.Add(subMesh);
+                    pendingSubMesh.model.Meshes.Add(pendingSubMesh.subMesh);
                     nextPublishOffset++;
                 }
             }
@@ -1467,23 +1521,28 @@ namespace XREngine
                 _meshes.Add(xrMesh);
                 _materials.Add(xrMaterial);
 
-                SubMesh subMesh = new(xrMesh, xrMaterial)
+                SubMesh subMesh = new(new SubMeshLOD(xrMaterial, xrMesh, 0.0f)
+                {
+                    GenerateAsync = importedRenderersGenerateAsync,
+                })
                 {
                     Name = mesh.Name,
                     RootTransform = rootTransform
                 };
 
+                Model targetModel = ResolveTargetModel(meshIndex);
+
                 if (pending != null)
                 {
                     Debug.Out($"[ModelImporter] Queueing mesh '{mesh.Name}' for {(batchSubmeshAddsDuringAsyncImport ? "batched" : "streamed")} publish");
-                    pending[meshIndex] = subMesh;
+                    pending[meshIndex] = (targetModel, subMesh);
                     if (!batchSubmeshAddsDuringAsyncImport)
                         Engine.EnqueueSwapTask(FlushReadySubMeshes);
                 }
                 else
                 {
                     Debug.Out($"[ModelImporter] Adding mesh '{mesh.Name}' directly to model");
-                    model.Meshes.Add(subMesh);
+                    targetModel.Meshes.Add(subMesh);
                 }
 
                 Debug.Out($"[ModelImporter] MeshRoutine completed for '{mesh.Name}'");

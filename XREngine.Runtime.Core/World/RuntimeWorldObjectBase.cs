@@ -116,9 +116,18 @@ public abstract class RuntimeWorldObjectBase : XRObjectBase
     public float LastTickReplicationTime { get; private set; }
 
     [Category("Networking")]
+    [YamlIgnore]
     public float TimeBetweenReplications
     {
         get => _timeBetweenReplicationsOverride ?? RuntimeWorldObjectServices.Current?.DefaultTimeBetweenReplications ?? 0.0f;
+        set => SetField(ref _timeBetweenReplicationsOverride, value);
+    }
+
+    [Browsable(false)]
+    [YamlMember(Alias = "TimeBetweenReplications")]
+    public float? TimeBetweenReplicationsOverrideSerialized
+    {
+        get => _timeBetweenReplicationsOverride;
         set => SetField(ref _timeBetweenReplicationsOverride, value);
     }
 

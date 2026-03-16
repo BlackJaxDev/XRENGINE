@@ -7,7 +7,14 @@ using System;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     /// <summary>
-    /// Applies bloom to the last FBO.
+    /// Progressive downsample-upsample bloom pass (Jimenez 2014, physically-based).
+    /// <para>
+    /// Pipeline:
+    /// 1. Copy HDR scene -> bloom texture mip 0
+    /// 2. Downsample chain (mip 0->1->2->3->4) with 13-tap filter + Karis average on first level
+    /// 3. Upsample chain (mip 4->3->2->1) with 9-tap tent filter + additive blend
+    /// 4. PostProcess reads bloom mip 1 (accumulated result) with BloomStrength
+    /// </para>
     /// </summary>
     public class VPRC_BloomPass : ViewportRenderCommand
     {
@@ -19,21 +26,30 @@ namespace XREngine.Rendering.Pipelines.Commands
                 location,
                 reason);
 
-        private string GetBloomBlurShaderName() =>
-            Stereo ? "BloomBlurStereo.fs" : 
-            "BloomBlur.fs";
+        private string GetDownsampleShaderName() =>
+            Stereo ? "BloomDownsampleStereo.fs" : "BloomDownsample.fs";
 
-        public const string BloomBlur1FBOName = "BloomBlurFBO1";
-        public const string BloomBlur2FBOName = "BloomBlurFBO2";
-        public const string BloomBlur4FBOName = "BloomBlurFBO4";
-        public const string BloomBlur8FBOName = "BloomBlurFBO8";
-        public const string BloomBlur16FBOName = "BloomBlurFBO16";
+        private string GetUpsampleShaderName() =>
+            Stereo ? "BloomUpsampleStereo.fs" : "BloomUpsample.fs";
 
-        public BoundingRectangle BloomRect16;
-        public BoundingRectangle BloomRect8;
+        // FBO names for the initial copy (mip 0 write target).
+        public const string BloomMip0FBOName = "BloomMip0FBO";
+
+        // Downsample FBO names (write targets for mips 1-4).
+        public const string BloomDS1FBOName = "BloomDS1FBO";
+        public const string BloomDS2FBOName = "BloomDS2FBO";
+        public const string BloomDS3FBOName = "BloomDS3FBO";
+        public const string BloomDS4FBOName = "BloomDS4FBO";
+
+        // Upsample FBO names (write targets for mips 3-1, blended with existing content).
+        public const string BloomUS3FBOName = "BloomUS3FBO";
+        public const string BloomUS2FBOName = "BloomUS2FBO";
+        public const string BloomUS1FBOName = "BloomUS1FBO";
+
         public BoundingRectangle BloomRect4;
+        public BoundingRectangle BloomRect3;
         public BoundingRectangle BloomRect2;
-        //public BoundingRectangle BloomRect1;
+        public BoundingRectangle BloomRect1;
 
         /// <summary>
         /// The name of the FBO that will be used as input for the bloom pass.
@@ -57,6 +73,81 @@ namespace XREngine.Rendering.Pipelines.Commands
         private uint _lastWidth = 0u;
         private uint _lastHeight = 0u;
 
+        private const int BloomMaxMipmapLevel = 4;
+
+        private XRTexture CreateBloomTexture(uint width, uint height,
+            EPixelInternalFormat internalFormat, ESizedInternalFormat sizedInternalFormat,
+            EPixelFormat pixelFormat, EPixelType pixelType)
+        {
+            if (Stereo)
+            {
+                var t = XRTexture2DArray.CreateFrameBufferTexture(
+                    2, width, height, internalFormat, pixelFormat, pixelType);
+                t.Resizable = false;
+                t.SizedInternalFormat = sizedInternalFormat;
+                t.LargestMipmapLevel = 0;
+                t.SmallestAllowedMipmapLevel = BloomMaxMipmapLevel;
+                t.OVRMultiViewParameters = new(0, 2u);
+                t.Name = BloomOutputTextureName;
+                t.SamplerName = BloomOutputTextureName;
+                t.MagFilter = ETexMagFilter.Linear;
+                t.MinFilter = ETexMinFilter.LinearMipmapLinear;
+                t.UWrap = ETexWrapMode.ClampToEdge;
+                t.VWrap = ETexWrapMode.ClampToEdge;
+                return t;
+            }
+            else
+            {
+                var t = XRTexture2D.CreateFrameBufferTexture(
+                    width, height, internalFormat, pixelFormat, pixelType);
+                t.Resizable = false;
+                t.SizedInternalFormat = sizedInternalFormat;
+                t.LargestMipmapLevel = 0;
+                t.SmallestAllowedMipmapLevel = BloomMaxMipmapLevel;
+                t.Name = BloomOutputTextureName;
+                t.SamplerName = BloomOutputTextureName;
+                t.MagFilter = ETexMagFilter.Linear;
+                t.MinFilter = ETexMinFilter.LinearMipmapLinear;
+                t.UWrap = ETexWrapMode.ClampToEdge;
+                t.VWrap = ETexWrapMode.ClampToEdge;
+                return t;
+            }
+        }
+
+        private static RenderingParameters NoDepthTestParams() => new()
+        {
+            DepthTest =
+            {
+                Enabled = ERenderParamUsage.Unchanged,
+                UpdateDepth = false,
+                Function = EComparison.Always,
+            }
+        };
+
+        private static RenderingParameters UpsampleBlendParams() => new()
+        {
+            DepthTest =
+            {
+                Enabled = ERenderParamUsage.Unchanged,
+                UpdateDepth = false,
+                Function = EComparison.Always,
+            },
+            // Additive blending: src * ONE + dst * ONE
+            // Each upsample level adds its tent-filtered contribution to the
+            // existing downsample content at the target mip.  After the full chain,
+            // mip 1 contains the accumulated multi-scale bloom result.
+            BlendModeAllDrawBuffers = new BlendMode()
+            {
+                Enabled = ERenderParamUsage.Enabled,
+                RgbSrcFactor = EBlendingFactor.One,
+                RgbDstFactor = EBlendingFactor.One,
+                AlphaSrcFactor = EBlendingFactor.One,
+                AlphaDstFactor = EBlendingFactor.One,
+                RgbEquation = EBlendEquationMode.FuncAdd,
+                AlphaEquation = EBlendEquationMode.FuncAdd,
+            }
+        };
+
         private void RegenerateFBOs(uint width, uint height)
         {
             var instance = ActivePipelineInstance;
@@ -69,21 +160,18 @@ namespace XREngine.Rendering.Pipelines.Commands
             width = Math.Max(1u, width);
             height = Math.Max(1u, height);
 
-            //Debug.Out($"Regenerating bloom pass FBOs at {width} x {height}.");
-
             _lastWidth = width;
             _lastHeight = height;
 
-            BloomRect16.Width = (int)(width * 0.0625f);
-            BloomRect16.Height = (int)(height * 0.0625f);
-            BloomRect8.Width = (int)(width * 0.125f);
-            BloomRect8.Height = (int)(height * 0.125f);
-            BloomRect4.Width = (int)(width * 0.25f);
-            BloomRect4.Height = (int)(height * 0.25f);
-            BloomRect2.Width = (int)(width * 0.5f);
-            BloomRect2.Height = (int)(height * 0.5f);
-            //BloomRect1.Width = width;
-            //BloomRect1.Height = height;
+            // Mip render areas (half-size per level).
+            BloomRect1.Width = (int)(width * 0.5f);
+            BloomRect1.Height = (int)(height * 0.5f);
+            BloomRect2.Width = (int)(width * 0.25f);
+            BloomRect2.Height = (int)(height * 0.25f);
+            BloomRect3.Width = (int)(width * 0.125f);
+            BloomRect3.Height = (int)(height * 0.125f);
+            BloomRect4.Width = (int)(width * 0.0625f);
+            BloomRect4.Height = (int)(height * 0.0625f);
 
             bool useHdr = Engine.Rendering.Settings.OutputHDR;
             var internalFormat = useHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
@@ -91,99 +179,86 @@ namespace XREngine.Rendering.Pipelines.Commands
             var pixelFormat = EPixelFormat.Rgba;
             var pixelType = useHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
 
-            XRTexture outputTexture;
-            const int bloomMaxMipmapLevel = 4;
-            if (Stereo)
-            {
-                var t = XRTexture2DArray.CreateFrameBufferTexture(
-                    2,
-                    width,
-                    height,
-                    internalFormat,
-                    pixelFormat,
-                    pixelType);
-                t.Resizable = false;
-                t.SizedInternalFormat = sizedInternalFormat;
-                t.LargestMipmapLevel = 0;
-                t.SmallestAllowedMipmapLevel = bloomMaxMipmapLevel;
-                t.OVRMultiViewParameters = new(0, 2u);
-                t.Name = BloomOutputTextureName;
-                t.SamplerName = BloomOutputTextureName;
-                t.MagFilter = ETexMagFilter.Linear;
-                t.MinFilter = ETexMinFilter.LinearMipmapLinear;
-                t.UWrap = ETexWrapMode.ClampToEdge;
-                t.VWrap = ETexWrapMode.ClampToEdge;
-                outputTexture = t;
-            }
-            else
-            {
-                var t = XRTexture2D.CreateFrameBufferTexture(
-                    width,
-                    height,
-                    internalFormat,
-                    pixelFormat,
-                    pixelType);
-                // Bloom relies on attaching/rendering into multiple mip levels (0..4).
-                // For OpenGL, framebuffer textures must have storage allocated for those mip levels.
-                // Mark as non-resizable so the GL backend uses immutable storage (TexStorage) with mip levels.
-                t.Resizable = false;
-                t.SizedInternalFormat = sizedInternalFormat;
-                t.LargestMipmapLevel = 0;
-                t.SmallestAllowedMipmapLevel = bloomMaxMipmapLevel;
-                t.Name = BloomOutputTextureName;
-                t.SamplerName = BloomOutputTextureName;
-                t.MagFilter = ETexMagFilter.Linear;
-                t.MinFilter = ETexMinFilter.LinearMipmapLinear;
-                t.UWrap = ETexWrapMode.ClampToEdge;
-                t.VWrap = ETexWrapMode.ClampToEdge;
-                outputTexture = t;
-            }
+            XRTexture outputTexture = CreateBloomTexture(width, height,
+                internalFormat, sizedInternalFormat, pixelFormat, pixelType);
 
             instance.SetTexture(outputTexture);
-
-            XRMaterial bloomBlurMat = new
-            (
-                [
-                    new ShaderFloat(0.0f, "Ping"),
-                    new ShaderInt(0, "LOD"),
-                    new ShaderFloat(1.0f, "Radius"),
-                ],
-                [outputTexture],
-                XRShader.EngineShader(Path.Combine(SceneShaderPath, GetBloomBlurShaderName()), EShaderType.Fragment))
-            {
-                RenderOptions = new RenderingParameters()
-                {
-                    DepthTest =
-                    {
-                        Enabled = ERenderParamUsage.Unchanged,
-                        UpdateDepth = false,
-                        Function = EComparison.Always,
-                    }
-                }
-            };
-
-            var blur1 = new XRQuadFrameBuffer(bloomBlurMat) { Name = BloomBlur1FBOName };
-            var blur2 = new XRQuadFrameBuffer(bloomBlurMat) { Name = BloomBlur2FBOName };
-            var blur4 = new XRQuadFrameBuffer(bloomBlurMat) { Name = BloomBlur4FBOName };
-            var blur8 = new XRQuadFrameBuffer(bloomBlurMat) { Name = BloomBlur8FBOName };
-            var blur16 = new XRQuadFrameBuffer(bloomBlurMat) { Name = BloomBlur16FBOName };
-
-            AttachBloomUniforms(blur1, blur2, blur4, blur8, blur16);
 
             if (outputTexture is not IFrameBufferAttachement outputAttach)
                 throw new InvalidOperationException("Output texture is not an IFrameBufferAttachement.");
 
-            blur1.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-            blur2.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 1, -1));
-            blur4.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 2, -1));
-            blur8.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 3, -1));
-            blur16.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 4, -1));
+            string downsampleShader = Path.Combine(SceneShaderPath, GetDownsampleShaderName());
+            string upsampleShader = Path.Combine(SceneShaderPath, GetUpsampleShaderName());
 
-            instance.SetFBO(blur1);
-            instance.SetFBO(blur2);
-            instance.SetFBO(blur4);
-            instance.SetFBO(blur8);
-            instance.SetFBO(blur16);
+            // --- Downsample material ---
+            XRMaterial downsampleMat = new(
+                [
+                    new ShaderInt(0, "SourceLOD"),
+                    new ShaderBool(false, "UseThreshold"),
+                    new ShaderBool(false, "UseKarisAverage"),
+                ],
+                [outputTexture],
+                XRShader.EngineShader(downsampleShader, EShaderType.Fragment))
+            {
+                RenderOptions = NoDepthTestParams()
+            };
+
+            // --- Upsample material (additive blend into existing mip content) ---
+            XRMaterial upsampleMat = new(
+                [
+                    new ShaderInt(0, "SourceLOD"),
+                    new ShaderFloat(1.0f, "Radius"),
+                ],
+                [outputTexture],
+                XRShader.EngineShader(upsampleShader, EShaderType.Fragment))
+            {
+                RenderOptions = UpsampleBlendParams()
+            };
+
+            // --- Mip 0 write target (for initial HDR scene copy) ---
+            // Uses the downsample material but is only bound for writing; the
+            // inputFBO material is what actually renders into it.
+            var mip0 = new XRQuadFrameBuffer(downsampleMat) { Name = BloomMip0FBOName };
+            mip0.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+            instance.SetFBO(mip0);
+
+            // --- Downsample FBOs (target mips 1-4) ---
+            var ds1 = new XRQuadFrameBuffer(downsampleMat) { Name = BloomDS1FBOName };
+            var ds2 = new XRQuadFrameBuffer(downsampleMat) { Name = BloomDS2FBOName };
+            var ds3 = new XRQuadFrameBuffer(downsampleMat) { Name = BloomDS3FBOName };
+            var ds4 = new XRQuadFrameBuffer(downsampleMat) { Name = BloomDS4FBOName };
+
+            ds1.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 1, -1));
+            ds2.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 2, -1));
+            ds3.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 3, -1));
+            ds4.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 4, -1));
+
+            ds1.SettingUniforms += DownsampleLevel1_SettingUniforms;
+            ds2.SettingUniforms += DownsampleLevelN_SettingUniforms;
+            ds3.SettingUniforms += DownsampleLevelN_SettingUniforms;
+            ds4.SettingUniforms += DownsampleLevelN_SettingUniforms;
+
+            instance.SetFBO(ds1);
+            instance.SetFBO(ds2);
+            instance.SetFBO(ds3);
+            instance.SetFBO(ds4);
+
+            // --- Upsample FBOs (target mips 3-1, blended with downsample content) ---
+            var us3 = new XRQuadFrameBuffer(upsampleMat) { Name = BloomUS3FBOName };
+            var us2 = new XRQuadFrameBuffer(upsampleMat) { Name = BloomUS2FBOName };
+            var us1 = new XRQuadFrameBuffer(upsampleMat) { Name = BloomUS1FBOName };
+
+            us3.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 3, -1));
+            us2.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 2, -1));
+            us1.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 1, -1));
+
+            us3.SettingUniforms += UpsampleFbo_SettingUniforms;
+            us2.SettingUniforms += UpsampleFbo_SettingUniforms;
+            us1.SettingUniforms += UpsampleFbo_SettingUniforms;
+
+            instance.SetFBO(us3);
+            instance.SetFBO(us2);
+            instance.SetFBO(us1);
         }
 
         protected override void Execute()
@@ -202,104 +277,105 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            var blur16 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur16FBOName);
-            var blur8 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur8FBOName);
-            var blur4 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur4FBOName);
-            var blur2 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur2FBOName);
-            var blur1 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur1FBOName);
-
-            if (blur16 is null ||
-                blur8 is null ||
-                blur4 is null ||
-                blur2 is null ||
-                blur1 is null)
+            var mip0 = instance.GetFBO<XRQuadFrameBuffer>(BloomMip0FBOName);
+            if (mip0 is null ||
+                inputFBO.Width != _lastWidth ||
+                inputFBO.Height != _lastHeight)
             {
                 RegenerateFBOs(inputFBO.Width, inputFBO.Height);
-                blur16 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur16FBOName);
-                blur8 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur8FBOName);
-                blur4 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur4FBOName);
-                blur2 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur2FBOName);
-                blur1 = instance.GetFBO<XRQuadFrameBuffer>(BloomBlur1FBOName);
-
-                if (blur16 is null ||
-                    blur8 is null ||
-                    blur4 is null ||
-                    blur2 is null ||
-                    blur1 is null)
+                mip0 = instance.GetFBO<XRQuadFrameBuffer>(BloomMip0FBOName);
+                if (mip0 is null)
                 {
-                    LogGuardFailure(nameof(Execute), "Bloom blur FBO chain is incomplete after regeneration; skipping this frame.");
+                    LogGuardFailure(nameof(Execute), "Bloom FBO chain is incomplete after regeneration; skipping this frame.");
                     return;
                 }
             }
-            else if (inputFBO.Width != _lastWidth ||
-                inputFBO.Height != _lastHeight)
-                RegenerateFBOs(inputFBO.Width, inputFBO.Height);
 
-            using (blur1!.BindForWritingState())
-                inputFBO!.Render();
+            var ds1 = instance.GetFBO<XRQuadFrameBuffer>(BloomDS1FBOName);
+            var ds2 = instance.GetFBO<XRQuadFrameBuffer>(BloomDS2FBOName);
+            var ds3 = instance.GetFBO<XRQuadFrameBuffer>(BloomDS3FBOName);
+            var ds4 = instance.GetFBO<XRQuadFrameBuffer>(BloomDS4FBOName);
+            var us3 = instance.GetFBO<XRQuadFrameBuffer>(BloomUS3FBOName);
+            var us2 = instance.GetFBO<XRQuadFrameBuffer>(BloomUS2FBOName);
+            var us1 = instance.GetFBO<XRQuadFrameBuffer>(BloomUS1FBOName);
 
-            var tex = instance.GetTexture<XRTexture>(BloomOutputTextureName);
-            tex?.GenerateMipmapsGPU();
+            if (ds1 is null || ds2 is null || ds3 is null || ds4 is null ||
+                us3 is null || us2 is null || us1 is null)
+            {
+                LogGuardFailure(nameof(Execute), "Bloom FBO chain is incomplete; skipping this frame.");
+                return;
+            }
 
-            BloomScaledPass(blur16!, BloomRect16, 4);
-            BloomScaledPass(blur8!, BloomRect8, 3);
-            BloomScaledPass(blur4!, BloomRect4, 2);
-            BloomScaledPass(blur2!, BloomRect2, 1);
-            //Don't blur original image, barely makes a difference to result
+            // Step 1: Copy HDR scene into bloom texture mip 0.
+            using (mip0.BindForWritingState())
+                inputFBO.Render();
+
+            // Step 2: Progressive downsample chain (mip 0→1→2→3→4).
+            // Each level reads from the previous mip using a 13-tap filter.
+            // The first level (0→1) also applies bright-pass threshold + Karis average.
+            DownsamplePass(ds1, BloomRect1, 0);  // mip 0 → mip 1 (+ threshold + Karis)
+            DownsamplePass(ds2, BloomRect2, 1);  // mip 1 → mip 2
+            DownsamplePass(ds3, BloomRect3, 2);  // mip 2 → mip 3
+            DownsamplePass(ds4, BloomRect4, 3);  // mip 3 → mip 4
+
+            // Step 3: Progressive upsample chain (mip 4→3→2→1).
+            // Each level tent-filters the lower-res mip and additively blends
+            // into the existing downsample content at the target mip.
+            // After this chain, mip 1 contains the accumulated bloom result.
+            UpsamplePass(us3, BloomRect3, 4);  // mip 4 -> add into mip 3
+            UpsamplePass(us2, BloomRect2, 3);  // mip 3 -> add into mip 2
+            UpsamplePass(us1, BloomRect1, 2);  // mip 2 -> add into mip 1
         }
-        private void BloomScaledPass(XRQuadFrameBuffer fbo, BoundingRectangle rect, int mipmap)
+
+        /// <summary>
+        /// Runs a single downsample pass: reads <paramref name="sourceMip"/>, writes to the FBO's target mip.
+        /// </summary>
+        private void DownsamplePass(XRQuadFrameBuffer fbo, BoundingRectangle rect, int sourceMip)
         {
             var instance = ActivePipelineInstance;
             if (instance is null)
             {
-                LogGuardFailure(nameof(BloomScaledPass), "No active pipeline instance during scaled pass; skipping mip blur.");
+                LogGuardFailure(nameof(DownsamplePass), "No active pipeline instance during downsample; skipping.");
                 return;
             }
 
+            fbo.Material?.SetInt(0, sourceMip); // SourceLOD
             using (fbo.BindForWritingState())
-            {
-                using (instance.RenderState.PushRenderArea(rect))
-                {
-                    // Blur this mip by sampling from the next higher-res mip to avoid read/write hazards.
-                    int sourceMip = Math.Max(0, mipmap - 1);
-                    BloomBlur(fbo, sourceMip, 0.0f);
-                    BloomBlur(fbo, sourceMip, 1.0f);
-                }
-            }
-        }
-        private static void BloomBlur(XRQuadFrameBuffer? fbo, int sourceMip, float dir)
-        {
-            if (ReferenceEquals(fbo, null))
-            {
-                LogGuardFailure(nameof(BloomBlur), "Target FBO is null; blur step skipped.");
-                return;
-            }
-
-            var mat = fbo?.Material;
-            if (mat is not null)
-            {
-                mat.SetFloat(0, dir);
-                mat.SetInt(1, sourceMip);
-            }
-            fbo?.Render();
+            using (instance.RenderState.PushRenderArea(rect))
+                fbo.Render();
         }
 
-        private static void AttachBloomUniforms(params XRQuadFrameBuffer[] targets)
-        {
-            foreach (var target in targets)
-                target.SettingUniforms += BloomBlurFbo_SettingUniforms;
-        }
-
-        private static void BloomBlurFbo_SettingUniforms(XRRenderProgram program)
+        /// <summary>
+        /// Runs a single upsample pass: reads <paramref name="sourceMip"/>, tent-filters it, and
+        /// additively blends into the FBO's target mip (which already contains the downsample result).
+        /// </summary>
+        private void UpsamplePass(XRQuadFrameBuffer fbo, BoundingRectangle rect, int sourceMip)
         {
             var instance = ActivePipelineInstance;
             if (instance is null)
             {
-                LogGuardFailure(nameof(BloomBlurFbo_SettingUniforms), "No active pipeline instance while setting blur uniforms; using safe defaults.");
-                program.Uniform("Radius", 1.0f);
-                program.Uniform("UseThreshold", false);
-                program.Uniform("BloomThreshold", 1.0f);
-                program.Uniform("BloomSoftKnee", 0.5f);
+                LogGuardFailure(nameof(UpsamplePass), "No active pipeline instance during upsample; skipping.");
+                return;
+            }
+
+            fbo.Material?.SetInt(0, sourceMip); // SourceLOD
+            using (fbo.BindForWritingState())
+            using (instance.RenderState.PushRenderArea(rect))
+                fbo.Render();
+        }
+
+        // --- Uniform callbacks ---
+
+        /// <summary>
+        /// First downsample level: applies threshold + Karis average.
+        /// </summary>
+        private static void DownsampleLevel1_SettingUniforms(XRRenderProgram program)
+        {
+            var instance = ActivePipelineInstance;
+            if (instance is null)
+            {
+                LogGuardFailure(nameof(DownsampleLevel1_SettingUniforms), "No active pipeline instance; using safe defaults.");
+                SetDefaultDownsampleUniforms(program, 0, true);
                 return;
             }
 
@@ -307,14 +383,69 @@ namespace XREngine.Rendering.Pipelines.Commands
             var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();
             if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true && bloom is not null)
             {
-                bloom.SetBlurPassUniforms(program);
+                bloom.SetDownsampleUniforms(program, 0, firstLevel: true);
                 return;
             }
 
-            program.Uniform("Radius", 1.0f);
-            program.Uniform("UseThreshold", false);
+            SetDefaultDownsampleUniforms(program, 0, true);
+        }
+
+        /// <summary>
+        /// Subsequent downsample levels: no threshold, no Karis.
+        /// </summary>
+        private static void DownsampleLevelN_SettingUniforms(XRRenderProgram program)
+        {
+            var instance = ActivePipelineInstance;
+            if (instance is null)
+            {
+                LogGuardFailure(nameof(DownsampleLevelN_SettingUniforms), "No active pipeline instance; using safe defaults.");
+                SetDefaultDownsampleUniforms(program, 0, false);
+                return;
+            }
+
+            var camera = instance.RenderState.SceneCamera;
+            var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();
+            if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true && bloom is not null)
+            {
+                // SourceLOD is set dynamically in DownsamplePass via SetInt; just set the static uniforms.
+                bloom.SetDownsampleUniforms(program, 0, firstLevel: false);
+                return;
+            }
+
+            SetDefaultDownsampleUniforms(program, 0, false);
+        }
+
+        private static void SetDefaultDownsampleUniforms(XRRenderProgram program, int sourceLod, bool firstLevel)
+        {
+            program.Uniform("SourceLOD", sourceLod);
+            program.Uniform("UseThreshold", firstLevel);
             program.Uniform("BloomThreshold", 1.0f);
             program.Uniform("BloomSoftKnee", 0.5f);
+            program.Uniform("BloomIntensity", 1.0f);
+            program.Uniform("UseKarisAverage", firstLevel);
+        }
+
+        private static void UpsampleFbo_SettingUniforms(XRRenderProgram program)
+        {
+            var instance = ActivePipelineInstance;
+            if (instance is null)
+            {
+                LogGuardFailure(nameof(UpsampleFbo_SettingUniforms), "No active pipeline instance; using safe defaults.");
+                program.Uniform("SourceLOD", 0);
+                program.Uniform("Radius", 1.0f);
+                return;
+            }
+
+            var camera = instance.RenderState.SceneCamera;
+            var bloomStage = camera?.GetPostProcessStageState<BloomSettings>();
+            if (bloomStage?.TryGetBacking(out BloomSettings? bloom) == true && bloom is not null)
+            {
+                bloom.SetUpsampleUniforms(program, 0);
+                return;
+            }
+
+            program.Uniform("SourceLOD", 0);
+            program.Uniform("Radius", 1.0f);
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

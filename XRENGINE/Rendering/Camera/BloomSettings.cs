@@ -5,16 +5,17 @@ namespace XREngine.Rendering
     public class BloomSettings : PostProcessSettings
     {
         private float _intensity = 1.0f;
-        private float _threshold = 1.0f;
+        private float _threshold = 0.0f;
         private float _softKnee = 0.5f;
         private float _radius = 1.0f;
-        private int _startMip = 0;
-        private int _endMip = 4;
-        private float _lod0Weight = 0.6f;
-        private float _lod1Weight = 0.5f;
-        private float _lod2Weight = 0.35f;
-        private float _lod3Weight = 0.2f;
-        private float _lod4Weight = 0.1f;
+        private float _strength = 0.04f;
+        private int _startMip = 1;
+        private int _endMip = 1;
+        private float _lod0Weight = 0.0f;
+        private float _lod1Weight = 1.0f;
+        private float _lod2Weight = 0.0f;
+        private float _lod3Weight = 0.0f;
+        private float _lod4Weight = 0.0f;
 
         public BloomSettings()
         {
@@ -40,6 +41,17 @@ namespace XREngine.Rendering
         {
             get => _radius;
             set => SetField(ref _radius, value);
+        }
+
+        /// <summary>
+        /// Overall bloom strength applied when compositing bloom into the scene.
+        /// In physically-based mode (Threshold = 0) this controls how much of the
+        /// accumulated bloom contribution is added. Typical PBR range: 0.01–0.10.
+        /// </summary>
+        public float Strength
+        {
+            get => _strength;
+            set => SetField(ref _strength, MathF.Max(0.0f, value));
         }
 
         /// <summary>
@@ -103,17 +115,25 @@ namespace XREngine.Rendering
             program.Uniform("SoftKnee", softKnee);
             program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
         }
-        public void SetBlurPassUniforms(XRRenderProgram program)
+
+        public void SetDownsampleUniforms(XRRenderProgram program, int sourceLod, bool firstLevel)
         {
             float threshold = MathF.Max(0.0f, Threshold);
             float softKnee = MathF.Min(1.0f, MathF.Max(0.0f, SoftKnee));
-            float radius = MathF.Max(0.0f, Radius);
-            bool useThreshold = threshold > 0.0f;
 
-            program.Uniform("Radius", radius);
+            program.Uniform("SourceLOD", sourceLod);
+            program.Uniform("UseThreshold", firstLevel && threshold > 0.0f);
             program.Uniform("BloomThreshold", threshold);
-            program.Uniform("BloomSoftKnee", MathF.Max(softKnee * threshold, 1e-4f));
-            program.Uniform("UseThreshold", useThreshold);
+            program.Uniform("BloomSoftKnee", softKnee);
+            program.Uniform("BloomIntensity", MathF.Max(0.0f, Intensity));
+            program.Uniform("Luminance", Engine.Rendering.Settings.DefaultLuminance);
+            program.Uniform("UseKarisAverage", firstLevel);
+        }
+
+        public void SetUpsampleUniforms(XRRenderProgram program, int sourceLod)
+        {
+            program.Uniform("SourceLOD", sourceLod);
+            program.Uniform("Radius", MathF.Max(0.1f, Radius));
         }
 
         public void SetCombineUniforms(XRRenderProgram program)
@@ -132,6 +152,7 @@ namespace XREngine.Rendering
                 _lod4Weight
             ];
 
+            program.Uniform("BloomStrength", MathF.Max(0.0f, Strength));
             program.Uniform("BloomStartMip", startMip);
             program.Uniform("BloomEndMip", endMip);
             program.Uniform("BloomLodWeights", weights);

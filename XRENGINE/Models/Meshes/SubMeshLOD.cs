@@ -34,7 +34,15 @@ namespace XREngine.Rendering.Models
             set => SetField(ref maxVisibleDistance, value);
         }
 
+        private bool _generateAsync;
+
+        public bool GenerateAsync
+        {
+            get => _generateAsync;
+            set => SetField(ref _generateAsync, value);
+        }
+
         public XRMeshRenderer NewRenderer()
-            => new(mesh, material) { GenerateAsync = false };
+            => new(mesh, material) { GenerateAsync = GenerateAsync };
     }
 }

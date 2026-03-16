@@ -1,8 +1,5 @@
 #version 450
 
-#pragma snippet "NormalEncoding"
-#pragma snippet "SurfaceDetailNormalMapping"
-
 layout (location = 0) out vec4 AlbedoOpacity;
 layout (location = 1) out vec2 Normal;
 layout (location = 2) out vec4 RMSI;
@@ -23,6 +20,12 @@ uniform float Specular = 1.0f;
 uniform float Roughness = 0.0f;
 uniform float Metallic = 0.0f;
 uniform float Emission = 0.0f;
+uniform float AlphaCutoff = -1.0f;
+
+// Snippets after uniforms so SurfaceDetailNormalMapping can reference Texture1.
+#pragma snippet "NormalEncoding"
+#pragma snippet "SurfaceDetailNormalMapping"
+#pragma snippet "DitheredTransparency"
 
 vec3 getNormalFromMap()
 {
@@ -31,8 +34,13 @@ vec3 getNormalFromMap()
 
 void main()
 {
+    vec4 texColor = texture(Texture0, FragUV0);
+
+    // Alpha cutoff (masked mode) and dithered transparency.
+    XRENGINE_AlphaCutoffAndDither(AlphaCutoff, texColor.a, Opacity, gl_FragCoord.xy);
+
     TransformId = floatBitsToUint(FragTransformId);
     Normal = XRENGINE_EncodeNormal(getNormalFromMap());
-    AlbedoOpacity = vec4(texture(Texture0, FragUV0).rgb * BaseColor, Opacity);
+    AlbedoOpacity = vec4(texColor.rgb * BaseColor, Opacity);
     RMSI = vec4(Roughness, Metallic, Specular, Emission);
 }

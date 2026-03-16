@@ -39,13 +39,15 @@ public partial class DefaultRenderPipeline
 
     private XRFrameBuffer CreatePostProcessFBO()
     {
+        // Texture array order must match the shader's sampler declaration order in PostProcess.fs,
+        // because Vulkan binds by index (binding N → Textures[N]), not by name.
         XRTexture[] postProcessRefs =
         [
-            GetTexture<XRTexture>(HDRSceneTextureName)!,
-            GetTexture<XRTexture>(AutoExposureTextureName)!,
-            GetTexture<XRTexture>(BloomBlurTextureName)!,
-            GetTexture<XRTexture>(DepthViewTextureName)!,
-            GetTexture<XRTexture>(StencilViewTextureName)!,
+            GetTexture<XRTexture>(HDRSceneTextureName)!,       // binding 0: sampler2D HDRSceneTex
+            GetTexture<XRTexture>(BloomBlurTextureName)!,      // binding 1: sampler2D BloomBlurTexture
+            GetTexture<XRTexture>(DepthViewTextureName)!,      // binding 2: sampler2D DepthView
+            GetTexture<XRTexture>(StencilViewTextureName)!,    // binding 3: usampler2D StencilView
+            GetTexture<XRTexture>(AutoExposureTextureName)!,   // binding 4: sampler2D AutoExposureTex
         ];
         XRShader postProcessShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, PostProcessShaderName()), EShaderType.Fragment);
         XRMaterial postProcessMat = new(postProcessRefs, postProcessShader)
@@ -141,6 +143,38 @@ public partial class DefaultRenderPipeline
         fxaaFbo.SetRenderTargets((fxaaAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         fxaaFbo.SettingUniforms += FxaaFBO_SettingUniforms;
         return fxaaFbo;
+    }
+
+    /// <summary>
+    /// Creates a simple bilinear upscale FBO for TSR.
+    /// Reads PostProcessOutputTexture at internal resolution and writes to FxaaOutputTexture at full resolution.
+    /// </summary>
+    private XRFrameBuffer CreateTsrUpscaleFBO()
+    {
+        XRTexture sourceTexture = GetTexture<XRTexture>(PostProcessOutputTextureName)!;
+        XRTexture outputTexture = GetTexture<XRTexture>(FxaaOutputTextureName)!;
+        XRShader upscaleShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "BilinearUpscale.fs"), EShaderType.Fragment);
+        XRMaterial upscaleMaterial = new([sourceTexture], upscaleShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Enabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                }
+            }
+        };
+        var fbo = new XRQuadFrameBuffer(upscaleMaterial)
+        {
+            Name = TsrUpscaleFBOName
+        };
+        if (outputTexture is not IFrameBufferAttachement outputAttach)
+            throw new InvalidOperationException("TSR upscale output texture is not an FBO-attachable texture.");
+
+        fbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+        return fbo;
     }
 
     private void TransformIdDebugQuadFBO_SettingUniforms(XRRenderProgram program)
@@ -638,7 +672,10 @@ public partial class DefaultRenderPipeline
             {
                 DepthTest = new()
                 {
-                    Enabled = ERenderParamUsage.Disabled,
+                    // Must be Enabled — OpenGL silently disables depth writes when
+                    // GL_DEPTH_TEST is disabled, preventing gl_FragDepth from reaching
+                    // the MSAA depth buffer. Always comparison ensures all fragments pass.
+                    Enabled = ERenderParamUsage.Enabled,
                     Function = EComparison.Always,
                     UpdateDepth = true,
                 },
@@ -885,5 +922,50 @@ public partial class DefaultRenderPipeline
         program.Sampler("Normal", normalView, 2);
         program.Uniform("ScreenWidth", (float)InternalWidth);
         program.Uniform("ScreenHeight", (float)InternalHeight);
+    }
+
+    // --- MSAA Deferred GBuffer FBO ---
+
+    private XRFrameBuffer CreateMsaaGBufferFBO()
+    {
+        if (GetTexture<XRTexture>(MsaaAlbedoOpacityTextureName) is not IFrameBufferAttachement albedoAttach)
+            throw new InvalidOperationException("MSAA AlbedoOpacity texture must be FBO-attachable.");
+        if (GetTexture<XRTexture>(MsaaNormalTextureName) is not IFrameBufferAttachement normalAttach)
+            throw new InvalidOperationException("MSAA Normal texture must be FBO-attachable.");
+        if (GetTexture<XRTexture>(MsaaRMSETextureName) is not IFrameBufferAttachement rmseAttach)
+            throw new InvalidOperationException("MSAA RMSE texture must be FBO-attachable.");
+        if (GetTexture<XRTexture>(MsaaTransformIdTextureName) is not IFrameBufferAttachement transformIdAttach)
+            throw new InvalidOperationException("MSAA TransformId texture must be FBO-attachable.");
+        if (GetTexture<XRTexture>(MsaaDepthStencilTextureName) is not IFrameBufferAttachement depthStencilAttach)
+            throw new InvalidOperationException("MSAA DepthStencil texture must be FBO-attachable.");
+
+        return new XRFrameBuffer(
+            (albedoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
+            (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
+            (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
+            (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = MsaaGBufferFBOName
+        };
+    }
+
+    /// <summary>
+    /// Creates an MSAA lighting FBO for deferred MSAA per-light accumulation.
+    /// The MSAA depth-stencil is attached so stencil-based complex pixel testing works.
+    /// </summary>
+    private XRFrameBuffer CreateMsaaLightingFBO()
+    {
+        if (GetTexture<XRTexture>(MsaaLightingTextureName) is not IFrameBufferAttachement lightingAttach)
+            throw new InvalidOperationException("MSAA Lighting texture must be FBO-attachable.");
+        if (GetTexture<XRTexture>(MsaaDepthStencilTextureName) is not IFrameBufferAttachement depthStencilAttach)
+            throw new InvalidOperationException("MSAA DepthStencil texture must be FBO-attachable.");
+
+        return new XRFrameBuffer(
+            (lightingAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = MsaaLightingFBOName
+        };
     }
 }

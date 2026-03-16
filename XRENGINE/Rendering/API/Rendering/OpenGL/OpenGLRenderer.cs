@@ -673,6 +673,15 @@ namespace XREngine.Rendering.OpenGL
         {
             Api.StencilMask(v);
         }
+        public override void EnableSampleShading(float minValue)
+        {
+            Api.Enable(EnableCap.SampleShading);
+            Api.MinSampleShading(minValue);
+        }
+        public override void DisableSampleShading()
+        {
+            Api.Disable(EnableCap.SampleShading);
+        }
         public override void DepthFunc(EComparison comparison)
         {
             var comp = comparison switch
@@ -2994,6 +3003,40 @@ void main()
                 linearFilter ? BlitFramebufferFilter.Linear : BlitFramebufferFilter.Nearest);
         }
 
+        public override void BlitWithDrawBuffer(
+            XRFrameBuffer? inFBO,
+            XRFrameBuffer? outFBO,
+            uint inW, uint inH,
+            uint outW, uint outH,
+            EReadBufferMode readBufferMode,
+            EReadBufferMode drawBufferMode,
+            bool colorBit, bool depthBit, bool stencilBit,
+            bool linearFilter)
+        {
+            ClearBufferMask mask = 0;
+            if (colorBit)
+                mask |= ClearBufferMask.ColorBufferBit;
+            if (depthBit)
+                mask |= ClearBufferMask.DepthBufferBit;
+            if (stencilBit)
+                mask |= ClearBufferMask.StencilBufferBit;
+
+            var glIn = GenericToAPI<GLFrameBuffer>(inFBO);
+            var glOut = GenericToAPI<GLFrameBuffer>(outFBO);
+            var inID = glIn?.BindingId ?? 0u;
+            var outID = glOut?.BindingId ?? 0u;
+
+            Api.NamedFramebufferReadBuffer(inID, ToGLEnum(readBufferMode));
+            Api.NamedFramebufferDrawBuffer(outID, ToGLEnum(drawBufferMode));
+            Api.BlitNamedFramebuffer(
+                inID,
+                outID,
+                0, 0, (int)inW, (int)inH,
+                0, 0, (int)outW, (int)outH,
+                mask,
+                linearFilter ? BlitFramebufferFilter.Linear : BlitFramebufferFilter.Nearest);
+        }
+
         public static int GetBytesPerPixel(InternalFormat internalFormat) => internalFormat switch
         {
             // Standard formats
@@ -3744,8 +3787,12 @@ void main()
             if (outputFbo is not null)
                 return outputFbo.IsMultisampled;
 
-            return Engine.Rendering.Settings.AntiAliasingMode == XREngine.EAntiAliasingMode.Msaa
-                && Engine.Rendering.Settings.MsaaSampleCount > 1u;
+            // Resolve AA mode through the current camera's override, falling back to global settings.
+            var camera = Engine.Rendering.State.RenderingCamera;
+            var aaMode = camera?.AntiAliasingModeOverride ?? Engine.Rendering.Settings.AntiAliasingMode;
+            var msaaSamples = camera?.MsaaSampleCountOverride ?? Engine.Rendering.Settings.MsaaSampleCount;
+            return aaMode == XREngine.EAntiAliasingMode.Msaa
+                && msaaSamples > 1u;
         }
 
         private void ApplyCulling(RenderingParameters r)

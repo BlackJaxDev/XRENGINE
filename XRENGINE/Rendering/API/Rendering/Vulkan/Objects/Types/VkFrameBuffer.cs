@@ -690,7 +690,14 @@ public unsafe partial class VulkanRenderer
                 throw new InvalidOperationException("Render buffer is not backed by a Vulkan object.");
 
             vkRenderBuffer.Generate();
-            return new AttachmentSource(vkRenderBuffer.View, vkRenderBuffer.Format, vkRenderBuffer.Samples, vkRenderBuffer.Aspect);
+                return new AttachmentSource(
+                    vkRenderBuffer.View,
+                    vkRenderBuffer.Format,
+                    vkRenderBuffer.Samples,
+                    vkRenderBuffer.Aspect,
+                    (vkRenderBuffer.Aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0
+                        ? ImageUsageFlags.DepthStencilAttachmentBit
+                        : ImageUsageFlags.ColorAttachmentBit);
         }
 
         private AttachmentSource ResolveTextureAttachment(XRTexture texture, EFrameBufferAttachment attachment, int mipLevel, int layerIndex)
@@ -704,7 +711,7 @@ public unsafe partial class VulkanRenderer
             source.EnsureAttachmentLayout(depthStencilAttachment);
 
             ImageView view = source.GetAttachmentView(mipLevel, layerIndex);
-            return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, source.DescriptorAspect);
+            return new AttachmentSource(view, source.DescriptorFormat, source.DescriptorSamples, source.DescriptorAspect, source.DescriptorUsage);
         }
 
         private static AttachmentRole ResolveAttachmentRole(EFrameBufferAttachment attachment, ImageAspectFlags aspect)
@@ -758,10 +765,14 @@ public unsafe partial class VulkanRenderer
             // Color attachments use ShaderReadOnlyOptimal as the final layout so
             // the render pass automatically transitions them for sampling by
             // subsequent passes (e.g. fullscreen quad blits in the post-process
-            // chain).  Depth/stencil attachments stay in their optimal layout.
+            // chain). Sampled depth/stencil attachments also need to leave the
+            // pass in a read-only layout; otherwise later sampled descriptors
+            // will mismatch the actual image layout.
             ImageLayout finalLayout = role == AttachmentRole.Color
                 ? ImageLayout.ShaderReadOnlyOptimal
-                : ImageLayout.DepthStencilAttachmentOptimal;
+                : (source.Usage & ImageUsageFlags.SampledBit) != 0
+                    ? ImageLayout.DepthStencilReadOnlyOptimal
+                    : ImageLayout.DepthStencilAttachmentOptimal;
 
             return new FrameBufferAttachmentSignature(
                 source.Format,
@@ -777,7 +788,7 @@ public unsafe partial class VulkanRenderer
                 finalLayout);
         }
 
-        private readonly record struct AttachmentSource(ImageView View, Format Format, SampleCountFlags Samples, ImageAspectFlags AspectMask);
+        private readonly record struct AttachmentSource(ImageView View, Format Format, SampleCountFlags Samples, ImageAspectFlags AspectMask, ImageUsageFlags Usage);
 
         private readonly record struct AttachmentBuildInfo(ImageView View, FrameBufferAttachmentSignature Signature, uint ColorIndex);
 

@@ -332,6 +332,11 @@ public static class ShaderHelper
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForwardWeightedOit(),
             "UnlitColoredForward.fs" => UnlitColorFragForwardWeightedOit(),
             "DeferredDecal.fs" => DeferredDecalForwardWeightedOit(),
+            // Deferred → lit forward WBOIT variants
+            "TexturedDeferred.fs" => LitTextureFragForwardWeightedOit(),
+            "TexturedNormalDeferred.fs" => LitTextureNormalFragForwardWeightedOit(),
+            "ColoredDeferred.fs" => LitColorFragForwardWeightedOit(),
+            "TexturedSilhouettePOMDeferred.fs" => LitTextureSilhouettePOMFragForwardWeightedOit(),
             _ => null,
         };
     }
@@ -359,6 +364,11 @@ public static class ShaderHelper
             "UnlitTexturedStereoForward.fs" => UnlitTextureStereoFragForwardPerPixelLinkedList(),
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForwardPerPixelLinkedList(),
             "UnlitColoredForward.fs" => UnlitColorFragForwardPerPixelLinkedList(),
+            // Deferred → lit forward PPLL variants
+            "TexturedDeferred.fs" => LitTextureFragForwardPerPixelLinkedList(),
+            "TexturedNormalDeferred.fs" => LitTextureNormalFragForwardPerPixelLinkedList(),
+            "ColoredDeferred.fs" => LitColorFragForwardPerPixelLinkedList(),
+            "TexturedSilhouettePOMDeferred.fs" => LitTextureSilhouettePOMFragForwardPerPixelLinkedList(),
             _ => null,
         };
     }
@@ -386,8 +396,53 @@ public static class ShaderHelper
             "UnlitTexturedStereoForward.fs" => UnlitTextureStereoFragForwardDepthPeeling(),
             "UnlitAlphaTexturedForward.fs" => UnlitAlphaTextureFragForwardDepthPeeling(),
             "UnlitColoredForward.fs" => UnlitColorFragForwardDepthPeeling(),
+            // Deferred → lit forward depth-peeling variants
+            "TexturedDeferred.fs" => LitTextureFragForwardDepthPeeling(),
+            "TexturedNormalDeferred.fs" => LitTextureNormalFragForwardDepthPeeling(),
+            "ColoredDeferred.fs" => LitColorFragForwardDepthPeeling(),
+            "TexturedSilhouettePOMDeferred.fs" => LitTextureSilhouettePOMFragForwardDepthPeeling(),
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// Returns the closest lit forward shader for a deferred shader, or null if the shader is not a known deferred shader.
+    /// </summary>
+    public static XRShader? GetForwardVariantOfDeferredShader(XRShader? shader)
+    {
+        string? path = shader?.Source?.FilePath ?? shader?.FilePath;
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        string fileName = Path.GetFileName(path);
+        return fileName switch
+        {
+            "TexturedDeferred.fs" => LitTextureFragForward(),
+            "TexturedNormalDeferred.fs" => LitTextureNormalFragForward(),
+            "ColoredDeferred.fs" => LitColorFragForward(),
+            "TexturedSilhouettePOMDeferred.fs" => LitTextureSilhouettePOMFragForward(),
+            "TexturedNormalMetallicDeferred.fs" => LitTextureNormalFragForward(),
+            "TexturedNormalMetallicRoughnessDeferred.fs" => LitTextureNormalFragForward(),
+            "TexturedMetallicDeferred.fs" => LitTextureFragForward(),
+            "TexturedMetallicRoughnessDeferred.fs" => LitTextureFragForward(),
+            "TexturedRoughnessDeferred.fs" => LitTextureFragForward(),
+            "TexturedEmissiveDeferred.fs" => LitTextureFragForward(),
+            "TexturedMatcapDeferred.fs" => LitTextureFragForward(),
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// Returns true if the shader is a known deferred GBuffer fragment shader.
+    /// </summary>
+    public static bool IsDeferredShader(XRShader? shader)
+    {
+        string? path = shader?.Source?.FilePath ?? shader?.FilePath;
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        string fileName = Path.GetFileName(path);
+        return fileName.EndsWith("Deferred.fs", System.StringComparison.OrdinalIgnoreCase);
     }
 
     public static XRShader? GetStandardForwardVariant(XRShader? shader)
@@ -494,7 +549,11 @@ public static class ShaderHelper
         };
     }
 
-    private static XRShader? CreateDefinedShaderVariant(XRShader? shader, string defineName)
+    /// <summary>
+    /// Creates a shader variant with a preprocessor define injected after the #version directive.
+    /// Used to create compile-time variants of the same shader source (e.g., MSAA deferred, shadow caster).
+    /// </summary>
+    public static XRShader? CreateDefinedShaderVariant(XRShader? shader, string defineName)
     {
         if (shader?.Source?.Text is not { Length: > 0 } source)
             return null;

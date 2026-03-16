@@ -418,6 +418,112 @@ public partial class DefaultRenderPipeline
         }
     }
 
+    // --- MSAA GBuffer texture creation (non-Stereo only) ---
+
+    private XRTexture CreateMsaaAlbedoOpacityTexture()
+    {
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat);
+        t.MultiSampleCount = MsaaSampleCount;
+        t.MinFilter = ETexMinFilter.Nearest;
+        t.MagFilter = ETexMagFilter.Nearest;
+        t.Name = MsaaAlbedoOpacityTextureName;
+        t.SamplerName = MsaaAlbedoOpacityTextureName;
+        return t;
+    }
+
+    private XRTexture CreateMsaaNormalTexture()
+    {
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.RG16f,
+            EPixelFormat.Rg,
+            EPixelType.HalfFloat);
+        t.SizedInternalFormat = ESizedInternalFormat.Rg16f;
+        t.MultiSampleCount = MsaaSampleCount;
+        t.MinFilter = ETexMinFilter.Nearest;
+        t.MagFilter = ETexMagFilter.Nearest;
+        t.Name = MsaaNormalTextureName;
+        t.SamplerName = MsaaNormalTextureName;
+        return t;
+    }
+
+    private XRTexture CreateMsaaRMSETexture()
+    {
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba,
+            EPixelType.UnsignedByte);
+        t.MultiSampleCount = MsaaSampleCount;
+        t.Name = MsaaRMSETextureName;
+        t.SamplerName = MsaaRMSETextureName;
+        return t;
+    }
+
+    private XRTexture CreateMsaaDepthStencilTexture()
+    {
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.Depth24Stencil8,
+            EPixelFormat.DepthStencil,
+            EPixelType.UnsignedInt248,
+            EFrameBufferAttachment.DepthStencilAttachment);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
+        t.MultiSampleCount = MsaaSampleCount;
+        t.MinFilter = ETexMinFilter.Nearest;
+        t.MagFilter = ETexMagFilter.Nearest;
+        t.Name = MsaaDepthStencilTextureName;
+        t.SamplerName = MsaaDepthStencilTextureName;
+        return t;
+    }
+
+    private XRTexture CreateMsaaDepthViewTexture()
+    {
+        return new XRTexture2DView(
+            GetTexture<XRTexture2D>(MsaaDepthStencilTextureName)!,
+            0u, 1u,
+            ESizedInternalFormat.Depth24Stencil8,
+            false, false)
+        {
+            DepthStencilViewFormat = EDepthStencilFmt.Depth,
+            Name = MsaaDepthViewTextureName,
+            SamplerName = MsaaDepthViewTextureName,
+        };
+    }
+
+    private XRTexture CreateMsaaTransformIdTexture()
+    {
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.R32ui,
+            EPixelFormat.RedInteger,
+            EPixelType.UnsignedInt);
+        t.MultiSampleCount = MsaaSampleCount;
+        t.MinFilter = ETexMinFilter.Nearest;
+        t.MagFilter = ETexMagFilter.Nearest;
+        t.Name = MsaaTransformIdTextureName;
+        t.SamplerName = MsaaTransformIdTextureName;
+        return t;
+    }
+
+    private XRTexture CreateMsaaLightingTexture()
+    {
+        var t = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.Rgb16f,
+            EPixelFormat.Rgb,
+            EPixelType.HalfFloat);
+        t.MultiSampleCount = MsaaSampleCount;
+        t.Name = MsaaLightingTextureName;
+        t.SamplerName = MsaaLightingTextureName;
+        return t;
+    }
+
     private XRTexture CreateVelocityTexture()
     {
         if (Stereo)

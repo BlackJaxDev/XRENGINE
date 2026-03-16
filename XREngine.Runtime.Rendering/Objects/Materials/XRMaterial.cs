@@ -426,7 +426,9 @@ namespace XREngine.Rendering
                     RenderOptions.AlphaToCoverage = ERenderParamUsage.Disabled;
                     RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
                     RenderOptions.DepthTest.UpdateDepth = true;
-                    RenderPass = (int)EDefaultRenderPass.MaskedForward;
+                    // Deferred shaders support alpha cutoff natively; keep the deferred pass.
+                    if (_opaqueRenderPass != (int)EDefaultRenderPass.OpaqueDeferred)
+                        RenderPass = (int)EDefaultRenderPass.MaskedForward;
                     break;
                 case ETransparencyMode.AlphaToCoverage:
                     RenderOptions.BlendModeAllDrawBuffers = BlendMode.Disabled();
@@ -434,7 +436,9 @@ namespace XREngine.Rendering
                     RenderOptions.AlphaToCoverage = ERenderParamUsage.Enabled;
                     RenderOptions.DepthTest.Enabled = ERenderParamUsage.Enabled;
                     RenderOptions.DepthTest.UpdateDepth = true;
-                    RenderPass = (int)EDefaultRenderPass.MaskedForward;
+                    // Deferred shaders support alpha cutoff natively; keep the deferred pass.
+                    if (_opaqueRenderPass != (int)EDefaultRenderPass.OpaqueDeferred)
+                        RenderPass = (int)EDefaultRenderPass.MaskedForward;
                     break;
                 case ETransparencyMode.WeightedBlendedOit:
                     RenderOptions.BlendModeAllDrawBuffers = null;

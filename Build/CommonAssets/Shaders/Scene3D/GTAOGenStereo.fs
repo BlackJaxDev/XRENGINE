@@ -14,10 +14,11 @@ uniform sampler2DArray DepthView;
 
 uniform float Radius = 2.0f;
 uniform float Bias = 0.05f;
-uniform float Power = 1.0f;
+uniform float Power = 1.0f; // Unused in gather — applied post-denoise in DeferredLightCombine
 uniform int SliceCount = 3;
 uniform int StepsPerSlice = 6;
 uniform float FalloffStartRatio = 0.4f;
+uniform float ThicknessHeuristic = 1.0f;
 uniform bool UseInputNormals = true;
 uniform int DepthMode;
 
@@ -70,79 +71,12 @@ float InterleavedGradientNoise(vec2 pixel)
     return fract(52.9829189f * fract(dot(pixel, vec2(0.06711056f, 0.00583715f))));
 }
 
-vec3 ProjectOntoPlane(vec3 value, vec3 planeNormal)
+// Canonical IntegrateArc from Jimenez et al. 2016 (Eq. 10)
+float IntegrateArc(float h, float n)
 {
-    return value - planeNormal * dot(value, planeNormal);
-}
-
-float IntegrateArc(float horizonAngle, float normalAngle)
-{
-    float h = clamp(horizonAngle, 0.0f, HALF_PI);
-    float n = clamp(normalAngle, -HALF_PI, HALF_PI);
-    return 0.25f * (-cos(2.0f * h - n) + cos(n) + 2.0f * h * sin(n));
-}
-
-float UpdateHorizonAngle(
-    float currentHorizon,
-    vec3 centerPos,
-    vec2 sampleUV,
-    float radiusVS,
-    float falloffStart,
-    vec3 planeForward,
-    vec3 planeSide,
-    vec3 planeNormal,
-    mat4 projMatrix)
-{
-    if (sampleUV.x <= 0.0f || sampleUV.x >= 1.0f || sampleUV.y <= 0.0f || sampleUV.y >= 1.0f)
-        return currentHorizon;
-
-    float sampleDepth = texture(DepthView, vec3(sampleUV, gl_ViewID_OVR)).r;
-    if (AOIsFarDepth(sampleDepth))
-        return currentHorizon;
-    vec3 samplePos = ViewPosFromDepth(sampleDepth, sampleUV, projMatrix);
-    vec3 toSample = samplePos - centerPos;
-    float distanceSq = dot(toSample, toSample);
-    if (distanceSq <= 1e-6f)
-        return currentHorizon;
-
-    float distance = sqrt(distanceSq);
-    if (distance > radiusVS)
-        return currentHorizon;
-
-    vec3 projected = ProjectOntoPlane(toSample / distance, planeNormal);
-    float projectedLength = length(projected);
-    if (projectedLength <= 1e-5f)
-        return currentHorizon;
-
-    projected /= projectedLength;
-
-    float forward = dot(projected, planeForward);
-    if (forward <= 1e-5f)
-        return currentHorizon;
-
-    float side = abs(dot(projected, planeSide));
-    float horizonAngle = atan(side, forward);
-    float attenuation = 1.0f - smoothstep(falloffStart, radiusVS, distance);
-    float weightedHorizon = mix(HALF_PI, horizonAngle, attenuation);
-    float biasedHorizon = clamp(weightedHorizon + Bias, 0.0f, HALF_PI);
-
-    return min(currentHorizon, biasedHorizon);
-}
-
-vec3 ComputeSliceViewDirection(vec2 uv, float depth, vec3 centerPos, vec2 sliceDirection, mat4 projMatrix)
-{
-    vec2 texelSize = 1.0f / textureSize(DepthView, 0).xy;
-    vec2 offsetUv = clamp(uv + sliceDirection * texelSize * 2.0f, vec2(0.0f), vec2(1.0f));
-    float offsetDepth = texture(DepthView, vec3(offsetUv, gl_ViewID_OVR)).r;
-    if (AOIsFarDepth(offsetDepth))
-        return normalize(vec3(sliceDirection, 0.0f));
-    vec3 offsetPos = ViewPosFromDepth(offsetDepth, offsetUv, projMatrix);
-    vec3 sliceVector = offsetPos - centerPos;
-    float sliceLengthSq = dot(sliceVector, sliceVector);
-    if (sliceLengthSq <= 1e-6f)
-        return normalize(vec3(sliceDirection, 0.0f));
-
-    return normalize(sliceVector);
+    float hClamped = clamp(h, 0.0f, HALF_PI);
+    float nClamped = clamp(n, -HALF_PI, HALF_PI);
+    return 0.25f * (-cos(2.0f * hClamped - nClamped) + cos(nClamped) + 2.0f * hClamped * sin(nClamped));
 }
 
 void main()
@@ -164,60 +98,125 @@ void main()
     }
     vec3 centerPos = ViewPosFromDepth(depth, uv, projMatrix);
     vec3 centerNormal = GetViewNormal(uv, centerPos, inverseViewMatrix, projMatrix);
+    vec3 viewDir = normalize(-centerPos);
 
     float radiusVS = max(Radius, 0.001f);
     float radiusPixels = ComputeRadiusPixels(radiusVS, centerPos.z, projMatrix);
     float falloffStart = clamp(FalloffStartRatio, 0.0f, 1.0f) * radiusVS;
     vec2 texelSize = 1.0f / textureSize(DepthView, 0).xy;
-    vec3 planeForwardBase = -normalize(centerPos);
+    float thicknessLimit = radiusVS * clamp(ThicknessHeuristic, 0.0f, 1.0f);
 
     int sliceCount = clamp(SliceCount, 1, 8);
     int stepCount = clamp(StepsPerSlice, 1, 16);
     float baseAngle = (InterleavedGradientNoise(floor(gl_FragCoord.xy) + vec2(float(gl_ViewID_OVR) * 13.0f, 0.0f)) - 0.5f) * (PI / float(sliceCount));
     float stepJitter = InterleavedGradientNoise(floor(gl_FragCoord.xy) + vec2(17.0f, 43.0f + float(gl_ViewID_OVR) * 19.0f));
 
+    float invProjX = 1.0f / projMatrix[0][0];
+    float invProjY = 1.0f / projMatrix[1][1];
+
     float visibility = 0.0f;
 
     for (int sliceIndex = 0; sliceIndex < sliceCount; ++sliceIndex)
     {
-        float angle = baseAngle + (PI * float(sliceIndex)) / float(sliceCount);
-        vec2 direction = vec2(cos(angle), sin(angle));
-        vec3 planeSide = ComputeSliceViewDirection(uv, depth, centerPos, direction, projMatrix);
-        vec3 planeNormal = cross(planeSide, planeForwardBase);
-        float planeNormalLength = length(planeNormal);
-        if (planeNormalLength <= 1e-5f)
+        float phi = baseAngle + (PI * float(sliceIndex)) / float(sliceCount);
+        vec2 screenDir = vec2(cos(phi), sin(phi));
+
+        vec3 sliceTangent = normalize(vec3(screenDir.x * invProjX, screenDir.y * invProjY, 0.0f));
+        sliceTangent = normalize(sliceTangent - viewDir * dot(sliceTangent, viewDir));
+        vec3 slicePlaneN = normalize(cross(viewDir, sliceTangent));
+
+        vec3 projN = centerNormal - slicePlaneN * dot(centerNormal, slicePlaneN);
+        float projNLen = length(projN);
+        if (projNLen <= 1e-5f)
         {
             visibility += 1.0f;
             continue;
         }
+        projN /= projNLen;
 
-        planeNormal /= planeNormalLength;
-        vec3 projectedNormal = ProjectOntoPlane(centerNormal, planeNormal);
-        float projectedNormalLength = length(projectedNormal);
-        if (projectedNormalLength <= 1e-5f)
+        float gamma = atan(dot(projN, sliceTangent), dot(projN, viewDir));
+
+        float h1 = HALF_PI;
+        float h2 = HALF_PI;
+
+        for (int step = 0; step < stepCount; ++step)
         {
-            visibility += 1.0f;
-            continue;
+            float t = (float(step) + stepJitter) / float(stepCount);
+            vec2 offset = screenDir * texelSize * radiusPixels * t;
+
+            // --- Forward sample ---
+            vec2 fUV = uv + offset;
+            if (fUV.x > 0.0f && fUV.x < 1.0f && fUV.y > 0.0f && fUV.y < 1.0f)
+            {
+                float fDepth = texture(DepthView, vec3(fUV, gl_ViewID_OVR)).r;
+                if (!AOIsFarDepth(fDepth))
+                {
+                    vec3 fPos = ViewPosFromDepth(fDepth, fUV, projMatrix);
+                    vec3 delta = fPos - centerPos;
+                    float dist = length(delta);
+
+                    if (dist > 1e-4f && dist <= radiusVS)
+                    {
+                        vec3 deltaDir = delta / dist;
+                        vec3 projDelta = deltaDir - slicePlaneN * dot(deltaDir, slicePlaneN);
+                        float projLen = length(projDelta);
+                        if (projLen > 1e-5f)
+                        {
+                            projDelta /= projLen;
+                            float candidateH = acos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
+
+                            float falloff = 1.0f - smoothstep(falloffStart, radiusVS, dist);
+
+                            float depthBehind = max(0.0f, -dot(delta, viewDir));
+                            if (thicknessLimit > 0.0f)
+                                falloff *= 1.0f - smoothstep(0.0f, thicknessLimit, depthBehind);
+
+                            candidateH = mix(HALF_PI, candidateH, falloff);
+                            candidateH = clamp(candidateH + Bias, 0.0f, HALF_PI);
+                            h1 = min(h1, candidateH);
+                        }
+                    }
+                }
+            }
+
+            // --- Backward sample ---
+            vec2 bUV = uv - offset;
+            if (bUV.x > 0.0f && bUV.x < 1.0f && bUV.y > 0.0f && bUV.y < 1.0f)
+            {
+                float bDepth = texture(DepthView, vec3(bUV, gl_ViewID_OVR)).r;
+                if (!AOIsFarDepth(bDepth))
+                {
+                    vec3 bPos = ViewPosFromDepth(bDepth, bUV, projMatrix);
+                    vec3 delta = bPos - centerPos;
+                    float dist = length(delta);
+
+                    if (dist > 1e-4f && dist <= radiusVS)
+                    {
+                        vec3 deltaDir = delta / dist;
+                        vec3 projDelta = deltaDir - slicePlaneN * dot(deltaDir, slicePlaneN);
+                        float projLen = length(projDelta);
+                        if (projLen > 1e-5f)
+                        {
+                            projDelta /= projLen;
+                            float candidateH = acos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
+
+                            float falloff = 1.0f - smoothstep(falloffStart, radiusVS, dist);
+
+                            float depthBehind = max(0.0f, -dot(delta, viewDir));
+                            if (thicknessLimit > 0.0f)
+                                falloff *= 1.0f - smoothstep(0.0f, thicknessLimit, depthBehind);
+
+                            candidateH = mix(HALF_PI, candidateH, falloff);
+                            candidateH = clamp(candidateH + Bias, 0.0f, HALF_PI);
+                            h2 = min(h2, candidateH);
+                        }
+                    }
+                }
+            }
         }
 
-        projectedNormal /= projectedNormalLength;
-        float normalAngle = atan(dot(projectedNormal, planeSide), dot(projectedNormal, planeForwardBase));
-
-        float forwardHorizon = HALF_PI;
-        float backwardHorizon = HALF_PI;
-
-        for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
-        {
-            float stepT = (float(stepIndex) + stepJitter) / float(stepCount);
-            vec2 offset = direction * texelSize * radiusPixels * stepT;
-            forwardHorizon = UpdateHorizonAngle(forwardHorizon, centerPos, uv + offset, radiusVS, falloffStart, planeForwardBase, planeSide, planeNormal, projMatrix);
-            backwardHorizon = UpdateHorizonAngle(backwardHorizon, centerPos, uv - offset, radiusVS, falloffStart, planeForwardBase, -planeSide, planeNormal, projMatrix);
-        }
-
-        float sliceVisibility = projectedNormalLength * (
-            IntegrateArc(forwardHorizon, normalAngle) +
-            IntegrateArc(backwardHorizon, -normalAngle));
-        visibility += clamp(sliceVisibility, 0.0f, 1.0f);
+        float sliceVis = projNLen * (IntegrateArc(h1, gamma) + IntegrateArc(h2, -gamma));
+        visibility += clamp(sliceVis, 0.0f, 1.0f);
     }
 
     visibility = clamp(visibility / float(sliceCount), 0.0f, 1.0f);
