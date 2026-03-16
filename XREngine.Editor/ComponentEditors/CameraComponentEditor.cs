@@ -340,6 +340,11 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         ImGui.Separator();
 
+        // Anti-Aliasing Override
+        DrawAntiAliasingOverride(component);
+
+        ImGui.Separator();
+
         // Internal Resolution Settings
         DrawInternalResolutionSettings(component);
 
@@ -356,6 +361,68 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         {
             component.DefaultRenderTarget = asset;
         });
+    }
+
+    private static readonly string[] AntiAliasingModeNames =
+    [
+        "None",
+        "MSAA",
+        "FXAA",
+        "TAA",
+        "TSR"
+    ];
+
+    private static void DrawAntiAliasingOverride(CameraComponent component)
+    {
+        var camera = component.Camera;
+
+        ImGui.Text("Anti-Aliasing Override");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Per-camera AA override. When enabled, overrides the global\nanti-aliasing setting for this camera only.");
+
+        bool hasOverride = camera.AntiAliasingModeOverride.HasValue;
+        if (ImGui.Checkbox("Override AA##AAOverrideToggle", ref hasOverride))
+        {
+            camera.AntiAliasingModeOverride = hasOverride
+                ? Engine.Rendering.Settings.AntiAliasingMode
+                : null;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Enable to override the global AA mode for this camera.");
+
+        if (camera.AntiAliasingModeOverride.HasValue)
+        {
+            int modeIndex = (int)camera.AntiAliasingModeOverride.Value;
+            ImGui.SetNextItemWidth(150f);
+            if (ImGui.Combo("Mode##AAOverrideMode", ref modeIndex, AntiAliasingModeNames, AntiAliasingModeNames.Length))
+            {
+                camera.AntiAliasingModeOverride = (EAntiAliasingMode)modeIndex;
+            }
+
+            if (camera.AntiAliasingModeOverride == EAntiAliasingMode.Msaa)
+            {
+                bool hasMsaaOverride = camera.MsaaSampleCountOverride.HasValue;
+                if (ImGui.Checkbox("Override MSAA Samples##MsaaOverrideToggle", ref hasMsaaOverride))
+                {
+                    camera.MsaaSampleCountOverride = hasMsaaOverride
+                        ? Engine.Rendering.Settings.MsaaSampleCount
+                        : null;
+                }
+
+                if (camera.MsaaSampleCountOverride.HasValue)
+                {
+                    int samples = (int)camera.MsaaSampleCountOverride.Value;
+                    ImGui.SetNextItemWidth(150f);
+                    if (ImGui.SliderInt("Samples##MsaaSamples", ref samples, 1, 8))
+                    {
+                        camera.MsaaSampleCountOverride = (uint)Math.Clamp(samples, 1, 8);
+                    }
+                }
+            }
+
+            // Show what the global setting is for reference
+            ImGui.TextDisabled($"Global: {Engine.Rendering.Settings.AntiAliasingMode}");
+        }
     }
 
     private static readonly string[] InternalResolutionModeNames = 

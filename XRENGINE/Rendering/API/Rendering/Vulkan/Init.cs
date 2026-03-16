@@ -177,6 +177,15 @@ namespace XREngine.Rendering.Vulkan
             _state.SetStencilWriteMask(mask);
             MarkCommandBuffersDirty();
         }
+        public override void EnableSampleShading(float minValue)
+        {
+            // Vulkan: sample shading is configured per-pipeline, not a global state toggle.
+            // Per-pipeline configuration would happen in VkMeshRenderer.Pipeline.cs.
+        }
+        public override void DisableSampleShading()
+        {
+            // Vulkan: sample shading is configured per-pipeline, not a global state toggle.
+        }
         public override void AllowDepthWrite(bool v)
         {
             _state.SetDepthWriteEnabled(v);

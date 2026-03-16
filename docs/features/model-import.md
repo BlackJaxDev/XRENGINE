@@ -3,6 +3,8 @@
 Model imports have two separate runtime policies:
 
 - `ProcessMeshesAsynchronously`: runs mesh conversion work on background jobs instead of finishing the whole import inline.
+- `GenerateMeshRenderersAsync`: leaves `XRMeshRenderer.GenerateAsync` off by default globally, but allows imported model renderers to opt into async renderer generation.
+- `SplitSubmeshesIntoSeparateModelComponents`: creates one `ModelComponent` per imported submesh instead of grouping a source node's submeshes into one model component.
 - `BatchSubmeshAddsDuringAsyncImport`: controls how finished submeshes are published when async import is enabled.
 
 `BatchSubmeshAddsDuringAsyncImport = true` preserves the old behavior. Imported nodes appear in the scene quickly, but each node's submeshes are withheld until that node's async mesh work is complete, then published together.
@@ -10,6 +12,10 @@ Model imports have two separate runtime policies:
 `BatchSubmeshAddsDuringAsyncImport = false` streams submeshes into the scene as they become ready. Publication still happens on the swap thread rather than directly from worker threads, and the importer preserves source order by only releasing the next contiguous ready submeshes.
 
 `ProcessMeshesAsynchronously` can still inherit the engine-wide async import preference.
+
+`GenerateMeshRenderersAsync` is a per-import setting on `ModelImportOptions`. Its current default is `true`.
+
+`SplitSubmeshesIntoSeparateModelComponents` is a per-import setting on `ModelImportOptions`. Its default is `false`, preserving the current "one imported model component per source node" layout.
 
 `BatchSubmeshAddsDuringAsyncImport` is a per-import setting on `ModelImportOptions`. Its default is batched publication.
 

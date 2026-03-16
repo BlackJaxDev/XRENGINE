@@ -152,6 +152,7 @@ public unsafe partial class VulkanRenderer
             _entryPoint = "main";
             _autoUniformBlock = null;
             _bindingId = null;
+            ResetGenerationFailure();
         }
     }
 }

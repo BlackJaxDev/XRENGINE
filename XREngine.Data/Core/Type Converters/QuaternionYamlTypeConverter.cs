@@ -9,14 +9,14 @@ namespace XREngine.Data
     [YamlTypeConverter]
     public sealed class QuaternionYamlTypeConverter : IYamlTypeConverter
     {
-        public bool Accepts(Type type) => type == typeof(Quaternion);
+        public bool Accepts(Type type) => type == typeof(Quaternion) || type == typeof(Quaternion?);
         public object? ReadYaml(IParser parser, Type type, ObjectDeserializer rootDeserializer)
         {
             if (!parser.TryConsume<Scalar>(out var scalar))
-                throw new YamlException("Expected a scalar value to deserialize a Vector4.");
+                throw new YamlException("Expected a scalar value to deserialize a Quaternion.");
             var parts = scalar.Value.Split(' ');
             if (parts.Length != 4)
-                throw new YamlException("Expected Vector4 format 'X Y Z W'.");
+                throw new YamlException("Expected Quaternion format 'X Y Z W'.");
             float x = float.Parse(parts[0].Trim());
             float y = float.Parse(parts[1].Trim());
             float z = float.Parse(parts[2].Trim());

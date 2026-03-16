@@ -310,6 +310,12 @@ namespace XREngine.Rendering
         /// </summary>
         private static void ScheduleGpuUpload(XRTexture2D texture, CancellationToken cancellationToken, Action? onCompleted = null)
         {
+            if (RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL)
+            {
+                ScheduleProgressiveOpenGlUpload(texture, cancellationToken, onCompleted);
+                return;
+            }
+
             void UploadAction()
             {
                 if (cancellationToken.IsCancellationRequested)
@@ -380,6 +386,92 @@ namespace XREngine.Rendering
             {
                 RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(UploadAction);
             }
+        }
+
+        private static void ScheduleProgressiveOpenGlUpload(XRTexture2D texture, CancellationToken cancellationToken, Action? onCompleted)
+        {
+            int uploadToken = Interlocked.Increment(ref texture._progressiveUploadToken);
+
+            void CleanupProgressiveUpload()
+            {
+                texture.ShouldLoadDataFromInternalPBO = false;
+
+                var mipmaps = texture.Mipmaps;
+                if (mipmaps is null)
+                    return;
+
+                for (int i = 0; i < mipmaps.Length; i++)
+                    mipmaps[i].StreamingPBO = null;
+            }
+
+            void StartCoroutine()
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    CleanupProgressiveUpload();
+                    return;
+                }
+
+                var mipmaps = texture.Mipmaps;
+                if (mipmaps is null || mipmaps.Length == 0)
+                {
+                    onCompleted?.Invoke();
+                    return;
+                }
+
+                texture.ShouldLoadDataFromInternalPBO = true;
+
+                int smallestResidentMip = mipmaps.Length - 1;
+                int originalLargestLevel = texture.LargestMipmapLevel;
+                int originalSmallestAllowedLevel = texture.SmallestAllowedMipmapLevel;
+                int nextMipToUpload = smallestResidentMip;
+
+                RuntimeRenderingHostServices.Current.LogOutput(
+                    $"[UploadMipmaps] Starting progressive upload for '{texture.Name}' ({mipmaps[0].Width}x{mipmaps[0].Height}), {mipmaps.Length} mipmaps.");
+
+                RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(() =>
+                {
+                    if (uploadToken != Volatile.Read(ref texture._progressiveUploadToken))
+                    {
+                        CleanupProgressiveUpload();
+                        return true;
+                    }
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        CleanupProgressiveUpload();
+                        return true;
+                    }
+
+                    if (!RuntimeRenderingHostServices.Current.IsRendererActive)
+                        return false;
+
+                    if (nextMipToUpload < 0)
+                    {
+                        texture.LargestMipmapLevel = originalLargestLevel;
+                        texture.SmallestAllowedMipmapLevel = originalSmallestAllowedLevel;
+                        CleanupProgressiveUpload();
+                        RuntimeRenderingHostServices.Current.LogOutput($"[UploadMipmaps] Completed progressive upload for '{texture.Name}'");
+                        onCompleted?.Invoke();
+                        return true;
+                    }
+
+                    texture.LargestMipmapLevel = nextMipToUpload;
+                    texture.SmallestAllowedMipmapLevel = smallestResidentMip;
+
+                    texture.LoadFromPBO(nextMipToUpload);
+                    texture.PushMipLevel(nextMipToUpload);
+                    mipmaps[nextMipToUpload].StreamingPBO = null;
+                    nextMipToUpload--;
+
+                    return false;
+                });
+            }
+
+            if (RuntimeRenderingHostServices.Current.IsRenderThread)
+                StartCoroutine();
+            else
+                RuntimeRenderingHostServices.Current.EnqueueRenderThreadTask(StartCoroutine);
         }
 
         private static bool HasAssetExtension(string filePath)
@@ -1091,6 +1183,14 @@ namespace XREngine.Rendering
 
         [MemoryPackIgnore]
         private XRDataBuffer? _pbo;
+
+        [MemoryPackIgnore]
+        private int _progressiveUploadToken;
+
+        public event Action<int>? PushMipLevelRequested;
+
+        public void PushMipLevel(int mipIndex)
+            => PushMipLevelRequested?.Invoke(mipIndex);
 
         public bool ShouldLoadDataFromInternalPBO
         {

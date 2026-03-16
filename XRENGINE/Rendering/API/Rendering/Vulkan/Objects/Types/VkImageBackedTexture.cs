@@ -200,6 +200,14 @@ public unsafe partial class VulkanRenderer
         /// <inheritdoc />
         bool IVkImageDescriptorSource.UsesAllocatorImage => _physicalGroup is not null;
 
+        /// <inheritdoc />
+        void IVkFrameBufferAttachmentSource.UpdateTrackedLayout(ImageLayout layout)
+        {
+            if (_physicalGroup is not null)
+                _physicalGroup.LastKnownLayout = layout;
+            _currentImageLayout = layout;
+        }
+
         #endregion
 
         #region Resolved Properties

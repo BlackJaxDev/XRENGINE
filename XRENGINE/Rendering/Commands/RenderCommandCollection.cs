@@ -4,6 +4,7 @@ using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Occlusion;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Scene;
 
@@ -487,12 +488,18 @@ namespace XREngine.Rendering.Commands
             Vector3 cameraPos = camera.Transform.RenderTranslation;
             Vector3 cameraForward = camera.Transform.RenderForward;
 
+            // Use previous-frame VP from the temporal accumulation pass when available,
+            // so the GPU-driven path has correct motion history for motion vectors.
+            Matrix4x4 prevViewProjection = VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporal) && temporal.HistoryReady
+                ? temporal.PrevViewProjectionUnjittered
+                : viewProjection;
+
             return new GPUViewConstants
             {
                 View = view,
                 Projection = projection,
                 ViewProjection = viewProjection,
-                PrevViewProjection = viewProjection,
+                PrevViewProjection = prevViewProjection,
                 CameraPositionAndNear = new Vector4(cameraPos, camera.NearZ),
                 CameraForwardAndFar = new Vector4(cameraForward, camera.FarZ)
             };

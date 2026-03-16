@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using NUnit.Framework;
+using XREngine;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
+using XREngine.Scene.Transforms;
 using Assert = NUnit.Framework.Assert;
 
 namespace XREngine.UnitTests.Prefabs;
@@ -85,6 +87,98 @@ public class SceneNodePrefabTests
         SceneNodePrefabUtility.ApplyOverrides(secondInstance, overrides);
 
         Assert.That(secondChild.Name, Is.EqualTo(overriddenName));
+    }
+
+    [Test]
+    public void SerializePrefabHierarchy_OmitsRedundantTransformAndReplicationFields()
+    {
+        SceneNode root = CreatePrefabTemplate();
+
+        string yaml = AssetManager.Serializer.Serialize(root);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(yaml, Does.Not.Contain("ScaleX:"));
+            Assert.That(yaml, Does.Not.Contain("ScaleY:"));
+            Assert.That(yaml, Does.Not.Contain("ScaleZ:"));
+            Assert.That(yaml, Does.Not.Contain("TranslationX:"));
+            Assert.That(yaml, Does.Not.Contain("TranslationY:"));
+            Assert.That(yaml, Does.Not.Contain("TranslationZ:"));
+            Assert.That(yaml, Does.Not.Contain("QuaternionX:"));
+            Assert.That(yaml, Does.Not.Contain("QuaternionY:"));
+            Assert.That(yaml, Does.Not.Contain("QuaternionZ:"));
+            Assert.That(yaml, Does.Not.Contain("QuaternionW:"));
+            Assert.That(yaml, Does.Not.Contain("ImmediateLocalMatrixRecalculation:"));
+            Assert.That(yaml, Does.Not.Contain("TimeBetweenReplications:"));
+            Assert.That(yaml, Does.Not.Contain("IsActiveSelf: true"));
+
+            // Default transform values should not appear (nullable bridge omits them)
+            Assert.That(yaml, Does.Not.Contain("Scale:"), "Default Scale (1,1,1) should be omitted");
+            Assert.That(yaml, Does.Not.Contain("Translation:"), "Default Translation (0,0,0) should be omitted");
+            Assert.That(yaml, Does.Not.Contain("Rotation:"), "Default Rotation (identity) should be omitted");
+            Assert.That(yaml, Does.Not.Contain("IsPrefabRoot: false"), "IsPrefabRoot=false should be omitted");
+        });
+    }
+
+    [Test]
+    public void TransformRoundtrip_NonDefaultValues_SurviveSerialization()
+    {
+        var node = new SceneNode("TransformTest");
+        var tfm = (Transform)node.Transform;
+        tfm.Scale = new System.Numerics.Vector3(2f, 0.5f, 3f);
+        tfm.Translation = new System.Numerics.Vector3(10f, -5f, 7.5f);
+        tfm.Rotation = new System.Numerics.Quaternion(0.1f, 0.2f, 0.3f, 0.9f);
+
+        string yaml = AssetManager.Serializer.Serialize(node);
+
+        // Non-default values MUST appear
+        Assert.That(yaml, Does.Contain("Scale:"), "Non-default Scale must appear");
+        Assert.That(yaml, Does.Contain("Translation:"), "Non-default Translation must appear");
+        Assert.That(yaml, Does.Contain("Rotation:"), "Non-default Rotation must appear");
+
+        // Roundtrip deserialize
+        var deserialized = AssetManager.Deserializer.Deserialize<SceneNode>(yaml);
+        var dtfm = (Transform)deserialized.Transform;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(dtfm.Scale.X, Is.EqualTo(2f).Within(1e-5f));
+            Assert.That(dtfm.Scale.Y, Is.EqualTo(0.5f).Within(1e-5f));
+            Assert.That(dtfm.Scale.Z, Is.EqualTo(3f).Within(1e-5f));
+            Assert.That(dtfm.Translation.X, Is.EqualTo(10f).Within(1e-5f));
+            Assert.That(dtfm.Translation.Y, Is.EqualTo(-5f).Within(1e-5f));
+            Assert.That(dtfm.Translation.Z, Is.EqualTo(7.5f).Within(1e-5f));
+            Assert.That(dtfm.Rotation.X, Is.EqualTo(0.1f).Within(1e-5f));
+            Assert.That(dtfm.Rotation.Y, Is.EqualTo(0.2f).Within(1e-5f));
+            Assert.That(dtfm.Rotation.Z, Is.EqualTo(0.3f).Within(1e-5f));
+            Assert.That(dtfm.Rotation.W, Is.EqualTo(0.9f).Within(1e-5f));
+        });
+    }
+
+    [Test]
+    public void PrefabAssetIdHoisting_OnlyRootEmitsId_ChildrenInheritOnDeserialize()
+    {
+        Guid prefabId = Guid.NewGuid();
+        SceneNode root = CreatePrefabTemplate();
+        SceneNodePrefabUtility.EnsurePrefabMetadata(root, prefabId);
+
+        string yaml = AssetManager.Serializer.Serialize(root);
+
+        // PrefabAssetId should appear exactly once (on the root)
+        int count = yaml.Split("PrefabAssetId:").Length - 1;
+        Assert.That(count, Is.EqualTo(1), "PrefabAssetId should appear exactly once in serialized YAML (on root only)");
+
+        // Roundtrip: deserialize and verify all nodes have the correct PrefabAssetId
+        var deserialized = AssetManager.Deserializer.Deserialize<SceneNode>(yaml);
+        SceneNode child = GetFirstChild(deserialized);
+        SceneNode grandChild = GetFirstChild(child);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(deserialized.Prefab?.PrefabAssetId, Is.EqualTo(prefabId), "Root should have PrefabAssetId after roundtrip");
+            Assert.That(child.Prefab?.PrefabAssetId, Is.EqualTo(prefabId), "Child should inherit PrefabAssetId from root after roundtrip");
+            Assert.That(grandChild.Prefab?.PrefabAssetId, Is.EqualTo(prefabId), "GrandChild should inherit PrefabAssetId from root after roundtrip");
+        });
     }
 
     private static SceneNode CreatePrefabTemplate()

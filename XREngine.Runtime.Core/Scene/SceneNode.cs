@@ -1,4 +1,5 @@
 ﻿using MemoryPack;
+using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Components;
 using XREngine.Components.Scene.Transforms;
@@ -261,6 +262,7 @@ namespace XREngine.Scene
         /// When set to false, Stop() will be called and all child nodes and components will be deactivated.
         /// When set to true, Start() will be called and all child nodes and components will be activated.
         /// </summary>
+        [DefaultValue(true)]
         public bool IsActiveSelf
         {
             get => _isActiveSelf;
@@ -409,6 +411,36 @@ namespace XREngine.Scene
 
                 foreach (var child in value)
                     child?.Parent = this;
+
+                // Propagate PrefabAssetId from this node to children that deserialized without one
+                // (child nodes omit PrefabAssetId from YAML since it's hoisted to the root).
+                Guid parentPrefabId = Prefab?.PrefabAssetId ?? Guid.Empty;
+                if (parentPrefabId != Guid.Empty)
+                    PropagatePrefabAssetId(value, parentPrefabId);
+            }
+        }
+
+        /// <summary>
+        /// Recursively propagates the prefab asset ID from a root node to all descendants
+        /// that have a prefab link but no asset ID (because it was omitted during serialization).
+        /// </summary>
+        private static void PropagatePrefabAssetId(SceneNode[] children, Guid prefabAssetId)
+        {
+            foreach (var child in children)
+            {
+                if (child?.Prefab is not { } link)
+                    continue;
+
+                if (link.PrefabAssetId == Guid.Empty)
+                    link.PrefabAssetId = prefabAssetId;
+
+                // Continue down the hierarchy via the transform's already-parented children
+                var grandChildren = new List<SceneNode>();
+                foreach (var t in child.Transform.Children)
+                    if (t?.SceneNode is SceneNode gc)
+                        grandChildren.Add(gc);
+                if (grandChildren.Count > 0)
+                    PropagatePrefabAssetId([.. grandChildren], prefabAssetId);
             }
         }
 

@@ -1,6 +1,7 @@
 #version 450
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "DitheredTransparency"
 
 layout (location = 0) out vec4 AlbedoOpacity;
 layout (location = 1) out vec2 Normal;
@@ -19,11 +20,17 @@ uniform float Specular = 0.2f;
 uniform float Roughness = 0.0f;
 uniform float Metallic = 0.0f;
 uniform float Emission = 0.0f;
+uniform float AlphaCutoff = -1.0f;
 
 void main()
 {
+    vec4 texColor = texture(Texture0, FragUV0);
+
+    // Alpha cutoff (masked mode) and dithered transparency.
+    XRENGINE_AlphaCutoffAndDither(AlphaCutoff, texColor.a, Opacity, gl_FragCoord.xy);
+
     TransformId = floatBitsToUint(FragTransformId);
     Normal = XRENGINE_EncodeNormal(FragNorm);
-    AlbedoOpacity = vec4(texture(Texture0, FragUV0).rgb * BaseColor, Opacity);
+    AlbedoOpacity = vec4(texColor.rgb * BaseColor, Opacity);
     RMSI = vec4(Roughness, Metallic, Specular, Emission);
 }

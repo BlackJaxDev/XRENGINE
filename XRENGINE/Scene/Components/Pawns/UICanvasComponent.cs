@@ -209,7 +209,7 @@ namespace XREngine.Components
         /// <returns></returns>
         public UICanvasInputComponent? GetInputComponent() => GetSiblingComponent<UICanvasInputComponent>();
 
-        private int _screenRenderDiagCount = 0;
+        //private int _screenRenderDiagCount = 0;
         public void RenderScreenSpace(XRViewport? viewport, XRFrameBuffer? outputFBO)
         {
             if (!IsActive)
@@ -217,12 +217,12 @@ namespace XREngine.Components
 
             EnsureScreenCanvasSize(viewport);
 
-            if (_screenRenderDiagCount < 20 || _screenRenderDiagCount % 300 == 0)
-            {
-                int renderingCount = _renderPipeline.MeshRenderCommands.GetRenderingCommandCount();
-                Debug.Out($"[UICanvas:ScreenRender] frame={_screenRenderDiagCount} renderingCmds={renderingCount} viewport={viewport?.GetHashCode()} fbo={outputFBO?.GetHashCode()} pipelineType={_renderPipeline.Pipeline?.GetType().Name}");
-            }
-            _screenRenderDiagCount++;
+            //if (_screenRenderDiagCount < 20 || _screenRenderDiagCount % 300 == 0)
+            //{
+            //    int renderingCount = _renderPipeline.MeshRenderCommands.GetRenderingCommandCount();
+            //    Debug.Out($"[UICanvas:ScreenRender] frame={_screenRenderDiagCount} renderingCmds={renderingCount} viewport={viewport?.GetHashCode()} fbo={outputFBO?.GetHashCode()} pipelineType={_renderPipeline.Pipeline?.GetType().Name}");
+            //}
+            //_screenRenderDiagCount++;
 
             _renderPipeline.Render(
                 VisualScene2D,
@@ -247,8 +247,8 @@ namespace XREngine.Components
             _renderPipeline.MeshRenderCommands.SwapBuffers();
             VisualScene2D.GlobalSwapBuffers();
             int renderingCount = _renderPipeline.MeshRenderCommands.GetRenderingCommandCount();
-            if (_screenSwapDiagCount < 20 || _screenSwapDiagCount % 300 == 0)
-                Debug.Out($"[UICanvas:ScreenSwap] frame={_screenSwapDiagCount} updatingBefore={updatingCount} renderingAfter={renderingCount}");
+            //if (_screenSwapDiagCount < 20 || _screenSwapDiagCount % 300 == 0)
+            //    Debug.Out($"[UICanvas:ScreenSwap] frame={_screenSwapDiagCount} updatingBefore={updatingCount} renderingAfter={renderingCount}");
             _screenSwapDiagCount++;
         }
 
@@ -363,7 +363,7 @@ namespace XREngine.Components
                 RecalculateDirtyMatrices(child);
         }
 
-        private int _screenCollectDiagCount = 0;
+        //private int _screenCollectDiagCount = 0;
         public void CollectVisibleItemsScreenSpace(XRViewport? viewport = null)
         {
             if (!IsActive)
@@ -396,17 +396,17 @@ namespace XREngine.Components
                 using var collectSample = Engine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace.CollectRenderedItems");
                 VisualScene2D.CollectRenderedItems(_renderPipeline.MeshRenderCommands, Camera2D, false, null, null, false);
                 int addedCount = _renderPipeline.MeshRenderCommands.GetCommandsAddedCount();
-                if (_screenCollectDiagCount < 20 || _screenCollectDiagCount % 300 == 0)
-                {
-                    var proj = Camera2D.ProjectionMatrix;
-                    var bounds = CanvasTransform.GetActualBounds();
-                    Debug.Out($"[UICanvas:ScreenCollect] frame={_screenCollectDiagCount} addedCmds={addedCount} sceneItems={VisualScene2D.Renderables.Count} treeBounds={VisualScene2D.RenderTree.Bounds} canvasBounds={bounds} cam2DProj=({proj.M11:F4},{proj.M22:F4},{proj.M41:F4},{proj.M42:F4})");
-                }
-                _screenCollectDiagCount++;
+                //if (_screenCollectDiagCount < 20 || _screenCollectDiagCount % 300 == 0)
+                //{
+                //    var proj = Camera2D.ProjectionMatrix;
+                //    var bounds = CanvasTransform.GetActualBounds();
+                //    Debug.Out($"[UICanvas:ScreenCollect] frame={_screenCollectDiagCount} addedCmds={addedCount} sceneItems={VisualScene2D.Renderables.Count} treeBounds={VisualScene2D.RenderTree.Bounds} canvasBounds={bounds} cam2DProj=({proj.M11:F4},{proj.M22:F4},{proj.M41:F4},{proj.M42:F4})");
+                //}
+                //_screenCollectDiagCount++;
             }
         }
 
-        private int _collectDiagCount = 0;
+        //private int _collectDiagCount = 0;
         private void CollectVisibleItemsNonScreen()
         {
             if (!IsActive)
@@ -425,16 +425,16 @@ namespace XREngine.Components
                 _renderPipeline.MeshRenderCommands.GetCommandsAddedCount(); // reset counter
                 VisualScene2D.CollectRenderedItems(_renderPipeline.MeshRenderCommands, Camera2D, false, null, null, false);
                 int addedCount = _renderPipeline.MeshRenderCommands.GetCommandsAddedCount();
-                if (_collectDiagCount < 10 || _collectDiagCount % 300 == 0)
-                {
-                    var proj = Camera2D.ProjectionMatrix;
-                    Debug.Out($"[UICanvas:Collect] frame={_collectDiagCount} drawSpace={canvasTransform.DrawSpace} addedCmds={addedCount} cam2DProj=({proj.M11:F4},{proj.M22:F4},{proj.M41:F4},{proj.M42:F4}) sceneItems={VisualScene2D.Renderables.Count} fboSize={_offscreenFbo.Width}x{_offscreenFbo.Height}");
-                }
-                _collectDiagCount++;
+                //if (_collectDiagCount < 10 || _collectDiagCount % 300 == 0)
+                //{
+                //    var proj = Camera2D.ProjectionMatrix;
+                //    Debug.Out($"[UICanvas:Collect] frame={_collectDiagCount} drawSpace={canvasTransform.DrawSpace} addedCmds={addedCount} cam2DProj=({proj.M11:F4},{proj.M22:F4},{proj.M41:F4},{proj.M42:F4}) sceneItems={VisualScene2D.Renderables.Count} fboSize={_offscreenFbo.Width}x{_offscreenFbo.Height}");
+                //}
+                //_collectDiagCount++;
             }
         }
 
-        private int _swapDiagCount = 0;
+        //private int _swapDiagCount = 0;
         private void SwapBuffersNonScreen()
         {
             if (!IsActive)
@@ -454,9 +454,9 @@ namespace XREngine.Components
             VisualScene2D.GlobalSwapBuffers();
             int renderingCount = _renderPipeline.MeshRenderCommands.GetRenderingCommandCount();
 
-            if (_swapDiagCount < 10 || _swapDiagCount % 300 == 0)
-                Debug.Out($"[UICanvas:Swap] frame={_swapDiagCount} updatingBeforeSwap={updatingCount} renderingAfterSwap={renderingCount}");
-            _swapDiagCount++;
+            //if (_swapDiagCount < 10 || _swapDiagCount % 300 == 0)
+            //    Debug.Out($"[UICanvas:Swap] frame={_swapDiagCount} updatingBeforeSwap={updatingCount} renderingAfterSwap={renderingCount}");
+            //_swapDiagCount++;
         }
 
         private bool ShouldRenderWorldSpaceQuad(RenderInfo info, RenderCommandCollection passes, XRCamera? camera)
@@ -503,14 +503,14 @@ namespace XREngine.Components
             }
             _lastRenderObservedSwapGeneration = _lastSwappedGeneration;
 
-            if (_renderDiagCount < 10)
-            {
-                var bounds = canvasTransform.GetActualBounds();
-                int renderCmds = _renderPipeline.MeshRenderCommands.GetRenderingCommandCount();
-                var batchCol = (_renderPipeline.Pipeline as UserInterfaceRenderPipeline)?.BatchCollector;
-                Debug.Out($"[UICanvas:Render] frame={_renderDiagCount} fboSize={_offscreenFbo.Width}x{_offscreenFbo.Height} renderCmds={renderCmds} batchEnabled={batchCol?.Enabled} bounds={bounds} pipeline={_renderPipeline.Pipeline?.GetType().Name}");
-                _renderDiagCount++;
-            }
+            //if (_renderDiagCount < 10)
+            //{
+            //    var bounds = canvasTransform.GetActualBounds();
+            //    int renderCmds = _renderPipeline.MeshRenderCommands.GetRenderingCommandCount();
+            //    var batchCol = (_renderPipeline.Pipeline as UserInterfaceRenderPipeline)?.BatchCollector;
+            //    Debug.Out($"[UICanvas:Render] frame={_renderDiagCount} fboSize={_offscreenFbo.Width}x{_offscreenFbo.Height} renderCmds={renderCmds} batchEnabled={batchCol?.Enabled} bounds={bounds} pipeline={_renderPipeline.Pipeline?.GetType().Name}");
+            //    _renderDiagCount++;
+            //}
 
             _renderPipeline.Render(
                 VisualScene2D,
@@ -540,11 +540,11 @@ namespace XREngine.Components
                 return;
 
             canvasTransform.CameraSpaceCamera = fallbackCamera;
-            if (_cameraBindingDiagCount < 20)
-            {
-                Debug.UI($"[UICanvas:CameraBinding] Assigned fallback camera for camera draw-space canvas '{SceneNode?.Name ?? "<unnamed>"}'.");
-                _cameraBindingDiagCount++;
-            }
+            //if (_cameraBindingDiagCount < 20)
+            //{
+            //    Debug.UI($"[UICanvas:CameraBinding] Assigned fallback camera for camera draw-space canvas '{SceneNode?.Name ?? "<unnamed>"}'.");
+            //    _cameraBindingDiagCount++;
+            //}
         }
 
         private void EnsureNonScreenCanvasSize(UICanvasTransform canvasTransform)
@@ -589,11 +589,11 @@ namespace XREngine.Components
                 return;
 
             _forceDirectRenderingForBackdropBlur = forceDirect;
-            if (_renderModeDiagCount < 20)
-            {
-                Debug.UI($"[UICanvas:RenderMode] drawSpace={canvasTransform.DrawSpace} preferOffscreen={_preferOffscreenRenderingForNonScreenSpaces} forceDirectForBackdropBlur={_forceDirectRenderingForBackdropBlur} effectiveOffscreen={UseOffscreenRenderingForNonScreenSpaces()}");
-                _renderModeDiagCount++;
-            }
+            //if (_renderModeDiagCount < 20)
+            //{
+            //    Debug.UI($"[UICanvas:RenderMode] drawSpace={canvasTransform.DrawSpace} preferOffscreen={_preferOffscreenRenderingForNonScreenSpaces} forceDirectForBackdropBlur={_forceDirectRenderingForBackdropBlur} effectiveOffscreen={UseOffscreenRenderingForNonScreenSpaces()}");
+            //    _renderModeDiagCount++;
+            //}
         }
 
         private bool HasViewportGrabPassUiMaterials()

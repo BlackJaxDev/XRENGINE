@@ -13,7 +13,6 @@
   "GPURenderDispatch": false,
   "ForceDebugOpaquePipeline": false,
   "BackgroundShader": false,
-  "StaticModelMaterialMode": "ForwardPlusTextured",
   "RenderMeshBounds": false,
   "RenderPhysicsDebug": false,
   "VisualizeOctree": false,
@@ -43,7 +42,7 @@
   "RiveUI": false,
   "VideoStreaming": false,
   "VideoStreamingAudio": true,
-  "VideoStreamingUrl": "https://www.twitch.tv/saintsakura",
+  "VideoStreamingUrl": "https://www.twitch.tv/videos/2721883712",
   "UltralightWebView": false,
   "UltralightWebViewUrl": "https://blackjaxvr.com",
 
@@ -65,8 +64,9 @@
 
   "ModelsToImport": [
     {
-      "Enabled": true,
+      "Enabled": false,
       "Kind": "Animated",
+      "MaterialMode": "Forward",
       "Path": "misc\\jax2026.fbx",
       "ImportFlags": "Triangulate, FlipUVs, GenerateNormals, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes",
       "Scale": 1.0,
@@ -79,6 +79,8 @@
     },
     {
       "Enabled": true,
+      "MaterialMode": "Deferred",
+      "UseForwardForTransparent": true,
       "Kind": "Static",
       "Path": "Models\\Sponza2\\Sponza.obj",
       "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",

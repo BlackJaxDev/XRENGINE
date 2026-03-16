@@ -1285,9 +1285,25 @@ public unsafe partial class VulkanRenderer
                 }
             }
 
+            ImageLayout descriptorLayout = layout;
+            ImageLayout trackedLayout = source.TrackedImageLayout;
+            if (trackedLayout != ImageLayout.Undefined)
+            {
+                if (requiresStorageUsage && trackedLayout == ImageLayout.General)
+                {
+                    descriptorLayout = trackedLayout;
+                }
+                else if (requiresSampledUsage && trackedLayout is ImageLayout.ShaderReadOnlyOptimal
+                    or ImageLayout.DepthStencilReadOnlyOptimal
+                    or ImageLayout.General)
+                {
+                    descriptorLayout = trackedLayout;
+                }
+            }
+
             imageInfo = new DescriptorImageInfo
             {
-                ImageLayout = layout,
+                ImageLayout = descriptorLayout,
                 ImageView = descriptorView,
                 Sampler = includeSampler ? source.DescriptorSampler : default
             };

@@ -377,6 +377,12 @@ namespace XREngine
 
             object? importOptions = GetOrCreateThirdPartyImportOptions(sourcePath, assetType);
 
+            // When generating a prefab asset we must serialize sub-assets (Models, SubMeshes, etc.)
+            // immediately after import. Force synchronous mesh processing so Model.Meshes is fully
+            // populated before ExternalizeEmbeddedAssetsForPrefabImport runs.
+            if (typeof(XRPrefabSource).IsAssignableFrom(assetType) && importOptions is ModelImportOptions modelOpts)
+                modelOpts.ProcessMeshesAsynchronously ??= false;
+
             if (Activator.CreateInstance(assetType) is not XRAsset asset)
             {
                 Debug.LogWarning($"Failed to create asset instance for '{assetType.FullName}'.");

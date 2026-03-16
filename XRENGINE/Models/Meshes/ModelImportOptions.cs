@@ -156,6 +156,18 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool? ProcessMeshesAsynchronously { get; set; } = null;
 
     /// <summary>
+    /// When true, mesh renderers created from imported submeshes opt into asynchronous GPU-side generation.
+    /// This only affects imported model renderers and leaves the global XRMeshRenderer default unchanged.
+    /// </summary>
+    public bool GenerateMeshRenderersAsync { get; set; } = true;
+
+    /// <summary>
+    /// When true, each imported submesh is assigned to its own <see cref="Components.Scene.Mesh.ModelComponent"/>
+    /// instead of grouping all submeshes from the same source node into a single model component.
+    /// </summary>
+    public bool SplitSubmeshesIntoSeparateModelComponents { get; set; } = false;
+
+    /// <summary>
     /// When async mesh import is enabled, controls whether imported submeshes are published
     /// to the scene in one batch at the end or streamed in as they become ready.
     /// </summary>

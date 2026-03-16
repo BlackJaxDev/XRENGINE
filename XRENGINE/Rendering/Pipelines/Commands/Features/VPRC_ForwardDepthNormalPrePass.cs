@@ -25,18 +25,18 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             
             var material = pipeline.GetDepthNormalPrePassMaterial();
+            var rs = ActivePipelineInstance.RenderState;
 
-            using var overrideTicket = ActivePipelineInstance.RenderState.PushOverrideMaterial(material);
-            using var variantTicket = ActivePipelineInstance.RenderState.PushUseDepthNormalMaterialVariants();
-            using var pipelineTicket = ActivePipelineInstance.RenderState.PushForceShaderPipelines();
-            using var generatedVertexTicket = ActivePipelineInstance.RenderState.PushForceGeneratedVertexProgram();
+            using var overrideTicket = rs.PushOverrideMaterial(material);
+            using var variantTicket = rs.PushUseDepthNormalMaterialVariants();
+            using var pipelineTicket = rs.PushForceShaderPipelines();
+            using var generatedVertexTicket = rs.PushForceGeneratedVertexProgram();
 
             var commands = ActivePipelineInstance.MeshRenderCommands;
             if (commands is null)
                 return;
 
-            var camera = ActivePipelineInstance.RenderState.SceneCamera;
-
+            var camera = rs.SceneCamera;
             foreach (int pass in _renderPasses)
             {
                 // This pre-pass relies on override materials, generated vertex programs,

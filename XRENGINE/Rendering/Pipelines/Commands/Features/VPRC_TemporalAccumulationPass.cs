@@ -176,7 +176,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (Engine.VRState.IsInVR && !Engine.Rendering.Settings.RenderVRSinglePassStereo)
             return false;
 
-        var mode = Engine.Rendering.Settings.AntiAliasingMode;
+        // Resolve AA mode through the current camera's override, falling back to global settings.
+        var camera = Engine.Rendering.State.RenderingCamera;
+        var mode = camera?.AntiAliasingModeOverride ?? Engine.Rendering.Settings.AntiAliasingMode;
         return mode == EAntiAliasingMode.Taa
             || mode == EAntiAliasingMode.Tsr;
     }
@@ -376,7 +378,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         return result;
     }
 
-    private static bool IsMatrixApproximatelyEqual(in Matrix4x4 a, in Matrix4x4 b, float epsilon = 1e-4f)
+    private static bool IsMatrixApproximatelyEqual(in Matrix4x4 a, in Matrix4x4 b, float epsilon = 1e-6f)
     {
         return MathF.Abs(a.M11 - b.M11) < epsilon && MathF.Abs(a.M12 - b.M12) < epsilon && MathF.Abs(a.M13 - b.M13) < epsilon && MathF.Abs(a.M14 - b.M14) < epsilon &&
                MathF.Abs(a.M21 - b.M21) < epsilon && MathF.Abs(a.M22 - b.M22) < epsilon && MathF.Abs(a.M23 - b.M23) < epsilon && MathF.Abs(a.M24 - b.M24) < epsilon &&

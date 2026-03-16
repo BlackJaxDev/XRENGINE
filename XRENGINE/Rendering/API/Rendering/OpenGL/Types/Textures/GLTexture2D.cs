@@ -72,6 +72,7 @@ namespace XREngine.Rendering.OpenGL
             base.UnlinkData();
 
             Data.Resized -= DataResized;
+            Data.PushMipLevelRequested -= PushPreparedMipLevel;
             Mipmaps = [];
         }
         protected override void LinkData()
@@ -79,6 +80,7 @@ namespace XREngine.Rendering.OpenGL
             base.LinkData();
 
             Data.Resized += DataResized;
+            Data.PushMipLevelRequested += PushPreparedMipLevel;
             UpdateMipmaps();
         }
 
@@ -116,33 +118,7 @@ namespace XREngine.Rendering.OpenGL
 
                 Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
 
-                EPixelInternalFormat? internalFormatForce = null;
-                if (!Data.Resizable && !StorageSet)
-                {
-                    // Track VRAM deallocation of previous texture if any
-                    if (_allocatedVRAMBytes > 0)
-                    {
-                        Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
-                        _allocatedVRAMBytes = 0;
-                    }
-
-                    // Guard against 0-sized textures which cause GL_INVALID_VALUE
-                    uint w = Math.Max(1u, Data.Width);
-                    uint h = Math.Max(1u, Data.Height);
-                    // SmallestMipmapLevel is the smallest mip *index* (0..N), so storage needs N+1 levels.
-                    uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
-                    
-                    if (Data.MultiSample)
-                        Api.TextureStorage2DMultisample(BindingId, Data.MultiSampleCount, ToGLEnum(Data.SizedInternalFormat), w, h, Data.FixedSampleLocations);
-                    else
-                        Api.TextureStorage2D(BindingId, levels, ToGLEnum(Data.SizedInternalFormat), w, h);
-                    internalFormatForce = ToBaseInternalFormat(Data.SizedInternalFormat);
-                    StorageSet = true;
-
-                    // Track VRAM allocation - calculate size with mipmaps
-                    _allocatedVRAMBytes = CalculateTextureVRAMSize(w, h, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
-                    Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
-                }
+                EPixelInternalFormat? internalFormatForce = EnsureStorageAllocated();
 
                 if (Mipmaps is null || Mipmaps.Length == 0)
                     PushMipmap(glTarget, 0, null, internalFormatForce);
@@ -152,35 +128,9 @@ namespace XREngine.Rendering.OpenGL
                         PushMipmap(glTarget, i, Mipmaps[i], internalFormatForce);
                 }
 
-                int baseLevel = 0;
-                int maxLevel = 0;
                 int minLOD = -1000;
                 int maxLOD = 1000;
-
-                // Keep mip parameters sane. Setting TextureMaxLevel to a huge number can make the texture
-                // appear "incomplete" on some drivers/paths (especially when the default min filter expects mipmaps).
-                // If mipmaps are actually allocated/used, clamp maxLevel to the last available level.
-                if (!Data.Resizable && StorageSet)
-                {
-                    // `levels` was computed as SmallestMipmapLevel+1 above when storage was allocated.
-                    // If we didn't allocate storage (e.g., resizable), keep maxLevel driven by actual mip data.
-                    maxLevel = Math.Max(0, Data.SmallestMipmapLevel);
-                }
-                else if (Mipmaps is not null && Mipmaps.Length > 1)
-                {
-                    maxLevel = Mipmaps.Length - 1;
-                }
-                else if (Data.AutoGenerateMipmaps)
-                {
-                    maxLevel = Math.Max(0, Data.SmallestMipmapLevel);
-                }
-                else
-                {
-                    maxLevel = 0;
-                }
-
-                Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in baseLevel);
-                Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in maxLevel);
+                ApplyMipRangeParameters();
 
                 if (!IsMultisampleTarget)
                 {
@@ -202,6 +152,106 @@ namespace XREngine.Rendering.OpenGL
             {
                 IsPushing = false;
                 Unbind();
+            }
+        }
+
+        private EPixelInternalFormat? EnsureStorageAllocated()
+        {
+            EPixelInternalFormat? internalFormatForce = null;
+            if (!Data.Resizable && !StorageSet)
+            {
+                if (_allocatedVRAMBytes > 0)
+                {
+                    Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+                    _allocatedVRAMBytes = 0;
+                }
+
+                uint w = Math.Max(1u, Data.Width);
+                uint h = Math.Max(1u, Data.Height);
+                uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
+
+                if (Data.MultiSample)
+                    Api.TextureStorage2DMultisample(BindingId, Data.MultiSampleCount, ToGLEnum(Data.SizedInternalFormat), w, h, Data.FixedSampleLocations);
+                else
+                    Api.TextureStorage2D(BindingId, levels, ToGLEnum(Data.SizedInternalFormat), w, h);
+
+                internalFormatForce = ToBaseInternalFormat(Data.SizedInternalFormat);
+                StorageSet = true;
+
+                _allocatedVRAMBytes = CalculateTextureVRAMSize(w, h, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
+                Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
+            }
+
+            return internalFormatForce;
+        }
+
+        private int ResolveMaxMipLevel(int baseLevel)
+        {
+            if (IsMultisampleTarget)
+                return baseLevel;
+
+            int configuredMaxLevel = Math.Max(baseLevel, Data.SmallestAllowedMipmapLevel);
+
+            if (Data.AutoGenerateMipmaps)
+                return Math.Max(baseLevel, Data.SmallestMipmapLevel);
+
+            if (Mipmaps is not null && Mipmaps.Length > 0)
+                return Math.Max(baseLevel, Math.Min(Mipmaps.Length - 1, configuredMaxLevel));
+
+            return baseLevel;
+        }
+
+        private void ApplyMipRangeParameters()
+        {
+            int baseLevel = Math.Max(0, Data.LargestMipmapLevel);
+            int maxLevel = ResolveMaxMipLevel(baseLevel);
+
+            Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in baseLevel);
+            Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in maxLevel);
+        }
+
+        private void PushPreparedMipLevel(int mipIndex)
+        {
+            if (!Engine.IsRenderThread)
+            {
+                Engine.EnqueueMainThreadTask(() => PushPreparedMipLevel(mipIndex));
+                return;
+            }
+
+            if (mipIndex < 0 || mipIndex >= Mipmaps.Length)
+                return;
+
+            Generate();
+
+            var previousTexture = Renderer.BoundTexture;
+            bool restorePrevious = previousTexture is not null && !ReferenceEquals(previousTexture, this);
+
+            Api.BindTexture(ToGLEnum(TextureTarget), BindingId);
+            Renderer.BoundTexture = this;
+
+            try
+            {
+                Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+
+                EPixelInternalFormat? internalFormatForce = EnsureStorageAllocated();
+                PushMipmap(ToGLEnum(TextureTarget), mipIndex, Mipmaps[mipIndex], internalFormatForce);
+
+                SetParameters();
+                IsInvalidated = false;
+            }
+            catch (Exception ex)
+            {
+                Debug.OpenGLException(ex);
+            }
+            finally
+            {
+                if (restorePrevious)
+                    previousTexture!.Bind();
+                else
+                {
+                    Renderer.BoundTexture = null;
+                    Api.BindTexture(ToGLEnum(TextureTarget), 0);
+                }
             }
         }
 
@@ -387,27 +437,7 @@ namespace XREngine.Rendering.OpenGL
             // Clamp base/max mip level to what we actually have.
             // This is critical for render-target textures (e.g., shadow maps) that only define mip 0.
             // Leaving maxLevel at a large default (e.g., 1000) can make the driver treat the attachment as incomplete.
-            int baseLevel = Math.Max(0, Data.LargestMipmapLevel);
-            int maxLevel;
-            if (IsMultisampleTarget)
-            {
-                maxLevel = baseLevel;
-            }
-            else if (Data.AutoGenerateMipmaps)
-            {
-                maxLevel = Math.Max(baseLevel, Data.SmallestMipmapLevel);
-            }
-            else if (Data.Mipmaps is not null && Data.Mipmaps.Length > 0)
-            {
-                maxLevel = Math.Max(baseLevel, Data.Mipmaps.Length - 1);
-            }
-            else
-            {
-                maxLevel = baseLevel;
-            }
-
-            Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in baseLevel);
-            Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in maxLevel);
+            ApplyMipRangeParameters();
 
         }
 

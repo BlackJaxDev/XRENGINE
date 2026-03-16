@@ -1102,8 +1102,31 @@ namespace XREngine.Rendering.Vulkan
                 // within the current frame.  If present, the render pass will use
                 // those as initialLayout (preserving content from earlier passes)
                 // instead of Undefined (which discards content).
-                fboLayoutTracking.TryGetValue(target, out ImageLayout[]? trackedLayouts);
+                //
+                // We query the CURRENT tracked layout of each attachment rather than
+                // relying on the static finalLayout stored previously.  This accounts
+                // for barrier-planner transitions or blit operations that may have
+                // changed the actual image layout since the last render pass ended.
+                ImageLayout[]? trackedLayouts = null;
+                if (fboLayoutTracking.ContainsKey(target))
+                {
+                    trackedLayouts = QueryCurrentAttachmentLayouts(target, vkFrameBuffer);
+                    // Update the tracking dict so that subsequent users see the
+                    // same layouts we resolved here.
+                    if (trackedLayouts is not null)
+                        fboLayoutTracking[target] = trackedLayouts;
+                }
                 RenderPass passRenderPass = vkFrameBuffer.ResolveRenderPassForPass(passIndex, context.PassMetadata, trackedLayouts);
+
+                Debug.VulkanEvery(
+                    $"Vulkan.BeginRP.FBO.{fboName}.{passRenderPass.Handle:X}",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] BeginRenderPassForTarget FBO='{0}' pass={1} renderPass=0x{2:X} attachments={3} trackedLayouts={4}",
+                    fboName,
+                    passIndex,
+                    passRenderPass.Handle,
+                    vkFrameBuffer.AttachmentCount,
+                    trackedLayouts is not null ? string.Join(",", trackedLayouts) : "null");
                 RenderPassBeginInfo fboPassInfo = new()
                 {
                     SType = StructureType.RenderPassBeginInfo,
@@ -1506,9 +1529,10 @@ namespace XREngine.Rendering.Vulkan
                             op.GetType().Name,
                             opEx.Message);
 
-                        throw new InvalidOperationException(
-                            $"[Vulkan] Frame op recording failed for {op.GetType().Name} (pass={op.PassIndex}).",
-                            opEx);
+                        // Continue recording remaining ops instead of aborting the
+                        // entire command buffer.  A single broken shader/pipeline
+                        // should not prevent the rest of the frame from rendering.
+                        continue;
                     }
                 }
 
@@ -2308,8 +2332,9 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// After ending a render pass for an FBO target, update the tracked layout
         /// on each physical image group backing the FBO's attachments. The render
-        /// pass will have transitioned each attachment to its <c>finalLayout</c>
-        /// (color → ColorAttachmentOptimal, depth → DepthStencilAttachmentOptimal).
+        /// pass transitions each attachment from <c>initialLayout</c> through the
+        /// subpass layout to <c>finalLayout</c> at <c>CmdEndRenderPass</c>.
+        /// We must track the <b>finalLayout</b>, not the subpass layout.
         /// </summary>
         private void UpdatePhysicalGroupLayoutsForFbo(XRFrameBuffer fbo)
         {
@@ -2317,44 +2342,79 @@ namespace XREngine.Rendering.Vulkan
             if (targets is null)
                 return;
 
+            // Get the actual final layouts from the render pass signature.
+            var vkFbo = GenericToAPI<VkFrameBuffer>(fbo);
+            ImageLayout[]? finalLayouts = vkFbo?.GetFinalLayouts();
+
+            int attachmentIndex = 0;
             foreach (var (target, attachment, _, _) in targets)
             {
-                if (target is not XRRenderBuffer rb)
+                ImageLayout finalLayout = (finalLayouts is not null && attachmentIndex < finalLayouts.Length)
+                    ? finalLayouts[attachmentIndex]
+                    : ImageLayout.Undefined;
+                attachmentIndex++;
+
+                if (finalLayout == ImageLayout.Undefined)
                     continue;
 
-                if (GetOrCreateAPIRenderObject(rb, true) is not VkRenderBuffer vkRb)
-                    continue;
-
-                if (vkRb.PhysicalGroup is not { } group)
-                    continue;
-
-                // The render pass finalLayout matches the BuildAttachmentSignature logic:
-                // color → ColorAttachmentOptimal, depth/stencil → DepthStencilAttachmentOptimal.
-                // However, some resources are sampled/storage-oriented and can appear in FBO targets
-                // without having attachment usage bits; in that case, keep tracking to a legal layout.
-                bool isColor = attachment >= EFrameBufferAttachment.ColorAttachment0 &&
-                               attachment <= EFrameBufferAttachment.ColorAttachment31;
-                bool isDepthAttachment = attachment is EFrameBufferAttachment.DepthAttachment
-                    or EFrameBufferAttachment.DepthStencilAttachment
-                    or EFrameBufferAttachment.StencilAttachment;
-
-                ImageLayout fallbackLayout = ResolveInitialPhysicalGroupLayout(
-                    group.Usage,
-                    VulkanResourceAllocator.IsDepthStencilFormat(group.Format));
-
-                if (isColor)
+                switch (target)
                 {
-                    group.LastKnownLayout = (group.Usage & ImageUsageFlags.ColorAttachmentBit) != 0
-                        ? ImageLayout.ColorAttachmentOptimal
-                        : fallbackLayout;
-                }
-                else if (isDepthAttachment)
-                {
-                    group.LastKnownLayout = (group.Usage & ImageUsageFlags.DepthStencilAttachmentBit) != 0
-                        ? ImageLayout.DepthStencilAttachmentOptimal
-                        : fallbackLayout;
+                    case XRRenderBuffer rb:
+                    {
+                        if (GetOrCreateAPIRenderObject(rb, true) is VkRenderBuffer vkRb && vkRb.PhysicalGroup is { } group)
+                            group.LastKnownLayout = finalLayout;
+                        break;
+                    }
+                    case XRTexture tex:
+                    {
+                        if (GetOrCreateAPIRenderObject(tex, true) is IVkFrameBufferAttachmentSource attSrc)
+                            attSrc.UpdateTrackedLayout(finalLayout);
+                        break;
+                    }
                 }
             }
+        }
+
+        /// <summary>
+        /// Queries the current tracked layout of each attachment backing the given FBO.
+        /// Returns an array suitable for <see cref="VkFrameBuffer.ResolveRenderPassForPass"/>
+        /// that reflects any barrier-planner or blit transitions since the last render pass.
+        /// </summary>
+        private ImageLayout[]? QueryCurrentAttachmentLayouts(XRFrameBuffer fbo, VkFrameBuffer vkFbo)
+        {
+            var targets = fbo.Targets;
+            if (targets is null)
+                return null;
+
+            int count = vkFbo.AttachmentCount > 0 ? (int)vkFbo.AttachmentCount : targets.Length;
+            ImageLayout[] layouts = new ImageLayout[count];
+
+            int i = 0;
+            foreach (var (target, _, _, _) in targets)
+            {
+                if (i >= layouts.Length)
+                    break;
+
+                ImageLayout layout = ImageLayout.Undefined;
+                switch (target)
+                {
+                    case XRRenderBuffer rb:
+                    {
+                        if (GetOrCreateAPIRenderObject(rb, true) is VkRenderBuffer vkRb && vkRb.PhysicalGroup is { } group)
+                            layout = group.LastKnownLayout;
+                        break;
+                    }
+                    case XRTexture tex:
+                    {
+                        if (GetOrCreateAPIRenderObject(tex, true) is IVkImageDescriptorSource imgSrc)
+                            layout = imgSrc.TrackedImageLayout;
+                        break;
+                    }
+                }
+                layouts[i++] = layout;
+            }
+
+            return layouts;
         }
 
         /// <summary>

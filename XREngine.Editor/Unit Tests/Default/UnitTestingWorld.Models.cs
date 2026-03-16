@@ -27,6 +27,33 @@ public static partial class EditorUnitTests
 {
     public static class Models
     {
+        private static ModelImporter.DelMakeMaterialAction ResolveMakeMaterialAction(Settings.ModelImportSettings model)
+        {
+            ModelImporter.DelMakeMaterialAction baseAction = model.MaterialMode switch
+            {
+                ModelImportMaterialMode.Deferred => ModelImporter.MakeMaterialDeferred,
+                ModelImportMaterialMode.Forward => ModelImporter.MakeMaterialForwardPlusTextured,
+                ModelImportMaterialMode.Uber => ModelImporter.MakeMaterialForwardPlusUberShader,
+                _ => ModelImporter.MakeMaterialDeferred,
+            };
+
+            // When deferred mode is active and the user wants forward rendering for transparent
+            // textures, wrap the factory so that materials with alpha fall back to the lit forward path.
+            if (model.MaterialMode == ModelImportMaterialMode.Deferred && model.UseForwardForTransparent)
+            {
+                return (textureList, textures, name) =>
+                {
+                    bool hasTransparency = ModelImporter.ResolveTransparencyMode(textureList, textures)
+                        is not ETransparencyMode.Opaque;
+                    return hasTransparency
+                        ? ModelImporter.MakeMaterialForwardPlusTextured(textureList, textures, name)
+                        : baseAction(textureList, textures, name);
+                };
+            }
+
+            return baseAction;
+        }
+
         private static Matrix4x4? GetOptionalRootTransformMatrix(Settings.ModelImportSettings model)
         {
             if (model?.YawPitchRoll is null)
@@ -84,7 +111,7 @@ public static partial class EditorUnitTests
                         SceneNode? ImportAnimated()
                         {
                             using var importer = new ModelImporter(resolvedPath, null, null);
-                            importer.MakeMaterialAction = ModelImporter.MakeMaterialDefault;
+                            importer.MakeMaterialAction = ResolveMakeMaterialAction(model);
                             importer.MakeTextureAction = CreateHardcodedTexture;
                             var node = importer.Import(
                                 model.ImportFlags,
@@ -106,14 +133,7 @@ public static partial class EditorUnitTests
                     default:
                     {
                         importedStaticModelsRootNode ??= new SceneNode(rootNode) { Name = "Static Model Root", Layer = DefaultLayers.StaticIndex };
-
-                        ModelImporter.DelMakeMaterialAction makeMaterialAction = Toggles.StaticModelMaterialMode switch
-                        {
-                            StaticModelMaterialMode.Deferred => ModelImporter.MakeMaterialDeferred,
-                            StaticModelMaterialMode.ForwardPlusTextured => ModelImporter.MakeMaterialForwardPlusTextured,
-                            StaticModelMaterialMode.ForwardPlusUberShader => ModelImporter.MakeMaterialForwardPlusUberShader,
-                            _ => ModelImporter.MakeMaterialDeferred,
-                        };
+                        ModelImporter.DelMakeMaterialAction makeMaterialAction = ResolveMakeMaterialAction(model);
 
                         _ = ModelImporter.ScheduleImportJob(
                             resolvedPath,

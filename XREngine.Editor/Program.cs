@@ -140,6 +140,13 @@ internal class Program
             // Unit test initialization that must run after editor preferences are loaded 
             // but before windows are created (e.g., that may affect render pipeline selection).
             UnitTest_Init();
+
+            // LoadSandboxSettings() replaces Engine.UserSettings with persisted values,
+            // which may differ from the JSON-specified unit-test overrides. Re-apply them
+            // so that RenderAPI/PhysicsAPI from UnitTestingWorldSettings.json win.
+            XREngine.Engine.UserSettings.RenderLibrary = EditorUnitTests.Toggles.RenderAPI;
+            XREngine.Engine.UserSettings.PhysicsLibrary = EditorUnitTests.Toggles.PhysicsAPI;
+            WriteBootstrapTrace($"Applied unit-test overrides: Render={EditorUnitTests.Toggles.RenderAPI}, Physics={EditorUnitTests.Toggles.PhysicsAPI}");
             
             // Initialize MCP server after last project or sandbox editor preferences are loaded
             McpServerHost.Initialize(args);
@@ -599,22 +606,22 @@ internal class Program
         }
 
         bool useDebug = EditorUnitTests.Toggles.ForceDebugOpaquePipeline;
-        EngineDebug.Out($"[DebugPipeline] ForceDebugOpaquePipeline={useDebug}, HasStaticModels={EditorUnitTests.Toggles.HasStaticModelsToImport}, Mode={EditorUnitTests.Toggles.StaticModelMaterialMode}");
+        bool hasModelsRequiringDefaultPipeline = EditorUnitTests.Toggles.ModelsToImport?.Any(model =>
+            model is not null &&
+            model.Enabled &&
+            (model.MaterialMode == EditorUnitTests.ModelImportMaterialMode.Deferred ||
+               model.MaterialMode == EditorUnitTests.ModelImportMaterialMode.Forward ||
+               model.MaterialMode == EditorUnitTests.ModelImportMaterialMode.Uber)) ?? false;
+        EngineDebug.Out($"[DebugPipeline] ForceDebugOpaquePipeline={useDebug}, HasStaticModels={EditorUnitTests.Toggles.HasStaticModelsToImport}, HasModelsRequiringDefaultPipeline={hasModelsRequiringDefaultPipeline}");
 
         // The debug opaque pipeline is forward-only and does not execute the default deferred/forward+ pass chain.
         // If the unit test is requesting static model material modes that rely on DefaultRenderPipeline passes,
         // force the default pipeline so results are visible and comparable.
-        if (EditorUnitTests.Toggles.HasStaticModelsToImport)
+        if (hasModelsRequiringDefaultPipeline)
         {
-            var mode = EditorUnitTests.Toggles.StaticModelMaterialMode;
-            if (mode == EditorUnitTests.StaticModelMaterialMode.Deferred ||
-                mode == EditorUnitTests.StaticModelMaterialMode.ForwardPlusTextured ||
-                mode == EditorUnitTests.StaticModelMaterialMode.ForwardPlusUberShader)
-            {
-                if (useDebug)
-                    EngineDebug.Out($"[UnitTestingWorld] ForceDebugOpaquePipeline disabled because StaticModelMaterialMode={mode} requires DefaultRenderPipeline.");
-                useDebug = false;
-            }
+            if (useDebug)
+                EngineDebug.Out("[UnitTestingWorld] ForceDebugOpaquePipeline disabled because one or more imported models require DefaultRenderPipeline.");
+            useDebug = false;
         }
 
         return useDebug;

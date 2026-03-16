@@ -555,6 +555,35 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         set => SetField(ref _raycastMode, value);
     }
 
+    private float _maxPicksPerSecond = 20.0f;
+    /// <summary>
+    /// Maximum world-picking dispatches per second. Higher values give snappier
+    /// hover outlines at the cost of more CPU time spent in octree/physics raycasts.
+    /// </summary>
+    [Category("Raycasting")]
+    public float MaxPicksPerSecond
+    {
+        get => _maxPicksPerSecond;
+        set => SetField(ref _maxPicksPerSecond, Math.Max(value, 1.0f));
+    }
+
+    /// <summary>
+    /// Cached cursor position from the last pick dispatch.
+    /// Used to skip raycasts when the cursor hasn't moved.
+    /// </summary>
+    private Vector2 _lastPickCursorPosition = new(float.NaN, float.NaN);
+
+    /// <summary>
+    /// Accumulates elapsed time between pick dispatches for throttling.
+    /// </summary>
+    private float _pickAccumulator;
+
+    /// <summary>
+    /// When true, the next tick will dispatch a pick regardless of throttle or dirty state.
+    /// Set by left-click so the click handler always has fresh results.
+    /// </summary>
+    private bool _forceRepick;
+
     protected ERaycastHitMode CurrentRaycastMode => _raycastMode;
     protected Triangle? CurrentFacePickResult => _facePickResult;
     protected MeshEdgePickResult? CurrentEdgePickResult => _edgePickResult;
@@ -1073,13 +1102,52 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         UpdateSelectionDrag(vp);
 
         if (AllowWorldPicking)
-        {
-            var octreeResults = GetOctreePickResultDict();
-            var physicsResults = GetPhysicsPickResultDict();
-            vp.PickSceneAsync(p, false, true, true, _layerMask, _physxQueryFilter, octreeResults, physicsResults, OctreeRaycastCallback, PhysicsRaycastCallback, RaycastMode);
-        }
+            DispatchWorldPickIfNeeded(vp, p);
 
         ApplyTransformations(vp);
+    }
+
+    /// <summary>
+    /// Dispatches octree + physics raycasts only when the cursor has moved, is inside the
+    /// viewport, and the throttle interval has elapsed — or when a repick is forced (e.g. click).
+    /// </summary>
+    private void DispatchWorldPickIfNeeded(XRViewport vp, Vector2 normalizedCursorPos)
+    {
+        // Gate: cursor must be inside the viewport [0,1] range.
+        bool cursorInViewport =
+            normalizedCursorPos.X >= 0f && normalizedCursorPos.X <= 1f &&
+            normalizedCursorPos.Y >= 0f && normalizedCursorPos.Y <= 1f;
+
+        if (!cursorInViewport && !_forceRepick)
+        {
+            // Cursor left the viewport — clear hover highlight so it doesn't stick.
+            if (!float.IsNaN(_lastPickCursorPosition.X))
+            {
+                ClearHoverHighlight();
+                _lastPickCursorPosition = new(float.NaN, float.NaN);
+            }
+            return;
+        }
+
+        // Cursor-dirty check: skip if the cursor hasn't moved since the last dispatch.
+        bool cursorMoved = normalizedCursorPos != _lastPickCursorPosition;
+
+        // Throttle: accumulate time and only dispatch at the configured rate.
+        _pickAccumulator += Engine.Delta;
+        float interval = 1.0f / _maxPicksPerSecond;
+
+        bool shouldPick = _forceRepick || (cursorMoved && _pickAccumulator >= interval);
+        if (!shouldPick)
+            return;
+
+        _pickAccumulator = 0f;
+        _lastPickCursorPosition = normalizedCursorPos;
+        _forceRepick = false;
+
+        var octreeResults = GetOctreePickResultDict();
+        var physicsResults = GetPhysicsPickResultDict();
+        vp.PickSceneAsync(normalizedCursorPos, false, true, true, _layerMask, _physxQueryFilter,
+            octreeResults, physicsResults, OctreeRaycastCallback, PhysicsRaycastCallback, RaycastMode);
     }
 
     private void PhysicsRaycastCallback(SortedDictionary<float, List<(XRComponent? item, object? data)>>? dictionary)
@@ -1450,12 +1518,23 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private Vector2? _lastMouseTranslationDelta = null;
     private readonly Queue<float> _pendingScrollDeltas = [];
     private bool _wantsScreenshot = false;
+    private Vector3? _scrollSmoothTarget = null;
 
     private float _distancePercentagePerScroll = 0.1f;
     public float DistancePercentagePerScroll
     {
         get => _distancePercentagePerScroll;
         set => SetField(ref _distancePercentagePerScroll, value.Clamp(0.0f, 1.0f));
+    }
+
+    private float _scrollSmoothSpeed = 12.0f;
+    /// <summary>
+    /// Controls how quickly the camera interpolates toward the scroll target. Higher = snappier.
+    /// </summary>
+    public float ScrollSmoothSpeed
+    {
+        get => _scrollSmoothSpeed;
+        set => SetField(ref _scrollSmoothSpeed, MathF.Max(1.0f, value));
     }
 
     private void ApplyTransformations(XRViewport vp)
@@ -1470,7 +1549,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var rot = _lastRotateDelta;
         _lastRotateDelta = null;
 
-        bool hasInput = _pendingScrollDeltas.Count > 0 || trans.HasValue || rot.HasValue;
+        bool hasNonScrollInput = trans.HasValue || rot.HasValue || HasContinuousMovementInput();
+        bool hasInput = _pendingScrollDeltas.Count > 0 || hasNonScrollInput;
         if (_cameraFocusLerp.HasValue)
         {
             if (hasInput)
@@ -1482,8 +1562,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             }
         }
 
+        // Cancel scroll smooth when any non-scroll movement input arrives
+        if (hasNonScrollInput)
+            _scrollSmoothTarget = null;
+
         while (_pendingScrollDeltas.Count > 0)
             ApplyScrollTransformation(vp, tfm, _pendingScrollDeltas.Dequeue());
+        UpdateScrollSmooth(tfm);
         if (trans.HasValue && WorldDragPoint.HasValue && DepthHitNormalizedViewportPoint.HasValue)
         {
             Vector3 normCoord = DepthHitNormalizedViewportPoint.Value;
@@ -1505,23 +1590,45 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         }
     }
 
-    private void ApplyScrollTransformation(XRViewport vp, Transform tfm, float scrollSpeed)
+    private void ApplyScrollTransformation(XRViewport vp, Transform tfm, float scrollDelta)
     {
-        if (ShiftPressed)
-            scrollSpeed *= ShiftSpeedModifier;
-
         if (DepthHitNormalizedViewportPoint.HasValue)
         {
             Vector3 worldCoord = vp.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint.Value);
-            float dist = tfm.WorldTranslation.Distance(worldCoord);
-            Vector3 newWorldPos = Segment.PointAtLineDistance(
-                tfm.WorldTranslation,
-                worldCoord,
-                scrollSpeed * dist * DistancePercentagePerScroll * ScrollSpeed);
-            tfm.SetWorldTranslation(newWorldPos);
+            // Compound from current smooth target if already animating, otherwise from camera position
+            Vector3 origin = _scrollSmoothTarget ?? tfm.WorldTranslation;
+            float dist = origin.Distance(worldCoord);
+            float moveAmount = MathF.Sign(scrollDelta) * dist * DistancePercentagePerScroll;
+            if (ShiftPressed)
+                moveAmount *= ShiftSpeedModifier;
+            _scrollSmoothTarget = Segment.PointAtLineDistance(origin, worldCoord, moveAmount);
         }
         else
-            base.OnScrolled(scrollSpeed);
+        {
+            if (ShiftPressed)
+                scrollDelta *= ShiftSpeedModifier;
+            base.OnScrolled(scrollDelta);
+        }
+    }
+
+    private void UpdateScrollSmooth(Transform tfm)
+    {
+        if (!_scrollSmoothTarget.HasValue)
+            return;
+
+        Vector3 current = tfm.WorldTranslation;
+        Vector3 target = _scrollSmoothTarget.Value;
+        float dt = Engine.Time.Timer.Update.Delta;
+        float t = 1.0f - MathF.Exp(-_scrollSmoothSpeed * dt);
+        Vector3 newPos = Vector3.Lerp(current, target, t);
+
+        if (Vector3.DistanceSquared(newPos, target) < 1e-8f)
+        {
+            tfm.SetWorldTranslation(target);
+            _scrollSmoothTarget = null;
+        }
+        else
+            tfm.SetWorldTranslation(newPos);
     }
 
     protected override void OnRightClick(bool pressed)
@@ -1543,6 +1650,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     protected override void OnLeftClick(bool pressed)
     {
         base.OnLeftClick(pressed);
+
+        // Force a fresh raycast on the next tick so click handlers always have
+        // up-to-date results, regardless of throttle or cursor-dirty state.
+        _forceRepick = true;
 
         if (!AllowWorldPicking)
             return;
@@ -1704,6 +1815,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private void BeginCameraFocusLerp(Vector3 targetPosition, Quaternion targetRotation, float durationSeconds)
     {
         var tfm = TransformAs<Transform>(); if (tfm is null) return;
+        _scrollSmoothTarget = null;
         float clampedDuration = MathF.Max(0.01f, durationSeconds);
         _cameraFocusLerp = new CameraFocusLerpState
         {

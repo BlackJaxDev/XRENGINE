@@ -35,3 +35,8 @@ vec3 XRENGINE_ReadNormal(sampler2DArray normalTexture, vec3 uvw)
 {
     return XRENGINE_DecodeNormal(texture(normalTexture, uvw).rg);
 }
+
+vec3 XRENGINE_ReadNormalMS(sampler2DMS normalTexture, ivec2 coord, int sampleIndex)
+{
+    return XRENGINE_DecodeNormal(texelFetch(normalTexture, coord, sampleIndex).rg);
+}

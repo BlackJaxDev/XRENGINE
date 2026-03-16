@@ -591,6 +591,20 @@ namespace XREngine
                     => AbstractRenderer.Current?.StencilMask(mask);
 
                 /// <summary>
+                /// Enables per-sample shading so the fragment shader runs once per MSAA sample.
+                /// Used by the MSAA deferred complex pixel lighting pass.
+                /// </summary>
+                /// <param name="minValue">Minimum fraction of samples to shade (1.0 = all samples).</param>
+                public static void EnableSampleShading(float minValue)
+                    => AbstractRenderer.Current?.EnableSampleShading(minValue);
+
+                /// <summary>
+                /// Disables per-sample shading, returning to per-fragment execution.
+                /// </summary>
+                public static void DisableSampleShading()
+                    => AbstractRenderer.Current?.DisableSampleShading();
+
+                /// <summary>
                 /// Enables or disables writing to the depth buffer.
                 /// When disabled, depth testing can still occur but values aren't written.
                 /// Useful for transparent objects that should test against but not update depth.

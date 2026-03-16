@@ -16,6 +16,12 @@ uniform bool UseGpuAutoExposure;
 
 uniform float ChromaticAberrationIntensity;
 
+// Bloom combine controls
+uniform float BloomStrength = 0.04;
+uniform int BloomStartMip = 1;
+uniform int BloomEndMip = 1;
+uniform float BloomLodWeights[5] = float[](0.0, 1.0, 0.0, 0.0, 0.0);
+
 // Lens distortion mode: 0=None, 1=Radial, 2=RadialAutoFromFOV, 3=Panini, 4=BrownConrady
 uniform int LensDistortionMode;
 uniform float LensDistortionIntensity;
@@ -183,13 +189,18 @@ void main()
         hdrSceneColor = texture(HDRSceneTex, uvi).rgb;
     }
 
-    // Add each blurred bloom mipmap
-    // Starts at 1/2 size lod because original image is not blurred (and doesn't need to be)
-        for (float lod = 1.0; lod < 5.0; lod += 1.0)
-        {
-            vec3 bloomSample = textureLod(BloomBlurTexture, vec3(duv, gl_ViewID_OVR), lod).rgb;
-            hdrSceneColor += bloomSample;
-        }
+    // Add bloom with configurable range/weights, scaled by overall strength
+    if (BloomStrength > 0.0)
+    {
+      int startMip = clamp(BloomStartMip, 0, 4);
+      int endMip = clamp(BloomEndMip, startMip, 4);
+      for (int lod = startMip; lod <= endMip; ++lod)
+      {
+        float w = BloomLodWeights[lod];
+        if (w > 0.0)
+          hdrSceneColor += textureLod(BloomBlurTexture, vec3(duv, gl_ViewID_OVR), float(lod)).rgb * w * BloomStrength;
+      }
+    }
 
     // Tone mapping
     vec3 ldrSceneColor = vec3(1.0) - exp(-hdrSceneColor * GetExposure());

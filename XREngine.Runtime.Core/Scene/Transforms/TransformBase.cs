@@ -196,6 +196,7 @@ namespace XREngine.Scene.Transforms
             set => SetField(ref _capsule, value);
         }
 
+        [DefaultValue(true)]
         public bool ImmediateLocalMatrixRecalculation
         {
             get => _immediateLocalMatrixRecalculation;

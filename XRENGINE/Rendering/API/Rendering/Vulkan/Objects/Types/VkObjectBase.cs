@@ -11,6 +11,19 @@ public unsafe partial class VulkanRenderer
 
         internal uint? _bindingId;
 
+        /// <summary>
+        /// Tracks whether <see cref="CreateObjectInternal"/> failed. When set, <see cref="Generate"/>
+        /// becomes a no-op to avoid retrying a deterministically failing creation every frame.
+        /// Reset by <see cref="ResetGenerationFailure"/> (e.g. after shader source changes).
+        /// </summary>
+        private bool _generationFailed;
+
+        /// <summary>
+        /// Clears the generation-failure flag so the next <see cref="Generate"/> call will retry.
+        /// Call this when the underlying data changes (e.g. shader source reloaded).
+        /// </summary>
+        public void ResetGenerationFailure() => _generationFailed = false;
+
         public override void Destroy()
         {
             if (!IsActive)
@@ -33,11 +46,19 @@ public unsafe partial class VulkanRenderer
 
         public override void Generate()
         {
-            if (IsActive)
+            if (IsActive || _generationFailed)
                 return;
 
             PreGenerated();
-            _bindingId = CreateObjectInternal();
+            try
+            {
+                _bindingId = CreateObjectInternal();
+            }
+            catch
+            {
+                _generationFailed = true;
+                throw;
+            }
             PostGenerated();
         }
 

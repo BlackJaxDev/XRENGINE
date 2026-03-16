@@ -8,10 +8,17 @@ const float InvPI = 0.31831f;
 layout(location = 0) out vec3 OutColor; //Diffuse lighting output
 layout(location = 0) in vec3 FragPos;
 
+#ifdef XRENGINE_MSAA_DEFERRED
+layout(binding = 0) uniform sampler2DMS AlbedoOpacity;
+layout(binding = 1) uniform sampler2DMS Normal;
+layout(binding = 2) uniform sampler2DMS RMSE;
+layout(binding = 3) uniform sampler2DMS DepthView;
+#else
 uniform sampler2D AlbedoOpacity; //AlbedoOpacity
 uniform sampler2D Normal; //Normal
 uniform sampler2D RMSE; //PBR: Roughness, Metallic, Specular, Index of refraction
 uniform sampler2D DepthView; //Depth
+#endif
 uniform sampler2D ShadowMap; //Directional Shadow Map
 
 uniform float ScreenWidth;
@@ -192,12 +199,21 @@ vec3 WorldPosFromDepth(in float depth, in vec2 uv)
 }
 void main()
 {
+#ifdef XRENGINE_MSAA_DEFERRED
+		ivec2 coord = ivec2(gl_FragCoord.xy);
+		vec3 albedo = texelFetch(AlbedoOpacity, coord, gl_SampleID).rgb;
+		vec3 normal = XRENGINE_ReadNormalMS(Normal, coord, gl_SampleID);
+		vec3 rms = texelFetch(RMSE, coord, gl_SampleID).rgb;
+		float depth = texelFetch(DepthView, coord, gl_SampleID).r;
+#else
 		vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
 
 		//Retrieve shading information from GBuffer textures
 		vec3 albedo = texture(AlbedoOpacity, uv).rgb;
 		vec3 normal = XRENGINE_ReadNormal(Normal, uv);
 		vec3 rms = texture(RMSE, uv).rgb;
+		float depth = texture(DepthView, uv).r;
+#endif
 		float depth = texture(DepthView, uv).r;
 		if (depth >= 1.0f)
 		{

@@ -9,7 +9,7 @@ namespace XREngine.Data
     [YamlTypeConverter]
     public sealed class Vector3YamlTypeConverter : IYamlTypeConverter
     {
-        public bool Accepts(Type type) => type == typeof(Vector3);
+        public bool Accepts(Type type) => type == typeof(Vector3) || type == typeof(Vector3?);
 
         public object? ReadYaml(IParser parser, Type type, ObjectDeserializer rootDeserializer)
         {

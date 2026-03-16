@@ -114,20 +114,18 @@ namespace XREngine
                     return true;
                 }
 
-                // Nested XRAsset - capture the node to check if it's a GUID reference
-                var capturedEvents = CaptureNode(reader);
-                if (TryResolveExternalReference(capturedEvents, expectedType, out var referencedAsset))
+                // Nested XRAsset - probe the exact { ID: guid } shape without consuming the full node.
+                // Replaying an entire subtree breaks YamlDotNet alias resolution because the replay parser
+                // does not carry the original parser's anchor context.
+                if (TryDeserializeNestedReferenceMapping(reader, expectedType, out value, out var deferredParser))
                 {
-                    value = referencedAsset;
                     return true;
                 }
 
-                // Not a reference - replay events to deserialize inline asset
-                var replayParser = new ReplayParser(capturedEvents);
                 _isReplaying = true;
                 try
                 {
-                    value = nestedObjectDeserializer(replayParser, expectedType);
+                    value = nestedObjectDeserializer(deferredParser!, expectedType);
                 }
                 finally
                 {
@@ -158,34 +156,7 @@ namespace XREngine
             if (Guid.TryParse(scalarValue, out var guid))
             {
                 reader.Consume<Scalar>();
-
-                // First prefer already-loaded assets.
-                if (Engine.Assets.TryGetAssetByID(guid, out var existing) && existing is not null)
-                {
-                    value = existing;
-                    return true;
-                }
-
-                // Otherwise, resolve the backing file via metadata and load it.
-                if (!Engine.Assets.TryResolveAssetPathById(guid, out var assetPath) || string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
-                {
-                    value = null;
-                    return true;
-                }
-
-                Type loadType = expectedType;
-                if (loadType.IsAbstract || loadType.IsInterface)
-                {
-                    if (TryResolveConcreteAssetType(assetPath, out var concreteType))
-                        loadType = concreteType;
-                    else
-                    {
-                        value = null;
-                        return true;
-                    }
-                }
-
-                value = Engine.Assets.LoadImmediate(assetPath, loadType);
+                value = ResolveExternalReference(guid, expectedType);
                 return true;
             }
 
@@ -256,123 +227,68 @@ namespace XREngine
             return false;
         }
 
-        private static IReadOnlyList<ParsingEvent> CaptureNode(IParser parser)
+        private static bool TryDeserializeNestedReferenceMapping(IParser reader, Type expectedType, out object? value, out IParser? deferredParser)
         {
-            var events = new List<ParsingEvent>();
-            CaptureNodeRecursive(parser, events);
-            return events;
-        }
+            value = null;
+            deferredParser = null;
 
-        private static void CaptureNodeRecursive(IParser parser, ICollection<ParsingEvent> events)
-        {
-            if (parser.TryConsume<Scalar>(out var scalar))
-            {
-                events.Add(scalar);
-                return;
-            }
+            List<ParsingEvent> consumedEvents = [];
 
-            if (parser.TryConsume<DocumentStart>(out var documentStart))
-            {
-                events.Add(documentStart);
-                while (true)
-                {
-                    if (parser.TryConsume<DocumentEnd>(out var documentEnd))
-                    {
-                        events.Add(documentEnd);
-                        break;
-                    }
-
-                    CaptureNodeRecursive(parser, events);
-                }
-                return;
-            }
-
-            if (parser.TryConsume<StreamStart>(out var streamStart))
-            {
-                events.Add(streamStart);
-                while (true)
-                {
-                    if (parser.TryConsume<StreamEnd>(out var streamEnd))
-                    {
-                        events.Add(streamEnd);
-                        break;
-                    }
-
-                    CaptureNodeRecursive(parser, events);
-                }
-                return;
-            }
-
-            if (parser.TryConsume<AnchorAlias>(out var anchorAlias))
-            {
-                events.Add(anchorAlias);
-                return;
-            }
-
-            if (parser.TryConsume<SequenceStart>(out var sequenceStart))
-            {
-                events.Add(sequenceStart);
-                while (true)
-                {
-                    if (parser.TryConsume<SequenceEnd>(out var sequenceEnd))
-                    {
-                        events.Add(sequenceEnd);
-                        break;
-                    }
-
-                    CaptureNodeRecursive(parser, events);
-                }
-                return;
-            }
-
-            if (parser.TryConsume<MappingStart>(out var mappingStart))
-            {
-                events.Add(mappingStart);
-                while (true)
-                {
-                    if (parser.TryConsume<MappingEnd>(out var mappingEnd))
-                    {
-                        events.Add(mappingEnd);
-                        break;
-                    }
-
-                    CaptureNodeRecursive(parser, events); // Key
-                    CaptureNodeRecursive(parser, events); // Value
-                }
-                return;
-            }
-
-            throw new YamlException("Unsupported YAML node encountered while capturing XRAsset data.");
-        }
-
-        private static bool TryResolveExternalReference(IReadOnlyList<ParsingEvent> events, Type expectedType, out XRAsset? asset)
-        {
-            asset = null;
-            if (events.Count != 4)
+            if (!reader.TryConsume<MappingStart>(out var mappingStart))
                 return false;
 
-            if (events[0] is not MappingStart || events[3] is not MappingEnd)
-                return false;
+            consumedEvents.Add(mappingStart);
 
-            if (events[1] is not Scalar keyScalar || !string.Equals(keyScalar.Value, "ID", StringComparison.OrdinalIgnoreCase))
+            if (!reader.TryConsume<Scalar>(out var keyScalar))
+            {
+                deferredParser = new PrefixReplayParser(consumedEvents, reader);
                 return false;
+            }
 
-            if (events[2] is not Scalar valueScalar)
+            consumedEvents.Add(keyScalar);
+
+            if (!string.Equals(keyScalar.Value, "ID", StringComparison.OrdinalIgnoreCase))
+            {
+                deferredParser = new PrefixReplayParser(consumedEvents, reader);
                 return false;
+            }
+
+            if (!reader.TryConsume<Scalar>(out var valueScalar))
+            {
+                deferredParser = new PrefixReplayParser(consumedEvents, reader);
+                return false;
+            }
+
+            consumedEvents.Add(valueScalar);
 
             if (!Guid.TryParse(valueScalar.Value, out var guid))
+            {
+                deferredParser = new PrefixReplayParser(consumedEvents, reader);
                 return false;
+            }
 
+            if (!reader.TryConsume<MappingEnd>(out _))
+            {
+                deferredParser = new PrefixReplayParser(consumedEvents, reader);
+                return false;
+            }
+
+            value = ResolveExternalReference(guid, expectedType);
+            return true;
+        }
+
+        private static XRAsset? ResolveExternalReference(Guid guid, Type expectedType)
+        {
             // First prefer already-loaded assets.
-            if (Engine.Assets.TryGetAssetByID(guid, out asset) && asset is not null)
-                return true;
+            if (Engine.Assets.TryGetAssetByID(guid, out var asset) && asset is not null)
+                return asset;
 
             // Otherwise, resolve the backing file via metadata and load it.
             if (!Engine.Assets.TryResolveAssetPathById(guid, out var assetPath) || string.IsNullOrWhiteSpace(assetPath))
-                return false;
+                return null;
 
             if (!File.Exists(assetPath))
-                return false;
+                return null;
 
             Type loadType = expectedType;
             if (loadType.IsAbstract || loadType.IsInterface)
@@ -380,11 +296,10 @@ namespace XREngine
                 if (TryResolveConcreteAssetType(assetPath, out var concreteType))
                     loadType = concreteType;
                 else
-                    return false;
+                    return null;
             }
 
-            asset = Engine.Assets.LoadImmediate(assetPath, loadType);
-            return asset is not null;
+            return Engine.Assets.LoadImmediate(assetPath, loadType);
         }
 
         private static bool TryResolveConcreteAssetType(string assetPath, out Type type)
@@ -448,30 +363,38 @@ namespace XREngine
             return false;
         }
 
-        private sealed class ReplayParser : IParser
+        private sealed class PrefixReplayParser : IParser
         {
-            private readonly Queue<ParsingEvent> _events;
-            private ParsingEvent? _current;
+            private readonly IReadOnlyList<ParsingEvent> _prefixEvents;
+            private readonly IParser _inner;
+            private int _prefixIndex;
+            private bool _replayingPrefix;
 
-            public ReplayParser(IEnumerable<ParsingEvent> events)
+            public PrefixReplayParser(IReadOnlyList<ParsingEvent> prefixEvents, IParser inner)
             {
-                _events = new Queue<ParsingEvent>(events);
-                // Position on first event immediately
-                MoveNext();
+                _prefixEvents = prefixEvents;
+                _inner = inner;
+                _prefixIndex = 0;
+                _replayingPrefix = prefixEvents.Count > 0;
             }
 
-            public ParsingEvent Current => _current ?? throw new InvalidOperationException("The parser is not positioned on an event.");
+            public ParsingEvent Current => _replayingPrefix
+                ? _prefixEvents[_prefixIndex]
+                : _inner.Current ?? throw new InvalidOperationException("The parser is not positioned on an event.");
 
             public bool MoveNext()
             {
-                if (_events.Count == 0)
+                if (_replayingPrefix)
                 {
-                    _current = null;
-                    return false;
+                    _prefixIndex++;
+                    if (_prefixIndex < _prefixEvents.Count)
+                        return true;
+
+                    _replayingPrefix = false;
+                    return true;
                 }
 
-                _current = _events.Dequeue();
-                return true;
+                return _inner.MoveNext();
             }
         }
     }

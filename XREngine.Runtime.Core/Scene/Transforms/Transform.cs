@@ -124,29 +124,42 @@ namespace XREngine.Scene.Transforms
             Order = state.Order;
         }
 
-        //[TypeConverter(typeof(Vector3TypeConverter))]
-        //[DefaultValue(typeof(Vector3), "1 1 1")]
         /// <summary>
         /// The local scale of this transform relative to its parent.
         /// </summary>
+        [YamlIgnore]
         public Vector3 Scale
         {
             get => _frameState.Scale;
             set => SetField(ref _frameState.Scale, value);
         }
 
+        /// <summary>
+        /// Serialization bridge for <see cref="Scale"/>. Returns null (omitted from YAML) when at default (1,1,1).
+        /// </summary>
+        [YamlMember(Alias = "Scale")]
+        [Browsable(false)]
+        public Vector3? ScaleSerialized
+        {
+            get => Scale == Vector3.One ? null : Scale;
+            set => Scale = value ?? Vector3.One;
+        }
+
+        [YamlIgnore]
         public float ScaleX
         {
             get => Scale.X;
             set => SetScaleX(value);
         }
 
+        [YamlIgnore]
         public float ScaleY
         {
             get => Scale.Y;
             set => SetScaleY(value);
         }
 
+        [YamlIgnore]
         public float ScaleZ
         {
             get => Scale.Z;
@@ -156,24 +169,39 @@ namespace XREngine.Scene.Transforms
         /// <summary>
         /// The local translation of this transform relative to its parent.
         /// </summary>
+        [YamlIgnore]
         public Vector3 Translation
         {
             get => _frameState.Translation;
             set => SetField(ref _frameState.Translation, value);
         }
 
+        /// <summary>
+        /// Serialization bridge for <see cref="Translation"/>. Returns null (omitted from YAML) when at default (0,0,0).
+        /// </summary>
+        [YamlMember(Alias = "Translation")]
+        [Browsable(false)]
+        public Vector3? TranslationSerialized
+        {
+            get => Translation == Vector3.Zero ? null : Translation;
+            set => Translation = value ?? Vector3.Zero;
+        }
+
+        [YamlIgnore]
         public float TranslationX
         {
             get => Translation.X;
             set => SetX(value);
         }
 
+        [YamlIgnore]
         public float TranslationY
         {
             get => Translation.Y;
             set => SetY(value);
         }
 
+        [YamlIgnore]
         public float TranslationZ
         {
             get => Translation.Z;
@@ -190,35 +218,49 @@ namespace XREngine.Scene.Transforms
             set => Rotation = value.ToQuaternion();
         }
 
-        //[DefaultValue(typeof(Quaternion), "0 0 0 1")]
-        //[TypeConverter(typeof(QuaternionTypeConverter))]
         /// <summary>
         /// The local rotation of this transform relative to its parent.
         /// </summary>
+        [YamlIgnore]
         public Quaternion Rotation
         {
             get => _frameState.Rotation;
             set => SetField(ref _frameState.Rotation, value);
         }
 
+        /// <summary>
+        /// Serialization bridge for <see cref="Rotation"/>. Returns null (omitted from YAML) when at identity (0,0,0,1).
+        /// </summary>
+        [YamlMember(Alias = "Rotation")]
+        [Browsable(false)]
+        public Quaternion? RotationSerialized
+        {
+            get => Rotation == Quaternion.Identity ? null : Rotation;
+            set => Rotation = value ?? Quaternion.Identity;
+        }
+
+        [YamlIgnore]
         public float QuaternionX
         {
             get => Rotation.X;
             set => Rotation = new Quaternion(value, Rotation.Y, Rotation.Z, Rotation.W);
         }
 
+        [YamlIgnore]
         public float QuaternionY
         {
             get => Rotation.Y;
             set => Rotation = new Quaternion(Rotation.X, value, Rotation.Z, Rotation.W);
         }
 
+        [YamlIgnore]
         public float QuaternionZ
         {
             get => Rotation.Z;
             set => Rotation = new Quaternion(Rotation.X, Rotation.Y, value, Rotation.W);
         }
 
+        [YamlIgnore]
         public float QuaternionW
         {
             get => Rotation.W;
