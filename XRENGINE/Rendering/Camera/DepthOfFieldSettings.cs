@@ -1,6 +1,7 @@
 
 using System;
 using System.Numerics;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering
 {
@@ -13,6 +14,7 @@ namespace XREngine.Rendering
         {
             Artist = 0,
             Physical = 1,
+            TargetTransform = 2,
         }
 
         private bool _enabled;
@@ -24,6 +26,8 @@ namespace XREngine.Rendering
         private float _bokehRadius = 1.25f;
         private bool _nearBlur = true;
         private float _physicalCircleOfConfusionMm = 0.03f;
+        private TransformBase? _focusTarget;
+        private Vector3 _focusTargetOffset = Vector3.Zero;
 
         public bool Enabled
         {
@@ -83,6 +87,25 @@ namespace XREngine.Rendering
             set => SetField(ref _physicalCircleOfConfusionMm, MathF.Max(0.0001f, value));
         }
 
+        /// <summary>
+        /// Optional transform whose world-space position drives the focus distance.
+        /// Active only when <see cref="Mode"/> is <see cref="DepthOfFieldControlMode.TargetTransform"/>.
+        /// </summary>
+        public TransformBase? FocusTarget
+        {
+            get => _focusTarget;
+            set => SetField(ref _focusTarget, value);
+        }
+
+        /// <summary>
+        /// World-space offset added to the focus target's position before computing focus distance.
+        /// </summary>
+        public Vector3 FocusTargetOffset
+        {
+            get => _focusTargetOffset;
+            set => SetField(ref _focusTargetOffset, value);
+        }
+
         public override void SetUniforms(XRRenderProgram program)
             => SetUniforms(program, Vector2.Zero);
 
@@ -93,7 +116,17 @@ namespace XREngine.Rendering
             bool usePhysical = _mode == DepthOfFieldControlMode.Physical
                 && camera?.Parameters is XRPhysicalCameraParameters;
 
-            float focusDist = MathF.Max(0.01f, _focusDistance);
+            float focusDist;
+            if (_mode == DepthOfFieldControlMode.TargetTransform && _focusTarget != null && camera != null)
+            {
+                Vector3 targetPos = _focusTarget.WorldTranslation + _focusTargetOffset;
+                Vector3 cameraPos = camera.Transform.WorldTranslation;
+                focusDist = MathF.Max(0.01f, Vector3.Distance(cameraPos, targetPos));
+            }
+            else
+            {
+                focusDist = MathF.Max(0.01f, _focusDistance);
+            }
             float focusRange = MathF.Max(0.01f, _focusRange);
 
             // Convert world-space distances to the camera's depth buffer space so DOF matches the actual depth encoding.

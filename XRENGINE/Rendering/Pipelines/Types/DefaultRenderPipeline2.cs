@@ -1,0 +1,2640 @@
+using Extensions;
+using System.Collections;
+using System.Numerics;
+using System.Runtime.InteropServices;
+using XREngine.Components.Capture.Lights;
+using XREngine.Components.Scene.Mesh;
+using XREngine.Data.Colors;
+using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
+using XREngine.Rendering.Commands;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Physics.Physx;
+using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Resources;
+using XREngine.Rendering.Vulkan;
+using XREngine.Scene;
+using static XREngine.Engine.Rendering.State;
+
+namespace XREngine.Rendering;
+
+public partial class DefaultRenderPipeline2 : RenderPipeline
+{
+    public const string SceneShaderPath = "Scene3D";
+
+    private readonly NearToFarRenderCommandSorter _nearToFarSorter = new();
+    private readonly FarToNearRenderCommandSorter _farToNearSorter = new();
+
+    //TODO: these options below should not be controlled by this render pipeline object, 
+    // but rather in branches in the command chain.
+
+    private readonly Lazy<XRMaterial> _voxelConeTracingVoxelizationMaterial;
+    private readonly Lazy<XRMaterial> _motionVectorsMaterial;
+    private readonly Lazy<XRMaterial> _depthNormalPrePassMaterial;
+
+    private const float TemporalFeedbackMin = 0.15f;
+    private const float TemporalFeedbackMax = 0.975f;
+    private const float TemporalVarianceGamma = 0.85f;
+    private const float TemporalCatmullRadius = 1.0f;
+    private const float TemporalDepthRejectThreshold = 0.0045f;
+    private static readonly Vector2 TemporalReactiveTransparencyRange = new(0.4f, 0.85f);
+    private const float TemporalReactiveVelocityScale = 0.55f;
+    private const float TemporalReactiveLumaThreshold = 0.35f;
+    private const float TemporalDepthDiscontinuityScale = 250.0f;
+    private const float TemporalConfidencePower = 0.75f;
+
+    private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
+    public EGlobalIlluminationMode GlobalIlluminationMode
+    {
+        get => _globalIlluminationMode;
+        set => SetField(ref _globalIlluminationMode, value);
+    }
+
+    public bool UsesRestirGI => _globalIlluminationMode == EGlobalIlluminationMode.Restir;
+    public bool UsesVoxelConeTracing => _globalIlluminationMode == EGlobalIlluminationMode.VoxelConeTracing;
+    public bool UsesLightVolumes => _globalIlluminationMode == EGlobalIlluminationMode.LightVolumes;
+    public bool UsesLightProbeGI => _globalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl;
+    public bool UsesRadianceCascades => _globalIlluminationMode == EGlobalIlluminationMode.RadianceCascades;
+    public bool UsesSurfelGI => _globalIlluminationMode == EGlobalIlluminationMode.SurfelGI;
+
+    // Light probe debug accessors (for editor/state panels)
+    public XRTexture2DArray? ProbeIrradianceArray => _probeIrradianceArray;
+    public XRTexture2DArray? ProbePrefilterArray => _probePrefilterArray;
+    public int ProbeCount => _probePositionBuffer is null ? 0 : (int)_probePositionBuffer.ElementCount;
+
+    protected static bool GPURenderDispatch
+        => Engine.Rendering.ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
+
+    private static bool UseVulkanSafeFeatureProfile
+        => VulkanFeatureProfile.IsActive;
+
+    private static bool EnableComputeDependentPasses
+        => VulkanFeatureProfile.EnableComputeDependentPasses;
+
+    /// <summary>
+    /// Resolves the effective HDR output mode for the current rendering camera.
+    /// Camera override takes highest priority, then falls back to the global engine setting.
+    /// </summary>
+    internal static bool ResolveOutputHDR()
+    {
+        var camera = Engine.Rendering.State.RenderingCamera;
+        return camera?.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
+    }
+
+    /// <summary>
+    /// Resolves the effective anti-aliasing mode for the current rendering camera.
+    /// Camera override takes highest priority, then falls back to the global engine setting.
+    /// </summary>
+    private static EAntiAliasingMode ResolveAntiAliasingMode()
+    {
+        var camera = Engine.Rendering.State.RenderingCamera;
+        return camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
+    }
+
+    internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
+    {
+        if (Engine.Rendering.Settings.EnableNvidiaDlss || Engine.Rendering.Settings.EnableIntelXess)
+            return null;
+
+        EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
+        return mode == EAntiAliasingMode.Tsr
+            ? Math.Clamp(camera?.TsrRenderScaleOverride ?? Engine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f)
+            : null;
+    }
+
+    /// <summary>
+    /// Resolves the effective MSAA sample count for the current rendering camera.
+    /// Camera override takes highest priority, then falls back to the global engine setting.
+    /// </summary>
+    internal static uint ResolveEffectiveMsaaSampleCount()
+    {
+        var camera = Engine.Rendering.State.RenderingCamera;
+        return Math.Max(1u, camera?.MsaaSampleCountOverride ?? Engine.EffectiveSettings.MsaaSampleCount);
+    }
+
+    /// <summary>
+    /// True when MSAA should be active for the current rendering camera.
+    /// Evaluated at render time so per-camera overrides take effect.
+    /// </summary>
+    private static bool RuntimeEnableMsaa
+        => ResolveAntiAliasingMode() == EAntiAliasingMode.Msaa
+        && ResolveEffectiveMsaaSampleCount() > 1u;
+
+    /// <summary>
+    /// True when FXAA should be active for the current rendering camera.
+    /// Evaluated at render time so per-camera overrides take effect.
+    /// </summary>
+    private static bool RuntimeEnableFxaa
+        => ResolveAntiAliasingMode() == EAntiAliasingMode.Fxaa;
+
+    /// <summary>
+    /// True when the current camera's AA mode is TSR and internal resolution is
+    /// below 100%, meaning a dedicated upscale pass is required.
+    /// </summary>
+    private static bool RuntimeNeedsTsrUpscale
+        => ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;
+
+    // Build-time checks: used only during command chain generation to decide
+    // whether to include FBOs/textures. True if the global setting requests
+    // the mode, ensuring resources are available even when no camera is active.
+    private bool EnableMsaa
+        => Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Msaa
+        && Engine.EffectiveSettings.MsaaSampleCount > 1u;
+    private bool EnableFxaa => Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Fxaa;
+    private uint MsaaSampleCount => Math.Max(1u, Engine.EffectiveSettings.MsaaSampleCount);
+
+    private string BrightPassShaderName() => 
+        Stereo ? "BrightPassStereo.fs" : 
+        "BrightPass.fs";
+
+    private string HudFBOShaderName() => 
+        Stereo ? "HudFBOStereo.fs" : 
+        "HudFBO.fs";
+
+    private string PostProcessShaderName() => 
+        Stereo ? "PostProcessStereo.fs" : 
+        "PostProcess.fs";
+
+    private string DeferredLightCombineShaderName() => 
+        Stereo ? "DeferredLightCombineStereo.fs" : 
+        "DeferredLightCombine.fs";
+
+    /// <summary>
+    /// Affects how textures and FBOs are created for single-pass stereo rendering.
+    /// </summary>
+    public bool Stereo { get; }
+
+    protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
+        => new()
+        {
+            { (int)EDefaultRenderPass.PreRender, null },
+            { (int)EDefaultRenderPass.Background, null },
+            { (int)EDefaultRenderPass.OpaqueDeferred, _nearToFarSorter },
+            { (int)EDefaultRenderPass.DeferredDecals, _farToNearSorter },
+            { (int)EDefaultRenderPass.OpaqueForward, _nearToFarSorter },
+            { (int)EDefaultRenderPass.MaskedForward, _nearToFarSorter },
+            { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
+            { (int)EDefaultRenderPass.WeightedBlendedOitForward, null },
+            { (int)EDefaultRenderPass.PerPixelLinkedListForward, null },
+            { (int)EDefaultRenderPass.DepthPeelingForward, null },
+            { (int)EDefaultRenderPass.OnTopForward, null },
+            { (int)EDefaultRenderPass.PostRender, null }
+        };
+
+    protected override Lazy<XRMaterial> InvalidMaterialFactory => new(MakeInvalidMaterial, LazyThreadSafetyMode.PublicationOnly);
+
+    private XRMaterial MakeInvalidMaterial() =>
+        //Debug.Out("Generating invalid material");
+        XRMaterial.CreateColorMaterialDeferred();
+
+    //FBOs
+    public const string AmbientOcclusionFBOName = "AmbientOcclusionFBO";
+    public const string AmbientOcclusionBlurFBOName = "AmbientOcclusionBlurFBO";
+    public const string HBAOPlusBlurIntermediateFBOName = "HBAOPlusBlurIntermediateFBO";
+    public const string GTAOBlurIntermediateFBOName = "GTAOBlurIntermediateFBO";
+    public const string GBufferFBOName = "GBufferFBO";
+    public const string LightCombineFBOName = "LightCombineFBO";
+    public const string ForwardPassFBOName = "ForwardPassFBO";
+    public const string ForwardPassMsaaFBOName = "ForwardPassMSAAFBO";
+    public const string TransparentSceneCopyFBOName = "TransparentSceneCopyFBO";
+    public const string TransparentAccumulationFBOName = "TransparentAccumulationFBO";
+    public const string TransparentResolveFBOName = "TransparentResolveFBO";
+    public const string TransparentAccumulationDebugFBOName = "TransparentAccumulationDebugFBO";
+    public const string TransparentRevealageDebugFBOName = "TransparentRevealageDebugFBO";
+    public const string TransparentOverdrawDebugFBOName = "TransparentOverdrawDebugFBO";
+    public const string PostProcessFBOName = "PostProcessFBO";
+    public const string PostProcessOutputTextureName = "PostProcessOutputTexture";
+    public const string PostProcessOutputFBOName = "PostProcessOutputFBO";
+    public const string FxaaFBOName = "FxaaFBO";
+    public const string UserInterfaceFBOName = "UserInterfaceFBO";
+    public const string TransformIdDebugQuadFBOName = "TransformIdDebugQuadFBO";
+    public const string TransformIdDebugOutputTextureName = "TransformIdDebugOutputTexture";
+    public const string TransformIdDebugOutputFBOName = "TransformIdDebugOutputFBO";
+    public const string RestirCompositeFBOName = "RestirCompositeFBO";
+    public const string LightVolumeCompositeFBOName = "LightVolumeCompositeFBO";
+    public const string VelocityFBOName = "VelocityFBO";
+    public const string HistoryCaptureFBOName = "HistoryCaptureFBO";
+    public const string TemporalInputFBOName = "TemporalInputFBO";
+    public const string TemporalAccumulationFBOName = "TemporalAccumulationFBO";
+    public const string HistoryExposureFBOName = "HistoryExposureFBO";
+    public const string MotionBlurCopyFBOName = "MotionBlurCopyFBO";
+    public const string MotionBlurFBOName = "MotionBlurFBO";
+    public const string DepthOfFieldCopyFBOName = "DepthOfFieldCopyFBO";
+    public const string DepthOfFieldFBOName = "DepthOfFieldFBO";
+    public const string DepthPreloadFBOName = "DepthPreloadFBO";
+    public const string ForwardDepthPrePassFBOName = "ForwardDepthPrePassFBO";
+    public const string ForwardDepthPrePassMergeFBOName = "ForwardDepthPrePassMergeFBO";
+    public const string FxaaOutputTextureName = "FxaaOutputTexture";
+    public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
+    public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
+    public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
+    public const string TsrUpscaleFBOName = "TsrUpscaleFBO";
+
+    //Textures
+    public const string AmbientOcclusionNoiseTextureName = "AmbientOcclusionNoiseTexture";
+    public const string AmbientOcclusionIntensityTextureName = "AmbientOcclusionTexture";
+    public const string GTAORawTextureName = "GTAORawTexture";
+    public const string GTAOBlurIntermediateTextureName = "GTAOBlurIntermediateTexture";
+    public const string HBAOPlusRawTextureName = "HBAOPlusRawTexture";
+    public const string HBAOPlusBlurIntermediateTextureName = "HBAOPlusBlurIntermediateTexture";
+    public const string NormalTextureName = "Normal";
+    public const string ForwardPrePassNormalTextureName = "ForwardPrePassNormal";
+    public const string DepthViewTextureName = "DepthView";
+    public const string StencilViewTextureName = "StencilView";
+    public const string AlbedoOpacityTextureName = "AlbedoOpacity";
+    public const string RMSETextureName = "RMSE";
+    public const string TransformIdTextureName = "TransformId";
+    public const string DepthStencilTextureName = "DepthStencil";
+    public const string ForwardPrePassDepthStencilTextureName = "ForwardPrePassDepthStencil";
+    public const string DiffuseTextureName = "LightingTexture";
+    public const string HDRSceneTextureName = "HDRSceneTex";
+    public const string TransparentSceneCopyTextureName = "TransparentSceneCopyTex";
+    public const string TransparentAccumTextureName = "TransparentAccumTex";
+    public const string TransparentRevealageTextureName = "TransparentRevealageTex";
+    //public const string HDRSceneTexture2Name = "HDRSceneTex2";
+    public const string AutoExposureTextureName = "AutoExposureTex";
+    public const string BloomBlurTextureName = "BloomBlurTexture";
+    public const string UserInterfaceTextureName = "HUDTex";
+    public const string BRDFTextureName = "BRDF";
+    public const string RestirGITextureName = "RestirGITexture";
+    public const string LightVolumeGITextureName = "LightVolumeGITexture";
+    public const string VoxelConeTracingVolumeTextureName = "VoxelConeTracingVolume";
+    public const string VelocityTextureName = "Velocity";
+    public const string HistoryColorTextureName = "HistoryColor";
+    public const string HistoryDepthStencilTextureName = "HistoryDepthStencil";
+    public const string HistoryDepthViewTextureName = "HistoryDepth";
+    public const string TemporalColorInputTextureName = "TemporalColorInput";
+    public const string TemporalExposureVarianceTextureName = "TemporalExposureVariance";
+    public const string HistoryExposureVarianceTextureName = "HistoryExposureVariance";
+    public const string MotionBlurTextureName = "MotionBlur";
+    public const string DepthOfFieldTextureName = "DepthOfField";
+    public const string TsrHistoryColorTextureName = "TsrHistoryColor";
+    public const string RadianceCascadeGITextureName = "RadianceCascadeGI";
+    public const string SurfelGITextureName = "SurfelGITexture";
+
+    // MSAA deferred GBuffer texture names
+    public const string MsaaAlbedoOpacityTextureName = "MsaaAlbedoOpacity";
+    public const string MsaaNormalTextureName = "MsaaNormal";
+    public const string MsaaRMSETextureName = "MsaaRMSE";
+    public const string MsaaDepthStencilTextureName = "MsaaDepthStencil";
+    public const string MsaaDepthViewTextureName = "MsaaDepthView";
+    public const string MsaaTransformIdTextureName = "MsaaTransformId";
+    public const string MsaaGBufferFBOName = "MsaaGBufferFBO";
+    public const string MsaaLightingTextureName = "MsaaLightingTexture";
+    public const string MsaaLightingFBOName = "MsaaLightingFBO";
+    public const string MsaaDeferredResolveAlbedoFBOName = "MsaaDeferredResolveAlbedoFBO";
+    public const string MsaaDeferredResolveNormalFBOName = "MsaaDeferredResolveNormalFBO";
+    public const string MsaaDeferredResolveRmseFBOName = "MsaaDeferredResolveRmseFBO";
+    private const string MsaaDeferredDefine = "XRENGINE_MSAA_DEFERRED";
+
+    /// <summary>
+    /// True when the current camera uses MSAA and the deferred pipeline should run in MSAA mode.
+    /// </summary>
+    internal static bool RuntimeEnableMsaaDeferred
+        => RuntimeEnableMsaa;
+
+    private const string TonemappingStageKey = "tonemapping";
+    private const string ColorGradingStageKey = "colorGrading";
+    private const string BloomStageKey = "bloom";
+    private const string AmbientOcclusionStageKey = "ambientOcclusion";
+    private const int AmbientOcclusionDisabledMode = -1;
+    private const string TemporalAntiAliasingStageKey = "temporalAntiAliasing";
+    private const string MotionBlurStageKey = "motionBlur";
+    private const string DepthOfFieldStageKey = "depthOfField";
+    private const string LensDistortionStageKey = "lensDistortion";
+    private const string ChromaticAberrationStageKey = "chromaticAberration";
+    private const string FogStageKey = "fog";
+
+    private static readonly string[] AntiAliasingTextureDependencies =
+    [
+        PostProcessOutputTextureName,
+        FxaaOutputTextureName,
+        HistoryColorTextureName,
+        HistoryDepthStencilTextureName,
+        HistoryDepthViewTextureName,
+        TemporalColorInputTextureName,
+        TemporalExposureVarianceTextureName,
+        HistoryExposureVarianceTextureName,
+        TsrHistoryColorTextureName,
+        MsaaAlbedoOpacityTextureName,
+        MsaaNormalTextureName,
+        MsaaRMSETextureName,
+        MsaaDepthStencilTextureName,
+        MsaaDepthViewTextureName,
+        MsaaTransformIdTextureName,
+        MsaaLightingTextureName,
+    ];
+
+    private static readonly string[] AntiAliasingFrameBufferDependencies =
+    [
+        AmbientOcclusionFBOName,
+        LightCombineFBOName,
+        ForwardPassFBOName,
+        PostProcessOutputFBOName,
+        PostProcessFBOName,
+        FxaaFBOName,
+        TsrHistoryColorFBOName,
+        TsrUpscaleFBOName,
+        HistoryCaptureFBOName,
+        TemporalInputFBOName,
+        TemporalAccumulationFBOName,
+        HistoryExposureFBOName,
+        DepthPreloadFBOName,
+        ForwardPassMsaaFBOName,
+        TransparentSceneCopyFBOName,
+        TransparentAccumulationFBOName,
+        TransparentResolveFBOName,
+        VelocityFBOName,
+        MsaaGBufferFBOName,
+        MsaaLightingFBOName,
+        MsaaDeferredResolveAlbedoFBOName,
+        MsaaDeferredResolveNormalFBOName,
+        MsaaDeferredResolveRmseFBOName,
+    ];
+
+    public DefaultRenderPipeline2() : this(false)
+    {
+    }
+
+    public DefaultRenderPipeline2(bool stereo = false) : base(true)
+    {
+        Stereo = stereo;
+        GlobalIlluminationMode = Engine.UserSettings.GlobalIlluminationMode;
+        _voxelConeTracingVoxelizationMaterial = new Lazy<XRMaterial>(CreateVoxelConeTracingVoxelizationMaterial, LazyThreadSafetyMode.PublicationOnly);
+        _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
+        _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
+        Engine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
+        Engine.Rendering.AntiAliasingSettingsChanged += HandleAntiAliasingSettingsChanged;
+        ApplyAntiAliasingResolutionHint();
+        CommandChain = GenerateCommandChain();
+    }
+
+    private bool EnableTransformIdVisualization
+        => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransformId;
+
+    private bool EnableTransparencyAccumulationVisualization
+        => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransparencyAccumulation;
+
+    private bool EnableTransparencyRevealageVisualization
+        => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransparencyRevealage;
+
+    private bool EnableTransparencyOverdrawVisualization
+        => !Stereo && Engine.EditorPreferences.Debug.VisualizeTransparencyOverdrawHeatmap;
+
+    private bool EnablePerPixelLinkedListVisualization
+        => !Stereo && Engine.EditorPreferences.Debug.VisualizePerPixelLinkedListFragments;
+
+    private bool EnableDepthPeelingLayerVisualization
+        => !Stereo && Engine.EditorPreferences.Debug.VisualizeDepthPeelingLayer;
+
+    private string? ActiveTransparencyDebugFboName
+        => EnableTransparencyAccumulationVisualization
+            ? TransparentAccumulationDebugFBOName
+            : EnableTransparencyRevealageVisualization
+                ? TransparentRevealageDebugFBOName
+                : EnableTransparencyOverdrawVisualization
+                    ? TransparentOverdrawDebugFBOName
+                    : EnablePerPixelLinkedListVisualization
+                        ? PpllFragmentCountDebugFBOName
+                        : EnableDepthPeelingLayerVisualization
+                            ? DepthPeelingDebugFBOName
+                    : null;
+
+    private void HandleRenderingSettingsChanged()
+    {
+        Engine.InvokeOnMainThread(() =>
+        {
+            ApplyAntiAliasingResolutionHint();
+            CommandChain = GenerateCommandChain();
+            foreach (var instance in Instances)
+                instance.DestroyCache();
+        }, "DefaultRenderPipeline2: Rendering settings changed", true);
+    }
+
+    private void HandleAntiAliasingSettingsChanged()
+    {
+        Engine.InvokeOnMainThread(() =>
+        {
+            ApplyAntiAliasingResolutionHint();
+
+            foreach (var instance in Instances)
+                InvalidateAntiAliasingResources(instance);
+
+            foreach (var window in Engine.Windows)
+            {
+                window.InvalidateScenePanelResources();
+                window.RequestRenderStateRecheck(resetCircuitBreaker: true);
+            }
+        }, "DefaultRenderPipeline2: AA settings changed", true);
+    }
+
+    private static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance)
+    {
+        foreach (string name in AntiAliasingFrameBufferDependencies)
+            instance.Resources.RemoveFrameBuffer(name);
+
+        foreach (string name in AntiAliasingTextureDependencies)
+            instance.Resources.RemoveTexture(name);
+    }
+
+    private void ApplyAntiAliasingResolutionHint()
+    {
+        // Avoid fighting other upscalers when DLSS or XeSS is enabled.
+        if (Engine.Rendering.Settings.EnableNvidiaDlss || Engine.Rendering.Settings.EnableIntelXess)
+        {
+            RequestedInternalResolution = null;
+            return;
+        }
+
+        if (Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Tsr)
+        {
+            RequestedInternalResolution = Math.Clamp(Engine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f);
+        }
+        else
+        {
+            // Null means "use viewport default".
+            RequestedInternalResolution = null;
+        }
+    }
+
+    internal XRMaterial GetVoxelConeTracingVoxelizationMaterial()
+        => _voxelConeTracingVoxelizationMaterial.Value;
+
+    internal XRMaterial GetMotionVectorsMaterial()
+        => _motionVectorsMaterial.Value;
+
+    internal XRMaterial GetDepthNormalPrePassMaterial()
+        => _depthNormalPrePassMaterial.Value;
+
+    #region Command Chain Generation
+
+    protected override ViewportRenderCommandContainer GenerateCommandChain()
+    {
+        ViewportRenderCommandContainer c = new(this);
+        var ifElse = c.Add<VPRC_IfElse>();
+        ifElse.ConditionEvaluator = () => State.WindowViewport is not null;
+        ifElse.TrueCommands = CreateViewportTargetCommands();
+        ifElse.FalseCommands = CreateFBOTargetCommands();
+        return c;
+    }
+
+    protected override void DescribeRenderPasses(RenderPassMetadataCollection metadata)
+    {
+        base.DescribeRenderPasses(metadata);
+
+        static void Chain(RenderPassMetadataCollection collection, EDefaultRenderPass pass, params EDefaultRenderPass[] dependencies)
+        {
+            var builder = collection.ForPass((int)pass, pass.ToString(), ERenderGraphPassStage.Graphics);
+            foreach (var dep in dependencies)
+                builder.DependsOn((int)dep);
+        }
+
+        Chain(metadata, EDefaultRenderPass.PreRender);
+        Chain(metadata, EDefaultRenderPass.Background, EDefaultRenderPass.PreRender, EDefaultRenderPass.DeferredDecals);
+        Chain(metadata, EDefaultRenderPass.OpaqueDeferred, EDefaultRenderPass.PreRender);
+        Chain(metadata, EDefaultRenderPass.DeferredDecals, EDefaultRenderPass.OpaqueDeferred);
+        Chain(metadata, EDefaultRenderPass.OpaqueForward, EDefaultRenderPass.Background);
+        Chain(metadata, EDefaultRenderPass.MaskedForward, EDefaultRenderPass.OpaqueForward);
+        Chain(metadata, EDefaultRenderPass.WeightedBlendedOitForward, EDefaultRenderPass.MaskedForward);
+        Chain(metadata, EDefaultRenderPass.PerPixelLinkedListForward, EDefaultRenderPass.WeightedBlendedOitForward);
+        Chain(metadata, EDefaultRenderPass.DepthPeelingForward, EDefaultRenderPass.PerPixelLinkedListForward);
+        Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.DepthPeelingForward);
+        Chain(metadata, EDefaultRenderPass.OnTopForward, EDefaultRenderPass.TransparentForward);
+        Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.OnTopForward);
+    }
+
+    public ViewportRenderCommandContainer CreateFBOTargetCommands()
+    {
+        ViewportRenderCommandContainer c = new(this);
+        bool enableComputePasses = EnableComputeDependentPasses;
+
+        c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
+        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
+
+        using (c.AddUsing<VPRC_PushOutputFBORenderArea>())
+        {
+            using (c.AddUsing<VPRC_BindOutputFBO>())
+            {
+                c.Add<VPRC_StencilMask>().Set(~0u);
+                c.Add<VPRC_ClearByBoundFBO>();
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GPURenderDispatch);
+                c.Add<VPRC_DepthWrite>().Allow = true;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GPURenderDispatch);
+                if (enableComputePasses)
+                    c.Add<VPRC_ForwardPlusLightCullingPass>();
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GPURenderDispatch);
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PerPixelLinkedListForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, GPURenderDispatch);
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
+                c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
+            }
+        }
+        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, GPURenderDispatch);
+        c.Add<VPRC_RenderScreenSpaceUI>();
+        return c;
+    }
+
+
+    private ViewportRenderCommandContainer CreateViewportTargetCommands()
+    {
+        ViewportRenderCommandContainer c = new(this);
+        bool enableComputePasses = EnableComputeDependentPasses;
+        bool bypassVendorUpscale = string.Equals(
+            Environment.GetEnvironmentVariable("XRE_BYPASS_VENDOR_UPSCALE"),
+            "1",
+            StringComparison.Ordinal);
+
+        c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Begin;
+
+        CacheTextures(c);
+
+        if (enableComputePasses)
+        {
+            c.Add<VPRC_VoxelConeTracingPass>().SetOptions(VoxelConeTracingVolumeTextureName,
+                [
+                    (int)EDefaultRenderPass.OpaqueDeferred,
+                    (int)EDefaultRenderPass.OpaqueForward,
+                    (int)EDefaultRenderPass.MaskedForward
+                ],
+                GPURenderDispatch,
+                true);
+        }
+            
+        //Create FBOs only after all their texture dependencies have been cached.
+
+        c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
+        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
+
+        using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
+        {
+            if (enableComputePasses)
+            {
+                // Render to the ambient occlusion FBO using a switch to select the active AO implementation.
+                var aoSwitch = c.Add<VPRC_Switch>();
+                aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
+                aoSwitch.Cases = new()
+                {
+                    [(int)AmbientOcclusionSettings.EType.ScreenSpace] = CreateSSAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.HorizonBased] = CreateHBAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.HorizonBasedPlus] = CreateHBAOPlusPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion] = CreateVXAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.MultiViewCustom] = CreateMVAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype] = CreateMSVOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.SpatialHashExperimental] = CreateSpatialHashAOPassCommands(),
+                };
+                aoSwitch.DefaultCase = CreateAmbientOcclusionDisabledPassCommands();
+            }
+            else
+            {
+                var aoSwitch = c.Add<VPRC_Switch>();
+                aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
+                aoSwitch.Cases = new()
+                {
+                    [(int)AmbientOcclusionSettings.EType.ScreenSpace] = CreateSSAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.HorizonBased] = CreateHBAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.HorizonBasedPlus] = CreateHBAOPlusPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion] = CreateVXAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.MultiViewCustom] = CreateSSAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype] = CreateSSAOPassCommands(),
+                    [(int)AmbientOcclusionSettings.EType.SpatialHashExperimental] = CreateSSAOPassCommands(),
+                };
+                aoSwitch.DefaultCase = CreateAmbientOcclusionDisabledPassCommands();
+            }
+
+            // MSAA deferred GBuffer and Lighting FBOs must be cached before any command tries to bind them.
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                MsaaGBufferFBOName,
+                CreateMsaaGBufferFBO,
+                GetDesiredFBOSizeInternal);
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                MsaaLightingFBOName,
+                CreateMsaaLightingFBO,
+                GetDesiredFBOSizeInternal);
+
+            // Deferred GBuffer geometry rendering.
+            // When MSAA deferred is active, renders into the MSAA GBuffer FBO for per-sample surface data.
+            // Otherwise renders into the standard AO FBO (non-MSAA).
+            // Always clear color+depth so the GBuffer starts with known values.
+            using (c.AddUsing<VPRC_BindFBOByName>(x =>
+            {
+                x.Write = true;
+                x.ClearColor = true;
+                x.ClearDepth = true;
+                x.ClearStencil = true;
+                x.DynamicName = () => RuntimeEnableMsaaDeferred ? MsaaGBufferFBOName : AmbientOcclusionFBOName;
+            }))
+            {
+                c.Add<VPRC_StencilMask>().Set(~0u);
+                    c.Add<VPRC_DepthTest>().Enable = true;
+                    c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueDeferred, GPURenderDispatch);
+                    c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DeferredDecals, GPURenderDispatch);
+            }
+
+            // When MSAA deferred is active, also render geometry into the non-MSAA AO FBO
+            // so that the AO pass has correct GBuffer data (SSAO doesn't support MSAA textures).
+            {
+                var msaaGBufferBranch = c.Add<VPRC_IfElse>();
+                msaaGBufferBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
+                {
+                    var msaaGeomCmds = new ViewportRenderCommandContainer(this);
+                    // Resolve MSAA GBuffer → non-MSAA GBuffer (AO FBO) for AO compatibility
+                    msaaGeomCmds.Add<VPRC_ResolveMsaaGBuffer>().SetOptions(
+                        MsaaGBufferFBOName,
+                        AmbientOcclusionFBOName,
+                        colorAttachmentCount: 4,
+                        resolveDepthStencil: true);
+                    msaaGBufferBranch.TrueCommands = msaaGeomCmds;
+                }
+            }
+
+            // Forward depth+normal pre-pass
+            var prePassChoice = c.Add<VPRC_IfElse>();
+            prePassChoice.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardDepthPrePassEnabled;
+            {
+                // When sharing GBuffer targets, skip the dedicated forward-only FBO
+                // and render only into the merged GBuffer attachments.
+                var shareChoice = new ViewportRenderCommandContainer(this);
+                var shareIfElse = shareChoice.Add<VPRC_IfElse>();
+                shareIfElse.ConditionEvaluator = () => Engine.EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets;
+                shareIfElse.TrueCommands = CreateForwardPrePassSharedCommands();
+                shareIfElse.FalseCommands = CreateForwardPrePassSeparateCommands();
+                prePassChoice.TrueCommands = shareChoice;
+            }
+
+            c.Add<VPRC_DepthTest>().Enable = false;
+
+            var aoResolveSwitch = c.Add<VPRC_Switch>();
+            aoResolveSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
+            aoResolveSwitch.Cases = new()
+            {
+                [(int)AmbientOcclusionSettings.EType.HorizonBasedPlus] = CreateHBAOPlusResolveCommands(),
+                [(int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion] = CreateGTAOResolveCommands(),
+            };
+            aoResolveSwitch.DefaultCase = CreateAmbientOcclusionResolveCommands();
+
+            //LightCombine FBO
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                LightCombineFBOName,
+                CreateLightCombineFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            // MSAA deferred: mark complex pixels in the MSAA depth-stencil before lighting
+            {
+                var msaaMarkBranch = c.Add<VPRC_IfElse>();
+                msaaMarkBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
+                {
+                    var markCmds = new ViewportRenderCommandContainer(this);
+                    // Clear color (zero for additive lighting) and stencil (fresh for marking),
+                    // but NOT depth — the MSAA depth-stencil is shared from the GBuffer pass.
+                    using (markCmds.AddUsing<VPRC_BindFBOByName>(x =>
+                        x.SetOptions(MsaaLightingFBOName, write: true, clearColor: true, clearDepth: false, clearStencil: true)))
+                    {
+                        markCmds.Add<VPRC_StencilMask>().Set(~0u);
+                        markCmds.Add<VPRC_MarkComplexMsaaPixels>().SetOptions(
+                            MsaaNormalTextureName,
+                            MsaaDepthViewTextureName);
+                    }
+                    msaaMarkBranch.TrueCommands = markCmds;
+                }
+            }
+
+            // Render the GBuffer to the lighting FBO.
+            // When MSAA deferred is active, light volumes render into the MSAA Lighting FBO
+            // using two-pass (simple + complex with per-sample shading).
+            // Otherwise, light volumes render into the standard LightCombine FBO.
+            {
+                var msaaLightingBranch = c.Add<VPRC_IfElse>();
+                msaaLightingBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
+                {
+                    // MSAA path: render lights into MSAA Lighting FBO, then resolve to DiffuseTexture
+                    var msaaLightCmds = new ViewportRenderCommandContainer(this);
+                    // Do NOT clear — color was zeroed and stencil was marked by the marking phase above;
+                    // depth is shared from the GBuffer and must be preserved for light volume testing.
+                    using (msaaLightCmds.AddUsing<VPRC_BindFBOByName>(x =>
+                        x.SetOptions(MsaaLightingFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+                    {
+                        msaaLightCmds.Add<VPRC_StencilMask>().Set(~0u);
+                        var msaaLightPass = msaaLightCmds.Add<VPRC_LightCombinePass>();
+                        msaaLightPass.SetOptions(
+                            AlbedoOpacityTextureName,
+                            NormalTextureName,
+                            RMSETextureName,
+                            DepthViewTextureName);
+                        msaaLightPass.MsaaDeferred = true;
+                    }
+                    // Resolve MSAA lighting → non-MSAA DiffuseTexture
+                    msaaLightCmds.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                        MsaaLightingFBOName,
+                        LightCombineFBOName,
+                        EReadBufferMode.ColorAttachment0,
+                        blitColor: true,
+                        blitDepth: false,
+                        blitStencil: false,
+                        linearFilter: false);
+                    msaaLightingBranch.TrueCommands = msaaLightCmds;
+                }
+                {
+                    // Non-MSAA path: render lights directly into LightCombine FBO
+                    var stdLightCmds = new ViewportRenderCommandContainer(this);
+                    using (stdLightCmds.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(LightCombineFBOName)))
+                    {
+                        stdLightCmds.Add<VPRC_StencilMask>().Set(~0u);
+                        stdLightCmds.Add<VPRC_LightCombinePass>().SetOptions(
+                            AlbedoOpacityTextureName,
+                            NormalTextureName,
+                            RMSETextureName,
+                            DepthViewTextureName);
+                    }
+                    msaaLightingBranch.FalseCommands = stdLightCmds;
+                }
+            }
+
+            // Always create MSAA FBOs so per-camera AA overrides can use them at runtime.
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                ForwardPassMsaaFBOName,
+                CreateForwardPassMsaaFBO,
+                GetDesiredFBOSizeInternal);
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                DepthPreloadFBOName,
+                CreateDepthPreloadFBO,
+                GetDesiredFBOSizeInternal);
+
+            // MSAA deferred FBO caching is done earlier (before GBuffer geometry render).
+
+            //ForwardPass FBO
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                ForwardPassFBOName,
+                CreateForwardPassFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TransparentSceneCopyFBOName,
+                CreateTransparentSceneCopyFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TransparentAccumulationFBOName,
+                CreateTransparentAccumulationFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TransparentResolveFBOName,
+                CreateTransparentResolveFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                RestirCompositeFBOName,
+                CreateRestirCompositeFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                LightVolumeCompositeFBOName,
+                CreateLightVolumeCompositeFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                RadianceCascadeCompositeFBOName,
+                CreateRadianceCascadeCompositeFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                SurfelGICompositeFBOName,
+                CreateSurfelGICompositeFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                HistoryCaptureFBOName,
+                CreateHistoryCaptureFBO,
+                GetDesiredFBOSizeInternal);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TemporalInputFBOName,
+                CreateTemporalInputFBO,
+                GetDesiredFBOSizeInternal);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TemporalAccumulationFBOName,
+                CreateTemporalAccumulationFBO,
+                GetDesiredFBOSizeInternal);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                HistoryExposureFBOName,
+                CreateHistoryExposureFBO,
+                GetDesiredFBOSizeInternal);
+
+            //Render forward pass - GBuffer results + forward lit meshes + debug data
+            // FBO target and clear flags are resolved at render time so per-camera AA overrides work.
+            // When MSAA is active, renders into the MSAA FBO and clears color/depth (MSAA renderbuffers contain garbage).
+            // Otherwise renders into the regular forward FBO without clearing color/depth.
+            // Stencil is always cleared so post-process outline is driven only by current-frame writes.
+            using (c.AddUsing<VPRC_BindFBOByName>(x =>
+            {
+                x.Write = true;
+                x.ClearStencil = true;
+                x.DynamicName = () => RuntimeEnableMsaa ? ForwardPassMsaaFBOName : ForwardPassFBOName;
+                x.DynamicClearColor = () => RuntimeEnableMsaa;
+                x.DynamicClearDepth = () => RuntimeEnableMsaa;
+            }))
+            {
+                // Depth preload blit is only needed for MSAA.
+                var msaaPreload = c.Add<VPRC_IfElse>();
+                msaaPreload.ConditionEvaluator = () => RuntimeEnableMsaa;
+                {
+                    var preloadCmds = new ViewportRenderCommandContainer(this);
+                    preloadCmds.Add<VPRC_RenderQuadToFBO>().SetTargets(DepthPreloadFBOName, ForwardPassMsaaFBOName);
+                    msaaPreload.TrueCommands = preloadCmds;
+                }
+
+                //Render the deferred pass lighting result, no depth testing
+                c.Add<VPRC_DepthTest>().Enable = false;
+                c.Add<VPRC_RenderQuadToFBO>().SourceQuadFBOName = LightCombineFBOName;
+
+                //Backgrounds (skybox) should honor the depth buffer but avoid modifying it
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.Background, GPURenderDispatch);
+
+                //Enable depth testing and writing for forward passes
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = true;
+                if (enableComputePasses)
+                    c.Add<VPRC_ForwardPlusLightCullingPass>();
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, GPURenderDispatch);
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.MaskedForward, GPURenderDispatch);
+
+                if (enableComputePasses)
+                {
+                    c.Add<VPRC_ReSTIRPass>();
+                    c.Add<VPRC_LightVolumesPass>();
+                    c.Add<VPRC_RadianceCascadesPass>();
+                    c.Add<VPRC_SurfelGIPass>();
+                }
+
+                c.Add<VPRC_RenderDebugShapes>();
+                c.Add<VPRC_RenderDebugPhysics>();
+            }
+
+            // MSAA resolve blit: only execute when MSAA is active for the current camera.
+            // Only color is resolved; OpenGL 4.6 §18.3.1 forbids blitting depth/stencil
+            // from a multisampled read framebuffer to a single-sample draw framebuffer
+            // (generates GL_INVALID_OPERATION and aborts the entire blit, including color).
+            // The non-MSAA DepthStencilTexture retains the GBuffer depth, which is sufficient
+            // for subsequent transparent passes and post-processing.
+            {
+                var msaaResolve = c.Add<VPRC_IfElse>();
+                msaaResolve.ConditionEvaluator = () => RuntimeEnableMsaa;
+                {
+                    var resolveCmds = new ViewportRenderCommandContainer(this);
+                    resolveCmds.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                        ForwardPassMsaaFBOName,
+                        ForwardPassFBOName,
+                        EReadBufferMode.ColorAttachment0,
+                        blitColor: true,
+                        blitDepth: false,
+                        blitStencil: false,
+                        linearFilter: false);
+                    msaaResolve.TrueCommands = resolveCmds;
+                }
+            }
+
+            c.Add<VPRC_RenderQuadToFBO>().SetTargets(ForwardPassFBOName, TransparentSceneCopyFBOName);
+            c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentAccumTextureName, ColorF4.Transparent);
+            c.Add<VPRC_ClearTextureByName>().SetOptions(TransparentRevealageTextureName, ColorF4.White);
+            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(TransparentAccumulationFBOName, true, false, false, false)))
+            {
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, GPURenderDispatch);
+            }
+            c.Add<VPRC_RenderQuadFBO>().FrameBufferName = TransparentResolveFBOName;
+
+            AppendExactTransparencyCommands(c);
+
+            // TransparentForward and OnTopForward are rendered AFTER the temporal
+            // accumulation resolve (see below) so that sub-pixel jitter does not
+            // shift alpha-test / blend boundaries, which causes smearing/ghosting
+            // when TAA/TSR tries to blend jittered transparent edges with history.
+
+            c.Add<VPRC_DepthTest>().Enable = false;
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                VelocityFBOName,
+                CreateVelocityFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            // Ensure the velocity target is initialized to zero instead of inheriting whatever clear
+            // color previous passes left on the renderer. Non-zero clears here imprint the scene's
+            // clear color into the velocity buffer, which then looks like a color pass when previewed
+            // and corrupts motion blur accumulation.
+            //Debug.Out($"[Velocity] Preparing velocity pass. InternalSize={InternalWidth}x{InternalHeight} Stereo={Stereo} Msaa={EnableMsaa}");
+            c.Add<VPRC_SetClears>().Set(ColorF4.Black, null, null);
+            // Keep the existing depth buffer so skyboxes/UI behind geometry do not write into velocity.
+            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(VelocityFBOName, true, true, false, false)))
+            {
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                // GPU path currently ignores override materials; force CPU so motion vectors render with the correct material.
+                // Skip background/on-top passes so skyboxes/UI do not pollute the velocity buffer.
+                c.Add<VPRC_RenderMotionVectorsPass>().SetOptions(false,
+                    new[]
+                    {
+                        (int)EDefaultRenderPass.OpaqueDeferred,
+                        (int)EDefaultRenderPass.DeferredDecals,
+                        (int)EDefaultRenderPass.OpaqueForward,
+                        (int)EDefaultRenderPass.MaskedForward,
+                        (int)EDefaultRenderPass.WeightedBlendedOitForward,
+                        (int)EDefaultRenderPass.PerPixelLinkedListForward,
+                        (int)EDefaultRenderPass.DepthPeelingForward,
+                        // TransparentForward is omitted: it renders after temporal
+                        // accumulation to avoid TAA smearing artifacts.
+                    });
+                c.Add<VPRC_DepthWrite>().Allow = true;
+            }
+            // Restore clears for subsequent passes to the pipeline defaults.
+            c.Add<VPRC_SetClears>().Set(ColorF4.Transparent, 1.0f, 0);
+
+            c.Add<VPRC_DepthTest>().Enable = false;
+
+            c.Add<VPRC_BloomPass>().SetTargetFBONames(
+                ForwardPassFBOName,
+                BloomBlurTextureName,
+                Stereo);
+
+            var motionBlurChoice = c.Add<VPRC_IfElse>();
+            motionBlurChoice.ConditionEvaluator = ShouldUseMotionBlur;
+            motionBlurChoice.TrueCommands = CreateMotionBlurPassCommands();
+
+            var dofChoice = c.Add<VPRC_IfElse>();
+            dofChoice.ConditionEvaluator = ShouldUseDepthOfField;
+            dofChoice.TrueCommands = CreateDepthOfFieldPassCommands();
+
+            var temporalAccumulate = c.Add<VPRC_TemporalAccumulationPass>();
+            temporalAccumulate.Phase = VPRC_TemporalAccumulationPass.EPhase.Accumulate;
+            temporalAccumulate.ConfigureAccumulationTargets(
+                ForwardPassFBOName,
+                TemporalInputFBOName,
+                TemporalAccumulationFBOName,
+                HistoryCaptureFBOName,
+                HistoryExposureFBOName);
+
+            // Pop jitter so transparent / masked forward passes render with a
+            // clean (unjittered) projection. This prevents sub-pixel jitter from
+            // shifting alpha-test / blend boundaries that cause TAA smearing.
+            c.Add<VPRC_TemporalAccumulationPass>().Phase =
+                VPRC_TemporalAccumulationPass.EPhase.PopJitter;
+
+            // Render transparent and on-top forward passes AFTER temporal resolve.
+            // They composite on top of the resolved opaque image without temporal
+            // accumulation, avoiding ghosting/smearing on transparent edges.
+            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false, false)))
+            {
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
+                c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
+            }
+
+            c.Add<VPRC_DepthTest>().Enable = false;
+
+            //PostProcess FBO
+            //This FBO is created here because it relies on BloomBlurTextureName, which is created in the BloomPass.
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                PostProcessFBOName,
+                CreatePostProcessFBO,
+                GetDesiredFBOSizeInternal)
+                .UseLifetime(RenderResourceLifetime.Transient);
+
+            if (EnableTransformIdVisualization)
+            {
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    TransformIdDebugQuadFBOName,
+                    CreateTransformIdDebugQuadFBO,
+                    GetDesiredFBOSizeInternal);
+            }
+
+            if (EnableTransparencyAccumulationVisualization)
+            {
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    TransparentAccumulationDebugFBOName,
+                    CreateTransparentAccumulationDebugFBO,
+                    GetDesiredFBOSizeInternal);
+            }
+
+            if (EnableTransparencyRevealageVisualization)
+            {
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    TransparentRevealageDebugFBOName,
+                    CreateTransparentRevealageDebugFBO,
+                    GetDesiredFBOSizeInternal);
+            }
+
+            if (EnableTransparencyOverdrawVisualization)
+            {
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    TransparentOverdrawDebugFBOName,
+                    CreateTransparentOverdrawDebugFBO,
+                    GetDesiredFBOSizeInternal);
+            }
+
+            if (EnableDepthPeelingLayerVisualization)
+            {
+                c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                    DepthPeelingDebugFBOName,
+                    CreateDepthPeelingDebugFBO,
+                    GetDesiredFBOSizeInternal);
+            }
+
+            // Always create FXAA resources so per-camera AA overrides can use them at runtime.
+            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+                FxaaOutputTextureName,
+                CreateFxaaOutputTexture,
+                NeedsRecreateTextureFullSize,
+                ResizeTextureFullSize);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                PostProcessOutputFBOName,
+                CreatePostProcessOutputFBO,
+                GetDesiredFBOSizeInternal);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                FxaaFBOName,
+                CreateFxaaFBO,
+                GetDesiredFBOSizeFull);
+
+            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+                TsrHistoryColorTextureName,
+                CreateTsrHistoryColorTexture,
+                NeedsRecreateTextureFullSize,
+                ResizeTextureFullSize);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TsrHistoryColorFBOName,
+                CreateTsrHistoryColorFBO,
+                GetDesiredFBOSizeFull);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TsrUpscaleFBOName,
+                CreateTsrUpscaleFBO,
+                GetDesiredFBOSizeFull);
+
+            //c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            //    UserInterfaceFBOName,
+            //    CreateUserInterfaceFBO,
+            //    GetDesiredFBOSizeInternal);
+
+        }
+
+        // FXAA / TSR upscale chain: runs when FXAA is active or TSR needs upscaling from internal to full resolution.
+        {
+            var upscaleChoice = c.Add<VPRC_IfElse>();
+            upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeNeedsTsrUpscale;
+            {
+                var upscaleCmds = new ViewportRenderCommandContainer(this);
+
+                // First pass: PostProcess quad renders to PostProcessOutputTexture at internal resolution
+                using (upscaleCmds.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
+                {
+                    upscaleCmds.Add<VPRC_RenderQuadToFBO>().SetTargets(PostProcessFBOName, PostProcessOutputFBOName);
+                }
+
+                // Second pass: upscale to full resolution.
+                // FXAA: applies FXAA while upscaling.
+                // TSR: resolves against full-resolution history.
+                using (upscaleCmds.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
+                {
+                    var fxaaOrTsr = upscaleCmds.Add<VPRC_IfElse>();
+                    fxaaOrTsr.ConditionEvaluator = () => RuntimeEnableFxaa;
+                    {
+                        var fxaaUpscale = new ViewportRenderCommandContainer(this);
+                        fxaaUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(FxaaFBOName, FxaaFBOName);
+                        fxaaOrTsr.TrueCommands = fxaaUpscale;
+                    }
+                    {
+                        var tsrUpscale = new ViewportRenderCommandContainer(this);
+                        tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName);
+                        tsrUpscale.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                            TsrUpscaleFBOName,
+                            TsrHistoryColorFBOName,
+                            EReadBufferMode.ColorAttachment0,
+                            blitColor: true,
+                            blitDepth: false,
+                            blitStencil: false,
+                            linearFilter: false);
+                        fxaaOrTsr.FalseCommands = tsrUpscale;
+                    }
+                }
+
+                upscaleChoice.TrueCommands = upscaleCmds;
+            }
+        }
+
+        // Auto exposure uses a GPU compute shader dispatch. Schedule it before the
+        // final swapchain output so the compute dispatch does not interrupt (and
+        // force a LoadOp.Clear restart of) the swapchain render pass.
+        // The HDR scene buffer is already fully rendered at this point, so reading
+        // it here produces the same result as reading it after the output blit.
+        string exposureSource = HDRSceneTextureName;
+        c.Add<VPRC_ExposureUpdate>().SetOptions(exposureSource, true);
+
+        // Temporal commit is CPU-side state bookkeeping only (no GPU ops).
+        c.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Commit;
+
+        // Final output to screen uses the full viewport region (with panel offset if applicable).
+        // All subsequent commands target the swapchain, keeping them in one contiguous
+        // Vulkan render pass so a LoadOp.Clear restart cannot wipe the composited scene.
+        using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
+        {
+            using (c.AddUsing<VPRC_BindOutputFBO>())
+            {
+                //c.Add<VPRC_ClearByBoundFBO>();
+                if (EnableTransformIdVisualization)
+                {
+                    // Debug visualization is produced by a quad shader; present it directly.
+                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(TransformIdDebugQuadFBOName, null);
+                }
+                else if (ActiveTransparencyDebugFboName is not null)
+                {
+                    c.Add<VPRC_RenderQuadToFBO>().SetTargets(ActiveTransparencyDebugFboName, null);
+                }
+                else
+                {
+                    string? overrideSource = Environment.GetEnvironmentVariable("XRE_OUTPUT_SOURCE_FBO");
+                    if (!string.IsNullOrWhiteSpace(overrideSource))
+                    {
+                        // Env var override takes absolute precedence (debug tooling).
+                        if (bypassVendorUpscale)
+                        {
+                            c.Add<VPRC_RenderQuadToFBO>().SetTargets(overrideSource, null);
+                        }
+                        else
+                        {
+                            var vendorBlit = c.Add<VPRC_VendorUpscale>();
+                            vendorBlit.FrameBufferName = overrideSource;
+                            vendorBlit.DepthTextureName = DepthViewTextureName;
+                            vendorBlit.MotionTextureName = VelocityTextureName;
+                        }
+                    }
+                    else
+                    {
+                        // Dynamic AA/upscale selection: choose the correct source at render time.
+                        // FXAA and TSR upscale both write to FxaaOutputTexture, so both use their
+                        // respective FBOs to blit to the output. When neither is active, PostProcess
+                        // output goes directly to screen.
+                        var upscaleOutputChoice = c.Add<VPRC_IfElse>();
+                        upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeNeedsTsrUpscale;
+                        {
+                            var upscaleOutput = new ViewportRenderCommandContainer(this);
+                            var fxaaOrTsrFinal = upscaleOutput.Add<VPRC_IfElse>();
+                            fxaaOrTsrFinal.ConditionEvaluator = () => RuntimeEnableFxaa;
+                            fxaaOrTsrFinal.TrueCommands = CreateFinalBlitCommands(FxaaFBOName, bypassVendorUpscale);
+                            fxaaOrTsrFinal.FalseCommands = CreateFinalBlitCommands(TsrUpscaleFBOName, bypassVendorUpscale);
+                            upscaleOutputChoice.TrueCommands = upscaleOutput;
+                        }
+                        upscaleOutputChoice.FalseCommands = CreateFinalBlitCommands(PostProcessFBOName, bypassVendorUpscale);
+                    }
+                }
+            }
+        }
+
+        c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
+        c.Add<VPRC_RenderScreenSpaceUI>();
+        return c;
+    }
+
+    /// <summary>
+    /// Builds the final blit command container that presents the given source FBO to the output.
+    /// Used by the FXAA/non-FXAA runtime switch so the output source is resolved per-camera.
+    /// </summary>
+    private ViewportRenderCommandContainer CreateFinalBlitCommands(string sourceFboName, bool bypassVendorUpscale)
+    {
+        var cmds = new ViewportRenderCommandContainer(this);
+        if (bypassVendorUpscale)
+        {
+            cmds.Add<VPRC_RenderQuadToFBO>().SetTargets(sourceFboName, null);
+        }
+        else
+        {
+            var vendorBlit = cmds.Add<VPRC_VendorUpscale>();
+            vendorBlit.FrameBufferName = sourceFboName;
+            vendorBlit.DepthTextureName = DepthViewTextureName;
+            vendorBlit.MotionTextureName = VelocityTextureName;
+        }
+        return cmds;
+    }
+
+    private string TransparentResolveShaderName()
+        => Stereo ? "TransparentResolveStereo.fs" : "TransparentResolve.fs";
+
+    private string TransparentAccumulationDebugShaderName()
+        => Stereo ? "TransparentAccumulationDebugStereo.fs" : "TransparentAccumulationDebug.fs";
+
+    private string TransparentRevealageDebugShaderName()
+        => Stereo ? "TransparentRevealageDebugStereo.fs" : "TransparentRevealageDebug.fs";
+
+    private string TransparentOverdrawDebugShaderName()
+        => Stereo ? "TransparentOverdrawDebugStereo.fs" : "TransparentOverdrawDebug.fs";
+
+    private ViewportRenderCommandContainer CreateVendorUpscaleCommands(string sourceFboName)
+    {
+        var c = new ViewportRenderCommandContainer(this);
+        var vendorBlit = c.Add<VPRC_VendorUpscale>();
+        vendorBlit.FrameBufferName = sourceFboName;
+        vendorBlit.DepthTextureName = DepthViewTextureName;
+        vendorBlit.MotionTextureName = VelocityTextureName;
+        return c;
+    }
+
+    private void CacheTextures(ViewportRenderCommandContainer c)
+    {
+        //BRDF, for PBR lighting
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            BRDFTextureName,
+            CreateBRDFTexture,
+            null,
+            null);
+
+        //Depth + Stencil GBuffer texture
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            DepthStencilTextureName,
+            CreateDepthStencilTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            ForwardPrePassDepthStencilTextureName,
+            CreateForwardPrePassDepthStencilTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        //Depth view texture
+        //This is a view of the depth/stencil texture that only shows the depth values.
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            DepthViewTextureName,
+            CreateDepthViewTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        //Stencil view texture
+        //This is a view of the depth/stencil texture that only shows the stencil values.
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            StencilViewTextureName,
+            CreateStencilViewTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        //History depth + view textures
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            HistoryDepthStencilTextureName,
+            CreateHistoryDepthStencilTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            HistoryDepthViewTextureName,
+            CreateHistoryDepthViewTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        //Albedo/Opacity GBuffer texture
+        //RGB = Albedo, A = Opacity
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            AlbedoOpacityTextureName,
+            CreateAlbedoOpacityTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        //Normal GBuffer texture
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            NormalTextureName,
+            CreateNormalTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            ForwardPrePassNormalTextureName,
+            CreateForwardPrePassNormalTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        //RMSI GBuffer texture
+        //R = Roughness, G = Metallic, B = Specular, A = IOR
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            RMSETextureName,
+            CreateRMSETexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        //Transform ID GBuffer texture
+        //R32UI = per-draw/per-transform identifier
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TransformIdTextureName,
+            CreateTransformIdTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        // TransformId visualization is rendered directly via a debug quad.
+
+        // MSAA deferred GBuffer textures (always cached so per-camera AA overrides work at runtime)
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            MsaaAlbedoOpacityTextureName,
+            CreateMsaaAlbedoOpacityTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            MsaaNormalTextureName,
+            CreateMsaaNormalTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            MsaaRMSETextureName,
+            CreateMsaaRMSETexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            MsaaDepthStencilTextureName,
+            CreateMsaaDepthStencilTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            MsaaDepthViewTextureName,
+            CreateMsaaDepthViewTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            MsaaTransformIdTextureName,
+            CreateMsaaTransformIdTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            MsaaLightingTextureName,
+            CreateMsaaLightingTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        //SSAO FBO texture, this is created later by the SSAO command
+        //c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        //    AmbientOcclusionIntensityTextureName,
+        //    CreateSSAOTexture,
+        //    NeedsRecreateTextureInternalSize,
+        //    ResizeTextureInternalSize);
+
+        //Lighting texture
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            DiffuseTextureName,
+            CreateLightingTexture,
+            t =>
+                NeedsRecreateTextureInternalSize(t) ||
+                t is not IFrameBufferAttachement ||
+                (Stereo ? t is not XRTexture2DArray : t is not XRTexture2D),
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VelocityTextureName,
+            CreateVelocityTexture,
+            t =>
+                NeedsRecreateTextureInternalSize(t) ||
+                t is not IFrameBufferAttachement ||
+                (Stereo ? t is not XRTexture2DArray : t is not XRTexture2D),
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            HistoryColorTextureName,
+            CreateHistoryColorTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TemporalColorInputTextureName,
+            CreateTemporalColorInputTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TemporalExposureVarianceTextureName,
+            CreateTemporalExposureVarianceTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            HistoryExposureVarianceTextureName,
+            CreateHistoryExposureVarianceTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            MotionBlurTextureName,
+            CreateMotionBlurTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            DepthOfFieldTextureName,
+            CreateDepthOfFieldTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        // PostProcessOutput is the intermediate target used by the post-process quad before
+        // any optional AA/upscale pass. It must exist regardless of the selected AA mode
+        // because the matching FBO is created unconditionally later in the command chain.
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            PostProcessOutputTextureName,
+            CreatePostProcessOutputTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        if (EnableFxaa)
+        {
+            // FXAA output is full resolution (FXAA performs the upscale)
+            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+                FxaaOutputTextureName,
+                CreateFxaaOutputTexture,
+                NeedsRecreateTextureFullSize,
+                ResizeTextureFullSize);
+        }
+
+        //HDR Scene texture
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            HDRSceneTextureName,
+            CreateHDRSceneTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TransparentSceneCopyTextureName,
+            CreateTransparentSceneCopyTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TransparentAccumTextureName,
+            CreateTransparentAccumTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            TransparentRevealageTextureName,
+            CreateTransparentRevealageTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        CacheExactTransparencyTextures(c);
+
+        // 1x1 exposure value texture (GPU auto exposure)
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            AutoExposureTextureName,
+            CreateAutoExposureTexture,
+            null,
+            null);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            RestirGITextureName,
+            CreateRestirGITexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            LightVolumeGITextureName,
+            CreateLightVolumeGITexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            RadianceCascadeGITextureName,
+            CreateRadianceCascadeGITexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            SurfelGITextureName,
+            CreateSurfelGITexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            VoxelConeTracingVolumeTextureName,
+            CreateVoxelConeTracingVolumeTexture,
+            NeedsRecreateVoxelVolumeTexture,
+            ResizeVoxelVolumeTexture);
+
+        //HDR Scene texture 2
+        //c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        //    HDRSceneTexture2Name,
+        //    CreateHDRSceneTexture,
+        //    NeedsRecreateTextureInternalSize,
+        //    ResizeTextureInternalSize);
+
+        //HUD texture
+        //c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+        //    UserInterfaceTextureName,
+        //    CreateHUDTexture,
+        //    NeedsRecreateTextureFullSize,
+        //    ResizeTextureFullSize);
+    }
+
+    private ViewportRenderCommandContainer CreateSSAOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureSSAOPass(container.Add<VPRC_SSAOPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateAmbientOcclusionDisabledPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureAmbientOcclusionDisabledPass(container.Add<VPRC_AODisabledPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateAmbientOcclusionResolveCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, GBufferFBOName);
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateHBAOPlusResolveCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, HBAOPlusBlurIntermediateFBOName);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(HBAOPlusBlurIntermediateFBOName, GBufferFBOName);
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateHBAOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureHBAOPass(container.Add<VPRC_AODisabledPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateHBAOPlusPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureHBAOPlusPass(container.Add<VPRC_HBAOPlusPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateGTAOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureGTAOPass(container.Add<VPRC_GTAOPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateGTAOResolveCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(AmbientOcclusionBlurFBOName, GTAOBlurIntermediateFBOName);
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(GTAOBlurIntermediateFBOName, GBufferFBOName);
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateVXAOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureVXAOPass(container.Add<VPRC_AODisabledPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateMVAOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureMVAOPass(container.Add<VPRC_MVAOPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateMSVOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureMSVOPass(container.Add<VPRC_MSVO>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateSpatialHashAOPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this)
+        {
+            BranchResources = ViewportRenderCommandContainer.BranchResourceBehavior.DisposeResourcesOnBranchExit
+        };
+        ConfigureSpatialHashAOPass(container.Add<VPRC_SpatialHashAOPass>());
+        return container;
+    }
+
+    private ViewportRenderCommandContainer CreateMotionBlurPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this);
+
+        container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            MotionBlurCopyFBOName,
+            CreateMotionBlurCopyFBO,
+            GetDesiredFBOSizeInternal);
+
+        container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            MotionBlurFBOName,
+            CreateMotionBlurFBO,
+            GetDesiredFBOSizeInternal);
+
+        container.Add<VPRC_BlitFrameBuffer>().SetOptions(
+            ForwardPassFBOName,
+            MotionBlurCopyFBOName,
+            EReadBufferMode.ColorAttachment0,
+            blitColor: true,
+            blitDepth: false,
+            blitStencil: false,
+            linearFilter: false);
+
+        // Render the motion blur result back into the forward pass FBO
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(MotionBlurFBOName, ForwardPassFBOName);
+
+        return container;
+    }
+
+    /// <summary>
+    /// Creates the forward pre-pass commands that render into both a dedicated
+    /// forward-only FBO and into the shared GBuffer attachments (separate + merge).
+    /// </summary>
+    private ViewportRenderCommandContainer CreateForwardPrePassSeparateCommands()
+    {
+        var c = new ViewportRenderCommandContainer(this);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            ForwardDepthPrePassFBOName,
+            CreateForwardDepthPrePassFBO,
+            GetDesiredFBOSizeInternal)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            ForwardDepthPrePassMergeFBOName,
+            CreateForwardDepthPrePassMergeFBO,
+            GetDesiredFBOSizeInternal)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassFBOName)))
+        {
+            c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = true;
+            c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(
+                [(int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
+                GPURenderDispatch);
+        }
+
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassMergeFBOName, true, false, false, false)))
+        {
+            c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = true;
+            c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(
+                [(int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
+                GPURenderDispatch);
+        }
+
+        return c;
+    }
+
+    /// <summary>
+    /// Creates the forward pre-pass commands that render directly into the GBuffer
+    /// normal and depth attachments, skipping the dedicated forward-only FBO.
+    /// </summary>
+    private ViewportRenderCommandContainer CreateForwardPrePassSharedCommands()
+    {
+        var c = new ViewportRenderCommandContainer(this);
+
+        c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            ForwardDepthPrePassMergeFBOName,
+            CreateForwardDepthPrePassMergeFBO,
+            GetDesiredFBOSizeInternal)
+            .UseLifetime(RenderResourceLifetime.Transient);
+
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardDepthPrePassMergeFBOName, true, false, false, false)))
+        {
+            c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = true;
+            c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(
+                [(int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
+                GPURenderDispatch);
+        }
+
+        return c;
+    }
+
+    private ViewportRenderCommandContainer CreateDepthOfFieldPassCommands()
+    {
+        var container = new ViewportRenderCommandContainer(this);
+
+        container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            DepthOfFieldCopyFBOName,
+            CreateDepthOfFieldCopyFBO,
+            GetDesiredFBOSizeInternal);
+
+        container.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+            DepthOfFieldFBOName,
+            CreateDepthOfFieldFBO,
+            GetDesiredFBOSizeInternal);
+
+        container.Add<VPRC_BlitFrameBuffer>().SetOptions(
+            ForwardPassFBOName,
+            DepthOfFieldCopyFBOName,
+            EReadBufferMode.ColorAttachment0,
+            blitColor: true,
+            blitDepth: false,
+            blitStencil: false,
+            linearFilter: false);
+
+        // Render the DoF result back into the forward pass FBO
+        container.Add<VPRC_RenderQuadToFBO>().SetTargets(DepthOfFieldFBOName, ForwardPassFBOName);
+
+        return container;
+    }
+
+    private void ConfigureSSAOPass(VPRC_SSAOPass pass)
+    {
+        pass.SetOptions(
+            VPRC_SSAOPass.DefaultSamples,
+            VPRC_SSAOPass.DefaultNoiseWidth,
+            VPRC_SSAOPass.DefaultNoiseHeight,
+            VPRC_SSAOPass.DefaultMinSampleDist,
+            VPRC_SSAOPass.DefaultMaxSampleDist,
+            Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName);
+
+        pass.SetOutputNames(
+            AmbientOcclusionNoiseTextureName,
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            GBufferFBOName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
+    }
+
+    private void ConfigureMVAOPass(VPRC_MVAOPass pass)
+    {
+        pass.SetOptions(
+            VPRC_MVAOPass.DefaultSamples,
+            VPRC_MVAOPass.DefaultNoiseWidth,
+            VPRC_MVAOPass.DefaultNoiseHeight,
+            VPRC_MVAOPass.DefaultMinSampleDist,
+            VPRC_MVAOPass.DefaultMaxSampleDist,
+            Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName);
+
+        pass.SetOutputNames(
+            AmbientOcclusionNoiseTextureName,
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            GBufferFBOName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
+    }
+
+    private void ConfigureMSVOPass(VPRC_MSVO pass)
+    {
+        pass.SetOptions(Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName,
+            TransformIdTextureName);
+
+        pass.SetOutputNames(
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            GBufferFBOName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
+    }
+
+    private void ConfigureAmbientOcclusionDisabledPass(VPRC_AODisabledPass pass)
+    {
+        pass.SetOptions(Stereo);
+        pass.SetStubInfo(null, null);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName,
+            TransformIdTextureName);
+
+        pass.SetOutputNames(
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            GBufferFBOName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
+    }
+
+    private void ConfigureHBAOPass(VPRC_AODisabledPass pass)
+    {
+        ConfigureAmbientOcclusionDisabledPass(pass);
+        pass.SetStubInfo(
+            "HorizonBased",
+            "HorizonBased AO is intentionally deferred in favor of HBAO+. Rendering neutral AO instead of implying that classic HBAO is implemented.");
+    }
+
+    private void ConfigureHBAOPlusPass(VPRC_HBAOPlusPass pass)
+    {
+        pass.SetOptions(Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName,
+            TransformIdTextureName);
+
+        pass.SetOutputNames(
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            HBAOPlusBlurIntermediateFBOName,
+            GBufferFBOName,
+            HBAOPlusRawTextureName,
+            HBAOPlusBlurIntermediateTextureName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
+    }
+
+    private void ConfigureGTAOPass(VPRC_GTAOPass pass)
+    {
+        pass.SetOptions(Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName,
+            TransformIdTextureName);
+
+        pass.SetOutputNames(
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            GTAOBlurIntermediateFBOName,
+            GBufferFBOName,
+            GTAORawTextureName,
+            GTAOBlurIntermediateTextureName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
+    }
+
+    private void ConfigureVXAOPass(VPRC_AODisabledPass pass)
+    {
+        ConfigureAmbientOcclusionDisabledPass(pass);
+        pass.SetStubInfo(
+            "VoxelAmbientOcclusion",
+            "VXAO is not implemented yet. This mode is reserved for a future voxelization plus cone-tracing path that will integrate with the existing voxel cone tracing infrastructure.");
+    }
+
+    private void ConfigureSpatialHashAOPass(VPRC_SpatialHashAOPass pass)
+    {
+        pass.SetOptions(
+            VPRC_SpatialHashAOPass.DefaultSamples,
+            VPRC_SpatialHashAOPass.DefaultNoiseWidth,
+            VPRC_SpatialHashAOPass.DefaultNoiseHeight,
+            VPRC_SpatialHashAOPass.DefaultMinSampleDist,
+            VPRC_SpatialHashAOPass.DefaultMaxSampleDist,
+            Stereo);
+
+        pass.SetGBufferInputTextureNames(
+            NormalTextureName,
+            DepthViewTextureName,
+            AlbedoOpacityTextureName,
+            RMSETextureName,
+            DepthStencilTextureName);
+
+        pass.SetOutputNames(
+            AmbientOcclusionIntensityTextureName,
+            AmbientOcclusionFBOName,
+            AmbientOcclusionBlurFBOName,
+            GBufferFBOName);
+        pass.DependentFboNames = new[] { LightCombineFBOName };
+    }
+
+    private int EvaluateAmbientOcclusionMode()
+    {
+        var aoStage = State.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+        if (aoStage?.TryGetBacking(out AmbientOcclusionSettings? aoSettings) == true && aoSettings is not null)
+        {
+            if (!aoSettings.Enabled)
+                return AmbientOcclusionDisabledMode;
+
+            return MapAmbientOcclusionMode(aoSettings.Type);
+        }
+
+        return AmbientOcclusionDisabledMode;
+    }
+
+    private static int MapAmbientOcclusionMode(AmbientOcclusionSettings.EType type)
+        => AmbientOcclusionSettings.NormalizeType(type) switch
+        {
+            AmbientOcclusionSettings.EType.ScreenSpace => (int)AmbientOcclusionSettings.EType.ScreenSpace,
+            AmbientOcclusionSettings.EType.HorizonBased => (int)AmbientOcclusionSettings.EType.HorizonBased,
+            AmbientOcclusionSettings.EType.HorizonBasedPlus => (int)AmbientOcclusionSettings.EType.HorizonBasedPlus,
+            AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion => (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
+            AmbientOcclusionSettings.EType.VoxelAmbientOcclusion => (int)AmbientOcclusionSettings.EType.VoxelAmbientOcclusion,
+            AmbientOcclusionSettings.EType.MultiViewCustom => (int)AmbientOcclusionSettings.EType.MultiViewCustom,
+            AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype => (int)AmbientOcclusionSettings.EType.MultiRadiusObscurancePrototype,
+            AmbientOcclusionSettings.EType.SpatialHashExperimental => (int)AmbientOcclusionSettings.EType.SpatialHashExperimental,
+            _ => (int)AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion,
+        };
+
+    #endregion
+
+    #region Setting Uniforms
+
+    private XRTexture2DArray? _probeIrradianceArray;
+    private XRTexture2DArray? _probePrefilterArray;
+    private XRDataBuffer? _probePositionBuffer;
+    private XRDataBuffer? _probeTetraBuffer;
+    private XRDataBuffer? _probeParamBuffer;
+    private XRDataBuffer? _probeGridCellBuffer;
+    private XRDataBuffer? _probeGridIndexBuffer;
+    private Vector3 _probeGridOrigin;
+    private float _probeGridCellSize;
+    private IVector3 _probeGridDims;
+    private bool _useProbeGridAcceleration = true;
+    private int _lastProbeCount = 0;
+    private readonly Dictionary<Guid, Vector3> _cachedProbePositions = new();
+    private readonly Dictionary<Guid, (XRTexture2D Irradiance, XRTexture2D Prefilter)> _cachedProbeTextures = new();
+    private readonly Dictionary<Guid, uint> _cachedProbeCaptureVersions = new();
+    private volatile bool _pendingProbeRefresh;
+    private Job? _probeTessellationJob;
+    private volatile int _probeTessellationGeneration;
+    private int _probeTetraProbeCount;
+
+    public bool UseProbeGridAcceleration
+    {
+        get => _useProbeGridAcceleration;
+        set => SetField(ref _useProbeGridAcceleration, value);
+    }
+
+    private struct ProbePositionData
+    {
+        public Vector4 Position;
+    }
+
+    private struct ProbeParamData
+    {
+        public Vector4 InfluenceInner;       // xyz inner extents or inner radius
+        public Vector4 InfluenceOuter;       // xyz outer extents or outer radius
+        public Vector4 InfluenceOffsetShape; // xyz offset, w shape (0 sphere, 1 box)
+        public Vector4 ProxyCenterEnable;    // xyz center offset, w enable (1/0)
+        public Vector4 ProxyHalfExtents;     // xyz half extents, w normalization scale
+        public Vector4 ProxyRotation;        // xyzw quaternion
+    }
+
+    private struct ProbeGridCell
+    {
+        public IVector2 OffsetCount;
+    }
+
+    private struct ProbeTetraData
+    {
+        public Vector4 Indices;
+    }
+
+    private void LightCombineFBO_SettingUniforms(XRRenderProgram program)
+    {
+        program.Uniform("UseAmbientOcclusion", ShouldUseAmbientOcclusion());
+
+        var aoStage = State.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+        float aoPower = 1.0f;
+        bool multiBounce = false;
+        bool specularOcclusion = false;
+
+        if (aoStage?.TryGetBacking(out AmbientOcclusionSettings? aoSettings) == true && aoSettings is not null)
+        {
+            aoPower = aoSettings.Power;
+            if (AmbientOcclusionSettings.NormalizeType(aoSettings.Type) == AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion)
+            {
+                multiBounce = aoSettings.GroundTruth.MultiBounceEnabled;
+                specularOcclusion = aoSettings.GroundTruth.SpecularOcclusionEnabled;
+            }
+        }
+
+        program.Uniform("AmbientOcclusionPower", aoPower);
+        program.Uniform("AmbientOcclusionMultiBounce", multiBounce);
+        program.Uniform("SpecularOcclusionEnabled", specularOcclusion);
+
+        if (!UsesLightProbeGI)
+            return;
+
+        var world = RenderingWorld;
+        if (world is null)
+            return;
+
+        IReadOnlyList<LightProbeComponent> probes = world.Lights.LightProbes;
+        var readyProbes = GetReadyProbes(probes);
+        if (readyProbes.Count == 0)
+        {
+            ClearProbeResources();
+            return;
+        }
+
+        if (_pendingProbeRefresh || ProbeConfigurationChanged(readyProbes))
+            BuildProbeResources(readyProbes);
+
+        if (_probeIrradianceArray is null || _probePrefilterArray is null || _probePositionBuffer is null || _probeParamBuffer is null)
+            return;
+
+        // Use explicit texture units to match the shader's fixed bindings (layout(binding = 7/8)).
+        const int irradianceUnit = 7;
+        const int prefilterUnit = 8;
+        program.Sampler("IrradianceArray", _probeIrradianceArray, irradianceUnit);
+        program.Sampler("PrefilterArray", _probePrefilterArray, prefilterUnit);
+
+        int probeCount = (int)_probePositionBuffer.ElementCount;
+        program.Uniform("ProbeCount", probeCount);
+        _probePositionBuffer.BindTo(program, 0);
+        _probeParamBuffer.BindTo(program, 2);
+        program.Uniform("UseProbeGrid", _useProbeGridAcceleration && _probeGridCellBuffer is not null && _probeGridIndexBuffer is not null);
+
+        if (_useProbeGridAcceleration && _probeGridCellBuffer is not null && _probeGridIndexBuffer is not null)
+        {
+            _probeGridCellBuffer.BindTo(program, 3);
+            _probeGridIndexBuffer.BindTo(program, 4);
+            program.Uniform("ProbeGridOrigin", _probeGridOrigin);
+            program.Uniform("ProbeGridCellSize", _probeGridCellSize);
+            program.Uniform("ProbeGridDims", _probeGridDims);
+        }
+
+        int tetraCount = _probeTetraBuffer != null && _probeTetraProbeCount == readyProbes.Count
+            ? (int)_probeTetraBuffer.ElementCount
+            : 0;
+        program.Uniform("TetraCount", tetraCount);
+        if (tetraCount > 0)
+        {
+            _probeTetraBuffer!.BindTo(program, 1);
+
+            if (Engine.EditorPreferences.Debug.RenderLightProbeTetrahedra)
+                RenderProbeTetrahedra(readyProbes, tetraCount);
+        }
+    }
+
+    private bool ShouldUseAmbientOcclusion()
+    {
+        var stage = State.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+        return stage?.TryGetBacking(out AmbientOcclusionSettings? settings) == true
+            && settings is not null
+            && settings.Enabled;
+    }
+
+    private void RenderProbeTetrahedra(List<LightProbeComponent> readyProbes, int tetraCount)
+    {
+        for (uint i = 0; i < tetraCount; ++i)
+        {
+            var tetraData = _probeTetraBuffer!.GetDataRawAtIndex<ProbeTetraData>(i);
+            var indices = tetraData.Indices;
+            int index0 = (int)indices.X;
+            int index1 = (int)indices.Y;
+            int index2 = (int)indices.Z;
+            int index3 = (int)indices.W;
+            int probeCount = readyProbes.Count;
+
+            if ((uint)index0 >= probeCount ||
+                (uint)index1 >= probeCount ||
+                (uint)index2 >= probeCount ||
+                (uint)index3 >= probeCount)
+            {
+                Debug.LogWarning($"Skipping stale probe tetrahedron {i}: indices=({index0}, {index1}, {index2}, {index3}) probeCount={probeCount}.");
+                continue;
+            }
+
+            Vector3 p0 = readyProbes[index0].Transform.RenderTranslation;
+            Vector3 p1 = readyProbes[index1].Transform.RenderTranslation;
+            Vector3 p2 = readyProbes[index2].Transform.RenderTranslation;
+            Vector3 p3 = readyProbes[index3].Transform.RenderTranslation;
+            Engine.Rendering.Debug.RenderLine(p0, p1, ColorF4.Cyan);
+            Engine.Rendering.Debug.RenderLine(p0, p2, ColorF4.Cyan);
+            Engine.Rendering.Debug.RenderLine(p0, p3, ColorF4.Cyan);
+            Engine.Rendering.Debug.RenderLine(p1, p2, ColorF4.Cyan);
+            Engine.Rendering.Debug.RenderLine(p1, p3, ColorF4.Cyan);
+            Engine.Rendering.Debug.RenderLine(p2, p3, ColorF4.Cyan);
+        }
+    }
+
+    private void BuildProbeGrid(List<ProbePositionData> positions)
+    {
+        _probeGridCellBuffer?.Dispose();
+        _probeGridCellBuffer = null;
+        _probeGridIndexBuffer?.Dispose();
+        _probeGridIndexBuffer = null;
+        _probeGridOrigin = Vector3.Zero;
+        _probeGridCellSize = 0f;
+        _probeGridDims = IVector3.Zero;
+
+        if (positions.Count == 0)
+            return;
+
+        Vector3 min = new(float.MaxValue);
+        Vector3 max = new(float.MinValue);
+        foreach (var p in positions)
+        {
+            min = Vector3.Min(min, p.Position.XYZ());
+            max = Vector3.Max(max, p.Position.XYZ());
+        }
+
+        Vector3 extents = max - min;
+        float maxExtent = Math.Max(extents.X, Math.Max(extents.Y, extents.Z));
+        if (maxExtent <= 0.0001f)
+            maxExtent = 1.0f;
+
+        const int targetCellsPerAxis = 16;
+        _probeGridCellSize = maxExtent / targetCellsPerAxis;
+        _probeGridOrigin = min;
+        Vector3 dimsF = extents / _probeGridCellSize + Vector3.One;
+        IVector3 dimsI = new(
+            Math.Max(1, (int)Math.Ceiling(dimsF.X)),
+            Math.Max(1, (int)Math.Ceiling(dimsF.Y)),
+            Math.Max(1, (int)Math.Ceiling(dimsF.Z)));
+        dimsI = IVector3.Min(dimsI, new IVector3(64, 64, 64));
+        _probeGridDims = dimsI;
+
+        int cellCount = dimsI.X * dimsI.Y * dimsI.Z;
+        var cellLists = new List<int>[cellCount];
+        for (int i = 0; i < cellCount; ++i)
+            cellLists[i] = new List<int>(4);
+
+        for (int i = 0; i < positions.Count; ++i)
+        {
+            Vector4 pos4 = positions[i].Position;
+            Vector3 rel = (new Vector3(pos4.X, pos4.Y, pos4.Z) - _probeGridOrigin) / _probeGridCellSize;
+            IVector3 cell = new(
+                Math.Clamp((int)MathF.Floor(rel.X), 0, dimsI.X - 1),
+                Math.Clamp((int)MathF.Floor(rel.Y), 0, dimsI.Y - 1),
+                Math.Clamp((int)MathF.Floor(rel.Z), 0, dimsI.Z - 1));
+            int flat = cell.X + cell.Y * dimsI.X + cell.Z * dimsI.X * dimsI.Y;
+            cellLists[flat].Add(i);
+        }
+
+        var offsets = new List<ProbeGridCell>(cellCount);
+        var indices = new List<int>();
+        for (int c = 0; c < cellCount; ++c)
+        {
+            var list = cellLists[c];
+            int offset = indices.Count;
+            indices.AddRange(list);
+            offsets.Add(new ProbeGridCell { OffsetCount = new IVector2(offset, list.Count) });
+        }
+
+        _probeGridCellBuffer = new XRDataBuffer("LightProbeGridCells", EBufferTarget.ShaderStorageBuffer, (uint)offsets.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeGridCell>(), false, false)
+        {
+            BindingIndexOverride = 3,
+        };
+        _probeGridCellBuffer.SetDataRaw(offsets);
+        _probeGridCellBuffer.PushData();
+
+        _probeGridIndexBuffer = new XRDataBuffer("LightProbeGridIndices", EBufferTarget.ShaderStorageBuffer, (uint)indices.Count, EComponentType.Int, sizeof(int), false, false)
+        {
+            BindingIndexOverride = 4,
+        };
+        _probeGridIndexBuffer.SetDataRaw(indices);
+        _probeGridIndexBuffer.PushData();
+    }
+
+    private static List<LightProbeComponent> GetReadyProbes(IReadOnlyList<LightProbeComponent> probes)
+    {
+        var readyProbes = new List<LightProbeComponent>(probes.Count);
+        foreach (var probe in probes)
+        {
+            if (probe.IrradianceTexture != null && probe.PrefilterTexture != null)
+                readyProbes.Add(probe);
+        }
+
+        return readyProbes;
+    }
+
+    private bool ProbeConfigurationChanged(IReadOnlyList<LightProbeComponent> readyProbes)
+    {
+        if (_lastProbeCount != readyProbes.Count)
+        {
+            _pendingProbeRefresh = true;
+            return true;
+        }
+
+        if (_cachedProbePositions.Count != readyProbes.Count || _cachedProbeTextures.Count != readyProbes.Count)
+        {
+            _pendingProbeRefresh = true;
+            return true;
+        }
+
+        foreach (var probe in readyProbes)
+        {
+            var position = probe.Transform.RenderTranslation;
+            if (!_cachedProbePositions.TryGetValue(probe.ID, out var cachedPos) || cachedPos != position)
+            {
+                _pendingProbeRefresh = true;
+                return true;
+            }
+
+            if (!_cachedProbeTextures.TryGetValue(probe.ID, out var cachedTex)
+                || cachedTex.Irradiance != probe.IrradianceTexture
+                || cachedTex.Prefilter != probe.PrefilterTexture)
+            {
+                _pendingProbeRefresh = true;
+                return true;
+            }
+
+            if (!_cachedProbeCaptureVersions.TryGetValue(probe.ID, out var cachedVersion)
+                || cachedVersion != probe.CaptureVersion)
+            {
+                _pendingProbeRefresh = true;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void ClearProbeResources()
+    {
+        _probeIrradianceArray?.Destroy();
+        _probeIrradianceArray = null;
+        _probePrefilterArray?.Destroy();
+        _probePrefilterArray = null;
+        _probePositionBuffer?.Dispose();
+        _probePositionBuffer = null;
+        _probeParamBuffer?.Dispose();
+        _probeParamBuffer = null;
+        _probeTetraBuffer?.Dispose();
+        _probeTetraBuffer = null;
+        _probeGridCellBuffer?.Dispose();
+        _probeGridCellBuffer = null;
+        _probeGridIndexBuffer?.Dispose();
+        _probeGridIndexBuffer = null;
+        _probeGridOrigin = Vector3.Zero;
+        _probeGridCellSize = 0f;
+        _probeGridDims = IVector3.Zero;
+        _probeTessellationJob?.Cancel();
+        _probeTessellationJob = null;
+        unchecked { _probeTessellationGeneration++; }
+        _probeTetraProbeCount = 0;
+        _cachedProbePositions.Clear();
+        _cachedProbeTextures.Clear();
+        _cachedProbeCaptureVersions.Clear();
+        _lastProbeCount = 0;
+        _pendingProbeRefresh = false;
+    }
+
+    private void BuildProbeResources(IList<LightProbeComponent> readyProbes)
+    {
+        ClearProbeResources();
+
+        if (readyProbes.Count == 0)
+        {
+            _pendingProbeRefresh = false;
+            return;
+        }
+
+        var irrTextures = new List<XRTexture2D>(readyProbes.Count);
+        var preTextures = new List<XRTexture2D>(readyProbes.Count);
+        var positions = new List<ProbePositionData>(readyProbes.Count);
+        var parameters = new List<ProbeParamData>(readyProbes.Count);
+
+        foreach (var probe in readyProbes)
+        {
+            irrTextures.Add(probe.IrradianceTexture!);
+            preTextures.Add(probe.PrefilterTexture!);
+
+            var position = probe.Transform.RenderTranslation;
+            positions.Add(new ProbePositionData { Position = new Vector4(position, 1.0f) });
+
+            parameters.Add(new ProbeParamData
+            {
+                InfluenceInner = new Vector4(probe.InfluenceBoxInnerExtents, probe.InfluenceSphereInnerRadius),
+                InfluenceOuter = new Vector4(probe.InfluenceBoxOuterExtents, probe.InfluenceSphereOuterRadius),
+                InfluenceOffsetShape = new Vector4(probe.InfluenceOffset, probe.InfluenceShape == LightProbeComponent.EInfluenceShape.Box ? 1.0f : 0.0f),
+                ProxyCenterEnable = new Vector4(probe.ProxyBoxCenterOffset, probe.ParallaxCorrectionEnabled ? 1.0f : 0.0f),
+                ProxyHalfExtents = new Vector4(probe.ProxyBoxHalfExtents, probe.NormalizationScale),
+                ProxyRotation = new Vector4(probe.ProxyBoxRotation.X, probe.ProxyBoxRotation.Y, probe.ProxyBoxRotation.Z, probe.ProxyBoxRotation.W),
+            });
+            _cachedProbePositions[probe.ID] = position;
+            _cachedProbeTextures[probe.ID] = (probe.IrradianceTexture!, probe.PrefilterTexture!);
+            _cachedProbeCaptureVersions[probe.ID] = probe.CaptureVersion;
+        }
+
+        if (irrTextures.Count == 0 || preTextures.Count == 0)
+            return;
+
+        _probeIrradianceArray = new XRTexture2DArray([.. irrTextures])
+        {
+            Name = "LightProbeIrradianceArray",
+            MinFilter = ETexMinFilter.Linear,
+            MagFilter = ETexMagFilter.Linear,
+            SizedInternalFormat = ESizedInternalFormat.Rgb8,  // Match irradiance texture format
+        };
+
+        _probePrefilterArray = new XRTexture2DArray([.. preTextures])
+        {
+            Name = "LightProbePrefilterArray",
+            MinFilter = ETexMinFilter.LinearMipmapLinear,
+            MagFilter = ETexMagFilter.Linear,
+            SizedInternalFormat = ESizedInternalFormat.Rgb16f,  // Match prefilter texture format
+        };
+
+        _probePositionBuffer = new XRDataBuffer("LightProbePositions", EBufferTarget.ShaderStorageBuffer, (uint)positions.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbePositionData>(), false, false)
+        {
+            BindingIndexOverride = 0,
+        };
+        _probePositionBuffer.SetDataRaw<ProbePositionData>(positions);
+        _probePositionBuffer.PushData();
+
+        _probeParamBuffer = new XRDataBuffer("LightProbeParameters", EBufferTarget.ShaderStorageBuffer, (uint)parameters.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeParamData>(), false, false)
+        {
+            BindingIndexOverride = 2,
+        };
+        _probeParamBuffer.SetDataRaw<ProbeParamData>(parameters);
+        _probeParamBuffer.PushData();
+
+        if (_useProbeGridAcceleration)
+            BuildProbeGrid(positions);
+
+        _lastProbeCount = positions.Count;
+        _pendingProbeRefresh = false;
+
+        StartTetrahedralizationJob(readyProbes);
+    }
+
+    private void StartTetrahedralizationJob(IList<LightProbeComponent> probes)
+    {
+        _probeTessellationJob?.Cancel();
+        int generation = _probeTessellationGeneration;
+        int probeCount = probes.Count;
+        _probeTessellationJob = Engine.Jobs.Schedule(() => RunTetrahedralization(probes, generation, probeCount));
+    }
+
+    private IEnumerable RunTetrahedralization(IList<LightProbeComponent> probes, int generation, int probeCount)
+    {
+        var probeIndices = new Dictionary<LightProbeComponent, int>(probes.Count);
+        for (int i = 0; i < probes.Count; ++i)
+            probeIndices[probes[i]] = i;
+
+        // If we don't have enough probes for a tetrahedralization, create a minimal fallback so shaders still have data.
+        if (probes.Count is > 0 and < 5)
+        {
+            UploadTetrahedralization(BuildFallbackTetraData(probeIndices), generation, probeCount);
+            yield break;
+        }
+
+        if (!Lights3DCollection.TryCreateDelaunay(probes, out var triangulation))
+        {
+            Debug.LogWarning("Probe tetrahedralization failed; skipping tetra buffer upload.");
+            UploadTetrahedralization([], generation, probeCount);
+            yield break;
+        }
+
+        if (triangulation is null)
+        {
+            Debug.LogWarning("Probe tetrahedralization returned null data; skipping tetra buffer upload.");
+            UploadTetrahedralization([], generation, probeCount);
+            yield break;
+        }
+
+        var cells = triangulation.Cells?.ToList();
+        if (cells is null || cells.Count == 0)
+        {
+            Debug.LogWarning("Probe tetrahedralization produced no cells; skipping tetra buffer upload.");
+            UploadTetrahedralization([], generation, probeCount);
+            yield break;
+        }
+
+        var tetraData = new List<ProbeTetraData>(cells.Count);
+        foreach (var cell in cells)
+        {
+            var v = cell.Vertices;
+            if (v.Length >= 4)
+            {
+                tetraData.Add(new ProbeTetraData
+                {
+                    Indices = new Vector4(
+                        probeIndices[v[0]],
+                        probeIndices[v[1]],
+                        probeIndices[v[2]],
+                        probeIndices[v[3]])
+                });
+            }
+        }
+
+        UploadTetrahedralization(tetraData, generation, probeCount);
+        yield break;
+    }
+
+    private static List<ProbeTetraData> BuildFallbackTetraData(Dictionary<LightProbeComponent, int> indices)
+    {
+        int count = indices.Count;
+        var list = new List<ProbeTetraData>(1);
+
+        int a = indices.Values.ElementAt(0);
+        int b = count >= 2 ? indices.Values.ElementAt(1) : a;
+        int c = count >= 3 ? indices.Values.ElementAt(2) : b;
+        int d = count >= 4 ? indices.Values.ElementAt(3) : c;
+
+        // Build one degenerate tetra that repeats available probes; shaders can treat this as a single-sample approximation.
+        list.Add(new ProbeTetraData
+        {
+            Indices = new Vector4(a, b, c, d)
+        });
+
+        return list;
+    }
+
+    private void UploadTetrahedralization(IReadOnlyList<ProbeTetraData> tetraData, int generation, int probeCount)
+    {
+        if (generation != _probeTessellationGeneration)
+            return;
+
+        _probeTetraBuffer?.Dispose();
+        if (tetraData.Count == 0)
+        {
+            _probeTetraBuffer = null;
+            _probeTetraProbeCount = 0;
+            return;
+        }
+
+        var tetraList = tetraData as IList<ProbeTetraData> ?? [.. tetraData];
+
+        _probeTetraBuffer = new XRDataBuffer("LightProbeTetra", EBufferTarget.ShaderStorageBuffer, (uint)tetraList.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeTetraData>(), false, false)
+        {
+            BindingIndexOverride = 1,
+        };
+        _probeTetraBuffer.SetDataRaw(tetraList);
+        _probeTetraBuffer.PushData();
+        _probeTetraProbeCount = probeCount;
+    }
+
+
+    private void RestirCompositeFBO_SettingUniforms(XRRenderProgram program)
+    {
+    var region = RenderingPipelineState?.CurrentRenderRegion;
+        float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
+        float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
+        program.Uniform("ScreenWidth", width);
+        program.Uniform("ScreenHeight", height);
+    }
+
+    private void SurfelGICompositeFBO_SettingUniforms(XRRenderProgram program)
+    {
+        var region = RenderingPipelineState?.CurrentRenderRegion;
+        float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
+        float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
+        program.Uniform("ScreenWidth", width);
+        program.Uniform("ScreenHeight", height);
+    }
+
+    private void LightVolumeCompositeFBO_SettingUniforms(XRRenderProgram program)
+    {
+        var region = RenderingPipelineState?.CurrentRenderRegion;
+        float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
+        float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
+        program.Uniform("ScreenWidth", width);
+        program.Uniform("ScreenHeight", height);
+    }
+
+    #endregion
+
+    #region Highlighting
+
+    /// <summary>
+    /// Stencil reference value for hover highlighting (bit 0).
+    /// </summary>
+    public const int StencilRefHover = 1;
+
+    /// <summary>
+    /// Stencil reference value for selection highlighting (bit 1).
+    /// </summary>
+    public const int StencilRefSelection = 2;
+
+    /// <summary>
+    /// This pipeline is set up to use the stencil buffer to highlight objects.
+    /// This will highlight the given material.
+    /// </summary>
+    /// <param name="material">The material to highlight.</param>
+    /// <param name="enabled">Whether to enable or disable highlighting.</param>
+    /// <param name="isSelection">If true, uses the selection stencil value; otherwise uses hover stencil value.</param>
+    public static void SetHighlighted(XRMaterial? material, bool enabled, bool isSelection = false)
+    {
+        if (material is null)
+            return;
+
+        //Set stencil buffer to indicate objects that should be highlighted.
+        //material?.SetFloat("Highlighted", enabled ? 1.0f : 0.0f);
+        var refValue = enabled ? (isSelection ? StencilRefSelection : StencilRefHover) : 0;
+        var stencil = material.RenderOptions.StencilTest;
+        stencil.Enabled = ERenderParamUsage.Enabled;
+        stencil.FrontFace = new StencilTestFace()
+        {
+            Function = EComparison.Always,
+            Reference = refValue,
+            ReadMask = 3,
+            WriteMask = 3,
+            BothFailOp = EStencilOp.Keep,
+            StencilPassDepthFailOp = EStencilOp.Keep,
+            BothPassOp = EStencilOp.Replace,
+        };
+        stencil.BackFace = new StencilTestFace()
+        {
+            Function = EComparison.Always,
+            Reference = refValue,
+            ReadMask = 3,
+            WriteMask = 3,
+            BothFailOp = EStencilOp.Keep,
+            StencilPassDepthFailOp = EStencilOp.Keep,
+            BothPassOp = EStencilOp.Replace,
+        };
+    }
+
+    /// <summary>
+    /// This pipeline is set up to use the stencil buffer to highlight objects.
+    /// This will highlight the given model.
+    /// </summary>
+    /// <param name="model">The model component to highlight.</param>
+    /// <param name="enabled">Whether to enable or disable highlighting.</param>
+    /// <param name="isSelection">If true, uses the selection stencil value; otherwise uses hover stencil value.</param>
+    public static void SetHighlighted(ModelComponent? model, bool enabled, bool isSelection = false)
+        => model?.Meshes.ForEach(m => m.LODs.ForEach(lod => SetHighlighted(lod.Renderer.Material, enabled, isSelection)));
+
+    /// <summary>
+    /// This pipeline is set up to use the stencil buffer to highlight objects.
+    /// This will highlight the model representing the given rigid body.
+    /// The model component must be a sibling component of the rigid body, or this will do nothing.
+    /// </summary>
+    /// <param name="body">The rigid body whose model to highlight.</param>
+    /// <param name="enabled">Whether to enable or disable highlighting.</param>
+    /// <param name="isSelection">If true, uses the selection stencil value; otherwise uses hover stencil value.</param>
+    public static void SetHighlighted(PhysxDynamicRigidBody? body, bool enabled, bool isSelection = false)
+        => SetHighlighted(body?.OwningComponent?.GetSiblingComponent<ModelComponent>(), enabled, isSelection);
+
+    #endregion
+}

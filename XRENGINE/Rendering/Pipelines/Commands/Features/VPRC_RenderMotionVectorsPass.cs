@@ -62,6 +62,9 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             //Debug.Out($"[Velocity] Motion vectors begin. GPU={GPUDispatch} PassCount={RenderPasses.Count}");
             using var overrideTicket = rs.PushOverrideMaterial(material);
+            // Rasterize the motion-vector pass against the same unjittered projection
+            // used for the reprojection uniforms so coverage and depth testing line up.
+            using var unjitteredProjectionTicket = rs.PushUnjitteredProjection();
             // Force shader pipeline mode so the override material is actually used.
             // In combined shader mode, material overrides are ignored and meshes render with their original shaders.
             using var pipelineTicket = rs.PushForceShaderPipelines();

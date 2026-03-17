@@ -145,6 +145,21 @@ namespace XREngine.Components.Lights
                 ? _cascadeShadowSlices[index].HalfExtents
                 : Vector3.Zero;
 
+        public XRCamera? GetCascadeCamera(int index)
+            => index >= 0 && index < _cascadeShadowCameras.Length
+                ? _cascadeShadowCameras[index]
+                : null;
+
+        public XRViewport? GetCascadeViewport(int index)
+            => index >= 0 && index < _cascadeShadowViewports.Length
+                ? _cascadeShadowViewports[index]
+                : null;
+
+        public XRFrameBuffer? GetCascadeFrameBuffer(int index)
+            => index >= 0 && index < _cascadeShadowFrameBuffers.Length
+                ? _cascadeShadowFrameBuffers[index]
+                : null;
+
         public static XRMesh GetVolumeMesh()
             => XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f));
         protected override XRMesh GetWireframeMesh()

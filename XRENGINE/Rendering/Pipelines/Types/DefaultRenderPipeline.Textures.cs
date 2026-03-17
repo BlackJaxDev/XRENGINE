@@ -488,7 +488,7 @@ public partial class DefaultRenderPipeline
             GetTexture<XRTexture2D>(MsaaDepthStencilTextureName)!,
             0u, 1u,
             ESizedInternalFormat.Depth24Stencil8,
-            false, false)
+            false, true)
         {
             DepthStencilViewFormat = EDepthStencilFmt.Depth,
             Name = MsaaDepthViewTextureName,
@@ -1145,6 +1145,33 @@ public partial class DefaultRenderPipeline
         texture.VWrap = ETexWrapMode.ClampToEdge;
         texture.SamplerName = FxaaOutputTextureName;
         texture.Name = FxaaOutputTextureName;
+        return texture;
+    }
+
+    private XRTexture CreateTsrHistoryColorTexture()
+    {
+        var (width, height) = GetDesiredFBOSizeFull();
+        bool outputHdr = Engine.Rendering.Settings.OutputHDR;
+
+        EPixelInternalFormat internalFormat = outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8;
+        EPixelType pixelType = outputHdr ? EPixelType.HalfFloat : EPixelType.UnsignedByte;
+        ESizedInternalFormat sized = outputHdr ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8;
+
+        XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
+            width,
+            height,
+            internalFormat,
+            EPixelFormat.Rgba,
+            pixelType,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = true;
+        texture.SizedInternalFormat = sized;
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = TsrHistoryColorTextureName;
+        texture.Name = TsrHistoryColorTextureName;
         return texture;
     }
 

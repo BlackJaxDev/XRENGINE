@@ -146,15 +146,20 @@ public partial class DefaultRenderPipeline
     }
 
     /// <summary>
-    /// Creates a simple bilinear upscale FBO for TSR.
-    /// Reads PostProcessOutputTexture at internal resolution and writes to FxaaOutputTexture at full resolution.
+    /// Creates the TSR resolve FBO.
+    /// Reads the internal-resolution post-process result plus temporal inputs and writes
+    /// the reconstructed full-resolution output to <see cref="FxaaOutputTextureName"/>.
     /// </summary>
     private XRFrameBuffer CreateTsrUpscaleFBO()
     {
         XRTexture sourceTexture = GetTexture<XRTexture>(PostProcessOutputTextureName)!;
+        XRTexture velocityTexture = GetTexture<XRTexture>(VelocityTextureName)!;
+        XRTexture depthTexture = GetTexture<XRTexture>(DepthViewTextureName)!;
+        XRTexture historyDepthTexture = GetTexture<XRTexture>(HistoryDepthViewTextureName)!;
+        XRTexture historyColorTexture = GetTexture<XRTexture>(TsrHistoryColorTextureName)!;
         XRTexture outputTexture = GetTexture<XRTexture>(FxaaOutputTextureName)!;
-        XRShader upscaleShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "BilinearUpscale.fs"), EShaderType.Fragment);
-        XRMaterial upscaleMaterial = new([sourceTexture], upscaleShader)
+        XRShader upscaleShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, "TemporalSuperResolution.fs"), EShaderType.Fragment);
+        XRMaterial upscaleMaterial = new([sourceTexture, velocityTexture, depthTexture, historyDepthTexture, historyColorTexture], upscaleShader)
         {
             RenderOptions = new RenderingParameters()
             {
@@ -166,7 +171,7 @@ public partial class DefaultRenderPipeline
                 }
             }
         };
-        var fbo = new XRQuadFrameBuffer(upscaleMaterial)
+        var fbo = new XRQuadFrameBuffer(upscaleMaterial, deriveRenderTargetsFromMaterial: false)
         {
             Name = TsrUpscaleFBOName
         };
@@ -174,7 +179,20 @@ public partial class DefaultRenderPipeline
             throw new InvalidOperationException("TSR upscale output texture is not an FBO-attachable texture.");
 
         fbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+        fbo.SettingUniforms += TsrUpscaleFBO_SettingUniforms;
         return fbo;
+    }
+
+    private XRFrameBuffer CreateTsrHistoryColorFBO()
+    {
+        XRTexture historyTexture = GetTexture<XRTexture>(TsrHistoryColorTextureName)!;
+        if (historyTexture is not IFrameBufferAttachement historyAttach)
+            throw new InvalidOperationException("TSR history color texture is not an FBO-attachable texture.");
+
+        return new XRFrameBuffer((historyAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            Name = TsrHistoryColorFBOName
+        };
     }
 
     private void TransformIdDebugQuadFBO_SettingUniforms(XRRenderProgram program)
@@ -473,7 +491,7 @@ public partial class DefaultRenderPipeline
         {
             Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
             Matrix4x4 projMatrix = camera.ProjectionMatrix;
-            Matrix4x4 viewProj = projMatrix * viewMatrix;
+            Matrix4x4 viewProj = viewMatrix * projMatrix;
             Debug.Out("[Velocity] Temporal data unavailable; using current camera matrices for motion vectors.");
             program.Uniform("CurrViewProjection", viewProj);
             program.Uniform("PrevViewProjection", viewProj);

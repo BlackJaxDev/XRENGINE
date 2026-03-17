@@ -40,6 +40,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (_computeProgram.Shaders.Count <= 0)
                 return;
 
+            ActivePipelineInstance.RenderState.ApplyScopedProgramBindings(_computeProgram);
+
             var textures = Textures?.Select(binding => (
                 binding.Unit,
                 (IRenderTextureResource)binding.TextureFactory(),

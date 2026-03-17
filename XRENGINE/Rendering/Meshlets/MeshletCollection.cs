@@ -215,7 +215,7 @@ namespace XREngine.Rendering.Meshlets
 
             // Set camera uniforms expected by shaders
             var viewMatrix = camera.Transform.InverseRenderMatrix;
-            var viewProjectionMatrix = camera.ProjectionMatrix * viewMatrix;
+            var viewProjectionMatrix = viewMatrix * camera.ProjectionMatrix;
             var cameraPosition = camera.Transform.RenderTranslation;
             var frustumPlanes = camera.WorldFrustum().Planes.Select(x => x.AsVector4()).ToArray();
 

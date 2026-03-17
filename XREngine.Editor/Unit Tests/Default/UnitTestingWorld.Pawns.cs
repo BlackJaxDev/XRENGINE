@@ -295,7 +295,8 @@ public static partial class EditorUnitTests
             persp!.HorizontalFieldOfView = 50.0f;
             persp.NearZ = 0.1f;
             persp.FarZ = 100000.0f;
-            firstPersonCam.Camera.RenderPipeline = new DefaultRenderPipeline(false) { OverrideProtected = true };
+            firstPersonCam.Camera.RenderPipeline = Engine.Rendering.NewRenderPipeline(stereo: false);
+            firstPersonCam.Camera.RenderPipeline.OverrideProtected = true;
             firstPersonCam.CullWithFrustum = true;
             if (pawn is null)
                 pawn = firstPersonCam.SetAsPlayerView(ELocalPlayerIndex.One);

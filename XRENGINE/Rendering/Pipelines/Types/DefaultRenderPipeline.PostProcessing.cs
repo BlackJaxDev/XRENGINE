@@ -13,12 +13,38 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline
 {
+    private const string TemporalFeedbackMinParameterName = "FeedbackMin";
+    private const string TemporalFeedbackMaxParameterName = "FeedbackMax";
+    private const string TemporalVarianceGammaParameterName = "VarianceGamma";
+    private const string TemporalCatmullRadiusParameterName = "CatmullRadius";
+    private const string TemporalDepthRejectThresholdParameterName = "DepthRejectThreshold";
+    private const string TemporalReactiveTransparencyRangeParameterName = "ReactiveTransparencyRange";
+    private const string TemporalReactiveVelocityScaleParameterName = "ReactiveVelocityScale";
+    private const string TemporalReactiveLumaThresholdParameterName = "ReactiveLumaThreshold";
+    private const string TemporalDepthDiscontinuityScaleParameterName = "DepthDiscontinuityScale";
+    private const string TemporalConfidencePowerParameterName = "ConfidencePower";
+
+    private readonly struct TemporalResolveSettings
+    {
+        public float FeedbackMin { get; init; }
+        public float FeedbackMax { get; init; }
+        public float VarianceGamma { get; init; }
+        public float CatmullRadius { get; init; }
+        public float DepthRejectThreshold { get; init; }
+        public Vector2 ReactiveTransparencyRange { get; init; }
+        public float ReactiveVelocityScale { get; init; }
+        public float ReactiveLumaThreshold { get; init; }
+        public float DepthDiscontinuityScale { get; init; }
+        public float ConfidencePower { get; init; }
+    }
+
     protected override void DescribePostProcessSchema(RenderPipelinePostProcessSchemaBuilder builder)
     {
         DescribeTonemappingStage(builder.Stage(TonemappingStageKey, "Tonemapping"));
         DescribeColorGradingStage(builder.Stage(ColorGradingStageKey, "Color Grading").BackedBy<ColorGradingSettings>());
         DescribeBloomStage(builder.Stage(BloomStageKey, "Bloom").BackedBy<BloomSettings>());
         DescribeAmbientOcclusionStage(builder.Stage(AmbientOcclusionStageKey, "Ambient Occlusion").BackedBy<AmbientOcclusionSettings>());
+        DescribeTemporalAntiAliasingStage(builder.Stage(TemporalAntiAliasingStageKey, "Temporal AA"));
         DescribeMotionBlurStage(builder.Stage(MotionBlurStageKey, "Motion Blur").BackedBy<MotionBlurSettings>());
         DescribeDepthOfFieldStage(builder.Stage(DepthOfFieldStageKey, "Depth of Field").BackedBy<DepthOfFieldSettings>());
         DescribeLensDistortionStage(builder.Stage(LensDistortionStageKey, "Lens Distortion").BackedBy<LensDistortionSettings>());
@@ -33,6 +59,9 @@ public partial class DefaultRenderPipeline
 
         builder.Category("ambient-occlusion", "Ambient Occlusion")
             .IncludeStage(AmbientOcclusionStageKey);
+
+        builder.Category("anti-aliasing", "Anti-Aliasing")
+            .IncludeStage(TemporalAntiAliasingStageKey);
 
         builder.Category("motion", "Motion Blur")
             .IncludeStage(MotionBlurStageKey);
@@ -423,6 +452,99 @@ public partial class DefaultRenderPipeline
             displayName: "LOD4 Weight",
             min: 0.0f,
             max: 2.0f,
+            step: 0.01f);
+    }
+
+    private static void DescribeTemporalAntiAliasingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    {
+        stage.AddParameter(
+            TemporalFeedbackMinParameterName,
+            PostProcessParameterKind.Float,
+            TemporalFeedbackMin,
+            displayName: "History Weight Min",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.001f);
+
+        stage.AddParameter(
+            TemporalFeedbackMaxParameterName,
+            PostProcessParameterKind.Float,
+            TemporalFeedbackMax,
+            displayName: "History Weight Max",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.001f);
+
+        stage.AddParameter(
+            TemporalVarianceGammaParameterName,
+            PostProcessParameterKind.Float,
+            TemporalVarianceGamma,
+            displayName: "Neighborhood Gamma",
+            min: 0.1f,
+            max: 4.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            TemporalCatmullRadiusParameterName,
+            PostProcessParameterKind.Float,
+            TemporalCatmullRadius,
+            displayName: "History Filter Radius",
+            min: 0.25f,
+            max: 2.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            TemporalDepthRejectThresholdParameterName,
+            PostProcessParameterKind.Float,
+            TemporalDepthRejectThreshold,
+            displayName: "Depth Reject Threshold",
+            min: 0.0f,
+            max: 0.05f,
+            step: 0.0001f);
+
+        stage.AddParameter(
+            TemporalReactiveTransparencyRangeParameterName,
+            PostProcessParameterKind.Vector2,
+            TemporalReactiveTransparencyRange,
+            displayName: "Reactive Alpha Range",
+            min: 0.0f,
+            max: 1.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            TemporalReactiveVelocityScaleParameterName,
+            PostProcessParameterKind.Float,
+            TemporalReactiveVelocityScale,
+            displayName: "Reactive Velocity Scale",
+            min: 0.0f,
+            max: 4.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            TemporalReactiveLumaThresholdParameterName,
+            PostProcessParameterKind.Float,
+            TemporalReactiveLumaThreshold,
+            displayName: "Reactive Luma Threshold",
+            min: 0.0f,
+            max: 2.0f,
+            step: 0.01f);
+
+        stage.AddParameter(
+            TemporalDepthDiscontinuityScaleParameterName,
+            PostProcessParameterKind.Float,
+            TemporalDepthDiscontinuityScale,
+            displayName: "Depth Edge Scale",
+            min: 0.0f,
+            max: 1000.0f,
+            step: 1.0f);
+
+        stage.AddParameter(
+            TemporalConfidencePowerParameterName,
+            PostProcessParameterKind.Float,
+            TemporalConfidencePower,
+            displayName: "Confidence Power",
+            min: 0.0f,
+            max: 4.0f,
             step: 0.01f);
     }
 
@@ -917,6 +1039,8 @@ public partial class DefaultRenderPipeline
 
         bool IsArtistMode(object o) => ((DepthOfFieldSettings)o).Mode == DepthOfFieldSettings.DepthOfFieldControlMode.Artist;
         bool IsPhysicalMode(object o) => ((DepthOfFieldSettings)o).Mode == DepthOfFieldSettings.DepthOfFieldControlMode.Physical;
+        bool IsTargetMode(object o) => ((DepthOfFieldSettings)o).Mode == DepthOfFieldSettings.DepthOfFieldControlMode.TargetTransform;
+        bool IsNotTargetMode(object o) => !IsTargetMode(o);
 
         stage.AddParameter(
             nameof(DepthOfFieldSettings.FocusDistance),
@@ -925,7 +1049,8 @@ public partial class DefaultRenderPipeline
             displayName: "Focus Distance",
             min: 0.1f,
             max: 2000.0f,
-            step: 0.05f);
+            step: 0.05f,
+            visibilityCondition: IsNotTargetMode);
 
         stage.AddParameter(
             nameof(DepthOfFieldSettings.FocusRange),
@@ -936,6 +1061,14 @@ public partial class DefaultRenderPipeline
             max: 500.0f,
             step: 0.05f,
             visibilityCondition: IsArtistMode);
+
+        stage.AddParameter(
+            nameof(DepthOfFieldSettings.FocusTargetOffset),
+            PostProcessParameterKind.Vector3,
+            Vector3.Zero,
+            displayName: "Focus Target Offset",
+            step: 0.05f,
+            visibilityCondition: IsTargetMode);
 
         stage.AddParameter(
             nameof(DepthOfFieldSettings.PhysicalCircleOfConfusionMm),
@@ -1266,7 +1399,7 @@ public partial class DefaultRenderPipeline
 
     private void PostProcessFBO_SettingUniforms(XRRenderProgram materialProgram)
     {
-        materialProgram.Uniform("OutputHDR", Engine.Rendering.Settings.OutputHDR);
+        materialProgram.Uniform("OutputHDR", ResolveOutputHDR());
 
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         ApplyPostProcessUniforms(state, materialProgram);
@@ -1278,6 +1411,60 @@ public partial class DefaultRenderPipeline
         float height = Math.Max(1u, FullHeight);
         var texelStep = new Vector2(1.0f / width, 1.0f / height);
         materialProgram.Uniform("FxaaTexelStep", texelStep);
+    }
+
+    private static TemporalResolveSettings ResolveTemporalSettings(PipelinePostProcessState? state)
+    {
+        var stage = state?.GetStage(TemporalAntiAliasingStageKey);
+        return new TemporalResolveSettings
+        {
+            FeedbackMin = stage?.GetValue(TemporalFeedbackMinParameterName, TemporalFeedbackMin) ?? TemporalFeedbackMin,
+            FeedbackMax = stage?.GetValue(TemporalFeedbackMaxParameterName, TemporalFeedbackMax) ?? TemporalFeedbackMax,
+            VarianceGamma = stage?.GetValue(TemporalVarianceGammaParameterName, TemporalVarianceGamma) ?? TemporalVarianceGamma,
+            CatmullRadius = stage?.GetValue(TemporalCatmullRadiusParameterName, TemporalCatmullRadius) ?? TemporalCatmullRadius,
+            DepthRejectThreshold = stage?.GetValue(TemporalDepthRejectThresholdParameterName, TemporalDepthRejectThreshold) ?? TemporalDepthRejectThreshold,
+            ReactiveTransparencyRange = stage?.GetValue(TemporalReactiveTransparencyRangeParameterName, TemporalReactiveTransparencyRange) ?? TemporalReactiveTransparencyRange,
+            ReactiveVelocityScale = stage?.GetValue(TemporalReactiveVelocityScaleParameterName, TemporalReactiveVelocityScale) ?? TemporalReactiveVelocityScale,
+            ReactiveLumaThreshold = stage?.GetValue(TemporalReactiveLumaThresholdParameterName, TemporalReactiveLumaThreshold) ?? TemporalReactiveLumaThreshold,
+            DepthDiscontinuityScale = stage?.GetValue(TemporalDepthDiscontinuityScaleParameterName, TemporalDepthDiscontinuityScale) ?? TemporalDepthDiscontinuityScale,
+            ConfidencePower = stage?.GetValue(TemporalConfidencePowerParameterName, TemporalConfidencePower) ?? TemporalConfidencePower,
+        };
+    }
+
+    private void TsrUpscaleFBO_SettingUniforms(XRRenderProgram program)
+    {
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        TemporalResolveSettings temporalSettings = ResolveTemporalSettings(state);
+        bool historyReady = false;
+        Vector2 currentJitterUv = Vector2.Zero;
+        Vector2 previousJitterUv = Vector2.Zero;
+        if (!DisableHistoryBasedVrEffects() && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+        {
+            historyReady = temporalData.HistoryReady;
+            currentJitterUv = new Vector2(temporalData.CurrentJitter.X / Math.Max(1u, InternalWidth), temporalData.CurrentJitter.Y / Math.Max(1u, InternalHeight));
+            previousJitterUv = new Vector2(temporalData.PreviousJitter.X / Math.Max(1u, InternalWidth), temporalData.PreviousJitter.Y / Math.Max(1u, InternalHeight));
+        }
+
+        float sourceWidth = Math.Max(1u, InternalWidth);
+        float sourceHeight = Math.Max(1u, InternalHeight);
+        float historyWidth = Math.Max(1u, FullWidth);
+        float historyHeight = Math.Max(1u, FullHeight);
+
+        program.Uniform("HistoryReady", historyReady);
+        program.Uniform("SourceTexelSize", new Vector2(1.0f / sourceWidth, 1.0f / sourceHeight));
+        program.Uniform("HistoryTexelSize", new Vector2(1.0f / historyWidth, 1.0f / historyHeight));
+        program.Uniform("CurrentJitterUv", currentJitterUv);
+        program.Uniform("PreviousJitterUv", previousJitterUv);
+        program.Uniform("FeedbackMin", temporalSettings.FeedbackMin);
+        program.Uniform("FeedbackMax", temporalSettings.FeedbackMax);
+        program.Uniform("VarianceGamma", temporalSettings.VarianceGamma);
+        program.Uniform("CatmullRadius", temporalSettings.CatmullRadius);
+        program.Uniform("DepthRejectThreshold", temporalSettings.DepthRejectThreshold);
+        program.Uniform("ReactiveTransparencyRange", temporalSettings.ReactiveTransparencyRange);
+        program.Uniform("ReactiveVelocityScale", temporalSettings.ReactiveVelocityScale);
+        program.Uniform("ReactiveLumaThreshold", temporalSettings.ReactiveLumaThreshold);
+        program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
+        program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
     }
 
     private void BrightPassFBO_SettingUniforms(XRRenderProgram program)
@@ -1333,6 +1520,8 @@ public partial class DefaultRenderPipeline
 
     private void TemporalAccumulationFBO_SettingUniforms(XRRenderProgram program)
     {
+        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        TemporalResolveSettings temporalSettings = ResolveTemporalSettings(state);
         if (!DisableHistoryBasedVrEffects() && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
         {
             float width = Math.Max(1u, temporalData.Width);
@@ -1340,22 +1529,26 @@ public partial class DefaultRenderPipeline
             bool historyReady = temporalData.HistoryReady && temporalData.HistoryExposureReady;
             program.Uniform("HistoryReady", historyReady);
             program.Uniform("TexelSize", new Vector2(1.0f / width, 1.0f / height));
+            program.Uniform("CurrentJitterUv", new Vector2(temporalData.CurrentJitter.X / width, temporalData.CurrentJitter.Y / height));
+            program.Uniform("PreviousJitterUv", new Vector2(temporalData.PreviousJitter.X / width, temporalData.PreviousJitter.Y / height));
         }
         else
         {
             program.Uniform("HistoryReady", false);
             program.Uniform("TexelSize", Vector2.Zero);
+            program.Uniform("CurrentJitterUv", Vector2.Zero);
+            program.Uniform("PreviousJitterUv", Vector2.Zero);
         }
 
-        program.Uniform("FeedbackMin", TemporalFeedbackMin);
-        program.Uniform("FeedbackMax", TemporalFeedbackMax);
-        program.Uniform("VarianceGamma", TemporalVarianceGamma);
-        program.Uniform("CatmullRadius", TemporalCatmullRadius);
-        program.Uniform("DepthRejectThreshold", TemporalDepthRejectThreshold);
-        program.Uniform("ReactiveTransparencyRange", TemporalReactiveTransparencyRange);
-        program.Uniform("ReactiveVelocityScale", TemporalReactiveVelocityScale);
-        program.Uniform("ReactiveLumaThreshold", TemporalReactiveLumaThreshold);
-        program.Uniform("DepthDiscontinuityScale", TemporalDepthDiscontinuityScale);
-        program.Uniform("ConfidencePower", TemporalConfidencePower);
+        program.Uniform("FeedbackMin", temporalSettings.FeedbackMin);
+        program.Uniform("FeedbackMax", temporalSettings.FeedbackMax);
+        program.Uniform("VarianceGamma", temporalSettings.VarianceGamma);
+        program.Uniform("CatmullRadius", temporalSettings.CatmullRadius);
+        program.Uniform("DepthRejectThreshold", temporalSettings.DepthRejectThreshold);
+        program.Uniform("ReactiveTransparencyRange", temporalSettings.ReactiveTransparencyRange);
+        program.Uniform("ReactiveVelocityScale", temporalSettings.ReactiveVelocityScale);
+        program.Uniform("ReactiveLumaThreshold", temporalSettings.ReactiveLumaThreshold);
+        program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
+        program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
     }
 }

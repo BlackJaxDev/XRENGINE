@@ -33,16 +33,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private readonly Lazy<XRMaterial> _motionVectorsMaterial;
     private readonly Lazy<XRMaterial> _depthNormalPrePassMaterial;
 
-    private const float TemporalFeedbackMin = 0.05f;
-    private const float TemporalFeedbackMax = 0.95f;
-    private const float TemporalVarianceGamma = 1.25f;
+    private const float TemporalFeedbackMin = 0.15f;
+    private const float TemporalFeedbackMax = 0.975f;
+    private const float TemporalVarianceGamma = 0.85f;
     private const float TemporalCatmullRadius = 1.0f;
-    private const float TemporalDepthRejectThreshold = 0.0025f;
-    private static readonly Vector2 TemporalReactiveTransparencyRange = new(0.05f, 0.35f);
-    private const float TemporalReactiveVelocityScale = 0.35f;
-    private const float TemporalReactiveLumaThreshold = 0.2f;
-    private const float TemporalDepthDiscontinuityScale = 900.0f;
-    private const float TemporalConfidencePower = 1.0f;
+    private const float TemporalDepthRejectThreshold = 0.0045f;
+    private static readonly Vector2 TemporalReactiveTransparencyRange = new(0.4f, 0.85f);
+    private const float TemporalReactiveVelocityScale = 0.55f;
+    private const float TemporalReactiveLumaThreshold = 0.35f;
+    private const float TemporalDepthDiscontinuityScale = 250.0f;
+    private const float TemporalConfidencePower = 0.75f;
 
     private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
     public EGlobalIlluminationMode GlobalIlluminationMode
@@ -73,6 +73,16 @@ public partial class DefaultRenderPipeline : RenderPipeline
         => VulkanFeatureProfile.EnableComputeDependentPasses;
 
     /// <summary>
+    /// Resolves the effective HDR output mode for the current rendering camera.
+    /// Camera override takes highest priority, then falls back to the global engine setting.
+    /// </summary>
+    internal static bool ResolveOutputHDR()
+    {
+        var camera = Engine.Rendering.State.RenderingCamera;
+        return camera?.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
+    }
+
+    /// <summary>
     /// Resolves the effective anti-aliasing mode for the current rendering camera.
     /// Camera override takes highest priority, then falls back to the global engine setting.
     /// </summary>
@@ -80,6 +90,17 @@ public partial class DefaultRenderPipeline : RenderPipeline
     {
         var camera = Engine.Rendering.State.RenderingCamera;
         return camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
+    }
+
+    internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
+    {
+        if (Engine.Rendering.Settings.EnableNvidiaDlss || Engine.Rendering.Settings.EnableIntelXess)
+            return null;
+
+        EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
+        return mode == EAntiAliasingMode.Tsr
+            ? Math.Clamp(camera?.TsrRenderScaleOverride ?? Engine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f)
+            : null;
     }
 
     /// <summary>
@@ -205,6 +226,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string ForwardDepthPrePassFBOName = "ForwardDepthPrePassFBO";
     public const string ForwardDepthPrePassMergeFBOName = "ForwardDepthPrePassMergeFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
+    public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
     public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
     public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
     public const string TsrUpscaleFBOName = "TsrUpscaleFBO";
@@ -247,6 +269,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string HistoryExposureVarianceTextureName = "HistoryExposureVariance";
     public const string MotionBlurTextureName = "MotionBlur";
     public const string DepthOfFieldTextureName = "DepthOfField";
+    public const string TsrHistoryColorTextureName = "TsrHistoryColor";
     public const string RadianceCascadeGITextureName = "RadianceCascadeGI";
     public const string SurfelGITextureName = "SurfelGITexture";
 
@@ -276,6 +299,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private const string BloomStageKey = "bloom";
     private const string AmbientOcclusionStageKey = "ambientOcclusion";
     private const int AmbientOcclusionDisabledMode = -1;
+    private const string TemporalAntiAliasingStageKey = "temporalAntiAliasing";
     private const string MotionBlurStageKey = "motionBlur";
     private const string DepthOfFieldStageKey = "depthOfField";
     private const string LensDistortionStageKey = "lensDistortion";
@@ -292,6 +316,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         TemporalColorInputTextureName,
         TemporalExposureVarianceTextureName,
         HistoryExposureVarianceTextureName,
+        TsrHistoryColorTextureName,
         MsaaAlbedoOpacityTextureName,
         MsaaNormalTextureName,
         MsaaRMSETextureName,
@@ -309,6 +334,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         PostProcessOutputFBOName,
         PostProcessFBOName,
         FxaaFBOName,
+        TsrHistoryColorFBOName,
         TsrUpscaleFBOName,
         HistoryCaptureFBOName,
         TemporalInputFBOName,
@@ -669,7 +695,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 msaaMarkBranch.ConditionEvaluator = () => RuntimeEnableMsaaDeferred;
                 {
                     var markCmds = new ViewportRenderCommandContainer(this);
-                    using (markCmds.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(MsaaLightingFBOName)))
+                    // Clear color (zero for additive lighting) and stencil (fresh for marking),
+                    // but NOT depth — the MSAA depth-stencil is shared from the GBuffer pass.
+                    using (markCmds.AddUsing<VPRC_BindFBOByName>(x =>
+                        x.SetOptions(MsaaLightingFBOName, write: true, clearColor: true, clearDepth: false, clearStencil: true)))
                     {
                         markCmds.Add<VPRC_StencilMask>().Set(~0u);
                         markCmds.Add<VPRC_MarkComplexMsaaPixels>().SetOptions(
@@ -690,7 +719,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 {
                     // MSAA path: render lights into MSAA Lighting FBO, then resolve to DiffuseTexture
                     var msaaLightCmds = new ViewportRenderCommandContainer(this);
-                    using (msaaLightCmds.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(MsaaLightingFBOName)))
+                    // Do NOT clear — color was zeroed and stencil was marked by the marking phase above;
+                    // depth is shared from the GBuffer and must be preserved for light volume testing.
+                    using (msaaLightCmds.AddUsing<VPRC_BindFBOByName>(x =>
+                        x.SetOptions(MsaaLightingFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
                     {
                         msaaLightCmds.Add<VPRC_StencilMask>().Set(~0u);
                         var msaaLightPass = msaaLightCmds.Add<VPRC_LightCombinePass>();
@@ -862,6 +894,11 @@ public partial class DefaultRenderPipeline : RenderPipeline
             }
 
             // MSAA resolve blit: only execute when MSAA is active for the current camera.
+            // Only color is resolved; OpenGL 4.6 §18.3.1 forbids blitting depth/stencil
+            // from a multisampled read framebuffer to a single-sample draw framebuffer
+            // (generates GL_INVALID_OPERATION and aborts the entire blit, including color).
+            // The non-MSAA DepthStencilTexture retains the GBuffer depth, which is sufficient
+            // for subsequent transparent passes and post-processing.
             {
                 var msaaResolve = c.Add<VPRC_IfElse>();
                 msaaResolve.ConditionEvaluator = () => RuntimeEnableMsaa;
@@ -872,8 +909,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
                         ForwardPassFBOName,
                         EReadBufferMode.ColorAttachment0,
                         blitColor: true,
-                        blitDepth: true,
-                        blitStencil: true,
+                        blitDepth: false,
+                        blitStencil: false,
                         linearFilter: false);
                     msaaResolve.TrueCommands = resolveCmds;
                 }
@@ -892,13 +929,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
             AppendExactTransparencyCommands(c);
 
-            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false, false)))
-            {
-                c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add<VPRC_DepthWrite>().Allow = false;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
-            }
+            // TransparentForward and OnTopForward are rendered AFTER the temporal
+            // accumulation resolve (see below) so that sub-pixel jitter does not
+            // shift alpha-test / blend boundaries, which causes smearing/ghosting
+            // when TAA/TSR tries to blend jittered transparent edges with history.
 
             c.Add<VPRC_DepthTest>().Enable = false;
 
@@ -931,7 +965,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
                         (int)EDefaultRenderPass.WeightedBlendedOitForward,
                         (int)EDefaultRenderPass.PerPixelLinkedListForward,
                         (int)EDefaultRenderPass.DepthPeelingForward,
-                        (int)EDefaultRenderPass.TransparentForward,
+                        // TransparentForward is omitted: it renders after temporal
+                        // accumulation to avoid TAA smearing artifacts.
                     });
                 c.Add<VPRC_DepthWrite>().Allow = true;
             }
@@ -961,6 +996,26 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 TemporalAccumulationFBOName,
                 HistoryCaptureFBOName,
                 HistoryExposureFBOName);
+
+            // Pop jitter so transparent / masked forward passes render with a
+            // clean (unjittered) projection. This prevents sub-pixel jitter from
+            // shifting alpha-test / blend boundaries that cause TAA smearing.
+            c.Add<VPRC_TemporalAccumulationPass>().Phase =
+                VPRC_TemporalAccumulationPass.EPhase.PopJitter;
+
+            // Render transparent and on-top forward passes AFTER temporal resolve.
+            // They composite on top of the resolved opaque image without temporal
+            // accumulation, avoiding ghosting/smearing on transparent edges.
+            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false, false)))
+            {
+                c.Add<VPRC_DepthTest>().Enable = true;
+                c.Add<VPRC_DepthWrite>().Allow = false;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, GPURenderDispatch);
+                c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
+                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OnTopForward, GPURenderDispatch);
+            }
+
+            c.Add<VPRC_DepthTest>().Enable = false;
 
             //PostProcess FBO
             //This FBO is created here because it relies on BloomBlurTextureName, which is created in the BloomPass.
@@ -1027,6 +1082,17 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 CreateFxaaFBO,
                 GetDesiredFBOSizeFull);
 
+            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+                TsrHistoryColorTextureName,
+                CreateTsrHistoryColorTexture,
+                NeedsRecreateTextureFullSize,
+                ResizeTextureFullSize);
+
+            c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
+                TsrHistoryColorFBOName,
+                CreateTsrHistoryColorFBO,
+                GetDesiredFBOSizeFull);
+
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 TsrUpscaleFBOName,
                 CreateTsrUpscaleFBO,
@@ -1053,8 +1119,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 }
 
                 // Second pass: upscale to full resolution.
-                // FXAA: applies FXAA shader which also upscales.
-                // TSR: applies simple bilinear upscale.
+                // FXAA: applies FXAA while upscaling.
+                // TSR: resolves against full-resolution history.
                 using (upscaleCmds.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = false))
                 {
                     var fxaaOrTsr = upscaleCmds.Add<VPRC_IfElse>();
@@ -1067,6 +1133,14 @@ public partial class DefaultRenderPipeline : RenderPipeline
                     {
                         var tsrUpscale = new ViewportRenderCommandContainer(this);
                         tsrUpscale.Add<VPRC_RenderQuadToFBO>().SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName);
+                        tsrUpscale.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                            TsrUpscaleFBOName,
+                            TsrHistoryColorFBOName,
+                            EReadBufferMode.ColorAttachment0,
+                            blitColor: true,
+                            blitDepth: false,
+                            blitStencil: false,
+                            linearFilter: false);
                         fxaaOrTsr.FalseCommands = tsrUpscale;
                     }
                 }

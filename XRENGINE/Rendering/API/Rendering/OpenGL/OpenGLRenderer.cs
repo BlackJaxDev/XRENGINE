@@ -687,6 +687,56 @@ namespace XREngine.Rendering.OpenGL
         {
             Api.StencilMask(v);
         }
+
+        public override void EnableStencilTest(bool enable)
+        {
+            if (enable)
+                Api.Enable(EnableCap.StencilTest);
+            else
+                Api.Disable(EnableCap.StencilTest);
+        }
+
+        public override void StencilFunc(EComparison function, int reference, uint mask)
+        {
+            Api.StencilFunc(StencilFunction.Never + (int)function, reference, mask);
+        }
+
+        public override void StencilOp(EStencilOp sfail, EStencilOp dpfail, EStencilOp dppass)
+        {
+            Api.StencilOp(
+                (Silk.NET.OpenGL.StencilOp)(int)sfail,
+                (Silk.NET.OpenGL.StencilOp)(int)dpfail,
+                (Silk.NET.OpenGL.StencilOp)(int)dppass);
+        }
+
+        public override void EnableBlend(bool enable)
+        {
+            if (enable)
+                Api.Enable(EnableCap.Blend);
+            else
+                Api.Disable(EnableCap.Blend);
+        }
+
+        public override void BlendFunc(EBlendingFactor src, EBlendingFactor dst)
+        {
+            Api.BlendFunc(ToGLEnum(src), ToGLEnum(dst));
+        }
+
+        public override void BlendFuncSeparate(EBlendingFactor srcRGB, EBlendingFactor dstRGB, EBlendingFactor srcAlpha, EBlendingFactor dstAlpha)
+        {
+            Api.BlendFuncSeparate(ToGLEnum(srcRGB), ToGLEnum(dstRGB), ToGLEnum(srcAlpha), ToGLEnum(dstAlpha));
+        }
+
+        public override void BlendEquation(EBlendEquationMode mode)
+        {
+            Api.BlendEquation(ToGLEnum(mode));
+        }
+
+        public override void BlendEquationSeparate(EBlendEquationMode modeRGB, EBlendEquationMode modeAlpha)
+        {
+            Api.BlendEquationSeparate(ToGLEnum(modeRGB), ToGLEnum(modeAlpha));
+        }
+
         public override void EnableSampleShading(float minValue)
         {
             Api.Enable(EnableCap.SampleShading);
@@ -1735,8 +1785,14 @@ void main()
             }
 
             var glExposure = GenericToAPI<GLTexture2D>(exposureTex);
-            if (glExposure is null)
+            if (glExposure is null || !glExposure.IsGenerated || !Api.IsTexture(glExposure.BindingId))
+            {
+                // An invalid image binding causes expensive GL debug-driver error handling
+                // and repeated stalls. Drop back to the CPU exposure path for this session.
+                //_supportsGpuAutoExposure = false;
+                //Debug.OpenGLWarning($"[AutoExposure] Disabling GPU auto exposure because the exposure texture is invalid. Texture='{exposureTex.Name}', BindingId={glExposure?.BindingId ?? 0}.");
                 return;
+            }
 
             int smallestMip;
             GLRenderProgram? glProgram;
@@ -1748,8 +1804,12 @@ void main()
             if (sourceTex is XRTexture2D source2D)
             {
                 var glSource = GenericToAPI<GLTexture2D>(source2D);
-                if (glSource is null)
+                if (glSource is null || !glSource.IsGenerated || !Api.IsTexture(glSource.BindingId))
+                {
+                    _supportsGpuAutoExposure = false;
+                    Debug.OpenGLWarning($"[AutoExposure] Disabling GPU auto exposure because the source texture is invalid. Texture='{sourceTex.Name}', BindingId={glSource?.BindingId ?? 0}.");
                     return;
+                }
 
                 if (generateMipmapsNow)
                     glSource.GenerateMipmaps();
@@ -1762,8 +1822,12 @@ void main()
             else if (sourceTex is XRTexture2DArray source2DArray)
             {
                 var glSource = GenericToAPI<GLTexture2DArray>(source2DArray);
-                if (glSource is null)
+                if (glSource is null || !glSource.IsGenerated || !Api.IsTexture(glSource.BindingId))
+                {
+                    _supportsGpuAutoExposure = false;
+                    Debug.OpenGLWarning($"[AutoExposure] Disabling GPU auto exposure because the array source texture is invalid. Texture='{sourceTex.Name}', BindingId={glSource?.BindingId ?? 0}.");
                     return;
+                }
 
                 if (generateMipmapsNow)
                     glSource.GenerateMipmaps();
@@ -2433,6 +2497,75 @@ void main()
                 }
                 Task.Run(() => imageCallback(XRTexture.NewImage(w, h, pixelFormat, pixelType, data), layer, 0));
             }
+        }
+
+        public unsafe bool TryCaptureTextureBytes(
+            uint textureBindingId,
+            int mipLevel,
+            int layer,
+            out byte[] data,
+            out EPixelFormat pixelFormat,
+            out EPixelType pixelType,
+            out uint width,
+            out uint height)
+        {
+            data = [];
+            pixelFormat = EPixelFormat.Rgba;
+            pixelType = EPixelType.UnsignedByte;
+            width = 0;
+            height = 0;
+
+            Api.GetTextureLevelParameter(textureBindingId, mipLevel, GLEnum.TextureWidth, out int levelWidth);
+            Api.GetTextureLevelParameter(textureBindingId, mipLevel, GLEnum.TextureHeight, out int levelHeight);
+            if (levelWidth <= 0 || levelHeight <= 0)
+                return false;
+
+            width = (uint)levelWidth;
+            height = (uint)levelHeight;
+
+            Api.GetTextureLevelParameter(textureBindingId, mipLevel, GLEnum.TextureInternalFormat, out int format);
+            InternalFormat internalFormat = (InternalFormat)format;
+            Api.GetTextureParameterI(textureBindingId, GLEnum.DepthStencilTextureMode, out int depthStencilMode);
+            GLEnum mode = (GLEnum)depthStencilMode;
+
+            switch (internalFormat)
+            {
+                case InternalFormat.Depth24Stencil8:
+                    pixelFormat = EPixelFormat.DepthStencil;
+                    pixelType = EPixelType.UnsignedInt248;
+                    break;
+                case InternalFormat.Depth32fStencil8:
+                case InternalFormat.Depth32fStencil8NV:
+                    pixelFormat = EPixelFormat.DepthStencil;
+                    pixelType = EPixelType.Float32UnsignedInt248Rev;
+                    break;
+            }
+
+            if (pixelFormat == EPixelFormat.DepthStencil && mode == GLEnum.StencilIndex)
+            {
+                pixelFormat = EPixelFormat.StencilIndex;
+                pixelType = EPixelType.UnsignedByte;
+            }
+
+            data = XRTexture.AllocateBytes(width, height, pixelFormat, pixelType);
+            fixed (byte* ptr = data)
+            {
+                Api.GetTextureSubImage(
+                    textureBindingId,
+                    mipLevel,
+                    0,
+                    0,
+                    layer,
+                    width,
+                    height,
+                    1,
+                    GLObjectBase.ToGLEnum(pixelFormat),
+                    GLObjectBase.ToGLEnum(pixelType),
+                    (uint)data.Length,
+                    ptr);
+            }
+
+            return true;
         }
 
         private bool IsDepthStencilFormat(InternalFormat internalFormat) => internalFormat switch

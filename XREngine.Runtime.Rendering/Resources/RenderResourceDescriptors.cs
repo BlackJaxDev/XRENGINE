@@ -1,4 +1,5 @@
 using XREngine.Data.Rendering;
+using static XREngine.Rendering.XRTexture;
 
 namespace XREngine.Rendering.Resources;
 
@@ -15,6 +16,16 @@ public enum RenderResourceSizeClass
     InternalResolution,
     WindowResolution,
     Custom
+}
+
+/// <summary>
+/// Describes the intended GPU-side access pattern for a buffer resource.
+/// </summary>
+public enum EBufferAccessPattern
+{
+    ReadOnly,
+    WriteOnly,
+    ReadWrite
 }
 
 public readonly record struct RenderResourceSizePolicy(
@@ -66,10 +77,22 @@ public sealed record FrameBufferResourceDescriptor(
     IReadOnlyList<FrameBufferAttachmentDescriptor> Attachments)
     : RenderResourceDescriptor(Name, Lifetime, SizePolicy);
 
+public sealed record RenderBufferResourceDescriptor(
+    string Name,
+    RenderResourceLifetime Lifetime,
+    RenderResourceSizePolicy SizePolicy,
+    ERenderBufferStorage StorageFormat,
+    uint MultisampleCount = 1,
+    EFrameBufferAttachment? DefaultAttachment = null)
+    : RenderResourceDescriptor(Name, Lifetime, SizePolicy);
+
 public sealed record BufferResourceDescriptor(
     string Name,
     RenderResourceLifetime Lifetime,
     ulong SizeInBytes,
     EBufferTarget Target,
     EBufferUsage Usage,
-    bool SupportsAliasing = true);
+    bool SupportsAliasing = true,
+    uint ElementStride = 0,
+    uint ElementCount = 0,
+    EBufferAccessPattern AccessPattern = EBufferAccessPattern.ReadWrite);

@@ -49,6 +49,9 @@ namespace XREngine.Rendering
 
         public override bool HasAlphaChannel => ViewedTexture.HasAlphaChannel;
 
-        public override ETextureTarget TextureTarget { get; } = ETextureTarget.Texture2D;
+        public override ETextureTarget TextureTarget
+            => Multisample
+                ? (Array ? ETextureTarget.Texture2DMultisampleArray : ETextureTarget.Texture2DMultisample)
+                : (Array ? ETextureTarget.Texture2DArray : ETextureTarget.Texture2D);
     }
 }

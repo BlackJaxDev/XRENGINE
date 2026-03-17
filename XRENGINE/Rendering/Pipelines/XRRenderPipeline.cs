@@ -314,6 +314,13 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     internal float? RequestedInternalResolution { get; set; }
 
     /// <summary>
+    /// Resolves the internal-resolution scale request for the current render. Derived pipelines can
+    /// override this to make the resolution hint depend on the active camera or runtime AA mode.
+    /// </summary>
+    internal virtual float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
+        => RequestedInternalResolution;
+
+    /// <summary>
     /// Creates a texture used by PBR shading to light an opaque surface.
     /// Input is an incoming light direction and an outgoing direction (calculated using the normal)
     /// Output from this texture is ratio of refleced radiance in the outgoing direction to irradiance from the incoming direction.

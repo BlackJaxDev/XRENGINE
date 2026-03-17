@@ -175,6 +175,28 @@ namespace XREngine.Rendering.Pipelines.Commands
             _currentLightComponent = null;
         }
         private void LightManager_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+            => BindCurrentLightUniforms(materialProgram);
+
+        private void MsaaLightManager_SettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+            => BindCurrentLightUniforms(materialProgram);
+
+        private void BindMsaaDeferredTextures(XRMaterialBase _, XRRenderProgram materialProgram)
+        {
+            if (_msaaAlbedoOpacityTextureCache is null ||
+                _msaaNormalTextureCache is null ||
+                _msaaRMSETextureCache is null ||
+                _msaaDepthViewTextureCache is null)
+            {
+                return;
+            }
+
+            materialProgram.Sampler("AlbedoOpacity", _msaaAlbedoOpacityTextureCache, 0);
+            materialProgram.Sampler("Normal", _msaaNormalTextureCache, 1);
+            materialProgram.Sampler("RMSE", _msaaRMSETextureCache, 2);
+            materialProgram.Sampler("DepthView", _msaaDepthViewTextureCache, 3);
+        }
+
+        private void BindCurrentLightUniforms(XRRenderProgram materialProgram)
         {
             if (_currentLightComponent is null)
                 return;
@@ -281,17 +303,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             _msaaRMSETextureCache = msaaRmseTex;
             _msaaDepthViewTextureCache = msaaDepthTex;
 
-            CreateMsaaLightRenderers(msaaAlbedoTex, msaaNormTex, msaaRmseTex, msaaDepthTex);
+            CreateMsaaLightRenderers();
         }
 
-        private void CreateMsaaLightRenderers(
-            XRTexture msaaAlbedoTex,
-            XRTexture msaaNormTex,
-            XRTexture msaaRmseTex,
-            XRTexture msaaDepthTex)
+        private void CreateMsaaLightRenderers()
         {
-            XRTexture[] msaaLightRefs = [msaaAlbedoTex, msaaNormTex, msaaRmseTex, msaaDepthTex];
-
             // Create shader variants with XRENGINE_MSAA_DEFERRED define
             XRShader basePoint = XRShader.EngineShader(Path.Combine(SceneShaderPath, "DeferredLightingPoint.fs"), EShaderType.Fragment);
             XRShader baseSpot = XRShader.EngineShader(Path.Combine(SceneShaderPath, "DeferredLightingSpot.fs"), EShaderType.Fragment);
@@ -306,22 +322,26 @@ namespace XREngine.Rendering.Pipelines.Commands
                 VPRC_MarkComplexMsaaPixels.ComplexPixelStencilBit,
                 EComparison.Equal);
 
-            XRMaterial msaaPointMat = new(msaaLightRefs, msaaPointShader) { RenderOptions = msaaParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
-            XRMaterial msaaSpotMat = new(msaaLightRefs, msaaSpotShader) { RenderOptions = msaaParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
-            XRMaterial msaaDirMat = new(msaaLightRefs, msaaDirShader) { RenderOptions = msaaParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            XRMaterial msaaPointMat = new(Array.Empty<XRTexture?>(), msaaPointShader) { RenderOptions = msaaParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            XRMaterial msaaSpotMat = new(Array.Empty<XRTexture?>(), msaaSpotShader) { RenderOptions = msaaParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            XRMaterial msaaDirMat = new(Array.Empty<XRTexture?>(), msaaDirShader) { RenderOptions = msaaParams, RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+
+            msaaPointMat.SettingUniforms += BindMsaaDeferredTextures;
+            msaaSpotMat.SettingUniforms += BindMsaaDeferredTextures;
+            msaaDirMat.SettingUniforms += BindMsaaDeferredTextures;
 
             XRMesh pointMesh = PointLightComponent.GetVolumeMesh();
             XRMesh spotMesh = SpotLightComponent.GetVolumeMesh();
             XRMesh dirMesh = DirectionalLightComponent.GetVolumeMesh();
 
             MsaaPointLightRenderer = new XRMeshRenderer(pointMesh, msaaPointMat);
-            MsaaPointLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            MsaaPointLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
 
             MsaaSpotLightRenderer = new XRMeshRenderer(spotMesh, msaaSpotMat);
-            MsaaSpotLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            MsaaSpotLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
 
             MsaaDirectionalLightRenderer = new XRMeshRenderer(dirMesh, msaaDirMat);
-            MsaaDirectionalLightRenderer.SettingUniforms += LightManager_SettingUniforms;
+            MsaaDirectionalLightRenderer.SettingUniforms += MsaaLightManager_SettingUniforms;
         }
 
         private static RenderingParameters GetAdditiveParameters()
@@ -346,6 +366,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 DepthTest = new()
                 {
                     Enabled = ERenderParamUsage.Disabled,
+                    },
+                    StencilTest = new()
+                    {
+                        Enabled = ERenderParamUsage.Disabled,
                 }
             };
             return additiveRenderParams;

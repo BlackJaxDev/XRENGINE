@@ -83,6 +83,7 @@ namespace XREngine.Rendering.OpenGL
                 SetTextureUniforms(materialProgram);
                 SetEngineUniforms(materialProgram);
                 Data.OnSettingUniforms(materialProgram.Data);
+                Engine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(materialProgram.Data);
 
                 // Ensure any active sampler uniforms left unbound by material/engine code still receive
                 // a type-correct placeholder texture so the draw does not hit GL_INVALID_OPERATION.

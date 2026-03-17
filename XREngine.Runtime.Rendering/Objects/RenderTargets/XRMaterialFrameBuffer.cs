@@ -9,13 +9,16 @@ namespace XREngine.Rendering
     public class XRMaterialFrameBuffer : XRFrameBuffer
     {
         private XRMaterial? _material;
+        private bool _deriveRenderTargetsFromMaterial = true;
 
         public XRMaterialFrameBuffer() { }
 
-        public XRMaterialFrameBuffer(XRMaterial? material)
+        public XRMaterialFrameBuffer(XRMaterial? material, bool deriveRenderTargetsFromMaterial = true)
         {
+            _deriveRenderTargetsFromMaterial = deriveRenderTargetsFromMaterial;
             _material = material;
-            SetRenderTargets(_material);
+            if (_deriveRenderTargetsFromMaterial)
+                SetRenderTargets(_material);
             VerifyTextures();
         }
 
@@ -32,7 +35,30 @@ namespace XREngine.Rendering
                 if (_material == value)
                     return;
 
-                SetRenderTargets(_material = value);
+                _material = value;
+                if (_deriveRenderTargetsFromMaterial)
+                    SetRenderTargets(_material);
+                VerifyTextures();
+            }
+        }
+
+        /// <summary>
+        /// When true, framebuffer targets are inferred from the material's attachable textures.
+        /// Disable this for fullscreen passes that sample from render targets of mixed sizes but
+        /// write to an explicitly assigned output attachment.
+        /// </summary>
+        public bool DeriveRenderTargetsFromMaterial
+        {
+            get => _deriveRenderTargetsFromMaterial;
+            set
+            {
+                if (_deriveRenderTargetsFromMaterial == value)
+                    return;
+
+                _deriveRenderTargetsFromMaterial = value;
+                if (_deriveRenderTargetsFromMaterial)
+                    SetRenderTargets(_material);
+
                 VerifyTextures();
             }
         }
@@ -41,16 +67,13 @@ namespace XREngine.Rendering
         {
             uint? w = null;
             uint? h = null;
-            if (Material != null)
+            if (Targets is not null)
             {
-                foreach (var tex in Material.Textures)
+                foreach (var (target, _, _, _) in Targets)
                 {
-                    if (tex?.FrameBufferAttachment is null)
-                        continue;
-
                     uint tw;
                     uint th;
-                    if (tex is XRTexture2D tref)
+                    if (target is XRTexture2D tref)
                     {
                         tw = tref.Width;
                         th = tref.Height;
@@ -60,6 +83,11 @@ namespace XREngine.Rendering
                     //    tw = vref.Width;
                     //    th = vref.Height;
                     //}
+                    else if (target is XRRenderBuffer rb)
+                    {
+                        tw = rb.Width;
+                        th = rb.Height;
+                    }
                     else
                         continue;
 

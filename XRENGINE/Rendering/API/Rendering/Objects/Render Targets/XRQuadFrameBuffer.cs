@@ -55,7 +55,8 @@ namespace XREngine.Rendering
         /// Renders a material to the screen using a fullscreen orthographic quad.
         /// </summary>
         /// <param name="mat">The material containing textures to render to this fullscreen quad.</param>
-        public XRQuadFrameBuffer(XRMaterial mat, bool useTriangle = true) : base(mat)
+        public XRQuadFrameBuffer(XRMaterial mat, bool useTriangle = true, bool deriveRenderTargetsFromMaterial = true)
+            : base(mat, deriveRenderTargetsFromMaterial)
         {
             mat.RenderOptions.CullMode = ECullMode.None;
             FullScreenMesh = new XRMeshRenderer(Mesh(useTriangle), mat);
@@ -72,7 +73,16 @@ namespace XREngine.Rendering
             XRMaterial material,
             bool useTriangle,
             params (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
-            : this(material, useTriangle) => SetRenderTargets(targets);
+            : this(material, useTriangle, true, targets)
+        {
+        }
+
+        public XRQuadFrameBuffer(
+            XRMaterial material,
+            bool useTriangle,
+            bool deriveRenderTargetsFromMaterial,
+            params (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
+            : this(material, useTriangle, deriveRenderTargetsFromMaterial) => SetRenderTargets(targets);
 
         private void SetUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
             => SettingUniforms?.Invoke(materialProgram);

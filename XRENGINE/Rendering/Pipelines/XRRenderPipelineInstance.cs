@@ -286,7 +286,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase
         // Honor any internal resolution request from the pipeline before executing commands.
         if (viewport is not null)
         {
-            float? requestedScale = Pipeline.RequestedInternalResolution;
+            float? requestedScale = Pipeline.GetRequestedInternalResolutionForCamera(camera);
 
             // Avoid redundant resets: only touch the viewport when the requested scale changes.
             if (requestedScale.HasValue)
@@ -368,14 +368,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
     public T? GetTexture<T>(string name) where T : XRTexture
     {
-        if (Resources.TryGetTexture(name, out XRTexture? value))
+        if (TryGetTexture(name, out XRTexture? value))
             return value as T;
         return null;
     }
 
     public bool TryGetTexture(string name, out XRTexture? texture)
     {
-        return Resources.TryGetTexture(name, out texture);
+        return Resources.TryGetTexture(name, out texture)
+            || Variables.TryResolveTexture(Resources, name, out texture);
     }
 
     public void SetTexture(XRTexture texture, TextureResourceDescriptor? descriptor = null)
@@ -391,14 +392,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
     public XRDataBuffer? GetBuffer(string name)
     {
-        if (Resources.TryGetBuffer(name, out XRDataBuffer? value))
+        if (TryGetBuffer(name, out XRDataBuffer? value))
             return value;
         return null;
     }
 
     public bool TryGetBuffer(string name, out XRDataBuffer? buffer)
     {
-        return Resources.TryGetBuffer(name, out buffer);
+        return Resources.TryGetBuffer(name, out buffer)
+            || Variables.TryResolveBuffer(Resources, name, out buffer);
     }
 
     public void SetBuffer(XRDataBuffer buffer, BufferResourceDescriptor? descriptor = null)
@@ -415,14 +417,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase
 
     public T? GetFBO<T>(string name) where T : XRFrameBuffer
     {
-        if (Resources.TryGetFrameBuffer(name, out XRFrameBuffer? value))
+        if (TryGetFBO(name, out XRFrameBuffer? value))
             return value as T;
         return null;
     }
 
     public bool TryGetFBO(string name, out XRFrameBuffer? fbo)
     {
-        return Resources.TryGetFrameBuffer(name, out fbo);
+        return Resources.TryGetFrameBuffer(name, out fbo)
+            || Variables.TryResolveFrameBuffer(Resources, name, out fbo);
     }
 
     public void SetFBO(XRFrameBuffer fbo, FrameBufferResourceDescriptor? descriptor = null)
@@ -434,6 +437,30 @@ public sealed partial class XRRenderPipelineInstance : XRBase
             return;
         }
         Resources.BindFrameBuffer(fbo, descriptor);
+    }
+
+    public XRRenderBuffer? GetRenderBuffer(string name)
+    {
+        if (TryGetRenderBuffer(name, out XRRenderBuffer? value))
+            return value;
+        return null;
+    }
+
+    public bool TryGetRenderBuffer(string name, out XRRenderBuffer? renderBuffer)
+    {
+        return Resources.TryGetRenderBuffer(name, out renderBuffer)
+            || Variables.TryResolveRenderBuffer(Resources, name, out renderBuffer);
+    }
+
+    public void SetRenderBuffer(XRRenderBuffer renderBuffer, RenderBufferResourceDescriptor? descriptor = null)
+    {
+        string? name = renderBuffer.Name;
+        if (name is null)
+        {
+            Debug.Rendering("RenderBuffer name must be set before adding to the pipeline.");
+            return;
+        }
+        Resources.BindRenderBuffer(renderBuffer, descriptor);
     }
 
     private void WarnIfScreenSpaceUiHasNoRenderCommand(UICanvasComponent? userInterface, XRViewport? viewport)

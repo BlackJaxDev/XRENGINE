@@ -140,6 +140,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             material.OnSettingUniforms(program);
+            Engine.Rendering.State.RenderingPipelineState?.ApplyScopedProgramBindings(program);
         }
 
         private static void PassCameraUniforms(XRRenderProgram program, XRCamera? camera, EEngineUniform inverseViewName, EEngineUniform projectionName)
@@ -239,18 +240,18 @@ namespace XREngine.Rendering.Vulkan
                 Reference = (uint)Math.Max(face.Reference, 0)
             };
 
-        private static StencilOp ToVulkanStencilOp(EStencilOp op)
+        private static Silk.NET.Vulkan.StencilOp ToVulkanStencilOp(EStencilOp op)
             => op switch
             {
-                EStencilOp.Zero => StencilOp.Zero,
-                EStencilOp.Invert => StencilOp.Invert,
-                EStencilOp.Keep => StencilOp.Keep,
-                EStencilOp.Replace => StencilOp.Replace,
-                EStencilOp.Incr => StencilOp.IncrementAndClamp,
-                EStencilOp.Decr => StencilOp.DecrementAndClamp,
-                EStencilOp.IncrWrap => StencilOp.IncrementAndWrap,
-                EStencilOp.DecrWrap => StencilOp.DecrementAndWrap,
-                _ => StencilOp.Keep
+                EStencilOp.Zero => Silk.NET.Vulkan.StencilOp.Zero,
+                EStencilOp.Invert => Silk.NET.Vulkan.StencilOp.Invert,
+                EStencilOp.Keep => Silk.NET.Vulkan.StencilOp.Keep,
+                EStencilOp.Replace => Silk.NET.Vulkan.StencilOp.Replace,
+                EStencilOp.Incr => Silk.NET.Vulkan.StencilOp.IncrementAndClamp,
+                EStencilOp.Decr => Silk.NET.Vulkan.StencilOp.DecrementAndClamp,
+                EStencilOp.IncrWrap => Silk.NET.Vulkan.StencilOp.IncrementAndWrap,
+                EStencilOp.DecrWrap => Silk.NET.Vulkan.StencilOp.DecrementAndWrap,
+                _ => Silk.NET.Vulkan.StencilOp.Keep
             };
 
         private static BlendOp ToVulkanBlendOp(EBlendEquationMode mode)

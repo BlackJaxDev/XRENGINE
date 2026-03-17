@@ -582,9 +582,9 @@ namespace XREngine
                     RightEyeViewport!.WorldInstanceOverride = ViewInformation.World;
                 }
 
-                var pipeline = new DefaultRenderPipeline(false);
+                var pipeline = (RenderPipeline)Rendering.NewRenderPipeline(stereo: false);
                 _twoPassLeftPipeline = new XRRenderPipelineInstance(pipeline);
-                _twoPassRightPipeline = new XRRenderPipelineInstance(new DefaultRenderPipeline(false));
+                _twoPassRightPipeline = new XRRenderPipelineInstance(Rendering.NewRenderPipeline(stereo: false));
                 _sharedMeshRenderCommands = new RenderCommandCollection();
                 _sharedMeshRenderCommands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);
 
@@ -627,7 +627,7 @@ namespace XREngine
             private static void InitSinglePass(XRWindow window, uint rW, uint rH, XRTexture2D left, XRTexture2D right)
             {
                 SetViewportParameters(rW, rH, StereoViewport = new XRViewport(window));
-                StereoViewport.RenderPipeline = new DefaultRenderPipeline(true);
+                StereoViewport.RenderPipeline = Rendering.NewRenderPipeline(stereo: true);
                 StereoViewport.AutomaticallyCollectVisible = false;
                 StereoViewport.AutomaticallySwapBuffers = false;
 

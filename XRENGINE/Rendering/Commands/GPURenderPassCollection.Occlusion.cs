@@ -489,7 +489,7 @@ namespace XREngine.Rendering.Commands
 
             // Prepare uniforms
             Matrix4x4 view = camera.Transform.InverseRenderMatrix;
-            Matrix4x4 viewProj = camera.ProjectionMatrix * view;
+            Matrix4x4 viewProj = view * camera.ProjectionMatrix;
             uint reversed = camera.IsReversedDepth ? 1u : 0u;
 
             _hiZOcclusionProgram!.Use();

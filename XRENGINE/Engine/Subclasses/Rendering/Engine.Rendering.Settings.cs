@@ -464,7 +464,7 @@ namespace XREngine
                 }
 
                 /// <summary>
-                /// Selects which anti-aliasing technique to use. Future modes (TAA/TSR) fall back to None until implemented.
+                /// Selects which anti-aliasing technique to use, including temporal AA (TAA) and temporal super resolution (TSR).
                 /// </summary>
                 [Category("Performance")]
                 [Description("Selects which anti-aliasing technique to use.")]

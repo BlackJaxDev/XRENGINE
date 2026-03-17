@@ -3,6 +3,7 @@
 ## Current State
 
 - Motion blur consumption was partially corrected by converting the velocity texture from NDC delta space into UV or pixel space in the blur shader.
+- The default render pipeline now exposes temporal TAA and TSR resolve tuning in the per-camera post-processing UI under a dedicated `Temporal AA` section.
 - The render-pipeline ImGui preview path had real OpenGL state leakage bugs:
   - preview sampling and swizzle state was being written onto live textures;
   - preview texture views could be created before the viewed GL texture existed, producing black previews;
@@ -19,6 +20,9 @@
 
 - `MotionVectors.fs` writes velocity as current minus previous NDC position.
 - `TemporalAccumulation.fs` already consumes this as NDC-to-UV by multiplying by `0.5`.
+- The velocity pass intentionally uses unjittered current and previous view-projection matrices.
+- Because of that, temporal reprojection must also add the previous-minus-current camera jitter delta in UV space when looking up history.
+- If the jitter delta is omitted, static geometry can visibly wobble frame-to-frame even when motion vectors themselves are correct.
 - `MotionBlur.fs` previously consumed it as if it were already UV-space, which was incorrect.
 
 ### Preview UI Side Effects
@@ -28,6 +32,17 @@
 - This should be treated as a pipeline bug, not as valid behavior.
 - The preview path is still not a reliable validator for render correctness because current previews can remain black even when the underlying resources may exist.
 - Depth-oriented previews saturating white suggest the preview path still lacks correct remapping or texture-view interpretation for at least some formats.
+
+### Fullscreen Resolve Attachment Rules
+
+- Fullscreen resolve passes that sample from textures at mixed resolutions must not auto-derive FBO render targets from every framebuffer-capable material texture.
+- TSR is a concrete case: its internal-resolution source textures and full-resolution history texture must coexist in one material while the FBO writes only to the explicit full-resolution output target.
+- If the quad FBO derives attachments from the material anyway, it can resize or validate unrelated input textures against the wrong size and cause stalls, warnings, or out-of-memory behavior.
+
+### MSAA Sampler Binding Rules
+
+- The deferred MSAA shaders expect sampler names like `AlbedoOpacity`, `Normal`, `RMSE`, `DepthView`, `NormalMS`, and `DepthMS`, even though the pipeline resources themselves are named `Msaa*`.
+- When those samplers are not rebound explicitly, the OpenGL layer falls back to dummy textures, which can turn the editor output black while still logging only sampler binding warnings.
 
 ### Non-TAA Requirement
 

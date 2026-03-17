@@ -390,7 +390,15 @@ namespace XREngine.Rendering
 
         public event Action? SetDrawBuffersRequested;
 
-        private unsafe void SetDrawBuffers()
+        /// <summary>
+        /// Re-applies the configured draw buffers to the underlying GL FBO.
+        /// Call after external operations (e.g. DSA blit) that mutate draw buffer state
+        /// behind the back of the FBO wrapper.
+        /// </summary>
+        public void RestoreDrawBuffers()
+            => SetDrawBuffersRequested?.Invoke();
+
+        private void SetDrawBuffers()
             => SetDrawBuffersRequested?.Invoke();
 
         public void SetRenderTarget(int i, (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex) target)

@@ -53,10 +53,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
             else
             {
-                Debug.Out($"[ExposureUpdate] GPU auto exposure not supported, using CPU path");
+                //Debug.Out($"[ExposureUpdate] GPU auto exposure not supported, using CPU path");
             }
 
-            grading.UpdateExposure(sourceTexture, GenerateMipmapsHere);
+            //grading.UpdateExposure(sourceTexture, GenerateMipmapsHere);
         }
 
         public void SetOptions(string hdrSceneTextureName, bool generateMipmapsHere)

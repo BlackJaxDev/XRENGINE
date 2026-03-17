@@ -591,6 +591,56 @@ namespace XREngine
                     => AbstractRenderer.Current?.StencilMask(mask);
 
                 /// <summary>
+                /// Enables or disables stencil testing.
+                /// </summary>
+                public static void EnableStencilTest(bool enable)
+                    => AbstractRenderer.Current?.EnableStencilTest(enable);
+
+                /// <summary>
+                /// Sets the stencil comparison function, reference value, and read mask.
+                /// Applied to both front and back faces.
+                /// </summary>
+                public static void StencilFunc(EComparison function, int reference, uint mask)
+                    => AbstractRenderer.Current?.StencilFunc(function, reference, mask);
+
+                /// <summary>
+                /// Sets the stencil operations for stencil fail, depth fail, and both pass.
+                /// Applied to both front and back faces.
+                /// </summary>
+                public static void StencilOp(EStencilOp sfail, EStencilOp dpfail, EStencilOp dppass)
+                    => AbstractRenderer.Current?.StencilOp(sfail, dpfail, dppass);
+
+                /// <summary>
+                /// Enables or disables alpha blending.
+                /// </summary>
+                public static void EnableBlend(bool enable)
+                    => AbstractRenderer.Current?.EnableBlend(enable);
+
+                /// <summary>
+                /// Sets the blend function for both RGB and alpha channels.
+                /// </summary>
+                public static void BlendFunc(EBlendingFactor src, EBlendingFactor dst)
+                    => AbstractRenderer.Current?.BlendFunc(src, dst);
+
+                /// <summary>
+                /// Sets separate blend functions for RGB and alpha channels.
+                /// </summary>
+                public static void BlendFuncSeparate(EBlendingFactor srcRGB, EBlendingFactor dstRGB, EBlendingFactor srcAlpha, EBlendingFactor dstAlpha)
+                    => AbstractRenderer.Current?.BlendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha);
+
+                /// <summary>
+                /// Sets the blend equation for both RGB and alpha channels.
+                /// </summary>
+                public static void BlendEquation(EBlendEquationMode mode)
+                    => AbstractRenderer.Current?.BlendEquation(mode);
+
+                /// <summary>
+                /// Sets separate blend equations for RGB and alpha channels.
+                /// </summary>
+                public static void BlendEquationSeparate(EBlendEquationMode modeRGB, EBlendEquationMode modeAlpha)
+                    => AbstractRenderer.Current?.BlendEquationSeparate(modeRGB, modeAlpha);
+
+                /// <summary>
                 /// Enables per-sample shading so the fragment shader runs once per MSAA sample.
                 /// Used by the MSAA deferred complex pixel lighting pass.
                 /// </summary>

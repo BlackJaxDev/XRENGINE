@@ -1,4 +1,6 @@
+using System.Numerics;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -10,6 +12,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// </summary>
     public class VPRC_ResolveMsaaGBuffer : ViewportRenderCommand
     {
+        private XRMaterial? _depthResolveMaterial;
+        private XRQuadFrameBuffer? _depthResolveQuad;
+
         public string? SourceMsaaFBOName { get; set; }
         public string? DestinationFBOName { get; set; }
 
@@ -41,6 +46,49 @@ namespace XREngine.Rendering.Pipelines.Commands
             EReadBufferMode.ColorAttachment3,
         ];
 
+        internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
+        {
+            if (_depthResolveQuad is not null)
+                return;
+
+            _depthResolveMaterial = new(
+                [new ShaderBool(false, "IsReversedDepth")],
+                Array.Empty<XRTexture?>(),
+                XRShader.EngineShader(Path.Combine(SceneShaderPath, "CopyDepthFromTextureMS.fs"), EShaderType.Fragment))
+            {
+                RenderOptions = new RenderingParameters()
+                {
+                    DepthTest = new()
+                    {
+                        Enabled = ERenderParamUsage.Enabled,
+                        Function = EComparison.Always,
+                        UpdateDepth = true,
+                    },
+                    WriteRed = false,
+                    WriteGreen = false,
+                    WriteBlue = false,
+                    WriteAlpha = false,
+                }
+            };
+            _depthResolveMaterial.SettingUniforms += DepthResolveMaterial_SettingUniforms;
+
+            _depthResolveQuad = new XRQuadFrameBuffer(_depthResolveMaterial, false);
+        }
+
+        internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
+        {
+            if (_depthResolveQuad is not null)
+            {
+                _depthResolveQuad.Destroy();
+                _depthResolveQuad = null;
+            }
+
+            if (_depthResolveMaterial is not null)
+                _depthResolveMaterial.SettingUniforms -= DepthResolveMaterial_SettingUniforms;
+            _depthResolveMaterial?.Destroy();
+            _depthResolveMaterial = null;
+        }
+
         protected override void Execute()
         {
             if (SourceMsaaFBOName is null || DestinationFBOName is null)
@@ -66,15 +114,39 @@ namespace XREngine.Rendering.Pipelines.Commands
                     linearFilter: false);
             }
 
+            // BlitWithDrawBuffer (DSA) mutates the destination FBO's draw buffer state
+            // behind the GLFrameBuffer wrapper. Restore the full MRT configuration so
+            // subsequent passes that write to this FBO see all color attachments.
+            destination.RestoreDrawBuffers();
+
             // Resolve depth-stencil (not affected by read/draw buffer selection)
             if (ResolveDepthStencil)
             {
-                renderer.BlitFBOToFBO(
-                    source, destination,
-                    EReadBufferMode.None,
-                    colorBit: false, depthBit: true, stencilBit: true,
-                    linearFilter: false);
+                ResolveDepth(source, destination);
             }
+        }
+
+        private void ResolveDepth(XRFrameBuffer source, XRFrameBuffer destination)
+        {
+            if (_depthResolveQuad is null)
+                return;
+
+            using var areaScope = ActivePipelineInstance.RenderState.PushRenderArea((int)destination.Width, (int)destination.Height);
+            _depthResolveQuad.Render(destination);
+        }
+
+        private void DepthResolveMaterial_SettingUniforms(XRMaterialBase _, XRRenderProgram program)
+        {
+            var msaaDepthView = ActivePipelineInstance.GetTexture<XRTexture>(DefaultRenderPipeline.MsaaDepthViewTextureName);
+            if (msaaDepthView is null)
+                return;
+
+            bool isReversedDepth = ActivePipelineInstance.RenderState.RenderingCamera?.IsReversedDepth
+                ?? ActivePipelineInstance.RenderState.SceneCamera?.IsReversedDepth
+                ?? false;
+
+            program.Sampler("DepthView", msaaDepthView, 0);
+            program.Uniform("IsReversedDepth", isReversedDepth);
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

@@ -5,6 +5,7 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Numerics;
@@ -170,9 +171,9 @@ namespace XREngine.Rendering
                         return;
                     }
 
-                    RuntimeRenderingHostServices.Current.LogOutput($"[TextureLoadJob] Loading texture from disk: {filePath}");
                     bool loadSuccess = target.Load3rdParty(filePath);
-                    RuntimeRenderingHostServices.Current.LogOutput($"[TextureLoadJob] Load3rdParty returned {loadSuccess} for: {filePath}");
+                    if (!loadSuccess)
+                        RuntimeRenderingHostServices.Current.LogWarning($"[TextureLoadJob] Failed to load texture from disk: {filePath}");
                     onProgress?.Invoke(0.5f);
 
                     if (cancellationToken.IsCancellationRequested)
@@ -1187,6 +1188,9 @@ namespace XREngine.Rendering
         [MemoryPackIgnore]
         private int _progressiveUploadToken;
 
+        [MemoryPackIgnore]
+        private readonly ConcurrentDictionary<int, byte> _pendingPboLoadMipIndices = [];
+
         public event Action<int>? PushMipLevelRequested;
 
         public void PushMipLevel(int mipIndex)
@@ -1214,6 +1218,7 @@ namespace XREngine.Rendering
                 {
                     _pbo?.Destroy();
                     _pbo = null;
+                    _pendingPboLoadMipIndices.Clear();
                 }
             }
         }
@@ -1239,16 +1244,28 @@ namespace XREngine.Rendering
 
             if (!RuntimeRenderingHostServices.Current.IsRenderThread || !RuntimeRenderingHostServices.Current.IsRendererActive)
             {
+                if (!_pendingPboLoadMipIndices.TryAdd(mipIndex, 0))
+                    return;
+
                 RuntimeRenderingHostServices.Current.EnqueueRenderThreadCoroutine(() =>
                 {
+                    if (_pbo is null)
+                    {
+                        _pendingPboLoadMipIndices.TryRemove(mipIndex, out _);
+                        return true;
+                    }
+
                     if (!RuntimeRenderingHostServices.Current.IsRendererActive)
                         return false;
 
+                    _pendingPboLoadMipIndices.TryRemove(mipIndex, out _);
                     LoadFromPBO(mipIndex);
                     return true;
                 });
                 return;
             }
+
+            _pendingPboLoadMipIndices.TryRemove(mipIndex, out _);
 
             if (Mipmaps is null || mipIndex < 0 || mipIndex >= Mipmaps.Length)
                 return;

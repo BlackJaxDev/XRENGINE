@@ -1140,7 +1140,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             ImGui.SameLine();
         }
 
-        if (instance.Pipeline is DefaultRenderPipeline)
+        if (instance.Pipeline is DefaultRenderPipeline or DefaultRenderPipeline2)
         {
             DrawFboButton("Velocity FBO", DefaultRenderPipeline.VelocityFBOName);
             DrawTextureButton("Velocity", DefaultRenderPipeline.VelocityTextureName);
@@ -1159,7 +1159,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         static bool ContainsName(IReadOnlyList<KeyValuePair<string, RenderFrameBufferResource>> records, string name)
             => records.Any(pair => pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
 
-        if (instance.Pipeline is DefaultRenderPipeline)
+        if (instance.Pipeline is DefaultRenderPipeline or DefaultRenderPipeline2)
         {
             string[] preferredNames =
             [
@@ -1198,7 +1198,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
         static bool ContainsName(IReadOnlyList<KeyValuePair<string, RenderTextureResource>> records, string name)
             => records.Any(pair => pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
 
-        if (instance.Pipeline is DefaultRenderPipeline)
+        if (instance.Pipeline is DefaultRenderPipeline or DefaultRenderPipeline2)
         {
             string[] preferredNames =
             [
