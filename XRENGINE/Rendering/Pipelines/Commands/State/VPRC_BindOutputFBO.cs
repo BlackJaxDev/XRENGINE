@@ -77,6 +77,18 @@ namespace XREngine.Rendering.Pipelines.Commands
             else
                 fbo.BindForReading();
 
+            // After binding (which triggers attachment validation + completeness check),
+            // bail out if the FBO is incomplete to prevent driver crashes on draw calls.
+            if (!fbo.IsLastCheckComplete)
+            {
+                Debug.RenderingWarningEvery(
+                    $"VPRC_BindOutputFBO.Incomplete.{fbo.GetHashCode()}",
+                    TimeSpan.FromSeconds(5),
+                    "[RenderDiag] Skipping render pass: FBO incomplete. FBO={0}",
+                    fbo.Name ?? fbo.GetHashCode().ToString());
+                return;
+            }
+
             PopCommand.FrameBuffer = fbo;
             PopCommand.Write = Write;
 

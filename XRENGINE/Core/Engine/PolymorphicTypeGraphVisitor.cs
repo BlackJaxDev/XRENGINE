@@ -42,7 +42,9 @@ namespace XREngine
         {
             _next.VisitMappingStart(mapping, keyType, valueType, emitter, serializer);
 
-            if (!ShouldEmitType(mapping))
+            Type? defaultType = YamlDefaultTypeContext.ConsumeWriteDefaultType();
+
+            if (!ShouldEmitType(mapping, defaultType))
                 return;
 
             string typeName = mapping.Type.FullName ?? mapping.Type.Name;
@@ -59,7 +61,7 @@ namespace XREngine
         public void VisitSequenceEnd(IObjectDescriptor sequence, IEmitter emitter, ObjectSerializer serializer)
             => _next.VisitSequenceEnd(sequence, emitter, serializer);
 
-        private static bool ShouldEmitType(IObjectDescriptor descriptor)
+        private static bool ShouldEmitType(IObjectDescriptor descriptor, Type? defaultType)
         {
             if (descriptor.Value is null)
                 return false;
@@ -72,6 +74,9 @@ namespace XREngine
             Type runtimeType = descriptor.Type;
 
             if (runtimeType == staticType)
+                return false;
+
+            if (defaultType is not null && runtimeType == defaultType)
                 return false;
 
             // Only when the declared type can't be directly instantiated / isn't specific.

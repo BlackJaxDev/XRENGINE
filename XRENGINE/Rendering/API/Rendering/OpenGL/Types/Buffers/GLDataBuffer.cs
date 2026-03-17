@@ -19,6 +19,7 @@ namespace XREngine.Rendering.OpenGL
             /// Tracks the currently allocated GPU memory size for this buffer in bytes.
             /// </summary>
             private long _allocatedVRAMBytes = 0;
+            internal long AllocatedVRAMBytes => _allocatedVRAMBytes;
 
             /// <summary>
             /// Cache of program binding ID -> SSBO resource index to avoid expensive glGetProgramResourceIndex calls every frame.
@@ -337,6 +338,12 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void PushDataImmediate()
             {
+                if (!Engine.Rendering.Stats.CanAllocateVram(Data.Length, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
+                {
+                    Debug.OpenGLWarning($"[VRAM Budget] Skipping buffer allocation for '{GetDescribingName()}' ({Data.Length} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
+                    return;
+                }
+
                 // Track VRAM deallocation of previous buffer if any
                 if (_allocatedVRAMBytes > 0)
                 {

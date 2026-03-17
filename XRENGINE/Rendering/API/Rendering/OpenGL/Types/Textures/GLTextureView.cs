@@ -18,6 +18,19 @@ namespace XREngine.Rendering.OpenGL
         private IGLTexture? GetViewedTexture()
             => Renderer.GetOrCreateAPIRenderObject(Data.GetViewedTexture()) is IGLTexture apiViewed ? apiViewed : null;
 
+        private bool IsCompatibleViewTarget(ETextureTarget viewedTarget, ETextureTarget viewTarget)
+        {
+            if (viewedTarget == viewTarget)
+                return true;
+
+            return (viewedTarget, viewTarget) switch
+            {
+                (ETextureTarget.Texture2DArray, ETextureTarget.Texture2D) when Data.NumLayers == 1 => true,
+                (ETextureTarget.Texture2DMultisampleArray, ETextureTarget.Texture2DMultisample) when Data.NumLayers == 1 => true,
+                _ => false,
+            };
+        }
+
         protected override void SetParameters()
         {
             base.SetParameters();
@@ -60,9 +73,18 @@ namespace XREngine.Rendering.OpenGL
             if (viewed is null)
                 return;
 
-            // `glTextureView` requires origtexture to be a valid texture object.
-            // With `glGenTextures`, the name may not become a real texture object until bound once.
-            // Bind/push the viewed texture here (and restore prior binding) to avoid invalid origtexture.
+            if (!IsCompatibleViewTarget(viewed.TextureTarget, Data.TextureTarget))
+            {
+                Debug.OpenGLWarning($"[GLTextureView] Incompatible texture view target. View='{Data.Name ?? BindingId.ToString()}', RequestedTarget={Data.TextureTarget}, ViewedTarget={viewed.TextureTarget}, MinLayer={Data.MinLayer}, NumLayers={Data.NumLayers}.");
+                return;
+            }
+
+            // glTextureView requires:
+            //   - <texture> (destination): an unused name from glGenTextures, never bound or given a target.
+            //   - <origtexture> (source): a valid texture with immutable storage (glTexStorage* called).
+            //
+            // Bind the SOURCE texture to ensure it becomes a real object with immutable storage.
+            // Do NOT bind the destination — glGenTextures already gave us a valid unused name.
             var previous = Renderer.BoundTexture;
             viewed.Bind();
             if (previous is null)
@@ -82,6 +104,13 @@ namespace XREngine.Rendering.OpenGL
                 Data.NumLevels,
                 Data.MinLayer,
                 Data.NumLayers);
+
+            GLEnum error = Api.GetError();
+            if (error != GLEnum.NoError)
+            {
+                Debug.OpenGLWarning($"[GLTextureView] Failed to create texture view '{Data.Name ?? BindingId.ToString()}': {error}. RequestedTarget={Data.TextureTarget}, ViewedTarget={viewed.TextureTarget}, Format={Data.InternalFormat}, MinLayer={Data.MinLayer}, NumLayers={Data.NumLayers}.");
+                return;
+            }
 
             SetParameters();
             IsInvalidated = false;

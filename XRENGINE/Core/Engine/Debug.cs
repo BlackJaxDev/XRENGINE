@@ -829,6 +829,18 @@ namespace XREngine
         }
 
         /// <summary>
+        /// Rate-limited OpenGL warning without stack trace (keeps logs readable).
+        /// </summary>
+        public static void OpenGLWarningEvery(string key, TimeSpan interval, string message, params object[] args)
+        {
+    #if DEBUG || EDITOR
+            if (!ShouldLogEvery(key, interval))
+                return;
+            Log(ELogCategory.OpenGL, EOutputVerbosity.Normal, false, "[WARN] " + message, args);
+    #endif
+        }
+
+        /// <summary>
         /// Logs an error to the general log with stack trace. Use category-specific methods for specialized logging.
         /// </summary>
         public static void LogError(string message, int lineIgnoreCount = 0, int includedLineCount = 10)

@@ -291,6 +291,18 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         if (ImGui.Checkbox("Cull With Frustum", ref cullWithFrustum))
             component.CullWithFrustum = cullWithFrustum;
 
+        int directionalShadowMode = (int)component.DirectionalShadowRenderingMode;
+        string[] directionalShadowModes =
+        [
+            "Non-Cascaded",
+            "Cascaded"
+        ];
+        ImGui.SetNextItemWidth(180.0f);
+        if (ImGui.Combo("Directional Shadow Rendering", ref directionalShadowMode, directionalShadowModes, directionalShadowModes.Length))
+            component.DirectionalShadowRenderingMode = (EDirectionalShadowRenderingMode)directionalShadowMode;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Chooses between the legacy single directional shadow map and cascaded directional shadows for this camera.");
+
         // Culling Mask
         int cullingMask = component.Camera.CullingMask.Value;
         bool cullingChanged = false;

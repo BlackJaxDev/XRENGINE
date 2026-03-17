@@ -47,6 +47,14 @@ namespace XREngine
             new(),
             new(),
         ];
+        private readonly ConcurrentQueue<Job>[] _pendingAppThreadByPriority =
+        [
+            new(),
+            new(),
+            new(),
+            new(),
+            new(),
+        ];
         private readonly ConcurrentQueue<Job>[] _pendingCollectVisibleSwapByPriority =
         [
             new(),
@@ -68,6 +76,7 @@ namespace XREngine
 
         private readonly int[] _pendingCounts = new int[PriorityLevels];
         private readonly int[] _pendingMainThreadCounts = new int[PriorityLevels];
+        private readonly int[] _pendingAppThreadCounts = new int[PriorityLevels];
         private readonly int[] _pendingCollectCounts = new int[PriorityLevels];
         private readonly int[] _pendingRemoteCounts = new int[PriorityLevels];
         private readonly long[] _totalWaitTicks = new long[PriorityLevels];
@@ -143,7 +152,8 @@ namespace XREngine
             int bucket = Math.Clamp((int)priority, 0, PriorityLevels - 1);
             return affinity switch
             {
-                JobAffinity.MainThread => Volatile.Read(ref _pendingMainThreadCounts[bucket]),
+                JobAffinity.RenderThread => Volatile.Read(ref _pendingMainThreadCounts[bucket]),
+                JobAffinity.AppThread => Volatile.Read(ref _pendingAppThreadCounts[bucket]),
                 JobAffinity.CollectVisibleSwap => Volatile.Read(ref _pendingCollectCounts[bucket]),
                 JobAffinity.Remote => Volatile.Read(ref _pendingRemoteCounts[bucket]),
                 _ => Volatile.Read(ref _pendingCounts[bucket]),
@@ -373,6 +383,14 @@ namespace XREngine
                         return true;
                     }
 
+            foreach (var queue in _pendingAppThreadByPriority)
+                foreach (var pending in queue)
+                    if (pending.Id == jobId)
+                    {
+                        pending.Cancel();
+                        return true;
+                    }
+
             foreach (var queue in _pendingCollectVisibleSwapByPriority)
                 foreach (var pending in queue)
                     if (pending.Id == jobId)
@@ -400,8 +418,11 @@ namespace XREngine
 
             switch (job.Affinity)
             {
-                case JobAffinity.MainThread:
+                case JobAffinity.RenderThread:
                     _pendingMainThreadByPriority[bucket].Enqueue(job);
+                    break;
+                case JobAffinity.AppThread:
+                    _pendingAppThreadByPriority[bucket].Enqueue(job);
                     break;
                 case JobAffinity.CollectVisibleSwap:
                     _pendingCollectVisibleSwapByPriority[bucket].Enqueue(job);
@@ -449,7 +470,8 @@ namespace XREngine
         {
             int newCount = affinity switch
             {
-                JobAffinity.MainThread => Interlocked.Increment(ref _pendingMainThreadCounts[bucket]),
+                JobAffinity.RenderThread => Interlocked.Increment(ref _pendingMainThreadCounts[bucket]),
+                JobAffinity.AppThread => Interlocked.Increment(ref _pendingAppThreadCounts[bucket]),
                 JobAffinity.CollectVisibleSwap => Interlocked.Increment(ref _pendingCollectCounts[bucket]),
                 JobAffinity.Remote => Interlocked.Increment(ref _pendingRemoteCounts[bucket]),
                 _ => Interlocked.Increment(ref _pendingCounts[bucket]),
@@ -463,8 +485,11 @@ namespace XREngine
         {
             switch (affinity)
             {
-                case JobAffinity.MainThread:
+                case JobAffinity.RenderThread:
                     Interlocked.Decrement(ref _pendingMainThreadCounts[bucket]);
+                    break;
+                case JobAffinity.AppThread:
+                    Interlocked.Decrement(ref _pendingAppThreadCounts[bucket]);
                     break;
                 case JobAffinity.CollectVisibleSwap:
                     Interlocked.Decrement(ref _pendingCollectCounts[bucket]);
@@ -757,6 +782,14 @@ namespace XREngine
             return total;
         }
 
+        private int SnapshotQueuedAppThreadJobs()
+        {
+            int total = 0;
+            for (int i = 0; i < PriorityLevels; i++)
+                total += Math.Max(0, Volatile.Read(ref _pendingAppThreadCounts[i]));
+            return total;
+        }
+
         /// <summary>
         /// Drains main-thread jobs that were already queued when this method begins.
         /// This method never waits/spins for more work, and it will not chase newly-enqueued jobs.
@@ -767,10 +800,27 @@ namespace XREngine
             int remaining = Math.Min(Math.Max(0, maxJobs), snapshot);
 
             int processed = 0;
-            while (processed < remaining && TryDequeueWithAging(_pendingMainThreadByPriority, JobAffinity.MainThread, out var job, out var bucket))
+            while (processed < remaining && TryDequeueWithAging(_pendingMainThreadByPriority, JobAffinity.RenderThread, out var job, out var bucket))
             {
                 RecordWait(job, bucket);
                 using (StartProfilerScope($"MainThreadJobs.{job.Priority}.{job.GetProfilerLabel()}"))
+                {
+                    ExecuteJob(job);
+                }
+                processed++;
+            }
+        }
+
+        public void ProcessAppThreadJobs(int maxJobs = int.MaxValue)
+        {
+            int snapshot = SnapshotQueuedAppThreadJobs();
+            int remaining = Math.Min(Math.Max(0, maxJobs), snapshot);
+
+            int processed = 0;
+            while (processed < remaining && TryDequeueWithAging(_pendingAppThreadByPriority, JobAffinity.AppThread, out var job, out var bucket))
+            {
+                RecordWait(job, bucket);
+                using (StartProfilerScope($"AppThreadJobs.{job.Priority}.{job.GetProfilerLabel()}"))
                 {
                     ExecuteJob(job);
                 }

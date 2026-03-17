@@ -41,6 +41,7 @@ namespace XREngine.Components
         private int _collectGeneration = 0;
         private int _lastSwappedGeneration = -1;
         private int _lastRenderObservedSwapGeneration = -1;
+        private bool _loggedStaleNonScreenFrameWarning = false;
         private bool _forceDirectRenderingForBackdropBlur = false;
         private int _renderModeDiagCount = 0;
         private bool _autoDisableOffscreenForBackdropBlur = true;
@@ -490,17 +491,18 @@ namespace XREngine.Components
 
             EnsureNonScreenCanvasSize(canvasTransform);
 
-            // Fallback path: if timer-driven collect/swap did not advance since the previous
-            // render, refresh commands locally on the render thread to avoid frozen world-space UI.
             bool swapAdvancedSinceLastRender = _lastSwappedGeneration != _lastRenderObservedSwapGeneration;
             if (!swapAdvancedSinceLastRender)
             {
-                if (canvasTransform.IsLayoutInvalidated)
-                    UpdateLayout();
-
-                CollectVisibleItemsNonScreen();
-                SwapBuffersNonScreen();
+                if (!_loggedStaleNonScreenFrameWarning)
+                {
+                    Debug.UIWarning($"[UICanvas] Reusing the previous offscreen frame for non-screen canvas '{SceneNode?.Name ?? "<unnamed>"}' because collect/swap did not advance before render.");
+                    _loggedStaleNonScreenFrameWarning = true;
+                }
             }
+            else
+                _loggedStaleNonScreenFrameWarning = false;
+
             _lastRenderObservedSwapGeneration = _lastSwappedGeneration;
 
             //if (_renderDiagCount < 10)

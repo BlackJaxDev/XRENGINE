@@ -15,8 +15,24 @@ namespace XREngine.Components.Physics
     {
         private readonly Dictionary<CoACD.CoACDParameters, List<CoACD.ConvexHullMesh>> _cachedConvexHulls = new();
         private readonly Dictionary<(CoACD.CoACDParameters parameters, PxConvexFlags flags, bool requestGpuData), List<PhysxConvexMesh>> _physxMeshCache = new();
+        private readonly object _convexHullGenerationStatusLock = new();
+
+        private ConvexHullGenerationStatus _convexHullGenerationStatus = new(
+            InProgress: false,
+            ActiveMessage: null,
+            LastMessage: null,
+            Progress: null,
+            StartedAtUtc: null);
 
         public IAbstractPhysicsActor? PhysicsActor { get; }
+
+        /// <summary>
+        /// Resolves the ModelComponent to use for collision mesh extraction.
+        /// Subclasses can override to provide a specific target (e.g. when multiple
+        /// ModelComponents exist on the same node).
+        /// </summary>
+        protected virtual ModelComponent? ResolveModelComponentForColliders()
+            => GetSiblingComponent<ModelComponent>();
 
         protected override void OnComponentActivated()
         {
@@ -44,6 +60,12 @@ namespace XREngine.Components.Physics
 
         protected virtual IConvexDecompositionRunner ConvexDecompositionRunner => s_defaultRunner;
 
+        public ConvexHullGenerationStatus GetConvexHullGenerationStatus()
+        {
+            lock (_convexHullGenerationStatusLock)
+                return _convexHullGenerationStatus;
+        }
+
         public async Task<List<CoACD.ConvexHullMesh>> CreateConvexDecompositionAsync(
             CoACD.CoACDParameters? parameters = null,
             IProgress<ConvexHullGenerationProgress>? progress = null,
@@ -57,7 +79,7 @@ namespace XREngine.Components.Physics
                 return [.. cached];
             }
 
-            var modelComponent = GetSiblingComponent<ModelComponent>();
+            var modelComponent = ResolveModelComponentForColliders();
             if (modelComponent is null)
                 return [];
 
@@ -80,20 +102,40 @@ namespace XREngine.Components.Physics
                 var input = inputs[i];
                 progress?.Report(new ConvexHullGenerationProgress(i, totalInputs, $"Decomposing mesh {i + 1} of {totalInputs}..."));
 
+                if (ConvexHullDiskCache.TryLoad(config, input, out var cachedInputHulls))
+                {
+                    if (cachedInputHulls.Count > 0)
+                    {
+                        results.AddRange(cachedInputHulls);
+                        UpdateCachedHullSnapshot(config, results);
+                    }
+
+                    progress?.Report(new ConvexHullGenerationProgress(
+                        i + 1,
+                        totalInputs,
+                        $"Loaded cached convex hulls for mesh {i + 1} of {totalInputs}."));
+                    continue;
+                }
+
                 var hulls = await ConvexDecompositionRunner
                     .GenerateAsync(input.Positions, input.Indices, config, cancellationToken)
                     .ConfigureAwait(false);
 
-                if (hulls is not null && hulls.Count > 0)
-                    results.AddRange(hulls);
+                IReadOnlyList<CoACD.ConvexHullMesh> generatedHulls = hulls ?? Array.Empty<CoACD.ConvexHullMesh>();
+                if (generatedHulls.Count > 0)
+                {
+                    results.AddRange(generatedHulls);
+                    UpdateCachedHullSnapshot(config, results);
+                }
+
+                ConvexHullDiskCache.TryStore(config, input, generatedHulls);
 
                 progress?.Report(new ConvexHullGenerationProgress(i + 1, totalInputs, $"Completed mesh {i + 1} of {totalInputs}."));
             }
 
             if (results.Count > 0)
             {
-                _cachedConvexHulls[config] = [.. results];
-                InvalidatePhysxMeshCache(config);
+                UpdateCachedHullSnapshot(config, results);
                 progress?.Report(new ConvexHullGenerationProgress(totalInputs, totalInputs, "Convex hulls cached."));
             }
             else
@@ -109,6 +151,7 @@ namespace XREngine.Components.Physics
             PxConvexFlags extraFlags = 0,
             bool requestGpuData = true,
             IReadOnlyList<CoACD.ConvexHullMesh>? cachedHulls = null,
+            IProgress<ConvexHullGenerationProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
             var config = parameters ?? CoACD.CoACDParameters.Default;
@@ -119,7 +162,7 @@ namespace XREngine.Components.Physics
 
             var hulls = cachedHulls ?? GetCachedHullReference(config);
             if (hulls is null || hulls.Count == 0)
-                hulls = await CreateConvexDecompositionAsync(config, cancellationToken: cancellationToken).ConfigureAwait(false);
+                hulls = await CreateConvexDecompositionAsync(config, progress, cancellationToken).ConfigureAwait(false);
 
             if (hulls.Count == 0)
                 return [];
@@ -144,25 +187,36 @@ namespace XREngine.Components.Physics
             IProgress<ConvexHullGenerationProgress>? progress = null,
             CancellationToken cancellationToken = default)
         {
+            BeginConvexHullGeneration("Preparing convex hull data...");
+
             try
             {
                 var defaultParams = CoACD.CoACDParameters.Default;
+                var trackedProgress = CreateTrackedConvexHullProgress(progress);
 
                 IReadOnlyList<CoACD.ConvexHullMesh>? preparedHulls = null;
-                if (!HasCachedHulls(defaultParams) && GetSiblingComponent<ModelComponent>() is not null)
-                    preparedHulls = await CreateConvexDecompositionAsync(defaultParams, progress, cancellationToken).ConfigureAwait(false);
+                if (!HasCachedHulls(defaultParams) && ResolveModelComponentForColliders() is not null)
+                    preparedHulls = await CreateConvexDecompositionAsync(defaultParams, trackedProgress, cancellationToken).ConfigureAwait(false);
                 else
                 {
                     preparedHulls = GetCachedHullReference(defaultParams);
                     if (preparedHulls is not null)
-                        progress?.Report(ConvexHullGenerationProgress.FromCache(preparedHulls.Count));
+                        trackedProgress.Report(ConvexHullGenerationProgress.FromCache(preparedHulls.Count));
                 }
 
                 if (WorldAs<XREngine.Rendering.XRWorldInstance>()?.PhysicsScene is PhysxScene && PhysicsActor is PhysxActor)
-                    await CreatePhysxConvexMeshesAsync(defaultParams, cachedHulls: preparedHulls, cancellationToken: cancellationToken).ConfigureAwait(false);
+                {
+                    ReportConvexHullGenerationMessage("Cooking PhysX convex meshes...");
+                    await CreatePhysxConvexMeshesAsync(defaultParams, cachedHulls: preparedHulls, progress: trackedProgress, cancellationToken: cancellationToken).ConfigureAwait(false);
+                }
+
+                CompleteConvexHullGeneration(preparedHulls is { Count: > 0 }
+                    ? "Convex hulls cached successfully."
+                    : "No convex hulls generated.");
             }
             catch (Exception ex)
             {
+                CompleteConvexHullGeneration($"Failed: {ex.Message}");
                 Debug.PhysicsException(ex, $"Failed to prepare convex assets for {GetType().Name}.");
             }
         }
@@ -196,6 +250,75 @@ namespace XREngine.Components.Physics
                 => new(hullCount, hullCount, "Using cached convex hulls.", true);
         }
 
+        public readonly record struct ConvexHullGenerationStatus(
+            bool InProgress,
+            string? ActiveMessage,
+            string? LastMessage,
+            ConvexHullGenerationProgress? Progress,
+            DateTimeOffset? StartedAtUtc);
+
+        private IProgress<ConvexHullGenerationProgress> CreateTrackedConvexHullProgress(IProgress<ConvexHullGenerationProgress>? progress)
+            => new Progress<ConvexHullGenerationProgress>(state =>
+            {
+                ReportConvexHullGenerationProgress(state);
+                progress?.Report(state);
+            });
+
+        protected void BeginConvexHullGeneration(string initialMessage)
+        {
+            lock (_convexHullGenerationStatusLock)
+            {
+                _convexHullGenerationStatus = new ConvexHullGenerationStatus(
+                    InProgress: true,
+                    ActiveMessage: initialMessage,
+                    LastMessage: null,
+                    Progress: null,
+                    StartedAtUtc: DateTimeOffset.UtcNow);
+            }
+        }
+
+        protected void ReportConvexHullGenerationMessage(string message)
+        {
+            lock (_convexHullGenerationStatusLock)
+            {
+                _convexHullGenerationStatus = _convexHullGenerationStatus with
+                {
+                    InProgress = true,
+                    ActiveMessage = message,
+                    StartedAtUtc = _convexHullGenerationStatus.StartedAtUtc ?? DateTimeOffset.UtcNow,
+                };
+            }
+        }
+
+        protected void ReportConvexHullGenerationProgress(ConvexHullGenerationProgress progress)
+        {
+            lock (_convexHullGenerationStatusLock)
+            {
+                _convexHullGenerationStatus = _convexHullGenerationStatus with
+                {
+                    InProgress = true,
+                    ActiveMessage = progress.Message,
+                    Progress = progress,
+                    StartedAtUtc = _convexHullGenerationStatus.StartedAtUtc ?? DateTimeOffset.UtcNow,
+                };
+            }
+        }
+
+        protected void CompleteConvexHullGeneration(string? lastMessage)
+        {
+            lock (_convexHullGenerationStatusLock)
+            {
+                _convexHullGenerationStatus = _convexHullGenerationStatus with
+                {
+                    InProgress = false,
+                    ActiveMessage = null,
+                    LastMessage = lastMessage,
+                    Progress = null,
+                    StartedAtUtc = null,
+                };
+            }
+        }
+
         private bool HasCachedHulls(CoACD.CoACDParameters parameters)
             => _cachedConvexHulls.TryGetValue(parameters, out var cached) && cached.Count > 0;
 
@@ -210,6 +333,15 @@ namespace XREngine.Components.Physics
         {
             var config = parameters ?? CoACD.CoACDParameters.Default;
             return GetCachedHullReference(config);
+        }
+
+        private void UpdateCachedHullSnapshot(CoACD.CoACDParameters parameters, List<CoACD.ConvexHullMesh> hulls)
+        {
+            if (hulls.Count == 0)
+                return;
+
+            _cachedConvexHulls[parameters] = [.. hulls];
+            InvalidatePhysxMeshCache(parameters);
         }
 
         private void InvalidatePhysxMeshCache(CoACD.CoACDParameters parameters)

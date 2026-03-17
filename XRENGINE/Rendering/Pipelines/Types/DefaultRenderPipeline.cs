@@ -79,7 +79,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private static EAntiAliasingMode ResolveAntiAliasingMode()
     {
         var camera = Engine.Rendering.State.RenderingCamera;
-        return camera?.AntiAliasingModeOverride ?? Engine.Rendering.Settings.AntiAliasingMode;
+        return camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
     }
 
     /// <summary>
@@ -89,7 +89,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
     internal static uint ResolveEffectiveMsaaSampleCount()
     {
         var camera = Engine.Rendering.State.RenderingCamera;
-        return Math.Max(1u, camera?.MsaaSampleCountOverride ?? Engine.Rendering.Settings.MsaaSampleCount);
+        return Math.Max(1u, camera?.MsaaSampleCountOverride ?? Engine.EffectiveSettings.MsaaSampleCount);
     }
 
     /// <summary>
@@ -118,10 +118,10 @@ public partial class DefaultRenderPipeline : RenderPipeline
     // whether to include FBOs/textures. True if the global setting requests
     // the mode, ensuring resources are available even when no camera is active.
     private bool EnableMsaa
-        => Engine.Rendering.Settings.AntiAliasingMode == EAntiAliasingMode.Msaa
-        && Engine.Rendering.Settings.MsaaSampleCount > 1u;
-    private bool EnableFxaa => Engine.Rendering.Settings.AntiAliasingMode == EAntiAliasingMode.Fxaa;
-    private uint MsaaSampleCount => Math.Max(1u, Engine.Rendering.Settings.MsaaSampleCount);
+        => Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Msaa
+        && Engine.EffectiveSettings.MsaaSampleCount > 1u;
+    private bool EnableFxaa => Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Fxaa;
+    private uint MsaaSampleCount => Math.Max(1u, Engine.EffectiveSettings.MsaaSampleCount);
 
     private string BrightPassShaderName() => 
         Stereo ? "BrightPassStereo.fs" : 
@@ -282,6 +282,51 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private const string ChromaticAberrationStageKey = "chromaticAberration";
     private const string FogStageKey = "fog";
 
+    private static readonly string[] AntiAliasingTextureDependencies =
+    [
+        PostProcessOutputTextureName,
+        FxaaOutputTextureName,
+        HistoryColorTextureName,
+        HistoryDepthStencilTextureName,
+        HistoryDepthViewTextureName,
+        TemporalColorInputTextureName,
+        TemporalExposureVarianceTextureName,
+        HistoryExposureVarianceTextureName,
+        MsaaAlbedoOpacityTextureName,
+        MsaaNormalTextureName,
+        MsaaRMSETextureName,
+        MsaaDepthStencilTextureName,
+        MsaaDepthViewTextureName,
+        MsaaTransformIdTextureName,
+        MsaaLightingTextureName,
+    ];
+
+    private static readonly string[] AntiAliasingFrameBufferDependencies =
+    [
+        AmbientOcclusionFBOName,
+        LightCombineFBOName,
+        ForwardPassFBOName,
+        PostProcessOutputFBOName,
+        PostProcessFBOName,
+        FxaaFBOName,
+        TsrUpscaleFBOName,
+        HistoryCaptureFBOName,
+        TemporalInputFBOName,
+        TemporalAccumulationFBOName,
+        HistoryExposureFBOName,
+        DepthPreloadFBOName,
+        ForwardPassMsaaFBOName,
+        TransparentSceneCopyFBOName,
+        TransparentAccumulationFBOName,
+        TransparentResolveFBOName,
+        VelocityFBOName,
+        MsaaGBufferFBOName,
+        MsaaLightingFBOName,
+        MsaaDeferredResolveAlbedoFBOName,
+        MsaaDeferredResolveNormalFBOName,
+        MsaaDeferredResolveRmseFBOName,
+    ];
+
     public DefaultRenderPipeline() : this(false)
     {
     }
@@ -294,6 +339,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
         Engine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
+        Engine.Rendering.AntiAliasingSettingsChanged += HandleAntiAliasingSettingsChanged;
         ApplyAntiAliasingResolutionHint();
         CommandChain = GenerateCommandChain();
     }
@@ -340,6 +386,32 @@ public partial class DefaultRenderPipeline : RenderPipeline
         }, "DefaultRenderPipeline: Rendering settings changed", true);
     }
 
+    private void HandleAntiAliasingSettingsChanged()
+    {
+        Engine.InvokeOnMainThread(() =>
+        {
+            ApplyAntiAliasingResolutionHint();
+
+            foreach (var instance in Instances)
+                InvalidateAntiAliasingResources(instance);
+
+            foreach (var window in Engine.Windows)
+            {
+                window.InvalidateScenePanelResources();
+                window.RequestRenderStateRecheck(resetCircuitBreaker: true);
+            }
+        }, "DefaultRenderPipeline: AA settings changed", true);
+    }
+
+    private static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance)
+    {
+        foreach (string name in AntiAliasingFrameBufferDependencies)
+            instance.Resources.RemoveFrameBuffer(name);
+
+        foreach (string name in AntiAliasingTextureDependencies)
+            instance.Resources.RemoveTexture(name);
+    }
+
     private void ApplyAntiAliasingResolutionHint()
     {
         // Avoid fighting other upscalers when DLSS or XeSS is enabled.
@@ -349,7 +421,7 @@ public partial class DefaultRenderPipeline : RenderPipeline
             return;
         }
 
-        if (Engine.Rendering.Settings.AntiAliasingMode == EAntiAliasingMode.Tsr)
+        if (Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Tsr)
         {
             RequestedInternalResolution = Math.Clamp(Engine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f);
         }
@@ -1308,15 +1380,17 @@ public partial class DefaultRenderPipeline : RenderPipeline
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
+        // PostProcessOutput is the intermediate target used by the post-process quad before
+        // any optional AA/upscale pass. It must exist regardless of the selected AA mode
+        // because the matching FBO is created unconditionally later in the command chain.
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            PostProcessOutputTextureName,
+            CreatePostProcessOutputTexture,
+            NeedsRecreateTextureInternalSize,
+            ResizeTextureInternalSize);
+
         if (EnableFxaa)
         {
-            // PostProcessOutput is intermediate before FXAA - use internal resolution
-            c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
-                PostProcessOutputTextureName,
-                CreatePostProcessOutputTexture,
-                NeedsRecreateTextureInternalSize,
-                ResizeTextureInternalSize);
-
             // FXAA output is full resolution (FXAA performs the upscale)
             c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
                 FxaaOutputTextureName,

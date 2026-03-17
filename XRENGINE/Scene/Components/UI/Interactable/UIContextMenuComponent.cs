@@ -280,7 +280,7 @@ namespace XREngine.Rendering.UI
             // Delay one frame before listening for left-clicks so the same click that
             // opened the menu doesn't immediately dismiss it.
             _dismissClickArmed = false;
-            Engine.Time.Timer.SwapBuffers += ArmDismissClick;
+            Engine.Time.Timer.PostUpdateFrame += ArmDismissClick;
         }
 
         private void UnsubscribeForDismiss()
@@ -292,7 +292,7 @@ namespace XREngine.Rendering.UI
                 _subscribedInput.LeftClickDown -= OnLeftClickDown;
                 _subscribedInput = null;
             }
-            Engine.Time.Timer.SwapBuffers -= ArmDismissClick;
+            Engine.Time.Timer.PostUpdateFrame -= ArmDismissClick;
         }
 
         /// <summary>
@@ -300,7 +300,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         private void ArmDismissClick()
         {
-            Engine.Time.Timer.SwapBuffers -= ArmDismissClick;
+            Engine.Time.Timer.PostUpdateFrame -= ArmDismissClick;
             if (!_isOpen)
                 return;
             _dismissClickArmed = true;

@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine;
 using static XREngine.Rendering.XRRenderProgram;
@@ -33,6 +34,7 @@ namespace XREngine.Rendering.OpenGL
             private readonly ConcurrentDictionary<int, string> _locationNameCache = new();
             private readonly ConcurrentDictionary<string, UniformInfo> _uniformMetadata = new();
             private readonly ConcurrentDictionary<string, byte> _loggedUniformMismatches = new();
+            private readonly ConcurrentDictionary<int, byte> _boundSamplerLocations = new();
 
             private int _uniformBindingAttempts;
             private int _uniformBindings;
@@ -44,6 +46,10 @@ namespace XREngine.Rendering.OpenGL
             private readonly ConcurrentDictionary<string, byte> _failedUniforms = new();
 
             private readonly record struct UniformInfo(GLEnum Type, int Size);
+
+            private static XRTexture2D? _fallbackTexture2D;
+            private static XRTexture2DArray? _fallbackTexture2DArray;
+            private static XRTextureCube? _fallbackTextureCube;
 
             protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
             {
@@ -442,6 +448,7 @@ namespace XREngine.Rendering.OpenGL
                 _uniformMetadata.Clear();
                 _loggedUniformMismatches.Clear();
                 _loggedEmptyBindingBatches.Clear();
+                _boundSamplerLocations.Clear();
                 _uniformBindingAttempts = 0;
                 _uniformBindings = 0;
                 _samplerBindingAttempts = 0;
@@ -494,6 +501,89 @@ namespace XREngine.Rendering.OpenGL
                 Interlocked.Exchange(ref _uniformBindings, 0);
                 Interlocked.Exchange(ref _samplerBindingAttempts, 0);
                 Interlocked.Exchange(ref _samplerBindings, 0);
+                _boundSamplerLocations.Clear();
+            }
+
+            private static bool IsSamplerType(GLEnum type)
+                => type is GLEnum.Sampler1D or GLEnum.Sampler1DArray or GLEnum.Sampler1DArrayShadow or GLEnum.Sampler1DShadow
+                    or GLEnum.Sampler2D or GLEnum.Sampler2DArray or GLEnum.Sampler2DArrayShadow or GLEnum.Sampler2DMultisample
+                    or GLEnum.Sampler2DMultisampleArray or GLEnum.Sampler2DRect or GLEnum.Sampler2DRectShadow or GLEnum.Sampler2DShadow
+                    or GLEnum.Sampler3D or GLEnum.SamplerBuffer or GLEnum.SamplerCube or GLEnum.SamplerCubeShadow
+                    or GLEnum.IntSampler1D or GLEnum.IntSampler1DArray or GLEnum.IntSampler2D or GLEnum.IntSampler2DArray
+                    or GLEnum.IntSampler2DMultisample or GLEnum.IntSampler2DMultisampleArray or GLEnum.IntSampler2DRect
+                    or GLEnum.IntSampler3D or GLEnum.IntSamplerBuffer or GLEnum.IntSamplerCube
+                    or GLEnum.UnsignedIntSampler1D or GLEnum.UnsignedIntSampler1DArray or GLEnum.UnsignedIntSampler2D
+                    or GLEnum.UnsignedIntSampler2DArray or GLEnum.UnsignedIntSampler2DMultisample or GLEnum.UnsignedIntSampler2DMultisampleArray
+                    or GLEnum.UnsignedIntSampler2DRect or GLEnum.UnsignedIntSampler3D or GLEnum.UnsignedIntSamplerBuffer or GLEnum.UnsignedIntSamplerCube;
+
+            private static XRTexture2D FallbackTexture2D
+                => _fallbackTexture2D ??= new XRTexture2D(1u, 1u, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, true)
+                {
+                    Resizable = false,
+                };
+
+            private static XRTexture2DArray FallbackTexture2DArray
+                => _fallbackTexture2DArray ??= new XRTexture2DArray(1u, 1u, 1u, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, true)
+                {
+                    Resizable = false,
+                };
+
+            private static XRTextureCube FallbackTextureCube
+                => _fallbackTextureCube ??= new XRTextureCube(1u, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, true, 1)
+                {
+                    Resizable = false,
+                };
+
+            private IGLTexture? GetFallbackSamplerTexture(GLEnum samplerType)
+            {
+                XRTexture texture = samplerType switch
+                {
+                    GLEnum.SamplerCube or GLEnum.SamplerCubeShadow or GLEnum.IntSamplerCube or GLEnum.UnsignedIntSamplerCube
+                        => FallbackTextureCube,
+                    GLEnum.Sampler2DArray or GLEnum.Sampler2DArrayShadow or GLEnum.Sampler2DMultisampleArray
+                        or GLEnum.IntSampler2DArray or GLEnum.IntSampler2DMultisampleArray
+                        or GLEnum.UnsignedIntSampler2DArray or GLEnum.UnsignedIntSampler2DMultisampleArray
+                        => FallbackTexture2DArray,
+                    _ => FallbackTexture2D,
+                };
+
+                return Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) as IGLTexture;
+            }
+
+            public void BindFallbackSamplers()
+            {
+                if (!IsLinked || _uniformMetadata.Count == 0)
+                    return;
+
+                const int fallbackSamplerBaseUnit = 24;
+                int nextFallbackUnit = fallbackSamplerBaseUnit;
+
+                foreach (var pair in _uniformMetadata)
+                {
+                    string name = pair.Key;
+                    UniformInfo meta = pair.Value;
+                    if (!IsSamplerType(meta.Type))
+                        continue;
+
+                    int location = GetUniformLocation(name);
+                    if (location < 0 || _boundSamplerLocations.ContainsKey(location))
+                        continue;
+
+                    var fallbackTexture = GetFallbackSamplerTexture(meta.Type);
+                    if (fallbackTexture is null)
+                        continue;
+
+                    Sampler(location, fallbackTexture, nextFallbackUnit);
+
+                    string programName = Data.Name ?? BindingId.ToString();
+                    string warningKey = $"GLFallbackSampler:{programName}:{name}:{meta.Type}";
+                    Debug.OpenGLWarningEvery(
+                        warningKey,
+                        TimeSpan.FromSeconds(30),
+                        $"[Shader Texture Binding] Bound fallback sampler for '{name}' in program '{programName}'. SamplerType={meta.Type}, TextureUnit={nextFallbackUnit}.");
+
+                    nextFallbackUnit++;
+                }
             }
 
             private bool MarkUniformBinding(int location)
@@ -736,19 +826,27 @@ namespace XREngine.Rendering.OpenGL
                         //Debug.Out($"Using cached program binary with hash {Hash}.");
                         _cachedProgram = binProg;
                         GLEnum format = binProg.Format;
-                        fixed (byte* ptr = binProg.Binary)
-                            Api.ProgramBinary(bindingId, format, ptr, binProg.Length);
-                        var error = Api.GetError();
-                        if (error != GLEnum.NoError)
+                        if (!Engine.Rendering.Stats.CanAllocateVram(binProg.Length, 0, out long projectedBytes, out long budgetBytes))
                         {
-                            Debug.OpenGLWarning($"Failed to load cached program binary with format {format} and hash {Hash}: {error}. Deleting from cache.");
+                            Debug.OpenGLWarning($"[VRAM Budget] Skipping cached program binary load for hash {Hash} ({binProg.Length} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes. Deleting from cache.");
                             DeleteFromBinaryShaderCache(Hash, format);
                         }
                         else
                         {
-                            IsLinked = true;
-                            CacheActiveUniforms();
-                            return true;
+                            fixed (byte* ptr = binProg.Binary)
+                                Api.ProgramBinary(bindingId, format, ptr, binProg.Length);
+                            var error = Api.GetError();
+                            if (error != GLEnum.NoError)
+                            {
+                                Debug.OpenGLWarning($"Failed to load cached program binary with format {format} and hash {Hash}: {error}. Deleting from cache.");
+                                DeleteFromBinaryShaderCache(Hash, format);
+                            }
+                            else
+                            {
+                                IsLinked = true;
+                                CacheActiveUniforms();
+                                return true;
+                            }
                         }
                     }
 
@@ -1588,6 +1686,9 @@ namespace XREngine.Rendering.OpenGL
                 // Even if the uniform location is invalid (-1), we still want the GL state
                 // to have the texture bound at the requested unit for layout(binding=) samplers.
                 bool canBindUniform = MarkSamplerBinding(location);
+
+                if (location >= 0)
+                    _boundSamplerLocations[location] = 1;
 
                 texture.PreSampling();
                 Renderer.SetActiveTextureUnit(textureUnit);

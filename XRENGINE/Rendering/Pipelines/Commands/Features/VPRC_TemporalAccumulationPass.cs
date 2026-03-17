@@ -178,7 +178,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         // Resolve AA mode through the current camera's override, falling back to global settings.
         var camera = Engine.Rendering.State.RenderingCamera;
-        var mode = camera?.AntiAliasingModeOverride ?? Engine.Rendering.Settings.AntiAliasingMode;
+        var mode = camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
         return mode == EAntiAliasingMode.Taa
             || mode == EAntiAliasingMode.Tsr;
     }

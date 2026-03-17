@@ -1160,12 +1160,15 @@ namespace XREngine
                 if (Interlocked.Exchange(ref finalized, 1) != 0)
                     return;
 
+                Debug.Out($"[ModelImporter] TryFlushAndComplete: enqueueing swap task with {_meshFinalizeActions.Count} finalize actions");
                 Engine.EnqueueSwapTask(() =>
                 {
                     try
                     {
+                        Debug.Out($"[ModelImporter] Swap task running: executing {_meshFinalizeActions.Count} finalize actions");
                         foreach (var finalize in _meshFinalizeActions)
                             finalize();
+                        Debug.Out($"[ModelImporter] All finalize actions completed");
 
                         if (Volatile.Read(ref faulted) != 0 || Volatile.Read(ref canceled) != 0)
                             Debug.Out($"[ModelImporter] Mesh processing completed with partial failures. faulted={faulted}, canceled={canceled}");
@@ -1181,9 +1184,12 @@ namespace XREngine
 
             void TryFinalize()
             {
-                if (Interlocked.Decrement(ref remaining) != 0)
+                int rem = Interlocked.Decrement(ref remaining);
+                Debug.Out($"[ModelImporter] TryFinalize: remaining={rem}");
+                if (rem != 0)
                     return;
 
+                Debug.Out($"[ModelImporter] TryFinalize: all batches done, calling TryFlushAndComplete");
                 TryFlushAndComplete();
             }
 
@@ -1488,13 +1494,19 @@ namespace XREngine
             void FlushReadySubMeshes()
             {
                 if (pending is null || ordered is null)
+                {
+                    Debug.Out($"[ModelImporter] FlushReadySubMeshes: pending or ordered is null, skipping (node={node.Name})");
                     return;
+                }
 
+                int flushed = 0;
                 while (nextPublishOffset < ordered.Length && pending.TryRemove(ordered[nextPublishOffset], out var pendingSubMesh))
                 {
                     pendingSubMesh.model.Meshes.Add(pendingSubMesh.subMesh);
                     nextPublishOffset++;
+                    flushed++;
                 }
+                Debug.Out($"[ModelImporter] FlushReadySubMeshes: flushed {flushed}/{ordered.Length} meshes for node '{node.Name}' (pending remaining={pending.Count})");
             }
 
             if (pending != null)

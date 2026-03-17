@@ -38,6 +38,13 @@ namespace XREngine.Rendering.OpenGL
             Api.BindRenderbuffer(GLEnum.Renderbuffer, BindingId);
             if (Invalidated)
             {
+                long requestedBytes = CalculateRenderBufferVRAMSize(Data.Width, Data.Height, Data.Type, Data.IsMultisample ? Data.MultisampleCount : 1u);
+                if (!Engine.Rendering.Stats.CanAllocateVram(requestedBytes, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
+                {
+                    Debug.OpenGLWarning($"[VRAM Budget] Skipping renderbuffer allocation for '{Data.Name ?? BindingId.ToString()}' ({requestedBytes} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
+                    return;
+                }
+
                 Invalidated = false;
 
                 // Track VRAM deallocation of previous buffer if any
@@ -53,7 +60,7 @@ namespace XREngine.Rendering.OpenGL
                     Api.NamedRenderbufferStorage(BindingId, ToGLEnum(Data.Type), Data.Width, Data.Height);
 
                 // Track VRAM allocation
-                _allocatedVRAMBytes = CalculateRenderBufferVRAMSize(Data.Width, Data.Height, Data.Type, Data.IsMultisample ? Data.MultisampleCount : 1u);
+                _allocatedVRAMBytes = requestedBytes;
                 Engine.Rendering.Stats.AddRenderBufferAllocation(_allocatedVRAMBytes);
             }
         }

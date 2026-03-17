@@ -40,6 +40,13 @@ namespace XREngine.Scene
         private static XRTexture2D? _dummyShadowMap;
         private static XRTexture2D DummyShadowMap => _dummyShadowMap ??= new XRTexture2D(1, 1, ColorF4.White);
 
+        /// <summary>
+        /// A 1x1 black cubemap used as a fallback environment/reflection map when no light probe is available.
+        /// Prevents "program texture usage" GL errors from unbound samplerCube uniforms.
+        /// </summary>
+        private static XRTextureCube? _dummyEnvironmentCubemap;
+        private static XRTextureCube DummyEnvironmentCubemap => _dummyEnvironmentCubemap ??= new XRTextureCube(1u);
+
         private static bool _loggedForwardLightingOnce = false;
         private static bool _loggedForwardAoBindingOnce = false;
         private static bool _loggedShadowMapEnabledOnce = false;
@@ -304,6 +311,29 @@ namespace XREngine.Scene
             // ALWAYS bind a texture to unit 15 - if no shadow map, use a 1x1 white dummy.
             // This prevents OpenGL from sampling stale texture state.
             program.Sampler("ShadowMap", forwardShadowTex ?? DummyShadowMap, forwardShadowMapUnit);
+
+            // Bind environment/reflection cubemap to dedicated high units.
+            // The uber PBR shader (pbr.glsl) declares samplerCube _PBRReflCube and u_EnvironmentMap.
+            // Without a valid cubemap bound, these samplers default to unit 0 (which has a 2D texture),
+            // causing GL_INVALID_OPERATION "program texture usage" on every draw call.
+            const int envMapUnit = 12;
+            const int reflCubeUnit = 13;
+
+            // Try to use the nearest light probe's environment cubemap if available.
+            XRTexture? envCubemap = null;
+            float envMipLevels = 1.0f;
+            if (LightProbes.Count > 0)
+            {
+                var probe = LightProbes[0];
+                envCubemap = probe.EnvironmentTextureCubemap;
+                if (envCubemap is XRTextureCube envCube && envCube.Mipmaps is { Length: > 0 })
+                    envMipLevels = envCube.Mipmaps.Length;
+            }
+            envCubemap ??= DummyEnvironmentCubemap;
+
+            program.Sampler("u_EnvironmentMap", envCubemap, envMapUnit);
+            program.Uniform("u_EnvironmentMapMipLevels", envMipLevels);
+            program.Sampler("_PBRReflCube", envCubemap, reflCubeUnit);
         }
 
         #endregion
@@ -622,14 +652,13 @@ namespace XREngine.Scene
                 return;
 
             PreparedFrustum preparedCamera = camera.WorldFrustum().Prepare();
-            Vector3 cameraForward = camera.Transform.WorldForward;
 
-            UpdateDirectionalCameraLightIntersections(DynamicDirectionalLights, preparedCamera, cameraForward, new ColorF4(0.2f, 0.8f, 1.0f, 1.0f));
+            UpdateDirectionalCameraLightIntersections(DynamicDirectionalLights, camera, preparedCamera, new ColorF4(0.2f, 0.8f, 1.0f, 1.0f));
             UpdateCameraLightIntersections(DynamicSpotLights, preparedCamera, new ColorF4(1.0f, 0.85f, 0.2f, 1.0f));
             UpdateCameraLightIntersections(DynamicPointLights, preparedCamera, new ColorF4(1.0f, 0.2f, 0.8f, 1.0f));
         }
 
-        private void UpdateDirectionalCameraLightIntersections(IReadOnlyList<DirectionalLightComponent> lights, PreparedFrustum preparedCamera, Vector3 cameraForward, ColorF4 debugColor)
+        private void UpdateDirectionalCameraLightIntersections(IReadOnlyList<DirectionalLightComponent> lights, XRCamera camera, PreparedFrustum preparedCamera, ColorF4 debugColor)
         {
             for (int i = 0; i < lights.Count; i++)
             {
@@ -637,7 +666,7 @@ namespace XREngine.Scene
                 _frustumScratch.Clear();
                 light.BuildShadowFrusta(_frustumScratch);
                 light.UpdateCameraIntersections(preparedCamera, _frustumScratch);
-                light.UpdateCascadeAabbs(cameraForward);
+                light.UpdateCascadeShadows(camera);
 
                 RenderIntersectionDebug(light, debugColor);
                 RenderCascadeDebug(light, debugColor);
@@ -679,9 +708,23 @@ namespace XREngine.Scene
             }
         }
 
+        /// <summary>
+        /// Distinct colors for cascade debug visualization (up to 8 cascades).
+        /// </summary>
+        private static readonly ColorF4[] CascadeDebugColors =
+        [
+            new(1.0f, 0.2f, 0.2f, 0.7f),  // Red
+            new(0.2f, 1.0f, 0.2f, 0.7f),  // Green
+            new(0.3f, 0.3f, 1.0f, 0.7f),  // Blue
+            new(1.0f, 1.0f, 0.2f, 0.7f),  // Yellow
+            new(1.0f, 0.5f, 0.0f, 0.7f),  // Orange
+            new(0.8f, 0.2f, 1.0f, 0.7f),  // Purple
+            new(0.0f, 1.0f, 1.0f, 0.7f),  // Cyan
+            new(1.0f, 0.5f, 0.7f, 0.7f),  // Pink
+        ];
+
         private static void RenderCascadeDebug(DirectionalLightComponent light, ColorF4 baseColor)
         {
-            // Only render debug when explicitly enabled
             if (!light.PreviewBoundingVolume)
                 return;
 
@@ -689,14 +732,12 @@ namespace XREngine.Scene
             if (cascades.Count == 0)
                 return;
 
-            // Slightly vary alpha per cascade for readability.
-            const float alphaStep = 0.15f;
             for (int i = 0; i < cascades.Count; i++)
             {
                 var cascade = cascades[i];
-                float alpha = MathF.Max(0.1f, 1.0f - (cascade.CascadeIndex * alphaStep));
-                ColorF4 color = new(baseColor.R, baseColor.G, baseColor.B, alpha);
-                Engine.Rendering.Debug.RenderAABB(cascade.HalfExtents, cascade.Center, false, color);
+                ColorF4 color = CascadeDebugColors[cascade.CascadeIndex % CascadeDebugColors.Length];
+                Matrix4x4 rotation = Matrix4x4.CreateFromQuaternion(cascade.Orientation);
+                Engine.Rendering.Debug.RenderBox(cascade.HalfExtents, cascade.Center, rotation, false, color);
             }
         }
 

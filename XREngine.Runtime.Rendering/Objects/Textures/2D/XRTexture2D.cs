@@ -769,7 +769,7 @@ namespace XREngine.Rendering
         /// Derives ESizedInternalFormat from EPixelInternalFormat for proper texture storage allocation.
         /// This is critical for depth/stencil textures where the wrong format causes FBO incomplete errors.
         /// </summary>
-        private static ESizedInternalFormat DeriveESizedInternalFormat(EPixelInternalFormat internalFormat)
+        internal static ESizedInternalFormat DeriveESizedInternalFormat(EPixelInternalFormat internalFormat)
             => internalFormat switch
             {
                 // Red channel formats

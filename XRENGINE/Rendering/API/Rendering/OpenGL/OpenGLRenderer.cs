@@ -419,6 +419,13 @@ namespace XREngine.Rendering.OpenGL
             Debug.OpenGLWarning($"OPENGL {FormatSeverity(severity)} #{id} | {FormatSource(source)} {FormatType(type)} | {messageStr}");
             bool shouldTrack = type == GLEnum.DebugTypeError;
             RecordOpenGLError(id, FormatSource(source), FormatType(type), FormatSeverity(severity), messageStr, shouldTrack);
+
+            // OOM errors leave the driver in a corrupted state — flag it so draw calls are skipped for the rest of this frame.
+            if (id == 1285 || messageStr.Contains("out of memory", StringComparison.OrdinalIgnoreCase))
+            {
+                if (Current is OpenGLRenderer renderer)
+                    renderer._oomDetectedThisFrame = true;
+            }
         }
 
         private static string FormatSeverity(GLEnum severity)
@@ -600,11 +607,18 @@ namespace XREngine.Rendering.OpenGL
         internal long _frameCounter;
 
         /// <summary>
+        /// Set when the NVIDIA driver reports GL_OUT_OF_MEMORY. Cleared at the start of each frame.
+        /// While set, draw calls are skipped to prevent access violations from corrupted GL state.
+        /// </summary>
+        internal volatile bool _oomDetectedThisFrame;
+
+        /// <summary>
         /// Processes pending async buffer uploads and mesh generations within the frame time budget.
         /// </summary>
         public override void ProcessPendingUploads()
         {
             _frameCounter++;
+            _oomDetectedThisFrame = false;
             UploadQueue.ProcessUploads();
             MeshGenerationQueue.ProcessGeneration();
         }
@@ -786,18 +800,18 @@ namespace XREngine.Rendering.OpenGL
         public void CheckFrameBufferErrors(GLFrameBuffer fbo)
         {
             var result = Api.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
-            string debug = GetFBODebugInfo(fbo, Environment.NewLine);
-            string name = fbo.GetDescribingName();
-            if (result != GLEnum.FramebufferComplete)
+            bool complete = result == GLEnum.FramebufferComplete;
+            fbo.Data.IsLastCheckComplete = complete;
+            if (!complete)
             {
+                string debug = GetFBODebugInfo(fbo, Environment.NewLine);
+                string name = fbo.GetDescribingName();
                 string details = string.Empty;
                 if (TryGetOneTimeFBODetailDump(fbo, out var dump))
                     details = dump;
 
                 Debug.OpenGLWarning($"FBO {name} is not complete. Status: {result}{debug}{details}");
             }
-            //else
-            //    Debug.Out($"FBO {name} is complete.{debug}");
         }
 
         private readonly HashSet<uint> _fboDetailedDumped = new();
@@ -3789,8 +3803,8 @@ void main()
 
             // Resolve AA mode through the current camera's override, falling back to global settings.
             var camera = Engine.Rendering.State.RenderingCamera;
-            var aaMode = camera?.AntiAliasingModeOverride ?? Engine.Rendering.Settings.AntiAliasingMode;
-            var msaaSamples = camera?.MsaaSampleCountOverride ?? Engine.Rendering.Settings.MsaaSampleCount;
+            var aaMode = camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
+            var msaaSamples = camera?.MsaaSampleCountOverride ?? Engine.EffectiveSettings.MsaaSampleCount;
             return aaMode == XREngine.EAntiAliasingMode.Msaa
                 && msaaSamples > 1u;
         }

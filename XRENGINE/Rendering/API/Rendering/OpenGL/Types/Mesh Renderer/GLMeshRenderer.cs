@@ -200,6 +200,9 @@ namespace XREngine.Rendering.OpenGL
         public void RenderCurrentMesh(uint instances = 1)
         {
             // Profiler instrumentation removed from this hot path - called per mesh per frame
+            if (_oomDetectedThisFrame)
+                return;
+
             if (ActiveMeshRenderer?.Mesh is null)
                 return;
 

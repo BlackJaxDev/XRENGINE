@@ -156,6 +156,55 @@ public class SceneNodePrefabTests
     }
 
     [Test]
+    public void TransformSerialization_DefaultPropertyType_OmitsTransformDiscriminator()
+    {
+        SceneNode node = new("Root");
+
+        string yaml = AssetManager.Serializer.Serialize(node);
+
+        Assert.That(yaml, Does.Not.Contain("$type:"));
+    }
+
+    [Test]
+    public void TransformSerialization_NonDefaultDerivedType_EmitsTransformDiscriminator()
+    {
+        SceneNode node = new("Root", new TransformNone());
+
+        string yaml = AssetManager.Serializer.Serialize(node);
+
+        Assert.That(yaml, Does.Contain("$type:"));
+        Assert.That(yaml, Does.Contain("TransformNone"));
+    }
+
+    [Test]
+    public void TransformRoundtrip_MissingTypeDiscriminators_DefaultsToTransformOnDeserialize()
+    {
+        SceneNode root = new("Root");
+        ((Transform)root.Transform).Translation = new System.Numerics.Vector3(1.0f, 2.0f, 3.0f);
+
+        SceneNode child = new("Child");
+        child.Parent = root;
+        ((Transform)child.Transform).Scale = new System.Numerics.Vector3(2.0f, 3.0f, 4.0f);
+
+        string yaml = AssetManager.Serializer.Serialize(root);
+        string yamlWithoutTransformTypes = string.Join(
+            Environment.NewLine,
+            yaml.Split(["\r\n", "\n"], StringSplitOptions.None)
+                .Where(static line => !line.TrimStart().StartsWith("$type:", StringComparison.Ordinal)));
+
+        SceneNode deserialized = AssetManager.Deserializer.Deserialize<SceneNode>(yamlWithoutTransformTypes);
+        SceneNode deserializedChild = GetFirstChild(deserialized);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(deserialized.Transform, Is.TypeOf<Transform>());
+            Assert.That(deserializedChild.Transform, Is.TypeOf<Transform>());
+            Assert.That(((Transform)deserialized.Transform).Translation, Is.EqualTo(new System.Numerics.Vector3(1.0f, 2.0f, 3.0f)));
+            Assert.That(((Transform)deserializedChild.Transform).Scale, Is.EqualTo(new System.Numerics.Vector3(2.0f, 3.0f, 4.0f)));
+        });
+    }
+
+    [Test]
     public void PrefabAssetIdHoisting_OnlyRootEmitsId_ChildrenInheritOnDeserialize()
     {
         Guid prefabId = Guid.NewGuid();

@@ -30,6 +30,20 @@ namespace XREngine
         public static int RenderThreadId { get; private set; }
 
         /// <summary>
+        /// Gets whether the current thread is the app/update thread.
+        /// </summary>
+        public static bool IsAppThread
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => Environment.CurrentManagedThreadId == UpdateThreadId;
+        }
+
+        /// <summary>
+        /// Gets the managed thread ID of the app/update thread.
+        /// </summary>
+        public static int UpdateThreadId { get; private set; }
+
+        /// <summary>
         /// Gets whether the current thread is the physics thread.
         /// </summary>
         /// <remarks>
@@ -58,6 +72,17 @@ namespace XREngine
         /// </summary>
         internal static void SetRenderThreadId(int threadId)
             => RenderThreadId = threadId;
+
+        /// <summary>
+        /// Sets the app/update thread ID. Called internally by the engine timer.
+        /// </summary>
+        internal static void SetUpdateThreadId(int threadId)
+            => UpdateThreadId = threadId;
+
+        internal static bool IsDispatchingRenderFrame => Volatile.Read(ref _isDispatchingRenderFrame) != 0;
+
+        internal static void SetDispatchingRenderFrame(bool value)
+            => Interlocked.Exchange(ref _isDispatchingRenderFrame, value ? 1 : 0);
 
         #endregion
 
@@ -92,16 +117,40 @@ namespace XREngine
         /// Use this for operations that require the graphics context, such as
         /// creating or modifying GPU resources.
         /// </remarks>
-        public static void EnqueueMainThreadTask(Action task)
-            => Jobs.Schedule(new ActionJob(task), JobPriority.Normal, JobAffinity.MainThread);
+        public static void EnqueueRenderThreadTask(Action task)
+            => Jobs.Schedule(new ActionJob(task), JobPriority.Normal, JobAffinity.RenderThread);
 
         /// <summary>
         /// Schedules a labeled task to execute on the main (render) thread.
         /// </summary>
         /// <param name="task">The action to execute.</param>
         /// <param name="reason">A description for profiler labeling.</param>
+        public static void EnqueueRenderThreadTask(Action task, string reason)
+            => Jobs.Schedule(new LabeledActionJob(task, reason), JobPriority.Normal, JobAffinity.RenderThread);
+
+        /// <summary>
+        /// Schedules a task to execute on the app/update thread.
+        /// </summary>
+        public static void EnqueueAppThreadTask(Action task)
+            => Jobs.Schedule(new ActionJob(task), JobPriority.Normal, JobAffinity.AppThread);
+
+        /// <summary>
+        /// Schedules a labeled task to execute on the app/update thread.
+        /// </summary>
+        public static void EnqueueAppThreadTask(Action task, string reason)
+            => Jobs.Schedule(new LabeledActionJob(task, reason), JobPriority.Normal, JobAffinity.AppThread);
+
+        /// <summary>
+        /// Schedules a task to execute on the main (render) thread.
+        /// </summary>
+        public static void EnqueueMainThreadTask(Action task)
+            => EnqueueRenderThreadTask(task);
+
+        /// <summary>
+        /// Schedules a labeled task to execute on the main (render) thread.
+        /// </summary>
         public static void EnqueueMainThreadTask(Action task, string reason)
-            => Jobs.Schedule(new LabeledActionJob(task, reason), JobPriority.Normal, JobAffinity.MainThread);
+            => EnqueueRenderThreadTask(task, reason);
 
         /// <summary>
         /// Schedules a task to run on the engine update thread.
@@ -138,8 +187,20 @@ namespace XREngine
         /// Adds a coroutine that runs on the main (render) thread.
         /// </summary>
         /// <param name="task">A function that returns <c>true</c> when complete, <c>false</c> to continue.</param>
+        public static void AddRenderThreadCoroutine(Func<bool> task)
+            => Jobs.Schedule(new CoroutineJob(task), JobPriority.Normal, JobAffinity.RenderThread);
+
+        /// <summary>
+        /// Adds a coroutine that runs on the app/update thread.
+        /// </summary>
+        public static void AddAppThreadCoroutine(Func<bool> task)
+            => Jobs.Schedule(new CoroutineJob(task), JobPriority.Normal, JobAffinity.AppThread);
+
+        /// <summary>
+        /// Adds a coroutine that runs on the main (render) thread.
+        /// </summary>
         public static void AddMainThreadCoroutine(Func<bool> task)
-            => Jobs.Schedule(new CoroutineJob(task), JobPriority.Normal, JobAffinity.MainThread);
+            => AddRenderThreadCoroutine(task);
 
         /// <summary>
         /// Invokes a task on the main thread if not already on it.
@@ -151,11 +212,11 @@ namespace XREngine
         /// If <c>false</c>, the caller is expected to execute the task.
         /// </param>
         /// <returns><c>true</c> if the task was enqueued; <c>false</c> if already on the main thread.</returns>
-        public static bool InvokeOnMainThread(Action task, string reason, bool executeNowIfAlreadyMainThread = false)
+        public static bool InvokeOnRenderThread(Action task, string reason, bool executeNowIfAlreadyRenderThread = false)
         {
             if (IsRenderThread)
             {
-                if (executeNowIfAlreadyMainThread)
+                if (executeNowIfAlreadyRenderThread)
                 {
                     task();
                 }
@@ -164,9 +225,31 @@ namespace XREngine
 
             LogMainThreadInvoke(reason, MainThreadInvokeMode.Queued);
             Debug.Out($"[MainThreadInvoke] {reason} (queued)");
-            EnqueueMainThreadTask(task, reason);
+            EnqueueRenderThreadTask(task, reason);
             return true;
         }
+
+        /// <summary>
+        /// Invokes a task on the app/update thread if not already there.
+        /// </summary>
+        public static bool InvokeOnAppThread(Action task, string reason, bool executeNowIfAlreadyAppThread = false)
+        {
+            if (IsAppThread)
+            {
+                if (executeNowIfAlreadyAppThread)
+                    task();
+                return false;
+            }
+
+            EnqueueAppThreadTask(task, reason);
+            return true;
+        }
+
+        /// <summary>
+        /// Invokes a task on the main/render thread if not already there.
+        /// </summary>
+        public static bool InvokeOnMainThread(Action task, string reason, bool executeNowIfAlreadyMainThread = false)
+            => InvokeOnRenderThread(task, reason, executeNowIfAlreadyMainThread);
 
         #endregion
 
@@ -203,6 +286,9 @@ namespace XREngine
                 }
                 processed++;
             }
+
+            if (processed < maxTasks)
+                ProcessPendingAppThreadWork(maxTasks - processed);
         }
 
         /// <summary>
@@ -230,6 +316,19 @@ namespace XREngine
         {
             using var scope = Engine.Profiler.Start("MainThreadJobs.Dispatch");
             Jobs.ProcessMainThreadJobs();
+        }
+
+        private static void ProcessPendingAppThreadWork(int maxJobs)
+        {
+#if !XRE_PUBLISHED
+            if (IsDispatchingRenderFrame && Interlocked.Exchange(ref _loggedAppThreadDispatchDuringRender, 1) == 0)
+            {
+                Debug.LogWarning("[ThreadAffinity] Non-GPU app-thread jobs were dispatched during render. AppThread work must stay off DispatchRender.");
+            }
+#endif
+
+            using var scope = Engine.Profiler.Start("AppThreadJobs.Dispatch");
+            Jobs.ProcessAppThreadJobs(maxJobs);
         }
 
         private static void SwapBuffers()

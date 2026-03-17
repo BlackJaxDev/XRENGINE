@@ -267,12 +267,12 @@ public static partial class InspectorPropertyEditors
                     Directory.CreateDirectory(directory);
 
                 asset.FilePath = path;
-                Engine.InvokeOnMainThread(() => manager.Save(asset), "Inspector: Save asset (new path)", executeNowIfAlreadyMainThread: true);
+                Engine.InvokeOnAppThread(() => manager.Save(asset), "Inspector: Save asset (new path)", executeNowIfAlreadyAppThread: true);
             });
             return;
         }
 
-        Engine.InvokeOnMainThread(() => manager.Save(asset), "Inspector: Save asset", executeNowIfAlreadyMainThread: true);
+        Engine.InvokeOnAppThread(() => manager.Save(asset), "Inspector: Save asset", executeNowIfAlreadyAppThread: true);
     }
 
     private static void PromptSaveAssetPathAsync(XRAsset asset, Action<string?> callback)

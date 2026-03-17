@@ -22,6 +22,7 @@ namespace XREngine
         public static partial class Rendering
         {
             public static event Action? SettingsChanged;
+            public static event Action? AntiAliasingSettingsChanged;
 
             /// <summary>
             /// When the editor is using an ImGui viewport panel presentation mode, this optional callback
@@ -376,6 +377,8 @@ namespace XREngine
                 private bool _allowSecondaryContextSharingFallback = false;
                 private bool _transformCullingIsAxisAligned = true;
                 private bool _logMissingShaderSamplers = false;
+                private bool _enableVramBudget = true;
+                private int _vramBudgetMB = 20 * 1024;
 
                 private bool _cullShadowCollectionByCameraFrusta = true;
 
@@ -390,6 +393,28 @@ namespace XREngine
                 {
                     get => _logMissingShaderSamplers;
                     set => SetField(ref _logMissingShaderSamplers, value);
+                }
+
+                /// <summary>
+                /// If true, tracked GPU allocations are blocked once the configured VRAM budget is exceeded.
+                /// </summary>
+                [Category("Performance")]
+                [Description("If true, tracked GPU allocations are blocked once the configured VRAM budget is exceeded.")]
+                public bool EnableVramBudget
+                {
+                    get => _enableVramBudget;
+                    set => SetField(ref _enableVramBudget, value);
+                }
+
+                /// <summary>
+                /// Maximum tracked GPU memory budget in megabytes used by the VRAM budget gate.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Maximum tracked GPU memory budget in megabytes used by the VRAM budget gate.")]
+                public int VramBudgetMB
+                {
+                    get => _vramBudgetMB;
+                    set => SetField(ref _vramBudgetMB, Math.Clamp(value, 256, 256 * 1024));
                 }
 
                 /// <summary>

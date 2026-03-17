@@ -29,6 +29,7 @@ namespace XREngine.Rendering
         }
         public XRTexture2DArray(uint count, uint width, uint height, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData = false)
         {
+            _sizedInternalFormat = XRTexture2D.DeriveESizedInternalFormat(internalFormat);
             var textures = new XRTexture2D[count];
             for (int i = 0; i < count; i++)
                 textures[i] = new XRTexture2D(width, height, internalFormat, format, type, allocateData);

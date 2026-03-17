@@ -54,6 +54,7 @@ namespace XREngine.Rendering
         static XRMeshRenderer()
         {
             Engine.Rendering.SettingsChanged += () => Interlocked.Increment(ref _settingsRevision);
+            Engine.Rendering.AntiAliasingSettingsChanged += () => Interlocked.Increment(ref _settingsRevision);
         }
 
         private static int CurrentSettingsRevision => Volatile.Read(ref _settingsRevision);

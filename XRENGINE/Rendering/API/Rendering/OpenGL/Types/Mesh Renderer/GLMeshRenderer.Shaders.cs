@@ -257,7 +257,11 @@ namespace XREngine.Rendering.OpenGL
 
                 shaders = shaders.Append(vertexShader);
 
-                program = Renderer.GenericToAPI<GLRenderProgram>(new XRRenderProgram(false, false, shaders))!;
+                var combinedData = new XRRenderProgram(false, false, shaders)
+                {
+                    Name = $"Combined:{MeshRenderer.Material?.Name ?? "unknown"}",
+                };
+                program = Renderer.GenericToAPI<GLRenderProgram>(combinedData)!;
                 program.PropertyChanged += CheckProgramLinked;
                 InitiateLink(program);
             }
@@ -283,7 +287,11 @@ namespace XREngine.Rendering.OpenGL
                     ? GenerateVertexShader(vertexSourceGenerator)
                     : vertexShaders.FirstOrDefault(vertexShaderSelector) ?? GenerateVertexShader(vertexSourceGenerator);
 
-                vertexProgram = Renderer.GenericToAPI<GLRenderProgram>(new XRRenderProgram(false, true, vertexShader))!;
+                var separatedData = new XRRenderProgram(false, true, vertexShader)
+                {
+                    Name = $"SeparatedVertex:{MeshRenderer.Material?.Name ?? "unknown"}",
+                };
+                vertexProgram = Renderer.GenericToAPI<GLRenderProgram>(separatedData)!;
                 vertexProgram.PropertyChanged += CheckProgramLinked;
                 InitiateLink(vertexProgram);
             }

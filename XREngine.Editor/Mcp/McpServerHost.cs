@@ -1210,7 +1210,7 @@ namespace XREngine.Editor.Mcp
                 }, token);
             }
 
-            // Main / Update / Physics: dispatch via engine task queues and await completion.
+            // App / Update / Physics: dispatch via engine task queues and await completion.
             {
                 var tcs = new System.Threading.Tasks.TaskCompletionSource<McpToolResponse>(
                     System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1235,7 +1235,7 @@ namespace XREngine.Editor.Mcp
                 switch (affinity)
                 {
                     case McpThreadAffinity.Main:
-                        Engine.EnqueueMainThreadTask(dispatch);
+                        Engine.EnqueueAppThreadTask(dispatch);
                         break;
                     case McpThreadAffinity.Update:
                         Engine.EnqueueUpdateThreadTask(dispatch);

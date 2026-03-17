@@ -31,6 +31,7 @@ namespace XREngine.Rendering
 
         public XRTextureCubeArray(uint layerCount, uint extent, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData = false, int mipCount = 1)
         {
+            _sizedInternalFormat = XRTexture2D.DeriveESizedInternalFormat(internalFormat);
             XRTextureCube[] cubes = new XRTextureCube[layerCount];
             for (int i = 0; i < layerCount; ++i)
                 cubes[i] = new XRTextureCube(extent, internalFormat, format, type, allocateData, mipCount);

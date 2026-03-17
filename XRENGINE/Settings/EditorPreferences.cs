@@ -1024,7 +1024,7 @@ namespace XREngine
     {
         /// <summary>
         /// Populates points, lines, and triangles on separate thread-pool tasks in parallel (Task.Run + Task.WaitAll).
-        /// Best throughput for thousands of debug primitives. Default.
+        /// Preserved as an opt-in compatibility mode.
         /// </summary>
         Tasks,
 
@@ -1042,7 +1042,7 @@ namespace XREngine
 
         /// <summary>
         /// Schedules population on the engine's persistent worker threads via the JobManager.
-        /// Avoids thread-pool scheduling overhead; workers are pre-warmed and use lock-free queues.
+        /// Avoids thread-pool scheduling overhead; workers are pre-warmed and use lock-free queues. Default.
         /// </summary>
         JobSystem,
     }
@@ -1085,7 +1085,7 @@ namespace XREngine
         private bool _enableGpuRenderPipelineProfiling = false;
         private bool _enableUILayoutDebugLogging = false;
         private bool _enableProfilerUdpSending = false;
-        private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.Tasks;
+        private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.JobSystem;
         private EDebugVisualizerPopulationMode _debugVisualizerPopulationMode = EDebugVisualizerPopulationMode.Tasks;
         private EDebugPrimitiveBufferFormat _debugPrimitiveBufferFormat = EDebugPrimitiveBufferFormat.Compressed;
         private bool _forwardDepthPrePassEnabled = true;
@@ -1456,7 +1456,7 @@ namespace XREngine
         /// </summary>
         [Category("Debug")]
         [DisplayName("Debug Shape Population Mode")]
-        [Description("Controls how debug shape data is populated each frame. 'Tasks' uses thread-pool tasks (best for thousands of primitives). 'ParallelInvoke' uses Parallel.Invoke. 'Sequential' runs on the calling thread (lowest overhead for few primitives).")]
+        [Description("Controls how debug shape data is populated each frame. 'JobSystem' uses engine worker threads and is the default. 'Tasks' retains the Task.Run + Task.WaitAll path. 'ParallelInvoke' uses Parallel.Invoke. 'Sequential' runs on the calling thread.")]
         public EDebugShapePopulationMode DebugShapePopulationMode
         {
             get => _debugShapePopulationMode;

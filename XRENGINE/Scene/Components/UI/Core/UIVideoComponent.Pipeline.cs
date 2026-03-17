@@ -38,12 +38,12 @@ namespace XREngine.Rendering.UI
         }
 
         /// <summary>
-        /// Starts the streaming pipeline on the main thread. Resolves the
+        /// Starts the streaming pipeline on the app/update thread. Resolves the
         /// stream URL (extracting quality variants from master playlists),
         /// creates a session, and begins the async open.
         /// </summary>
         private void StartStreamingPipeline()
-            => Engine.InvokeOnMainThread(StartStreamingPipelineOnMainThread, "UIVideoComponent.StartStreamingPipeline", true);
+            => Engine.InvokeOnAppThread(StartStreamingPipelineOnMainThread, "UIVideoComponent.StartStreamingPipeline", true);
 
         private void StartStreamingPipelineOnMainThread()
         {
@@ -136,7 +136,7 @@ namespace XREngine.Rendering.UI
         /// media playlist URL.
         /// </summary>
         private void StartStreamingPipelineWithVariant(StreamVariantInfo variant)
-            => Engine.InvokeOnMainThread(() => StartStreamingPipelineWithVariantOnMainThread(variant),
+            => Engine.InvokeOnAppThread(() => StartStreamingPipelineWithVariantOnMainThread(variant),
                 "UIVideoComponent.StartStreamingPipelineWithVariant", true);
 
         private void StartStreamingPipelineWithVariantOnMainThread(StreamVariantInfo variant)
@@ -189,7 +189,7 @@ namespace XREngine.Rendering.UI
         /// the session, disposes GPU upload resources, and resets all state.
         /// </summary>
         private void StopStreamingPipeline()
-            => Engine.InvokeOnMainThread(StopStreamingPipelineOnMainThread, "UIVideoComponent.StopStreamingPipeline", true);
+            => Engine.InvokeOnAppThread(StopStreamingPipelineOnMainThread, "UIVideoComponent.StopStreamingPipeline", true);
 
         private void StopStreamingPipelineOnMainThread()
         {

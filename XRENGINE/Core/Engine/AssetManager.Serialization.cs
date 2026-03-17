@@ -72,6 +72,7 @@ namespace XREngine
                 .WithEmissionPhaseObjectGraphVisitor(args => new PolymorphicTypeGraphVisitor(args.InnerVisitor))
                 .WithEventEmitter(nextEmitter => new DepthTrackingEventEmitter(nextEmitter))
                 .WithTypeInspector(inner => new DelegateSkippingTypeInspector(inner))
+                .WithTypeInspector(inner => new YamlDefaultTypeInspector(inner, applyDefaultTypeOnRead: false))
                 //.WithTypeConverter(new XRAssetYamlConverter())
                 .IncludeNonPublicProperties()
                 //.WithTagMapping("!Transform", typeof(Transform))
@@ -115,6 +116,7 @@ namespace XREngine
                 .WithEnforceNullability()
                 .WithEnforceRequiredMembers()
                 .WithDuplicateKeyChecking()
+                .WithTypeInspector(inner => new YamlDefaultTypeInspector(inner, applyDefaultTypeOnRead: true))
                 .WithNodeDeserializer(
                     inner => new DepthTrackingNodeDeserializer(inner),
                     s => s.InsteadOf<ObjectNodeDeserializer>())

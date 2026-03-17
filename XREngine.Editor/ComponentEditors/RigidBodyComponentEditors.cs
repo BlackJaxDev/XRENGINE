@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using System.Threading.Tasks;
 using ImGuiNET;
 using XREngine;
 using XREngine.Components;
@@ -17,21 +15,21 @@ namespace XREngine.Editor.ComponentEditors;
 
 internal static class RigidBodyEditorShared
 {
-    private sealed class GenerationState
-    {
-        public bool InProgress;
-        public string? LastMessage;
-        public string? ActiveMessage;
-        public PhysicsActorComponent.ConvexHullGenerationProgress? LastProgress;
-        public readonly Stopwatch Stopwatch = new();
-    }
-
     private sealed class HullPreviewState
     {
-        public bool Enabled;
+        public HashSet<int> EnabledHullIndices { get; } = [];
     }
 
-    private static readonly ConditionalWeakTable<PhysicsActorComponent, GenerationState> _generationStates = new();
+    private readonly record struct HullMetrics(
+        int VertexCount,
+        int TriangleCount,
+        Vector3 Min,
+        Vector3 Max)
+    {
+        public Vector3 Center => (Min + Max) * 0.5f;
+        public Vector3 Size => Max - Min;
+    }
+
     private static readonly ConditionalWeakTable<PhysicsActorComponent, HullPreviewState> _previewStates = new();
     private static readonly string[] s_spinnerFrames = ["-", "\\", "|", "/"];
 
@@ -39,61 +37,24 @@ internal static class RigidBodyEditorShared
     {
         ImGui.SeparatorText("Convex Hull Utilities");
 
-        var state = _generationStates.GetValue(component, _ => new GenerationState());
+        var status = component.GetConvexHullGenerationStatus();
         bool hasModel = component.GetSiblingComponent<ModelComponent>() is not null;
         var cachedHulls = component.GetCachedConvexHulls();
 
-        using (new ImGuiDisabledScope(!hasModel || state.InProgress))
+        using (new ImGuiDisabledScope(!hasModel || status.InProgress))
         {
-            string label = state.InProgress ? "Generating..." : "Generate Convex Hulls";
-            if (ImGui.Button(label, new Vector2(-1f, 0f)) && hasModel && !state.InProgress)
-                TriggerGeneration(component, state);
+            string label = status.InProgress ? "Generating..." : "Generate Convex Hulls";
+            if (ImGui.Button(label, new Vector2(-1f, 0f)) && hasModel && !status.InProgress)
+                _ = component.GenerateConvexHullsFromModelAsync();
         }
 
         if (!hasModel)
             ImGui.TextDisabled("Requires a sibling ModelComponent.");
 
-        if (hasModel)
+        if (hasModel || cachedHulls is { Count: > 0 })
             DrawWireframePreviewControls(component, cachedHulls);
 
-        DrawGenerationStatus(state);
-    }
-
-    private static void TriggerGeneration(PhysicsActorComponent component, GenerationState state)
-    {
-        state.InProgress = true;
-        state.LastMessage = null;
-        state.ActiveMessage = "Preparing convex hull data...";
-        state.LastProgress = null;
-        state.Stopwatch.Restart();
-        _ = RunGenerationAsync(component, state);
-    }
-
-    private static async Task RunGenerationAsync(PhysicsActorComponent component, GenerationState state)
-    {
-        try
-        {
-            var progress = new Progress<PhysicsActorComponent.ConvexHullGenerationProgress>(p =>
-            {
-                state.LastProgress = p;
-                state.ActiveMessage = FormatProgressMessage(p);
-            });
-
-            await component.GenerateConvexHullsFromModelAsync(progress).ConfigureAwait(false);
-            state.LastMessage = "Convex hulls cached successfully.";
-        }
-        catch (Exception ex)
-        {
-            Debug.LogException(ex, "Convex hull generation failed.");
-            state.LastMessage = $"Failed: {ex.Message}";
-        }
-        finally
-        {
-            state.InProgress = false;
-            state.ActiveMessage = null;
-            state.LastProgress = null;
-            state.Stopwatch.Reset();
-        }
+        DrawGenerationStatus(status);
     }
 
     private static string FormatProgressMessage(PhysicsActorComponent.ConvexHullGenerationProgress progress)
@@ -115,28 +76,149 @@ internal static class RigidBodyEditorShared
         bool hasHulls = cachedHulls is { Count: > 0 };
         var previewState = _previewStates.GetValue(component, _ => new HullPreviewState());
 
-        if (!hasHulls && previewState.Enabled)
-            previewState.Enabled = false;
-
-        using (new ImGuiDisabledScope(!hasHulls))
+        if (!hasHulls)
         {
-            bool previewEnabled = previewState.Enabled;
-            if (ImGui.Checkbox("Preview hull wireframe", ref previewEnabled) && hasHulls)
-                previewState.Enabled = previewEnabled;
-        }
-
-        if (previewState.Enabled && cachedHulls is not null)
-        {
-            RenderHullWireframe(component, cachedHulls);
-            ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.9f, 1f), "Wireframe preview queued for rendering.");
-        }
-        else if (!hasHulls)
-        {
+            previewState.EnabledHullIndices.Clear();
             ImGui.TextDisabled("Generate convex hulls to enable preview.");
+            return;
+        }
+
+        TrimInvalidHullSelections(previewState, cachedHulls.Count);
+
+        ImGui.SeparatorText("Generated Hulls");
+        DrawHullSummary(cachedHulls);
+        DrawHullPreviewToolbar(previewState, cachedHulls.Count);
+        DrawHullPreviewTable(previewState, cachedHulls);
+
+        int selectedHullCount = previewState.EnabledHullIndices.Count;
+        if (selectedHullCount > 0)
+        {
+            RenderHullWireframes(component, cachedHulls, previewState.EnabledHullIndices);
+            ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.9f, 1f), $"Queued {selectedHullCount} of {cachedHulls.Count} hull wireframes for rendering.");
+        }
+        else
+        {
+            ImGui.TextDisabled("Enable one or more hull previews to render wireframes.");
         }
     }
 
-    private static void RenderHullWireframe(PhysicsActorComponent component, IReadOnlyList<CoACD.ConvexHullMesh> hulls)
+    private static void DrawHullSummary(IReadOnlyList<CoACD.ConvexHullMesh> hulls)
+    {
+        int totalVertices = 0;
+        int totalTriangles = 0;
+
+        for (int i = 0; i < hulls.Count; i++)
+        {
+            HullMetrics metrics = CalculateHullMetrics(hulls[i]);
+            totalVertices += metrics.VertexCount;
+            totalTriangles += metrics.TriangleCount;
+        }
+
+        const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.NoSavedSettings;
+        if (!ImGui.BeginTable("ConvexHullSummary", 3, tableFlags))
+            return;
+
+        ImGui.TableSetupColumn("Hulls", ImGuiTableColumnFlags.WidthStretch, 0.33f);
+        ImGui.TableSetupColumn("Vertices", ImGuiTableColumnFlags.WidthStretch, 0.33f);
+        ImGui.TableSetupColumn("Triangles", ImGuiTableColumnFlags.WidthStretch, 0.34f);
+        ImGui.TableNextRow();
+
+        ImGui.TableSetColumnIndex(0);
+        ImGui.TextUnformatted(hulls.Count.ToString());
+        ImGui.TableSetColumnIndex(1);
+        ImGui.TextUnformatted(totalVertices.ToString());
+        ImGui.TableSetColumnIndex(2);
+        ImGui.TextUnformatted(totalTriangles.ToString());
+
+        ImGui.EndTable();
+    }
+
+    private static void DrawHullPreviewToolbar(HullPreviewState previewState, int hullCount)
+    {
+        if (ImGui.SmallButton("Show All Hulls"))
+        {
+            previewState.EnabledHullIndices.Clear();
+            for (int i = 0; i < hullCount; i++)
+                previewState.EnabledHullIndices.Add(i);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Hide All Hulls"))
+            previewState.EnabledHullIndices.Clear();
+
+        ImGui.SameLine();
+        ImGui.TextDisabled($"Previewing {previewState.EnabledHullIndices.Count}/{hullCount}");
+    }
+
+    private static void DrawHullPreviewTable(HullPreviewState previewState, IReadOnlyList<CoACD.ConvexHullMesh> hulls)
+    {
+        const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp
+            | ImGuiTableFlags.RowBg
+            | ImGuiTableFlags.BordersOuter
+            | ImGuiTableFlags.BordersInnerV
+            | ImGuiTableFlags.Resizable
+            | ImGuiTableFlags.NoSavedSettings;
+
+        if (!ImGui.BeginTable("ConvexHullDetails", 6, tableFlags))
+            return;
+
+        ImGui.TableSetupColumn("Preview", ImGuiTableColumnFlags.WidthFixed, 70.0f);
+        ImGui.TableSetupColumn("Hull", ImGuiTableColumnFlags.WidthFixed, 55.0f);
+        ImGui.TableSetupColumn("Vertices", ImGuiTableColumnFlags.WidthFixed, 70.0f);
+        ImGui.TableSetupColumn("Triangles", ImGuiTableColumnFlags.WidthFixed, 75.0f);
+        ImGui.TableSetupColumn("Bounds Size", ImGuiTableColumnFlags.WidthStretch, 0.5f);
+        ImGui.TableSetupColumn("Center", ImGuiTableColumnFlags.WidthStretch, 0.5f);
+        ImGui.TableHeadersRow();
+
+        for (int hullIndex = 0; hullIndex < hulls.Count; hullIndex++)
+        {
+            HullMetrics metrics = CalculateHullMetrics(hulls[hullIndex]);
+            bool previewEnabled = previewState.EnabledHullIndices.Contains(hullIndex);
+
+            ImGui.PushID(hullIndex);
+            ImGui.TableNextRow();
+
+            ImGui.TableSetColumnIndex(0);
+            if (ImGui.Checkbox("##PreviewHull", ref previewEnabled))
+            {
+                if (previewEnabled)
+                    previewState.EnabledHullIndices.Add(hullIndex);
+                else
+                    previewState.EnabledHullIndices.Remove(hullIndex);
+            }
+
+            ImGui.TableSetColumnIndex(1);
+            if (previewEnabled)
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.35f, 0.9f, 0.9f, 1.0f));
+            ImGui.TextUnformatted($"#{hullIndex + 1}");
+            if (previewEnabled)
+                ImGui.PopStyleColor();
+
+            ImGui.TableSetColumnIndex(2);
+            ImGui.TextUnformatted(metrics.VertexCount.ToString());
+
+            ImGui.TableSetColumnIndex(3);
+            ImGui.TextUnformatted(metrics.TriangleCount.ToString());
+
+            ImGui.TableSetColumnIndex(4);
+            ImGui.TextUnformatted(FormatVector(metrics.Size));
+
+            ImGui.TableSetColumnIndex(5);
+            ImGui.TextUnformatted(FormatVector(metrics.Center));
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Min: {FormatVector(metrics.Min)}\nMax: {FormatVector(metrics.Max)}");
+
+            ImGui.PopID();
+        }
+
+        ImGui.EndTable();
+    }
+
+    private static void RenderHullWireframes(
+        PhysicsActorComponent component,
+        IReadOnlyList<CoACD.ConvexHullMesh> hulls,
+        HashSet<int> enabledHullIndices)
     {
         var componentTransform = component.Transform;
         Matrix4x4 transform = componentTransform.RenderMatrix;
@@ -158,12 +240,18 @@ internal static class RigidBodyEditorShared
         }
         bool hasOffset = hasTranslation || hasRotation;
 
-        foreach (var hull in hulls)
+        for (int hullIndex = 0; hullIndex < hulls.Count; hullIndex++)
         {
+            if (!enabledHullIndices.Contains(hullIndex))
+                continue;
+
+            var hull = hulls[hullIndex];
             var vertices = hull.Vertices;
             var indices = hull.Indices;
             if (vertices is null || vertices.Length == 0 || indices is null || indices.Length < 3)
                 continue;
+
+            ColorF4 color = GetHullPreviewColor(hullIndex);
 
             for (int i = 0; i <= indices.Length - 3; i += 3)
             {
@@ -178,9 +266,46 @@ internal static class RigidBodyEditorShared
                 var worldB = Vector3.Transform(hasOffset ? ApplyShapeOffset(b, offsetTranslation, offsetRotation, hasTranslation, hasRotation) : b, transform);
                 var worldC = Vector3.Transform(hasOffset ? ApplyShapeOffset(c, offsetTranslation, offsetRotation, hasTranslation, hasRotation) : c, transform);
 
-                Engine.Rendering.Debug.RenderTriangle(worldA, worldB, worldC, ColorF4.Cyan, solid: false);
+                Engine.Rendering.Debug.RenderTriangle(worldA, worldB, worldC, color, solid: false);
             }
         }
+    }
+
+    private static void TrimInvalidHullSelections(HullPreviewState previewState, int hullCount)
+        => previewState.EnabledHullIndices.RemoveWhere(index => index < 0 || index >= hullCount);
+
+    private static HullMetrics CalculateHullMetrics(CoACD.ConvexHullMesh hull)
+    {
+        Vector3[]? vertices = hull.Vertices;
+        int vertexCount = vertices?.Length ?? 0;
+        int triangleCount = (hull.Indices?.Length ?? 0) / 3;
+        if (vertexCount == 0)
+            return new HullMetrics(vertexCount, triangleCount, Vector3.Zero, Vector3.Zero);
+
+        Vector3 min = vertices![0];
+        Vector3 max = vertices[0];
+        for (int i = 1; i < vertices.Length; i++)
+        {
+            min = Vector3.Min(min, vertices[i]);
+            max = Vector3.Max(max, vertices[i]);
+        }
+
+        return new HullMetrics(vertexCount, triangleCount, min, max);
+    }
+
+    private static ColorF4 GetHullPreviewColor(int hullIndex)
+    {
+        ColorF4[] palette =
+        [
+            new ColorF4(0.25f, 0.85f, 1.0f, 1.0f),
+            new ColorF4(1.0f, 0.72f, 0.24f, 1.0f),
+            new ColorF4(0.52f, 1.0f, 0.48f, 1.0f),
+            new ColorF4(1.0f, 0.48f, 0.68f, 1.0f),
+            new ColorF4(0.72f, 0.62f, 1.0f, 1.0f),
+            new ColorF4(1.0f, 0.88f, 0.42f, 1.0f)
+        ];
+
+        return palette[hullIndex % palette.Length];
     }
 
     private static Vector3 ApplyShapeOffset(
@@ -197,29 +322,34 @@ internal static class RigidBodyEditorShared
         return vertex;
     }
 
-    private static void DrawGenerationStatus(GenerationState state)
+    private static void DrawGenerationStatus(PhysicsActorComponent.ConvexHullGenerationStatus status)
     {
-        if (state.InProgress)
+        if (status.InProgress)
         {
             string spinner = s_spinnerFrames[(int)(ImGui.GetTime() * 8) % s_spinnerFrames.Length];
-            string message = state.ActiveMessage ?? "Running convex decomposition...";
+            string message = status.Progress is { } progressState
+                ? FormatProgressMessage(progressState)
+                : status.ActiveMessage ?? "Running convex decomposition...";
             ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.9f, 1f), $"{spinner} {message}");
 
-            var progress = state.LastProgress;
+            var progress = status.Progress;
             if (progress is { TotalInputs: > 0 })
             {
                 float percent = progress.Value.Percentage;
                 ImGui.ProgressBar(percent, new Vector2(-1f, 0f), $"{percent * 100f:0}%");
-                ImGui.TextDisabled($"{progress.Value.CompletedInputs}/{progress.Value.TotalInputs} meshes • {state.Stopwatch.Elapsed:mm\\:ss}");
+                if (status.StartedAtUtc is DateTimeOffset startedAtUtc)
+                    ImGui.TextDisabled($"{progress.Value.CompletedInputs}/{progress.Value.TotalInputs} meshes • {(DateTimeOffset.UtcNow - startedAtUtc):mm\\:ss}");
+                else
+                    ImGui.TextDisabled($"{progress.Value.CompletedInputs}/{progress.Value.TotalInputs} meshes");
             }
-            else if (state.Stopwatch.IsRunning)
+            else if (status.StartedAtUtc is DateTimeOffset startedAtUtc)
             {
-                ImGui.TextDisabled($"Elapsed {state.Stopwatch.Elapsed:mm\\:ss}");
+                ImGui.TextDisabled($"Elapsed {(DateTimeOffset.UtcNow - startedAtUtc):mm\\:ss}");
             }
         }
-        else if (!string.IsNullOrEmpty(state.LastMessage))
+        else if (!string.IsNullOrEmpty(status.LastMessage))
         {
-            ImGui.TextWrapped(state.LastMessage);
+            ImGui.TextWrapped(status.LastMessage);
         }
     }
 

@@ -72,12 +72,12 @@ public static partial class EditorUnitTests
 
         private static ModelImportOptions? CreateImportOptions(Settings.ModelImportSettings model)
         {
-            if (!model.GenerateCoacdCollidersPerSubmesh)
+            if (!model.GenerateCoacdCollidersPerSubmesh && !model.SplitSubmeshesIntoSeparateModelComponents)
                 return null;
 
             return new ModelImportOptions
             {
-                SplitSubmeshesIntoSeparateModelComponents = true,
+                SplitSubmeshesIntoSeparateModelComponents = model.SplitSubmeshesIntoSeparateModelComponents,
             };
         }
 
@@ -86,11 +86,13 @@ public static partial class EditorUnitTests
             int colliderCount = 0;
             rootNode.IterateComponents<ModelComponent>(component =>
             {
-                StaticRigidBodyComponent? staticBody = component.SceneNode.GetComponent<StaticRigidBodyComponent>();
-                staticBody ??= component.SceneNode.AddComponent<StaticRigidBodyComponent>();
+                // When multiple ModelComponents exist on one node (split import), each
+                // StaticRigidBodyComponent must target its specific ModelComponent.
+                var staticBody = component.SceneNode.AddComponent<StaticRigidBodyComponent>();
                 if (staticBody is null)
                     return;
 
+                staticBody.TargetModelComponent = component;
                 staticBody.AutoGenerateConvexCollidersFromSiblingModel = true;
                 colliderCount++;
             }, true);

@@ -160,15 +160,21 @@ namespace XREngine.Rendering.OpenGL
             EPixelInternalFormat? internalFormatForce = null;
             if (!Data.Resizable && !StorageSet)
             {
+                uint w = Math.Max(1u, Data.Width);
+                uint h = Math.Max(1u, Data.Height);
+                uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
+                long requestedBytes = CalculateTextureVRAMSize(w, h, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);
+                if (!Engine.Rendering.Stats.CanAllocateVram(requestedBytes, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
+                {
+                    Debug.OpenGLWarning($"[VRAM Budget] Skipping 2D texture allocation for '{Data.Name ?? BindingId.ToString()}' ({requestedBytes} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
+                    return null;
+                }
+
                 if (_allocatedVRAMBytes > 0)
                 {
                     Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
                     _allocatedVRAMBytes = 0;
                 }
-
-                uint w = Math.Max(1u, Data.Width);
-                uint h = Math.Max(1u, Data.Height);
-                uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
 
                 if (Data.MultiSample)
                     Api.TextureStorage2DMultisample(BindingId, Data.MultiSampleCount, ToGLEnum(Data.SizedInternalFormat), w, h, Data.FixedSampleLocations);
@@ -467,7 +473,7 @@ namespace XREngine.Rendering.OpenGL
         /// <summary>
         /// Calculates the approximate VRAM size for a 2D texture including all mipmap levels.
         /// </summary>
-        private static long CalculateTextureVRAMSize(uint width, uint height, uint mipLevels, ESizedInternalFormat format, uint sampleCount)
+        internal static long CalculateTextureVRAMSize(uint width, uint height, uint mipLevels, ESizedInternalFormat format, uint sampleCount)
         {
             long totalSize = 0;
             uint bpp = GetBytesPerPixel(format);
@@ -485,7 +491,7 @@ namespace XREngine.Rendering.OpenGL
         /// <summary>
         /// Returns the bytes per pixel for a given sized internal format.
         /// </summary>
-        private static uint GetBytesPerPixel(ESizedInternalFormat format)
+        internal static uint GetBytesPerPixel(ESizedInternalFormat format)
         {
             return format switch
             {

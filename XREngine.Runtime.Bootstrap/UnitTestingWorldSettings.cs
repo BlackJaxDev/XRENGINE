@@ -111,6 +111,12 @@ public class UnitTestingWorldSettings
         public float Scale { get; set; } = 1.0f;
         public bool ZUp { get; set; } = false;
         public bool GenerateCoacdCollidersPerSubmesh { get; set; } = false;
+        /// <summary>
+        /// When true, each imported submesh gets its own ModelComponent instead of
+        /// grouping all submeshes from the same source node into one ModelComponent.
+        /// Increases GPU resource usage; leave false unless per-submesh scene nodes are needed.
+        /// </summary>
+        public bool SplitSubmeshesIntoSeparateModelComponents { get; set; } = false;
         public YawPitchRollDegrees? YawPitchRoll { get; set; }
     }
 

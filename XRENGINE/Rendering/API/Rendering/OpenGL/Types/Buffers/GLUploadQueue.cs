@@ -101,6 +101,14 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
+                if (!Engine.Rendering.Stats.CanAllocateVram(dataLength, buffer.AllocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
+                {
+                    buffer._hasPendingUpload = false;
+                    _pendingBuffers.TryRemove(buffer, out _);
+                    Debug.OpenGLWarning($"[VRAM Budget] Skipping queued buffer upload for '{buffer.GetDescribingName()}' ({dataLength} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
+                    return;
+                }
+
                 // Perform the upload
                 fixed (byte* src = data)
                 {

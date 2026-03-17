@@ -319,6 +319,7 @@ namespace XREngine.Scene
         /// The transform of this scene node.
         /// Will never be null, because scene nodes all have transformations in the scene.
         /// </summary>
+        [YamlDefaultType(typeof(Transform))]
         public TransformBase Transform
         {
             get

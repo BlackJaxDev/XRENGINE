@@ -46,6 +46,41 @@ namespace XREngine.Components.Scene.Mesh
         public EventList<RenderableMesh> Meshes { get; private set; } = new EventList<RenderableMesh>() { ThreadSafe = true };
         public RenderInfo[] RenderedObjects { get; private set; } = [];
 
+        protected override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            SyncRenderedObjectsWithWorld();
+        }
+
+        protected override void OnComponentDeactivated()
+        {
+            // Unregister all render infos from the world so they stop drawing.
+            foreach (var ri in RenderedObjects)
+                ri.WorldInstance = null;
+            base.OnComponentDeactivated();
+        }
+
+        /// <summary>
+        /// Ensures every <see cref="RenderedObjects"/> entry is registered (or unregistered)
+        /// with the current world instance to match the component's active state.
+        /// </summary>
+        private void SyncRenderedObjectsWithWorld()
+        {
+            var world = WorldAs<XREngine.Rendering.XRWorldInstance>();
+            foreach (var ri in RenderedObjects)
+            {
+                if (IsActive && world is not null)
+                {
+                    if (!ReferenceEquals(ri.WorldInstance, world))
+                        ri.WorldInstance = world;
+                }
+                else
+                {
+                    ri.WorldInstance = null;
+                }
+            }
+        }
+
         void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
         {
             // Cooked-binary restore can replace the Meshes EventList instance (setter/deserializer),
@@ -60,21 +95,7 @@ namespace XREngine.Components.Scene.Mesh
 
             // Ensure render infos are registered with the current world instance when active.
             // Without this, the VisualScene can end up tracking zero renderables after snapshot restore.
-            var world = WorldAs<XREngine.Rendering.XRWorldInstance>();
-            foreach (var mesh in Meshes)
-            {
-                var ri = mesh.RenderInfo;
-                if (IsActive && world is not null)
-                {
-                    if (!ReferenceEquals(ri.WorldInstance, world))
-                        ri.WorldInstance = world;
-                }
-                else
-                {
-                    if (ReferenceEquals(ri.WorldInstance, world))
-                        ri.WorldInstance = null;
-                }
-            }
+            SyncRenderedObjectsWithWorld();
 
             //if (Environment.GetEnvironmentVariable("XRE_DEBUG_RENDER_DUMP") == "1")
             {
@@ -86,7 +107,7 @@ namespace XREngine.Components.Scene.Mesh
                     IsActive,
                     Meshes.Count,
                     RenderedObjects.Length,
-                    world is null);
+                    WorldAs<XREngine.Rendering.XRWorldInstance>() is null);
             }
         }
     }

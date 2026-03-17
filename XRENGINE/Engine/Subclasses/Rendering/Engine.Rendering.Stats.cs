@@ -386,6 +386,26 @@ namespace XREngine
                 public static double AllocatedVRAMMB => AllocatedVRAMBytes / (1024.0 * 1024.0);
 
                 /// <summary>
+                /// Configured VRAM budget in bytes. Returns long.MaxValue when budgeting is disabled.
+                /// </summary>
+                public static long VramBudgetBytes
+                    => Engine.Rendering.Settings.EnableVramBudget
+                        ? Math.Max(1L, (long)Engine.Rendering.Settings.VramBudgetMB) * 1024L * 1024L
+                        : long.MaxValue;
+
+                /// <summary>
+                /// Determines whether a tracked GPU allocation would fit inside the configured VRAM budget.
+                /// </summary>
+                public static bool CanAllocateVram(long requestedBytes, long existingAllocationBytes, out long projectedBytes, out long budgetBytes)
+                {
+                    budgetBytes = VramBudgetBytes;
+                    long currentBytes = AllocatedVRAMBytes;
+                    long retainedBytes = Math.Max(0L, existingAllocationBytes);
+                    projectedBytes = Math.Max(0L, currentBytes - retainedBytes) + Math.Max(0L, requestedBytes);
+                    return projectedBytes <= budgetBytes;
+                }
+
+                /// <summary>
                 /// Total FBO render bandwidth in bytes for the last completed frame.
                 /// This represents the total size of all render targets written to during rendering.
                 /// </summary>
