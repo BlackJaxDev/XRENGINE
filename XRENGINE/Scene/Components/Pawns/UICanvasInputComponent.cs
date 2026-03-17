@@ -366,25 +366,56 @@ namespace XREngine.Components
             // If any intersected element has BlocksInputBehind, remove items not in its subtree.
             FilterBlockedInput();
 
-            // Select the deepest (most nested) element under the cursor.
-            // Children are visually on top of parents, so with matching LayerIndex
-            // the deepest transform in the UI hierarchy should receive input.
-            TopMostElement = UIElementIntersections
-                .Where(x => x.Owner is UIComponent)
-                .OrderByDescending(x => (x.Owner as UIComponent)?.Transform?.Depth ?? int.MinValue)
-                .ThenByDescending(x => x.LayerIndex)
-                .ThenByDescending(x => x.IndexWithinLayer)
-                .FirstOrDefault()?.Owner as UIComponent;
+            TopMostElement = null;
+            TopMostInteractable = null;
 
-            TopMostInteractable = UIElementIntersections
-                .Where(x => x.Owner is UIInteractableComponent)
-                .OrderByDescending(x => (x.Owner as UIInteractableComponent)?.Transform?.Depth ?? int.MinValue)
-                .ThenByDescending(x => x.LayerIndex)
-                .ThenByDescending(x => x.IndexWithinLayer)
-                .FirstOrDefault()?.Owner as UIInteractableComponent;
+            int bestElementDepth = int.MinValue;
+            int bestElementLayer = int.MinValue;
+            int bestElementIndex = int.MinValue;
+            int bestInteractableDepth = int.MinValue;
+            int bestInteractableLayer = int.MinValue;
+            int bestInteractableIndex = int.MinValue;
+
+            foreach (var item in UIElementIntersections)
+            {
+                if (item.Owner is UIComponent uiComponent)
+                {
+                    int depth = uiComponent.Transform?.Depth ?? int.MinValue;
+                    if (IsBetterInputCandidate(depth, item.LayerIndex, item.IndexWithinLayer, bestElementDepth, bestElementLayer, bestElementIndex))
+                    {
+                        TopMostElement = uiComponent;
+                        bestElementDepth = depth;
+                        bestElementLayer = item.LayerIndex;
+                        bestElementIndex = item.IndexWithinLayer;
+                    }
+                }
+
+                if (item.Owner is UIInteractableComponent interactable)
+                {
+                    int depth = interactable.Transform?.Depth ?? int.MinValue;
+                    if (IsBetterInputCandidate(depth, item.LayerIndex, item.IndexWithinLayer, bestInteractableDepth, bestInteractableLayer, bestInteractableIndex))
+                    {
+                        TopMostInteractable = interactable;
+                        bestInteractableDepth = depth;
+                        bestInteractableLayer = item.LayerIndex;
+                        bestInteractableIndex = item.IndexWithinLayer;
+                    }
+                }
+            }
 
             ValidateAndSwapIntersections();
             LastCursorPositionWorld2D = CursorPositionWorld2D;
+        }
+
+        private static bool IsBetterInputCandidate(int depth, int layerIndex, int indexWithinLayer, int bestDepth, int bestLayerIndex, int bestIndexWithinLayer)
+        {
+            if (depth != bestDepth)
+                return depth > bestDepth;
+
+            if (layerIndex != bestLayerIndex)
+                return layerIndex > bestLayerIndex;
+
+            return indexWithinLayer > bestIndexWithinLayer;
         }
 
         private static Vector2? GetUICoordinate(XRViewport worldVP, XRCamera? inputCamera, Vector2 normCoord, UICanvasTransform canvasTransform, ECanvasDrawSpace space)

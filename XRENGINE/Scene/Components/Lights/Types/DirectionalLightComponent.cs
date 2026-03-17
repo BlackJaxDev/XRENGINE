@@ -6,6 +6,7 @@ using XREngine.Components;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Core.Attributes;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -20,6 +21,16 @@ namespace XREngine.Components.Lights
     [Description("Illuminates the scene with an infinite directional light that can cast cascaded shadows.")]
     public class DirectionalLightComponent : OneViewLightComponent
     {
+        private sealed class CascadeShadowSlice
+        {
+            public required int CascadeIndex { get; init; }
+            public required float SplitFarDistance { get; init; }
+            public required Vector3 Center { get; init; }
+            public required Vector3 HalfExtents { get; init; }
+            public required Quaternion Orientation { get; init; }
+            public required Matrix4x4 WorldToLightSpaceMatrix { get; init; }
+        }
+
         public readonly record struct CascadedShadowAabb(
             int FrustumIndex,
             int CascadeIndex,
@@ -28,12 +39,21 @@ namespace XREngine.Components.Lights
             Quaternion Orientation);
 
         private const float NearZ = 0.01f;
+        private const int MaxCascadeRenderCount = 8;
+        private const float CascadeBoundsPadding = 0.05f;
 
         private Vector3 _scale = Vector3.One;
         private int _cascadeCount = 4;
         private float[] _cascadePercentages = [0.1f, 0.2f, 0.3f, 0.4f];
         private float _cascadeOverlapPercent = 0.1f;
+        private bool _debugCascadeColors;
         private readonly List<CascadedShadowAabb> _cascadeAabbs = new(4);
+        private readonly List<CascadeShadowSlice> _cascadeShadowSlices = new(MaxCascadeRenderCount);
+        private XRTexture2DArray? _cascadeShadowMapTexture;
+        private XRFrameBuffer[] _cascadeShadowFrameBuffers = [];
+        private XRViewport[] _cascadeShadowViewports = [];
+        private Transform[] _cascadeShadowTransforms = [];
+        private XRCamera[] _cascadeShadowCameras = [];
         /// <summary>
         /// Scale of the orthographic shadow volume.
         /// </summary>
@@ -74,6 +94,18 @@ namespace XREngine.Components.Lights
         }
 
         /// <summary>
+        /// When true, the shader replaces lighting output with a per-cascade color overlay for debugging.
+        /// </summary>
+        [Category("Shadows")]
+        [DisplayName("Debug Cascade Colors")]
+        [Description("When enabled, each cascade is tinted with a distinct color in the viewport for visual debugging.")]
+        public bool DebugCascadeColors
+        {
+            get => _debugCascadeColors;
+            set => SetField(ref _debugCascadeColors, value);
+        }
+
+        /// <summary>
         /// Percentages (should sum to 1) allocated to each cascade along the camera forward axis.
         /// Length is clamped/expanded to match CascadeCount and normalized on assignment.
         /// </summary>
@@ -89,6 +121,29 @@ namespace XREngine.Components.Lights
         /// Cascaded shadow AABBs derived from the current camera/light intersection.
         /// </summary>
         public IReadOnlyList<CascadedShadowAabb> CascadedShadowAabbs => _cascadeAabbs;
+
+        public XRTexture2DArray? CascadedShadowMapTexture => _cascadeShadowMapTexture;
+        public int ActiveCascadeCount => _cascadeShadowSlices.Count;
+
+        public float GetCascadeSplit(int index)
+            => index >= 0 && index < _cascadeShadowSlices.Count
+                ? _cascadeShadowSlices[index].SplitFarDistance
+                : float.MaxValue;
+
+        public Matrix4x4 GetCascadeMatrix(int index)
+            => index >= 0 && index < _cascadeShadowSlices.Count
+                ? _cascadeShadowSlices[index].WorldToLightSpaceMatrix
+                : Matrix4x4.Identity;
+
+        public Vector3 GetCascadeCenter(int index)
+            => index >= 0 && index < _cascadeShadowSlices.Count
+                ? _cascadeShadowSlices[index].Center
+                : Vector3.Zero;
+
+        public Vector3 GetCascadeHalfExtents(int index)
+            => index >= 0 && index < _cascadeShadowSlices.Count
+                ? _cascadeShadowSlices[index].HalfExtents
+                : Vector3.Zero;
 
         public static XRMesh GetVolumeMesh()
             => XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f));
@@ -165,20 +220,29 @@ namespace XREngine.Components.Lights
             return result;
         }
 
-        internal void UpdateCascadeAabbs(Vector3 cameraForward)
+        private static Frustum CreateCascadeViewFrustum(Frustum cameraFrustum, float cameraNear, float cameraFar, float sliceNear, float sliceFar)
         {
-            _cascadeAabbs.Clear();
+            float totalDepth = MathF.Max(cameraFar - cameraNear, 1e-4f);
+            float nearT = Math.Clamp((sliceNear - cameraNear) / totalDepth, 0.0f, 1.0f);
+            float farT = Math.Clamp((sliceFar - cameraNear) / totalDepth, 0.0f, 1.0f);
 
-            if (!CastsShadows || CameraIntersections.Count == 0)
-                return;
+            Vector3 Lerp(Vector3 nearCorner, Vector3 farCorner, float t)
+                => Vector3.Lerp(nearCorner, farCorner, t);
 
-            Vector3 fwd = cameraForward;
-            if (fwd.LengthSquared() < 1e-6f)
-                fwd = Vector3.UnitZ;
-            fwd = Vector3.Normalize(fwd);
+            return new Frustum(
+                Lerp(cameraFrustum.LeftBottomNear, cameraFrustum.LeftBottomFar, nearT),
+                Lerp(cameraFrustum.RightBottomNear, cameraFrustum.RightBottomFar, nearT),
+                Lerp(cameraFrustum.LeftTopNear, cameraFrustum.LeftTopFar, nearT),
+                Lerp(cameraFrustum.RightTopNear, cameraFrustum.RightTopFar, nearT),
+                Lerp(cameraFrustum.LeftBottomNear, cameraFrustum.LeftBottomFar, farT),
+                Lerp(cameraFrustum.RightBottomNear, cameraFrustum.RightBottomFar, farT),
+                Lerp(cameraFrustum.LeftTopNear, cameraFrustum.LeftTopFar, farT),
+                Lerp(cameraFrustum.RightTopNear, cameraFrustum.RightTopFar, farT));
+        }
 
-            // Build light-space basis: Z = light direction, Y = world up (fallback X if nearly parallel).
-            Vector3 lightDir = Transform.WorldForward;
+        private void BuildLightSpaceBasis(out Matrix4x4 worldToLight, out Matrix4x4 lightToWorld, out Quaternion lightRotation, out Vector3 lightDir)
+        {
+            lightDir = Transform.WorldForward;
             if (lightDir.LengthSquared() < 1e-6f)
                 lightDir = Vector3.UnitZ;
             lightDir = Vector3.Normalize(lightDir);
@@ -191,123 +255,210 @@ namespace XREngine.Components.Lights
             up = Vector3.Normalize(Vector3.Cross(lightDir, right));
 
             // World-to-light: rows are right, up, lightDir (light Z points along light direction).
-            Matrix4x4 worldToLight = new(
+            worldToLight = new(
                 right.X, right.Y, right.Z, 0,
                 up.X, up.Y, up.Z, 0,
                 lightDir.X, lightDir.Y, lightDir.Z, 0,
                 0, 0, 0, 1);
 
-            Matrix4x4.Invert(worldToLight, out Matrix4x4 lightToWorld);
-            Quaternion lightRotation = Quaternion.CreateFromRotationMatrix(lightToWorld);
+            Matrix4x4.Invert(worldToLight, out lightToWorld);
+            lightRotation = Quaternion.CreateFromRotationMatrix(lightToWorld);
+        }
+
+        private void EnsureCascadeShadowResources()
+        {
+            if (!CastsShadows)
+                return;
+
+            int requiredCascades = Math.Clamp(_cascadeCount, 1, MaxCascadeRenderCount);
+            uint width = Math.Max(1u, ShadowMapResolutionWidth);
+            uint height = Math.Max(1u, ShadowMapResolutionHeight);
+
+            bool recreateTexture = _cascadeShadowMapTexture is null ||
+                _cascadeShadowMapTexture.Depth != (uint)requiredCascades ||
+                _cascadeShadowMapTexture.Width != width ||
+                _cascadeShadowMapTexture.Height != height;
+
+            if (recreateTexture)
+            {
+                _cascadeShadowMapTexture?.Destroy();
+                _cascadeShadowMapTexture = XRTexture2DArray.CreateFrameBufferTexture(
+                    (uint)requiredCascades,
+                    width,
+                    height,
+                    GetShadowDepthMapFormat(EDepthPrecision.Int24),
+                    EPixelFormat.DepthComponent,
+                    EPixelType.Float,
+                    EFrameBufferAttachment.DepthAttachment);
+                _cascadeShadowMapTexture.SamplerName = "ShadowMapArray";
+            }
+
+            if (_cascadeShadowFrameBuffers.Length == requiredCascades && !recreateTexture)
+                return;
+
+            XRWorldInstance? world = WorldAs<XRWorldInstance>();
+            _cascadeShadowFrameBuffers = new XRFrameBuffer[requiredCascades];
+            _cascadeShadowViewports = new XRViewport[requiredCascades];
+            _cascadeShadowTransforms = new Transform[requiredCascades];
+            _cascadeShadowCameras = new XRCamera[requiredCascades];
+
+            for (int i = 0; i < requiredCascades; i++)
+            {
+                var transform = new Transform
+                {
+                    Order = XREngine.Animation.ETransformOrder.TRS,
+                };
+
+                XROrthographicCameraParameters parameters = new(1.0f, 1.0f, NearZ, 1.0f);
+                parameters.SetOriginPercentages(0.5f, 0.5f);
+                var camera = new XRCamera(transform, parameters);
+                var viewport = new XRViewport(null, width, height)
+                {
+                    RenderPipeline = new ShadowRenderPipeline(),
+                    SetRenderPipelineFromCamera = false,
+                    AutomaticallyCollectVisible = false,
+                    AutomaticallySwapBuffers = false,
+                    AllowUIRender = false,
+                    CullWithFrustum = true,
+                    WorldInstanceOverride = world,
+                    Camera = camera,
+                };
+
+                _cascadeShadowTransforms[i] = transform;
+                _cascadeShadowCameras[i] = camera;
+                _cascadeShadowViewports[i] = viewport;
+                _cascadeShadowFrameBuffers[i] = new XRFrameBuffer((_cascadeShadowMapTexture!, EFrameBufferAttachment.DepthAttachment, 0, i));
+            }
+        }
+
+        private void ReleaseCascadeShadowResources()
+        {
+            _cascadeShadowSlices.Clear();
+            _cascadeAabbs.Clear();
+
+            for (int i = 0; i < _cascadeShadowViewports.Length; i++)
+            {
+                _cascadeShadowViewports[i].WorldInstanceOverride = null;
+                _cascadeShadowViewports[i].Camera = null;
+            }
+
+            _cascadeShadowMapTexture?.Destroy();
+            _cascadeShadowMapTexture = null;
+            _cascadeShadowFrameBuffers = [];
+            _cascadeShadowViewports = [];
+            _cascadeShadowTransforms = [];
+            _cascadeShadowCameras = [];
+        }
+
+        private void UpdateCascadeShadowCamera(int slot, Vector3 center, Vector3 halfExtents, Quaternion orientation, Vector3 lightDirection)
+        {
+            Transform transform = _cascadeShadowTransforms[slot];
+            transform.Translation = center - lightDirection * halfExtents.Z;
+            transform.Rotation = orientation;
+
+            XRCamera camera = _cascadeShadowCameras[slot];
+            float width = MathF.Max(halfExtents.X * 2.0f, 1e-3f);
+            float height = MathF.Max(halfExtents.Y * 2.0f, 1e-3f);
+            float depth = MathF.Max(halfExtents.Z * 2.0f, NearZ + 1e-3f);
+            if (camera.Parameters is not XROrthographicCameraParameters ortho)
+            {
+                ortho = new XROrthographicCameraParameters(width, height, NearZ, depth - NearZ);
+                ortho.SetOriginPercentages(0.5f, 0.5f);
+                camera.Parameters = ortho;
+            }
+            else
+            {
+                ortho.Width = width;
+                ortho.Height = height;
+                ortho.NearZ = NearZ;
+                ortho.FarZ = depth - NearZ;
+            }
+        }
+
+        internal void UpdateCascadeShadows(XRCamera playerCamera)
+        {
+            _cascadeAabbs.Clear();
+            _cascadeShadowSlices.Clear();
+
+            if (!CastsShadows || !EnableCascadedShadows || ShadowCamera is null)
+                return;
+
+            EnsureCascadeShadowResources();
+            if (_cascadeShadowMapTexture is null || _cascadeShadowCameras.Length == 0)
+                return;
+
+            Frustum playerFrustum = playerCamera.WorldFrustum();
+
+            BuildLightSpaceBasis(out Matrix4x4 worldToLight, out Matrix4x4 lightToWorld, out Quaternion lightRotation, out Vector3 lightDirection);
+
+            // Use Scale.Z as the shadow depth: how far backward along the light direction
+            // to extend each cascade so we capture shadow casters behind the visible slice.
+            float shadowDepth = MathF.Max(Scale.Z, 1.0f);
 
             float[] percentages = GetEffectiveCascadePercentages();
-            float overlap = _cascadeOverlapPercent;
+            float cameraNear = playerCamera.NearZ;
+            float cameraFar = playerCamera.FarZ;
+            float totalDepth = MathF.Max(cameraFar - cameraNear, 1e-4f);
+            float cumulative = 0.0f;
+            int resourceSlot = 0;
 
-            Span<Vector3> cornersWS = stackalloc Vector3[8];
-            Span<Vector3> cornersLS = stackalloc Vector3[8];
-            foreach (var intersection in CameraIntersections)
+            for (int cascadeIndex = 0; cascadeIndex < Math.Min(percentages.Length, _cascadeShadowCameras.Length); cascadeIndex++)
             {
-                Vector3 min = intersection.Min;
-                Vector3 max = intersection.Max;
+                float pct = percentages[cascadeIndex];
+                if (pct <= 0.0f)
+                    continue;
 
-                // Build 8 corners of intersection AABB.
-                cornersWS[0] = new Vector3(min.X, min.Y, min.Z);
-                cornersWS[1] = new Vector3(min.X, min.Y, max.Z);
-                cornersWS[2] = new Vector3(min.X, max.Y, min.Z);
-                cornersWS[3] = new Vector3(min.X, max.Y, max.Z);
-                cornersWS[4] = new Vector3(max.X, min.Y, min.Z);
-                cornersWS[5] = new Vector3(max.X, min.Y, max.Z);
-                cornersWS[6] = new Vector3(max.X, max.Y, min.Z);
-                cornersWS[7] = new Vector3(max.X, max.Y, max.Z);
+                float splitStart = cameraNear + totalDepth * cumulative;
+                float splitEnd = splitStart + totalDepth * pct;
+                cumulative += pct;
 
-                // Transform corners to light space.
-                for (int i = 0; i < cornersWS.Length; i++)
-                    cornersLS[i] = Vector3.Transform(cornersWS[i], worldToLight);
+                float sliceDepth = splitEnd - splitStart;
+                float expand = sliceDepth * _cascadeOverlapPercent * 0.5f;
+                float expandedStart = MathF.Max(cameraNear, splitStart - expand);
+                float expandedEnd = MathF.Min(cameraFar, splitEnd + expand);
 
-                // Compute tight axis-aligned bounds in light space.
-                Vector3 lsMin = new(float.MaxValue);
-                Vector3 lsMax = new(float.MinValue);
-                for (int i = 0; i < cornersLS.Length; i++)
+                // Create the camera frustum slice for this cascade
+                Frustum cascadeFrustum = CreateCascadeViewFrustum(playerFrustum, cameraNear, cameraFar, expandedStart, expandedEnd);
+
+                // Project all 8 corners of the slice into light space to compute a tight ortho bounding box
+                Vector3 min = new(float.MaxValue);
+                Vector3 max = new(float.MinValue);
+                for (int i = 0; i < cascadeFrustum.Corners.Count; i++)
                 {
-                    lsMin = Vector3.Min(lsMin, cornersLS[i]);
-                    lsMax = Vector3.Max(lsMax, cornersLS[i]);
+                    Vector3 point = Vector3.Transform(cascadeFrustum.Corners[i], worldToLight);
+                    min = Vector3.Min(min, point);
+                    max = Vector3.Max(max, point);
                 }
 
-                Vector3 lsCenter = (lsMin + lsMax) * 0.5f;
-                Vector3 lsHalfExtents = (lsMax - lsMin) * 0.5f;
+                // Extend Z backward along the light direction to capture shadow casters
+                // that are behind the visible slice but still cast into it.
+                min.Z -= shadowDepth;
 
-                // Slice axis: camera forward transformed to light space, then project onto XY plane of light.
-                Vector3 fwdLS = Vector3.TransformNormal(fwd, worldToLight);
-                // Zero out the light-Z component so slicing is perpendicular to light direction.
-                fwdLS.Z = 0;
-                if (fwdLS.LengthSquared() < 1e-6f)
-                    fwdLS = Vector3.UnitX; // fallback if camera looks along light
-                fwdLS = Vector3.Normalize(fwdLS);
+                if (max.X <= min.X || max.Y <= min.Y || max.Z <= min.Z)
+                    continue;
 
-                // Project light-space corners onto slice axis to find span.
-                float projMin = float.MaxValue;
-                float projMax = float.MinValue;
-                for (int i = 0; i < cornersLS.Length; i++)
+                Vector3 centerLS = (min + max) * 0.5f;
+                Vector3 halfExtents = Vector3.Max((max - min) * 0.5f, new Vector3(1e-3f, 1e-3f, NearZ + 1e-3f));
+                Vector3 centerWS = Vector3.Transform(centerLS, lightToWorld);
+
+                UpdateCascadeShadowCamera(resourceSlot, centerWS, halfExtents, lightRotation, lightDirection);
+
+                Matrix4x4 cascadeView = _cascadeShadowCameras[resourceSlot].Transform.InverseRenderMatrix;
+                Matrix4x4 cascadeProj = _cascadeShadowCameras[resourceSlot].ProjectionMatrix;
+                Matrix4x4 viewProj = cascadeView * cascadeProj;
+
+                _cascadeShadowSlices.Add(new CascadeShadowSlice
                 {
-                    float p = Vector3.Dot(cornersLS[i], fwdLS);
-                    projMin = MathF.Min(projMin, p);
-                    projMax = MathF.Max(projMax, p);
-                }
+                    CascadeIndex = cascadeIndex,
+                    SplitFarDistance = splitEnd,
+                    Center = centerWS,
+                    HalfExtents = halfExtents,
+                    Orientation = lightRotation,
+                    WorldToLightSpaceMatrix = viewProj,
+                });
 
-                float projLen = MathF.Max(projMax - projMin, 1e-4f);
-
-                // Perpendicular half-extent (axis orthogonal to slice within XY).
-                Vector3 perpLS = new(-fwdLS.Y, fwdLS.X, 0);
-                float perpMin = float.MaxValue;
-                float perpMax = float.MinValue;
-                for (int i = 0; i < cornersLS.Length; i++)
-                {
-                    float p = Vector3.Dot(cornersLS[i], perpLS);
-                    perpMin = MathF.Min(perpMin, p);
-                    perpMax = MathF.Max(perpMax, p);
-                }
-                float halfPerp = (perpMax - perpMin) * 0.5f;
-                float halfZ = lsHalfExtents.Z; // full depth along light direction
-
-                // Center along perpendicular and Z axes.
-                float centerPerp = (perpMin + perpMax) * 0.5f;
-                float centerZ = lsCenter.Z;
-
-                float cumulative = 0.0f;
-                for (int cascadeIndex = 0; cascadeIndex < _cascadeCount; cascadeIndex++)
-                {
-                    float pct = percentages[cascadeIndex];
-                    if (pct <= 0.0f)
-                        continue;
-
-                    float segStart = projMin + projLen * cumulative;
-                    float segEnd = segStart + projLen * pct;
-                    cumulative += pct;
-
-                    // Apply symmetric overlap, clamped within overall span.
-                    float segLen = segEnd - segStart;
-                    float expand = segLen * overlap * 0.5f;
-                    segStart = MathF.Max(projMin, segStart - expand);
-                    segEnd = MathF.Min(projMax, segEnd + expand);
-
-                    float centerSlice = (segStart + segEnd) * 0.5f;
-                    float halfSlice = MathF.Max((segEnd - segStart) * 0.5f, 1e-6f);
-
-                    // Reconstruct center in light space.
-                    Vector3 centerLS = fwdLS * centerSlice + perpLS * centerPerp + new Vector3(0, 0, centerZ);
-                    // Half-extents: slice direction, perpendicular, light depth.
-                    Vector3 halfExtentsLS = new(halfSlice, halfPerp, halfZ);
-
-                    // Convert center back to world space.
-                    Vector3 centerWS = Vector3.Transform(centerLS, lightToWorld);
-
-                    _cascadeAabbs.Add(new CascadedShadowAabb(
-                        intersection.FrustumIndex,
-                        cascadeIndex,
-                        centerWS,
-                        halfExtentsLS,
-                        lightRotation));
-                }
+                _cascadeAabbs.Add(new CascadedShadowAabb(0, cascadeIndex, centerWS, halfExtents, lightRotation));
+                resourceSlot++;
             }
         }
 
@@ -338,14 +489,71 @@ namespace XREngine.Components.Lights
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            EnsureCascadeShadowResources();
+            for (int i = 0; i < _cascadeShadowViewports.Length; i++)
+                _cascadeShadowViewports[i].WorldInstanceOverride = WorldAs<XREngine.Rendering.XRWorldInstance>();
             if (Type == ELightType.Dynamic)
                 WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicDirectionalLights.Add(this);
         }
         protected override void OnComponentDeactivated()
         {
+            ReleaseCascadeShadowResources();
             if (Type == ELightType.Dynamic)
                 WorldAs<XREngine.Rendering.XRWorldInstance>()?.Lights.DynamicDirectionalLights.Remove(this);
             base.OnComponentDeactivated();
+        }
+
+        public override void SetShadowMapResolution(uint width, uint height)
+        {
+            base.SetShadowMapResolution(width, height);
+            EnsureCascadeShadowResources();
+        }
+
+        public override void CollectVisibleItems()
+        {
+            if (!CastsShadows)
+                return;
+
+            if (ShadowMap is not null)
+                _viewport.CollectVisible(false);
+
+            for (int i = 0; i < _cascadeShadowSlices.Count && i < _cascadeShadowViewports.Length; i++)
+                _cascadeShadowViewports[i].CollectVisible(false);
+        }
+
+        public override void SwapBuffers(Rendering.Lightmapping.LightmapBakeManager? lightmapBaker = null)
+        {
+            if (!CastsShadows)
+                return;
+
+            if (ShadowMap is not null)
+                _viewport.SwapBuffers();
+
+            for (int i = 0; i < _cascadeShadowSlices.Count && i < _cascadeShadowViewports.Length; i++)
+                _cascadeShadowViewports[i].SwapBuffers();
+
+            lightmapBaker?.ProcessDynamicCachedAutoBake(this);
+        }
+
+        public override void RenderShadowMap(bool collectVisibleNow = false)
+        {
+            if (!CastsShadows)
+                return;
+
+            if (collectVisibleNow)
+            {
+                CollectVisibleItems();
+                SwapBuffers();
+            }
+
+            if (ShadowMap is not null)
+                _viewport.Render(ShadowMap, null, null, true, ShadowMap.Material);
+
+            if (ShadowMap?.Material is null)
+                return;
+
+            for (int i = 0; i < _cascadeShadowSlices.Count && i < _cascadeShadowViewports.Length && i < _cascadeShadowFrameBuffers.Length; i++)
+                _cascadeShadowViewports[i].Render(_cascadeShadowFrameBuffers[i], null, null, true, ShadowMap.Material);
         }
 
         private static bool _loggedShadowCameraOnce = false;
@@ -393,6 +601,17 @@ namespace XREngine.Components.Lights
             program.Uniform($"{flatPrefix}WorldToLightProjMatrix", lightProj);
             program.Uniform($"{flatPrefix}WorldToLightInvViewMatrix", ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);
             program.Uniform($"{flatPrefix}WorldToLightSpaceMatrix", lightViewProj);  // Pre-computed for deferred shadow mapping
+
+            program.Uniform($"{flatPrefix}CascadeCount", _cascadeShadowSlices.Count);
+            for (int i = 0; i < MaxCascadeRenderCount; i++)
+            {
+                float split = i < _cascadeShadowSlices.Count ? _cascadeShadowSlices[i].SplitFarDistance : float.MaxValue;
+                Matrix4x4 cascadeMatrix = i < _cascadeShadowSlices.Count ? _cascadeShadowSlices[i].WorldToLightSpaceMatrix : Matrix4x4.Identity;
+                program.Uniform($"{flatPrefix}CascadeSplits[{i}]", split);
+                program.Uniform($"{flatPrefix}CascadeMatrices[{i}]", cascadeMatrix);
+            }
+
+            program.Uniform("DebugCascadeColors", _debugCascadeColors);
 
             program.Uniform($"{basePrefix}Color", _color);
             program.Uniform($"{basePrefix}DiffuseIntensity", _diffuseIntensity);
@@ -453,6 +672,15 @@ namespace XREngine.Components.Lights
                             p.NearZ = NearZ;
                         }
                     }
+                    break;
+                case nameof(CascadeCount):
+                    EnsureCascadeShadowResources();
+                    break;
+                case nameof(CastsShadows):
+                    if (CastsShadows)
+                        EnsureCascadeShadowResources();
+                    else
+                        ReleaseCascadeShadowResources();
                     break;
                 case nameof(Type):
                     if (Type == ELightType.Dynamic)

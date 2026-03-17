@@ -42,6 +42,7 @@ namespace XREngine.Rendering
             bool allocateData,
             int mipCount = 1)
         {
+            _sizedInternalFormat = XRTexture2D.DeriveESizedInternalFormat(internalFormat);
             uint sDim = dim;
             CubeMipmap[] mips = new CubeMipmap[mipCount];
             for (uint i = 0u; i < mipCount; i++)

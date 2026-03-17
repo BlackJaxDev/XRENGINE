@@ -241,12 +241,21 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
+                if (!program.IsLinked)
+                {
+                    Dbg("BindBuffers: program not linked, skipping", "Buffers");
+                    return;
+                }
+
                 using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.BindVAO"))
                 {
                     Renderer.BindMeshRenderer(this);
                 }
                 Dbg(mesh is null ? "BindBuffers: binding renderer buffers (mesh=null)" : "BindBuffers: binding attribute & index buffers", "Buffers");
 
+                // Track whether at least one vertex attribute was successfully bound.
+                // If none bind (e.g. wrong program or OOM-corrupted state), we must not mark BuffersBound.
+                int attributesBound = 0;
                 using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.BindAttributes"))
                 {
                     foreach (GLDataBuffer buffer in _bufferCache.Values)
@@ -254,9 +263,19 @@ namespace XREngine.Rendering.OpenGL
                         using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.Buffer"))
                         {
                             buffer.Generate();
+                            if (buffer.TryGetAttributeLocation(program, out _))
+                                attributesBound++;
                             buffer.BindToRenderer(program, this);
                         }
                     }
+                }
+
+                if (attributesBound == 0 && _bufferCache.Count > 0)
+                {
+                    string programName = program.Data?.Name ?? program.BindingId.ToString();
+                    Debug.OpenGLWarning($"[GLMeshRenderer] BindBuffers: no vertex attributes found in program '{programName}'. Skipping VAO setup to prevent rendering with corrupt state.");
+                    Renderer.BindMeshRenderer(null);
+                    return;
                 }
 
                 using (Engine.Profiler.Start("GLMeshRenderer.BindBuffers.BindIndexBuffers"))

@@ -118,10 +118,10 @@ internal sealed class EngineRuntimeRenderingHostServices : IRuntimeRenderingHost
     }
 
     public void EnqueueRenderThreadTask(Action task)
-        => Engine.EnqueueMainThreadTask(task);
+        => Engine.EnqueueRenderThreadTask(task);
 
     public void EnqueueRenderThreadCoroutine(Func<bool> task)
-        => Engine.AddMainThreadCoroutine(task);
+        => Engine.AddRenderThreadCoroutine(task);
 
     public TAsset? LoadAsset<TAsset>(string filePath) where TAsset : XRAsset, new()
         => Engine.Assets?.Load<TAsset>(filePath);

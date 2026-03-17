@@ -11,6 +11,18 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         private const string MsaaDeferredDefine = "XRENGINE_MSAA_DEFERRED";
 
+        /// <summary>
+        /// A 1x1x1 dummy depth texture array bound to the ShadowMapArray sampler
+        /// when cascaded shadows are not active, preventing GL_INVALID_OPERATION
+        /// from sampler type mismatch on the default texture unit.
+        /// </summary>
+        private static XRTexture2DArray? _dummyShadowMapArray;
+        private static XRTexture2DArray DummyShadowMapArray => _dummyShadowMapArray ??= new XRTexture2DArray(
+            1, 1, 1,
+            EPixelInternalFormat.DepthComponent16,
+            EPixelFormat.DepthComponent,
+            EPixelType.Float);
+
         public string AlbedoOpacityTexture { get; set; } = "AlbedoOpacityTexture";
         public string NormalTexture { get; set; } = "NormalTexture";
         public string RMSETexture { get; set; } = "RMSETexture";
@@ -168,6 +180,24 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             _currentLightComponent.SetUniforms(materialProgram);
+
+            bool useCascadedDirectionalShadows = false;
+            if (_currentLightComponent is DirectionalLightComponent directionalLight)
+            {
+                var cameraComponent = ActivePipelineInstance.RenderState.WindowViewport?.CameraComponent;
+                useCascadedDirectionalShadows =
+                    cameraComponent?.DirectionalShadowRenderingMode == global::XREngine.Components.EDirectionalShadowRenderingMode.Cascaded &&
+                    directionalLight.EnableCascadedShadows &&
+                    directionalLight.CascadedShadowMapTexture is not null &&
+                    directionalLight.ActiveCascadeCount > 0;
+
+                if (useCascadedDirectionalShadows)
+                    materialProgram.Sampler("ShadowMapArray", directionalLight.CascadedShadowMapTexture!, 5);
+                else
+                    materialProgram.Sampler("ShadowMapArray", DummyShadowMapArray, 5);
+            }
+
+            materialProgram.Uniform("UseCascadedDirectionalShadows", useCascadedDirectionalShadows);
 
             // Bind shadow map for deferred rendering at unit 4 (deferred shaders expect it there).
             // This is done here rather than in SetUniforms to avoid overwriting material texture units

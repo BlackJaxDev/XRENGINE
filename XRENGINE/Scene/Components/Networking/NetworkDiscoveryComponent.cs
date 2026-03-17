@@ -235,7 +235,7 @@ namespace XREngine.Components
                 }
             }
 
-            bool enqueued = Engine.InvokeOnMainThread(ConnectAction, "NetworkDiscoveryComponent.ConnectToAnnouncement", true);
+            bool enqueued = Engine.InvokeOnAppThread(ConnectAction, "NetworkDiscoveryComponent.ConnectToAnnouncement", true);
             if (!enqueued && cancellationToken.IsCancellationRequested)
                 tcs.TrySetCanceled(cancellationToken);
 
@@ -265,7 +265,7 @@ namespace XREngine.Components
                 }
             }
 
-            bool enqueued = Engine.InvokeOnMainThread(StartAction, "NetworkDiscoveryComponent.StartServer", true);
+            bool enqueued = Engine.InvokeOnAppThread(StartAction, "NetworkDiscoveryComponent.StartServer", true);
             if (!enqueued && cancellationToken.IsCancellationRequested)
                 tcs.TrySetCanceled(cancellationToken);
 

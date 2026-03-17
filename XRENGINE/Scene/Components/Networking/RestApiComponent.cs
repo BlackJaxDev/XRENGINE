@@ -624,11 +624,11 @@ namespace XREngine.Components
             => JsonSerializer.Serialize(payload, payload.GetType(), options);
 
         /// <summary>
-        /// Ensures callbacks fire on the engine's main thread immediately if already there.
+        /// Ensures callbacks fire on the engine's app/update thread immediately if already there.
         /// </summary>
         private static void RunOnMainThread(Action action, string reason)
         {
-            Engine.InvokeOnMainThread(action, reason, true);
+            Engine.InvokeOnAppThread(action, reason, true);
         }
     }
 

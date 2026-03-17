@@ -215,6 +215,7 @@ namespace XREngine.Timers
         /// </summary>
         private void UpdateThread()
         {
+            Engine.SetUpdateThreadId(Environment.CurrentManagedThreadId);
             while (IsRunning)
             {
                 // Drain update-thread work even when paused.
@@ -411,7 +412,15 @@ namespace XREngine.Timers
                     Render.LastTimestampTicks = timestampTicks;
 
                     Engine.Rendering.State.BeginRenderFrame();
-                    RenderFrame?.Invoke(); // This dispatch has to be synchronous to stay on the main thread
+                    Engine.SetDispatchingRenderFrame(true);
+                    try
+                    {
+                        RenderFrame?.Invoke(); // This dispatch has to be synchronous to stay on the render thread
+                    }
+                    finally
+                    {
+                        Engine.SetDispatchingRenderFrame(false);
+                    }
 
 #if !XRE_PUBLISHED
                     if (allocStart != 0)

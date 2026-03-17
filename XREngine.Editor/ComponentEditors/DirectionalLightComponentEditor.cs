@@ -2,11 +2,27 @@ using ImGuiNET;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Lights;
+using XREngine.Data.Rendering;
 
 namespace XREngine.Editor.ComponentEditors;
 
 public sealed class DirectionalLightComponentEditor : IXRComponentEditor
 {
+    /// <summary>
+    /// Distinct colors matching the cascade debug colors used in the scene (Lights3DCollection).
+    /// </summary>
+    private static readonly uint[] CascadeImGuiColors =
+    [
+        ImGui.ColorConvertFloat4ToU32(new Vector4(1.0f, 0.2f, 0.2f, 1.0f)),  // Red
+        ImGui.ColorConvertFloat4ToU32(new Vector4(0.2f, 1.0f, 0.2f, 1.0f)),  // Green
+        ImGui.ColorConvertFloat4ToU32(new Vector4(0.3f, 0.3f, 1.0f, 1.0f)),  // Blue
+        ImGui.ColorConvertFloat4ToU32(new Vector4(1.0f, 1.0f, 0.2f, 1.0f)),  // Yellow
+        ImGui.ColorConvertFloat4ToU32(new Vector4(1.0f, 0.5f, 0.0f, 1.0f)),  // Orange
+        ImGui.ColorConvertFloat4ToU32(new Vector4(0.8f, 0.2f, 1.0f, 1.0f)),  // Purple
+        ImGui.ColorConvertFloat4ToU32(new Vector4(0.0f, 1.0f, 1.0f, 1.0f)),  // Cyan
+        ImGui.ColorConvertFloat4ToU32(new Vector4(1.0f, 0.5f, 0.7f, 1.0f)),  // Pink
+    ];
+
     public void DrawInspector(XRComponent component, HashSet<object> visited)
     {
         if (component is not DirectionalLightComponent light)
@@ -28,6 +44,7 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
         LightComponentEditorShared.DrawShadowSection(light, showCascadedOptions: true);
         LightComponentEditorShared.DrawShadowMapPreview(light);
         DrawDirectionalShadowSection(light);
+        DrawCascadeDebugSection(light);
 
         ImGui.PopID();
         ComponentEditorLayout.DrawActivePreviewDialog();
@@ -81,5 +98,85 @@ public sealed class DirectionalLightComponentEditor : IXRComponentEditor
 
         if (anyChanged)
             light.CascadePercentages = percentages;
+    }
+
+    private static void DrawCascadeDebugSection(DirectionalLightComponent light)
+    {
+        if (!ImGui.CollapsingHeader("Cascade Debug", ImGuiTreeNodeFlags.None))
+            return;
+
+        // Debug cascade color overlay toggle
+        bool debugColors = light.DebugCascadeColors;
+        if (ImGui.Checkbox("Debug Cascade Colors", ref debugColors))
+            light.DebugCascadeColors = debugColors;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Tint each cascade with a distinct color in the viewport.\nUseful for verifying cascade boundaries.");
+
+        // Preview bounding volume toggle (affects the scene wireframe boxes)
+        bool previewVol = light.PreviewBoundingVolume;
+        if (ImGui.Checkbox("Preview Cascade Volumes", ref previewVol))
+            light.PreviewBoundingVolume = previewVol;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Draw wireframe OBBs for each cascade slice in the scene.");
+
+        ImGui.Separator();
+
+        // Runtime statistics
+        int activeCascades = light.ActiveCascadeCount;
+        bool cascadesEnabled = light.EnableCascadedShadows;
+        bool castsShadows = light.CastsShadows;
+
+        ImGui.Text($"Casts Shadows: {(castsShadows ? "Yes" : "No")}");
+        ImGui.Text($"Cascaded Enabled: {(cascadesEnabled ? "Yes" : "No")}");
+        ImGui.Text($"Active Cascades: {activeCascades} / {light.CascadeCount}");
+
+        var tex = light.CascadedShadowMapTexture;
+        if (tex is not null)
+            ImGui.Text($"Cascade Texture: {tex.Width}x{tex.Height} x {tex.Depth} layers");
+        else
+            ImGui.TextDisabled("Cascade texture not allocated.");
+
+        if (activeCascades == 0)
+        {
+            ImGui.TextDisabled("No active cascades — camera/light frusta may not overlap.");
+            return;
+        }
+
+        ImGui.Separator();
+
+        // Per-cascade detail table
+        if (ImGui.BeginTable("CascadeSlices", 4, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingFixedFit))
+        {
+            ImGui.TableSetupColumn("Idx", ImGuiTableColumnFlags.WidthFixed, 30.0f);
+            ImGui.TableSetupColumn("Split Far", ImGuiTableColumnFlags.WidthFixed, 80.0f);
+            ImGui.TableSetupColumn("Center", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Half Extents", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableHeadersRow();
+
+            for (int i = 0; i < activeCascades; i++)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+
+                // Color indicator matching cascade debug colors
+                uint color = CascadeImGuiColors[i % CascadeImGuiColors.Length];
+                ImGui.PushStyleColor(ImGuiCol.Text, color);
+                ImGui.Text($"{i}");
+                ImGui.PopStyleColor();
+
+                ImGui.TableNextColumn();
+                ImGui.Text($"{light.GetCascadeSplit(i):F1}");
+
+                ImGui.TableNextColumn();
+                Vector3 center = light.GetCascadeCenter(i);
+                ImGui.Text($"({center.X:F1}, {center.Y:F1}, {center.Z:F1})");
+
+                ImGui.TableNextColumn();
+                Vector3 he = light.GetCascadeHalfExtents(i);
+                ImGui.Text($"({he.X:F1}, {he.Y:F1}, {he.Z:F1})");
+            }
+
+            ImGui.EndTable();
+        }
     }
 }

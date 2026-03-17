@@ -133,6 +133,13 @@ public static partial class EditorUnitTests
             public bool GenerateCoacdCollidersPerSubmesh { get; set; } = false;
 
             /// <summary>
+            /// When true, each imported submesh gets its own ModelComponent instead of
+            /// grouping all submeshes from the same source node into one ModelComponent.
+            /// Increases GPU resource usage; leave false unless per-submesh scene nodes are needed.
+            /// </summary>
+            public bool SplitSubmeshesIntoSeparateModelComponents { get; set; } = false;
+
+            /// <summary>
             /// Optional additional local-space rotation to apply after import.
             /// Values are degrees.
             /// </summary>

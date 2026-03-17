@@ -9,6 +9,7 @@ namespace XREngine.Rendering.OpenGL
 {
     public class GLTexture2DArray(OpenGLRenderer renderer, XRTexture2DArray data) : GLTexture<XRTexture2DArray>(renderer, data)
     {
+        private long _allocatedVRAMBytes = 0;
         private bool _storageSet = false;
         private ESizedInternalFormat _allocatedInternalFormat = ESizedInternalFormat.Rgba8;
         private uint _allocatedWidth = 0;
@@ -203,6 +204,12 @@ namespace XREngine.Rendering.OpenGL
         }
         protected internal override void PostDeleted()
         {
+            if (_allocatedVRAMBytes > 0)
+            {
+                Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+                _allocatedVRAMBytes = 0;
+            }
+
             _storageSet = false;
             _allocatedInternalFormat = ESizedInternalFormat.Rgba8;
             _allocatedWidth = 0;
@@ -223,6 +230,19 @@ namespace XREngine.Rendering.OpenGL
             if (!needsAllocation)
                 return;
 
+            long requestedBytes = CalculateTextureArrayVRAMSize(width, height, depth, levels, desiredFormat);
+            if (!Engine.Rendering.Stats.CanAllocateVram(requestedBytes, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
+            {
+                Debug.OpenGLWarning($"[VRAM Budget] Skipping 2D array texture allocation for '{Data.Name ?? BindingId.ToString()}' ({requestedBytes} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
+                return;
+            }
+
+            if (_allocatedVRAMBytes > 0)
+            {
+                Engine.Rendering.Stats.RemoveTextureAllocation(_allocatedVRAMBytes);
+                _allocatedVRAMBytes = 0;
+            }
+
             Api.TextureStorage3D(BindingId, levels, ToGLEnum(desiredFormat), width, height, depth);
             _storageSet = true;
             _allocatedInternalFormat = desiredFormat;
@@ -230,6 +250,32 @@ namespace XREngine.Rendering.OpenGL
             _allocatedHeight = height;
             _allocatedDepth = depth;
             _allocatedLevels = levels;
+            _allocatedVRAMBytes = requestedBytes;
+            Engine.Rendering.Stats.AddTextureAllocation(_allocatedVRAMBytes);
+        }
+
+        private static long CalculateTextureArrayVRAMSize(uint width, uint height, uint depth, uint mipLevels, ESizedInternalFormat format)
+        {
+            long totalSize = 0;
+            uint bpp = GLTexture2D.GetBytesPerPixel(format);
+
+            for (uint mip = 0; mip < mipLevels; mip++)
+            {
+                uint mipWidth = Math.Max(1u, width >> (int)mip);
+                uint mipHeight = Math.Max(1u, height >> (int)mip);
+                totalSize += mipWidth * mipHeight * depth * bpp;
+            }
+
+            return totalSize;
+        }
+
+        private void EnsureFramebufferStorage()
+        {
+            uint width = Math.Max(1u, Data.Width);
+            uint height = Math.Max(1u, Data.Height);
+            uint depth = Math.Max(1u, Data.Depth);
+            uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
+            EnsureStorage(Data.SizedInternalFormat, width, height, depth, levels);
         }
 
         public override void PushData()
@@ -256,6 +302,8 @@ namespace XREngine.Rendering.OpenGL
                 // Fast path: render-target arrays already have GPU storage populated via FBO. Skip CPU->GPU copy from slices.
                 if (Data.FrameBufferAttachment.HasValue)
                 {
+                    EnsureFramebufferStorage();
+
                     // Ensure sampler state is up to date and bail out.
                     int magFilterRt = (int)ToGLEnum(Data.MagFilter);
                     Api.TextureParameterI(BindingId, GLEnum.TextureMagFilter, in magFilterRt);

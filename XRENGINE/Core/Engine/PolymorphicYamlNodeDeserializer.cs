@@ -1,11 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Numerics;
 using XREngine.Core;
 using XREngine.Core.Files;
-using XREngine.Rendering;
-using XREngine.Rendering.Models.Materials;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
@@ -17,8 +13,8 @@ namespace XREngine
     ///
     /// This runs for abstract/interface (and object) declared types.
     /// If __type is present in the mapping, it instantiates that concrete type.
-    /// For legacy assets without __type, it provides minimal backwards-compatible fallbacks
-    /// for common engine abstractions (ShaderVar, XRTexture).
+    /// If __type is absent, property-level defaults from <see cref="YamlDefaultTypeAttribute"/>
+    /// are honored first, followed by any legacy fallbacks from <see cref="PolymorphicYamlFallbackRegistry"/>.
     /// </summary>
     public sealed class PolymorphicYamlNodeDeserializer : INodeDeserializer
     {
@@ -71,17 +67,17 @@ namespace XREngine
                     $"(expected base type: '{expectedType.FullName}'). Ensure the type is loaded and the name is correct.");
             }
 
-            // 2) Back-compat fallback for legacy assets that predate __type.
-            if (expectedType == typeof(XRTexture))
+            // 2) Property-level default concrete type when __type is omitted.
+            if (YamlDefaultTypeContext.TryConsumeRead(expectedType, out Type? propertyDefaultType))
             {
-                value = nestedObjectDeserializer(new ReplayParser(events), typeof(XRTexture2D));
+                value = nestedObjectDeserializer(new ReplayParser(events), propertyDefaultType!);
                 return true;
             }
 
-            if (expectedType == typeof(ShaderVar))
+            // 3) Back-compat fallback for legacy assets that predate __type.
+            if (PolymorphicYamlFallbackRegistry.TryResolve(expectedType, events, out Type? fallbackType))
             {
-                Type inferred = InferLegacyShaderVarType(events) ?? typeof(ShaderFloat);
-                value = nestedObjectDeserializer(new ReplayParser(events), inferred);
+                value = nestedObjectDeserializer(new ReplayParser(events), fallbackType!);
                 return true;
             }
 
@@ -136,96 +132,6 @@ namespace XREngine
 
             type = null;
             return false;
-        }
-
-        private static Type? InferLegacyShaderVarType(IReadOnlyList<ParsingEvent> events)
-        {
-            // Legacy format: mapping with keys like Name/Value/Color.
-            if (events.Count < 2 || events[0] is not MappingStart || events[^1] is not MappingEnd)
-                return null;
-
-            string? valueToken = null;
-            bool hasColorKey = false;
-
-            for (int i = 1; i < events.Count - 1; i++)
-            {
-                if (events[i] is not Scalar key)
-                    continue;
-
-                if (key.Value == "Color")
-                    hasColorKey = true;
-
-                if (key.Value != "Value")
-                    continue;
-
-                if (i + 1 < events.Count - 1 && events[i + 1] is Scalar valScalar)
-                    valueToken = valScalar.Value;
-            }
-
-            if (!string.IsNullOrWhiteSpace(valueToken) && TryInferShaderVarFromValueToken(valueToken!, out var inferred))
-            {
-                if (ShaderVar.ShaderTypeAssociations.TryGetValue(inferred, out var clrType))
-                    return clrType;
-            }
-
-            if (hasColorKey)
-                return typeof(ShaderVector3);
-
-            return null;
-        }
-
-        private static bool TryInferShaderVarFromValueToken(string token, out EShaderVarType type)
-        {
-            token = token.Trim();
-
-            if (string.Equals(token, "true", StringComparison.OrdinalIgnoreCase) || string.Equals(token, "false", StringComparison.OrdinalIgnoreCase))
-            {
-                type = EShaderVarType._bool;
-                return true;
-            }
-
-            string[] parts = token.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-
-            if (parts.Length == 1)
-            {
-                if (int.TryParse(parts[0], out _))
-                {
-                    type = EShaderVarType._int;
-                    return true;
-                }
-
-                if (uint.TryParse(parts[0], out _))
-                {
-                    type = EShaderVarType._uint;
-                    return true;
-                }
-
-                if (float.TryParse(parts[0], out _))
-                {
-                    type = EShaderVarType._float;
-                    return true;
-                }
-
-                if (double.TryParse(parts[0], out _))
-                {
-                    type = EShaderVarType._double;
-                    return true;
-                }
-
-                type = EShaderVarType._float;
-                return true;
-            }
-
-            type = parts.Length switch
-            {
-                2 => EShaderVarType._vec2,
-                3 => EShaderVarType._vec3,
-                4 => EShaderVarType._vec4,
-                16 => EShaderVarType._mat4,
-                _ => EShaderVarType._float
-            };
-
-            return true;
         }
 
         private static IReadOnlyList<ParsingEvent> CaptureNode(IParser parser)

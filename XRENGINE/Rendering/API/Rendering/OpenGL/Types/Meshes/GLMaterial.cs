@@ -84,6 +84,10 @@ namespace XREngine.Rendering.OpenGL
                 SetEngineUniforms(materialProgram);
                 Data.OnSettingUniforms(materialProgram.Data);
 
+                // Ensure any active sampler uniforms left unbound by material/engine code still receive
+                // a type-correct placeholder texture so the draw does not hit GL_INVALID_OPERATION.
+                materialProgram.BindFallbackSamplers();
+
                 materialProgram.WarnIfNoUniformOrSamplerBindings(Data.Name);
             }
 

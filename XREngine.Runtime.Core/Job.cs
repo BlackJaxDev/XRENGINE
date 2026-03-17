@@ -18,9 +18,11 @@ namespace XREngine
     public enum JobAffinity
     {
         Any = 0,
-        MainThread = 1,
-        CollectVisibleSwap = 2,
-        Remote = 3,
+        RenderThread = 1,
+        MainThread = RenderThread,
+        AppThread = 2,
+        CollectVisibleSwap = 3,
+        Remote = 4,
     }
 
     public abstract class Job

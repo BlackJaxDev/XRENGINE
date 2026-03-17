@@ -150,15 +150,12 @@ namespace XREngine
             }
 
             /// <summary>
-            /// Pushes the effective AA mode into the engine rendering settings so that
-            /// pipeline command chains (which read from <see cref="Settings"/>) are
-            /// regenerated and runtime AA checks pick up the cascade-resolved value.
+            /// Applies anti-aliasing overrides resolved through the settings cascade.
+            /// Engine defaults remain untouched; consumers must read from
+            /// <see cref="Engine.EffectiveSettings"/> when they need the resolved value.
             /// </summary>
             public static void ApplyAntiAliasingPreference()
-            {
-                Settings.AntiAliasingMode = Engine.EffectiveSettings.AntiAliasingMode;
-                Settings.MsaaSampleCount = Engine.EffectiveSettings.MsaaSampleCount;
-            }
+                => AntiAliasingSettingsChanged?.Invoke();
 
             public static void ApplyGpuRenderDispatchPreference()
             {

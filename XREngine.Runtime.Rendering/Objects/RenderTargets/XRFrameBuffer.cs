@@ -18,6 +18,12 @@ namespace XREngine.Rendering
         private EFrameBufferTextureTypeFlags _textureTypes = EFrameBufferTextureTypeFlags.None;
         private (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? _targets;
 
+        /// <summary>
+        /// Set by the rendering backend after the most recent framebuffer completeness check.
+        /// When false, the FBO failed validation and draw calls should be skipped to avoid driver crashes.
+        /// </summary>
+        public bool IsLastCheckComplete { get; set; } = true;
+
         private static readonly Stack<XRFrameBuffer> _readStack = new();
         private static readonly Stack<XRFrameBuffer> _writeStack = new();
         private static readonly Stack<XRFrameBuffer> _bindStack = new();

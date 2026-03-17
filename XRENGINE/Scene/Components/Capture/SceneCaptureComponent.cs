@@ -444,6 +444,11 @@ namespace XREngine.Components.Lights
                 (_environmentTextureCubemap!, EFrameBufferAttachment.ColorAttachment0, 0, i),
                 (depthAttachment, EFrameBufferAttachment.DepthStencilAttachment, 0, depthLayers[i]));
 
+            // After SetRenderTargets triggers attachment + completeness check, skip this face
+            // if the FBO is incomplete to avoid driver crashes (e.g. access violation in DrawElementsInstanced).
+            if (!RenderFBO.IsLastCheckComplete)
+                return;
+
             Viewports[i]!.Render(RenderFBO, null, null, false, null);
         }
 

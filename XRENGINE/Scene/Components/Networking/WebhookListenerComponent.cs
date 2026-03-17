@@ -287,7 +287,7 @@ namespace XREngine.Components
 
         private static void RunOnMainThread(Action action, string reason)
         {
-            if (!Engine.InvokeOnMainThread(action, reason))
+            if (!Engine.InvokeOnAppThread(action, reason))
                 action();
         }
     }

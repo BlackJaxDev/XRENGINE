@@ -81,7 +81,7 @@
       "Enabled": true,
       "MaterialMode": "Deferred",
       "UseForwardForTransparent": true,
-      "GenerateCoacdCollidersPerSubmesh": true,
+      "GenerateCoacdCollidersPerSubmesh": false,
       "Kind": "Static",
       "Path": "Models\\Sponza2\\Sponza.obj",
       "ImportFlags": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs",

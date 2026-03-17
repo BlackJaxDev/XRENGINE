@@ -60,13 +60,13 @@ namespace XREngine.Components.Scene.Volumes
 				return;
 
 			int token = Interlocked.Increment(ref _loadToken);
-			Engine.EnqueueMainThreadTask(() => DetachIfLoaded(token, expectedWorld: WorldAs<XREngine.Rendering.XRWorldInstance>()));
+			Engine.EnqueueAppThreadTask(() => DetachIfLoaded(token, expectedWorld: WorldAs<XREngine.Rendering.XRWorldInstance>()));
 		}
 
 		protected override void OnComponentDeactivated()
 		{
 			int token = Interlocked.Increment(ref _loadToken);
-			Engine.EnqueueMainThreadTask(() => DetachIfLoaded(token, expectedWorld: WorldAs<XREngine.Rendering.XRWorldInstance>()));
+			Engine.EnqueueAppThreadTask(() => DetachIfLoaded(token, expectedWorld: WorldAs<XREngine.Rendering.XRWorldInstance>()));
 			base.OnComponentDeactivated();
 		}
 
@@ -84,7 +84,7 @@ namespace XREngine.Components.Scene.Volumes
 			if (scene is null)
 				return;
 
-			Engine.EnqueueMainThreadTask(() => AttachIfEligible(token, expectedWorld, scene));
+			Engine.EnqueueAppThreadTask(() => AttachIfEligible(token, expectedWorld, scene));
 		}
 
 		private void AttachIfEligible(int token, XRWorldInstance expectedWorld, XRScene scene)

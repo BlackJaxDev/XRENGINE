@@ -33,12 +33,12 @@ public static class EditorDragDropUtility
             return;
 
         if (_inputComponent is not null)
-            Engine.Time.Timer.SwapBuffers -= OnSwapBuffers;
+            Engine.Time.Timer.PostUpdateFrame -= OnPostUpdateFrame;
 
         _inputComponent = input;
 
         if (_inputComponent is not null)
-            Engine.Time.Timer.SwapBuffers += OnSwapBuffers;
+            Engine.Time.Timer.PostUpdateFrame += OnPostUpdateFrame;
     }
 
     // --- Scene node payloads ---
@@ -131,9 +131,9 @@ public static class EditorDragDropUtility
         return new DropTargetHandle(registration);
     }
 
-    private static void OnSwapBuffers()
+    private static void OnPostUpdateFrame()
     {
-        using var sample = Engine.Profiler.Start("EditorDragDropUtility.OnSwapBuffers");
+        using var sample = Engine.Profiler.Start("EditorDragDropUtility.OnPostUpdateFrame");
         
         CleanupTargets();
 

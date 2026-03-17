@@ -33,6 +33,15 @@ namespace XREngine.Components
         Manual
     }
 
+    public enum EDirectionalShadowRenderingMode
+    {
+        [Description("Use the legacy single orthographic directional shadow map.")]
+        NonCascaded,
+
+        [Description("Use cascaded directional shadow maps derived from the player view frustum.")]
+        Cascaded,
+    }
+
     /// <summary>
     /// This component wraps a camera object.
     /// </summary>
@@ -266,6 +275,16 @@ namespace XREngine.Components
         {
             get => _cullWithFrustum;
             set => SetField(ref _cullWithFrustum, value);
+        }
+
+        private EDirectionalShadowRenderingMode _directionalShadowRenderingMode = EDirectionalShadowRenderingMode.NonCascaded;
+        [Category("Shadows")]
+        [DisplayName("Directional Shadow Rendering")]
+        [Description("Selects whether this camera uses a single directional shadow map or cascaded directional shadows.")]
+        public EDirectionalShadowRenderingMode DirectionalShadowRenderingMode
+        {
+            get => _directionalShadowRenderingMode;
+            set => SetField(ref _directionalShadowRenderingMode, value);
         }
 
         private Func<XRCamera>? _cullingCameraOverride = null;

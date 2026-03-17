@@ -42,7 +42,7 @@ internal static class EditorFileDropHandler
         if (paths is null || paths.Length == 0)
             return;
 
-        Engine.InvokeOnMainThread(() => ProcessFileDrop(window, paths), "Editor: Process file drop", executeNowIfAlreadyMainThread: true);
+        Engine.InvokeOnAppThread(() => ProcessFileDrop(window, paths), "Editor: Process file drop", executeNowIfAlreadyAppThread: true);
     }
 
     private static void ProcessFileDrop(XRWindow window, string[] paths)

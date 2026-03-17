@@ -4684,7 +4684,16 @@ public static partial class EditorImGuiUI
             if (ImGui.Checkbox("##HasOverride", ref checkboxValue) && overrideCanWrite)
             {
                 if (undoTarget is not null) { using var _undo = Undo.TrackChange("Toggle Override", undoTarget); }
-                setting.HasOverride = checkboxValue;
+                if (checkboxValue && !hasOverride && TryGetOverrideActivationValue(owner, descriptor, setting, baseProperty, baseValue, baseValueRetrievalFailed, out object? activationValue))
+                {
+                    setting.BoxedValue = activationValue;
+                    overrideValue = activationValue;
+                    overrideIsNull = activationValue is null;
+                }
+
+                if (setting.HasOverride != checkboxValue)
+                    setting.HasOverride = checkboxValue;
+
                 hasOverride = checkboxValue;
                 NotifyInspectorValueEdited(owner);
             }
@@ -4717,6 +4726,33 @@ public static partial class EditorImGuiUI
             ImGui.TextDisabled($"Effective: {FormatSettingValue(effectiveValue)}");
 
             ImGui.EndGroup();
+        }
+
+        private static bool TryGetOverrideActivationValue(
+            object owner,
+            SettingPropertyDescriptor descriptor,
+            IOverrideableSetting setting,
+            PropertyInfo? baseProperty,
+            object? baseValue,
+            bool baseValueRetrievalFailed,
+            out object? activationValue)
+        {
+            if (baseProperty is not null && !baseValueRetrievalFailed)
+            {
+                activationValue = baseValue;
+                return true;
+            }
+
+            activationValue = descriptor.Property.Name switch
+            {
+                nameof(UserSettings.AntiAliasingModeOverride) when owner is UserSettings or GameStartupSettings
+                    => Engine.EffectiveSettings.AntiAliasingMode,
+                nameof(UserSettings.MsaaSampleCountOverride) when owner is UserSettings or GameStartupSettings
+                    => Engine.EffectiveSettings.MsaaSampleCount,
+                _ => setting.BoxedValue,
+            };
+
+            return activationValue is not null;
         }
 
         private static bool DrawInlineValueEditor(Type effectiveType, bool canWrite, ref object? currentValue, ref bool isCurrentlyNull, Func<object?, bool> applyValue, string label)

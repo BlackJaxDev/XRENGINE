@@ -110,23 +110,16 @@ namespace XREngine.Data.Geometry
 
     public static class FrustumIntersection
     {
-        /// <summary>
-        /// Compute the AABB of the intersection of two frusta.
-        /// Returns true if there is an intersection volume, false if disjoint.
-        /// Plane normals must point inside their frustum (n·x + d >= 0 for inside).
-        /// </summary>
-        public static bool TryIntersectFrustaAabb(
+        public static bool TryIntersectFrustaPoints(
             PreparedFrustum a,
             PreparedFrustum b,
-            out Vector3 aabbMin,
-            out Vector3 aabbMax)
+            List<Vector3> intersectionPoints)
         {
             const float planeEps = 1e-4f;
             const float pointEps = 1e-4f;
             const float denomEps = 1e-6f;
 
-            aabbMin = default;
-            aabbMax = default;
+            intersectionPoints.Clear();
 
             if (AreFrustaClearlyDisjoint(a, b))
                 return false;
@@ -158,15 +151,13 @@ namespace XREngine.Data.Geometry
                 dd[i] = allPlanes[i].D;
             }
 
-            List<Vector3> candidates = new(64);
-
             for (int i = 0; i < a.Corners.Length; i++)
             {
                 Vector3 p = a.Corners[i];
                 if (ContainsPointIntrinsics(p, a.NxSpan, a.NySpan, a.NzSpan, a.DSpan, a.PlaneCount, planeEps) &&
                     ContainsPointIntrinsics(p, b.NxSpan, b.NySpan, b.NzSpan, b.DSpan, b.PlaneCount, planeEps))
                 {
-                    AddUniquePoint(candidates, p, pointEps);
+                    AddUniquePoint(intersectionPoints, p, pointEps);
                 }
             }
 
@@ -176,7 +167,7 @@ namespace XREngine.Data.Geometry
                 if (ContainsPointIntrinsics(p, a.NxSpan, a.NySpan, a.NzSpan, a.DSpan, a.PlaneCount, planeEps) &&
                     ContainsPointIntrinsics(p, b.NxSpan, b.NySpan, b.NzSpan, b.DSpan, b.PlaneCount, planeEps))
                 {
-                    AddUniquePoint(candidates, p, pointEps);
+                    AddUniquePoint(intersectionPoints, p, pointEps);
                 }
             }
 
@@ -190,16 +181,33 @@ namespace XREngine.Data.Geometry
                         if (inA == 0 || inA == 3)
                             continue;
 
-                        if (TryIntersectThreePlanes(allPlanes[i], allPlanes[j], allPlanes[k], denomEps, out Vector3 p))
+                        if (TryIntersectThreePlanes(allPlanes[i], allPlanes[j], allPlanes[k], denomEps, out Vector3 p) &&
+                            ContainsPointIntrinsics(p, nx, ny, nz, dd, totalPlanes, planeEps))
                         {
-                            if (ContainsPointIntrinsics(p, nx, ny, nz, dd, totalPlanes, planeEps))
-                                AddUniquePoint(candidates, p, pointEps);
+                            AddUniquePoint(intersectionPoints, p, pointEps);
                         }
                     }
                 }
             }
 
-            if (candidates.Count == 0)
+            return intersectionPoints.Count > 0;
+        }
+
+        /// <summary>
+        /// Compute the AABB of the intersection of two frusta.
+        /// Returns true if there is an intersection volume, false if disjoint.
+        /// Plane normals must point inside their frustum (n·x + d >= 0 for inside).
+        /// </summary>
+        public static bool TryIntersectFrustaAabb(
+            PreparedFrustum a,
+            PreparedFrustum b,
+            out Vector3 aabbMin,
+            out Vector3 aabbMax)
+        {
+            aabbMin = default;
+            aabbMax = default;
+            List<Vector3> candidates = new(64);
+            if (!TryIntersectFrustaPoints(a, b, candidates))
                 return false;
 
             Vector3 min = new(float.PositiveInfinity);

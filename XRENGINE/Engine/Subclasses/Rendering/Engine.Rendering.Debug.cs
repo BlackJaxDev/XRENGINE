@@ -70,7 +70,7 @@ namespace XREngine
                     }
 
                     var mode = Engine.EditorPreferences?.Debug?.DebugShapePopulationMode
-                        ?? EDebugShapePopulationMode.Tasks;
+                        ?? EDebugShapePopulationMode.JobSystem;
 
                     switch (mode)
                     {
