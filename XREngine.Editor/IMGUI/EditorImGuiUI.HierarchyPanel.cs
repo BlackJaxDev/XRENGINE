@@ -1082,7 +1082,7 @@ public static partial class EditorImGuiUI
     private static void FocusCameraOnHierarchyNode(SceneNode node)
     {
         var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
-        if (player?.ControlledPawn is EditorFlyingCameraPawnComponent pawn)
+        if (player?.ControlledPawnComponent is EditorFlyingCameraPawnComponent pawn)
             pawn.FocusOnNode(node, HierarchyFocusCameraDurationSeconds);
     }
 

@@ -103,6 +103,7 @@ namespace XREngine
             Matrix4x4? rootTransformMatrix = null,
             DelMaterialFactory? materialFactory = null,
             DelMakeMaterialAction? makeMaterialAction = null,
+            ModelImportOptions? importOptions = null,
             bool? batchSubmeshAddsDuringAsyncImport = null,
             int layer = DefaultLayers.DynamicIndex)
         {
@@ -115,7 +116,7 @@ namespace XREngine
                 Debug.Out($"[ModelImporter] ImportRoutine started on thread: {Environment.CurrentManagedThreadId}");
                 // Run on the job system thread directly (no Task.Run). The job system already executes
                 // this enumerator on a worker thread.
-                var result = ImportInternal(path, options, parent, scaleConversion, zUp, rootTransformMatrix, onFinished, materialFactory, makeMaterialAction, onProgress, cancellationToken, batchSubmeshAddsDuringAsyncImport, layer);
+                var result = ImportInternal(path, options, parent, scaleConversion, zUp, rootTransformMatrix, onFinished, materialFactory, makeMaterialAction, importOptions, onProgress, cancellationToken, batchSubmeshAddsDuringAsyncImport, layer);
                 Debug.Out($"[ModelImporter] ImportInternal completed, yielding result");
                 yield return new JobProgress(1f, result);
             }
@@ -546,6 +547,7 @@ namespace XREngine
             Action<ModelImporterResult>? onFinished,
             DelMaterialFactory? materialFactory,
             DelMakeMaterialAction? makeMaterialAction,
+            ModelImportOptions? importOptions,
             Action<float>? onProgress,
             CancellationToken cancellationToken,
             bool? batchSubmeshAddsDuringAsyncImport = null,
@@ -557,6 +559,7 @@ namespace XREngine
             using var importer = new ModelImporter(path, onCompleted: null, materialFactory);
             if (makeMaterialAction is not null)
                 importer.MakeMaterialAction = makeMaterialAction;
+            importer.ImportOptions = importOptions;
             importer._importLayer = layer;
             Debug.Out($"[ModelImporter] Created importer, calling Import()...");
 

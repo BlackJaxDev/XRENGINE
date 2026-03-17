@@ -199,7 +199,7 @@ namespace XREngine.Components.Animation
             if (CameraOverride?.Camera is XRCamera cam)
                 return cam;
 
-            return Engine.State.MainPlayer?.Viewport?.ActiveCamera;
+            return Engine.State.MainPlayer?.Viewport as XRViewport is XRViewport viewport ? viewport.ActiveCamera : null;
         }
 
         private TransformBase GetEffectiveTargetTransform()

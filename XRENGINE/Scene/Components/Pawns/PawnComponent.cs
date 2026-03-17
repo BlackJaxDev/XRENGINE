@@ -32,18 +32,18 @@ namespace XREngine.Components
             set => SetField(ref _optionalInputSets, value);
         }
 
-        private PawnController? _controller;
+        private IPawnController? _controller;
         /// <summary>
         /// The interface that is managing and providing input to this pawn.
         /// </summary>
-        public PawnController? Controller
+        public IPawnController? Controller
         {
             get => _controller;
             set => SetField(ref _controller, value);
         }
 
         [Browsable(false)]
-        public LocalInputInterface? LocalInput => (Controller as LocalPlayerController)?.Input;
+        public LocalInputInterface? LocalInput => Controller?.InputDevice as LocalInputInterface;
         /// <summary>
         /// The local gamepad input device for this pawn.
         /// </summary>
@@ -98,7 +98,7 @@ namespace XREngine.Components
                 {
                     case nameof(Controller):
                         PreUnpossess();
-                        if (Controller is LocalPlayerController localPlayerController)
+                        if (Controller is { IsLocal: true })
                             UnregisterTick(ETickGroup.Normal, InputDispatchTickOrder, TickInput);
                         PostUnpossess();
                         break;
@@ -113,66 +113,29 @@ namespace XREngine.Components
             {
                 case nameof(Controller):
                     PrePossess();
-                    if (Controller is LocalPlayerController localPlayerController)
+                    if (Controller is { IsLocal: true })
                     {
-                        Debug.Out($"[PawnComponent] Possessed by LocalPlayerController, registering tick. Input={localPlayerController.Input?.GetType().Name}");
+                        Debug.Out($"[PawnComponent] Possessed by local controller, registering tick. InputDevice={Controller.InputDevice?.GetType().Name}");
                         RegisterTick(ETickGroup.Normal, InputDispatchTickOrder, TickInput);
                     }
                     PostPossess();
                     break;
                 case nameof(CameraComponent):
-                    LocalPlayerController?.RefreshViewportCamera();
+                    Controller?.OnPawnCameraChanged();
                     break;
             }
         }
 
-        //private static int _tickInputLogCounter = 0;
         private void TickInput()
         {
-            if (Controller is not LocalPlayerController localPlayerController ||
-                localPlayerController.Input is not LocalInputInterface localInput)
-                return;
-
-            // Log once every 100 ticks to avoid spam
-            //if (++_tickInputLogCounter % 100 == 1)
-            //{
-            //    Debug.Out($"[PawnComponent.TickInput] Ticking input for {Name}, UIInputCaptured={Engine.Input.IsUIInputCaptured}, Keyboard={localInput.Keyboard != null}, Mouse={localInput.Mouse != null}");
-            //}
-
-            if (Engine.Input.IsUIInputCaptured)
-            {
-                // Prevent latent scroll from applying to the world camera once the cursor
-                // leaves an ImGui panel.
-                localInput.ClearMouseScrollBuffer();
-                return;
-            }
-
-            localInput.TickStates(Engine.Delta);
+            Controller?.TickPawnInput(Engine.Delta, Engine.Input.IsUIInputCaptured);
         }
 
         /// <summary>
-        /// Casts the controller to a server player controller.
+        /// The viewport of the controller that is controlling this pawn.
         /// </summary>
         [Browsable(false)]
-        public RemotePlayerController? ServerPlayerController => Controller as RemotePlayerController;
-
-        /// <summary>
-        /// Casts the controller to a local player controller.
-        /// </summary>
-        [Browsable(false)]
-        public LocalPlayerController? LocalPlayerController => Controller as LocalPlayerController;
-
-        /// <summary>
-        /// Casts the controller to a generic player controller.
-        /// </summary>
-        [Browsable(false)]
-        public PlayerControllerBase? PlayerController => Controller as PlayerControllerBase;
-
-        /// <summary>
-        /// The viewport of the local player controller that is controlling this pawn.
-        /// </summary>
-        [Browsable(false)]
-        public XRViewport? Viewport => LocalPlayerController?.Viewport;
+        public XRViewport? Viewport => Controller?.Viewport as XRViewport;
 
         private CameraComponent? _camera;
         /// <summary>
@@ -290,13 +253,13 @@ namespace XREngine.Components
         /// </summary>
         /// <param name="player"></param>
         public void EnqueuePossessionByLocalPlayer(ELocalPlayerIndex player)
-            => Engine.State.GetOrCreateLocalPlayer(player).EnqueuePosession(this);
+            => Engine.State.GetOrCreateLocalPlayer(player).EnqueuePossession(this);
         /// <summary>
         /// Sets the controlled pawn of the local player with the given index to this pawn.
         /// </summary>
         /// <param name="player"></param>
         public void PossessByLocalPlayer(ELocalPlayerIndex player)
-            => Engine.State.GetOrCreateLocalPlayer(player).ControlledPawn = this;
+            => Engine.State.GetOrCreateLocalPlayer(player).ControlledPawnComponent = this;
 
         public CameraComponent? GetCamera()
         {

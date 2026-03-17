@@ -191,7 +191,7 @@ public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
         surfelPass.GridIndicesBuffer?.BindTo(_debugProgram, 4u);
 
         // Bind command buffer (optional) for world-matrix reconstruction in debug shaders
-        BindCulledCommandsIfAvailable(_debugProgram);
+        BindCulledCommandsIfAvailable(_debugProgram, surfelPass);
 
         // Set uniforms
         _debugProgram.Uniform("resolution", new Data.Vectors.IVector2((int)width, (int)height));
@@ -212,10 +212,31 @@ public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
         _debugProgram.DispatchCompute(groupsX, groupsY, 1u, EMemoryBarrierMask.ShaderImageAccess);
     }
 
-    private void BindCulledCommandsIfAvailable(XRRenderProgram program)
+    private void BindCulledCommandsIfAvailable(XRRenderProgram program, VPRC_SurfelGIPass surfelPass)
     {
         var scene = ActivePipelineInstance.RenderState.Scene;
         var gpuScene = scene?.GPUCommands;
+
+        if (surfelPass.TransformSource == ESurfelTransformSource.CompactTransformAtlas)
+        {
+            var atlasBuffer = surfelPass.TransformAtlasBuffer;
+            uint atlasCount = surfelPass.TransformAtlasElementCount;
+            if (atlasBuffer is not null && atlasCount > 0)
+            {
+                atlasBuffer.BindTo(program, 6u);
+                program.Uniform("useTransformAtlas", true);
+                program.Uniform("transformAtlasCount", atlasCount * 16u);
+                program.Uniform("hasCulledCommands", false);
+                program.Uniform("culledFloatCount", 0u);
+                program.Uniform("culledCommandFloats", CulledCommandFloats);
+                return;
+            }
+            // Fall through to GPU commands path if atlas not available.
+        }
+
+        program.Uniform("useTransformAtlas", false);
+        program.Uniform("transformAtlasCount", 0u);
+
         XRDataBuffer? commands = gpuScene is null ? null : gpuScene.AllLoadedCommandsBuffer;
         if (commands is null)
         {

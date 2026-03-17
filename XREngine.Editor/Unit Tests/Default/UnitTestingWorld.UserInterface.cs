@@ -431,7 +431,7 @@ public static partial class EditorUnitTests
         {
             //Debug.Out("Take Screenshot clicked");
 
-            var camera = Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).ControlledPawn as EditorFlyingCameraPawnComponent;
+            var camera = Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent as EditorFlyingCameraPawnComponent;
             camera?.TakeScreenshot();
         }
 

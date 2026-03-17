@@ -139,7 +139,7 @@ namespace XREngine.Components
         }
 
         public bool AllowKeyboardInput
-            => LocalPlayerController?.FocusedUIComponent is null;
+            => Controller?.FocusedInteractable is null;
 
         protected virtual void MoveDown(bool pressed)
         {
@@ -169,7 +169,7 @@ namespace XREngine.Components
         protected virtual void MoveForward(bool pressed)
         {
             if (pressed)
-                Debug.UI($"[MoveForward] pressed, AllowKeyboardInput={AllowKeyboardInput}, FocusedUIComponent={LocalPlayerController?.FocusedUIComponent?.GetType().Name} ('{LocalPlayerController?.FocusedUIComponent?.Name}')");
+                Debug.UI($"[MoveForward] pressed, AllowKeyboardInput={AllowKeyboardInput}, FocusedInteractable={Controller?.FocusedInteractable?.GetType().Name} ('{(Controller?.FocusedInteractable as XRComponent)?.Name}')");
 
             if (AllowKeyboardInput)
                 _incForward += KeyboardTranslateSpeed * (pressed ? 1.0f : -1.0f);
@@ -266,8 +266,8 @@ namespace XREngine.Components
             _rightClickDragging = true;
             //Debug.UI($"[TryActivatePendingRightClickDrag] Drag activated (retry), LinkedUICanvasInputs.Count={LinkedUICanvasInputs.Count}");
 
-            var controller = LocalPlayerController;
-            controller?.FocusedUIComponent = null;
+            var controller = Controller;
+            controller?.FocusedInteractable = null;
 
             return true;
         }
@@ -292,8 +292,8 @@ namespace XREngine.Components
                 // UI component so that keyboard input (WASD, arrows) is restored.
                 if (_rightClickDragging)
                 {
-                    var controller = LocalPlayerController;
-                    controller?.FocusedUIComponent = null;
+                    var ctrl = Controller;
+                    ctrl?.FocusedInteractable = null;
                 }
             }
             else

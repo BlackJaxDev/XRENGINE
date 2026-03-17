@@ -533,8 +533,8 @@ namespace XREngine.Components
                 return;
 
             XRCamera? fallbackCamera =
-                Engine.State.MainPlayer?.ControlledPawn?.CameraComponent?.Camera
-                ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawn?.CameraComponent?.Camera;
+                (Engine.State.MainPlayer?.ControlledPawnComponent as PawnComponent)?.CameraComponent?.Camera
+                ?? (Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent as PawnComponent)?.CameraComponent?.Camera;
 
             if (fallbackCamera is null)
                 return;
@@ -733,8 +733,8 @@ namespace XREngine.Components
             right = Globals.Right;
 
             var camera = transform.CameraSpaceCamera
-                ?? Engine.State.MainPlayer?.ControlledPawn?.CameraComponent?.Camera
-                ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawn?.CameraComponent?.Camera;
+                ?? (Engine.State.MainPlayer?.ControlledPawnComponent as PawnComponent)?.CameraComponent?.Camera
+                ?? (Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One)?.ControlledPawnComponent as PawnComponent)?.CameraComponent?.Camera;
 
             var cameraTransform = camera?.Transform;
             if (cameraTransform is null)
@@ -775,7 +775,7 @@ namespace XREngine.Components
             right = Globals.Right;
 
             var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
-            var cameraTransform = player?.ControlledPawn?.CameraComponent?.Transform;
+            var cameraTransform = (player?.ControlledPawnComponent as PawnComponent)?.CameraComponent?.Transform;
             if (cameraTransform is null)
                 return false;
 

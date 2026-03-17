@@ -84,7 +84,7 @@ internal static class EditorFileDropHandler
             return;
         }
 
-        if (Engine.State.MainPlayer.ControlledPawn is not EditorFlyingCameraPawnComponent pawn)
+        if (Engine.State.MainPlayer?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
         {
             Debug.LogWarning("No editor camera pawn available to apply dropped texture.");
             return;

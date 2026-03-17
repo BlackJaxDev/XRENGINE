@@ -1416,7 +1416,7 @@ public class GPUPhysicsChainComponent : XRComponent, IRenderable
         TransformBase? rt = ReferenceObject;
         if (rt is null)
         {
-            XRCamera? c = State.MainPlayer.ControlledPawn?.CameraComponent?.Camera;
+            XRCamera? c = (State.MainPlayer?.ControlledPawnComponent as PawnComponent)?.CameraComponent?.Camera;
             if (c != null)
                 rt = c.Transform;
         }

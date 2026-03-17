@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using XREngine.Audio;
 using XREngine.Data.Core;
 using XREngine.Data.Trees;
+using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Rendering.VideoStreaming;
 using XREngine.Scene.Transforms;
@@ -207,6 +208,7 @@ namespace XREngine
             RuntimeShaderServices.Current = new EngineRuntimeShaderServices();
             RuntimeRenderingHostServices.Current = new EngineRuntimeRenderingHostServices();
             RuntimeVideoStreamingServices.Current = new EngineRuntimeVideoStreamingServices();
+            RuntimePlayerControllerServices.Current = new EngineRuntimePlayerControllerServices();
 
             // Connect external profiling hooks for subsystems
             XREvent.ProfilingHook = ExternalProfilingHook;

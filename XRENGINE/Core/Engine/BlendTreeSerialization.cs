@@ -315,7 +315,8 @@ internal static class BlendTreeSerialization
     }
 }
 
-internal sealed class BlendTree1DSerializedModel
+[MemoryPackable]
+internal sealed partial class BlendTree1DSerializedModel
 {
     public string? Name { get; set; }
     public string? OriginalPath { get; set; }
@@ -324,7 +325,8 @@ internal sealed class BlendTree1DSerializedModel
     public List<BlendTree1DChildSerializedModel> Children { get; set; } = [];
 }
 
-internal sealed class BlendTree1DChildSerializedModel
+[MemoryPackable]
+internal sealed partial class BlendTree1DChildSerializedModel
 {
     public SerializedMotionModel? Motion { get; set; }
     public float? Speed { get; set; }
@@ -332,7 +334,8 @@ internal sealed class BlendTree1DChildSerializedModel
     public bool HumanoidMirror { get; set; }
 }
 
-internal sealed class BlendTree2DSerializedModel
+[MemoryPackable]
+internal sealed partial class BlendTree2DSerializedModel
 {
     public string? Name { get; set; }
     public string? OriginalPath { get; set; }
@@ -343,7 +346,8 @@ internal sealed class BlendTree2DSerializedModel
     public List<BlendTree2DChildSerializedModel> Children { get; set; } = [];
 }
 
-internal sealed class BlendTree2DChildSerializedModel
+[MemoryPackable]
+internal sealed partial class BlendTree2DChildSerializedModel
 {
     public SerializedMotionModel? Motion { get; set; }
     public float PositionX { get; set; }
@@ -352,7 +356,8 @@ internal sealed class BlendTree2DChildSerializedModel
     public bool HumanoidMirror { get; set; }
 }
 
-internal sealed class BlendTreeDirectSerializedModel
+[MemoryPackable]
+internal sealed partial class BlendTreeDirectSerializedModel
 {
     public string? Name { get; set; }
     public string? OriginalPath { get; set; }
@@ -360,7 +365,8 @@ internal sealed class BlendTreeDirectSerializedModel
     public List<BlendTreeDirectChildSerializedModel> Children { get; set; } = [];
 }
 
-internal sealed class BlendTreeDirectChildSerializedModel
+[MemoryPackable]
+internal sealed partial class BlendTreeDirectChildSerializedModel
 {
     public SerializedMotionModel? Motion { get; set; }
     public string? WeightParameterName { get; set; }

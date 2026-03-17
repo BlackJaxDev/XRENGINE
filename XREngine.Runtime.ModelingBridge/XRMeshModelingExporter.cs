@@ -172,12 +172,6 @@ public static class XRMeshModelingExporter
         }
     }
 
-    /// <summary>
-    /// Applies the XRMesh save/update contract used by modeling export:
-    /// rebuild bounds from current positions, repopulate triangle index state,
-    /// invalidate index-buffer cache, clear stale acceleration caches, and
-    /// emit mesh change notification for renderer backends.
-    /// </summary>
     internal static void ApplyExportContract(XRMesh mesh)
     {
         ArgumentNullException.ThrowIfNull(mesh);
@@ -220,7 +214,6 @@ public static class XRMeshModelingExporter
             int b = RemapTriangleIndex(oldToNewVertexMap, document.TriangleIndices[i + 1], i + 1);
             int c = RemapTriangleIndex(oldToNewVertexMap, document.TriangleIndices[i + 2], i + 2);
 
-            // Canonical rotation preserves winding while ensuring the smallest index starts each face tuple.
             RotateTriangleToMinimalStart(ref a, ref b, ref c);
             triangles.Add(new CanonicalTriangle(a, b, c, i / 3));
         }
@@ -335,7 +328,6 @@ public static class XRMeshModelingExporter
             if (comparison != 0)
                 return comparison;
 
-            // Stable tie-break: if all channels match, keep lower source index first.
             return leftIndex.CompareTo(rightIndex);
         }
     }

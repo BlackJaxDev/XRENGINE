@@ -276,16 +276,108 @@ namespace XREngine
         #region Settings Application
 
         /// <summary>
+        /// Maps property names from UserSettings, GameStartupSettings, and EditorPreferencesOverrides
+        /// to the handler(s) that apply the effective cascade value at runtime.
+        /// Built once; lookups are O(1).
+        /// </summary>
+        private static readonly Dictionary<string, Action> _settingsPropertyHandlers = BuildSettingsPropertyHandlers();
+
+        private static Dictionary<string, Action> BuildSettingsPropertyHandlers()
+        {
+            var h = new Dictionary<string, Action>(StringComparer.Ordinal);
+
+            // ── GI ──
+            static void ApplyGI() => Rendering.ApplyGlobalIlluminationModePreference();
+            h[nameof(UserSettings.GlobalIlluminationMode)] = ApplyGI;
+            h[nameof(UserSettings.GlobalIlluminationModeOverride)] = ApplyGI;     // also matches GameStartup's identically-named property
+
+            // ── GPU render dispatch ──
+            h[nameof(GameStartupSettings.GPURenderDispatch)] = Rendering.ApplyGpuRenderDispatchPreference;
+            h[nameof(UserSettings.GPURenderDispatchOverride)] = Rendering.ApplyGpuRenderDispatchPreference;
+
+            // ── GPU BVH ──
+            h[nameof(GameStartupSettings.UseGpuBvhOverride)] = Rendering.ApplyGpuBvhPreference;
+
+            // ── Vulkan GPU-driven profile (compound) ──
+            static void ApplyVulkanProfileSettings()
+            {
+                Rendering.ApplyGpuRenderDispatchPreference();
+                Rendering.ApplyGpuBvhPreference();
+                Rendering.LogVulkanFeatureProfileFingerprint();
+            }
+            h[nameof(GameStartupSettings.VulkanGpuDrivenProfileOverride)] = ApplyVulkanProfileSettings;
+
+            // ── NVIDIA DLSS ──
+            h[nameof(UserSettings.EnableNvidiaDlssOverride)] = Rendering.ApplyNvidiaDlssPreference;
+            h[nameof(UserSettings.DlssQualityOverride)] = Rendering.ApplyNvidiaDlssPreference;
+
+            // ── Intel XeSS ──
+            h[nameof(UserSettings.EnableIntelXessOverride)] = Rendering.ApplyIntelXessPreference;
+            h[nameof(UserSettings.XessQualityOverride)] = Rendering.ApplyIntelXessPreference;
+
+            // ── Anti-aliasing ──
+            Action applyAA = Rendering.ApplyAntiAliasingPreference;
+            h[nameof(UserSettings.AntiAliasingModeOverride)] = applyAA;           // also matches GameStartup
+            h[nameof(UserSettings.MsaaSampleCountOverride)] = applyAA;            // also matches GameStartup
+
+            // ── Timer / VSync ──
+            Action applyTimer = ApplyTimerSettings;
+            h[nameof(UserSettings.VSync)] = applyTimer;
+            h[nameof(UserSettings.VSyncOverride)] = applyTimer;                   // also matches GameStartup
+            h[nameof(UserSettings.TargetUpdatesPerSecondOverride)] = applyTimer;
+            h[nameof(UserSettings.TargetFramesPerSecondOverride)] = applyTimer;
+            h[nameof(UserSettings.UnfocusedTargetFramesPerSecondOverride)] = applyTimer;
+            h[nameof(UserSettings.FixedFramesPerSecondOverride)] = applyTimer;
+            h[nameof(GameStartupSettings.TargetUpdatesPerSecond)] = applyTimer;
+            h[nameof(GameStartupSettings.TargetFramesPerSecond)] = applyTimer;
+            h[nameof(GameStartupSettings.UnfocusedTargetFramesPerSecond)] = applyTimer;
+            h[nameof(GameStartupSettings.FixedFramesPerSecond)] = applyTimer;
+
+            // ── Audio ──
+            Action applyAudio = ApplyAudioPreferences;
+            h[nameof(UserSettings.AudioTransport)] = applyAudio;
+            h[nameof(UserSettings.AudioEffects)] = applyAudio;
+            h[nameof(UserSettings.AudioArchitectureV2)] = applyAudio;
+            h[nameof(UserSettings.AudioSampleRate)] = applyAudio;
+            h[nameof(GameStartupSettings.AudioTransportOverride)] = applyAudio;
+            h[nameof(GameStartupSettings.AudioEffectsOverride)] = applyAudio;
+            h[nameof(GameStartupSettings.AudioArchitectureV2Override)] = applyAudio;
+            h[nameof(GameStartupSettings.AudioSampleRateOverride)] = applyAudio;
+            h[nameof(EditorPreferencesOverrides.AudioTransportOverride)] = applyAudio;
+            h[nameof(EditorPreferencesOverrides.AudioEffectsOverride)] = applyAudio;
+            h[nameof(EditorPreferencesOverrides.AudioArchitectureV2Override)] = applyAudio;
+            h[nameof(EditorPreferencesOverrides.AudioSampleRateOverride)] = applyAudio;
+
+            // ── Parallel tick ──
+            h[nameof(UserSettings.TickGroupedItemsInParallelOverride)] = Rendering.ApplyTickGroupedItemsInParallelPreference;
+            // GameStartup's identically-named property matches the same key
+
+            // ── Technical / compute overrides (GameStartup → Engine push) ──
+            h[nameof(GameStartupSettings.AllowShaderPipelinesOverride)] = Rendering.ApplyAllowShaderPipelinesPreference;
+            h[nameof(GameStartupSettings.RecalcChildMatricesLoopTypeOverride)] = Rendering.ApplyRecalcChildMatricesLoopTypePreference;
+            Action applyCompute = Rendering.ApplyComputeSkinningPreference;
+            h[nameof(GameStartupSettings.CalculateSkinningInComputeShaderOverride)] = applyCompute;
+            h[nameof(GameStartupSettings.CalculateBlendshapesInComputeShaderOverride)] = applyCompute;
+
+            return h;
+        }
+
+        /// <summary>
         /// Applies all runtime-effective settings (called when settings change globally).
         /// </summary>
         private static void ApplyEffectiveSettingsRuntime()
         {
             Rendering.ApplyRenderPipelinePreference();
             Rendering.ApplyGlobalIlluminationModePreference();
+            Rendering.ApplyAntiAliasingPreference();
             Rendering.ApplyGpuRenderDispatchPreference();
             Rendering.ApplyGpuBvhPreference();
             Rendering.ApplyNvidiaDlssPreference();
             Rendering.ApplyIntelXessPreference();
+            Rendering.ApplyTickGroupedItemsInParallelPreference();
+            Rendering.ApplyAllowShaderPipelinesPreference();
+            Rendering.ApplyRecalcChildMatricesLoopTypePreference();
+            Rendering.ApplyComputeSkinningPreference();
             ApplyTimerSettings();
             ApplyAudioPreferences();
         }
@@ -301,64 +393,8 @@ namespace XREngine
                 return;
             }
 
-            if (propertyName == nameof(UserSettings.GlobalIlluminationMode)
-                || propertyName == nameof(UserSettings.GlobalIlluminationModeOverride))
-            {
-                Rendering.ApplyGlobalIlluminationModePreference();
-            }
-            else if (propertyName == nameof(GameStartupSettings.GPURenderDispatch)
-                || propertyName == nameof(UserSettings.GPURenderDispatchOverride))
-            {
-                Rendering.ApplyGpuRenderDispatchPreference();
-            }
-            else if (propertyName == nameof(GameStartupSettings.UseGpuBvhOverride))
-            {
-                Rendering.ApplyGpuBvhPreference();
-            }
-            else if (propertyName == nameof(GameStartupSettings.VulkanGpuDrivenProfileOverride))
-            {
-                Rendering.ApplyGpuRenderDispatchPreference();
-                Rendering.ApplyGpuBvhPreference();
-                Rendering.LogVulkanFeatureProfileFingerprint();
-            }
-            else if (propertyName == nameof(UserSettings.EnableNvidiaDlssOverride)
-                || propertyName == nameof(UserSettings.DlssQualityOverride))
-            {
-                Rendering.ApplyNvidiaDlssPreference();
-            }
-            else if (propertyName == nameof(UserSettings.EnableIntelXessOverride)
-                || propertyName == nameof(UserSettings.XessQualityOverride))
-            {
-                Rendering.ApplyIntelXessPreference();
-            }
-            else if (propertyName == nameof(UserSettings.VSync)
-                || propertyName == nameof(UserSettings.VSyncOverride)
-                || propertyName == nameof(UserSettings.TargetUpdatesPerSecondOverride)
-                || propertyName == nameof(UserSettings.TargetFramesPerSecondOverride)
-                || propertyName == nameof(UserSettings.UnfocusedTargetFramesPerSecondOverride)
-                || propertyName == nameof(UserSettings.FixedFramesPerSecondOverride)
-                || propertyName == nameof(GameStartupSettings.TargetUpdatesPerSecond)
-                || propertyName == nameof(GameStartupSettings.TargetFramesPerSecond)
-                || propertyName == nameof(GameStartupSettings.UnfocusedTargetFramesPerSecond)
-                || propertyName == nameof(GameStartupSettings.FixedFramesPerSecond))
-            {
-                ApplyTimerSettings();
-            }
-            else if (propertyName == nameof(UserSettings.AudioTransport)
-                || propertyName == nameof(UserSettings.AudioEffects)
-                || propertyName == nameof(UserSettings.AudioArchitectureV2)
-                || propertyName == nameof(UserSettings.AudioSampleRate)
-                || propertyName == nameof(GameStartupSettings.AudioTransportOverride)
-                || propertyName == nameof(GameStartupSettings.AudioEffectsOverride)
-                || propertyName == nameof(GameStartupSettings.AudioArchitectureV2Override)
-                || propertyName == nameof(GameStartupSettings.AudioSampleRateOverride)
-                || propertyName == nameof(EditorPreferencesOverrides.AudioTransportOverride)
-                || propertyName == nameof(EditorPreferencesOverrides.AudioEffectsOverride)
-                || propertyName == nameof(EditorPreferencesOverrides.AudioArchitectureV2Override)
-                || propertyName == nameof(EditorPreferencesOverrides.AudioSampleRateOverride))
-            {
-                ApplyAudioPreferences();
-            }
+            if (_settingsPropertyHandlers.TryGetValue(propertyName, out var handler))
+                handler();
         }
 
         /// <summary>

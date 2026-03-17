@@ -11,9 +11,10 @@ This document proposes a staged restructuring of the runtime assemblies so that:
 
 This is a design document for the refactor, not an implementation record.
 
-Implementation companion:
+Implementation companions:
 
-- [Runtime Modularization Phase 2 TODO](../todo/runtime-modularization-phase2-todo.md)
+- [Runtime Modularization Phase 2 TODO](../todo/runtime-modularization-phase2-todo.md) (complete)
+- [Runtime Modularization Phase 3 TODO](../todo/runtime-modularization-phase3-todo.md) (physical code moves & XRENGINE deletion)
 
 ## Why This Refactor Exists
 

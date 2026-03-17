@@ -495,7 +495,7 @@ public static partial class EditorUnitTests
 
                     //Crazy band-aid to register these
                     if (Toggles.AllowEditingInVR)
-                        Engine.State.MainPlayer.ControlledPawn?.OptionalInputSets.Add(extOpt);
+                        (Engine.State.MainPlayer?.ControlledPawnComponent as PawnComponent)?.OptionalInputSets.Add(extOpt);
 
                     void RegisterEmulatorActions(Input.Devices.InputInterface inputSet)
                     {

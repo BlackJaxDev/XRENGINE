@@ -1,4 +1,5 @@
 using System;
+using MemoryPack;
 using XREngine.Animation;
 using XREngine.Core.Files;
 
@@ -30,7 +31,8 @@ internal static class MotionSerialization
     }
 }
 
-internal sealed class SerializedMotionModel
+[MemoryPackable]
+internal sealed partial class SerializedMotionModel
 {
     public string? TypeName { get; set; }
 

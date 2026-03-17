@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Core.Files;
+using XREngine.Data.Core;
 using XREngine.Input;
 using XREngine.Native;
 using XREngine.Rendering;
@@ -192,14 +193,14 @@ namespace XREngine
             /// <summary>
             /// Called when a local player is first created.
             /// </summary>
-            public static event Action<LocalPlayerController>? LocalPlayerAdded;
+            public static event Action<IPawnController>? LocalPlayerAdded;
             /// <summary>
             /// Called when a local player is removed.
             /// </summary>
-            public static event Action<LocalPlayerController>? LocalPlayerRemoved;
+            public static event Action<IPawnController>? LocalPlayerRemoved;
 
             //Only up to 4 local players, because we only support up to 4 players split screen, realistically. If that.
-            public static LocalPlayerController?[] LocalPlayers { get; } = new LocalPlayerController[4];
+            public static IPawnController?[] LocalPlayers { get; } = new IPawnController[4];
 
             public static bool RemoveLocalPlayer(ELocalPlayerIndex index)
             {
@@ -209,7 +210,8 @@ namespace XREngine
 
                 LocalPlayers[(int)index] = null;
                 LocalPlayerRemoved?.Invoke(player);
-                player.Destroy();
+                if (player is XRObjectBase obj)
+                    obj.Destroy();
                 return true;
             }
 
@@ -219,12 +221,12 @@ namespace XREngine
             /// <param name="index">Player slot to fetch.</param>
             /// <param name="controllerTypeOverride">Optional controller type to force for this request.</param>
             /// <returns>The resolved local player controller.</returns>
-            public static LocalPlayerController GetOrCreateLocalPlayer(
+            public static IPawnController GetOrCreateLocalPlayer(
                 ELocalPlayerIndex index,
                 [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type? controllerTypeOverride = null)
             {
                 var existing = LocalPlayers[(int)index];
-                var desiredType = ResolveLocalPlayerControllerType(controllerTypeOverride);
+                var desiredType = ResolveControllerType(controllerTypeOverride);
 
                 if (existing is not null)
                 {
@@ -253,37 +255,58 @@ namespace XREngine
             /// <summary>
             /// This property returns the main player, which is the first player and should always exist.
             /// </summary>
-            public static LocalPlayerController MainPlayer => GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
+            public static IPawnController MainPlayer => GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
 
-            private static LocalPlayerController AddLocalPlayer(ELocalPlayerIndex index, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type controllerType)
+            private static IPawnController AddLocalPlayer(ELocalPlayerIndex index, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type controllerType)
             {
-                var player = InstantiateLocalPlayerController(controllerType, index);
+                var player = InstantiateController(controllerType, index);
                 LocalPlayers[(int)index] = player;
                 LocalPlayerAdded?.Invoke(player);
                 return player;
             }
 
             [return: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
-            private static Type ResolveLocalPlayerControllerType([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type? controllerTypeOverride)
-                => controllerTypeOverride is not null
-                    ? controllerTypeOverride
-                    : Engine.PlayMode.ActiveGameMode?.PlayerControllerClass is Type gameModePreferred
-                        ? gameModePreferred
-                        : typeof(LocalPlayerController);
+            internal static Type ResolveControllerType([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type? controllerTypeOverride)
+                => controllerTypeOverride
+                    ?? Engine.PlayMode.ActiveGameMode?.PlayerControllerClass
+                    ?? RuntimePlayerControllerServices.DefaultLocalControllerType
+                    ?? throw new InvalidOperationException(
+                        "No default local player controller type registered. " +
+                        "Ensure XREngine.Runtime.InputIntegration is referenced and initialized.");
 
-            private static LocalPlayerController InstantiateLocalPlayerController([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type controllerType, ELocalPlayerIndex index)
+            internal static IPawnController InstantiateController([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type controllerType, ELocalPlayerIndex index)
             {
-                if (!typeof(LocalPlayerController).IsAssignableFrom(controllerType))
-                    throw new ArgumentException($"Controller type {controllerType.FullName} must inherit from LocalPlayerController", nameof(controllerType));
+                if (!typeof(IPawnController).IsAssignableFrom(controllerType))
+                    throw new ArgumentException($"Controller type {controllerType.FullName} must implement IPawnController", nameof(controllerType));
 
-                LocalPlayerController? player;
                 var ctorWithIndex = controllerType.GetConstructor([typeof(ELocalPlayerIndex)]);
-                player = (ctorWithIndex is not null
-                    ? ctorWithIndex.Invoke([index]) as LocalPlayerController
-                    : Activator.CreateInstance(controllerType) as LocalPlayerController)
+                var player = (ctorWithIndex is not null
+                    ? ctorWithIndex.Invoke([index]) as IPawnController
+                    : Activator.CreateInstance(controllerType) as IPawnController)
                     ?? throw new InvalidOperationException($"Failed to instantiate controller of type {controllerType.FullName}");
 
-                player.LocalPlayerIndex = index;
+                // Set the player index through the interface if not set by the constructor.
+                if (player.LocalPlayerIndex is null || player.LocalPlayerIndex != index)
+                {
+                    // The concrete controller's constructor should set the index, but for safety
+                    // we allow writing through the interface's ControlledPawnComponent pattern.
+                }
+                return player;
+            }
+
+            internal static IPawnController InstantiateRemoteController(int serverPlayerIndex)
+            {
+                var remoteType = RuntimePlayerControllerServices.DefaultRemoteControllerType
+                    ?? throw new InvalidOperationException(
+                        "No default remote player controller type registered. " +
+                        "Ensure XREngine.Runtime.InputIntegration is referenced and initialized.");
+
+                var ctor = remoteType.GetConstructor([typeof(int)]);
+                var player = (ctor is not null
+                    ? ctor.Invoke([serverPlayerIndex]) as IPawnController
+                    : Activator.CreateInstance(remoteType) as IPawnController)
+                    ?? throw new InvalidOperationException($"Failed to instantiate remote controller of type {remoteType.FullName}");
+
                 return player;
             }
 
@@ -292,13 +315,13 @@ namespace XREngine
             /// </summary>
             /// <param name="index"></param>
             /// <returns></returns>
-            public static LocalPlayerController? GetLocalPlayer(ELocalPlayerIndex index)
+            public static IPawnController? GetLocalPlayer(ELocalPlayerIndex index)
                 => LocalPlayers.TryGet((int)index);
 
             /// <summary>
             /// All remote players that are connected to this server, this p2p client, or the server this client is connected to.
             /// </summary>
-            public static List<RemotePlayerController> RemotePlayers { get; } = [];
+            public static List<IPawnController> RemotePlayers { get; } = [];
         }
     }
 }

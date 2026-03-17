@@ -159,14 +159,14 @@ namespace XREngine.Components
         /// Finds the local player controller that is using this camera for rendering, if any.
         /// </summary>
         /// <returns>The local player controller using this camera, or null if not in use by any local player.</returns>
-        public LocalPlayerController? GetUsingLocalPlayer()
+        public IPawnController? GetUsingLocalPlayer()
         {
             foreach (var player in Engine.State.LocalPlayers)
             {
                 if (player is null)
                     continue;
 
-                if (player.Viewport?.CameraComponent == this)
+                if ((player.Viewport as XRViewport)?.CameraComponent == this)
                     return player;
             }
 
@@ -186,8 +186,8 @@ namespace XREngine.Components
         public PawnComponent? GetUsingPawn()
         {
             var player = GetUsingLocalPlayer();
-            if (player?.ControlledPawn?.GetCamera() == this)
-                return player.ControlledPawn;
+            if (player?.ControlledPawnComponent is PawnComponent pawn && pawn.GetCamera() == this)
+                return pawn;
 
             // Also check if a sibling pawn is using this camera
             if (SceneNode?.TryGetComponent<PawnComponent>(out var siblingPawn) == true && siblingPawn is not null)

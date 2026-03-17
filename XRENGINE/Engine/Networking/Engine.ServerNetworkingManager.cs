@@ -184,13 +184,14 @@ namespace XREngine
                 if (connection.Pawn is not null)
                 {
                     connection.TransformId = connection.Pawn.SceneNode?.Transform?.ID ?? Guid.Empty;
-                    var controller = new RemotePlayerController(connection.ServerPlayerIndex)
+                    var controller = Engine.State.InstantiateRemoteController(connection.ServerPlayerIndex);
+                    if (controller is not null)
                     {
-                        ControlledPawn = connection.Pawn
-                    };
-                    connection.Pawn.Controller = controller;
-                    if (!Engine.State.RemotePlayers.Contains(controller))
-                        Engine.State.RemotePlayers.Add(controller);
+                        controller.ControlledPawnComponent = connection.Pawn;
+                        connection.Pawn.Controller = controller;
+                        if (!Engine.State.RemotePlayers.Contains(controller))
+                            Engine.State.RemotePlayers.Add(controller);
+                    }
                 }
             }
 
@@ -236,7 +237,7 @@ namespace XREngine
                     return;
 
                 transform.InstanceId = transform.InstanceId == Guid.Empty ? connection.InstanceId : transform.InstanceId;
-                if (connection.Pawn?.Controller is RemotePlayerController remoteController)
+                if (connection.Pawn?.Controller is IPawnController remoteController)
                     remoteController.ApplyNetworkTransform(transform);
 
                 BroadcastStateChange(EStateChangeType.PlayerTransformUpdate, transform, compress: false);

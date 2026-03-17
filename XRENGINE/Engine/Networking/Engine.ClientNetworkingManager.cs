@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Input;
 using XREngine.Networking;
 using XREngine.Rendering;
@@ -226,13 +227,13 @@ namespace XREngine
                     if (serverIndex < 0)
                         continue;
 
-                    if (player.ControlledPawn is null)
+                    if (player.ControlledPawnComponent is not PawnComponent pawn)
                         continue;
 
                     var snapshot = new PlayerInputSnapshot
                     {
                         ServerPlayerIndex = serverIndex,
-                        Input = player.ControlledPawn.CaptureNetworkInputState(),
+                        Input = pawn.CaptureNetworkInputState(),
                         TimestampUtc = GetUtcSeconds(),
                         InstanceId = player.PlayerInfo.InstanceId
                     };
@@ -252,7 +253,7 @@ namespace XREngine
                     if (serverIndex < 0)
                         continue;
 
-                    Transform? transform = player.ControlledPawn?.SceneNode?.Transform as Transform;
+                    Transform? transform = player.ControlledPawnComponent?.SceneNode?.Transform as Transform;
                     if (transform is null)
                         continue;
 
@@ -518,10 +519,11 @@ namespace XREngine
                 if (pawn is null)
                     return null;
 
-                var controller = new RemotePlayerController(serverPlayerIndex)
-                {
-                    ControlledPawn = pawn
-                };
+                var controller = Engine.State.InstantiateRemoteController(serverPlayerIndex);
+                if (controller is null)
+                    return null;
+
+                controller.ControlledPawnComponent = pawn;
 
                 if (!Engine.State.RemotePlayers.Contains(controller))
                     Engine.State.RemotePlayers.Add(controller);
@@ -578,7 +580,8 @@ namespace XREngine
                 }
 
                 Engine.State.RemotePlayers.Remove(remote.Controller);
-                remote.Controller.Destroy();
+                if (remote.Controller is XRObjectBase controllerObj)
+                    controllerObj.Destroy();
             }
 
             private static void UpdateRemoteDisplayName(RemotePlayerState remote, string? displayName)
@@ -617,7 +620,7 @@ namespace XREngine
 
             private sealed class RemotePlayerState
             {
-                public RemotePlayerState(int serverPlayerIndex, RemotePlayerController controller, PawnComponent pawn)
+                public RemotePlayerState(int serverPlayerIndex, IPawnController controller, PawnComponent pawn)
                 {
                     ServerPlayerIndex = serverPlayerIndex;
                     Controller = controller;
@@ -625,7 +628,7 @@ namespace XREngine
                 }
 
                 public int ServerPlayerIndex { get; }
-                public RemotePlayerController Controller { get; }
+                public IPawnController Controller { get; }
                 public PawnComponent Pawn { get; }
             }
 

@@ -3,6 +3,7 @@ using System.Linq;
 using System.Numerics;
 using ImGuiNET;
 using XREngine;
+using XREngine.Components;
 using XREngine.Diagnostics;
 using static XREngine.Engine;
 
@@ -139,7 +140,7 @@ public static partial class EditorImGuiUI
                         ImGui.TableSetColumnIndex(1);
                         ImGui.Text(player.PlayerInfo.ServerIndex.ToString());
                         ImGui.TableSetColumnIndex(2);
-                        ImGui.TextUnformatted(player.ControlledPawn?.Name ?? "(no pawn)");
+                        ImGui.TextUnformatted((player.ControlledPawnComponent as PawnComponent)?.Name ?? "(no pawn)");
                     }
                     ImGui.EndTable();
                 }

@@ -7,6 +7,8 @@ Model imports have two separate runtime policies:
 - `SplitSubmeshesIntoSeparateModelComponents`: creates one `ModelComponent` per imported submesh instead of grouping a source node's submeshes into one model component.
 - `BatchSubmeshAddsDuringAsyncImport`: controls how finished submeshes are published when async import is enabled.
 
+The unit-testing world also exposes a per-model JSON toggle, `GenerateCoacdCollidersPerSubmesh`. When enabled for a static model import, the importer forces `SplitSubmeshesIntoSeparateModelComponents = true` for that import and adds a `StaticRigidBodyComponent` sibling to each imported submesh component. After the submesh data is ready, the rigid body runs CoACD and attaches one PhysX convex shape per generated hull.
+
 `BatchSubmeshAddsDuringAsyncImport = true` preserves the old behavior. Imported nodes appear in the scene quickly, but each node's submeshes are withheld until that node's async mesh work is complete, then published together.
 
 `BatchSubmeshAddsDuringAsyncImport = false` streams submeshes into the scene as they become ready. Publication still happens on the swap thread rather than directly from worker threads, and the importer preserves source order by only releasing the next contiguous ready submeshes.

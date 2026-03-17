@@ -35,7 +35,11 @@
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
-    <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.AnimationIntegration\XREngine.Runtime.AnimationIntegration.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.AudioIntegration\XREngine.Runtime.AudioIntegration.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
   </ItemGroup>
 
 </Project>

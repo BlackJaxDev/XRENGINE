@@ -1,5 +1,6 @@
 using XREngine.Components;
 using XREngine.Runtime.Bootstrap;
+using XREngine.Runtime.InputIntegration;
 using XREngine.Scene;
 
 namespace XREngine.Editor;
@@ -9,6 +10,9 @@ public static class BootstrapEditorHookRegistration
     public static void Register()
     {
         BootstrapEditorBridge.Current ??= new EditorBootstrapBridge();
+        BootstrapWorldBridge.Current ??= new EditorBootstrapWorldBridge();
+        BootstrapModelImportBridge.Current ??= new EditorBootstrapModelImportBridge();
+        BootstrapInputBridge.Current ??= new EditorBootstrapInputBridge();
     }
 
     private sealed class EditorBootstrapBridge : IBootstrapEditorBridge
@@ -18,13 +22,10 @@ public static class BootstrapEditorHookRegistration
 
         public void EnableTransformToolForNode(SceneNode node)
             => EditorUnitTests.UserInterface.EnableTransformToolForNode(node);
+    }
 
-        public void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
-            => EditorUnitTests.Models.ImportModels(desktopDir, rootNode, characterParentNode);
-
-        public PawnComponent? CreateFlyableCameraPawn(SceneNode cameraNode)
-            => cameraNode.AddComponent<EditorFlyingCameraPawnComponent>();
-
+    private sealed class EditorBootstrapWorldBridge : IBootstrapWorldBridge
+    {
         public XRWorld? CreateSpecializedWorld(UnitTestWorldKind worldKind, bool setUI, bool isServer)
         {
             EditorUnitTests.SyncTogglesFromRuntime();
@@ -42,5 +43,17 @@ public static class BootstrapEditorHookRegistration
             RuntimeBootstrapState.Settings = EditorUnitTests.Toggles.ToRuntimeSettings();
             return world;
         }
+    }
+
+    private sealed class EditorBootstrapModelImportBridge : IBootstrapModelImportBridge
+    {
+        public void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode)
+            => EditorUnitTests.Models.ImportModels(desktopDir, rootNode, characterParentNode);
+    }
+
+    private sealed class EditorBootstrapInputBridge : IBootstrapInputBridge
+    {
+        public PawnComponent? CreateFlyableCameraPawn(SceneNode cameraNode)
+            => cameraNode.AddComponent<EditorFlyingCameraPawnComponent>();
     }
 }

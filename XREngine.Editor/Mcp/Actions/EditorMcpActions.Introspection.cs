@@ -13,6 +13,7 @@ using XREngine.Data.Core;
 using XREngine.Editor;
 using XREngine.Input;
 using XREngine.Input.Devices;
+using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
@@ -530,18 +531,18 @@ namespace XREngine.Editor.Mcp
                 .Where(player => player is not null)
                 .Select(player =>
                 {
-                    var input = player!.Input;
-                    var viewport = player.Viewport;
+                    var input = player!.InputDevice as LocalInputInterface;
+                    var viewport = player.Viewport as XRViewport;
                     return new
                     {
                         localIndex = player.LocalPlayerIndex.ToString(),
                         controllerType = player.GetType().FullName ?? player.GetType().Name,
                         viewportIndex = viewport?.Index,
                         viewportSize = viewport is null ? null : new { width = viewport.Width, height = viewport.Height },
-                        hasKeyboard = input.Keyboard is not null,
-                        hasMouse = input.Mouse is not null,
-                        hasGamepad = input.Gamepad is not null,
-                        hasOpenVRActions = input.OpenVRActions is not null
+                        hasKeyboard = input?.Keyboard is not null,
+                        hasMouse = input?.Mouse is not null,
+                        hasGamepad = input?.Gamepad is not null,
+                        hasOpenVRActions = input?.OpenVRActions is not null
                     };
                 })
                 .ToArray();

@@ -30,6 +30,13 @@
     <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
+    <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="OpenVR.NET">
+      <HintPath>..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
 </Project>

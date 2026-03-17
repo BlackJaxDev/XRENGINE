@@ -9,6 +9,9 @@ namespace XREngine.Input
     //TODO: handle sending controller input packets to the server
     public class LocalPlayerController : PlayerController<LocalInputInterface>
     {
+        /// <inheritdoc />
+        public override bool IsLocal => true;
+
         private ELocalPlayerIndex _index = ELocalPlayerIndex.One;
         public ELocalPlayerIndex LocalPlayerIndex
         {
@@ -56,6 +59,13 @@ namespace XREngine.Input
         {
             Engine.VRState.ActionsChanged += OnActionsChanged;
         }
+
+        // --- IPawnController virtual dispatch overrides ---
+        protected override object? GetViewportCore() => _viewport;
+        protected override void SetViewportCore(object? value) => Viewport = value as XRViewport;
+        protected override object? GetFocusedInteractableCore() => _focusedUIComponent;
+        protected override void SetFocusedInteractableCore(object? value) => FocusedUIComponent = value as UIInteractableComponent;
+        protected override ELocalPlayerIndex? GetLocalPlayerIndexCore() => _index;
 
         private void OnActionsChanged(Dictionary<string, Dictionary<string, OpenVR.NET.Input.Action>> dictionary)
             => UpdateViewportCamera();
@@ -123,6 +133,25 @@ namespace XREngine.Input
             Debug.Out($"[LocalPlayerController] RefreshViewportCamera called. VP={(Viewport is null ? "NULL" : Viewport.GetHashCode().ToString())} Pawn={ControlledPawn?.Name ?? "<null>"}");
             UpdateViewportCamera();
         }
+
+        /// <inheritdoc />
+        public override void TickPawnInput(float delta, bool isUIInputCaptured)
+        {
+            if (Input is not LocalInputInterface localInput)
+                return;
+
+            if (isUIInputCaptured)
+            {
+                localInput.ClearMouseScrollBuffer();
+                return;
+            }
+
+            localInput.TickStates(delta);
+        }
+
+        /// <inheritdoc />
+        public override void OnPawnCameraChanged()
+            => RefreshViewportCamera();
 
         protected override void RegisterInput(InputInterface input)
         {

@@ -130,6 +130,7 @@ public static partial class EditorUnitTests
             public PostProcessSteps ImportFlags { get; set; } = PostProcessSteps.None;
             public float Scale { get; set; } = 1.0f;
             public bool ZUp { get; set; } = false;
+            public bool GenerateCoacdCollidersPerSubmesh { get; set; } = false;
 
             /// <summary>
             /// Optional additional local-space rotation to apply after import.

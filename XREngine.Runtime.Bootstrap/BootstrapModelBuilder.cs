@@ -11,14 +11,14 @@ public static class BootstrapModelBuilder
         if (!RuntimeBootstrapState.Settings.HasAnyModelsToImport)
             return;
 
-        var editorBridge = BootstrapEditorBridge.Current;
-        if (editorBridge is null)
+        var importBridge = BootstrapModelImportBridge.Current;
+        if (importBridge is null)
         {
-            Debug.LogWarning("[BootstrapWorldFactory] Model import requested, but no bootstrap import hook is registered.");
+            Debug.LogWarning("[BootstrapModelBuilder] Model import requested, but no bootstrap model-import bridge is registered.");
             return;
         }
 
-        editorBridge.ImportModels(desktopDir, rootNode, characterParentNode);
+        importBridge.ImportModels(desktopDir, rootNode, characterParentNode);
     }
 
     public static void AddSkybox(SceneNode rootNode, XRTexture2D? skyEquirect)

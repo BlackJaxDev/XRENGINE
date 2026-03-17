@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using XREngine.Components;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Scene;
@@ -47,10 +48,10 @@ namespace XREngine
             {
                 var player = State.LocalPlayers[i];
                 string playerType = player?.GetType().Name ?? "<null>";
-                string pawnName = player?.ControlledPawn?.Name ?? "<null>";
+                string pawnName = (player?.ControlledPawnComponent as PawnComponent)?.Name ?? "<null>";
                 int playerHash = player?.GetHashCode() ?? 0;
                 int viewportHash = player?.Viewport?.GetHashCode() ?? 0;
-                bool hasCamera = player?.ControlledPawn?.GetCamera() is not null;
+                bool hasCamera = (player?.ControlledPawnComponent as PawnComponent)?.GetCamera() is not null;
 
                 Debug.RenderingEvery(
                     $"ViewportRebind.{phase}.Player.{worldInstance.GetHashCode()}.{i}",
@@ -145,17 +146,20 @@ namespace XREngine
                         var associated = viewport.AssociatedPlayer;
                         if (associated is not null)
                         {
-                            var current = State.GetLocalPlayer(associated.LocalPlayerIndex) ?? State.GetOrCreateLocalPlayer(associated.LocalPlayerIndex);
-                            if (!ReferenceEquals(current, associated))
+                            if (associated.LocalPlayerIndex is ELocalPlayerIndex localPlayerIndex)
                             {
-                                Debug.Out(
-                                    "[{0}] Rebind: viewport {1} had stale AssociatedPlayer. OldHash={2} NewHash={3} Index={4}",
-                                    phase,
-                                    viewport.Index,
-                                    associated.GetHashCode(),
-                                    current.GetHashCode(),
-                                    associated.LocalPlayerIndex);
-                                viewport.AssociatedPlayer = current;
+                                var current = State.GetLocalPlayer(localPlayerIndex) ?? State.GetOrCreateLocalPlayer(localPlayerIndex);
+                                if (!ReferenceEquals(current, associated))
+                                {
+                                    Debug.Out(
+                                        "[{0}] Rebind: viewport {1} had stale AssociatedPlayer. OldHash={2} NewHash={3} Index={4}",
+                                        phase,
+                                        viewport.Index,
+                                        associated.GetHashCode(),
+                                        current.GetHashCode(),
+                                        associated.LocalPlayerIndex);
+                                    viewport.AssociatedPlayer = current;
+                                }
                             }
                         }
                         else
@@ -164,12 +168,12 @@ namespace XREngine
                             var inferred = State.LocalPlayers.FirstOrDefault(p => p is not null && ReferenceEquals(p.Viewport, viewport));
                             if (inferred is not null)
                             {
-                                Debug.Out("[{0}] Rebind: inferred AssociatedPlayer for viewport {1} -> P{2}", phase, viewport.Index, (int)inferred.LocalPlayerIndex + 1);
+                                Debug.Out("[{0}] Rebind: inferred AssociatedPlayer for viewport {1} -> P{2}", phase, viewport.Index, (int)(inferred.LocalPlayerIndex ?? 0) + 1);
                                 viewport.AssociatedPlayer = inferred;
                             }
                         }
 
-                        // LocalPlayerController.Viewport is runtime-only and can be lost across snapshot restore.
+                        // IPawnController.Viewport is runtime-only and can be lost across snapshot restore.
                         if (viewport.AssociatedPlayer is not null && !ReferenceEquals(viewport.AssociatedPlayer.Viewport, viewport))
                             viewport.AssociatedPlayer.Viewport = viewport;
 
@@ -179,10 +183,10 @@ namespace XREngine
 
                         // Rebind camera from controlled pawn (may have changed across restore / BeginPlay).
                         var playerForRebind = viewport.AssociatedPlayer;
-                        var playerPawnCamera = playerForRebind?.ControlledPawn?.GetCamera();
+                        var playerPawnCamera = (playerForRebind?.ControlledPawnComponent as PawnComponent)?.GetCamera();
                         if (playerForRebind is not null && playerPawnCamera is not null)
                         {
-                            playerForRebind.RefreshViewportCamera();
+                            playerForRebind.OnPawnCameraChanged();
                             viewport.EnsureViewportBoundToCamera();
                         }
                         else
@@ -195,7 +199,7 @@ namespace XREngine
                         }
 
                         var p = viewport.AssociatedPlayer;
-                        var pawn = p?.ControlledPawn;
+                        var pawn = p?.ControlledPawnComponent as PawnComponent;
                         var pawnCam = pawn?.GetCamera();
                         var cam = viewport.ActiveCamera;
                         int camViewportCount = cam?.Viewports.Count ?? 0;
@@ -206,7 +210,7 @@ namespace XREngine
                             phase,
                             window.GetHashCode(),
                             viewport.Index,
-                            p is null ? "<null>" : $"P{(int)p.LocalPlayerIndex + 1}",
+                            p is null ? "<null>" : $"P{(int)(p.LocalPlayerIndex ?? 0) + 1}",
                             p?.GetHashCode() ?? 0,
                             p is not null && ReferenceEquals(p.Viewport, viewport),
                             pawn?.Name ?? "<null>",
@@ -234,9 +238,9 @@ namespace XREngine
                         }
 
                         // Only warn when we *expected* a camera/world to exist.
-                        if (viewport.ActiveCamera is null && viewport.AssociatedPlayer?.ControlledPawn?.GetCamera() is not null)
+                        if (viewport.ActiveCamera is null && (viewport.AssociatedPlayer?.ControlledPawnComponent as PawnComponent)?.GetCamera() is not null)
                             Debug.LogWarning($"[{phase}] Viewport {viewport.Index} has no ActiveCamera (player={viewport.AssociatedPlayer?.LocalPlayerIndex}).");
-                        if (viewport.World is null && viewport.AssociatedPlayer?.ControlledPawn?.GetCamera() is not null)
+                        if (viewport.World is null && (viewport.AssociatedPlayer?.ControlledPawnComponent as PawnComponent)?.GetCamera() is not null)
                             Debug.LogWarning($"[{phase}] Viewport {viewport.Index} has no World (player={viewport.AssociatedPlayer?.LocalPlayerIndex}).");
                     }
 
@@ -245,7 +249,7 @@ namespace XREngine
                     {
                         var mainPlayer = State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
                         window.RegisterController(mainPlayer, autoSizeAllViewports: false);
-                        mainPlayer.RefreshViewportCamera();
+                        mainPlayer.OnPawnCameraChanged();
                     }
                 }
             }

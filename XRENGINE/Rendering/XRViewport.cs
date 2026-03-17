@@ -43,7 +43,7 @@ namespace XREngine.Rendering
         /// The local player controller associated with this viewport.
         /// Used to link input handling and player-specific rendering (e.g., split-screen scenarios).
         /// </summary>
-        private LocalPlayerController? _associatedPlayer = null;
+        private IPawnController? _associatedPlayer = null;
 
         /// <summary>
         /// The screen-space rectangular region where this viewport renders within the parent window.
@@ -94,6 +94,15 @@ namespace XREngine.Rendering
         /// should typically be set to false since the commands are managed externally.
         /// </summary>
         public RenderCommandCollection? MeshRenderCommandsOverride { get; set; }
+
+        /// <summary>
+        /// When true, per-frame 3D scene work (visibility collection, command buffer swap,
+        /// skinning prepass) is skipped. The render pipeline still runs with stale commands,
+        /// producing the same 3D output from the previous unsuppressed frame, while
+        /// screen-space UI continues to update normally.
+        /// Used by render-on-demand features to reduce CPU load when the view is idle.
+        /// </summary>
+        public bool Suppress3DSceneRendering { get; set; }
 
         /// <summary>
         /// When true, objects outside the camera's view frustum are culled (not rendered).
@@ -263,7 +272,7 @@ namespace XREngine.Rendering
         /// Not serialized (YamlIgnore) as player associations are established at runtime.
         /// </summary>
         [YamlIgnore]
-        public LocalPlayerController? AssociatedPlayer
+        public IPawnController? AssociatedPlayer
         {
             get => _associatedPlayer;
             internal set
@@ -271,9 +280,11 @@ namespace XREngine.Rendering
                 if (_associatedPlayer == value)
                     return;
 
-                _associatedPlayer?.Viewport = null;
+                if (_associatedPlayer is not null)
+                    _associatedPlayer.Viewport = null;
                 SetField(ref _associatedPlayer, value);
-                _associatedPlayer?.Viewport = this;
+                if (_associatedPlayer is not null)
+                    _associatedPlayer.Viewport = this;
             }
         }
 
@@ -814,7 +825,17 @@ namespace XREngine.Rendering
         /// Subscribed to Engine.Time.Timer.CollectVisible when AutomaticallyCollectVisible is true.
         /// Simply delegates to CollectVisible() with default parameters.
         /// </summary>
-        private void CollectVisibleAutomatic() => CollectVisible();
+        private void CollectVisibleAutomatic()
+        {
+            if (Suppress3DSceneRendering)
+            {
+                // Skip expensive 3D scene collection but still collect UI
+                // so the editor overlay stays responsive.
+                CollectVisible_ScreenSpaceUI();
+                return;
+            }
+            CollectVisible();
+        }
 
         #endregion
 
@@ -888,6 +909,13 @@ namespace XREngine.Rendering
         /// </summary>
         private void SwapBuffersAutomatic()
         {
+            if (Suppress3DSceneRendering)
+            {
+                // Skip 3D command buffer swap but still swap UI buffers
+                // so the editor overlay stays responsive.
+                SwapBuffers_ScreenSpaceUI();
+                return;
+            }
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRViewport.SwapBuffersAutomatic");
             SwapBuffers();
         }
@@ -1006,8 +1034,10 @@ namespace XREngine.Rendering
 
                 // Visibility-driven compute deformation (skinning/blendshapes).
                 // This runs on the render thread and uses the swapped (rendering) command buffers.
+                // Skip when 3D scene rendering is suppressed — the stale commands don't need re-skinning.
                 var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-                SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
+                if (!Suppress3DSceneRendering)
+                    SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
 
                 _renderPipeline.Render(
                     world.VisualScene,
@@ -1086,7 +1116,7 @@ namespace XREngine.Rendering
             bool forceUiThroughPipeline =
                 RuntimeRenderingHostServices.Current.GetWindowRenderBackend(Window) == RuntimeGraphicsApiKind.Vulkan ||
                 RuntimeRenderingHostServices.Current.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
-            bool wantThroughPipeline = forceUiThroughPipeline || (AssociatedPlayer?.RenderUIThroughPipeline ?? true);
+            bool wantThroughPipeline = forceUiThroughPipeline || true;
 
             if (!wantThroughPipeline)
             {

@@ -19,6 +19,9 @@ namespace XREngine.Input
             internal set => SetField(ref _input, value);
         }
 
+        /// <inheritdoc />
+        public override object? InputDevice => _input;
+
         protected override bool OnPropertyChanging<T2>(string? propName, T2 field, T2 @new)
         {
             bool change = base.OnPropertyChanging(propName, field, @new);

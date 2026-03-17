@@ -769,7 +769,7 @@ public sealed class RenderPipelineInspector : IXRAssetInspector
             ?? Engine.Rendering.State.CurrentRenderingPipeline?.RenderState.SceneCamera
             ?? Engine.Rendering.State.CurrentRenderingPipeline?.RenderState.RenderingCamera
             ?? Engine.Rendering.State.RenderingPipelineState?.WindowViewport?.ActiveCamera
-            ?? Engine.State.MainPlayer?.Viewport?.ActiveCamera;
+            ?? (Engine.State.MainPlayer?.Viewport as XRViewport)?.ActiveCamera;
 
         var stage = camera?.GetPostProcessStageState<ColorGradingSettings>();
         if (stage?.TryGetBacking(out ColorGradingSettings? g) != true)

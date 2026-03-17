@@ -22,7 +22,7 @@ namespace XREngine.Input
         /// <summary>
         /// Applies the latest transform information received from the server.
         /// </summary>
-        public void ApplyNetworkTransform(PlayerTransformUpdate update)
+        public override void ApplyNetworkTransform(PlayerTransformUpdate update)
         {
             ApplyNetworkTransform(update.Translation, update.Rotation);
         }

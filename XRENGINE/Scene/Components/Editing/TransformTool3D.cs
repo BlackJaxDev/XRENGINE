@@ -707,7 +707,7 @@ namespace XREngine.Scene.Components.Editing
 
         private Matrix4x4 GetScreenSpaceTransform(XRCamera? referenceCamera = null)
         {
-            referenceCamera ??= Engine.State.MainPlayer.Viewport?.ActiveCamera;
+            referenceCamera ??= (Engine.State.MainPlayer.Viewport as XRViewport)?.ActiveCamera;
             if (referenceCamera is null)
                 return Matrix4x4.Identity;
             
