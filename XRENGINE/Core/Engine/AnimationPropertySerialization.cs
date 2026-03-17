@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using MemoryPack;
 using XREngine.Animation;
 using XREngine.Core.Files;
 
@@ -115,7 +116,8 @@ internal static class AnimationPropertySerialization
     }
 }
 
-internal sealed class SerializedPropertyAnimationModel
+[MemoryPackable]
+internal sealed partial class SerializedPropertyAnimationModel
 {
     public string? TypeName { get; set; }
 
@@ -124,7 +126,8 @@ internal sealed class SerializedPropertyAnimationModel
     public List<SerializedKeyframeModel> Keyframes { get; set; } = [];
 }
 
-internal sealed class SerializedKeyframeModel
+[MemoryPackable]
+internal sealed partial class SerializedKeyframeModel
 {
     public string? TypeName { get; set; }
 

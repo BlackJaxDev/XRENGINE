@@ -27,8 +27,8 @@ namespace XREngine
             get => _defaultPlayerControllerClass;
             set
             {
-                if (value is not null && !typeof(LocalPlayerController).IsAssignableFrom(value))
-                    throw new ArgumentException("Default player controller must inherit from LocalPlayerController", nameof(value));
+                if (value is not null && !typeof(IPawnController).IsAssignableFrom(value))
+                    throw new ArgumentException("Default player controller must implement IPawnController", nameof(value));
 
                 SetField(ref _defaultPlayerControllerClass, value);
             }

@@ -377,7 +377,12 @@ public static class EditorPlayModeController
     {
         foreach (var (playerIndex, snapshot) in _editorPossessionSnapshot)
         {
-            var localPlayer = Engine.State.GetOrCreateLocalPlayer(playerIndex, snapshot.ControllerType);
+            var localPlayer = Engine.State.GetOrCreateLocalPlayer(playerIndex, snapshot.ControllerType) as LocalPlayerController;
+            if (localPlayer is null)
+            {
+                Debug.Out($"Failed to restore editor pawn for player {playerIndex}: controller is not a LocalPlayerController.");
+                continue;
+            }
 
             PawnComponent? resolvedPawn = null;
 

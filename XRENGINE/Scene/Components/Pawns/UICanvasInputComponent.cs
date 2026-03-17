@@ -131,7 +131,7 @@ namespace XREngine.Components
                     {
                         _focusedComponent.IsFocused = true;
                         _focusedComponent.PropertyChanged += FocusedComponentPropertyChanged;
-                        var input = _owningPawn?.LocalPlayerController?.Input;
+                        var input = _owningPawn?.Controller?.InputDevice as InputInterface;
                         if (input is not null && _focusedComponent.RegisterInputsOnFocus)
                             _focusedComponent.RegisterInput(input);
                     }
@@ -139,7 +139,7 @@ namespace XREngine.Components
                     {
                         prevInteractable.IsFocused = false;
                         prevInteractable.PropertyChanged -= FocusedComponentPropertyChanged;
-                        var input = _owningPawn?.LocalPlayerController?.Input;
+                        var input = _owningPawn?.Controller?.InputDevice as InputInterface;
                         if (input is not null && prevInteractable.RegisterInputsOnFocus)
                         {
                             input.Unregister = true;
@@ -147,9 +147,9 @@ namespace XREngine.Components
                             input.Unregister = false;
                         }
                     }
-                    var localPlayerController = _owningPawn?.LocalPlayerController;
-                    if (localPlayerController is not null)
-                        localPlayerController.FocusedUIComponent = _focusedComponent;
+                    var controller = _owningPawn?.Controller;
+                    if (controller is not null)
+                        controller.FocusedInteractable = _focusedComponent;
                     break;
             }
         }
@@ -257,7 +257,7 @@ namespace XREngine.Components
         }
 
         private InputInterface? GetOwningInput()
-            => _owningPawn?.LocalPlayerController?.Input;
+            => _owningPawn?.Controller?.InputDevice as InputInterface;
 
         public void RegisterInput(InputInterface input)
         {

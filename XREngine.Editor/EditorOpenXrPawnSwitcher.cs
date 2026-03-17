@@ -30,7 +30,7 @@ internal static class EditorOpenXrPawnSwitcher
 
     private static void SwitchPawnControl(bool preferVr)
     {
-        var world = Engine.State.MainPlayer.Viewport?.World ?? Engine.WorldInstances.FirstOrDefault();
+        var world = (Engine.State.MainPlayer.Viewport as XRViewport)?.World ?? Engine.WorldInstances.FirstOrDefault();
         if (world is null)
             return;
 

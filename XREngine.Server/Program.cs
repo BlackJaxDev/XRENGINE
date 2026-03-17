@@ -305,7 +305,7 @@ namespace XREngine.Networking
         private static void CreateConsoleUI(SceneNode rootNode)
         {
             CreateConsoleUI(rootNode, out UICanvasComponent uiCanvas, out UICanvasInputComponent input);
-            var pawnForInput = Engine.State.MainPlayer.ControlledPawn;
+            var pawnForInput = Engine.State.MainPlayer?.ControlledPawnComponent as PawnComponent;
             var pawnCam = pawnForInput?.GetSiblingComponent<CameraComponent>(false);
             pawnCam?.UserInterface = uiCanvas;
             input.OwningPawn = pawnForInput;

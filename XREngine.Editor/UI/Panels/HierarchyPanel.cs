@@ -1343,7 +1343,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         if (node is null)
             return false;
 
-        if (Engine.State.MainPlayer.ControlledPawn is not EditorFlyingCameraPawnComponent pawn)
+        if (Engine.State.MainPlayer?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
             return false;
 
         pawn.FocusOnNode(node, DoubleClickFocusDuration);

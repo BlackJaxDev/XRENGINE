@@ -16,6 +16,9 @@ namespace XREngine.Scene.Transforms
     {
         public BillboardTransform() : this(null) { }
 
+        private static XRCamera? GetMainPlayerCamera()
+            => (Engine.State.MainPlayer.Viewport as XRViewport)?.ActiveCamera;
+
         private bool _perspective = false;
         /// <summary>
         /// If perspective is true, the billboard will face towards the camera's position.
@@ -193,7 +196,7 @@ namespace XREngine.Scene.Transforms
         protected override void OnSceneNodeActivated()
         {
             base.OnSceneNodeActivated();
-            var camera = Engine.State.MainPlayer.Viewport?.ActiveCamera;
+            var camera = GetMainPlayerCamera();
             if (camera is null)
                 return;
 
@@ -217,7 +220,7 @@ namespace XREngine.Scene.Transforms
         {
             if (_subscribedCamera is null)
             {
-                var camera = Engine.State.MainPlayer.Viewport?.ActiveCamera;
+                var camera = GetMainPlayerCamera();
                 camera?.Transform.WorldMatrixChanged -= CameraMoved;
                 camera?.Parameters.PropertyChanged -= CameraParametersChanged;
                 return;
@@ -239,7 +242,7 @@ namespace XREngine.Scene.Transforms
 
         protected override Matrix4x4 CreateWorldMatrix()
         {
-            var camera = Engine.State.MainPlayer.Viewport?.ActiveCamera;
+            var camera = GetMainPlayerCamera();
             if (camera is null)
                 return Matrix4x4.Identity;
 

@@ -274,7 +274,7 @@ public static partial class EditorImGuiUI
         _ = world;
 
         var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
-        if (player?.ControlledPawn is not EditorFlyingCameraPawnComponent pawn)
+        if (player?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
             return;
 
         if (!pawn.TryGetLastMeshHit(out MeshPickResult meshHit))
@@ -345,7 +345,7 @@ public static partial class EditorImGuiUI
         _ = world;
 
         var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
-        if (player?.ControlledPawn is not EditorFlyingCameraPawnComponent pawn)
+        if (player?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
         {
             Debug.LogWarning("No editor camera pawn available to apply dropped material.");
             return false;

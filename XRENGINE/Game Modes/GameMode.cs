@@ -19,7 +19,7 @@ namespace XREngine
     public abstract class GameMode : XRAsset
     {
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
-        protected Type? _defaultPlayerControllerClass = typeof(LocalPlayerController);
+        protected Type? _defaultPlayerControllerClass = null;
         protected Type? _defaultPlayerPawnClass = typeof(FlyingCameraPawnComponent);
 
         [property: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
@@ -93,8 +93,8 @@ namespace XREngine
 
             // Unpossess all pawns
             foreach (var player in Engine.State.LocalPlayers)
-                if (player?.ControlledPawn is not null)
-                    player.ControlledPawn.Controller = null;
+                if (player?.ControlledPawnComponent is not null)
+                    player.ControlledPawnComponent = null;
 
             // Destroy all auto-spawned pawns
             foreach (var pawn in AutoSpawnedPawns)
@@ -235,9 +235,9 @@ namespace XREngine
             var localPlayer = Engine.State.GetOrCreateLocalPlayer(possessor);
             if (localPlayer != null)
             {
-                Debug.Out($"[GameMode] LocalPlayer found, viewport={localPlayer.Viewport?.GetHashCode()}, current pawn={localPlayer.ControlledPawn?.Name}");
-                localPlayer.ControlledPawn = pawnComponent;
-                Debug.Out($"[GameMode] After possession: ControlledPawn={localPlayer.ControlledPawn?.Name}, Controller={pawnComponent?.Controller?.GetType().Name}");
+                Debug.Out($"[GameMode] LocalPlayer found, viewport={localPlayer.Viewport?.GetHashCode()}, current pawn={(localPlayer.ControlledPawnComponent as PawnComponent)?.Name}");
+                localPlayer.ControlledPawnComponent = pawnComponent;
+                Debug.Out($"[GameMode] After possession: ControlledPawn={(localPlayer.ControlledPawnComponent as PawnComponent)?.Name}, Controller={pawnComponent?.Controller?.GetType().Name}");
             }
             else
                 Debug.LogWarning($"Failed to possess pawn: could not resolve local player for index {possessor}");
@@ -282,7 +282,7 @@ namespace XREngine
         /// </summary>
         /// <param name="playerIndex">The target player index.</param>
         /// <returns>The resolved controller, or null if creation failed.</returns>
-        protected virtual LocalPlayerController? EnsureLocalPlayerController(ELocalPlayerIndex playerIndex)
+        protected virtual IPawnController? EnsureLocalPlayerController(ELocalPlayerIndex playerIndex)
             => Engine.State.GetOrCreateLocalPlayer(playerIndex, _defaultPlayerControllerClass);
 
         #endregion

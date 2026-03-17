@@ -14,6 +14,7 @@ using XREngine.Core.Files;
 using XREngine.Editor.AssetEditors;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.TransformEditors;
+using XREngine.Input.Devices;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -1395,7 +1396,7 @@ public static partial class EditorImGuiUI
         private static void DrawPawnPossessButton(PawnComponent pawn)
         {
             var mainPlayer = Engine.State.MainPlayer;
-            bool isCurrentlyPossessed = ReferenceEquals(mainPlayer?.ControlledPawn, pawn);
+            bool isCurrentlyPossessed = ReferenceEquals(mainPlayer?.ControlledPawnComponent, pawn);
 
             if (isCurrentlyPossessed)
             {
@@ -1425,7 +1426,7 @@ public static partial class EditorImGuiUI
             }
 
             // Unlink from current pawn first
-            mainPlayer.UnlinkControlledPawn();
+            mainPlayer.ControlledPawnComponent = null;
 
             // Ensure player has a valid viewport
             var window = Engine.Windows.FirstOrDefault();
@@ -1434,15 +1435,15 @@ public static partial class EditorImGuiUI
                 var ensuredViewport = window.EnsureControllerRegistered(mainPlayer, autoSizeAllViewports: false);
                 if (ensuredViewport is not null)
                 {
-                    mainPlayer.Input.UpdateDevices(ensuredViewport.Window?.Input, Engine.VRState.Actions);
+                    (mainPlayer.InputDevice as LocalInputInterface)?.UpdateDevices(ensuredViewport.Window?.Input, Engine.VRState.Actions);
                 }
             }
 
             // Set the controlled pawn - this triggers UpdateViewportCamera
-            mainPlayer.ControlledPawn = pawn;
+            mainPlayer.ControlledPawnComponent = pawn;
 
             // Force refresh the viewport camera binding
-            mainPlayer.RefreshViewportCamera();
+            mainPlayer.OnPawnCameraChanged();
 
             Debug.Out($"[EditorImGuiUI] Possessed pawn '{pawn.Name ?? pawn.GetType().Name}' as Player 1");
         }

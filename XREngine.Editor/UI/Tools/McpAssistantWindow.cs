@@ -7145,7 +7145,7 @@ exception={ex}
             if (targetNodes.Count == 0)
                 return;
 
-            if (Engine.State.MainPlayer.ControlledPawn is not EditorFlyingCameraPawnComponent pawn)
+            if (Engine.State.MainPlayer?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
                 return;
 
             pawn.FocusOnNodes(targetNodes, AutoCameraViewFocusDurationSeconds);

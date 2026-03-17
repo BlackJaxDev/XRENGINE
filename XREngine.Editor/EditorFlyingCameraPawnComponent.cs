@@ -76,6 +76,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             TransformToolUndoAdapter.Attach(tool);
         }
         UpdateSelectionHighlight();
+        InvalidateView();
     }
 
     /// <summary>
@@ -459,6 +460,47 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         get => _layerMask;
         set => SetField(ref _layerMask, value);
     }
+
+    #region Render On Demand
+
+    private bool _renderOnDemand;
+    /// <summary>
+    /// When enabled, the viewport only renders a new frame when user input (mouse, keyboard, scroll)
+    /// or an active animation invalidates the camera view. Reduces GPU load when the view is idle.
+    /// Scene-side changes (object transforms, material edits, lights) do not automatically
+    /// trigger a re-render; call <see cref="InvalidateView"/> for those cases.
+    /// </summary>
+    [Category("Performance")]
+    [DisplayName("Render On Demand")]
+    [Description("Only render when user input or animations change the camera view. Reduces GPU load when idle.")]
+    public bool RenderOnDemand
+    {
+        get => _renderOnDemand;
+        set => SetField(ref _renderOnDemand, value);
+    }
+
+    private bool _viewInvalidated;
+
+    /// <summary>
+    /// Marks the camera view as needing a re-render on the next frame.
+    /// Called automatically by input handlers when <see cref="RenderOnDemand"/> is enabled.
+    /// Also available for external callers that modify the scene programmatically.
+    /// </summary>
+    public void InvalidateView() => _viewInvalidated = true;
+
+    /// <summary>
+    /// Returns true when the viewport should render this frame.
+    /// Accounts for one-shot input events, ongoing animations, and continuous movement input.
+    /// </summary>
+    private bool NeedsRender()
+        => _viewInvalidated
+        || _scrollSmoothTarget is not null
+        || _cameraFocusLerp is not null
+        || HasContinuousMovementInput()
+        || _selectionDragActive
+        || _wantsScreenshot;
+
+    #endregion
 
     private SortedDictionary<float, List<(XRComponent? item, object? data)>> _lastPhysicsPickResults = [];
     /// <summary>
@@ -1051,7 +1093,15 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     protected override void Tick()
     {
         base.Tick();
-        ApplyInput(Viewport);
+
+        var vp = Viewport;
+        ApplyInput(vp);
+
+        if (_renderOnDemand && vp is not null)
+        {
+            vp.Suppress3DSceneRendering = !NeedsRender();
+            _viewInvalidated = false;
+        }
     }
 
     private void PostRender()
@@ -1510,6 +1560,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 if (_rightClickPressed && !IsHoveringUI())
                     _depthQueryRequested = true;
                 break;
+            case nameof(RenderOnDemand):
+                if (!_renderOnDemand && Viewport is { } vp)
+                    vp.Suppress3DSceneRendering = false;
+                break;
         }
     }
 
@@ -1634,6 +1688,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     protected override void OnRightClick(bool pressed)
     {
         base.OnRightClick(pressed);
+        InvalidateView();
         if (pressed && !IsHoveringUI())
         {
             if (GetAverageSelectionPoint(out Vector3 avgPoint))
@@ -1650,6 +1705,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     protected override void OnLeftClick(bool pressed)
     {
         base.OnLeftClick(pressed);
+        InvalidateView();
 
         // Force a fresh raycast on the next tick so click handlers always have
         // up-to-date results, regardless of throttle or cursor-dirty state.
@@ -1713,6 +1769,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     protected override void MouseRotate(float x, float y)
     {
+        InvalidateView();
         if (_arcballRotationPosition is not null)
             _lastRotateDelta = new Vector2(-x * MouseRotateSpeed, y * MouseRotateSpeed);
         else
@@ -1744,6 +1801,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     protected override void MouseTranslate(float x, float y)
     {
+        InvalidateView();
         if (WorldDragPoint.HasValue)
         {
             if (Math.Abs(x) <0.00001f && Math.Abs(y) <0.00001f)
@@ -1758,11 +1816,16 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         if (IsHoveringUI())
             return;
+        InvalidateView();
         _pendingScrollDeltas.Enqueue(diff);
         _depthQueryRequested = true;
     }
 
-    public void TakeScreenshot() => _wantsScreenshot = true;
+    public void TakeScreenshot()
+    {
+        _wantsScreenshot = true;
+        InvalidateView();
+    }
 
     public void FocusOnNode(SceneNode node, float durationSeconds = DefaultFocusDurationSeconds)
         => FocusOnNodes([node], durationSeconds);
@@ -1771,6 +1834,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         if (nodes is null)
             return;
+
+        InvalidateView();
 
         var tfm = TransformAs<Transform>();
         if (tfm is null)
@@ -1808,6 +1873,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (tfm is null)
             return;
 
+        InvalidateView();
         CancelCameraFocusLerp();
         BeginCameraFocusLerp(targetPosition, targetRotation, durationSeconds);
     }

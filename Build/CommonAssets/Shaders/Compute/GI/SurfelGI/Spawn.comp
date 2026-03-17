@@ -11,9 +11,14 @@ layout(binding = 3) uniform usampler2D gTransformId;
 // GPU indirect: per-draw command data (float[48]) indexed by TransformId.
 layout(std430, binding = 5) buffer CulledCommandsBuffer { float culled[]; };
 
+// Compact transform atlas: mat4 (16 floats) per transform, indexed by TransformId.
+layout(std430, binding = 6) buffer TransformAtlasBuffer { float transforms[]; };
+
 uniform bool hasCulledCommands;
 uniform uint culledFloatCount;
 uniform uint culledCommandFloats;
+uniform bool useTransformAtlas;
+uniform uint transformAtlasCount;
 
 uniform ivec2 resolution;
 uniform mat4 invProjMatrix;
@@ -81,6 +86,27 @@ vec3 DecodeNormal(vec3 encoded)
 
 bool TryLoadWorldMatrix(uint commandIndex, out mat4 M)
 {
+    // Path A: compact transform atlas (16 floats per entry).
+    if (useTransformAtlas)
+    {
+        uint base = commandIndex * 16u;
+        if (base + 15u >= transformAtlasCount)
+            return false;
+
+        vec4 r0 = vec4(transforms[base+0],  transforms[base+1],  transforms[base+2],  transforms[base+3]);
+        vec4 r1 = vec4(transforms[base+4],  transforms[base+5],  transforms[base+6],  transforms[base+7]);
+        vec4 r2 = vec4(transforms[base+8],  transforms[base+9],  transforms[base+10], transforms[base+11]);
+        vec4 r3 = vec4(transforms[base+12], transforms[base+13], transforms[base+14], transforms[base+15]);
+        M = mat4(
+            vec4(r0.x, r1.x, r2.x, r3.x),
+            vec4(r0.y, r1.y, r2.y, r3.y),
+            vec4(r0.z, r1.z, r2.z, r3.z),
+            vec4(r0.w, r1.w, r2.w, r3.w)
+        );
+        return true;
+    }
+
+    // Path B: full GPU commands buffer (48 floats per entry).
     if (!hasCulledCommands)
         return false;
 
@@ -89,13 +115,10 @@ bool TryLoadWorldMatrix(uint commandIndex, out mat4 M)
     if (base + 15u >= culledFloatCount)
         return false;
 
-    // GPU command buffer stores matrices in row-major order (matching System.Numerics.Matrix4x4).
-    // GLSL mat4 constructor takes columns, so we read rows and construct columns.
     vec4 r0 = vec4(culled[base+0],  culled[base+1],  culled[base+2],  culled[base+3]);
     vec4 r1 = vec4(culled[base+4],  culled[base+5],  culled[base+6],  culled[base+7]);
     vec4 r2 = vec4(culled[base+8],  culled[base+9],  culled[base+10], culled[base+11]);
     vec4 r3 = vec4(culled[base+12], culled[base+13], culled[base+14], culled[base+15]);
-    // Transpose: mat4 takes columns, so column i = (r0[i], r1[i], r2[i], r3[i])
     M = mat4(
         vec4(r0.x, r1.x, r2.x, r3.x),
         vec4(r0.y, r1.y, r2.y, r3.y),

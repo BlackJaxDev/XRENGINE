@@ -10,6 +10,7 @@ using XREngine.Data.Components.Scene;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Rendering.Physics.Physx;
+using XREngine.Runtime.InputIntegration;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using static XREngine.Scene.Transforms.RigidBodyTransform;
@@ -258,10 +259,7 @@ public static class BootstrapPawnFactory
         PawnComponent pawnComp;
         if (flyable)
         {
-            var editorBridge = !isServer ? BootstrapEditorBridge.Current : null;
-            pawnComp = editorBridge is not null
-                ? editorBridge.CreateFlyableCameraPawn(cameraNode) ?? cameraNode.AddComponent<FlyingCameraPawnComponent>()!
-                : cameraNode.AddComponent<FlyingCameraPawnComponent>()!;
+            pawnComp = BootstrapFlyableCameraFactory.CreateFlyableCameraPawn(cameraNode, !isServer);
             pawnComp.Name = "Desktop Camera Pawn (Flyable)";
         }
         else

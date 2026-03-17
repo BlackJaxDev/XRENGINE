@@ -219,7 +219,7 @@ public static class EditorDragDropUtility
     }
 
     private static InputInterface? TryGetInput()
-        => _inputComponent?.OwningPawn?.LocalPlayerController?.Input;
+        => _inputComponent?.OwningPawn?.Controller?.InputDevice as InputInterface;
 
     private sealed record DragSession(UIInteractableComponent Source, DragPayload Payload, Vector2 StartPosition);
 

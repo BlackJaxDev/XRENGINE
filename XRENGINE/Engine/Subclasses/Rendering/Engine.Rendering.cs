@@ -141,12 +141,23 @@ namespace XREngine
 
             public static void ApplyGlobalIlluminationModePreference()
             {
-                var mode = Engine.UserSettings.GlobalIlluminationMode;
+                var mode = Engine.EffectiveSettings.GlobalIlluminationMode;
                 foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
                 {
                     if (viewport.RenderPipeline is DefaultRenderPipeline defaultPipeline)
                         defaultPipeline.GlobalIlluminationMode = mode;
                 }
+            }
+
+            /// <summary>
+            /// Pushes the effective AA mode into the engine rendering settings so that
+            /// pipeline command chains (which read from <see cref="Settings"/>) are
+            /// regenerated and runtime AA checks pick up the cascade-resolved value.
+            /// </summary>
+            public static void ApplyAntiAliasingPreference()
+            {
+                Settings.AntiAliasingMode = Engine.EffectiveSettings.AntiAliasingMode;
+                Settings.MsaaSampleCount = Engine.EffectiveSettings.MsaaSampleCount;
             }
 
             public static void ApplyGpuRenderDispatchPreference()
@@ -296,6 +307,33 @@ namespace XREngine
                     }
                 }
                 Engine.InvokeOnMainThread(Apply, "Engine.Rendering.ApplyIntelXessPreference", true);
+            }
+
+            /// <summary>
+            /// Pushes the effective parallel tick setting into the engine rendering settings.
+            /// </summary>
+            public static void ApplyTickGroupedItemsInParallelPreference()
+                => Settings.TickGroupedItemsInParallel = Engine.EffectiveSettings.TickGroupedItemsInParallel;
+
+            /// <summary>
+            /// Pushes the effective shader pipeline setting into the engine rendering settings.
+            /// </summary>
+            public static void ApplyAllowShaderPipelinesPreference()
+                => Settings.AllowShaderPipelines = Engine.EffectiveSettings.AllowShaderPipelines;
+
+            /// <summary>
+            /// Pushes the effective child matrix recalc loop type into the engine rendering settings.
+            /// </summary>
+            public static void ApplyRecalcChildMatricesLoopTypePreference()
+                => Settings.RecalcChildMatricesLoopType = Engine.EffectiveSettings.RecalcChildMatricesLoopType;
+
+            /// <summary>
+            /// Pushes the effective compute skinning setting into the engine rendering settings.
+            /// </summary>
+            public static void ApplyComputeSkinningPreference()
+            {
+                Settings.CalculateSkinningInComputeShader = Engine.EffectiveSettings.CalculateSkinningInComputeShader;
+                Settings.CalculateBlendshapesInComputeShader = Engine.EffectiveSettings.CalculateBlendshapesInComputeShader;
             }
 
             internal static void ApplyGpuRenderDispatchToPipeline(RenderPipeline pipeline, bool useGpu)

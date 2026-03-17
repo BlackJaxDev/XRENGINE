@@ -480,7 +480,8 @@ internal enum AnimVarKind : byte
     Float = 3,
 }
 
-internal sealed class AnimStateMachineSerializedModel
+[MemoryPackable]
+internal sealed partial class AnimStateMachineSerializedModel
 {
     [YamlMember(Alias = "__assetType", Order = -100)]
     [MemoryPackIgnore]
@@ -501,7 +502,8 @@ internal sealed class AnimStateMachineSerializedModel
     public List<AnimLayerSerializedModel> Layers { get; set; } = [];
 }
 
-internal sealed class AnimLayerSerializedModel
+[MemoryPackable]
+internal sealed partial class AnimLayerSerializedModel
 {
     public AnimLayer.EApplyType ApplyType { get; set; }
 
@@ -516,7 +518,8 @@ internal sealed class AnimLayerSerializedModel
     public List<AnimStateSerializedModel> States { get; set; } = [];
 }
 
-internal sealed class AnimStateSerializedModel
+[MemoryPackable]
+internal sealed partial class AnimStateSerializedModel
 {
     public string? Name { get; set; }
 
@@ -533,7 +536,8 @@ internal sealed class AnimStateSerializedModel
     public List<AnimStateTransitionSerializedModel> Transitions { get; set; } = [];
 }
 
-internal sealed class AnimStateTransitionSerializedModel
+[MemoryPackable]
+internal sealed partial class AnimStateTransitionSerializedModel
 {
     public int DestinationStateIndex { get; set; }
 
@@ -562,7 +566,8 @@ internal sealed class AnimStateTransitionSerializedModel
     public bool CanTransitionToSelf { get; set; }
 }
 
-internal sealed class AnimStateComponentSerializedModel
+[MemoryPackable]
+internal sealed partial class AnimStateComponentSerializedModel
 {
     public AnimStateComponentKind Kind { get; set; }
 
@@ -603,7 +608,8 @@ internal sealed class AnimStateComponentSerializedModel
     public TrackingControllerComponent.ETrackingMode TrackingModeMouth { get; set; }
 }
 
-internal sealed class AnimVarSerializedModel
+[MemoryPackable]
+internal sealed partial class AnimVarSerializedModel
 {
     public AnimVarKind Kind { get; set; }
 

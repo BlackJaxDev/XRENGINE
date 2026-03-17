@@ -3,7 +3,9 @@ using System;
 using System.Linq;
 using System.Numerics;
 using XREngine;
+using XREngine.Components;
 using XREngine.Input;
+using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.Vulkan;
@@ -189,7 +191,7 @@ public static partial class EditorImGuiUI
                             ImGui.TableNextColumn();
                             ImGui.Text($"R{idx++}");
                             ImGui.TableNextColumn();
-                            ImGui.Text(remote.ControlledPawn?.GetType().Name ?? "<none>");
+                            ImGui.Text((remote.ControlledPawnComponent as PawnComponent)?.GetType().Name ?? "<none>");
                         }
 
                         ImGui.EndTable();
@@ -200,9 +202,9 @@ public static partial class EditorImGuiUI
             }
         }
 
-        private static void DrawControllerInfo(LocalPlayerController player)
+        private static void DrawControllerInfo(IPawnController player)
         {
-            var input = player.Input;
+            var input = player.InputDevice as LocalInputInterface;
             if (input is null)
             {
                 ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1.0f), "<no input>");
@@ -224,9 +226,9 @@ public static partial class EditorImGuiUI
             ImGui.Text(devices.Trim());
         }
 
-        private static void DrawPawnInfo(LocalPlayerController player)
+        private static void DrawPawnInfo(IPawnController player)
         {
-            var pawn = player.ControlledPawn;
+            var pawn = player.ControlledPawnComponent as PawnComponent;
             if (pawn is null)
             {
                 ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1.0f), "<none>");

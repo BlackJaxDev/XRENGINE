@@ -315,7 +315,8 @@ internal static class AnimationClipSerialization
     }
 }
 
-internal sealed class AnimationClipSerializedModel
+[MemoryPackable]
+internal sealed partial class AnimationClipSerializedModel
 {
     [YamlMember(Alias = "__assetType", Order = -100)]
     [MemoryPackIgnore]
@@ -348,7 +349,8 @@ internal sealed class AnimationClipSerializedModel
     public AnimationMemberSerializedModel? RootMember { get; set; }
 }
 
-internal sealed class AnimationMemberSerializedModel
+[MemoryPackable]
+internal sealed partial class AnimationMemberSerializedModel
 {
     public string? MemberName { get; set; }
 
@@ -365,7 +367,8 @@ internal sealed class AnimationMemberSerializedModel
     public List<AnimationMemberSerializedModel> Children { get; set; } = [];
 }
 
-internal sealed class SerializedMethodArgumentModel
+[MemoryPackable]
+internal sealed partial class SerializedMethodArgumentModel
 {
     public string? TypeName { get; set; }
 

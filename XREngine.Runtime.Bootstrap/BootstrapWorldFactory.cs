@@ -7,6 +7,8 @@ using XREngine.Components.Lights;
 using XREngine.Components.Scene;
 using XREngine.Data.Core;
 using XREngine.Rendering;
+using XREngine.Runtime.AnimationIntegration;
+using XREngine.Runtime.AudioIntegration;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using Quaternion = System.Numerics.Quaternion;
@@ -23,7 +25,7 @@ public static class BootstrapWorldFactory
         {
             UnitTestWorldKind.Default => CreateUnitTestWorld(setUI, isServer),
             UnitTestWorldKind.NetworkingPose => CreateNetworkingPoseWorld(setUI, isServer),
-            _ => BootstrapEditorBridge.Current?.CreateSpecializedWorld(settings.WorldKind, setUI, isServer) ?? CreateUnitTestWorld(setUI, isServer),
+            _ => BootstrapWorldBridge.Current?.CreateSpecializedWorld(settings.WorldKind, setUI, isServer) ?? CreateUnitTestWorld(setUI, isServer),
         };
     }
 
@@ -55,10 +57,10 @@ public static class BootstrapWorldFactory
             AddPointLight(rootNode);
 
         if (settings.SoundNode)
-            BootstrapAudioBuilder.AddSoundNode(rootNode);
+            BootstrapAudioWorldBuilder.AddSoundNode(rootNode);
 
         if (settings.IKTest)
-            AddIKTest(rootNode);
+            BootstrapAnimationWorldBuilder.AddIKTest(rootNode, targetNode => BootstrapEditorBridge.Current?.EnableTransformToolForNode(targetNode));
 
         if (settings.LightProbe || settings.Skybox)
         {
@@ -79,7 +81,7 @@ public static class BootstrapWorldFactory
             BootstrapPhysicsBuilder.AddPhysics(rootNode, settings.PhysicsBallCount);
 
         if (settings.Spline)
-            AddSpline(rootNode);
+            BootstrapAnimationWorldBuilder.AddSpline(rootNode);
 
         if (settings.DeferredDecal)
             AddDeferredDecal(rootNode);
@@ -143,34 +145,6 @@ public static class BootstrapWorldFactory
         _ = mirrorNode.AddComponent<MirrorCaptureComponent>();
     }
 
-    private static void AddIKTest(SceneNode rootNode)
-    {
-        SceneNode ikTestRootNode = rootNode.NewChild();
-        ikTestRootNode.Name = "IKTestRootNode";
-        Transform tfmRoot = ikTestRootNode.GetTransformAs<Transform>(true)!;
-        tfmRoot.Translation = new Vector3(0.0f, 0.0f, 0.0f);
-
-        SceneNode ikTest1Node = ikTestRootNode.NewChild();
-        ikTest1Node.Name = "IKTest1Node";
-        Transform tfm1 = ikTest1Node.GetTransformAs<Transform>(true)!;
-        tfm1.Translation = new Vector3(0.0f, 5.0f, 0.0f);
-
-        SceneNode ikTest2Node = ikTest1Node.NewChild();
-        ikTest2Node.Name = "IKTest2Node";
-        Transform tfm2 = ikTest2Node.GetTransformAs<Transform>(true)!;
-        tfm2.Translation = new Vector3(0.0f, 5.0f, 0.0f);
-
-        var comp = ikTestRootNode.AddComponent<SingleTargetIKComponent>()!;
-        comp.MaxIterations = 10;
-
-        var targetNode = rootNode.NewChild();
-        var targetTfm = targetNode.GetTransformAs<Transform>(true)!;
-        targetTfm.Translation = new Vector3(2.0f, 5.0f, 0.0f);
-        comp.TargetTransform = targetNode.Transform;
-
-        BootstrapEditorBridge.Current?.EnableTransformToolForNode(targetNode);
-    }
-
     private static void AddDeferredDecal(SceneNode rootNode)
     {
         var decalNode = new SceneNode(rootNode) { Name = "TestDecalNode" };
@@ -181,25 +155,6 @@ public static class BootstrapWorldFactory
         var decalComp = decalNode.AddComponent<DeferredDecalComponent>()!;
         decalComp.Name = "TestDecal";
         decalComp.SetTexture(Engine.Assets.LoadEngineAsset<XRTexture2D>("Textures", "decal guide.png"));
-    }
-
-    private static void AddSpline(SceneNode rootNode)
-    {
-        var spline = rootNode.AddComponent<Spline3DPreviewComponent>();
-        PropAnimVector3 anim = new();
-        Random random = new();
-        float len = random.NextSingle() * 10.0f;
-        int frameCount = random.Next(2, 10);
-        for (int i = 0; i < frameCount; i++)
-        {
-            float t = i / (float)frameCount;
-            Vector3 value = new(random.NextSingle() * 10.0f, random.NextSingle() * 10.0f, random.NextSingle() * 10.0f);
-            Vector3 tangent = new(random.NextSingle() * 10.0f, random.NextSingle() * 10.0f, random.NextSingle() * 10.0f);
-            anim.Keyframes.Add(new Vector3Keyframe(t, value, tangent, EVectorInterpType.Smooth));
-        }
-
-        anim.LengthInSeconds = len;
-        spline!.Spline = anim;
     }
 
     private static void AddDirLight2(SceneNode rootNode)

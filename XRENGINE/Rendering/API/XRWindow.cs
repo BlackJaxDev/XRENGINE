@@ -296,8 +296,8 @@ namespace XREngine.Rendering
 
         #region Public Methods - Viewport Management
 
-        public XRViewport GetOrAddViewportForPlayer(LocalPlayerController controller, bool autoSizeAllViewports)
-            => controller.Viewport ??= AddViewportForPlayer(controller, autoSizeAllViewports);
+        public XRViewport GetOrAddViewportForPlayer(IPawnController controller, bool autoSizeAllViewports)
+            => (controller.Viewport as XRViewport) ?? AddViewportForPlayer(controller, autoSizeAllViewports);
 
         /// <summary>
         /// Remakes all viewports in order of active local player indices.
@@ -306,11 +306,12 @@ namespace XREngine.Rendering
         {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.ResizeAllViewportsAccordingToPlayers");
 
-            LocalPlayerController[] players = [.. Viewports
+            IPawnController[] players = [.. Viewports
                 .Select(x => x.AssociatedPlayer)
-                .OfType<LocalPlayerController>()
+                .OfType<IPawnController>()
+                .Where(x => x.IsLocal)
                 .Distinct()
-                .OrderBy(x => (int)x.LocalPlayerIndex)];
+                .OrderBy(x => (int)(x.LocalPlayerIndex ?? 0))];
             foreach (var viewport in Viewports)
                 viewport.Destroy();
             Viewports.Clear();
@@ -331,7 +332,7 @@ namespace XREngine.Rendering
         public void RegisterLocalPlayer(ELocalPlayerIndex playerIndex, bool autoSizeAllViewports)
             => RegisterController(Engine.State.GetOrCreateLocalPlayer(playerIndex), autoSizeAllViewports);
 
-        public void RegisterController(LocalPlayerController controller, bool autoSizeAllViewports)
+        public void RegisterController(IPawnController controller, bool autoSizeAllViewports)
             => GetOrAddViewportForPlayer(controller, autoSizeAllViewports).AssociatedPlayer = controller;
 
         /// <summary>
@@ -340,13 +341,13 @@ namespace XREngine.Rendering
         /// scenarios like snapshot restore where runtime-only references (controller.Viewport,
         /// viewport.AssociatedPlayer) can become stale or inconsistent.
         /// </summary>
-        public XRViewport? EnsureControllerRegistered(LocalPlayerController controller, bool autoSizeAllViewports)
+        public XRViewport? EnsureControllerRegistered(IPawnController controller, bool autoSizeAllViewports)
         {
             if (controller is null)
                 return null;
 
             // If the controller is holding a stale viewport reference (not owned by this window), drop it.
-            if (controller.Viewport is not null && !Viewports.Contains(controller.Viewport))
+            if (controller.Viewport is XRViewport existingVP && !Viewports.Contains(existingVP))
                 controller.Viewport = null;
 
             // Prefer an existing viewport already tied to the same local player index.
@@ -354,7 +355,6 @@ namespace XREngine.Rendering
             if (existingByIndex is not null)
             {
                 existingByIndex.AssociatedPlayer = controller;
-                controller.Viewport = existingByIndex;  // CRITICAL: bind controller to viewport
                 return existingByIndex;
             }
 
@@ -363,25 +363,24 @@ namespace XREngine.Rendering
             if (unassigned is not null)
             {
                 unassigned.AssociatedPlayer = controller;
-                controller.Viewport = unassigned;  // CRITICAL: bind controller to viewport
                 return unassigned;
             }
 
             // Fallback: create a viewport for the controller.
             RegisterController(controller, autoSizeAllViewports);
-            return controller.Viewport;
+            return controller.Viewport as XRViewport;
         }
 
         public void UnregisterLocalPlayer(ELocalPlayerIndex playerIndex)
         {
-            LocalPlayerController? controller = Engine.State.GetLocalPlayer(playerIndex);
+            IPawnController? controller = Engine.State.GetLocalPlayer(playerIndex);
             if (controller is not null)
                 UnregisterController(controller);
         }
 
-        public void UnregisterController(LocalPlayerController controller)
+        public void UnregisterController(IPawnController controller)
         {
-            if (controller.Viewport != null && Viewports.Contains(controller.Viewport))
+            if (controller.Viewport is XRViewport vp && Viewports.Contains(vp))
                 controller.Viewport = null;
         }
 
@@ -1122,7 +1121,7 @@ namespace XREngine.Rendering
             VerifyTick();
         }
 
-        private XRViewport AddViewportForPlayer(LocalPlayerController? controller, bool autoSizeAllViewports)
+        private XRViewport AddViewportForPlayer(IPawnController? controller, bool autoSizeAllViewports)
         {
             using var sample = RuntimeRenderingHostServices.Current.StartProfileScope("XRWindow.AddViewportForPlayer");
 
@@ -1138,8 +1137,8 @@ namespace XREngine.Rendering
                 newViewport.Index,
                 newViewport.GetHashCode(),
                 controller?.GetHashCode() ?? 0,
-                controller is null ? "<null>" : $"P{(int)controller.LocalPlayerIndex + 1}",
-                controller?.Viewport?.GetHashCode() ?? 0);
+                controller is null ? "<null>" : $"P{(int)(controller.LocalPlayerIndex ?? 0) + 1}",
+                (controller?.Viewport as XRViewport)?.GetHashCode() ?? 0);
 
             if (autoSizeAllViewports)
                 ResizeAllViewportsAccordingToPlayers();

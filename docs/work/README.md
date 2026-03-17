@@ -19,6 +19,7 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 
 ## Design & Investigations
 - [Indirect GPU Rendering Architecture](design/IndirectGPURendering-Design.md)
+- [Bindless Deferred Texturing Plan](design/bindless-deferred-texturing-plan.md)
 - [Vulkan Parity Report](design/vulkan-parity-report.md)
 - [Vulkan Command Buffer Refactor](design/vulkan-command-buffer-refactor.md)
 - [Transparency And OIT Implementation Plan](design/transparency-and-oit-implementation-plan.md)

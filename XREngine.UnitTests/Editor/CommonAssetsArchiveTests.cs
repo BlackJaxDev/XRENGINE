@@ -14,6 +14,8 @@ public class CommonAssetsArchiveTests
     private const string ArchiveOutputEnvVar = "XRE_COOK_COMMONASSETS_ARCHIVE";
 
     [Test]
+    [Category("Slow")]
+    [Explicit("Slow content-packaging integration test. Run manually when validating common-asset cooking or archive output changes.")]
     public void CookBuildCommonAssets_ToGameContentArchive()
     {
         string repoRoot = FindRepositoryRoot();

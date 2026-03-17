@@ -25,7 +25,7 @@ namespace XREngine
                 => Volatile.Write(ref _uiInputCaptured, captured ? 1 : 0);
 
             public static InputInterface? Get(ELocalPlayerIndex index)
-                => State.LocalPlayers[(int)index]?.Input;
+                => State.LocalPlayers[(int)index]?.InputDevice as InputInterface;
 
             public static bool Key(ELocalPlayerIndex localPlayerIndex, EKey key, EButtonInputType type)
                 => Get(localPlayerIndex)?.GetKeyState(key, type) ?? false;

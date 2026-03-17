@@ -94,6 +94,7 @@ The Unit Testing World is configured by a JSON file and loaded on startup.
 - **What happens on load**: the JSON is deserialized into `UnitTestingWorld.Toggles` (type `UnitTestingWorld.Settings`). If the file doesn’t exist yet, a default one is written out.
 - **How it affects the world**: `UnitTestingWorld.CreateSelectedWorld(...)` switches on `Toggles.WorldKind` to choose which unit-test world factory to run, and the other toggle values control what gets added (models to import, lighting, physics, UI overlays, etc.).
 - **Per-model material selection**: each entry in `ModelsToImport` now owns its own `MaterialMode` value. Supported values are `Deferred`, `Forward`, and `Uber`, and they apply to both `Static` and `Animated` model imports.
+- **Per-model static collider generation**: static `ModelsToImport` entries can set `GenerateCoacdCollidersPerSubmesh` to `true` to split imported submeshes into separate model components and auto-attach CoACD-generated PhysX convex colliders for each one.
 - **It also influences engine startup**: the Editor loads these toggles early so render/update settings (render API, tick rates, pipeline choices, etc.) can be applied consistently.
 
 ## Launch Options (VS Code)
@@ -135,6 +136,10 @@ There are also “prep” tasks used by the debug configurations:
 - `Prep-DebugClient-WithServerAndClient`
 - `Prep-DebugP2PClient-WithPeer`
 - `Prep-DebugVRClient-WithEditor`
+
+Manual validation tasks:
+
+- `Cook-CommonAssets-Archive (Manual Slow)` packages `Build/CommonAssets` into a game-content archive. It is intentionally not part of the normal test loop and should be run only when validating content cooking or archive packaging changes.
 
 ## Launch Options (Visual Studio)
 

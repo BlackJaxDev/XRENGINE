@@ -1,13 +1,35 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    /// <summary>
+    /// Controls which SSBO the surfel shaders use for world-matrix lookups.
+    /// </summary>
+    public enum ESurfelTransformSource
+    {
+        /// <summary>
+        /// Bind the full GPU indirect commands buffer (48 floats per command, binding 5).
+        /// Works whenever GPUCommands is populated (both GPU and CPU dispatch modes
+        /// after the VisualScene3D always-populate fix).
+        /// </summary>
+        GpuCommands,
+
+        /// <summary>
+        /// Build a compact transform-only SSBO (16 floats per transform, binding 6)
+        /// extracted from the GPU commands buffer each frame. Lower memory footprint
+        /// on the GPU at the cost of a per-frame CPU copy.
+        /// </summary>
+        CompactTransformAtlas,
+    }
+
     /// <summary>
     /// Surfel-based GI (GIBS-inspired) initial implementation.
     ///
@@ -55,10 +77,19 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRDataBuffer? _freeStackBuffer;
         private XRDataBuffer? _gridCountsBuffer;
         private XRDataBuffer? _gridIndicesBuffer;
+        private XRDataBuffer? _transformAtlasBuffer;
+        private uint _transformAtlasElementCount;
 
         private bool _initialized;
 
         private uint _frameIndex;
+
+        /// <summary>
+        /// Selects whether surfel shaders read world matrices from the full GPU commands
+        /// buffer or from a compact transform-only SSBO built each frame.
+        /// Defaults to <see cref="ESurfelTransformSource.GpuCommands"/>.
+        /// </summary>
+        public ESurfelTransformSource TransformSource { get; set; } = ESurfelTransformSource.GpuCommands;
 
         // Expose buffers and parameters for debug visualization
         public XRDataBuffer? SurfelBuffer => _surfelBuffer;
@@ -66,6 +97,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         public XRDataBuffer? FreeStackBuffer => _freeStackBuffer;
         public XRDataBuffer? GridCountsBuffer => _gridCountsBuffer;
         public XRDataBuffer? GridIndicesBuffer => _gridIndicesBuffer;
+        public XRDataBuffer? TransformAtlasBuffer => _transformAtlasBuffer;
+        public uint TransformAtlasElementCount => _transformAtlasElementCount;
 
         /// <summary>
         /// Current grid origin (world-space position of grid corner).
@@ -452,6 +485,28 @@ namespace XREngine.Rendering.Pipelines.Commands
             // not the compacted culled-visible commands list.
             var scene = ActivePipelineInstance.RenderState.Scene;
             var gpuScene = scene?.GPUCommands;
+
+            if (TransformSource == ESurfelTransformSource.CompactTransformAtlas)
+            {
+                BuildCompactTransformAtlas(gpuScene);
+                if (_transformAtlasBuffer is not null && _transformAtlasElementCount > 0)
+                {
+                    _transformAtlasBuffer.BindTo(program, 6u);
+                    program.Uniform("useTransformAtlas", true);
+                    program.Uniform("transformAtlasCount", _transformAtlasElementCount * 16u);
+                    // Still set the GPU commands uniforms so the shader doesn't use stale state.
+                    program.Uniform("hasCulledCommands", false);
+                    program.Uniform("culledFloatCount", 0u);
+                    program.Uniform("culledCommandFloats", CulledCommandFloats);
+                    return;
+                }
+                // Fall through to GPU commands path if atlas build failed.
+            }
+
+            // GPU commands path (also the fallback).
+            program.Uniform("useTransformAtlas", false);
+            program.Uniform("transformAtlasCount", 0u);
+
             XRDataBuffer? commands = gpuScene is null ? null : gpuScene.AllLoadedCommandsBuffer;
             if (commands is null)
             {
@@ -467,6 +522,67 @@ namespace XREngine.Rendering.Pipelines.Commands
             // ElementCount here is the number of commands, not the number of floats.
             program.Uniform("culledFloatCount", commands.ElementCount * CulledCommandFloats);
             program.Uniform("culledCommandFloats", CulledCommandFloats);
+        }
+
+        /// <summary>
+        /// Builds a compact SSBO containing only world matrices (16 floats each)
+        /// extracted from the full GPU commands buffer (48 floats each).
+        /// </summary>
+        private void BuildCompactTransformAtlas(GPUScene? gpuScene)
+        {
+            if (gpuScene is null)
+            {
+                _transformAtlasElementCount = 0;
+                return;
+            }
+
+            uint commandCount = gpuScene.TotalCommandCount;
+            if (commandCount == 0)
+            {
+                _transformAtlasElementCount = 0;
+                return;
+            }
+
+            // Ensure atlas buffer exists and is large enough.
+            if (_transformAtlasBuffer is null)
+            {
+                _transformAtlasBuffer = new XRDataBuffer(
+                    "SurfelGI_TransformAtlas",
+                    EBufferTarget.ShaderStorageBuffer,
+                    commandCount,
+                    EComponentType.Float,
+                    16u, // Matrix4x4 = 16 floats
+                    false,
+                    false)
+                {
+                    Usage = EBufferUsage.DynamicDraw,
+                    BindingIndexOverride = 6u,
+                    DisposeOnPush = false,
+                    Resizable = true
+                };
+            }
+
+            if (_transformAtlasBuffer.ElementCount < commandCount)
+                _transformAtlasBuffer.Resize(commandCount);
+
+            _transformAtlasElementCount = commandCount;
+
+            // Extract WorldMatrix (first 64 bytes of each 192-byte command) into the compact buffer.
+            XRDataBuffer commandsBuffer = gpuScene.AllLoadedCommandsBuffer;
+            if (!commandsBuffer.TryGetAddress(out VoidPtr srcAddr) ||
+                !_transformAtlasBuffer.TryGetAddress(out VoidPtr dstAddr))
+            {
+                _transformAtlasElementCount = 0;
+                return;
+            }
+
+            const uint srcStride = 48u * sizeof(float); // 192 bytes per GPU command
+            const uint dstStride = 16u * sizeof(float); // 64 bytes per world matrix
+
+            for (uint i = 0; i < commandCount; i++)
+                Memory.Move(dstAddr + i * dstStride, srcAddr + i * srcStride, dstStride);
+
+            _transformAtlasBuffer.PushSubData(0, commandCount * dstStride);
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

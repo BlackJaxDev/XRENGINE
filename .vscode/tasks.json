@@ -410,7 +410,7 @@
             "problemMatcher": []
         },
         {
-            "label": "Cook-CommonAssets-Archive",
+            "label": "Cook-CommonAssets-Archive (Manual Slow)",
             "type": "shell",
             "command": "powershell",
             "args": [

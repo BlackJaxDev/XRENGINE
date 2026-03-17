@@ -27,6 +27,7 @@ namespace XREngine.Scene
         private AABB _sceneBounds;
         private bool _hasSceneBounds = false;
         private bool _isGpuDispatchActive = Engine.Rendering.ResolveGpuRenderDispatchPreference(Engine.EffectiveSettings.GPURenderDispatch);
+        private bool _isCpuGpuCommandMirrorActive = false;
         private bool _useGpuBvhActive = Engine.EffectiveSettings.UseGpuBvh;
         public BvhRaycastDispatcher BvhRaycasts { get; } = new();
 
@@ -45,7 +46,7 @@ namespace XREngine.Scene
             _sceneBounds = bounds;
             _hasSceneBounds = true;
 
-            if (_isGpuDispatchActive)
+            if (_isGpuDispatchActive || _isCpuGpuCommandMirrorActive)
                 GPUCommands.Bounds = bounds;
             else
                 RenderTree.Remake(bounds);
@@ -158,8 +159,58 @@ namespace XREngine.Scene
 
         public override void GlobalSwapBuffers()
         {
+            SyncCpuGpuCommandMirrorState();
             base.GlobalSwapBuffers();
             SwapBuffersHook?.Invoke(this);
+        }
+
+        private bool ShouldMaintainCpuGpuCommandMirror()
+        {
+            foreach (XRViewport viewport in Engine.EnumerateActiveViewports())
+            {
+                switch (viewport.RenderPipeline)
+                {
+                    case DefaultRenderPipeline pipeline when pipeline.UsesSurfelGI:
+                    case SurfelDebugRenderPipeline:
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void SyncCpuGpuCommandMirrorState()
+        {
+            if (_isGpuDispatchActive)
+            {
+                _isCpuGpuCommandMirrorActive = false;
+                return;
+            }
+
+            bool shouldMirror = ShouldMaintainCpuGpuCommandMirror();
+            if (shouldMirror == _isCpuGpuCommandMirrorActive)
+                return;
+
+            _isCpuGpuCommandMirrorActive = shouldMirror;
+
+            if (shouldMirror && _hasSceneBounds)
+                GPUCommands.Bounds = _sceneBounds;
+
+            foreach (var renderable in _renderables)
+            {
+                if (renderable.RenderCommands.Count == 0 || renderable.RenderCommands[0] is not IRenderCommandMesh meshCmd)
+                    continue;
+
+                if (shouldMirror)
+                {
+                    if (meshCmd.GPUCommandIndex == uint.MaxValue)
+                        GPUCommands.Add(renderable);
+                }
+                else if (meshCmd.GPUCommandIndex != uint.MaxValue)
+                {
+                    GPUCommands.Remove(renderable);
+                }
+            }
         }
 
         // NOTE: skinning/blendshape compute prepass is now dispatched per-viewport from the
@@ -177,20 +228,31 @@ namespace XREngine.Scene
 
             if (useGpu)
             {
+                // GPU dispatch: remove from RenderTree, keep in GPUCommands.
                 RenderTree.RemoveRange(_renderables);
                 RenderTree.Swap();
 
                 if (_hasSceneBounds)
                     GPUCommands.Bounds = _sceneBounds;
 
+                // GPUCommands is always populated (see below), so renderables should
+                // already be present. Re-add defensively for cases where they were
+                // removed during an earlier CPU->GPU transition that was interrupted.
                 foreach (var renderable in _renderables)
-                    GPUCommands.Add(renderable);
+                {
+                    if (renderable.RenderCommands.Count > 0 &&
+                        renderable.RenderCommands[0] is IRenderCommandMesh meshCmd &&
+                        meshCmd.GPUCommandIndex == uint.MaxValue)
+                    {
+                        GPUCommands.Add(renderable);
+                    }
+                }
             }
             else
             {
-                foreach (var renderable in _renderables)
-                    GPUCommands.Remove(renderable);
-
+                // CPU dispatch: repopulate the RenderTree for CPU draw dispatch.
+                // GPUCommands mirroring is handled separately and only enabled when
+                // an active surfel consumer actually needs it.
                 if (_hasSceneBounds)
                     RenderTree.Remake(_sceneBounds);
                 else
@@ -201,6 +263,7 @@ namespace XREngine.Scene
             }
 
             _isGpuDispatchActive = useGpu;
+            SyncCpuGpuCommandMirrorState();
         }
 
         public void ApplyGpuBvhPreference(bool useGpuBvh)
@@ -243,9 +306,10 @@ namespace XREngine.Scene
                         operation.renderable.SwapBuffersCallback += OnRenderableSwapBuffers;
                         TrackRenderable(operation.renderable);
 
-                        if (_isGpuDispatchActive)
+                        if (_isGpuDispatchActive || _isCpuGpuCommandMirrorActive)
                             GPUCommands.Add(operation.renderable);
-                        else
+
+                        if (!_isGpuDispatchActive)
                             RenderTree.Add(operation.renderable);
                     }
                 }
@@ -254,9 +318,9 @@ namespace XREngine.Scene
                     UntrackRenderable(operation.renderable);
                     operation.renderable.SwapBuffersCallback -= OnRenderableSwapBuffers;
 
-                    if (_isGpuDispatchActive)
-                        GPUCommands.Remove(operation.renderable);
-                    else
+                    GPUCommands.Remove(operation.renderable);
+
+                    if (!_isGpuDispatchActive)
                         RenderTree.Remove(operation.renderable);
 
                     _renderables.Remove(operation.renderable);
@@ -266,10 +330,8 @@ namespace XREngine.Scene
 
         private void OnRenderableSwapBuffers(RenderInfo info, RenderCommand command)
         {
-            if (!_isGpuDispatchActive)
-                return;
-
-            if (command is IRenderCommandMesh meshCmd)
+            if ((_isGpuDispatchActive || _isCpuGpuCommandMirrorActive)
+                && command is IRenderCommandMesh meshCmd)
                 GPUCommands.TryUpdateMeshCommand(info, meshCmd);
         }
 

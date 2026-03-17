@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using XREngine.Data.Core;
 
 namespace XREngine.Players

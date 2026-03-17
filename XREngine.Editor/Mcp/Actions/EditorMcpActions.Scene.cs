@@ -742,7 +742,7 @@ namespace XREngine.Editor.Mcp
                 return Task.FromResult(new McpToolResponse(error ?? "Scene node not found.", isError: true));
 
             var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
-            if (player?.ControlledPawn is not EditorFlyingCameraPawnComponent pawn)
+            if (player?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
                 return Task.FromResult(new McpToolResponse("No editor camera pawn available to focus.", isError: true));
 
             pawn.FocusOnNode(node, durationSeconds);
@@ -771,7 +771,7 @@ namespace XREngine.Editor.Mcp
             [McpName("duration"), Description("Optional interpolation duration in seconds.")] float durationSeconds = 0.35f)
         {
             var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
-            if (player?.ControlledPawn is not EditorFlyingCameraPawnComponent pawn)
+            if (player?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
                 return Task.FromResult(new McpToolResponse("No editor camera pawn available.", isError: true));
 
             if (pawn.SceneNode?.Transform is not TransformBase cameraTransform)
