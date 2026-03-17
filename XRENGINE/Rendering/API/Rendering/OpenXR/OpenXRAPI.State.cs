@@ -399,7 +399,7 @@ public unsafe partial class OpenXRAPI
     private RenderPipeline GetOrCreateOpenXrPipeline(RenderPipeline? sourcePipeline)
     {
         // Best-effort: if no source pipeline exists, fall back to a sane default.
-        sourcePipeline ??= new DefaultRenderPipeline(stereo: false);
+        sourcePipeline ??= Engine.Rendering.NewRenderPipeline(stereo: false);
 
         // If the source pipeline type changed, recreate our dedicated instance.
         if (_openXrRenderPipeline is null || _openXrRenderPipeline.GetType() != sourcePipeline.GetType())
@@ -414,16 +414,23 @@ public unsafe partial class OpenXRAPI
                         IsShadowPass = srcDefault.IsShadowPass,
                     };
                 }
+                else if (sourcePipeline is DefaultRenderPipeline2 srcV2)
+                {
+                    created = new DefaultRenderPipeline2(stereo: false)
+                    {
+                        IsShadowPass = srcV2.IsShadowPass,
+                    };
+                }
                 else
                 {
                     created = (RenderPipeline?)Activator.CreateInstance(sourcePipeline.GetType())
-                              ?? new DefaultRenderPipeline(stereo: false);
+                              ?? Engine.Rendering.NewRenderPipeline(stereo: false);
                     created.IsShadowPass = sourcePipeline.IsShadowPass;
                 }
             }
             catch
             {
-                created = new DefaultRenderPipeline(stereo: false);
+                created = Engine.Rendering.NewRenderPipeline(stereo: false);
             }
 
             _openXrRenderPipeline = created;

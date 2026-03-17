@@ -240,8 +240,8 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 // If previous transform was never captured, assume static to avoid fake motion vectors.
-                //if (IsApproximatelyIdentity(prevModelMatrix) && !IsApproximatelyIdentity(modelMatrix))
-                //    prevModelMatrix = modelMatrix;
+                if (IsApproximatelyIdentity(prevModelMatrix) && !IsApproximatelyIdentity(modelMatrix))
+                    prevModelMatrix = modelMatrix;
 
                 SetUniformBoth(EEngineUniform.ModelMatrix, modelMatrix);
                 SetUniformBoth(EEngineUniform.PrevModelMatrix, prevModelMatrix);

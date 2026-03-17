@@ -189,7 +189,8 @@ namespace XREngine.Rendering.Commands
                 return false;
             }
 
-            camera = Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.SceneCamera;
+            camera = Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.RenderingCamera
+                ?? Engine.Rendering.State.CurrentRenderingPipeline?.RenderState?.SceneCamera;
             if (camera is null)
             {
                 Dbg("Render abort - no camera", "Lifecycle");

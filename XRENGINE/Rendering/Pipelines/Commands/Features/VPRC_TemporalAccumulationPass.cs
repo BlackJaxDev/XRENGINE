@@ -31,6 +31,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         public StateObject? ActiveJitterHandle;
         public uint LastInternalWidth;
         public uint LastInternalHeight;
+        public uint LastFullWidth;
+        public uint LastFullHeight;
+        public EAntiAliasingMode LastAntiAliasingMode = EAntiAliasingMode.None;
         public ulong LastFrameCount = 0;
     }
 
@@ -42,6 +45,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         public Matrix4x4 CurrInverseViewProjection { get; init; }
         public Matrix4x4 CurrViewProjection { get; init; }
         public Matrix4x4 CurrViewProjectionUnjittered { get; init; }
+        public Vector2 CurrentJitter { get; init; }
+        public Vector2 PreviousJitter { get; init; }
         public uint Width { get; init; }
         public uint Height { get; init; }
         public bool HistoryExposureReady { get; init; }
@@ -54,6 +59,12 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     {
         Begin,
         Accumulate,
+        /// <summary>
+        /// Disposes the active jitter handle so that subsequent rendering
+        /// (e.g. transparent / masked forward passes) uses an unjittered projection.
+        /// The jitter values are preserved in the temporal state for the Commit phase.
+        /// </summary>
+        PopJitter,
         Commit
     }
 
@@ -95,6 +106,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                 //Debug.Out("[Temporal] Accumulate phase");
                 ExecuteAccumulation(pipeline);
                 break;
+            case EPhase.PopJitter:
+                PopActiveJitter();
+                break;
             case EPhase.Commit:
                 //Debug.Out("[Temporal] Commit phase");
                 CommitTemporalFrame();
@@ -135,7 +149,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             false,
             false);
 
-        bool shouldAccumulate = ShouldUseTemporalJitter();
+        EAntiAliasingMode antiAliasingMode = ResolveAntiAliasingMode();
+        bool shouldAccumulate = ShouldRunInternalAccumulation(antiAliasingMode);
         //Debug.Out($"[Temporal] shouldAccumulate={shouldAccumulate}");
         SetHistoryExposureReady(shouldAccumulate);
         if (shouldAccumulate)
@@ -172,16 +187,22 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     }
 
     private static bool ShouldUseTemporalJitter()
+        => ShouldUseTemporalJitter(ResolveAntiAliasingMode());
+
+    private static EAntiAliasingMode ResolveAntiAliasingMode()
     {
         if (Engine.VRState.IsInVR && !Engine.Rendering.Settings.RenderVRSinglePassStereo)
-            return false;
+            return EAntiAliasingMode.None;
 
-        // Resolve AA mode through the current camera's override, falling back to global settings.
         var camera = Engine.Rendering.State.RenderingCamera;
-        var mode = camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
-        return mode == EAntiAliasingMode.Taa
-            || mode == EAntiAliasingMode.Tsr;
+        return camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
     }
+
+    private static bool ShouldUseTemporalJitter(EAntiAliasingMode mode)
+        => mode == EAntiAliasingMode.Taa || mode == EAntiAliasingMode.Tsr;
+
+    private static bool ShouldRunInternalAccumulation(EAntiAliasingMode mode)
+        => mode == EAntiAliasingMode.Taa;
 
     private static void SetHistoryExposureReady(bool ready)
     {
@@ -210,6 +231,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                 CurrInverseViewProjection = state.CurrInverseViewProjection,
                 CurrViewProjection = state.CurrViewProjection,
                 CurrViewProjectionUnjittered = state.CurrViewProjectionUnjittered,
+                CurrentJitter = state.CurrentJitter,
+                PreviousJitter = state.PreviousJitter,
                 Width = state.LastInternalWidth,
                 Height = state.LastInternalHeight
             };
@@ -247,11 +270,21 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         var viewport = instance.RenderState.WindowViewport;
         uint width = viewport is null ? 0u : (uint)viewport.InternalWidth;
         uint height = viewport is null ? 0u : (uint)viewport.InternalHeight;
+        uint fullWidth = viewport is null ? 0u : (uint)viewport.Width;
+        uint fullHeight = viewport is null ? 0u : (uint)viewport.Height;
+        EAntiAliasingMode antiAliasingMode = ResolveAntiAliasingMode();
 
-        if (width != state.LastInternalWidth || height != state.LastInternalHeight)
+        if (width != state.LastInternalWidth
+            || height != state.LastInternalHeight
+            || fullWidth != state.LastFullWidth
+            || fullHeight != state.LastFullHeight
+            || antiAliasingMode != state.LastAntiAliasingMode)
         {
             state.LastInternalWidth = width;
             state.LastInternalHeight = height;
+            state.LastFullWidth = fullWidth;
+            state.LastFullHeight = fullHeight;
+            state.LastAntiAliasingMode = antiAliasingMode;
             state.HistoryReady = false;
             state.PendingHistoryReady = false;
             state.HaltonIndex = 1;
@@ -274,7 +307,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             return;
         }
 
-        bool jitterEnabled = ShouldUseTemporalJitter();
+        bool jitterEnabled = ShouldUseTemporalJitter(antiAliasingMode);
         Vector2 jitter = jitterEnabled ? GenerateHaltonJitter(state) : Vector2.Zero;
         state.CurrentJitter = jitter;
         //Debug.Out($"[Temporal] JitterEnabled={jitterEnabled} Jitter=({jitter.X:F6},{jitter.Y:F6}) HaltonIndex={state.HaltonIndex}");
@@ -287,7 +320,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         // Use Unjittered property to ensure we get a clean projection matrix, 
         // even if the jitter stack has leaked or is dirty from other passes.
         Matrix4x4 baseProjection = camera.ProjectionMatrixUnjittered;
-        Matrix4x4 baseViewProjection = baseProjection * viewMatrix;
+        // System.Numerics is row-major / row-vector: combined VP = View * Projection.
+        // When uploaded untransposed, GLSL sees (V*P)^T = P_gl * V_gl — correct order.
+        Matrix4x4 baseViewProjection = viewMatrix * baseProjection;
 
         // Stabilize projection if it hasn't changed significantly to prevent micro-jitter/drift
         // which causes diagonal motion blur on static objects, especially at distance.
@@ -301,7 +336,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             state.ActiveJitterHandle = instance.RenderState.RequestCameraProjectionJitter(jitter);
 
         Matrix4x4 jitteredProjection = camera.ProjectionMatrix;
-        Matrix4x4 jitteredViewProjection = jitteredProjection * viewMatrix;
+        Matrix4x4 jitteredViewProjection = viewMatrix * jitteredProjection;
         if (!Matrix4x4.Invert(jitteredViewProjection, out Matrix4x4 inverseViewProjection))
             inverseViewProjection = Matrix4x4.Identity;
 
@@ -326,6 +361,19 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         }
 
         state.PendingHistoryReady = true;
+    }
+
+    /// <summary>
+    /// Disposes the active jitter handle so transparent/masked passes render unjittered.
+    /// Called between Accumulate and Commit phases.
+    /// </summary>
+    private static void PopActiveJitter()
+    {
+        if (!TryGetActiveState(out _, out var state))
+            return;
+
+        state.ActiveJitterHandle?.Dispose();
+        state.ActiveJitterHandle = null;
     }
 
     private static void CommitTemporalFrame()

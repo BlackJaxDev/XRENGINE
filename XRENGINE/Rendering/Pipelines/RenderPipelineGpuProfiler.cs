@@ -120,6 +120,10 @@ internal sealed class RenderPipelineGpuProfiler
 
     [ThreadStatic]
     private static List<string>? _commandScopeStack;
+    [ThreadStatic]
+    private static List<string>? _userScopeStack;
+    [ThreadStatic]
+    private static Stack<UserScopeHandle>? _openUserScopes;
 
     private readonly object _lock = new();
     private readonly Queue<XRRenderQuery> _queryPool = new();
@@ -129,6 +133,13 @@ internal sealed class RenderPipelineGpuProfiler
 
     private RenderPipelineGpuProfiler()
     {
+    }
+
+    private readonly struct UserScopeHandle(ulong frameId, string[] path, GLRenderQuery startQuery)
+    {
+        public ulong FrameId { get; } = frameId;
+        public string[] Path { get; } = path;
+        public GLRenderQuery StartQuery { get; } = startQuery;
     }
 
     public RenderStatsGpuPipelineSnapshot LatestSnapshot
@@ -177,18 +188,22 @@ internal sealed class RenderPipelineGpuProfiler
         string pipelineName = instance.DebugDescriptor;
         string commandName = command.GpuProfilingName;
 
-        List<string> stack = _commandScopeStack ??= [];
-        string[] path = new string[stack.Count + 2];
+        List<string> commandStack = _commandScopeStack ??= [];
+        List<string> userStack = _userScopeStack ??= [];
+        string[] path = new string[userStack.Count + commandStack.Count + 2];
         path[0] = pipelineName;
-        for (int i = 0; i < stack.Count; i++)
-            path[i + 1] = stack[i];
+        int pathIndex = 1;
+        for (int i = 0; i < userStack.Count; i++)
+            path[pathIndex++] = userStack[i];
+        for (int i = 0; i < commandStack.Count; i++)
+            path[pathIndex++] = commandStack[i];
         path[^1] = commandName;
 
         GLRenderQuery startQuery = AcquireTimestampQuery(renderer);
         startQuery.Data.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
         startQuery.QueryCounter();
 
-        stack.Add(commandName);
+        commandStack.Add(commandName);
 
         lock (_lock)
         {
@@ -200,6 +215,91 @@ internal sealed class RenderPipelineGpuProfiler
         }
 
         return new Scope(this, frameId, path, startQuery, popScope: true);
+    }
+
+    public bool PushUserScope(string scopeName)
+    {
+        if (string.IsNullOrWhiteSpace(scopeName) ||
+            !Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling ||
+            !Engine.Rendering.Stats.EnableTracking)
+        {
+            return false;
+        }
+
+        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        {
+            lock (_lock)
+                _latestSnapshot = RenderStatsGpuPipelineSnapshot.Unsupported(GetBackendName(), "GPU render-pipeline command timing is currently available on OpenGL.");
+            return false;
+        }
+
+        XRRenderPipelineInstance instance = ViewportRenderCommand.ActivePipelineInstance;
+        ulong frameId = Engine.Rendering.State.RenderFrameId;
+        string pipelineName = instance.DebugDescriptor;
+
+        List<string> userStack = _userScopeStack ??= [];
+        Stack<UserScopeHandle> openScopes = _openUserScopes ??= [];
+        string[] path = new string[userStack.Count + 2];
+        path[0] = pipelineName;
+        for (int i = 0; i < userStack.Count; i++)
+            path[i + 1] = userStack[i];
+        path[^1] = scopeName;
+
+        GLRenderQuery startQuery = AcquireTimestampQuery(renderer);
+        startQuery.Data.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
+        startQuery.QueryCounter();
+
+        userStack.Add(scopeName);
+        openScopes.Push(new UserScopeHandle(frameId, path, startQuery));
+
+        lock (_lock)
+        {
+            FrameCapture frame = GetOrCreateFrameNoLock(frameId);
+            frame.Supported = true;
+            frame.BackendName = "OpenGL";
+            frame.StatusMessage = string.Empty;
+            frame.PendingSamples++;
+        }
+
+        return true;
+    }
+
+    public void PopUserScope(string? expectedScopeName = null)
+    {
+        Stack<UserScopeHandle>? openScopes = _openUserScopes;
+        if (openScopes is null || openScopes.Count == 0)
+            return;
+
+        UserScopeHandle scope = openScopes.Pop();
+
+        List<string>? userStack = _userScopeStack;
+        if (userStack is { Count: > 0 })
+        {
+            if (!string.IsNullOrWhiteSpace(expectedScopeName) &&
+                !string.Equals(userStack[^1], expectedScopeName, StringComparison.Ordinal))
+            {
+                Debug.Rendering($"GPU timer scope mismatch. Expected '{expectedScopeName}', but closing '{userStack[^1]}'.");
+            }
+
+            userStack.RemoveAt(userStack.Count - 1);
+        }
+
+        if (AbstractRenderer.Current is not OpenGLRenderer renderer)
+        {
+            lock (_lock)
+            {
+                ReleaseQueryNoLock(scope.StartQuery);
+                CancelPendingSampleNoLock(scope.FrameId);
+            }
+            return;
+        }
+
+        GLRenderQuery endQuery = AcquireTimestampQuery(renderer);
+        endQuery.Data.CurrentQuery = Data.Rendering.EQueryTarget.Timestamp;
+        endQuery.QueryCounter();
+
+        lock (_lock)
+            _pendingScopes.Add(new PendingScope(scope.FrameId, scope.Path, scope.StartQuery, endQuery));
     }
 
     private void EndScope(ulong frameId, string[]? path, GLRenderQuery? startQuery, bool popScope)
@@ -256,6 +356,13 @@ internal sealed class RenderPipelineGpuProfiler
             ReleaseQueryNoLock(pending.EndQuery);
             _pendingScopes.RemoveAt(i);
         }
+    }
+
+    private void CancelPendingSampleNoLock(ulong frameId)
+    {
+        FrameCapture frame = GetOrCreateFrameNoLock(frameId);
+        if (frame.PendingSamples > 0)
+            frame.PendingSamples--;
     }
 
     private void PublishLatestResolvedFrameNoLock(ulong currentFrameId)

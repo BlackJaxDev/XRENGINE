@@ -177,6 +177,47 @@ namespace XREngine.Rendering.Vulkan
             _state.SetStencilWriteMask(mask);
             MarkCommandBuffersDirty();
         }
+
+        public override void EnableStencilTest(bool enable)
+        {
+            // Vulkan: stencil test is configured per-pipeline; tracked in dynamic state for future use.
+        }
+
+        public override void StencilFunc(EComparison function, int reference, uint mask)
+        {
+            // Vulkan: stencil compare is per-pipeline state; no global toggle.
+        }
+
+        public override void StencilOp(EStencilOp sfail, EStencilOp dpfail, EStencilOp dppass)
+        {
+            // Vulkan: stencil ops are per-pipeline state; no global toggle.
+        }
+
+        public override void EnableBlend(bool enable)
+        {
+            // Vulkan: blend enable is per-pipeline state; no global toggle.
+        }
+
+        public override void BlendFunc(EBlendingFactor src, EBlendingFactor dst)
+        {
+            // Vulkan: blend factors are per-pipeline state; no global toggle.
+        }
+
+        public override void BlendFuncSeparate(EBlendingFactor srcRGB, EBlendingFactor dstRGB, EBlendingFactor srcAlpha, EBlendingFactor dstAlpha)
+        {
+            // Vulkan: blend factors are per-pipeline state; no global toggle.
+        }
+
+        public override void BlendEquation(EBlendEquationMode mode)
+        {
+            // Vulkan: blend equation is per-pipeline state; no global toggle.
+        }
+
+        public override void BlendEquationSeparate(EBlendEquationMode modeRGB, EBlendEquationMode modeAlpha)
+        {
+            // Vulkan: blend equation is per-pipeline state; no global toggle.
+        }
+
         public override void EnableSampleShading(float minValue)
         {
             // Vulkan: sample shading is configured per-pipeline, not a global state toggle.

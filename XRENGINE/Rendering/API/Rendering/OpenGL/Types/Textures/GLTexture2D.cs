@@ -9,6 +9,13 @@ namespace XREngine.Rendering.OpenGL
 {
     public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GLTexture<XRTexture2D>(renderer, data)
     {
+        private const string TextureFilterAnisotropicExtension = "GL_EXT_texture_filter_anisotropic";
+        private const float DesiredMaxAnisotropy = 8.0f;
+        private const GLEnum TextureMaxAnisotropyExt = (GLEnum)0x84FE;
+        private const GLEnum MaxTextureMaxAnisotropyExt = (GLEnum)0x84FF;
+
+        private static bool? _supportsTextureFilterAnisotropic;
+        private static float _maxSupportedTextureAnisotropy = 1.0f;
         /// <summary>
         /// Clears the invalidation flag and the NeedsFullPush flag on all mipmaps
         /// so that the next Bind() → VerifySettings() cycle does NOT call PushData().
@@ -214,6 +221,54 @@ namespace XREngine.Rendering.OpenGL
 
             Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in baseLevel);
             Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in maxLevel);
+        }
+
+        private bool TryGetSupportedTextureAnisotropy(out float maxSupportedAnisotropy)
+        {
+            if (_supportsTextureFilterAnisotropic.HasValue)
+            {
+                maxSupportedAnisotropy = _maxSupportedTextureAnisotropy;
+                return _supportsTextureFilterAnisotropic.Value;
+            }
+
+            string[] extensions = Engine.Rendering.State.OpenGLExtensions;
+            bool supported = Array.IndexOf(extensions, TextureFilterAnisotropicExtension) >= 0;
+            float driverMax = 1.0f;
+            if (supported)
+            {
+                try
+                {
+                    driverMax = MathF.Max(1.0f, Api.GetFloat(MaxTextureMaxAnisotropyExt));
+                }
+                catch
+                {
+                    supported = false;
+                }
+            }
+
+            _supportsTextureFilterAnisotropic = supported;
+            _maxSupportedTextureAnisotropy = driverMax;
+            maxSupportedAnisotropy = driverMax;
+            return supported;
+        }
+
+        private static bool UsesMipmapFiltering(ETexMinFilter minFilter)
+            => minFilter is
+                ETexMinFilter.NearestMipmapNearest or
+                ETexMinFilter.LinearMipmapNearest or
+                ETexMinFilter.NearestMipmapLinear or
+                ETexMinFilter.LinearMipmapLinear;
+
+        private void ApplyTextureAnisotropy()
+        {
+            if (!TryGetSupportedTextureAnisotropy(out float maxSupportedAnisotropy))
+                return;
+
+            float anisotropy = UsesMipmapFiltering(Data.MinFilter)
+                ? MathF.Min(maxSupportedAnisotropy, DesiredMaxAnisotropy)
+                : 1.0f;
+
+            Api.TextureParameter(BindingId, TextureMaxAnisotropyExt, anisotropy);
         }
 
         private void PushPreparedMipLevel(int mipIndex)
@@ -433,6 +488,7 @@ namespace XREngine.Rendering.OpenGL
 
             int minFilter = (int)ToGLEnum(Data.MinFilter);
             Api.TextureParameterI(BindingId, GLEnum.TextureMinFilter, in minFilter);
+            ApplyTextureAnisotropy();
 
             int uWrap = (int)ToGLEnum(Data.UWrap);
             Api.TextureParameterI(BindingId, GLEnum.TextureWrapS, in uWrap);

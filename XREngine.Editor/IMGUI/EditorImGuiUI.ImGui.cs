@@ -10,6 +10,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using ImGuiNET;
 using XREngine;
@@ -71,10 +72,12 @@ public static partial class EditorImGuiUI
         private static bool _showAnimationClipEditor;
         private static UserSettings? _editorSceneHierarchySettingsSource;
         private static string? _ownedImGuiIniFilename;
-        private static DateTime _ownedImGuiIniLastWriteTimeUtc;
         private static bool _imguiPanelVisibilityLoaded;
         private static bool _imguiPanelVisibilityWriteRequested;
         private static ImGuiPanelVisibilityState _savedPanelVisibilityState;
+        private static long _iniSaveDeadlineTicks;
+        private static int _iniSaveInFlight;
+        private const long IniSaveDebounceMs = 2000;
 
         private static bool _renameInputFocusRequested;
         private static bool _imguiStyleInitialized;
@@ -1389,6 +1392,7 @@ public static partial class EditorImGuiUI
             var io = ImGui.GetIO();
             if (!string.IsNullOrWhiteSpace(io.IniFilename))
                 _ownedImGuiIniFilename ??= io.IniFilename;
+            io.IniSavingRate = float.MaxValue; // Disable ImGui auto-save; we handle persistence with debounced async writes.
             io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
 
             var style = ImGui.GetStyle();
@@ -1602,8 +1606,6 @@ public static partial class EditorImGuiUI
                 return;
             }
 
-            _ownedImGuiIniLastWriteTimeUtc = File.GetLastWriteTimeUtc(iniFilename);
-
             bool sectionFound = false;
 
             try
@@ -1654,37 +1656,56 @@ public static partial class EditorImGuiUI
             if (string.IsNullOrWhiteSpace(iniFilename))
                 return;
 
+            var io = ImGui.GetIO();
             ImGuiPanelVisibilityState currentState = CapturePanelVisibilityState();
             bool panelVisibilityChanged = currentState != _savedPanelVisibilityState;
-            DateTime currentLastWriteTimeUtc = File.Exists(iniFilename)
-                ? File.GetLastWriteTimeUtc(iniFilename)
-                : DateTime.MinValue;
-            bool iniFileChanged = currentLastWriteTimeUtc != _ownedImGuiIniLastWriteTimeUtc;
-            if (!panelVisibilityChanged && !_imguiPanelVisibilityWriteRequested && !iniFileChanged)
+            bool imguiWantsSave = io.WantSaveIniSettings;
+
+            // When any dirty signal fires, push the debounce deadline forward.
+            if (panelVisibilityChanged || _imguiPanelVisibilityWriteRequested || imguiWantsSave)
+            {
+                _iniSaveDeadlineTicks = Environment.TickCount64 + IniSaveDebounceMs;
+                if (imguiWantsSave)
+                    io.WantSaveIniSettings = false;
+            }
+
+            // Nothing pending, or debounce period hasn't elapsed yet.
+            if (_iniSaveDeadlineTicks == 0 || Environment.TickCount64 < _iniSaveDeadlineTicks)
                 return;
 
-            try
-            {
-                string? iniDirectory = Path.GetDirectoryName(iniFilename);
-                if (!string.IsNullOrWhiteSpace(iniDirectory))
-                    Directory.CreateDirectory(iniDirectory);
+            // Another async write is still running — wait for it.
+            if (Interlocked.CompareExchange(ref _iniSaveInFlight, 1, 0) != 0)
+                return;
 
-                ImGui.SaveIniSettingsToDisk(iniFilename);
-                string currentIniContent = File.Exists(iniFilename) ? File.ReadAllText(iniFilename) : string.Empty;
-                string updatedIniContent = UpsertPanelVisibilityIniSection(currentIniContent, currentState);
-                if (!string.Equals(currentIniContent, updatedIniContent, StringComparison.Ordinal))
-                    File.WriteAllText(iniFilename, updatedIniContent);
+            // Reset deadline so we don't re-trigger until next change.
+            _iniSaveDeadlineTicks = 0;
 
-                _ownedImGuiIniLastWriteTimeUtc = File.Exists(iniFilename)
-                    ? File.GetLastWriteTimeUtc(iniFilename)
-                    : DateTime.MinValue;
-                _savedPanelVisibilityState = currentState;
-                _imguiPanelVisibilityWriteRequested = false;
-            }
-            catch (Exception ex)
+            // Capture ini content on the main thread (ImGui is not thread-safe).
+            string imguiIniContent = ImGui.SaveIniSettingsToMemory();
+            string updatedContent = UpsertPanelVisibilityIniSection(imguiIniContent, currentState);
+            _savedPanelVisibilityState = currentState;
+            _imguiPanelVisibilityWriteRequested = false;
+
+            // Write to disk on a background thread so we never block the render loop.
+            _ = Task.Run(() =>
             {
-                System.Diagnostics.Debug.WriteLine($"Failed to persist ImGui panel visibility to '{iniFilename}': {ex.Message}");
-            }
+                try
+                {
+                    string? dir = Path.GetDirectoryName(iniFilename);
+                    if (!string.IsNullOrWhiteSpace(dir))
+                        Directory.CreateDirectory(dir);
+
+                    File.WriteAllText(iniFilename, updatedContent);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Failed to persist ImGui ini to '{iniFilename}': {ex.Message}");
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _iniSaveInFlight, 0);
+                }
+            });
         }
 
         private static ImGuiPanelVisibilityState CapturePanelVisibilityState()

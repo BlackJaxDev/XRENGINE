@@ -1492,7 +1492,15 @@ namespace XREngine.Rendering
         public void SetParameter(string name, Matrix4x4 value) => Parameter<ShaderMat4>(name)?.SetValue(value);
 
         internal void OnSettingUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-            => _settingUniforms?.Invoke(vertexProgram, materialProgram);
+        {
+            var renderState = Engine.Rendering.State.RenderingPipelineState;
+            renderState?.ApplyScopedProgramBindings(vertexProgram);
+
+            if (!ReferenceEquals(vertexProgram, materialProgram))
+                renderState?.ApplyScopedProgramBindings(materialProgram);
+
+            _settingUniforms?.Invoke(vertexProgram, materialProgram);
+        }
 
         /// <summary>
         /// Retrieve all meshes and materials used by this renderer.

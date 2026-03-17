@@ -123,6 +123,22 @@ namespace XREngine.Rendering.Commands
                     : 0;
         }
 
+        public bool TryGetRenderingPassCommands(int renderPass, out IReadOnlyCollection<RenderCommand>? commands)
+        {
+            using (_lock.EnterScope())
+            {
+                if (_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) &&
+                    list is IReadOnlyCollection<RenderCommand> readOnly)
+                {
+                    commands = readOnly;
+                    return true;
+                }
+            }
+
+            commands = null;
+            return false;
+        }
+
         public void AddRangeCPU(IEnumerable<RenderCommand> renderCommands)
         {
             foreach (RenderCommand renderCommand in renderCommands)
@@ -223,6 +239,20 @@ namespace XREngine.Rendering.Commands
                 if (cmd is IRenderCommandMesh)
                     cmd?.Render();
         }
+
+        /// <summary>
+        /// Renders only commands in the specified pass that satisfy the given predicate.
+        /// </summary>
+        public void RenderCPUFiltered(int renderPass, Predicate<RenderCommand> filter)
+        {
+            if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
+                return;
+
+            foreach (var cmd in list)
+                if (cmd is not null && filter(cmd))
+                    cmd.Render();
+        }
+
         public void RenderGPU(int renderPass)
         {
             if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))
@@ -232,7 +262,7 @@ namespace XREngine.Rendering.Commands
             if (renderState is null)
                 return;
 
-            XRCamera? camera = renderState.SceneCamera;
+            XRCamera? camera = renderState.RenderingCamera ?? renderState.SceneCamera;
             if (camera is null)
                 return;
 
@@ -484,7 +514,7 @@ namespace XREngine.Rendering.Commands
         {
             Matrix4x4 view = camera.Transform.InverseRenderMatrix;
             Matrix4x4 projection = camera.ProjectionMatrix;
-            Matrix4x4 viewProjection = projection * view;
+            Matrix4x4 viewProjection = view * projection;
             Vector3 cameraPos = camera.Transform.RenderTranslation;
             Vector3 cameraForward = camera.Transform.RenderForward;
 

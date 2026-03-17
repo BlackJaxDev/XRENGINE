@@ -13,6 +13,7 @@ using XREngine.Rendering.OpenGL;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.Resources;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor.ComponentEditors;
 
@@ -357,6 +358,11 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         ImGui.Separator();
 
+        // HDR Output Override
+        DrawOutputHDROverride(component);
+
+        ImGui.Separator();
+
         // Internal Resolution Settings
         DrawInternalResolutionSettings(component);
 
@@ -387,6 +393,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     private static void DrawAntiAliasingOverride(CameraComponent component)
     {
         var camera = component.Camera;
+        EAntiAliasingMode globalMode = Engine.EffectiveSettings.AntiAliasingMode;
+        EAntiAliasingMode effectiveMode = camera.AntiAliasingModeOverride ?? globalMode;
 
         ImGui.Text("Anti-Aliasing Override");
         if (ImGui.IsItemHovered())
@@ -396,7 +404,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         if (ImGui.Checkbox("Override AA##AAOverrideToggle", ref hasOverride))
         {
             camera.AntiAliasingModeOverride = hasOverride
-                ? Engine.Rendering.Settings.AntiAliasingMode
+                ? globalMode
                 : null;
         }
         if (ImGui.IsItemHovered())
@@ -417,7 +425,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
                 if (ImGui.Checkbox("Override MSAA Samples##MsaaOverrideToggle", ref hasMsaaOverride))
                 {
                     camera.MsaaSampleCountOverride = hasMsaaOverride
-                        ? Engine.Rendering.Settings.MsaaSampleCount
+                        ? Engine.EffectiveSettings.MsaaSampleCount
                         : null;
                 }
 
@@ -431,10 +439,64 @@ public sealed class CameraComponentEditor : IXRComponentEditor
                     }
                 }
             }
-
-            // Show what the global setting is for reference
-            ImGui.TextDisabled($"Global: {Engine.Rendering.Settings.AntiAliasingMode}");
         }
+
+        if (effectiveMode == EAntiAliasingMode.Tsr)
+            DrawTsrScaleOverride(camera);
+
+        ImGui.TextDisabled($"Global: {globalMode}");
+    }
+
+    private static void DrawTsrScaleOverride(XRCamera camera)
+    {
+        bool hasOverride = camera.TsrRenderScaleOverride.HasValue;
+        if (ImGui.Checkbox("Override TSR Scale##TsrScaleOverrideToggle", ref hasOverride))
+        {
+            camera.TsrRenderScaleOverride = hasOverride
+                ? Engine.Rendering.Settings.TsrRenderScale
+                : null;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Enable to override the global TSR internal render scale for this camera.");
+
+        if (camera.TsrRenderScaleOverride.HasValue)
+        {
+            float scale = camera.TsrRenderScaleOverride.Value;
+            ImGui.SetNextItemWidth(150f);
+            if (ImGui.SliderFloat("TSR Scale##TsrScaleOverride", ref scale, 0.5f, 1.0f, "%.2fx"))
+                camera.TsrRenderScaleOverride = scale;
+        }
+
+        ImGui.TextDisabled($"Global TSR Scale: {Engine.Rendering.Settings.TsrRenderScale:0.00}x");
+    }
+
+    private static void DrawOutputHDROverride(CameraComponent component)
+    {
+        var camera = component.Camera;
+
+        ImGui.Text("HDR Output Override");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Per-camera HDR override. When enabled, overrides the global\nOutputHDR setting for this camera. Tonemapping is skipped in HDR mode.");
+
+        bool hasOverride = camera.OutputHDROverride.HasValue;
+        if (ImGui.Checkbox("Override HDR##HDROverrideToggle", ref hasOverride))
+        {
+            camera.OutputHDROverride = hasOverride
+                ? Engine.Rendering.Settings.OutputHDR
+                : null;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Enable to override the global HDR output mode for this camera.");
+
+        if (camera.OutputHDROverride.HasValue)
+        {
+            bool hdr = camera.OutputHDROverride.Value;
+            if (ImGui.Checkbox("Output HDR##HDRValue", ref hdr))
+                camera.OutputHDROverride = hdr;
+        }
+
+        // Show what the global setting is for reference
+        ImGui.TextDisabled($"Global HDR: {(Engine.Rendering.Settings.OutputHDR ? "On" : "Off")}");
     }
 
     private static readonly string[] InternalResolutionModeNames = 
@@ -1049,6 +1111,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
     private static void DrawSchemaCategories(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, CameraComponent component)
     {
+        bool effectiveHDR = component.Camera.OutputHDROverride ?? Engine.Rendering.Settings.OutputHDR;
+
         foreach (var category in schema.Categories)
         {
             if (!ImGui.CollapsingHeader(category.DisplayName, ImGuiTreeNodeFlags.DefaultOpen))
@@ -1066,6 +1130,13 @@ public sealed class CameraComponentEditor : IXRComponentEditor
                     !state.TryGetStage(stageKey, out PostProcessStageState? stageState) ||
                     stageState is null)
                     continue;
+
+                // Hide the tonemapping stage when HDR output is active
+                if (effectiveHDR && stageKey == "tonemapping")
+                {
+                    ImGui.TextDisabled("Tonemapping is disabled (HDR output active).");
+                    continue;
+                }
 
                 DrawSchemaStage(stage, stageState, component);
             }
@@ -1087,7 +1158,58 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         foreach (var param in stage.Parameters)
             DrawSchemaParameter(param, stageState, undoTarget);
 
+        if (stageState.BackingInstance is DepthOfFieldSettings dof)
+            DrawDepthOfFieldFocusTarget(dof, component);
+
         ImGui.PopID();
+    }
+
+    private static void DrawDepthOfFieldFocusTarget(DepthOfFieldSettings dof, CameraComponent component)
+    {
+        if (dof.Mode != DepthOfFieldSettings.DepthOfFieldControlMode.TargetTransform)
+            return;
+
+        ImGui.Separator();
+
+        TransformBase? current = dof.FocusTarget;
+        string label = current != null
+            ? (current.SceneNode?.Name ?? current.GetType().Name)
+            : "(none — drag a scene node here)";
+
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted("Focus Target");
+        ImGui.SameLine();
+
+        float availW = ImGui.GetContentRegionAvail().X;
+        float clearW = current != null ? ImGui.CalcTextSize("Clear").X + ImGui.GetStyle().FramePadding.X * 2 + ImGui.GetStyle().ItemSpacing.X : 0;
+        ImGui.SetNextItemWidth(availW - clearW);
+        ImGui.InputText("##focusTarget", ref label, 256, ImGuiInputTextFlags.ReadOnly);
+
+        if (ImGui.BeginDragDropTarget())
+        {
+            if (ImGuiSceneNodeDragDrop.Accept() is SceneNode dropped)
+            {
+                using var _ = Undo.TrackChange("Set DoF Focus Target", dof);
+                dof.FocusTarget = dropped.Transform;
+            }
+            ImGui.EndDragDropTarget();
+        }
+
+        if (current != null)
+        {
+            ImGui.SameLine();
+            if (ImGui.Button("Clear"))
+            {
+                using var _ = Undo.TrackChange("Clear DoF Focus Target", dof);
+                dof.FocusTarget = null;
+            }
+
+            // Show computed distance as read-only info
+            Vector3 targetPos = current.WorldTranslation + dof.FocusTargetOffset;
+            Vector3 cameraPos = component.Camera.Transform.WorldTranslation;
+            float dist = Vector3.Distance(cameraPos, targetPos);
+            ImGui.TextDisabled($"Computed Distance: {dist:F2}");
+        }
     }
 
     private static void DrawSchemaParameter(PostProcessParameterDescriptor param, PostProcessStageState stageState, XRBase? undoTarget)

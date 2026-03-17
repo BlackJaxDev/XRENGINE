@@ -94,7 +94,6 @@ namespace XREngine
         private static readonly ConcurrentQueue<Action> _pendingPhysicsThreadWork = new();
 
         private static int _isDispatchingRenderFrame;
-        private static int _loggedAppThreadDispatchDuringRender;
 
         // ═══════════════════════════════════════════════════════════════════════════════════════════
         // SETTINGS BACKING FIELDS

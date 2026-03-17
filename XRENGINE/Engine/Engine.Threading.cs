@@ -320,12 +320,9 @@ namespace XREngine
 
         private static void ProcessPendingAppThreadWork(int maxJobs)
         {
-#if !XRE_PUBLISHED
-            if (IsDispatchingRenderFrame && Interlocked.Exchange(ref _loggedAppThreadDispatchDuringRender, 1) == 0)
-            {
-                Debug.LogWarning("[ThreadAffinity] Non-GPU app-thread jobs were dispatched during render. AppThread work must stay off DispatchRender.");
-            }
-#endif
+            // App-thread work must not run while the render frame is being dispatched.
+            if (IsDispatchingRenderFrame)
+                return;
 
             using var scope = Engine.Profiler.Start("AppThreadJobs.Dispatch");
             Jobs.ProcessAppThreadJobs(maxJobs);

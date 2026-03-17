@@ -502,16 +502,14 @@ namespace XREngine
                     int count = System.Threading.Interlocked.Increment(ref _duplicateIdWarningCount);
                     if (count <= 3)
                     {
-                        string trace = Environment.StackTrace;
-                        Debug.Out(
+                        Debug.LogWarning(
                             $"[DuplicateID #{count}] ID={existingID} type={asset.GetType().Name} " +
                             $"path='{asset.FilePath}' name='{asset.Name}' " +
-                            $"existingType={existingAsset.GetType().Name} existingPath='{existingAsset.FilePath}' existingName='{existingAsset.Name}'\n" +
-                            $"Stack:\n{trace}");
+                            $"existingType={existingAsset.GetType().Name} existingPath='{existingAsset.FilePath}' existingName='{existingAsset.Name}'");
                     }
                     else if (count == 4)
                     {
-                        Debug.Out($"[DuplicateID] Suppressing further duplicate-ID warnings ({count}+ occurrences). Fix the root cause.");
+                        Debug.LogWarning($"[DuplicateID] Suppressing further duplicate-ID warnings ({count}+ occurrences). Fix the root cause.");
                     }
                     // Suppress all further messages after #4.
                     return existingAsset;

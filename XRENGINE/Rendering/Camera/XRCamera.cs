@@ -184,6 +184,20 @@ namespace XREngine.Rendering
         private uint? _msaaSampleCountOverride;
 
         /// <summary>
+        /// Per-camera HDR output override. When non-null, takes highest priority
+        /// over the global OutputHDR engine setting for this camera's rendering.
+        /// When true, tonemapping is skipped and the scene is output in HDR space.
+        /// </summary>
+        private bool? _outputHDROverride;
+
+        /// <summary>
+        /// Per-camera TSR render scale override. When non-null, takes highest priority
+        /// over the global TSR render scale for this camera's rendering.
+        /// Only meaningful when the effective anti-aliasing mode resolves to TSR.
+        /// </summary>
+        private float? _tsrRenderScaleOverride;
+
+        /// <summary>
         /// The projection parameters (FOV, aspect ratio, near/far planes) for this camera.
         /// Can be perspective or orthographic depending on the parameter type.
         /// </summary>
@@ -344,6 +358,38 @@ namespace XREngine.Rendering
         {
             get => _msaaSampleCountOverride;
             set => SetField(ref _msaaSampleCountOverride, value);
+        }
+
+        /// <summary>
+        /// Per-camera HDR output override.
+        /// When non-null, takes highest priority over the global OutputHDR engine setting
+        /// for any frame rendered through this camera. When true, tonemapping is skipped
+        /// and the scene is output in HDR space.
+        /// Set to null to fall back to the global settings cascade.
+        /// </summary>
+        public bool? OutputHDROverride
+        {
+            get => _outputHDROverride;
+            set => SetField(ref _outputHDROverride, value);
+        }
+
+        /// <summary>
+        /// Per-camera TSR render scale override.
+        /// When non-null, takes highest priority over the global TSR render scale
+        /// for any frame rendered through this camera.
+        /// Only meaningful when the effective anti-aliasing mode resolves to <see cref="EAntiAliasingMode.Tsr"/>.
+        /// Set to null to fall back to the global TSR render scale.
+        /// </summary>
+        public float? TsrRenderScaleOverride
+        {
+            get => _tsrRenderScaleOverride;
+            set
+            {
+                float? clamped = value.HasValue
+                    ? Math.Clamp(value.Value, 0.5f, 1.0f)
+                    : null;
+                SetField(ref _tsrRenderScaleOverride, clamped);
+            }
         }
 
         /// <summary>

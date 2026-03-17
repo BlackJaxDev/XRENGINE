@@ -106,10 +106,18 @@ namespace XREngine
             public static VisualScene3D NewVisualScene()
                 => new();
 
+            public static bool UsePipelineV2
+                => Environment.GetEnvironmentVariable("XRE_USE_PIPELINE_V2") == "1";
+
             public static RenderPipeline NewRenderPipeline()
-                => (Engine.EditorPreferences?.Debug?.UseDebugOpaquePipeline ?? false)
+                => NewRenderPipeline(stereo: false);
+
+            public static RenderPipeline NewRenderPipeline(bool stereo)
+                => (Engine.EditorPreferences?.Debug?.UseDebugOpaquePipeline ?? false) && !stereo
                     ? new DebugOpaqueRenderPipeline()
-                    : new DefaultRenderPipeline();
+                    : UsePipelineV2
+                        ? new DefaultRenderPipeline2(stereo)
+                        : new DefaultRenderPipeline(stereo);
 
             public static void ApplyRenderPipelinePreference()
             {
@@ -129,12 +137,14 @@ namespace XREngine
 
                     if (preferDebug)
                     {
-                        if (pipeline is DefaultRenderPipeline defaultPipeline && !defaultPipeline.Stereo)
+                        if (pipeline is DefaultRenderPipeline { Stereo: false })
+                            viewport.RenderPipeline = new DebugOpaqueRenderPipeline();
+                        else if (pipeline is DefaultRenderPipeline2 { Stereo: false })
                             viewport.RenderPipeline = new DebugOpaqueRenderPipeline();
                     }
                     else if (pipeline is DebugOpaqueRenderPipeline)
                     {
-                        viewport.RenderPipeline = new DefaultRenderPipeline();
+                        viewport.RenderPipeline = NewRenderPipeline(stereo: false);
                     }
                 }
             }
@@ -146,6 +156,8 @@ namespace XREngine
                 {
                     if (viewport.RenderPipeline is DefaultRenderPipeline defaultPipeline)
                         defaultPipeline.GlobalIlluminationMode = mode;
+                    else if (viewport.RenderPipeline is DefaultRenderPipeline2 v2Pipeline)
+                        v2Pipeline.GlobalIlluminationMode = mode;
                 }
             }
 

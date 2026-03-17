@@ -74,8 +74,6 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Path.Combine(SceneShaderPath, "MarkComplexMsaaPixels.fs"),
                 EShaderType.Fragment);
 
-            XRTexture[] textures = [normalTex, depthTex];
-
             var stencilFace = new StencilTestFace
             {
                 Function = EComparison.Always,
@@ -87,7 +85,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 BothPassOp = EStencilOp.Replace, // Write complex bit on non-discarded fragments
             };
 
-            XRMaterial mat = new(textures, shader)
+            XRMaterial mat = new(Array.Empty<XRTexture?>(), shader)
             {
                 RenderOptions = new RenderingParameters
                 {
@@ -109,6 +107,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                     WriteBlue = false,
                     WriteAlpha = false,
                 }
+            };
+
+            mat.SettingUniforms += (_, materialProgram) =>
+            {
+                materialProgram.Sampler("NormalMS", normalTex, 0);
+                materialProgram.Sampler("DepthMS", depthTex, 1);
             };
 
             var mesh = CreateFullscreenTriangle();

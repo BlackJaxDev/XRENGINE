@@ -458,6 +458,16 @@ namespace XREngine.Rendering
         public abstract void AllowDepthWrite(bool allow);
         public abstract void DepthFunc(EComparison always);
 
+        public abstract void EnableStencilTest(bool enable);
+        public abstract void StencilFunc(EComparison function, int reference, uint mask);
+        public abstract void StencilOp(EStencilOp sfail, EStencilOp dpfail, EStencilOp dppass);
+
+        public abstract void EnableBlend(bool enable);
+        public abstract void BlendFunc(EBlendingFactor src, EBlendingFactor dst);
+        public abstract void BlendFuncSeparate(EBlendingFactor srcRGB, EBlendingFactor dstRGB, EBlendingFactor srcAlpha, EBlendingFactor dstAlpha);
+        public abstract void BlendEquation(EBlendEquationMode mode);
+        public abstract void BlendEquationSeparate(EBlendEquationMode modeRGB, EBlendEquationMode modeAlpha);
+
         /// <summary>
         /// Enables per-sample shading (GL_SAMPLE_SHADING) with the given minimum fraction.
         /// When enabled with minValue=1.0, the fragment shader runs once per sample.

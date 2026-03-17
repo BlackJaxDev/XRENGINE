@@ -591,6 +591,10 @@ namespace XREngine.Timers
             get => _targetRenderPeriodTicks == 0L ? 0.0f : (float)(Stopwatch.Frequency / (double)_targetRenderPeriodTicks);
             set
             {
+                float current = TargetRenderFrequency;
+                if (Math.Abs(current - value) < 0.0001f)
+                    return;
+
                 if (value < 1.0f)
                 {
                     SetField(ref _targetRenderPeriodTicks, 0L);
@@ -621,6 +625,10 @@ namespace XREngine.Timers
             get => TicksToSeconds(_targetRenderPeriodTicks);
             set
             {
+                float current = TargetRenderPeriod;
+                if (Math.Abs(current - value) < 0.0001f)
+                    return;
+
                 if (value < 1.0f / MaxFrequency)
                 {
                     SetField(ref _targetRenderPeriodTicks, 0L);
@@ -652,6 +660,10 @@ namespace XREngine.Timers
             get => _targetUpdatePeriodTicks == 0L ? 0.0f : (float)(Stopwatch.Frequency / (double)_targetUpdatePeriodTicks);
             set
             {
+                float current = TargetUpdateFrequency;
+                if (Math.Abs(current - value) < 0.0001f)
+                    return;
+
                 if (value < 1.0)
                 {
                     SetField(ref _targetUpdatePeriodTicks, 0L);
@@ -682,6 +694,10 @@ namespace XREngine.Timers
             get => TicksToSeconds(_targetUpdatePeriodTicks);
             set
             {
+                float current = TargetUpdatePeriod;
+                if (Math.Abs(current - value) < 0.0001f)
+                    return;
+
                 if (value < 1.0f / MaxFrequency)
                 {
                     SetField(ref _targetUpdatePeriodTicks, 0L);

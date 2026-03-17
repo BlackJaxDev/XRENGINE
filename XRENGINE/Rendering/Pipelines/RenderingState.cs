@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Geometry;
@@ -189,7 +190,131 @@ public sealed partial class XRRenderPipelineInstance
             return StateObject.New(PopOverrideMaterial);
         }
         public void PopOverrideMaterial()
-            => _overrideMaterials.Pop();
+        {
+            if (_overrideMaterials.Count > 0)
+                _overrideMaterials.Pop();
+        }
+
+        public sealed class ScopedTextureBinding
+        {
+            public required string TextureName { get; init; }
+            public required string SamplerName { get; init; }
+            public required int TextureUnit { get; init; }
+
+            public void Apply(XRRenderPipelineInstance pipeline, XRRenderProgram program)
+            {
+                if (string.IsNullOrWhiteSpace(TextureName) || string.IsNullOrWhiteSpace(SamplerName))
+                    return;
+
+                if (pipeline.TryGetTexture(TextureName, out XRTexture? texture) && texture is not null)
+                    program.Sampler(SamplerName, texture, TextureUnit);
+            }
+        }
+
+        public sealed class ScopedBufferBinding
+        {
+            public required string BufferName { get; init; }
+            public required uint BindingLocation { get; init; }
+
+            public void Apply(XRRenderPipelineInstance pipeline, XRRenderProgram program)
+            {
+                if (string.IsNullOrWhiteSpace(BufferName))
+                    return;
+
+                if (pipeline.TryGetBuffer(BufferName, out XRDataBuffer? buffer) && buffer is not null)
+                    program.BindBuffer(buffer, BindingLocation);
+            }
+        }
+
+        public sealed class ScopedShaderGlobals
+        {
+            public Dictionary<string, bool> BoolUniforms { get; } = [];
+            public Dictionary<string, int> IntUniforms { get; } = [];
+            public Dictionary<string, uint> UIntUniforms { get; } = [];
+            public Dictionary<string, float> FloatUniforms { get; } = [];
+            public Dictionary<string, Vector2> Vector2Uniforms { get; } = [];
+            public Dictionary<string, Vector3> Vector3Uniforms { get; } = [];
+            public Dictionary<string, Vector4> Vector4Uniforms { get; } = [];
+            public Dictionary<string, Matrix4x4> Matrix4Uniforms { get; } = [];
+
+            public void Apply(XRRenderProgram program)
+            {
+                foreach (var pair in BoolUniforms)
+                    program.Uniform(pair.Key, pair.Value);
+                foreach (var pair in IntUniforms)
+                    program.Uniform(pair.Key, pair.Value);
+                foreach (var pair in UIntUniforms)
+                    program.Uniform(pair.Key, pair.Value);
+                foreach (var pair in FloatUniforms)
+                    program.Uniform(pair.Key, pair.Value);
+                foreach (var pair in Vector2Uniforms)
+                    program.Uniform(pair.Key, pair.Value);
+                foreach (var pair in Vector3Uniforms)
+                    program.Uniform(pair.Key, pair.Value);
+                foreach (var pair in Vector4Uniforms)
+                    program.Uniform(pair.Key, pair.Value);
+                foreach (var pair in Matrix4Uniforms)
+                    program.Uniform(pair.Key, pair.Value);
+            }
+        }
+
+        private readonly Stack<ScopedTextureBinding> _textureBindings = new();
+        private readonly Stack<ScopedBufferBinding> _bufferBindings = new();
+        private readonly Stack<ScopedShaderGlobals> _shaderGlobals = new();
+
+        public StateObject PushTextureBinding(ScopedTextureBinding binding)
+        {
+            _textureBindings.Push(binding);
+            return StateObject.New(PopTextureBinding);
+        }
+
+        public void PopTextureBinding()
+        {
+            if (_textureBindings.Count > 0)
+                _textureBindings.Pop();
+        }
+
+        public StateObject PushBufferBinding(ScopedBufferBinding binding)
+        {
+            _bufferBindings.Push(binding);
+            return StateObject.New(PopBufferBinding);
+        }
+
+        public void PopBufferBinding()
+        {
+            if (_bufferBindings.Count > 0)
+                _bufferBindings.Pop();
+        }
+
+        public StateObject PushShaderGlobals(ScopedShaderGlobals globals)
+        {
+            _shaderGlobals.Push(globals);
+            return StateObject.New(PopShaderGlobals);
+        }
+
+        public void PopShaderGlobals()
+        {
+            if (_shaderGlobals.Count > 0)
+                _shaderGlobals.Pop();
+        }
+
+        public void ApplyScopedProgramBindings(XRRenderProgram program)
+        {
+            XRRenderPipelineInstance? pipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+            if (pipeline is null)
+                return;
+
+            pipeline.Variables.Apply(program);
+
+            foreach (var binding in _textureBindings.Reverse())
+                binding.Apply(pipeline, program);
+
+            foreach (var binding in _bufferBindings.Reverse())
+                binding.Apply(pipeline, program);
+
+            foreach (var globals in _shaderGlobals.Reverse())
+                globals.Apply(program);
+        }
 
         /// <summary>
         /// When true, mesh renderers should prefer a cached per-material depth-normal fragment variant
