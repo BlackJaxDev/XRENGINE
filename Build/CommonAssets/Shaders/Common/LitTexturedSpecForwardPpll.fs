@@ -24,5 +24,5 @@ void main()
     float specularMask = texture(Texture1, FragUV0).r;
     float specIntensity = MatSpecularIntensity * specularMask;
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, texColor.rgb, specIntensity, AmbientOcclusion);
-    XRE_StorePerPixelLinkedListFragment(texColor * vec4(totalLight, 1.0));
+    XRE_StorePerPixelLinkedListFragment(vec4(totalLight, texColor.a));
 }

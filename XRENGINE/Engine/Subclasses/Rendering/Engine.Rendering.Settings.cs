@@ -119,7 +119,7 @@ namespace XREngine
                 private bool _enableFrameLogging = true;
                 private float _debugOutputMinElapsedMs = 1.0f;
                 private double _debugOutputRecencySeconds = 0.0;
-                private bool _enableGpuIndirectDebugLogging = true;
+                private bool _enableGpuIndirectDebugLogging = false;
                 private bool _enableGpuIndirectCpuFallback = false;
                 private bool _enableGpuIndirectValidationLogging = false;
 

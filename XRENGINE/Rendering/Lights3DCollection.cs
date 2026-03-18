@@ -182,18 +182,51 @@ namespace XREngine.Scene
             const int forwardAmbientOcclusionUnit = 14;
             XRTexture? ambientOcclusionTexture = null;
             var currentPipeline = Engine.Rendering.State.CurrentRenderingPipeline;
+            var ambientOcclusionCamera = Engine.Rendering.State.RenderingCamera
+                ?? currentPipeline?.RenderState.SceneCamera
+                ?? currentPipeline?.LastSceneCamera
+                ?? currentPipeline?.LastRenderingCamera;
+            var aoStage = ambientOcclusionCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+            AmbientOcclusionSettings? aoSettings = aoStage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true
+                ? backing
+                : null;
             bool ambientOcclusionEnabled = currentPipeline is not null &&
                 currentPipeline.TryGetTexture(
                     DefaultRenderPipeline.AmbientOcclusionIntensityTextureName,
                     out ambientOcclusionTexture) && ambientOcclusionTexture is not null;
             program.Uniform("AmbientOcclusionEnabled", ambientOcclusionEnabled);
+            program.Uniform("AmbientOcclusionPower", aoSettings?.Power ?? 1.0f);
+            program.Uniform(
+                "AmbientOcclusionMultiBounce",
+                AmbientOcclusionSettings.NormalizeType(aoSettings?.Type ?? AmbientOcclusionSettings.EType.ScreenSpace) == AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion
+                && aoSettings?.GroundTruth.MultiBounceEnabled == true);
+            program.Uniform(
+                "SpecularOcclusionEnabled",
+                AmbientOcclusionSettings.NormalizeType(aoSettings?.Type ?? AmbientOcclusionSettings.EType.ScreenSpace) == AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion
+                && aoSettings?.GroundTruth.SpecularOcclusionEnabled == true);
             // Debug power exponent: set > 0 (e.g. 8) to dramatically exaggerate AO on forward objects.
             // This lets us visually confirm the shader is sampling and applying the AO texture.
             // 0 = normal behaviour.  Try 8.0 to make subtle AO extremely visible.
-            program.Uniform("DebugForwardAOPower", 8.0f);
+            program.Uniform("DebugForwardAOPower", 0.0f);
             program.Uniform(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, forwardAmbientOcclusionUnit);
             if (ambientOcclusionEnabled)
                 program.Sampler(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName, ambientOcclusionTexture!, forwardAmbientOcclusionUnit);
+
+            switch (currentPipeline?.Pipeline)
+            {
+                case DefaultRenderPipeline defaultPipeline:
+                    defaultPipeline.BindPbrLightingResources(program);
+                    break;
+                case DefaultRenderPipeline2 defaultPipeline2:
+                    defaultPipeline2.BindPbrLightingResources(program);
+                    break;
+                default:
+                    program.Uniform("ForwardPbrResourcesEnabled", false);
+                    program.Uniform("ProbeCount", 0);
+                    program.Uniform("TetraCount", 0);
+                    program.Uniform("UseProbeGrid", false);
+                    break;
+            }
 
             /*
             Debug.RenderingEvery(

@@ -43,5 +43,5 @@ void main()
         MatColor.rgb,
         MatSpecularIntensity,
         XRENGINE_SampleAmbientOcclusion());
-    XRE_WriteWeightedBlendedOit(MatColor * vec4(totalLight, 1.0));
+    XRE_WriteWeightedBlendedOit(vec4(totalLight, MatColor.a));
 }

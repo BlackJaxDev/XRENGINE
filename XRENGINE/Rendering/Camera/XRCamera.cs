@@ -240,6 +240,7 @@ namespace XREngine.Rendering
         /// The topmost value is applied to the projection matrix.
         /// </summary>
         private readonly Stack<Vector2> _projectionJitterStack = new();
+        private readonly Lock _projectionJitterLock = new();
 
         #endregion
 
@@ -529,13 +530,13 @@ namespace XREngine.Rendering
         /// True if any non-zero projection jitter is currently active.
         /// </summary>
         public bool HasProjectionJitter
-            => _projectionJitterStack.Count > 0 && !IsZeroVector(_projectionJitterStack.Peek());
+            => TryGetCurrentProjectionJitter(out Vector2 jitter) && !IsZeroVector(jitter);
 
         /// <summary>
         /// The current projection jitter offset in clip space.
         /// </summary>
         public Vector2 ProjectionJitter
-            => _projectionJitterStack.TryPeek(out var jitter) ? jitter : Vector2.Zero;
+            => TryGetCurrentProjectionJitter(out Vector2 jitter) ? jitter : Vector2.Zero;
 
         /// <summary>
         /// Gets the projection matrix with any active jitter applied.
@@ -557,7 +558,10 @@ namespace XREngine.Rendering
         public StateObject PushProjectionJitter(in ProjectionJitterRequest request)
         {
             Vector2 clipSpaceOffset = request.ToClipSpace();
-            _projectionJitterStack.Push(clipSpaceOffset);
+
+            using (_projectionJitterLock.EnterScope())
+                _projectionJitterStack.Push(clipSpaceOffset);
+
             return StateObject.New(PopProjectionJitter);
         }
 
@@ -568,10 +572,13 @@ namespace XREngine.Rendering
         /// </summary>
         public void PopProjectionJitter()
         {
-            if (_projectionJitterStack.Count <= 0)
-                return;
+            using (_projectionJitterLock.EnterScope())
+            {
+                if (_projectionJitterStack.Count <= 0)
+                    return;
 
-            _projectionJitterStack.Pop();
+                _projectionJitterStack.Pop();
+            }
         }
 
         /// <summary>
@@ -579,7 +586,10 @@ namespace XREngine.Rendering
         /// Use to reset jitter state completely, such as when changing render modes.
         /// </summary>
         public void ClearProjectionJitter()
-            => _projectionJitterStack.Clear();
+        {
+            using (_projectionJitterLock.EnterScope())
+                _projectionJitterStack.Clear();
+        }
 
         /// <summary>
         /// Gets the base projection matrix without jitter applied.
@@ -619,10 +629,9 @@ namespace XREngine.Rendering
         /// <returns>The jittered projection matrix.</returns>
         private Matrix4x4 ApplyProjectionJitter(Matrix4x4 projection)
         {
-            if (_projectionJitterStack.Count <= 0)
+            if (!TryGetCurrentProjectionJitter(out Vector2 jitter))
                 return projection;
 
-            Vector2 jitter = _projectionJitterStack.Peek();
             if (IsZeroVector(jitter))
                 return projection;
 
@@ -638,6 +647,15 @@ namespace XREngine.Rendering
             }
 
             return projection;
+        }
+
+        /// <summary>
+        /// Gets the current top-most projection jitter as an atomic snapshot.
+        /// </summary>
+        private bool TryGetCurrentProjectionJitter(out Vector2 jitter)
+        {
+            using (_projectionJitterLock.EnterScope())
+                return _projectionJitterStack.TryPeek(out jitter);
         }
 
         /// <summary>

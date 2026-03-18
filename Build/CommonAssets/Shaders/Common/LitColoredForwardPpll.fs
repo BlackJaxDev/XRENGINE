@@ -18,5 +18,5 @@ void main()
 {
     vec3 normal = normalize(FragNorm);
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, MatColor.rgb, MatSpecularIntensity, XRENGINE_SampleAmbientOcclusion());
-    XRE_StorePerPixelLinkedListFragment(MatColor * vec4(totalLight, 1.0));
+    XRE_StorePerPixelLinkedListFragment(vec4(totalLight, MatColor.a));
 }

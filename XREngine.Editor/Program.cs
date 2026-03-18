@@ -261,11 +261,11 @@ internal class Program
         {
             //opts.DisableCountDrawPath = true;
             //opts.SkipIndirectTailClear = true;
-            opts.LogCountBufferWrites = true;
-            opts.ValidateBufferLayouts = true;
-            opts.ValidateLiveHandles = true;
-            opts.ForceParameterRemap = true;
-            opts.DumpIndirectArguments = true;
+            opts.LogCountBufferWrites = false;
+            opts.ValidateBufferLayouts = false;
+            opts.ValidateLiveHandles = false;
+            opts.ForceParameterRemap = false;
+            opts.DumpIndirectArguments = false;
             opts.SkipIndirectTailClear = false;
             opts.DisableCountDrawPath = false;
         });

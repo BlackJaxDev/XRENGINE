@@ -50,7 +50,7 @@ void main()
 
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, texColor.rgb, specIntensity, AmbientOcclusion);
 
-    OutColor = vec4(texColor.rgb * totalLight, texColor.a * alphaMask);
+    OutColor = vec4(totalLight, texColor.a * alphaMask);
 #endif
 #endif
 }

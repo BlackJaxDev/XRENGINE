@@ -461,7 +461,7 @@ namespace XREngine.Components
 
             SweepExpired(now);
 
-            RunOnMainThread(() =>
+            RunOnAppThread(() =>
             {
                 if (isNew)
                     EndpointDiscovered?.Invoke(this, announcement);
@@ -480,7 +480,7 @@ namespace XREngine.Components
                 if (_discovered.TryRemove(kvp.Key, out DiscoveredEndpoint expired))
                 {
                     var announcement = expired.Announcement;
-                    RunOnMainThread(() => EndpointExpired?.Invoke(this, announcement), "NetworkDiscoveryComponent.EndpointExpired");
+                    RunOnAppThread(() => EndpointExpired?.Invoke(this, announcement), "NetworkDiscoveryComponent.EndpointExpired");
                 }
             }
         }
@@ -506,9 +506,9 @@ namespace XREngine.Components
         private void Tick()
             => SweepExpired(DateTimeOffset.UtcNow);
 
-        private static void RunOnMainThread(Action action, string reason)
+        private static void RunOnAppThread(Action action, string reason)
         {
-            if (!Engine.InvokeOnMainThread(action, reason))
+            if (!Engine.InvokeOnAppThread(action, reason))
                 action();
         }
 

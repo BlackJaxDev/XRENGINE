@@ -104,6 +104,36 @@ namespace XREngine.Rendering
             set => SpatialHash.JitterScale = value;
         }
 
+        public bool SpatialHashTemporalReuseEnabled
+        {
+            get => SpatialHash.TemporalReuseEnabled;
+            set => SpatialHash.TemporalReuseEnabled = value;
+        }
+
+        public float SpatialHashTemporalBlendFactor
+        {
+            get => SpatialHash.TemporalBlendFactor;
+            set => SpatialHash.TemporalBlendFactor = value;
+        }
+
+        public float SpatialHashTemporalClamp
+        {
+            get => SpatialHash.TemporalClamp;
+            set => SpatialHash.TemporalClamp = value;
+        }
+
+        public float SpatialHashTemporalDepthRejectThreshold
+        {
+            get => SpatialHash.TemporalDepthRejectThreshold;
+            set => SpatialHash.TemporalDepthRejectThreshold = value;
+        }
+
+        public float SpatialHashTemporalMotionRejectionScale
+        {
+            get => SpatialHash.TemporalMotionRejectionScale;
+            set => SpatialHash.TemporalMotionRejectionScale = value;
+        }
+
         public float SecondaryRadius
         {
             get => MultiView.SecondaryRadius;

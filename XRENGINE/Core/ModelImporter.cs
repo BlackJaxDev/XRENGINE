@@ -665,6 +665,9 @@ namespace XREngine
                     [
                         new ShaderFloat(1.0f, "MatSpecularIntensity"),
                         new ShaderFloat(32.0f, "MatShininess"),
+                        new ShaderFloat(0.9f, "Roughness"),
+                        new ShaderFloat(0.0f, "Metallic"),
+                        new ShaderFloat(0.0f, "Emission"),
                     ];
                     mat.RenderPass = ShaderHelper.ResolveTransparentRenderPass(transparencyMode);
                     mat.RenderOptions = new RenderingParameters()
@@ -826,6 +829,9 @@ namespace XREngine
                     [
                         new ShaderFloat(1.0f, "MatSpecularIntensity"),
                         new ShaderFloat(32.0f, "MatShininess"),
+                        new ShaderFloat(0.9f, "Roughness"),
+                        new ShaderFloat(0.0f, "Metallic"),
+                        new ShaderFloat(0.0f, "Emission"),
                         new ShaderFloat(0.5f, "AlphaCutoff"),
                     ];
                 }
@@ -835,6 +841,9 @@ namespace XREngine
                     [
                         new ShaderFloat(1.0f, "MatSpecularIntensity"),
                         new ShaderFloat(32.0f, "MatShininess"),
+                        new ShaderFloat(0.9f, "Roughness"),
+                        new ShaderFloat(0.0f, "Metallic"),
+                        new ShaderFloat(0.0f, "Emission"),
                     ];
                 }
 
@@ -858,6 +867,9 @@ namespace XREngine
                     new ShaderVector4(new Vector4(1, 0, 1, 1), "MatColor"),
                     new ShaderFloat(1.0f, "MatSpecularIntensity"),
                     new ShaderFloat(32.0f, "MatShininess"),
+                    new ShaderFloat(1.0f, "Roughness"),
+                    new ShaderFloat(0.0f, "Metallic"),
+                    new ShaderFloat(0.0f, "Emission"),
                     new ShaderFloat(0.5f, "AlphaCutoff"),
                 ];
                 mat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;

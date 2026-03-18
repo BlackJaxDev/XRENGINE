@@ -41,7 +41,7 @@ public static partial class EditorUnitTests
 
                         probeComp!.Name = "TestLightProbe";
                         probeComp.SetCaptureResolution(128, false);
-                        probeComp.RealtimeCapture = true;
+                        probeComp.RealtimeCapture = false;
                         probeComp.PreviewDisplay = LightProbeComponent.ERenderPreview.Irradiance;
                         probeComp.RealTimeCaptureUpdateInterval = TimeSpan.FromMilliseconds(Toggles.LightProbeCaptureMs);
                         if (Toggles.StopRealtimeCaptureSec is not null)

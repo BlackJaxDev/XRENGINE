@@ -23,6 +23,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private const uint HashMapScale = 2u;
         private const uint LocalGroupSize = 8u;
+        private const uint ShaderMaxFrameAge = 20u;
         private const string ComputeShaderFile = "AO/SpatialHashAO.comp";
         private const string ComputeShaderFileStereo = "AO/SpatialHashAOStereo.comp";
 
@@ -61,12 +62,39 @@ namespace XREngine.Rendering.Pipelines.Commands
             public bool ResourcesDirty = true;
             public int LastWidth;
             public int LastHeight;
+            public int SettingsHash;
             public uint HashCapacity;
             public uint FrameIndex;
+            public bool HistoryReady;
+            public bool HasCachedViewProjection;
+            public bool UseHistoryTextureA = true;
+            public Matrix4x4 LastUnjitteredViewProjection = Matrix4x4.Identity;
             public XRTexture? AoTexture;
+            public XRTexture? HistoryAoTextureA;
+            public XRTexture? HistoryAoTextureB;
+            public XRTexture? HistoryDepthTextureA;
+            public XRTexture? HistoryDepthTextureB;
             public XRDataBuffer? HashBuffer;
             public XRDataBuffer? HashTimeBuffer;
             public XRDataBuffer? SpatialBuffer;
+        }
+
+        private readonly struct SpatialHashRuntimeSettings
+        {
+            public float Radius { get; init; }
+            public float Power { get; init; }
+            public int Steps { get; init; }
+            public float Bias { get; init; }
+            public float CellSizeMin { get; init; }
+            public float Thickness { get; init; }
+            public float SamplesPerPixel { get; init; }
+            public float JitterScale { get; init; }
+            public uint MaxSamplesPerCell { get; init; }
+            public bool TemporalReuseEnabled { get; init; }
+            public float TemporalBlendFactor { get; init; }
+            public float TemporalClamp { get; init; }
+            public float TemporalDepthRejectThreshold { get; init; }
+            public float TemporalMotionRejectionScale { get; init; }
         }
 
         private static readonly ConditionalWeakTable<XRRenderPipelineInstance, InstanceState> _instanceStates = new();
@@ -131,8 +159,29 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (width <= 0 || height <= 0)
                 return;
 
+            var camera = instance.RenderState.SceneCamera;
+            var stage = camera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+            var settings = stage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true ? backing : null;
+            SpatialHashRuntimeSettings runtimeSettings = ResolveRuntimeSettings(settings);
+
+            VPRC_TemporalAccumulationPass.TemporalUniformData temporalData = default;
+            bool hasTemporalData = !Stereo && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out temporalData);
+            int settingsHash = ComputeSettingsHash(runtimeSettings, Stereo);
+
             bool forceRebuild = state.ResourcesDirty;
             state.ResourcesDirty = false;
+
+            if (state.SettingsHash != settingsHash)
+            {
+                state.SettingsHash = settingsHash;
+                forceRebuild = true;
+            }
+
+            Matrix4x4 currentUnjitteredViewProjection = GetCurrentUnjitteredViewProjection(camera, temporalData, hasTemporalData);
+            bool cameraMovedSinceLastFrame = !Stereo && !forceRebuild && ShouldInvalidateForCameraMotion(state, currentUnjitteredViewProjection);
+
+            if (!Stereo && runtimeSettings.TemporalReuseEnabled && state.HistoryReady && (!hasTemporalData || !temporalData.HistoryReady))
+                forceRebuild = true;
 
             if (!forceRebuild)
             {
@@ -187,8 +236,107 @@ namespace XREngine.Rendering.Pipelines.Commands
                     height);
             }
 
+            // Soft-clear spatial hash data when the camera moves: zero out the
+            // SSBO hit/sample/key buffers so stale view-dependent occlusion data
+            // is discarded, but keep temporal history textures intact so the
+            // reprojection pass can smooth the reconvergence.
+            if (cameraMovedSinceLastFrame && !forceRebuild)
+                ClearSpatialHashData(state);
+
             EnsureComputeProgram();
-            DispatchSpatialHashAO(state, normalTex, depthViewTex, width, height);
+            DispatchSpatialHashAO(state, normalTex, depthViewTex, width, height, runtimeSettings, hasTemporalData ? temporalData : default, hasTemporalData);
+        }
+
+        private static void ClearSpatialHashData(InstanceState state)
+        {
+            // Advancing FrameIndex past the shader's MaxFrameAge window makes
+            // every cell appear stale on next lookup. The shader will lazily
+            // re-initialize each cell as it's accessed — no GPU clear needed.
+            state.FrameIndex += ShaderMaxFrameAge + 1;
+        }
+
+        private static Matrix4x4 GetCurrentUnjitteredViewProjection(
+            XRCamera? camera,
+            VPRC_TemporalAccumulationPass.TemporalUniformData temporalData,
+            bool hasTemporalData)
+        {
+            if (hasTemporalData)
+                return temporalData.CurrViewProjectionUnjittered;
+
+            if (camera is null)
+                return Matrix4x4.Identity;
+
+            Matrix4x4 viewMatrix = camera.Transform.InverseRenderMatrix;
+            return viewMatrix * camera.ProjectionMatrixUnjittered;
+        }
+
+        private static bool ShouldInvalidateForCameraMotion(InstanceState state, in Matrix4x4 currentUnjitteredViewProjection)
+        {
+            if (!state.HasCachedViewProjection)
+            {
+                state.HasCachedViewProjection = true;
+                state.LastUnjitteredViewProjection = currentUnjitteredViewProjection;
+                return false;
+            }
+
+            if (IsMatrixApproximatelyEqual(state.LastUnjitteredViewProjection, currentUnjitteredViewProjection, 1e-4f))
+                return false;
+
+            state.LastUnjitteredViewProjection = currentUnjitteredViewProjection;
+            return true;
+        }
+
+        private static bool IsMatrixApproximatelyEqual(in Matrix4x4 a, in Matrix4x4 b, float epsilon)
+        {
+            return MathF.Abs(a.M11 - b.M11) < epsilon && MathF.Abs(a.M12 - b.M12) < epsilon && MathF.Abs(a.M13 - b.M13) < epsilon && MathF.Abs(a.M14 - b.M14) < epsilon &&
+                   MathF.Abs(a.M21 - b.M21) < epsilon && MathF.Abs(a.M22 - b.M22) < epsilon && MathF.Abs(a.M23 - b.M23) < epsilon && MathF.Abs(a.M24 - b.M24) < epsilon &&
+                   MathF.Abs(a.M31 - b.M31) < epsilon && MathF.Abs(a.M32 - b.M32) < epsilon && MathF.Abs(a.M33 - b.M33) < epsilon && MathF.Abs(a.M34 - b.M34) < epsilon &&
+                   MathF.Abs(a.M41 - b.M41) < epsilon && MathF.Abs(a.M42 - b.M42) < epsilon && MathF.Abs(a.M43 - b.M43) < epsilon && MathF.Abs(a.M44 - b.M44) < epsilon;
+        }
+
+        private static SpatialHashRuntimeSettings ResolveRuntimeSettings(AmbientOcclusionSettings? settings)
+        {
+            float spatialMaxDistance = settings?.SpatialHashMaxDistance > 0.0f ? settings.SpatialHashMaxDistance : 0.0f;
+            float fallbackRadius = settings?.Radius > 0.0f ? settings.Radius : 2.0f;
+
+            return new SpatialHashRuntimeSettings
+            {
+                Radius = spatialMaxDistance > 0.0f ? spatialMaxDistance : fallbackRadius,
+                Power = settings?.Power > 0.0f ? settings.Power : 1.0f,
+                Steps = settings?.SpatialHashSteps > 0 ? settings.SpatialHashSteps : 8,
+                Bias = settings?.Bias > 0.0f ? settings.Bias : 0.01f,
+                CellSizeMin = settings?.SpatialHashCellSize > 0.0f ? settings.SpatialHashCellSize : 0.07f,
+                Thickness = settings?.Thickness > 0.0f ? settings.Thickness : 0.5f,
+                SamplesPerPixel = Math.Max(settings?.SamplesPerPixel ?? 3.0f, 1.0f),
+                JitterScale = settings?.SpatialHashJitterScale >= 0.0f ? settings.SpatialHashJitterScale : 0.35f,
+                MaxSamplesPerCell = (uint)Math.Clamp(settings?.Samples > 0 ? settings.Samples : DefaultSamples, 1, 4096),
+                TemporalReuseEnabled = settings?.SpatialHashTemporalReuseEnabled ?? true,
+                TemporalBlendFactor = Math.Clamp(settings?.SpatialHashTemporalBlendFactor ?? 0.9f, 0.0f, 0.99f),
+                TemporalClamp = Math.Max(settings?.SpatialHashTemporalClamp ?? 0.2f, 0.001f),
+                TemporalDepthRejectThreshold = Math.Max(settings?.SpatialHashTemporalDepthRejectThreshold ?? 0.01f, 0.0001f),
+                TemporalMotionRejectionScale = Math.Max(settings?.SpatialHashTemporalMotionRejectionScale ?? 0.2f, 0.0001f)
+            };
+        }
+
+        private static int ComputeSettingsHash(in SpatialHashRuntimeSettings settings, bool stereo)
+        {
+            HashCode hash = new();
+            hash.Add(settings.Radius);
+            hash.Add(settings.Power);
+            hash.Add(settings.Steps);
+            hash.Add(settings.Bias);
+            hash.Add(settings.CellSizeMin);
+            hash.Add(settings.Thickness);
+            hash.Add(settings.SamplesPerPixel);
+            hash.Add(settings.JitterScale);
+            hash.Add(settings.MaxSamplesPerCell);
+            hash.Add(settings.TemporalReuseEnabled);
+            hash.Add(settings.TemporalBlendFactor);
+            hash.Add(settings.TemporalClamp);
+            hash.Add(settings.TemporalDepthRejectThreshold);
+            hash.Add(settings.TemporalMotionRejectionScale);
+            hash.Add(stereo);
+            return hash.ToHashCode();
         }
 
         private void EnsureComputeProgram()
@@ -225,12 +373,18 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             state.LastWidth = width;
             state.LastHeight = height;
+            state.FrameIndex = 0;
+            state.HistoryReady = false;
+            state.HasCachedViewProjection = false;
+            state.UseHistoryTextureA = true;
 
             //Log($"Regenerating resources: size={width}x{height}, stereo={Stereo}");
 
             state.AoTexture?.Destroy();
             state.AoTexture = CreateAOTexture(width, height);
             PrimeTextureStorage(state.AoTexture);
+            DestroyHistoryTextures(state);
+            CreateHistoryTextures(state, width, height);
             instance.SetTexture(state.AoTexture);
             InvalidateDependentFbos(instance);
 
@@ -275,7 +429,105 @@ namespace XREngine.Rendering.Pipelines.Commands
             tex.MagFilter = ETexMagFilter.Nearest;
             tex.UWrap = ETexWrapMode.ClampToEdge;
             tex.VWrap = ETexWrapMode.ClampToEdge;
+            tex.RequiresStorageUsage = true;
             return tex;
+        }
+
+        private void CreateHistoryTextures(InstanceState state, int width, int height)
+        {
+            state.HistoryAoTextureA = CreateHistoryAoTexture(width, height);
+            state.HistoryAoTextureB = CreateHistoryAoTexture(width, height);
+            state.HistoryDepthTextureA = CreateHistoryDepthTexture(width, height);
+            state.HistoryDepthTextureB = CreateHistoryDepthTexture(width, height);
+
+            PrimeTextureStorage(state.HistoryAoTextureA);
+            PrimeTextureStorage(state.HistoryAoTextureB);
+            PrimeTextureStorage(state.HistoryDepthTextureA);
+            PrimeTextureStorage(state.HistoryDepthTextureB);
+        }
+
+        private XRTexture CreateHistoryAoTexture(int width, int height)
+        {
+            if (Stereo)
+            {
+                var arrayTexture = XRTexture2DArray.CreateFrameBufferTexture(
+                    2,
+                    (uint)width,
+                    (uint)height,
+                    EPixelInternalFormat.R16f,
+                    EPixelFormat.Red,
+                    EPixelType.HalfFloat);
+                arrayTexture.Resizable = false;
+                arrayTexture.SizedInternalFormat = ESizedInternalFormat.R16f;
+                arrayTexture.OVRMultiViewParameters = new(0, 2u);
+                arrayTexture.MinFilter = ETexMinFilter.Nearest;
+                arrayTexture.MagFilter = ETexMagFilter.Nearest;
+                arrayTexture.UWrap = ETexWrapMode.ClampToEdge;
+                arrayTexture.VWrap = ETexWrapMode.ClampToEdge;
+                arrayTexture.RequiresStorageUsage = true;
+                return arrayTexture;
+            }
+
+            XRTexture2D historyTexture = XRTexture2D.CreateFrameBufferTexture(
+                (uint)width,
+                (uint)height,
+                EPixelInternalFormat.R16f,
+                EPixelFormat.Red,
+                EPixelType.HalfFloat);
+            historyTexture.Resizable = false;
+            historyTexture.SizedInternalFormat = ESizedInternalFormat.R16f;
+            historyTexture.MinFilter = ETexMinFilter.Nearest;
+            historyTexture.MagFilter = ETexMagFilter.Nearest;
+            historyTexture.UWrap = ETexWrapMode.ClampToEdge;
+            historyTexture.VWrap = ETexWrapMode.ClampToEdge;
+            historyTexture.RequiresStorageUsage = true;
+            return historyTexture;
+        }
+
+        private XRTexture CreateHistoryDepthTexture(int width, int height)
+        {
+            if (Stereo)
+            {
+                XRTexture2DArray arrayTexture = new((uint)width, (uint)height, 2, EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float)
+                {
+                    Resizable = false,
+                    SizedInternalFormat = ESizedInternalFormat.R32f,
+                    MinFilter = ETexMinFilter.Nearest,
+                    MagFilter = ETexMagFilter.Nearest,
+                    UWrap = ETexWrapMode.ClampToEdge,
+                    VWrap = ETexWrapMode.ClampToEdge,
+                    RequiresStorageUsage = true,
+                    OVRMultiViewParameters = new(0, 2u)
+                };
+                return arrayTexture;
+            }
+
+            XRTexture2D historyTexture = XRTexture2D.CreateFrameBufferTexture(
+                (uint)width,
+                (uint)height,
+                EPixelInternalFormat.R32f,
+                EPixelFormat.Red,
+                EPixelType.Float);
+            historyTexture.Resizable = false;
+            historyTexture.SizedInternalFormat = ESizedInternalFormat.R32f;
+            historyTexture.MinFilter = ETexMinFilter.Nearest;
+            historyTexture.MagFilter = ETexMagFilter.Nearest;
+            historyTexture.UWrap = ETexWrapMode.ClampToEdge;
+            historyTexture.VWrap = ETexWrapMode.ClampToEdge;
+            historyTexture.RequiresStorageUsage = true;
+            return historyTexture;
+        }
+
+        private static void DestroyHistoryTextures(InstanceState state)
+        {
+            state.HistoryAoTextureA?.Destroy();
+            state.HistoryAoTextureA = null;
+            state.HistoryAoTextureB?.Destroy();
+            state.HistoryAoTextureB = null;
+            state.HistoryDepthTextureA?.Destroy();
+            state.HistoryDepthTextureA = null;
+            state.HistoryDepthTextureB?.Destroy();
+            state.HistoryDepthTextureB = null;
         }
 
         private static void PrimeTextureStorage(XRTexture texture)
@@ -388,7 +640,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             Log($"Recreated buffers capacity={state.HashCapacity}");
         }
 
-        private void DispatchSpatialHashAO(InstanceState state, XRTexture normalTex, XRTexture depthViewTex, int width, int height)
+        private void DispatchSpatialHashAO(
+            InstanceState state,
+            XRTexture normalTex,
+            XRTexture depthViewTex,
+            int width,
+            int height,
+            SpatialHashRuntimeSettings runtimeSettings,
+            VPRC_TemporalAccumulationPass.TemporalUniformData temporalData,
+            bool hasTemporalData)
         {
             if (state.AoTexture is null || state.HashBuffer is null || state.HashTimeBuffer is null || state.SpatialBuffer is null)
                 return;
@@ -399,22 +659,6 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             var camera = ActivePipelineInstance.RenderState.SceneCamera;
-            var stage = camera?.GetPostProcessStageState<AmbientOcclusionSettings>();
-            var settings = stage?.TryGetBacking(out AmbientOcclusionSettings? backing) == true ? backing : null;
-
-            float hashRadius = settings?.Radius > 0.0f ? settings.Radius : 2.0f;  // Max ray distance in world units
-            float hashPower = settings?.Power > 0.0f ? settings.Power : 1.0f;
-            int hashSteps = settings?.SpatialHashSteps > 0 ? settings.SpatialHashSteps : 8;
-            float hashBias = settings?.Bias > 0.0f ? settings.Bias : 0.01f;
-            float hashCellMin = settings?.SpatialHashCellSize > 0.0f ? settings.SpatialHashCellSize : 0.07f;  // smin - smallest cell
-            float hashThickness = settings?.Thickness > 0.0f ? settings.Thickness : 0.5f;
-            float jitterScale = settings?.SpatialHashJitterScale >= 0.0f ? settings.SpatialHashJitterScale : 0.35f;
-
-            // SamplesPerPixel (sp) controls feature size in screen pixels for adaptive cell sizing
-            float spp = settings?.SamplesPerPixel > 0.0f ? settings.SamplesPerPixel : 3.0f;
-
-            if (spp < 1.0f)
-                spp = 1.0f;
 
             float fovY = camera?.Parameters is XRPerspectiveCameraParameters persp
                 ? XRMath.DegToRad(persp.VerticalFieldOfView)
@@ -423,14 +667,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Stereo && layered)
             {
                 DispatchStereo(state, normalTex, depthViewTex, aoTexture, width, height,
-                    hashRadius, hashPower, hashSteps, hashBias, hashCellMin,
-                    hashThickness, spp, jitterScale, fovY);
+                    runtimeSettings, fovY);
             }
             else
             {
                 DispatchMono(state, normalTex, depthViewTex, aoTexture, width, height,
-                    hashRadius, hashPower, hashSteps, hashBias, hashCellMin,
-                    hashThickness, spp, jitterScale, fovY, camera);
+                    runtimeSettings, fovY, camera, temporalData, hasTemporalData);
             }
         }
 
@@ -453,17 +695,42 @@ namespace XREngine.Rendering.Pipelines.Commands
             InstanceState state,
             XRTexture normalTex, XRTexture depthViewTex, XRTexture aoTexture,
             int width, int height,
-            float hashRadius, float hashPower, int hashSteps, float hashBias,
-            float hashCellMin, float hashThickness,
-            float spp, float jitterScale, float fovY, XRCamera? camera)
+            SpatialHashRuntimeSettings runtimeSettings,
+            float fovY,
+            XRCamera? camera,
+            VPRC_TemporalAccumulationPass.TemporalUniformData temporalData,
+            bool hasTemporalData)
         {
             if (_computeProgram is null)
                 return;
 
+            XRTexture? previousHistoryAo = state.UseHistoryTextureA ? state.HistoryAoTextureB : state.HistoryAoTextureA;
+            XRTexture? previousHistoryDepth = state.UseHistoryTextureA ? state.HistoryDepthTextureB : state.HistoryDepthTextureA;
+            XRTexture? writeHistoryAo = state.UseHistoryTextureA ? state.HistoryAoTextureA : state.HistoryAoTextureB;
+            XRTexture? writeHistoryDepth = state.UseHistoryTextureA ? state.HistoryDepthTextureA : state.HistoryDepthTextureB;
+            if (writeHistoryAo is null || writeHistoryDepth is null)
+                return;
+
             Matrix4x4 inverseView = camera?.Transform.RenderMatrix ?? Matrix4x4.Identity;
             Matrix4x4 viewMatrix = inverseView.Inverted();
-            Matrix4x4 projMatrix = camera?.Parameters.GetProjectionMatrix() ?? Matrix4x4.Identity;
+            Matrix4x4 projMatrix = camera?.ProjectionMatrix ?? Matrix4x4.Identity;
             Matrix4x4 inverseProj = projMatrix.Inverted();
+            Matrix4x4 currViewProjectionUnjittered = hasTemporalData
+                ? temporalData.CurrViewProjectionUnjittered
+                : viewMatrix * (camera?.ProjectionMatrixUnjittered ?? Matrix4x4.Identity);
+            Matrix4x4 prevViewProjectionUnjittered = hasTemporalData && temporalData.HistoryReady
+                ? temporalData.PrevViewProjectionUnjittered
+                : currViewProjectionUnjittered;
+            Vector2 currentJitterUv = hasTemporalData
+                ? new Vector2(temporalData.CurrentJitter.X / Math.Max(1, width), temporalData.CurrentJitter.Y / Math.Max(1, height))
+                : Vector2.Zero;
+            Vector2 previousJitterUv = hasTemporalData
+                ? new Vector2(temporalData.PreviousJitter.X / Math.Max(1, width), temporalData.PreviousJitter.Y / Math.Max(1, height))
+                : Vector2.Zero;
+            bool historyReady = runtimeSettings.TemporalReuseEnabled
+                && state.HistoryReady
+                && hasTemporalData
+                && temporalData.HistoryReady;
 
             state.HashBuffer!.BindTo(_computeProgram, 1u);
             state.HashTimeBuffer!.BindTo(_computeProgram, 2u);
@@ -471,22 +738,36 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             _computeProgram.Sampler("NormalTex", normalTex, 0);
             _computeProgram.Sampler("DepthTex", depthViewTex, 1);
+            _computeProgram.Sampler("HistoryAOTex", previousHistoryAo ?? writeHistoryAo, 2);
+            _computeProgram.Sampler("HistoryDepthTex", previousHistoryDepth ?? writeHistoryDepth, 3);
             _computeProgram.BindImageTexture(0u, aoTexture, 0, false, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R16F);
+            _computeProgram.BindImageTexture(1u, writeHistoryAo, 0, false, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R16F);
+            _computeProgram.BindImageTexture(2u, writeHistoryDepth, 0, false, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R32F);
 
             _computeProgram.Uniform("FrameIndex", state.FrameIndex++);
             _computeProgram.Uniform("HashMapSize", state.HashCapacity);
-            _computeProgram.Uniform("CellSizeMin", hashCellMin);
-            _computeProgram.Uniform("Bias", hashBias);
-            _computeProgram.Uniform("Thickness", hashThickness);
-            _computeProgram.Uniform("Power", hashPower);
-            _computeProgram.Uniform("SamplesPerPixel", spp);
-            _computeProgram.Uniform("JitterScale", jitterScale);
-            _computeProgram.Uniform("RayStepCount", hashSteps);
-            _computeProgram.Uniform("Radius", hashRadius);  // Used as max ray distance
+            _computeProgram.Uniform("CellSizeMin", runtimeSettings.CellSizeMin);
+            _computeProgram.Uniform("Bias", runtimeSettings.Bias);
+            _computeProgram.Uniform("Thickness", runtimeSettings.Thickness);
+            _computeProgram.Uniform("Power", runtimeSettings.Power);
+            _computeProgram.Uniform("SamplesPerPixel", runtimeSettings.SamplesPerPixel);
+            _computeProgram.Uniform("JitterScale", runtimeSettings.JitterScale);
+            _computeProgram.Uniform("MaxSamplesPerCell", runtimeSettings.MaxSamplesPerCell);
+            _computeProgram.Uniform("RayStepCount", runtimeSettings.Steps);
+            _computeProgram.Uniform("Radius", runtimeSettings.Radius);
             _computeProgram.Uniform("FieldOfViewY", fovY);
             _computeProgram.Uniform("InvResolution", new Vector2(1.0f / width, 1.0f / height));
+            _computeProgram.Uniform("HistoryReady", historyReady);
+            _computeProgram.Uniform("CurrentJitterUv", currentJitterUv);
+            _computeProgram.Uniform("PreviousJitterUv", previousJitterUv);
+            _computeProgram.Uniform("TemporalBlendFactor", runtimeSettings.TemporalBlendFactor);
+            _computeProgram.Uniform("TemporalClamp", runtimeSettings.TemporalClamp);
+            _computeProgram.Uniform("TemporalDepthRejectThreshold", runtimeSettings.TemporalDepthRejectThreshold);
+            _computeProgram.Uniform("TemporalMotionRejectionScale", runtimeSettings.TemporalMotionRejectionScale);
             _computeProgram.Uniform("InverseProjMatrix", inverseProj);
             _computeProgram.Uniform("ProjMatrix", projMatrix);
+            _computeProgram.Uniform("CurrViewProjectionUnjittered", currViewProjectionUnjittered);
+            _computeProgram.Uniform("PrevViewProjectionUnjittered", prevViewProjectionUnjittered);
             _computeProgram.Uniform("InverseViewMatrix", inverseView);
             _computeProgram.Uniform("ViewMatrix", viewMatrix);
 
@@ -498,13 +779,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                 state.FrameIndex,
                 width,
                 height,
-                hashRadius,
-                spp);
+                runtimeSettings.Radius,
+                runtimeSettings.SamplesPerPixel);
 
             uint groupX = (uint)(width + LocalGroupSize - 1) / LocalGroupSize;
             uint groupY = (uint)(height + LocalGroupSize - 1) / LocalGroupSize;
             _computeProgram.DispatchCompute(groupX, groupY, 1u, EMemoryBarrierMask.TextureFetch | EMemoryBarrierMask.ShaderStorage);
             Log($"Dispatch mono: frameIndex={state.FrameIndex}, groups={groupX}x{groupY}, hashCapacity={state.HashCapacity}");
+            state.HistoryReady = true;
+            state.UseHistoryTextureA = !state.UseHistoryTextureA;
         }
 
         internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
@@ -520,6 +803,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.ResourcesDirty = true;
             state.AoTexture?.Destroy();
             state.AoTexture = null;
+            DestroyHistoryTextures(state);
             state.HashBuffer?.Destroy();
             state.HashBuffer = null;
             state.HashTimeBuffer?.Destroy();
@@ -529,17 +813,28 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.LastWidth = 0;
             state.LastHeight = 0;
             state.HashCapacity = 0;
+            state.FrameIndex = 0;
+            state.HistoryReady = false;
+            state.HasCachedViewProjection = false;
+            state.LastUnjitteredViewProjection = Matrix4x4.Identity;
+            state.UseHistoryTextureA = true;
         }
 
         private void DispatchStereo(
             InstanceState state,
             XRTexture normalTex, XRTexture depthViewTex, XRTexture aoTexture,
             int width, int height,
-            float hashRadius, float hashPower, int hashSteps, float hashBias,
-            float hashCellMin, float hashThickness,
-            float spp, float jitterScale, float fovY)
+            SpatialHashRuntimeSettings runtimeSettings,
+            float fovY)
         {
             if (_computeProgramStereo is null)
+                return;
+
+            XRTexture? previousHistoryAo = state.UseHistoryTextureA ? state.HistoryAoTextureB : state.HistoryAoTextureA;
+            XRTexture? previousHistoryDepth = state.UseHistoryTextureA ? state.HistoryDepthTextureB : state.HistoryDepthTextureA;
+            XRTexture? writeHistoryAo = state.UseHistoryTextureA ? state.HistoryAoTextureA : state.HistoryAoTextureB;
+            XRTexture? writeHistoryDepth = state.UseHistoryTextureA ? state.HistoryDepthTextureA : state.HistoryDepthTextureB;
+            if (writeHistoryAo is null || writeHistoryDepth is null)
                 return;
 
             var renderState = ActivePipelineInstance.RenderState;
@@ -567,32 +862,48 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             _computeProgramStereo.Sampler("NormalTex", normalTex, 0);
             _computeProgramStereo.Sampler("DepthTex", depthViewTex, 1);
+            _computeProgramStereo.Sampler("HistoryAOTex", previousHistoryAo ?? writeHistoryAo, 2);
+            _computeProgramStereo.Sampler("HistoryDepthTex", previousHistoryDepth ?? writeHistoryDepth, 3);
             _computeProgramStereo.BindImageTexture(0u, aoTexture, 0, true, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R16F);
+            _computeProgramStereo.BindImageTexture(1u, writeHistoryAo, 0, true, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R16F);
+            _computeProgramStereo.BindImageTexture(2u, writeHistoryDepth, 0, true, 0, XRRenderProgram.EImageAccess.WriteOnly, XRRenderProgram.EImageFormat.R32F);
 
             _computeProgramStereo.Uniform("FrameIndex", state.FrameIndex++);
             _computeProgramStereo.Uniform("HashMapSize", state.HashCapacity);
-            _computeProgramStereo.Uniform("CellSizeMin", hashCellMin);
-            _computeProgramStereo.Uniform("Bias", hashBias);
-            _computeProgramStereo.Uniform("Thickness", hashThickness);
-            _computeProgramStereo.Uniform("Power", hashPower);
-            _computeProgramStereo.Uniform("SamplesPerPixel", spp);
-            _computeProgramStereo.Uniform("JitterScale", jitterScale);
-            _computeProgramStereo.Uniform("RayStepCount", hashSteps);
-            _computeProgramStereo.Uniform("Radius", hashRadius);  // Used as max ray distance
+            _computeProgramStereo.Uniform("CellSizeMin", runtimeSettings.CellSizeMin);
+            _computeProgramStereo.Uniform("Bias", runtimeSettings.Bias);
+            _computeProgramStereo.Uniform("Thickness", runtimeSettings.Thickness);
+            _computeProgramStereo.Uniform("Power", runtimeSettings.Power);
+            _computeProgramStereo.Uniform("SamplesPerPixel", runtimeSettings.SamplesPerPixel);
+            _computeProgramStereo.Uniform("JitterScale", runtimeSettings.JitterScale);
+            _computeProgramStereo.Uniform("MaxSamplesPerCell", runtimeSettings.MaxSamplesPerCell);
+            _computeProgramStereo.Uniform("RayStepCount", runtimeSettings.Steps);
+            _computeProgramStereo.Uniform("Radius", runtimeSettings.Radius);
             _computeProgramStereo.Uniform("FieldOfViewY", fovY);
             _computeProgramStereo.Uniform("InvResolution", new Vector2(1.0f / width, 1.0f / height));
+            _computeProgramStereo.Uniform("HistoryReady", false);
+            _computeProgramStereo.Uniform("CurrentJitterUv", Vector2.Zero);
+            _computeProgramStereo.Uniform("PreviousJitterUv", Vector2.Zero);
+            _computeProgramStereo.Uniform("TemporalBlendFactor", runtimeSettings.TemporalBlendFactor);
+            _computeProgramStereo.Uniform("TemporalClamp", runtimeSettings.TemporalClamp);
+            _computeProgramStereo.Uniform("TemporalDepthRejectThreshold", runtimeSettings.TemporalDepthRejectThreshold);
+            _computeProgramStereo.Uniform("TemporalMotionRejectionScale", runtimeSettings.TemporalMotionRejectionScale);
 
             // Left eye matrices
             _computeProgramStereo.Uniform("LeftEyeInverseProjMatrix", leftInverseProj);
             _computeProgramStereo.Uniform("LeftEyeProjMatrix", leftProjMatrix);
             _computeProgramStereo.Uniform("LeftEyeInverseViewMatrix", leftInverseView);
             _computeProgramStereo.Uniform("LeftEyeViewMatrix", leftViewMatrix);
+            _computeProgramStereo.Uniform("LeftEyeCurrViewProjectionUnjittered", leftViewMatrix * leftCamera.ProjectionMatrixUnjittered);
+            _computeProgramStereo.Uniform("LeftEyePrevViewProjectionUnjittered", leftViewMatrix * leftCamera.ProjectionMatrixUnjittered);
 
             // Right eye matrices
             _computeProgramStereo.Uniform("RightEyeInverseProjMatrix", rightInverseProj);
             _computeProgramStereo.Uniform("RightEyeProjMatrix", rightProjMatrix);
             _computeProgramStereo.Uniform("RightEyeInverseViewMatrix", rightInverseView);
             _computeProgramStereo.Uniform("RightEyeViewMatrix", rightViewMatrix);
+            _computeProgramStereo.Uniform("RightEyeCurrViewProjectionUnjittered", rightViewMatrix * (rightCamera?.ProjectionMatrixUnjittered ?? leftCamera.ProjectionMatrixUnjittered));
+            _computeProgramStereo.Uniform("RightEyePrevViewProjectionUnjittered", rightViewMatrix * (rightCamera?.ProjectionMatrixUnjittered ?? leftCamera.ProjectionMatrixUnjittered));
 
             Debug.RenderingEvery(
                 $"AO.SpatialHash.DispatchStereo.{RuntimeHelpers.GetHashCode(ActivePipelineInstance)}",
@@ -601,13 +912,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                 state.FrameIndex,
                 width,
                 height,
-                hashRadius,
-                spp);
+                runtimeSettings.Radius,
+                runtimeSettings.SamplesPerPixel);
 
             uint groupX = (uint)(width + LocalGroupSize - 1) / LocalGroupSize;
             uint groupY = (uint)(height + LocalGroupSize - 1) / LocalGroupSize;
             _computeProgramStereo.DispatchCompute(groupX, groupY, 1u, EMemoryBarrierMask.TextureFetch | EMemoryBarrierMask.ShaderStorage);
             Log($"Dispatch stereo: frameIndex={state.FrameIndex}, groups={groupX}x{groupY}, hashCapacity={state.HashCapacity}");
+            state.HistoryReady = true;
+            state.UseHistoryTextureA = !state.UseHistoryTextureA;
         }
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)

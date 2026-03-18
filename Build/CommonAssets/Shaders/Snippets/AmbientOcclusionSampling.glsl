@@ -2,6 +2,7 @@
 
 layout(binding = 14) uniform sampler2D AmbientOcclusionTexture;
 uniform bool AmbientOcclusionEnabled;
+uniform float AmbientOcclusionPower;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;
@@ -23,6 +24,7 @@ float XRENGINE_SampleAmbientOcclusion()
     ivec2 pixel = ivec2(floor(gl_FragCoord.xy - ScreenOrigin));
     pixel = clamp(pixel, ivec2(0), aoSize - ivec2(1));
     float ao = texelFetch(AmbientOcclusionTexture, pixel, 0).r;
+    ao = pow(clamp(ao, 0.0, 1.0), max(AmbientOcclusionPower, 0.001));
 
     // When the debug power is active, exaggerate the AO so even subtle
     // occlusion becomes plainly visible.

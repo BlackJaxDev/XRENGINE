@@ -56,5 +56,5 @@ void main()
     float AmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
     vec3 normal = getNormalFromMap();
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, texColor.rgb, MatSpecularIntensity, AmbientOcclusion);
-    XRE_WriteWeightedBlendedOit(vec4(texColor.rgb * totalLight, texColor.a * alphaMask));
+    XRE_WriteWeightedBlendedOit(vec4(totalLight, texColor.a * alphaMask));
 }

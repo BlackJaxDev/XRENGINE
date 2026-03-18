@@ -538,6 +538,93 @@ namespace XREngine.Rendering
             LogDispatchEnd("RenderIndirect", true);
         }
 
+        private static int _oneShotDumpBudget = 3; // dump for first 3 frames
+
+        private static void DumpIndirectCommandsOneShot(
+            XRDataBuffer indirectDrawBuffer,
+            IReadOnlyList<DrawBatch> activeBatches,
+            int currentRenderPass)
+        {
+            if (_oneShotDumpBudget <= 0)
+                return;
+            _oneShotDumpBudget--;
+
+            var renderer = AbstractRenderer.Current;
+            if (renderer is null)
+                return;
+
+            renderer.MemoryBarrier(
+                EMemoryBarrierMask.ShaderStorage |
+                EMemoryBarrierMask.Command |
+                EMemoryBarrierMask.ClientMappedBuffer |
+                EMemoryBarrierMask.BufferUpdate);
+
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"[GPU-DIAG] OneShot pass={currentRenderPass} batches={activeBatches.Count} bufferCapacity={indirectDrawBuffer.ElementCount}");
+
+            // Map the GPU buffer to read actual GPU-written data
+            bool mappedHere = false;
+            try
+            {
+                if (indirectDrawBuffer.ActivelyMapping.Count == 0)
+                {
+                    indirectDrawBuffer.MapBufferData();
+                    mappedHere = true;
+                }
+
+                VoidPtr mappedPtr = indirectDrawBuffer
+                    .GetMappedAddresses()
+                    .FirstOrDefault(ptr => ptr.IsValid);
+
+                if (!mappedPtr.IsValid)
+                {
+                    sb.Append(" MAPPING_FAILED");
+                    Debug.Out(sb.ToString());
+                    return;
+                }
+
+                uint stride = indirectDrawBuffer.ElementSize;
+                if (stride == 0)
+                    stride = (uint)Marshal.SizeOf<DrawElementsIndirectCommand>();
+
+                int sampled = 0;
+                int nonZeroCount = 0;
+                unsafe
+                {
+                    byte* basePtr = (byte*)mappedPtr.Pointer;
+                    foreach (var batch in activeBatches)
+                    {
+                        if (sampled >= 12 || batch.Count == 0)
+                            break;
+
+                        for (uint j = 0; j < batch.Count && sampled < 12; j++, sampled++)
+                        {
+                            uint idx = batch.Offset + j;
+                            if (idx >= indirectDrawBuffer.ElementCount)
+                                break;
+
+                            var cmd = Unsafe.ReadUnaligned<DrawElementsIndirectCommand>(basePtr + (int)(idx * stride));
+                            sb.Append($" |[{idx}] cnt={cmd.Count} inst={cmd.InstanceCount} 1st={cmd.FirstIndex} bVtx={cmd.BaseVertex} bInst={cmd.BaseInstance} mat={batch.MaterialID}");
+                            if (cmd.Count > 0 && cmd.InstanceCount > 0)
+                                nonZeroCount++;
+                        }
+                    }
+                }
+                sb.Append($" nonZero={nonZeroCount}/{sampled}");
+            }
+            catch (Exception ex)
+            {
+                sb.Append($" ERROR={ex.Message}");
+            }
+            finally
+            {
+                if (mappedHere)
+                    indirectDrawBuffer.UnmapBufferData();
+            }
+
+            Debug.Out(sb.ToString());
+        }
+
         private static void DumpGpuIndirectArguments(
             GPURenderPassCollection renderPasses,
             XRDataBuffer indirectDrawBuffer,
@@ -2249,12 +2336,10 @@ namespace XREngine.Rendering
                 return;
             }
 
+            // GPU-indirect shaders fetch per-draw transforms from SSBOs, so there is no single
+            // CPU-side model matrix that correctly describes an entire indirect batch.
+            // Keep the legacy ModelMatrix uniform at identity and avoid GPU readbacks here.
             Matrix4x4 defaultModelMatrix = Matrix4x4.Identity;
-            if (renderPasses.VisibleCommandCount > 0 &&
-                TryReadWorldMatrix(renderPasses.CulledSceneToRenderBuffer, 0, out Matrix4x4 firstWorldMatrix))
-            {
-                defaultModelMatrix = firstWorldMatrix;
-            }
 
             // Batched range draws already provide explicit offset/count, so avoid
             // global count-buffer semantics here.
@@ -2369,6 +2454,9 @@ namespace XREngine.Rendering
                 DumpGpuIndirectArguments(renderPasses, indirectDrawBuffer, maxAllowed, dispatchParameterBuffer, visible);
             }
 
+            // === One-shot diagnostic: dump first N indirect draw commands to verify GPU data ===
+            DumpIndirectCommandsOneShot(indirectDrawBuffer, activeBatches, currentRenderPass);
+
             bool textBatchBuffersAttached = false;
             foreach (var batch in activeBatches)
             {
@@ -2480,10 +2568,6 @@ namespace XREngine.Rendering
 
                 GpuDebug("Batch draw: materialID={0} offset={1} count={2}", effectiveMaterialId, batch.Offset, effectiveCount);
 
-                Matrix4x4 batchModelMatrix = defaultModelMatrix;
-                if (TryReadWorldMatrix(renderPasses.CulledSceneToRenderBuffer, batch.Offset, out Matrix4x4 firstDrawMatrix))
-                    batchModelMatrix = firstDrawMatrix;
-
                 DispatchRenderIndirectRange(
                     indirectDrawBuffer,
                     vaoRenderer,
@@ -2496,7 +2580,7 @@ namespace XREngine.Rendering
                     dispatchParameterBuffer,
                     program,
                     camera,
-                    batchModelMatrix);
+                        defaultModelMatrix);
             }
 
             if (textBatchBuffersAttached)

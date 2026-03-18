@@ -1,26 +1,12 @@
 #version 450 core
 
+#pragma snippet "HashColor"
+
 layout(location = 0) out vec4 OutColor;
 
 uniform usampler2D TransformId;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
-
-vec3 HashColor(uint id)
-{
-    // Cheap integer hash -> RGB in [0,1]
-    uint x = id;
-    x ^= x >> 16;
-    x *= 0x7feb352du;
-    x ^= x >> 15;
-    x *= 0x846ca68bu;
-    x ^= x >> 16;
-
-    return vec3(
-        float((x >> 0) & 255u),
-        float((x >> 8) & 255u),
-        float((x >> 16) & 255u)) / 255.0;
-}
 
 void main()
 {
@@ -39,5 +25,5 @@ void main()
         return;
     }
 
-    OutColor = vec4(HashColor(id), 1.0);
+    OutColor = vec4(XRENGINE_HashColor(id), 1.0);
 }

@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "OctahedralMapping"
+
 layout (location = 0) out vec3 OutColor;
 layout (location = 0) in vec3 FragPos;
 
@@ -9,41 +11,6 @@ uniform int SourceDim = 512;
 
 const float PI = 3.14159265359f;
 
-vec2 EncodeOcta(vec3 dir)
-{
-    dir = normalize(dir);
-    // Swizzle: world (x,y,z) -> octahedral (x,z,y)
-    // So world Y (up) -> octahedral Z (center/corners discriminator)
-    vec3 octDir = vec3(dir.x, dir.z, dir.y);
-    octDir /= max(abs(octDir.x) + abs(octDir.y) + abs(octDir.z), 1e-5f);
-
-    vec2 uv = octDir.xy;
-    if (octDir.z < 0.0f)
-    {
-        vec2 signDir = vec2(uv.x >= 0.0f ? 1.0f : -1.0f, uv.y >= 0.0f ? 1.0f : -1.0f);
-        uv = (1.0f - abs(uv.yx)) * signDir;
-    }
-
-    return uv * 0.5f + 0.5f;
-}
-
-vec3 DecodeOcta(vec2 uv)
-{
-    vec2 f = uv * 2.0f - 1.0f;
-    vec3 n = vec3(f.x, f.y, 1.0f - abs(f.x) - abs(f.y));
-
-    if (n.z < 0.0f)
-    {
-        vec2 nXY = n.xy;
-        vec2 signDir = vec2(nXY.x >= 0.0f ? 1.0f : -1.0f, nXY.y >= 0.0f ? 1.0f : -1.0f);
-        n.xy = (1.0f - abs(nXY.yx)) * signDir;
-    }
-
-    // Swizzle back: octahedral (x,y,z) -> world (x,z,y)
-    vec3 dir = vec3(n.x, n.z, n.y);
-    return normalize(dir);
-}
-
 vec3 DirectionFromFragPos(vec3 fragPos)
 {
     vec2 clipXY = fragPos.xy;
@@ -51,13 +18,7 @@ vec3 DirectionFromFragPos(vec3 fragPos)
         discard;
 
     vec2 uv = clipXY * 0.5f + 0.5f;
-    return DecodeOcta(uv);
-}
-
-vec3 SampleOcta(sampler2D tex, vec3 dir, float lod)
-{
-    vec2 uv = EncodeOcta(dir);
-    return textureLod(tex, uv, lod).rgb;
+    return XRENGINE_DecodeOcta(uv);
 }
 
 float DistributionGGX(vec3 N, vec3 H, float roughness)
@@ -140,7 +101,7 @@ void main()
 
             float mipLevel = Roughness == 0.0f ? 0.0f : 0.5f * log2(saSample / saTexel);
 
-            prefilteredColor += SampleOcta(Texture0, L, mipLevel) * NdotL;
+            prefilteredColor += XRENGINE_SampleOctaLod(Texture0, L, mipLevel) * NdotL;
             totalWeight      += NdotL;
         }
     }

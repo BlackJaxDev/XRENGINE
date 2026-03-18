@@ -8,7 +8,7 @@
   "TickGroupedItemsInParallel": true,
   "RecalcChildMatricesType": "Asynchronous",
 
-  "RenderAPI": "Vulkan",
+  "RenderAPI": "OpenGL",
   "AllowShaderPipelines": false,
   "GPURenderDispatch": false,
   "ForceDebugOpaquePipeline": false,

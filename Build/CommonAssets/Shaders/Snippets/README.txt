@@ -40,6 +40,8 @@
 // ENGINE SNIPPETS (in this directory):
 //   - ForwardLighting.glsl     : Complete forward lighting with Forward+ support
 //   - ForwardLightingPBR.glsl  : PBR lighting functions (use with ForwardLighting)
+//   - LightStructs.glsl        : Shared forward light struct definitions
+//   - LightAttenuation.glsl    : Shared inverse-square style light falloff helper
 //   - PBRFunctions.glsl        : Cook-Torrance BRDF, Fresnel, GGX, IBL helpers
 //   - ParallaxMapping.glsl     : Parallax occlusion mapping (POM) functions
 //   - DepthUtils.glsl          : Depth buffer linearization and reconstruction

@@ -1,6 +1,7 @@
 #version 450
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "LightAttenuation"
 
 const float PI = 3.14159265359f;
 const float InvPI = 0.31831f;
@@ -38,10 +39,6 @@ float GetShadowBias(in float NoL)
 {
     float mapped = pow(ShadowBase * (1.0f - NoL), ShadowMult);
     return mix(ShadowBiasMin, ShadowBiasMax, mapped);
-}
-float Attenuate(in float dist, in float radius)
-{
-    return pow(clamp(1.0f - pow(dist / radius, 4.0f), 0.0f, 1.0f), 2.0f) / (dist * dist + 1.0f);
 }
 
 vec3 CalcColor(

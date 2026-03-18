@@ -19,6 +19,7 @@ namespace XREngine
 
         public static Action<string>? LogMessage { get; set; }
         public static Func<string, IDisposable?>? ProfilerScopeFactory { get; set; }
+        public static Action<JobAffinity, string>? JobDispatchObserver { get; set; }
 
         private const int PriorityLevels = 5; // Matches JobPriority enum
         private const int DefaultWorkerCap = 16;
@@ -803,7 +804,9 @@ namespace XREngine
             while (processed < remaining && TryDequeueWithAging(_pendingMainThreadByPriority, JobAffinity.RenderThread, out var job, out var bucket))
             {
                 RecordWait(job, bucket);
-                using (StartProfilerScope($"MainThreadJobs.{job.Priority}.{job.GetProfilerLabel()}"))
+                string label = job.GetProfilerLabel();
+                JobDispatchObserver?.Invoke(JobAffinity.RenderThread, label);
+                using (StartProfilerScope($"MainThreadJobs.{job.Priority}.{label}"))
                 {
                     ExecuteJob(job);
                 }

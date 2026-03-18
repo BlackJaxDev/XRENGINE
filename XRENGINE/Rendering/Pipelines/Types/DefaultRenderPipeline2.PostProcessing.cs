@@ -957,6 +957,53 @@ public partial class DefaultRenderPipeline2
             step: 0.01f,
             visibilityCondition: IsSpatialHash);
 
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.TemporalReuseEnabled)),
+            PostProcessParameterKind.Bool,
+            true,
+            displayName: "Temporal Reuse",
+            visibilityCondition: IsSpatialHash);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.TemporalBlendFactor)),
+            PostProcessParameterKind.Float,
+            0.9f,
+            displayName: "Temporal Blend",
+            min: 0.0f,
+            max: 0.99f,
+            step: 0.01f,
+            visibilityCondition: IsSpatialHash);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.TemporalClamp)),
+            PostProcessParameterKind.Float,
+            0.2f,
+            displayName: "Temporal Clamp",
+            min: 0.001f,
+            max: 1.0f,
+            step: 0.01f,
+            visibilityCondition: IsSpatialHash);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.TemporalDepthRejectThreshold)),
+            PostProcessParameterKind.Float,
+            0.01f,
+            displayName: "Temporal Depth Reject",
+            min: 0.0001f,
+            max: 0.1f,
+            step: 0.001f,
+            visibilityCondition: IsSpatialHash);
+
+        stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.SpatialHash), nameof(SpatialHashAmbientOcclusionSettings.TemporalMotionRejectionScale)),
+            PostProcessParameterKind.Float,
+            0.2f,
+            displayName: "Temporal Motion Reject",
+            min: 0.0001f,
+            max: 2.0f,
+            step: 0.01f,
+            visibilityCondition: IsSpatialHash);
+
     }
 
     private static void DescribeMotionBlurStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)

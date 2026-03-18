@@ -551,12 +551,12 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     {
         program.Uniform("UseAmbientOcclusion", ShouldUseAmbientOcclusion());
 
-        var aoStage = State.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
         float aoPower = 1.0f;
         bool multiBounce = false;
         bool specularOcclusion = false;
 
-        if (aoStage?.TryGetBacking(out AmbientOcclusionSettings? aoSettings) == true && aoSettings is not null)
+        AmbientOcclusionSettings? aoSettings = ResolveAmbientOcclusionSettings();
+        if (aoSettings is not null)
         {
             aoPower = aoSettings.Power;
             if (AmbientOcclusionSettings.NormalizeType(aoSettings.Type) == AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion)
@@ -570,43 +570,78 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
         program.Uniform("AmbientOcclusionMultiBounce", multiBounce);
         program.Uniform("SpecularOcclusionEnabled", specularOcclusion);
 
+        BindPbrLightingResources(program);
+    }
+
+    public bool BindPbrLightingResources(XRRenderProgram program)
+    {
+        XRTexture? brdfTexture = GetTexture<XRTexture>(BRDFTextureName);
+        if (brdfTexture is not null)
+            program.Sampler("BRDF", brdfTexture, 6);
+
         if (!UsesLightProbeGI)
-            return;
+        {
+            program.Uniform("ForwardPbrResourcesEnabled", false);
+            program.Uniform("ProbeCount", 0);
+            program.Uniform("TetraCount", 0);
+            program.Uniform("UseProbeGrid", false);
+            return false;
+        }
 
         var world = RenderingWorld;
         if (world is null)
-            return;
+        {
+            program.Uniform("ForwardPbrResourcesEnabled", false);
+            program.Uniform("ProbeCount", 0);
+            program.Uniform("TetraCount", 0);
+            program.Uniform("UseProbeGrid", false);
+            return false;
+        }
 
         IReadOnlyList<LightProbeComponent> probes = world.Lights.LightProbes;
         var readyProbes = GetReadyProbes(probes);
         if (readyProbes.Count == 0)
         {
             ClearProbeResources();
-            return;
+            program.Uniform("ForwardPbrResourcesEnabled", false);
+            program.Uniform("ProbeCount", 0);
+            program.Uniform("TetraCount", 0);
+            program.Uniform("UseProbeGrid", false);
+            return false;
         }
 
         if (_pendingProbeRefresh || ProbeConfigurationChanged(readyProbes))
             BuildProbeResources(readyProbes);
 
-        if (_probeIrradianceArray is null || _probePrefilterArray is null || _probePositionBuffer is null || _probeParamBuffer is null)
-            return;
+        bool enabled = brdfTexture is not null
+            && _probeIrradianceArray is not null
+            && _probePrefilterArray is not null
+            && _probePositionBuffer is not null
+            && _probeParamBuffer is not null;
 
-        // Use explicit texture units to match the shader's fixed bindings (layout(binding = 7/8)).
-        const int irradianceUnit = 7;
-        const int prefilterUnit = 8;
-        program.Sampler("IrradianceArray", _probeIrradianceArray, irradianceUnit);
-        program.Sampler("PrefilterArray", _probePrefilterArray, prefilterUnit);
+        program.Uniform("ForwardPbrResourcesEnabled", enabled);
+        if (!enabled)
+        {
+            program.Uniform("ProbeCount", 0);
+            program.Uniform("TetraCount", 0);
+            program.Uniform("UseProbeGrid", false);
+            return false;
+        }
 
-        int probeCount = (int)_probePositionBuffer.ElementCount;
+        program.Sampler("IrradianceArray", _probeIrradianceArray!, 7);
+        program.Sampler("PrefilterArray", _probePrefilterArray!, 8);
+
+        int probeCount = (int)_probePositionBuffer!.ElementCount;
         program.Uniform("ProbeCount", probeCount);
         _probePositionBuffer.BindTo(program, 0);
-        _probeParamBuffer.BindTo(program, 2);
-        program.Uniform("UseProbeGrid", _useProbeGridAcceleration && _probeGridCellBuffer is not null && _probeGridIndexBuffer is not null);
+        _probeParamBuffer!.BindTo(program, 2);
+        bool useProbeGrid = _useProbeGridAcceleration && _probeGridCellBuffer is not null && _probeGridIndexBuffer is not null;
+        program.Uniform("UseProbeGrid", useProbeGrid);
 
-        if (_useProbeGridAcceleration && _probeGridCellBuffer is not null && _probeGridIndexBuffer is not null)
+        if (useProbeGrid)
         {
-            _probeGridCellBuffer.BindTo(program, 3);
-            _probeGridIndexBuffer.BindTo(program, 4);
+            _probeGridCellBuffer!.BindTo(program, 3);
+            _probeGridIndexBuffer!.BindTo(program, 4);
             program.Uniform("ProbeGridOrigin", _probeGridOrigin);
             program.Uniform("ProbeGridCellSize", _probeGridCellSize);
             program.Uniform("ProbeGridDims", _probeGridDims);
@@ -623,14 +658,27 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
             if (Engine.EditorPreferences.Debug.RenderLightProbeTetrahedra)
                 RenderProbeTetrahedra(readyProbes, tetraCount);
         }
+
+        return true;
     }
 
     private bool ShouldUseAmbientOcclusion()
     {
-        var stage = State.SceneCamera?.GetPostProcessStageState<AmbientOcclusionSettings>();
+        AmbientOcclusionSettings? settings = ResolveAmbientOcclusionSettings();
+        return settings?.Enabled == true;
+    }
+
+    private AmbientOcclusionSettings? ResolveAmbientOcclusionSettings()
+    {
+        var camera = State.SceneCamera
+            ?? State.RenderingCamera
+            ?? CurrentRenderingPipeline?.LastSceneCamera
+            ?? CurrentRenderingPipeline?.LastRenderingCamera;
+
+        var stage = camera?.GetPostProcessStageState<AmbientOcclusionSettings>();
         return stage?.TryGetBacking(out AmbientOcclusionSettings? settings) == true
-            && settings is not null
-            && settings.Enabled;
+            ? settings
+            : null;
     }
 
     private void RenderProbeTetrahedra(List<LightProbeComponent> readyProbes, int tetraCount)

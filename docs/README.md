@@ -23,6 +23,7 @@ A map of the XRENGINE docs. Start here to explore architecture overviews, API gu
 - [Prefab Workflow](api/prefab-workflow.md)
 
 ## Rendering
+- [Rendering Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 - [CoACD Integration](architecture/CoACD.md)
 - [GPU Render Pass Pipeline](work/design/gpu-render-pass-pipeline.md)
 - [Bindless Deferred Texturing Plan](work/design/bindless-deferred-texturing-plan.md)

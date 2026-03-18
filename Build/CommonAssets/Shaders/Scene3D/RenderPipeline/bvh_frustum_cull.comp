@@ -80,10 +80,17 @@ layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer { uint inHotC
 layout(std430, binding = 10) writeonly buffer CulledHotCommandsBuffer { uint outHotCommands[]; };
 
 // Optional comparison buffer: stores GPU-visible command indices for CPU parity checks.
+// Guarded behind ENABLE_COMPARE_BUFFER / ENABLE_CLUSTER_PLANES because bindings 16-17
+// exceed the OpenGL minimum SSBO binding limit (GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS = 16
+// on many GPUs). Enable via shader #define when the host binds actual comparison data.
+#ifdef ENABLE_COMPARE_BUFFER
 layout(std430, binding = 16) buffer CompareBuffer { uint CompareVisible[]; };
+#endif
 
 // Optional packed cluster plane buffer (vec4 planes, same packing as clustered lighting).
+#ifdef ENABLE_CLUSTER_PLANES
 layout(std430, binding = 17) readonly buffer ClusterPlaneBuffer { vec4 ClusterPlaneData[]; };
+#endif
 
 struct GPUViewDescriptor
 {
@@ -154,6 +161,7 @@ uint ResolvePlaneStride()
 vec4 GetPlane(uint idx)
 {
     // Prefer SSBO-packed cluster planes when enabled and in range
+#ifdef ENABLE_CLUSTER_PLANES
     if (UseClusterPlaneBuffer != 0u)
     {
         uint stride = ResolvePlaneStride();
@@ -162,6 +170,7 @@ vec4 GetPlane(uint idx)
         if (stride > 0u && fetchIndex < ClusterPlaneData.length())
             return ClusterPlaneData[fetchIndex];
     }
+#endif
 
     // Uniform cluster planes override camera planes when requested
     if (UseClusterPlanes != 0u)
@@ -325,11 +334,13 @@ void AppendVisible(uint cmdIndex, vec3 center, float renderDistance, uint instan
 
     atomicAdd(CulledInstanceCount, instanceCount);
 
+#ifdef ENABLE_COMPARE_BUFFER
     if (ENABLE_CPU_GPU_COMPARE != 0u && CompareVisible.length() > 0)
     {
         if (outIndex < CompareVisible.length())
             CompareVisible[outIndex] = cmdIndex;
     }
+#endif
 
     AppendPerView(cmdIndex, outIndex, center, flags);
 }

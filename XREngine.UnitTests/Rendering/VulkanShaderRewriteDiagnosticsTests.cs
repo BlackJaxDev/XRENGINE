@@ -13,6 +13,8 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class VulkanShaderRewriteDiagnosticsTests
 {
+    [TestCase("Common/TexturedDeferred.fs")]
+    [TestCase("Common/TexturedNormalDeferred.fs")]
     [TestCase("Scene3D/DeferredLightingDir.fs")]
     [TestCase("Scene3D/PostProcess.fs")]
     public void Rewrite_DoesNotEmitKnownBrokenTokens(string shaderRelativePath)
@@ -20,6 +22,7 @@ public sealed class VulkanShaderRewriteDiagnosticsTests
         LoadedShaderSource loadedShader = LoadShaderSource(shaderRelativePath);
         string rewritten = RewriteForVulkanFragment(loadedShader.Source);
 
+        rewritten.ShouldNotContain("jax//");
         rewritten.ShouldNotContain("layout(...)uniform");
         rewritten.ShouldNotContain("syntax error");
         rewritten.ShouldNotContain("XREngine_AutoUniforms_Fragment_Instance.XREngine_AutoUniforms_Fragment_Instance");

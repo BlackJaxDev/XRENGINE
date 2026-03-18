@@ -1,4 +1,5 @@
 using XREngine.Data.Rendering;
+using XREngine.Data.Geometry;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
@@ -99,9 +100,48 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (msaaActive)
                 EnsureMsaaRenderers();
 
-            var lights = ActivePipelineInstance.RenderState.WindowViewport?.World?.Lights;
+            var viewport = ActivePipelineInstance.RenderState.WindowViewport;
+            var world = viewport?.World;
+            var lights = world?.Lights;
             if (lights is null)
                 return;
+
+            BoundingRectangle region = ActivePipelineInstance.RenderState.CurrentRenderRegion;
+            int directionalLightCount = lights.DynamicDirectionalLights.Count;
+            int pointLightCount = lights.DynamicPointLights.Count;
+            int spotLightCount = lights.DynamicSpotLights.Count;
+
+            Debug.RenderingEvery(
+                $"RenderDiag.LightCombine.{ActivePipelineInstance.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] LightCombine: VP={0} World={1} Play={2} Region={3}x{4} Msaa={5} Lights(D/P/S)={6}/{7}/{8} GBuffer={9} | {10} | {11} | {12}",
+                viewport?.Index ?? -1,
+                world?.TargetWorld?.Name ?? "<null>",
+                world?.PlayState.ToString() ?? "<null>",
+                region.Width,
+                region.Height,
+                msaaActive,
+                directionalLightCount,
+                pointLightCount,
+                spotLightCount,
+                DescribeTexture(albOpacTex),
+                DescribeTexture(normTex),
+                DescribeTexture(rmseTex),
+                DescribeTexture(depthViewTex));
+
+            if (viewport is { Width: > 512, Height: > 512 } && (region.Width <= 128 || region.Height <= 128))
+            {
+                Debug.RenderingWarningEvery(
+                    $"RenderDiag.LightCombine.SmallRegion.{ActivePipelineInstance.GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] LightCombine is running with unexpectedly small region {0}x{1} while viewport is {2}x{3}. World={4} VP={5}",
+                    region.Width,
+                    region.Height,
+                    viewport.Width,
+                    viewport.Height,
+                    world?.TargetWorld?.Name ?? "<null>",
+                    viewport.Index);
+            }
 
             using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
             {
@@ -373,6 +413,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             };
             return additiveRenderParams;
+        }
+
+        private static string DescribeTexture(XRTexture? texture)
+        {
+            if (texture is null)
+                return "<null>";
+
+            var size = texture.WidthHeightDepth;
+            return $"{texture.Name ?? texture.GetDescribingName()}({(int)size.X}x{(int)size.Y}x{(int)size.Z})";
         }
 
         /// <summary>

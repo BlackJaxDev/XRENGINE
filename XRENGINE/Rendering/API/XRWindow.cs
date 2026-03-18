@@ -984,19 +984,27 @@ namespace XREngine.Rendering
         {
             string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
 
-/*
             Debug.RenderingEvery(
                 keyBase + ".Mode",
                 TimeSpan.FromSeconds(1),
-                "[RenderDiag] Mode: PanelMode={0} ForcedFull={1} Pref={2} CanRender={3} Viewports={4} TargetWorldNull={5} Delta={6:F4}",
+                "[RenderDiag] Window mode: PanelMode={0} ForcedFull={1} Pref={2} CanRender={3} Viewports={4} TargetWorld={5} PlayState={6} Delta={7:F4} DrawCalls={8} VkReq={9} VkCull={10} VkEmit={11} VkConsume={12} GpuVisible(O/M/A/E)={13}/{14}/{15}/{16}",
                 useScenePanelMode,
                 forceFullViewport,
                 Engine.EditorPreferences.ViewportPresentationMode,
                 canRenderWindowViewports,
                 Viewports.Count,
-                TargetWorldInstance is null,
-                delta);
-*/
+                TargetWorldInstance?.TargetWorld?.Name ?? "<null>",
+                TargetWorldInstance?.PlayState.ToString() ?? "<null>",
+                delta,
+                Engine.Rendering.Stats.DrawCalls,
+                Engine.Rendering.Stats.VulkanRequestedDraws,
+                Engine.Rendering.Stats.VulkanCulledDraws,
+                Engine.Rendering.Stats.VulkanEmittedIndirectDraws,
+                Engine.Rendering.Stats.VulkanConsumedDraws,
+                Engine.Rendering.Stats.GpuTransparencyOpaqueOrOtherVisible,
+                Engine.Rendering.Stats.GpuTransparencyMaskedVisible,
+                Engine.Rendering.Stats.GpuTransparencyApproximateVisible,
+                Engine.Rendering.Stats.GpuTransparencyExactVisible);
 
             if (!canRenderWindowViewports)
             {
@@ -1020,29 +1028,26 @@ namespace XREngine.Rendering
                     canRenderWindowViewports);
             }
 
-            // Per-viewport state snapshot (only a few times a second)
-            /*
-            Debug.RenderingEvery(
-                keyBase + ".ViewportSummary",
-                TimeSpan.FromSeconds(2),
-                "[RenderDiag] Window tick. Delta={0:F4}s, Viewports={1}, TargetWorld={2}, PanelMode={3}",
-                delta,
-                Viewports.Count,
-                TargetWorldInstance?.TargetWorld?.Name ?? "<null>",
-                useScenePanelMode);
-            */
-            
             foreach (var vp in Viewports)
             {
                 var activeCamera = vp.ActiveCamera;
                 var world = vp.World;
                 bool hasPipeline = vp.RenderPipelineInstance.Pipeline is not null;
+                int renderCommandCount = vp.RenderPipelineInstance.MeshRenderCommands.GetRenderingCommandCount();
+                int updatingCommandCount = vp.RenderPipelineInstance.MeshRenderCommands.GetUpdatingCommandCount();
+                int rootNodeCount = world?.RootNodes.Count ?? 0;
+                int directionalLightCount = world?.Lights.DynamicDirectionalLights.Count ?? 0;
+                int pointLightCount = world?.Lights.DynamicPointLights.Count ?? 0;
+                int spotLightCount = world?.Lights.DynamicSpotLights.Count ?? 0;
+                string pipelineName = vp.RenderPipelineInstance.Pipeline?.GetType().Name ?? "<null>";
+                string cameraPosition = activeCamera?.Transform is not null
+                    ? activeCamera.Transform.WorldTranslation.ToString()
+                    : "<null>";
 
-                /*
                 Debug.RenderingEvery(
                     keyBase + $".VP.{vp.Index}",
-                    TimeSpan.FromSeconds(2),
-                    "[RenderDiag] VP[{0}] Region={1}x{2}@({3},{4}) Internal={5}x{6} ActiveCameraNull={7} WorldNull={8} PipelineNull={9} AssocPlayer={10}",
+                    TimeSpan.FromSeconds(1),
+                    "[RenderDiag] VP[{0}] Region={1}x{2}@({3},{4}) Internal={5}x{6} World={7} Play={8} RootNodes={9} ActiveCameraNull={10} CamPos={11} Pipeline={12} RenderCmds={13} UpdateCmds={14} Lights(D/P/S)={15}/{16}/{17} Suppress3D={18} AssocPlayer={19}",
                     vp.Index,
                     vp.Width,
                     vp.Height,
@@ -1050,11 +1055,34 @@ namespace XREngine.Rendering
                     vp.Y,
                     vp.InternalWidth,
                     vp.InternalHeight,
+                    world?.TargetWorld?.Name ?? "<null>",
+                    world?.PlayState.ToString() ?? "<null>",
+                    rootNodeCount,
                     activeCamera is null,
-                    world is null,
-                    !hasPipeline,
+                    cameraPosition,
+                    pipelineName,
+                    renderCommandCount,
+                    updatingCommandCount,
+                    directionalLightCount,
+                    pointLightCount,
+                    spotLightCount,
+                    vp.Suppress3DSceneRendering,
                     vp.AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
-                */
+
+                if (canRenderWindowViewports && hasPipeline && activeCamera is not null && world is not null && rootNodeCount > 0 && renderCommandCount == 0)
+                {
+                    Debug.RenderingWarningEvery(
+                        keyBase + $".VP.{vp.Index}.NoRenderCommands",
+                        TimeSpan.FromSeconds(1),
+                        "[RenderDiag] VP[{0}] has world content but zero render commands. RootNodes={1} Lights(D/P/S)={2}/{3}/{4} Pipeline={5} Suppress3D={6}",
+                        vp.Index,
+                        rootNodeCount,
+                        directionalLightCount,
+                        pointLightCount,
+                        spotLightCount,
+                        pipelineName,
+                        vp.Suppress3DSceneRendering);
+                }
             }
         }
 

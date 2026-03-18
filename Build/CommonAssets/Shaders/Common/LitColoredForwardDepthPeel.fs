@@ -23,5 +23,5 @@ void main()
 
     vec3 normal = normalize(FragNorm);
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, MatColor.rgb, MatSpecularIntensity, XRENGINE_SampleAmbientOcclusion());
-    OutColor = MatColor * vec4(totalLight, 1.0);
+    OutColor = vec4(totalLight, MatColor.a);
 }

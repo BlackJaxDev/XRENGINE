@@ -42,6 +42,7 @@ namespace XREngine.Rendering.Commands
         private int _copyAtomicOverflowLogBudget = 4;
         private int _filteredCountLogBudget = 6;
         private int _shippingPolicyLogBudget = 8;
+        private int _zeroVisibilityDiagnosticLogBudget = 6;
         private bool _loggedPassthroughCullMode;
         private bool _loggedFrustumCullMode;
         private bool _loggedBvhCullMode;
@@ -291,6 +292,14 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        private static void BindStorageBuffer(XRRenderProgram program, XRDataBuffer buffer, uint location)
+        {
+            if (buffer.Target == EBufferTarget.ParameterBuffer)
+                buffer.BindTo(program, location);
+            else
+                program.BindBuffer(buffer, location);
+        }
+
         private void ResetVisibleCounters()
         {
             VisibleCommandCount = 0;
@@ -309,7 +318,14 @@ namespace XREngine.Rendering.Commands
         private void UpdateVisibleCountersFromBuffer(XRDataBuffer? countBuffer)
         {
             if (IsCpuReadbackCountDisabledForPass())
+            {
+                // GPU-driven path: the count buffer is consumed directly by GPU dispatches.
+                // Set VisibleCommandCount to buffer capacity as a conservative upper bound
+                // so CPU-side batch clamping doesn't discard valid GPU-generated ranges.
+                VisibleCommandCount = CommandCapacity;
+                VisibleInstanceCount = CommandCapacity;
                 return;
+            }
 
             if (countBuffer is null)
             {
@@ -320,6 +336,27 @@ namespace XREngine.Rendering.Commands
 
             uint draws = ReadUIntAt(countBuffer, GPUScene.VisibleCountDrawIndex);
             uint instances = ReadUIntAt(countBuffer, GPUScene.VisibleCountInstanceIndex);
+
+            if (draws == 0 && ReferenceEquals(countBuffer, _culledCountBuffer) && _statsBuffer is not null)
+            {
+                AbstractRenderer.Current?.MemoryBarrier(
+                    EMemoryBarrierMask.ShaderStorage |
+                    EMemoryBarrierMask.Command |
+                    EMemoryBarrierMask.ClientMappedBuffer);
+
+                uint statsCulled = ReadUIntAt(_statsBuffer, GpuStatsLayout.StatsCulledCount);
+                if (statsCulled > 0)
+                {
+                    draws = statsCulled;
+
+                    if (_filteredCountLogBudget > 0)
+                    {
+                        Debug.LogWarning($"{FormatDebugPrefix("Culling")} Visible-count readback returned 0, but stats buffer reported {statsCulled} visible commands. Using stats fallback for this frame.");
+                        _filteredCountLogBudget--;
+                    }
+                }
+            }
+
             VisibleCommandCount = draws;
             VisibleInstanceCount = instances;
         }
@@ -486,7 +523,7 @@ namespace XREngine.Rendering.Commands
             ApplyOcclusionCulling(gpuCommands, camera);
 
             bool sanitizerOk = true;
-            if (VisibleCommandCount > 0)
+            if (VisibleCommandCount > 0 && !IsCpuReadbackCountDisabledForPass())
                 sanitizerOk = SanitizeCulledCommands(gpuCommands);
 
             if (_skipGpuSubmissionThisPass || !sanitizerOk)
@@ -729,7 +766,7 @@ namespace XREngine.Rendering.Commands
             // Bind buffers
             _cullingComputeShader.BindBuffer(src, 0);
             _cullingComputeShader.BindBuffer(dst, 1);
-            _cullingComputeShader.BindBuffer(_culledCountBuffer!, 2);
+            BindStorageBuffer(_cullingComputeShader, _culledCountBuffer!, 2);
             if (_cullingOverflowFlagBuffer is not null)
                 _cullingComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 3);
             if (useHotCommands)
@@ -742,13 +779,15 @@ namespace XREngine.Rendering.Commands
             BindViewSetBuffers(_cullingComputeShader);
 
             // Dispatch compute shader
+            const EMemoryBarrierMask postCullBarrier =
+                EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command | EMemoryBarrierMask.ClientMappedBuffer;
             (uint x, uint y, uint z) = XRRenderProgram.ComputeDispatch.ForCommands(inputCount);
             {
                 using var cullTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Cull, inputCount);
-                _cullingComputeShader.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+                _cullingComputeShader.DispatchCompute(x, y, z, postCullBarrier);
             }
 
-            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            AbstractRenderer.Current?.MemoryBarrier(postCullBarrier);
             _culledHotCommandsValid = useHotCommands;
 
             // Check for overflow
@@ -767,7 +806,10 @@ namespace XREngine.Rendering.Commands
 
             // Read back visible counts
             UpdateVisibleCountersFromBuffer(_culledCountBuffer);
-            uint visibleCount = VisibleCommandCount;
+            uint visibleCount = Math.Min(VisibleCommandCount, inputCount);
+
+            if (visibleCount == 0 && inputCount > 0)
+                LogZeroVisibilityDiagnostics(scene, camera, inputCount);
 
             if (debugLoggingEnabled)
             {
@@ -972,7 +1014,7 @@ namespace XREngine.Rendering.Commands
             // Bind command buffers (same as linear culling)
             _bvhFrustumCullProgram.BindBuffer(src, 0);
             _bvhFrustumCullProgram.BindBuffer(dst, 1);
-            _bvhFrustumCullProgram.BindBuffer(_culledCountBuffer!, 2);
+            BindStorageBuffer(_bvhFrustumCullProgram, _culledCountBuffer!, 2);
             if (_cullingOverflowFlagBuffer is not null)
                 _bvhFrustumCullProgram.BindBuffer(_cullingOverflowFlagBuffer, 3);
 
@@ -997,12 +1039,14 @@ namespace XREngine.Rendering.Commands
             uint leafCount = (nodeCount + 1u) / 2u;
             (uint x, uint y, uint z) = XRRenderProgram.ComputeDispatch.ForCommands(Math.Max(leafCount, 1u));
 
+            const EMemoryBarrierMask bvhPostCullBarrier =
+                EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command | EMemoryBarrierMask.ClientMappedBuffer;
             {
                 using var cullTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Cull, inputCount);
-                _bvhFrustumCullProgram.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+                _bvhFrustumCullProgram.DispatchCompute(x, y, z, bvhPostCullBarrier);
             }
 
-            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            AbstractRenderer.Current?.MemoryBarrier(bvhPostCullBarrier);
             _culledHotCommandsValid = useHotCommands;
 
             // Check for overflow
@@ -1021,7 +1065,7 @@ namespace XREngine.Rendering.Commands
 
             // Read back visible counts
             UpdateVisibleCountersFromBuffer(_culledCountBuffer);
-            uint visibleCount = VisibleCommandCount;
+            uint visibleCount = Math.Min(VisibleCommandCount, inputCount);
 
             if (debugLoggingEnabled)
             {
@@ -1139,7 +1183,7 @@ namespace XREngine.Rendering.Commands
             _copyCommandsProgram.Uniform("BoundsCheckEnabled", boundsCheckEnabled);
             _copyCommandsProgram.BindBuffer(src, 0);
             _copyCommandsProgram.BindBuffer(dst, 1);
-            _copyCommandsProgram.BindBuffer(_culledCountBuffer!, 2);
+            BindStorageBuffer(_copyCommandsProgram, _culledCountBuffer!, 2);
             if (_cullingOverflowFlagBuffer is not null)
                 _copyCommandsProgram.BindBuffer(_cullingOverflowFlagBuffer, 4);
             BindViewSetBuffers(_copyCommandsProgram);
@@ -1147,10 +1191,10 @@ namespace XREngine.Rendering.Commands
             (uint x, uint y, uint z) = XRRenderProgram.ComputeDispatch.ForCommands(copyCount);
             {
                 using var cullTiming = BvhGpuProfiler.Instance.Scope(BvhGpuProfiler.Stage.Cull, copyCount);
-                _copyCommandsProgram.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+                _copyCommandsProgram.DispatchCompute(x, y, z, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command | EMemoryBarrierMask.ClientMappedBuffer);
             }
 
-            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command | EMemoryBarrierMask.ClientMappedBuffer);
 
             if (debugSamples > 0)
                 DumpPassFilterDebug(debugSamples);
@@ -1613,7 +1657,86 @@ namespace XREngine.Rendering.Commands
         }
 
         private static string FormatCommandSnapshot(in GPUIndirectRenderCommand cmd)
-            => $"mesh={cmd.MeshID} material={cmd.MaterialID} pass={cmd.RenderPass} instances={cmd.InstanceCount}";
+            => $"mesh={cmd.MeshID} material={cmd.MaterialID} pass={cmd.RenderPass} instances={cmd.InstanceCount} layer=0x{cmd.LayerMask:X8} center=<{cmd.BoundingSphere.X:F2},{cmd.BoundingSphere.Y:F2},{cmd.BoundingSphere.Z:F2}> radius={cmd.BoundingSphere.W:F2}";
+
+        private void LogZeroVisibilityDiagnostics(GPUScene scene, XRCamera camera, uint inputCount)
+        {
+            if (_zeroVisibilityDiagnosticLogBudget <= 0)
+                return;
+
+            if (Interlocked.Decrement(ref _zeroVisibilityDiagnosticLogBudget) < 0)
+                return;
+
+            uint rejectedFrustum = ReadStatCounter(3u);
+            uint rejectedDistance = ReadStatCounter(4u);
+            uint sampleCount = Math.Min(inputCount, 4u);
+            if (sampleCount == 0u)
+            {
+                Debug.LogWarning($"{FormatDebugPrefix("Culling")} Zero-visible diagnostic: no source commands available. rejectedFrustum={rejectedFrustum} rejectedDistance={rejectedDistance} cameraMask=0x{unchecked((uint)camera.CullingMask.Value):X8} farZ={camera.FarZ:F2}");
+                return;
+            }
+
+            GPUIndirectRenderCommand[] sample = scene.AllLoadedCommandsBuffer.GetDataArrayRawAtIndex<GPUIndirectRenderCommand>(0, (int)sampleCount);
+            Frustum frustum = camera.WorldFrustum();
+            uint cameraMask = unchecked((uint)camera.CullingMask.Value);
+            Vector3 cameraPosition = camera.Transform?.WorldTranslation ?? Vector3.Zero;
+            float maxDistanceSq = camera.FarZ > 0.0f ? camera.FarZ * camera.FarZ : float.PositiveInfinity;
+
+            var sb = new StringBuilder(512);
+            sb.Append($"{FormatDebugPrefix("Culling")} Zero-visible diagnostic: rejectedFrustum={rejectedFrustum} rejectedDistance={rejectedDistance} cameraMask=0x{cameraMask:X8} farZ={camera.FarZ:F2}");
+            for (int i = 0; i < sample.Length; i++)
+            {
+                GPUIndirectRenderCommand cmd = sample[i];
+                string reason = DescribeCpuFrustumRejectReason(cmd, frustum, cameraPosition, cameraMask, maxDistanceSq);
+                sb.Append(" | #").Append(i).Append(' ').Append(reason).Append(' ').Append(FormatCommandSnapshot(cmd));
+            }
+
+            Debug.LogWarning(sb.ToString());
+        }
+
+        private uint ReadStatCounter(uint index)
+        {
+            if (_statsBuffer is null || _statsBuffer.ElementCount <= index)
+                return 0u;
+
+            try
+            {
+                return ReadUIntAt(_statsBuffer, index);
+            }
+            catch
+            {
+                return 0u;
+            }
+        }
+
+        private string DescribeCpuFrustumRejectReason(in GPUIndirectRenderCommand cmd, Frustum frustum, Vector3 cameraPosition, uint cameraMask, float maxDistanceSq)
+        {
+            if (cmd.InstanceCount == 0u)
+                return "reject=instance-count";
+
+            if ((cmd.LayerMask & cameraMask) == 0u)
+                return "reject=layer-mask";
+
+            if (RenderPass >= 0 && cmd.RenderPass != (uint)RenderPass && cmd.RenderPass != uint.MaxValue)
+                return "reject=render-pass";
+
+            Vector3 center = new(cmd.BoundingSphere.X, cmd.BoundingSphere.Y, cmd.BoundingSphere.Z);
+            float radius = cmd.BoundingSphere.W;
+            if (float.IsNaN(center.X) || float.IsNaN(center.Y) || float.IsNaN(center.Z) || float.IsNaN(radius))
+                return "reject=nan-bounds";
+
+            if (radius < 0.0f || float.IsInfinity(radius))
+                return "reject=invalid-radius";
+
+            float distanceSq = Vector3.DistanceSquared(center, cameraPosition);
+            if (distanceSq > maxDistanceSq)
+                return "reject=distance";
+
+            Sphere sphere = new(center, radius);
+            return frustum.ContainsSphere(sphere) == EContainment.Disjoint
+                ? "reject=frustum"
+                : "candidate=visible";
+        }
 
         private static (uint MeshId, uint MaterialId, uint Pass) BuildVisibilitySignature(in GPUIndirectRenderCommand cmd)
             => (cmd.MeshID, cmd.MaterialID, cmd.RenderPass);
@@ -1930,7 +2053,7 @@ namespace XREngine.Rendering.Commands
             shader.BindBuffer(spheres, 0);
             shader.BindBuffer(meta, 1);
             shader.BindBuffer(_soaIndexList, 2);
-            shader.BindBuffer(_culledCountBuffer, 3);
+            BindStorageBuffer(shader, _culledCountBuffer, 3);
 
             if (_cullingOverflowFlagBuffer != null)
                 shader.BindBuffer(_cullingOverflowFlagBuffer, 4);
@@ -1965,7 +2088,7 @@ namespace XREngine.Rendering.Commands
 
             _debugDrawProgram.BindBuffer(_culledSceneToRenderBuffer, 0);
             _debugDrawProgram.BindBuffer(scene.AllLoadedCommandsBuffer, 1);
-            _debugDrawProgram.BindBuffer(_culledCountBuffer, 2);
+            BindStorageBuffer(_debugDrawProgram, _culledCountBuffer, 2);
 
             uint numGroups = (count + ComputeWorkGroupSize - 1) / ComputeWorkGroupSize;
             _debugDrawProgram.DispatchCompute(numGroups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);

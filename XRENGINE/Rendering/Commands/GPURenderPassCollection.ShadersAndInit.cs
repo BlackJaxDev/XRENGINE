@@ -59,7 +59,13 @@ namespace XREngine.Rendering.Commands
                     return;
                 }
 
-                // Do NOT map parameter buffers; only map SSBO/flag buffers for readback
+                // Map all SSBO buffers (count, flag, stats) for persistent coherent readback
+                if (_culledCountBuffer is not null)
+                    EnsurePersistentReadbackMapping(_culledCountBuffer);
+                if (_cullCountScratchBuffer is not null)
+                    EnsurePersistentReadbackMapping(_cullCountScratchBuffer);
+                if (_drawCountBuffer is not null)
+                    EnsurePersistentReadbackMapping(_drawCountBuffer);
                 if (_cullingOverflowFlagBuffer is not null)
                     EnsurePersistentReadbackMapping(_cullingOverflowFlagBuffer);
                 if (_indirectOverflowFlagBuffer is not null)
@@ -74,16 +80,17 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            // Otherwise, selectively map only the buffers that were flagged
+            // Map count buffers with persistent+coherent readback so GPU atomicAdd writes
+            // are visible to CPU reads.
             if (_culledCountNeedsMap && _culledCountBuffer is not null)
             {
-                // Skip mapping for parameter buffers; just clear the flag
+                EnsurePersistentReadbackMapping(_culledCountBuffer);
                 _culledCountNeedsMap = false;
             }
 
             if (_drawCountNeedsMap && _drawCountBuffer is not null)
             {
-                // Skip mapping for parameter buffers; just clear the flag
+                EnsurePersistentReadbackMapping(_drawCountBuffer);
                 _drawCountNeedsMap = false;
             }
 
@@ -523,13 +530,19 @@ namespace XREngine.Rendering.Commands
 
         private bool EnsureParameterBuffer(ref XRDataBuffer? buffer, string name, uint elementCount = 1, uint componentCount = 1)
         {
+            const EBufferMapStorageFlags requiredStorage =
+                EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read |
+                EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent;
+            const EBufferMapRangeFlags requiredRange =
+                EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
+
             bool requiresMapping = false;
 
             if (buffer is not null)
             {
                 bool invalidLayout = buffer.ElementCount != elementCount || buffer.ComponentType != EComponentType.UInt || buffer.ComponentCount != componentCount;
-                bool missingStorage = (buffer.StorageFlags & (EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read)) != (EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read);
-                bool missingRange = !buffer.RangeFlags.HasFlag(EBufferMapRangeFlags.Read);
+                bool missingStorage = (buffer.StorageFlags & requiredStorage) != requiredStorage;
+                bool missingRange = (buffer.RangeFlags & requiredRange) != requiredRange;
 
                 if (invalidLayout || missingStorage || missingRange)
                 {
@@ -542,14 +555,16 @@ namespace XREngine.Rendering.Commands
 
             if (buffer is null)
             {
-                buffer = new XRDataBuffer(name, EBufferTarget.ParameterBuffer, elementCount, EComponentType.UInt, componentCount, false, true)
+                // Persistent+Coherent MUST be set before Generate() because OpenGL
+                // requires GL_MAP_PERSISTENT_BIT at glBufferStorage allocation time.
+                buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, elementCount, EComponentType.UInt, componentCount, false, true)
                 {
                     Usage = EBufferUsage.DynamicCopy,
                     DisposeOnPush = false,
                     Resizable = false,
                     PadEndingToVec4 = false,
-                    StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read,
-                    RangeFlags = EBufferMapRangeFlags.Read,
+                    StorageFlags = requiredStorage,
+                    RangeFlags = requiredRange,
                 };
 
                 buffer.Generate();
@@ -558,18 +573,6 @@ namespace XREngine.Rendering.Commands
                 buffer.PushSubData();
                 requiresMapping = true;
             }
-
-            // Parameter buffers participate in GPU writes via compute shaders and are rebound as
-            // GL_PARAMETER_BUFFER for multi-draw indirect count submissions.  Several desktop
-            // drivers will hard-stall if these buffers are created with the persistent/coherent
-            // mapping bits set, so keep them as simple readback buffers that can be mapped on
-            // demand.  We still request DynamicStorage so the GPU can update the contents without
-            // forcing a reallocation, but omit Persistent/Coherent so glMapNamedBufferRange issues
-            // a one-off read-only mapping instead of a long-lived persistent map.
-            buffer.StorageFlags &= ~(EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent);
-            buffer.RangeFlags &= ~(EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent);
-            buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read;
-            buffer.RangeFlags |= EBufferMapRangeFlags.Read;
 
             // Only force a remap before the initial mapping has occurred
             if (!requiresMapping && IndirectDebug.ForceParameterRemap && buffer is not null && !_buffersMapped)
@@ -875,6 +878,8 @@ namespace XREngine.Rendering.Commands
                     DisposeOnPush = false,
                     Resizable = false,
                 };
+                _transparencyDomainCountBuffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read;
+                _transparencyDomainCountBuffer.RangeFlags |= EBufferMapRangeFlags.Read;
                 _transparencyDomainCountBuffer.Generate();
                 _transparencyDomainCountBuffer.SetDataRaw(new uint[GPUTransparencyLayout.DomainCountBufferUIntCount], (int)GPUTransparencyLayout.DomainCountBufferUIntCount);
                 _transparencyDomainCountBuffer.PushSubData();

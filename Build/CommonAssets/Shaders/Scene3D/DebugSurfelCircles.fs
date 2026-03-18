@@ -1,5 +1,7 @@
 #version 450 core
 
+#pragma snippet "HashColor"
+
 // Surfel Debug Visualization: Renders surfels as colored circles on the scene
 layout(location = 0) out vec4 OutColor;
 
@@ -58,22 +60,6 @@ layout(std430, binding = 5) buffer CulledCommandsBuffer { float culled[]; };
 uniform bool hasCulledCommands;
 uniform uint culledFloatCount;
 uniform uint culledCommandFloats;
-
-vec3 HashColor(uint id)
-{
-    // Cheap integer hash -> RGB in [0,1]
-    uint x = id;
-    x ^= x >> 16;
-    x *= 0x7feb352du;
-    x ^= x >> 15;
-    x *= 0x846ca68bu;
-    x ^= x >> 16;
-
-    return vec3(
-        float((x >> 0) & 255u),
-        float((x >> 8) & 255u),
-        float((x >> 16) & 255u)) / 255.0;
-}
 
 vec3 ReconstructWorldPosition(vec2 uv, float depth)
 {
@@ -201,7 +187,7 @@ void main()
                 minDist = dist;
                 nearestIdx = idx;
                 // Color by surfel index for unique identification
-                nearestColor = HashColor(idx);
+                nearestColor = XRENGINE_HashColor(idx);
                 nearestRadius = sRadius;
                 foundSurfel = true;
             }
