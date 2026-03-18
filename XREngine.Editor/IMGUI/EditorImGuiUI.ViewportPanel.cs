@@ -221,6 +221,11 @@ public static partial class EditorImGuiUI
             RevertMaterialPreview();
         }
 
+        if (_prefabPreviewActive && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
+        {
+            RevertPrefabPreview();
+        }
+
         if (!ImGui.BeginDragDropTarget())
         {
             // If we leave the drop target while dragging, revert the preview
@@ -238,7 +243,15 @@ public static partial class EditorImGuiUI
                 string? path = ImGuiAssetUtilities.GetPathFromPayload(peekPayload);
                 if (!string.IsNullOrWhiteSpace(path) && TryLoadMaterialAsset(path, out var material))
                 {
+                    if (_prefabPreviewActive)
+                        RevertPrefabPreview();
                     UpdateMaterialPreview(world, material!);
+                }
+                else if (!string.IsNullOrWhiteSpace(path) && TryLoadPrefabAsset(path, out var prefab))
+                {
+                    if (_materialPreviewActive)
+                        RevertMaterialPreview();
+                    UpdatePrefabPreview(world, parent: null, prefab!);
                 }
             }
         }
@@ -255,13 +268,22 @@ public static partial class EditorImGuiUI
                     if (TryLoadMaterialAsset(path, out var material))
                     {
                         // Clear preview state before permanent apply (don't revert, just clear tracking)
+                        if (_prefabPreviewActive)
+                            RevertPrefabPreview();
                         ClearMaterialPreviewState();
                         EnqueueSceneEdit(() => TryApplyMaterialDropToHoveredSubmesh(world, material!));
                     }
                     else if (TryLoadPrefabAsset(path, out var prefab))
-                        EnqueueSceneEdit(() => SpawnPrefabNode(world, parent: null, prefab!));
+                    {
+                        if (!TryFinalizePrefabPreview(world, parent: null, prefab!))
+                            EnqueueSceneEdit(() => SpawnPrefabNode(world, parent: null, prefab!));
+                    }
                     else if (TryLoadModelAsset(path, out var model))
+                    {
+                        if (_prefabPreviewActive)
+                            RevertPrefabPreview();
                         EnqueueSceneEdit(() => SpawnModelNode(world, parent: null, model!, path));
+                    }
                 }
             }
         }

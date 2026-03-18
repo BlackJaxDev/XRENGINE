@@ -856,7 +856,7 @@ public partial class DefaultRenderPipeline2
         var cmds = new ViewportRenderCommandContainer(this);
         if (bypassVendorUpscale)
         {
-            cmds.Add<VPRC_RenderQuadToFBO>().SetTargets(sourceFboName, null);
+            cmds.Add<VPRC_RenderToWindow>().SourceFBOName = sourceFboName;
         }
         else
         {

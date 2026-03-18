@@ -1,6 +1,7 @@
 #version 450
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "DepthUtils"
 
 layout (location = 0) out vec4 OutAlbedoOpacity;
 layout (location = 1) out vec2 OutNormal;
@@ -21,14 +22,6 @@ uniform mat4 InverseViewMatrix;
 uniform mat4 BoxWorldMatrix;
 uniform vec3 BoxHalfScale;
 
-vec3 WorldPosFromDepth(in float depth, in vec2 uv)
-{
-	vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-	vec4 viewSpacePosition = inverse(ProjMatrix) * clipSpacePosition;
-	viewSpacePosition /= viewSpacePosition.w;
-	return (InverseViewMatrix * viewSpacePosition).xyz;
-}
-
 void main()
 {
 	vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
@@ -40,7 +33,7 @@ void main()
 	float depth = texture(DepthView, uv).r;
 
 	//Resolve world fragment position using depth and screen UV
-	vec3 fragPosWS = WorldPosFromDepth(depth, uv);
+	vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, inverse(ProjMatrix), InverseViewMatrix);
 	vec4 fragPosOS = (inverse(BoxWorldMatrix) * vec4(fragPosWS, 1.0f));
 	fragPosOS.xyz /= BoxHalfScale;
 

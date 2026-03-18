@@ -515,8 +515,8 @@ namespace XREngine.Rendering.Commands
             _hiZOcclusionProgram.Sampler("HiZDepth", _hiZDepthPyramid, 0);
             _hiZOcclusionProgram.BindBuffer(CulledSceneToRenderBuffer!, 0);
             _hiZOcclusionProgram.BindBuffer(_occlusionCulledBuffer!, 1);
-            _hiZOcclusionProgram.BindBuffer(_culledCountBuffer!, 2);
-            _hiZOcclusionProgram.BindBuffer(_cullCountScratchBuffer!, 3);
+            BindStorageBuffer(_hiZOcclusionProgram, _culledCountBuffer!, 2);
+            BindStorageBuffer(_hiZOcclusionProgram, _cullCountScratchBuffer!, 3);
             _hiZOcclusionProgram.BindBuffer(_occlusionOverflowFlagBuffer!, 4);
             if (useHotCommands)
             {
@@ -536,8 +536,8 @@ namespace XREngine.Rendering.Commands
 
             // Forward occlusion output counts into the primary count buffer for indirect build.
             _copyCount3Program.Use();
-            _copyCount3Program.BindBuffer(_cullCountScratchBuffer!, 0);
-            _copyCount3Program.BindBuffer(_culledCountBuffer!, 1);
+            BindStorageBuffer(_copyCount3Program, _cullCountScratchBuffer!, 0);
+            BindStorageBuffer(_copyCount3Program, _culledCountBuffer!, 1);
             _copyCount3Program.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 
             _culledHotCommandsValid = useHotCommands;

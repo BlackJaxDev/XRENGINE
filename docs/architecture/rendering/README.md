@@ -7,6 +7,7 @@ Documentation for XREngine's rendering system — how windows are created, graph
 | Document | Description |
 |----------|-------------|
 | [Window Creation & Renderer Initialization](window-creation-and-renderer-init.md) | How the engine creates OS windows on startup, selects OpenGL or Vulkan, instantiates renderers, and begins the render loop. Start here for the full picture. |
+| [Rendering Frame Lifecycle And Dispatch Paths](frame-lifecycle-and-dispatch-paths.md) | The end-to-end `CollectVisible -> SwapBuffers -> Render` lifecycle, how worlds/viewports/scenes hand buffers across threads, and how CPU, GPU, BVH, octree, quadtree, and meshlet-related paths fit together. |
 | [OpenGL Renderer](opengl-renderer.md) | OpenGL 4.6 renderer initialization, GL state management, draw call submission, indirect drawing, framebuffer management, and ImGui integration. |
 | [Vulkan Renderer](vulkan-renderer.md) | Vulkan 1.3 renderer initialization (instance → swapchain → sync), the explicit frame loop (acquire → record → submit → present), render graph compilation, and resource management. |
 | [OpenXR VR Rendering](openxr-vr-rendering.md) | OpenXR session lifecycle, graphics bindings (OpenGL / Vulkan), swapchain management, three-phase frame model, per-eye rendering, mirror blit pipeline, and late-pose updates. |

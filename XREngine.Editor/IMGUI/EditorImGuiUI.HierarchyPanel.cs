@@ -73,19 +73,24 @@ public static partial class EditorImGuiUI
                 return;
         }
 
-        // Only process on mouse release
-        if (!ImGui.IsMouseReleased(ImGuiMouseButton.Left))
-            return;
-
         string? path = ImGuiAssetUtilities.GetPathFromPayload(payload);
         if (string.IsNullOrWhiteSpace(path))
             return;
 
         SceneNode? parent = Selection.SceneNode;
         if (TryLoadPrefabAsset(path, out var prefab))
-            EnqueueSceneEdit(() => SpawnPrefabNode(world, parent, prefab!));
+        {
+            UpdatePrefabPreview(world, parent, prefab!);
+            if (ImGui.IsMouseReleased(ImGuiMouseButton.Left) && !TryFinalizePrefabPreview(world, parent, prefab!))
+                EnqueueSceneEdit(() => SpawnPrefabNode(world, parent, prefab!));
+        }
         else if (TryLoadModelAsset(path, out var model))
+        {
+            if (_prefabPreviewActive)
+                RevertPrefabPreview();
+            if (ImGui.IsMouseReleased(ImGuiMouseButton.Left))
             EnqueueSceneEdit(() => SpawnModelNode(world, parent, model!, path));
+        }
     }
 
     private static void DrawWorldHierarchyTab()
@@ -213,12 +218,26 @@ public static partial class EditorImGuiUI
         if (isSelected)
             fullFlags |= ImGuiTreeNodeFlags.Selected;
         bool nodeOpen = ImGui.TreeNodeEx("##TreeNode", fullFlags);
+        bool treeItemHovered = ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem);
         if (!isRenaming && ImGui.IsItemClicked(ImGuiMouseButton.Left))
-            UpdateHierarchySelection(node);
+            _nodePendingSelection = node;
+
+        if (!isRenaming
+            && ReferenceEquals(_nodePendingSelection, node)
+            && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+        {
+            if (treeItemHovered && !ImGui.IsMouseDragging(ImGuiMouseButton.Left))
+                UpdateHierarchySelection(node);
+
+            _nodePendingSelection = null;
+        }
         ImGui.OpenPopupOnItemClick("Context", ImGuiPopupFlags.MouseButtonRight);
 
         if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
         {
+            if (ReferenceEquals(_nodePendingSelection, node))
+                _nodePendingSelection = null;
+
             ImGuiSceneNodeDragDrop.SetPayload(node);
             ImGui.TextUnformatted(displayLabel);
             ImGui.EndDragDropSource();

@@ -29,5 +29,5 @@ void main()
     float specularMask = texture(Texture1, FragUV0).r;
     float specIntensity = MatSpecularIntensity * specularMask;
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, texColor.rgb, specIntensity, AmbientOcclusion);
-    OutColor = texColor * vec4(totalLight, 1.0);
+    OutColor = vec4(totalLight, texColor.a);
 }

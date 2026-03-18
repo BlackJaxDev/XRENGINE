@@ -216,15 +216,15 @@ namespace XREngine.Rendering.Commands
 
             Dbg("Reset counters dispatch", "Lifecycle");
 
-            _resetCountersComputeShader.BindBuffer(_culledCountBuffer, 0);
-            _resetCountersComputeShader.BindBuffer(_drawCountBuffer, 1);
+            BindStorageBuffer(_resetCountersComputeShader, _culledCountBuffer, 0);
+            BindStorageBuffer(_resetCountersComputeShader, _drawCountBuffer, 1);
             if (_cullingOverflowFlagBuffer is not null)
                 _resetCountersComputeShader.BindBuffer(_cullingOverflowFlagBuffer, 2);
             if (_indirectOverflowFlagBuffer is not null)
                 _resetCountersComputeShader.BindBuffer(_indirectOverflowFlagBuffer, 3);
             if (_truncationFlagBuffer is not null)
                 _resetCountersComputeShader.BindBuffer(_truncationFlagBuffer, 4);
-            _resetCountersComputeShader.BindBuffer(_cullCountScratchBuffer, 6);
+            BindStorageBuffer(_resetCountersComputeShader, _cullCountScratchBuffer, 6);
             if (_statsBuffer is not null)
                 _resetCountersComputeShader.BindBuffer(_statsBuffer, 8);
             if (_gpuBatchCountBuffer is not null)

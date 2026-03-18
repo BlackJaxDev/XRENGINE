@@ -87,6 +87,7 @@ public static partial class EditorImGuiUI
         private static Vector4? _imguiBaseDockingEmptyBg;
         private static bool _componentTypeCacheDirty = true;
         private static SceneNode? _nodePendingRename;
+        private static SceneNode? _nodePendingSelection;
         private static IReadOnlyList<SceneNode>? _nodesPendingAddComponent;
         private static IReadOnlyList<SceneNode>? _nodesPendingDeepDuplicate;
         private static IReadOnlyList<XRAsset>? _assetsPendingDeepDuplicate;
@@ -527,6 +528,7 @@ public static partial class EditorImGuiUI
             // Reset per-frame UI state; other panels set these during their draw.
             _assetExplorerWindowHovered = false;
             _assetDragInProgress = false;
+            _prefabPreviewHoveredThisFrame = false;
 
             LoadEditorSceneHierarchyFromUserSettingsIfNeeded();
 
@@ -636,7 +638,15 @@ public static partial class EditorImGuiUI
                     var world = TryGetActiveWorldInstance();
                     if (world is not null && TryLoadMaterialAsset(_assetDragPath, out var material))
                     {
+                        if (_prefabPreviewActive)
+                            RevertPrefabPreview();
                         UpdateMaterialPreview(world, material!);
+                    }
+                    else if (world is not null && TryLoadPrefabAsset(_assetDragPath, out var prefab))
+                    {
+                        if (_materialPreviewActive)
+                            RevertMaterialPreview();
+                        UpdatePrefabPreview(world, parent: null, prefab!);
                     }
                 }
                 else if (_materialPreviewActive)
@@ -662,13 +672,22 @@ public static partial class EditorImGuiUI
                                 if (TryLoadMaterialAsset(path, out var material))
                                 {
                                     // Clear preview state before permanent apply
+                                    if (_prefabPreviewActive)
+                                        RevertPrefabPreview();
                                     ClearMaterialPreviewState();
                                     EnqueueSceneEdit(() => TryApplyMaterialDropToHoveredSubmesh(world, material!));
                                 }
                                 else if (TryLoadPrefabAsset(path, out var prefab))
-                                    EnqueueSceneEdit(() => SpawnPrefabNode(world, parent: null, prefab!));
+                                {
+                                    if (!TryFinalizePrefabPreview(world, parent: null, prefab!))
+                                        EnqueueSceneEdit(() => SpawnPrefabNode(world, parent: null, prefab!));
+                                }
                                 else if (TryLoadModelAsset(path, out var model))
+                                {
+                                    if (_prefabPreviewActive)
+                                        RevertPrefabPreview();
                                     EnqueueSceneEdit(() => SpawnModelNode(world, parent: null, model!, path));
+                                }
                             }
                         }
                     }
@@ -685,6 +704,9 @@ public static partial class EditorImGuiUI
                         RevertMaterialPreview();
                 }
             }
+
+            if (_prefabPreviewActive && (!_prefabPreviewHoveredThisFrame || !ImGui.IsMouseDown(ImGuiMouseButton.Left)))
+                RevertPrefabPreview();
 
             bool uiWantsCapture = io.WantCaptureMouse || captureKeyboard;
             bool allowEngineInputThroughScenePanel =

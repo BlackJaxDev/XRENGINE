@@ -50,5 +50,5 @@ void main()
     float specularMask = texture(Texture1, FragUV0).r;
     float specIntensity = MatSpecularIntensity * specularMask;
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, texColor.rgb, specIntensity, AmbientOcclusion);
-    XRE_WriteWeightedBlendedOit(vec4(texColor.rgb * totalLight, texColor.a * alphaMask));
+    XRE_WriteWeightedBlendedOit(vec4(totalLight, texColor.a * alphaMask));
 }

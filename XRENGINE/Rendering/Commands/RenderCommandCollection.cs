@@ -171,7 +171,12 @@ namespace XREngine.Rendering.Commands
             return added;
         }
 
-        public void RenderCPU(int renderPass, bool skipGpuCommands = false, XRCamera? camera = null)
+        public void RenderCPU(
+            int renderPass,
+            bool skipGpuCommands = false,
+            XRCamera? camera = null,
+            bool allowExcludedGpuFallbackMeshes = true,
+            Action<IRenderCommandMesh>? onExcludedGpuFallbackMesh = null)
         {
             if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list))
                 return;
@@ -189,11 +194,19 @@ namespace XREngine.Rendering.Commands
             {
                 if (skipGpuCommands && cmd is IRenderCommandMesh meshCmd)
                 {
-                    // Skip mesh commands that should go through GPU dispatch,
-                    // but still render meshes that explicitly exclude themselves from GPU indirect.
+                    // Skip mesh commands that should go through GPU dispatch.
+                    // Optionally allow opt-out meshes to keep rendering on CPU for diagnostics.
                     var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
-                    if (material?.RenderOptions?.ExcludeFromGpuIndirect != true)
+                    bool excludedFromGpuIndirect = material?.RenderOptions?.ExcludeFromGpuIndirect == true;
+                    if (!excludedFromGpuIndirect)
                     {
+                        cpuCmdIndex++;
+                        continue;
+                    }
+
+                    if (!allowExcludedGpuFallbackMeshes)
+                    {
+                        onExcludedGpuFallbackMesh?.Invoke(meshCmd);
                         cpuCmdIndex++;
                         continue;
                     }
@@ -257,6 +270,9 @@ namespace XREngine.Rendering.Commands
         {
             if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))
                 return;
+
+            if (!HasGpuEligibleMeshCommands(renderPass))
+                return;
             
             var renderState = Engine.Rendering.State.CurrentRenderingPipeline?.RenderState;
             if (renderState is null)
@@ -289,6 +305,29 @@ namespace XREngine.Rendering.Commands
                     Engine.Rendering.Stats.RecordVrPerViewDrawCounts(leftDraws, rightDraws);
                 }
             }
+        }
+
+        private bool HasGpuEligibleMeshCommands(int renderPass)
+        {
+            using (_lock.EnterScope())
+            {
+                if (!_renderingPasses.TryGetValue(renderPass, out ICollection<RenderCommand>? list) || list.Count == 0)
+                    return false;
+
+                foreach (var cmd in list)
+                {
+                    if (cmd is not IRenderCommandMesh meshCmd)
+                        continue;
+
+                    var material = meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material;
+                    if (material?.RenderOptions?.ExcludeFromGpuIndirect == true)
+                        continue;
+
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static void ConfigureGpuViewSet(GPURenderPassCollection gpuPass, XRRenderPipelineInstance.RenderingState renderState, XRCamera leftCamera)

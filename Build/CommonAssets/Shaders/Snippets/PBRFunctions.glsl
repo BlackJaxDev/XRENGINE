@@ -97,6 +97,13 @@ vec3 XRENGINE_F_SchlickFast(float VoH, vec3 F0)
     return F0 + (1.0 - F0) * p;
 }
 
+// Spherical Gaussian approximation with roughness for IBL
+vec3 XRENGINE_F_SchlickRoughnessFast(float VoH, vec3 F0, float roughness)
+{
+    float p = exp2((-5.55473 * VoH - 6.98316) * VoH);
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * p;
+}
+
 // ============================================================================
 // Complete BRDF Terms
 // ============================================================================

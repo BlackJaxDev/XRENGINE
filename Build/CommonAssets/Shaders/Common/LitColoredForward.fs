@@ -35,6 +35,6 @@ void main()
         MatSpecularIntensity,
         XRENGINE_SampleAmbientOcclusion());
 
-    OutColor = MatColor * vec4(totalLight, 1.0);
+    OutColor = vec4(totalLight, MatColor.a);
 #endif
 }

@@ -23,7 +23,12 @@ uniform sampler2D SourceTexture;
 
 void main()
 {
-    OutColor = texture(SourceTexture, FragPos.xy);
+    vec2 clipXY = FragPos.xy;
+    if (clipXY.x < -1.0 || clipXY.x > 1.0 || clipXY.y < -1.0 || clipXY.y > 1.0)
+        discard;
+
+    vec2 uv = clipXY * 0.5 + 0.5;
+    OutColor = texture(SourceTexture, uv);
 }
 """;
 

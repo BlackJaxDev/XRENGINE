@@ -1,5 +1,7 @@
 #version 460
 
+#pragma snippet "DepthUtils"
+
 layout(location = 0) out vec4 OutAccum;
 layout(location = 1) out vec4 OutRevealage;
 
@@ -12,14 +14,6 @@ uniform mat4 ProjMatrix;
 uniform mat4 InverseViewMatrix;
 uniform mat4 BoxWorldMatrix;
 uniform vec3 BoxHalfScale;
-
-vec3 WorldPosFromDepth(in float depth, in vec2 uv)
-{
-    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-    vec4 viewSpacePosition = inverse(ProjMatrix) * clipSpacePosition;
-    viewSpacePosition /= viewSpacePosition.w;
-    return (InverseViewMatrix * viewSpacePosition).xyz;
-}
 
 float XRE_ComputeOitWeight(float alpha)
 {
@@ -34,7 +28,7 @@ void main()
     float depth = texture(DepthView, uv).r;
 
     // Reconstruct world-space position from depth
-    vec3 fragPosWS = WorldPosFromDepth(depth, uv);
+    vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, inverse(ProjMatrix), InverseViewMatrix);
     vec4 fragPosOS = (inverse(BoxWorldMatrix) * vec4(fragPosWS, 1.0f));
     fragPosOS.xyz /= BoxHalfScale;
 

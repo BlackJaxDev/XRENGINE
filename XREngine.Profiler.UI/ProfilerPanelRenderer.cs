@@ -89,6 +89,13 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     private readonly List<string> _gpuPipelineRootHistoryStaleKeys = new();
     private readonly float[] _gpuPipelineRootHistoryScratch = new float[RenderStatsHistorySamples];
     private int _gpuPipelineRootSampleSerial;
+    private bool _gpuPipelineDisplayEnabled;
+    private bool _gpuPipelineDisplaySupported;
+    private bool _gpuPipelineDisplayReady;
+    private string _gpuPipelineDisplayBackend = string.Empty;
+    private string _gpuPipelineDisplayStatusMessage = string.Empty;
+    private double _gpuPipelineDisplayFrameMs;
+    private GpuPipelineTimingNodeData[] _gpuPipelineDisplayRoots = [];
 
     // ═══════════════════════════════════════════════════════════════
     //  Public entry points — called per-frame
@@ -106,6 +113,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             nowUtc - _lastDisplayRefreshUtc >= minInterval;
 
         var frame = _source.LatestFrame;
+        var renderStats = _source.LatestRenderStats;
         bool hasFrame = frame is not null && frame.Threads is { Length: > 0 };
         bool hasNewFrame = false;
 
@@ -123,7 +131,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 UpdateRootMethodCache(frame, history, nowUtc);
                 UpdateFpsDropSpikeLog(frame, history);
 
-                if (_source.LatestRenderStats is { } renderStats)
+                if (renderStats is not null)
                     PushRenderStatsSample(renderStats);
             }
         }
@@ -134,6 +142,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         {
             PruneRootMethodCache(nowUtc);
             UpdateDisplayValues();
+            UpdateGpuPipelineDisplay(renderStats);
 
             if (hasNewFrame)
             {
@@ -574,52 +583,73 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             }
         }
 
-        RenderStatsPacket? stats = _source.LatestRenderStats;
-        if (stats is null)
+        if (_source.LatestRenderStats is null)
         {
             ImGui.TextDisabled("Waiting for GPU pipeline timings...");
             ImGui.End();
             return;
         }
 
-        if (!stats.GpuRenderPipelineProfilingEnabled)
+        if (!_gpuPipelineDisplayEnabled)
         {
             ImGui.TextDisabled("GPU render-pipeline profiling is disabled.");
             ImGui.End();
             return;
         }
 
-        if (!stats.GpuRenderPipelineProfilingSupported)
+        if (!_gpuPipelineDisplaySupported)
         {
-            string status = string.IsNullOrWhiteSpace(stats.GpuRenderPipelineStatusMessage)
+            string status = string.IsNullOrWhiteSpace(_gpuPipelineDisplayStatusMessage)
                 ? "GPU render-pipeline profiling is not supported by the active renderer."
-                : stats.GpuRenderPipelineStatusMessage;
+                : _gpuPipelineDisplayStatusMessage;
             ImGui.TextWrapped(status);
-            if (!string.IsNullOrWhiteSpace(stats.GpuRenderPipelineBackend))
-                ImGui.TextDisabled($"Backend: {stats.GpuRenderPipelineBackend}");
+            if (!string.IsNullOrWhiteSpace(_gpuPipelineDisplayBackend))
+                ImGui.TextDisabled($"Backend: {_gpuPipelineDisplayBackend}");
             ImGui.End();
             return;
         }
 
-        if (!stats.GpuRenderPipelineTimingsReady || stats.GpuRenderPipelineTimingRoots.Length == 0)
+        if (!_gpuPipelineDisplayReady || _gpuPipelineDisplayRoots.Length == 0)
         {
             ImGui.TextDisabled("Waiting for the first resolved GPU command frame...");
-            if (!string.IsNullOrWhiteSpace(stats.GpuRenderPipelineBackend))
-                ImGui.TextDisabled($"Backend: {stats.GpuRenderPipelineBackend}");
+            if (!string.IsNullOrWhiteSpace(_gpuPipelineDisplayBackend))
+                ImGui.TextDisabled($"Backend: {_gpuPipelineDisplayBackend}");
             ImGui.End();
             return;
         }
 
-        ImGui.Text($"Backend: {stats.GpuRenderPipelineBackend}");
-        ImGui.Text($"Resolved Frame: {stats.GpuRenderPipelineFrameMs:F3} ms");
-        if (!string.IsNullOrWhiteSpace(stats.GpuRenderPipelineStatusMessage))
-            ImGui.TextDisabled(stats.GpuRenderPipelineStatusMessage);
+        ImGui.Text($"Backend: {_gpuPipelineDisplayBackend}");
+        ImGui.Text($"Resolved Frame: {_gpuPipelineDisplayFrameMs:F3} ms");
+        if (!string.IsNullOrWhiteSpace(_gpuPipelineDisplayStatusMessage))
+            ImGui.TextDisabled(_gpuPipelineDisplayStatusMessage);
+
+        ImGui.Checkbox("Sort by Time", ref _sortByTime);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(100);
+        ImGui.SliderFloat("Smoothing", ref _smoothingAlpha, 0.0f, 0.95f, "%.2f");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(100);
+        ImGui.DragFloat("Update (s)", ref _updateIntervalSeconds, 0.05f, 0.1f, 2.0f);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(110);
+        ImGui.DragInt("Graph Samples", ref _graphSampleCount, 1.0f, 30, 720);
+        _graphSampleCount = Math.Clamp(_graphSampleCount, 30, 720);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(90);
+        ImGui.DragFloat("Min ms", ref _rootHierarchyMinMs, 0.05f, 0.0f, 1000.0f);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(90);
+        ImGui.DragFloat("Max ms", ref _rootHierarchyMaxMs, 0.05f, 0.0f, 1000.0f);
 
         if (_gpuPipelineRootHistory.Count > 0 && ImGui.CollapsingHeader("Root History", ImGuiTreeNodeFlags.DefaultOpen))
         {
-            for (int i = 0; i < stats.GpuRenderPipelineTimingRoots.Length; i++)
+            GpuPipelineTimingNodeData[] roots = GetOrderedGpuPipelineRoots(_gpuPipelineDisplayRoots);
+            for (int i = 0; i < roots.Length; i++)
             {
-                GpuPipelineTimingNodeData root = stats.GpuRenderPipelineTimingRoots[i];
+                GpuPipelineTimingNodeData root = roots[i];
+                if (!IsGpuPipelineNodeVisible(root))
+                    continue;
+
                 if (!_gpuPipelineRootHistory.TryGetValue(root.Name, out float[]? series))
                     continue;
 
@@ -627,8 +657,29 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 if (sampleCount <= 0)
                     continue;
 
+                float min = float.MaxValue;
+                float max = float.MinValue;
+                for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++)
+                {
+                    float value = _gpuPipelineRootHistoryScratch[sampleIndex];
+                    if (value < min) min = value;
+                    if (value > max) max = value;
+                }
+
+                if (!float.IsFinite(min) || !float.IsFinite(max))
+                {
+                    min = 0f;
+                    max = 1f;
+                }
+                else if (MathF.Abs(max - min) < 0.001f)
+                {
+                    float pad = MathF.Max(0.001f, MathF.Abs(max) * 0.05f);
+                    min = MathF.Max(0f, min - pad);
+                    max += pad;
+                }
+
                 ImGui.Text($"{root.Name}: {root.ElapsedMs:F3} ms");
-                ImGui.PlotLines($"##GpuPipeline_{i}", ref _gpuPipelineRootHistoryScratch[0], sampleCount, 0, null, 0f, 0f, new Vector2(-1f, 44f));
+                ImGui.PlotLines($"##GpuPipeline_{i}", ref _gpuPipelineRootHistoryScratch[0], sampleCount, 0, null, min, max, new Vector2(-1f, 44f));
             }
         }
 
@@ -642,8 +693,9 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             ImGui.TableSetupColumn("Frame %", ImGuiTableColumnFlags.WidthFixed, 70f);
             ImGui.TableHeadersRow();
 
-            for (int i = 0; i < stats.GpuRenderPipelineTimingRoots.Length; i++)
-                DrawGpuPipelineNode(stats.GpuRenderPipelineTimingRoots[i], stats.GpuRenderPipelineFrameMs, depth: 0);
+            GpuPipelineTimingNodeData[] orderedRoots = GetOrderedGpuPipelineRoots(_gpuPipelineDisplayRoots);
+            for (int i = 0; i < orderedRoots.Length; i++)
+                DrawGpuPipelineNode(orderedRoots[i], _gpuPipelineDisplayFrameMs, depth: 0, this);
 
             ImGui.EndTable();
         }
@@ -1555,18 +1607,30 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (_renderStatsHistoryCount <= 0)
             return 0;
 
-        int start = (_renderStatsHistoryHead - _renderStatsHistoryCount + RenderStatsHistorySamples) % RenderStatsHistorySamples;
-        for (int i = 0; i < _renderStatsHistoryCount; i++)
+        int sampleCount = Math.Min(_renderStatsHistoryCount, _graphSampleCount);
+        int start = (_renderStatsHistoryHead - sampleCount + RenderStatsHistorySamples) % RenderStatsHistorySamples;
+        float previous = 0f;
+        bool hasPrevious = false;
+        for (int i = 0; i < sampleCount; i++)
         {
             int idx = (start + i) % RenderStatsHistorySamples;
-            destination[i] = ring[idx];
+            float value = ring[idx];
+            if (_smoothingAlpha > 0.001f && hasPrevious)
+                value = (previous * _smoothingAlpha) + (value * (1.0f - _smoothingAlpha));
+
+            destination[i] = value;
+            previous = value;
+            hasPrevious = true;
         }
 
-        return _renderStatsHistoryCount;
+        return sampleCount;
     }
 
-    private static void DrawGpuPipelineNode(GpuPipelineTimingNodeData node, double frameMs, int depth)
+    private static void DrawGpuPipelineNode(GpuPipelineTimingNodeData node, double frameMs, int depth, ProfilerPanelRenderer owner)
     {
+        if (!owner.IsGpuPipelineNodeVisible(node))
+            return;
+
         ImGui.TableNextRow();
 
         ImGui.TableSetColumnIndex(0);
@@ -1586,12 +1650,81 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 
         if (open)
         {
-            for (int i = 0; i < node.Children.Length; i++)
-                DrawGpuPipelineNode(node.Children[i], frameMs, depth + 1);
+            GpuPipelineTimingNodeData[] children = owner.GetOrderedGpuPipelineRoots(node.Children);
+            for (int i = 0; i < children.Length; i++)
+                DrawGpuPipelineNode(children[i], frameMs, depth + 1, owner);
             ImGui.TreePop();
         }
 
         ImGui.PopID();
+    }
+
+    private void UpdateGpuPipelineDisplay(RenderStatsPacket? stats)
+    {
+        if (stats is null)
+        {
+            _gpuPipelineDisplayEnabled = false;
+            _gpuPipelineDisplaySupported = false;
+            _gpuPipelineDisplayReady = false;
+            _gpuPipelineDisplayBackend = string.Empty;
+            _gpuPipelineDisplayStatusMessage = string.Empty;
+            _gpuPipelineDisplayFrameMs = 0.0;
+            _gpuPipelineDisplayRoots = [];
+            return;
+        }
+
+        _gpuPipelineDisplayEnabled = stats.GpuRenderPipelineProfilingEnabled;
+        _gpuPipelineDisplaySupported = stats.GpuRenderPipelineProfilingSupported;
+        _gpuPipelineDisplayReady = stats.GpuRenderPipelineTimingsReady;
+        _gpuPipelineDisplayBackend = stats.GpuRenderPipelineBackend ?? string.Empty;
+        _gpuPipelineDisplayStatusMessage = stats.GpuRenderPipelineStatusMessage ?? string.Empty;
+        _gpuPipelineDisplayFrameMs = stats.GpuRenderPipelineFrameMs;
+        _gpuPipelineDisplayRoots = CloneGpuPipelineNodes(stats.GpuRenderPipelineTimingRoots);
+    }
+
+    private static GpuPipelineTimingNodeData[] CloneGpuPipelineNodes(GpuPipelineTimingNodeData[] nodes)
+    {
+        if (nodes.Length == 0)
+            return [];
+
+        GpuPipelineTimingNodeData[] copy = new GpuPipelineTimingNodeData[nodes.Length];
+        for (int i = 0; i < nodes.Length; i++)
+        {
+            GpuPipelineTimingNodeData node = nodes[i];
+            copy[i] = new GpuPipelineTimingNodeData
+            {
+                Name = node.Name,
+                ElapsedMs = node.ElapsedMs,
+                SampleCount = node.SampleCount,
+                Children = CloneGpuPipelineNodes(node.Children),
+            };
+        }
+
+        return copy;
+    }
+
+    private GpuPipelineTimingNodeData[] GetOrderedGpuPipelineRoots(GpuPipelineTimingNodeData[] nodes)
+    {
+        if (nodes.Length <= 1)
+            return nodes;
+
+        GpuPipelineTimingNodeData[] ordered = new GpuPipelineTimingNodeData[nodes.Length];
+        Array.Copy(nodes, ordered, nodes.Length);
+        if (_sortByTime)
+            Array.Sort(ordered, static (a, b) => b.ElapsedMs.CompareTo(a.ElapsedMs));
+        else
+            Array.Sort(ordered, static (a, b) => string.CompareOrdinal(a.Name, b.Name));
+
+        return ordered;
+    }
+
+    private bool IsGpuPipelineNodeVisible(GpuPipelineTimingNodeData node)
+    {
+        float minMs = Math.Max(0f, _rootHierarchyMinMs);
+        float maxMs = _rootHierarchyMaxMs;
+        bool hasMax = maxMs > 0f;
+        double elapsed = node.ElapsedMs;
+        return elapsed >= minMs && (!hasMax || elapsed <= maxMs);
     }
 
     private void DrawRenderStatsHistoryPlot(string label, float[] ring, string units, float minY, float maxY)

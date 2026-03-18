@@ -1,3 +1,4 @@
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Vulkan;
 using System.Threading;
 
@@ -6,6 +7,8 @@ namespace XREngine.Rendering.Pipelines.Commands;
 internal static class VPRC_RenderMeshesPassTraditional
 {
     private static int _forbiddenFallbackLogBudget = 8;
+    private static int _excludedGpuFallbackLogBudget = 16;
+    private static int _cpuSafetyNetLogBudget = 8;
 
     public static void Execute(VPRC_RenderMeshesPassShared command)
     {
@@ -21,24 +24,27 @@ internal static class VPRC_RenderMeshesPassTraditional
         var activeInstance = ViewportRenderCommand.ActivePipelineInstance;
         var camera = activeInstance.RenderState.SceneCamera;
 
-        activeInstance.MeshRenderCommands.RenderCPU(command.RenderPass, true, camera);
+        activeInstance.MeshRenderCommands.RenderCPU(
+            command.RenderPass,
+            true,
+            camera,
+            allowExcludedGpuFallbackMeshes: false);
         activeInstance.MeshRenderCommands.RenderGPU(command.RenderPass);
 
         if (activeInstance.MeshRenderCommands.TryGetGpuPass(command.RenderPass, out var gpuPass) && gpuPass.VisibleCommandCount == 0)
         {
-            bool allowCpuSafetyNet = !VulkanFeatureProfile.EnforceStrictNoFallbacks &&
-                (!VulkanFeatureProfile.IsActive ||
-                VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics);
+            bool allowCpuSafetyNet = IsExplicitCpuFallbackAllowed();
 
             if (allowCpuSafetyNet)
             {
+                Engine.Rendering.Stats.RecordGpuCpuFallback(1, 0);
+                WarnCpuSafetyNetFallback(command.RenderPass);
                 activeInstance.MeshRenderCommands.RenderCPUMeshOnly(command.RenderPass);
             }
             else
             {
-                Engine.Rendering.Stats.RecordGpuCpuFallback(1, 0);
                 Engine.Rendering.Stats.RecordForbiddenGpuFallback(1);
-                if (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging && Interlocked.Decrement(ref _forbiddenFallbackLogBudget) >= 0)
+                if (Interlocked.Decrement(ref _forbiddenFallbackLogBudget) >= 0)
                 {
                     XREngine.Debug.LogWarning(
                         $"[GPU-PIPELINE] Render pass {command.RenderPass} produced zero visible GPU commands; CPU mesh safety-net suppressed for profile {VulkanFeatureProfile.ActiveProfile}.");
@@ -53,5 +59,36 @@ internal static class VPRC_RenderMeshesPassTraditional
         var activeInstance = ViewportRenderCommand.ActivePipelineInstance;
         var camera = activeInstance.RenderState.SceneCamera;
         activeInstance.MeshRenderCommands.RenderCPU(command.RenderPass, false, camera);
+    }
+
+    private static bool IsExplicitCpuFallbackAllowed()
+    {
+        bool fallbackRequested = (Engine.EditorPreferences?.Debug?.AllowGpuCpuFallback == true)
+            || (Engine.EffectiveSettings.EnableGpuIndirectDebugLogging && Engine.EffectiveSettings.EnableGpuIndirectCpuFallback);
+
+        return fallbackRequested
+            && !VulkanFeatureProfile.EnforceStrictNoFallbacks
+            && (!VulkanFeatureProfile.IsActive ||
+                VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics);
+    }
+
+    private static void WarnExcludedGpuFallback(int renderPass, IRenderCommandMesh meshCmd)
+    {
+        if (Interlocked.Decrement(ref _excludedGpuFallbackLogBudget) < 0)
+            return;
+
+        string meshName = meshCmd.Mesh?.Mesh?.Name ?? "<unnamed-mesh>";
+        string materialName = (meshCmd.MaterialOverride ?? meshCmd.Mesh?.Material)?.Name ?? "<unnamed-material>";
+        XREngine.Debug.LogWarning(
+            $"[GPU-PIPELINE] Render pass {renderPass} skipped CPU fallback for mesh '{meshName}' with material '{materialName}' because GPU render dispatch is enabled and ExcludeFromGpuIndirect is set.");
+    }
+
+    private static void WarnCpuSafetyNetFallback(int renderPass)
+    {
+        if (Interlocked.Decrement(ref _cpuSafetyNetLogBudget) < 0)
+            return;
+
+        XREngine.Debug.LogWarning(
+            $"[GPU-PIPELINE] Render pass {renderPass} produced zero visible GPU commands; explicit CPU mesh safety-net fallback is running because GPU CPU fallback diagnostics are enabled.");
     }
 }

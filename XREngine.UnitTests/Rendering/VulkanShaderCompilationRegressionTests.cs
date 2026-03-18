@@ -13,8 +13,18 @@ public sealed class VulkanShaderCompilationRegressionTests
 {
     private static readonly string[] FragmentShaders =
     [
+        "Scene3D/CubemapToOctahedron.fs",
+        "Scene3D/DebugTransformId.fs",
+        "Scene3D/DeferredDecal.fs",
+        "Scene3D/DeferredDecalForwardWeightedOit.fs",
         "Scene3D/DeferredLightingDir.fs",
+        "Scene3D/DeferredLightCombine.fs",
+        "Scene3D/DeferredLightCombineStereo.fs",
+        "Scene3D/DeferredLightingPoint.fs",
+        "Scene3D/DeferredLightingSpot.fs",
         "Scene3D/PostProcess.fs",
+        "Common/TexturedDeferred.fs",
+        "Common/TexturedNormalDeferred.fs",
         "Common/UITextBatched.fs",
         "Common/LitColoredForward.fs",
         "Common/LitTexturedForward.fs",

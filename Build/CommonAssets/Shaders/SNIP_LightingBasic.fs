@@ -1,30 +1,6 @@
-struct BaseLight
-{
-    vec3 Color;
-    float DiffuseIntensity;
-    float AmbientIntensity;
-    mat4 WorldToLightSpaceProjMatrix;
-};
-struct DirLight
-{
-    BaseLight Base;
-    vec3 Direction;
-};
-struct PointLight
-{
-    BaseLight Base;
-    vec3 Position;
-    float Radius;
-    float Brightness;
-};
-struct SpotLight
-{
-    PointLight Base;
-    vec3 Direction;
-    float InnerCutoff;
-    float OuterCutoff;
-    float Exponent;
-};
+#pragma snippet "LightStructs"
+#pragma snippet "LightAttenuation"
+#pragma snippet "ShadowSampling"
 
 uniform vec3 CameraPosition;
 uniform vec3 GlobalAmbient;
@@ -51,26 +27,14 @@ float ReadShadowMap(in vec3 fragPos, in vec3 normal, in float diffuseFactor, in 
 
     float maxBias = 0.04;
     float minBias = 0.001;
-
-    vec4 fragPosLightSpace = lightMatrix * vec4(fragPos, 1.0);
-    vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    fragCoord = fragCoord * 0.5 + 0.5;
+    vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, fragPos);
 
     // Outside shadow map bounds: treat as fully lit
-    if (fragCoord.x < 0.0 || fragCoord.x > 1.0 ||
-        fragCoord.y < 0.0 || fragCoord.y > 1.0 ||
-        fragCoord.z < 0.0 || fragCoord.z > 1.0)
+    if (!XRENGINE_ShadowCoordInBounds(fragCoord))
         return 1.0;
 
     float bias = max(maxBias * (1.0 - max(diffuseFactor, 0.0)), minBias);
-
-    float depth = texture(ShadowMap, fragCoord.xy).r;
-    return (fragCoord.z - bias) > depth ? 0.0 : 1.0;
-}
-
-float Attenuate(in float dist, in float radius)
-{
-    return pow(clamp(1.0 - pow(dist / radius, 4), 0.0, 1.0), 2.0) / (dist * dist + 1.0);
+    return XRENGINE_SampleShadowMapSimple(ShadowMap, fragCoord, bias);
 }
 
 vec3 CalcColor(BaseLight light, vec3 lightDirection, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion, bool useShadow)
@@ -105,7 +69,7 @@ vec3 CalcDirLight(DirLight light, vec3 normal, vec3 fragPos, vec3 albedo, float 
 vec3 CalcPointLight(PointLight light, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion)
 {
     vec3 lightToPos = fragPos - light.Position;
-    return Attenuate(length(lightToPos), light.Radius) * CalcColor(light.Base, normalize(lightToPos), normal, fragPos, albedo, spec, ambientOcclusion, false);
+    return XRENGINE_Attenuate(length(lightToPos), light.Radius) * CalcColor(light.Base, normalize(lightToPos), normal, fragPos, albedo, spec, ambientOcclusion, false);
 } 
 
 vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 fragPos, vec3 albedo, float spec, float ambientOcclusion)
@@ -119,7 +83,7 @@ vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 fragPos, vec3 albedo, floa
         {
             vec3 lightToPos = fragPos - light.Base.Position;
             float spotAttn = pow(clampedCosine, light.Exponent);
-            float distAttn = Attenuate(length(lightToPos) / light.Base.Brightness, light.Base.Radius);
+            float distAttn = XRENGINE_Attenuate(length(lightToPos) / light.Base.Brightness, light.Base.Radius);
             vec3 color = CalcColor(light.Base.Base, normalize(lightToPos), normal, fragPos, albedo, spec, ambientOcclusion, false);
             return spotEffect * spotAttn * distAttn * color;
         }

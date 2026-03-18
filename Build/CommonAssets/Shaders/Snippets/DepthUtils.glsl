@@ -18,6 +18,16 @@ vec3 XRENGINE_WorldPosFromDepth(float depth, vec2 uv, mat4 invProj, mat4 cameraT
     return worldSpacePosition.xyz;
 }
 
+// Overload using raw depth (no DepthMode resolve) with explicit matrices.
+// Matches the pattern used in deferred lighting / decal passes.
+vec3 XRENGINE_WorldPosFromDepthRaw(float depth, vec2 uv, mat4 invProj, mat4 invView)
+{
+    vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0 - 1.0, 1.0);
+    vec4 viewSpacePosition = invProj * clipSpacePosition;
+    viewSpacePosition /= viewSpacePosition.w;
+    return (invView * viewSpacePosition).xyz;
+}
+
 vec3 XRENGINE_ViewPosFromDepth(float depth, vec2 uv, mat4 invProj)
 {
     float z = XRENGINE_ResolveDepth(depth) * 2.0 - 1.0;

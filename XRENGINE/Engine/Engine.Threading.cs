@@ -9,6 +9,8 @@ namespace XREngine
     /// </summary>
     public static partial class Engine
     {
+        private static readonly ConcurrentDictionary<string, byte> _renderDispatchWarningLabels = new(StringComparer.Ordinal);
+
         #region Public Properties - Threading
 
         /// <summary>
@@ -83,6 +85,66 @@ namespace XREngine
 
         internal static void SetDispatchingRenderFrame(bool value)
             => Interlocked.Exchange(ref _isDispatchingRenderFrame, value ? 1 : 0);
+
+        internal static void ObserveJobDispatch(JobAffinity affinity, string profilerLabel)
+        {
+#if DEBUG
+            if (!IsDispatchingRenderFrame || affinity != JobAffinity.RenderThread)
+                return;
+
+            string label = string.IsNullOrWhiteSpace(profilerLabel)
+                ? "<unnamed>"
+                : profilerLabel.Trim();
+
+            if (IsGpuTaggedRenderThreadJob(label))
+                return;
+
+            if (_renderDispatchWarningLabels.TryAdd(label, 0))
+            {
+                Debug.LogWarning(
+                    $"[RenderThreadJobs] RenderFrame dispatched non-GPU-tagged render-thread job '{label}'. " +
+                    "Move scene/editor/networking work to AppThread or UpdateThread unless it truly requires the graphics context.");
+            }
+#endif
+        }
+
+        private static bool IsGpuTaggedRenderThreadJob(string label)
+        {
+            if (label.Equals("Invoke:UISvgComponent.Rasterize", StringComparison.Ordinal))
+                return true;
+
+            ReadOnlySpan<string> gpuTokens =
+            [
+                "OpenGL",
+                "GL",
+                "Vulkan",
+                "Vk",
+                "Gpu",
+                "Shader",
+                "RenderProgram",
+                "Renderer",
+                "Texture",
+                "Buffer",
+                "Framebuffer",
+                "Fbo",
+                "Fence",
+                "MeshRenderer",
+                "Readback",
+                "Screenshot",
+                "Upload",
+                "Mip",
+                "Viewport",
+                "Imposter",
+            ];
+
+            foreach (string token in gpuTokens)
+            {
+                if (label.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+
+            return false;
+        }
 
         #endregion
 

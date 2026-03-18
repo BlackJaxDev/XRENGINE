@@ -13,6 +13,13 @@ namespace XREngine.Editor;
 
 public static partial class EditorImGuiUI
 {
+    private static SceneNode? _prefabPreviewNode;
+    private static XRPrefabSource? _prefabPreviewPrefab;
+    private static XRWorldInstance? _prefabPreviewWorld;
+    private static SceneNode? _prefabPreviewParent;
+    private static bool _prefabPreviewActive;
+    private static bool _prefabPreviewHoveredThisFrame;
+
     private static bool TryLoadPrefabAsset(string path, out XRPrefabSource? prefab)
     {
         prefab = null;
@@ -188,8 +195,16 @@ public static partial class EditorImGuiUI
         if (world is null || prefab is null)
             return;
 
-        SceneNode? instance = Engine.Assets.InstantiatePrefab(prefab, world, parent, maintainWorldTransform: false);
+        SceneNode? instance = world.InstantiatePrefab(prefab, parent, maintainWorldTransform: false);
         if (instance is null)
+            return;
+
+        FinalizeSpawnedPrefabNode(world, instance);
+    }
+
+    private static void FinalizeSpawnedPrefabNode(XRWorldInstance world, SceneNode instance)
+    {
+        if (world is null || instance is null)
             return;
 
         // Record structural undo
@@ -218,6 +233,87 @@ public static partial class EditorImGuiUI
 
         Selection.SceneNode = instance;
         MarkSceneHierarchyDirty(instance, owningScene: null, world);
+    }
+
+    private static void UpdatePrefabPreview(XRWorldInstance world, SceneNode? parent, XRPrefabSource prefab)
+    {
+        if (world is null || prefab is null)
+            return;
+
+        _prefabPreviewHoveredThisFrame = true;
+
+        if (_prefabPreviewActive
+            && _prefabPreviewNode is not null
+            && ReferenceEquals(_prefabPreviewWorld, world)
+            && ReferenceEquals(_prefabPreviewParent, parent)
+            && ReferenceEquals(_prefabPreviewPrefab, prefab))
+        {
+            return;
+        }
+
+        RevertPrefabPreview();
+
+        SceneNode? instance = world.InstantiatePrefab(prefab, parent, maintainWorldTransform: false);
+        if (instance is null)
+            return;
+
+        _prefabPreviewNode = instance;
+        _prefabPreviewPrefab = prefab;
+        _prefabPreviewWorld = world;
+        _prefabPreviewParent = parent;
+        _prefabPreviewActive = true;
+        MarkSceneHierarchyDirty(instance, owningScene: null, world);
+    }
+
+    private static bool TryFinalizePrefabPreview(XRWorldInstance world, SceneNode? parent, XRPrefabSource prefab)
+    {
+        if (!_prefabPreviewActive || _prefabPreviewNode is null)
+            return false;
+
+        if (!ReferenceEquals(_prefabPreviewWorld, world)
+            || !ReferenceEquals(_prefabPreviewParent, parent)
+            || !ReferenceEquals(_prefabPreviewPrefab, prefab))
+        {
+            return false;
+        }
+
+        SceneNode instance = _prefabPreviewNode;
+        ClearPrefabPreviewState();
+        FinalizeSpawnedPrefabNode(world, instance);
+        return true;
+    }
+
+    private static void RevertPrefabPreview()
+    {
+        if (!_prefabPreviewActive || _prefabPreviewNode is null)
+        {
+            ClearPrefabPreviewState();
+            return;
+        }
+
+        SceneNode node = _prefabPreviewNode;
+        XRWorldInstance? world = _prefabPreviewWorld is not null
+            ? _prefabPreviewWorld
+            : node.World as XRWorldInstance;
+        var parentTransform = node.Transform.Parent;
+
+        if (parentTransform is not null)
+            parentTransform.RemoveChild(node.Transform, XREngine.Scene.Transforms.EParentAssignmentMode.Immediate);
+        else if (world is not null)
+            world.RootNodes.Remove(node);
+
+        node.IsActiveSelf = false;
+        MarkSceneHierarchyDirty(node, owningScene: null, world);
+        ClearPrefabPreviewState();
+    }
+
+    private static void ClearPrefabPreviewState()
+    {
+        _prefabPreviewNode = null;
+        _prefabPreviewPrefab = null;
+        _prefabPreviewWorld = null;
+        _prefabPreviewParent = null;
+        _prefabPreviewActive = false;
     }
 
     private static void SpawnModelNode(XRWorldInstance world, SceneNode? parent, Model model, string modelAssetPath)

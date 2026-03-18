@@ -1,9 +1,10 @@
 #version 450
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "OctahedralMapping"
+#pragma snippet "PBRFunctions"
+#pragma snippet "DepthUtils"
 
-const float PI = 3.14159265359f;
-const float InvPI = 0.31831f;
 // Reflection mip is derived from the texture's mip count; no fixed cap.
 const float MAX_REFLECTION_LOD = 4.0f; // Deprecated; retained to avoid breaking includes, actual max is queried per texture.
 
@@ -87,47 +88,6 @@ float GTSpecularOcclusion(float NoV, float ao, float roughness)
 {
     return clamp(pow(NoV + ao, exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao, 0.0f, 1.0f);
 }
-vec2 EncodeOcta(vec3 dir)
-{
-	dir = normalize(dir);
-	// Swizzle: world (x,y,z) -> octahedral (x,z,y)
-	// So world Y (up) -> octahedral Z (center/corners discriminator)
-	vec3 octDir = vec3(dir.x, dir.z, dir.y);
-	octDir /= max(abs(octDir.x) + abs(octDir.y) + abs(octDir.z), 1e-5f);
-
-	vec2 uv = octDir.xy;
-	if (octDir.z < 0.0f)
-	{
-		vec2 signDir = vec2(octDir.x >= 0.0f ? 1.0f : -1.0f, octDir.y >= 0.0f ? 1.0f : -1.0f);
-		uv = (1.0f - abs(uv.yx)) * signDir;
-	}
-
-	return uv * 0.5f + 0.5f;
-}
-
-vec3 SampleOcta(sampler2D tex, vec3 dir)
-{
-        vec2 uv = EncodeOcta(dir);
-        return texture(tex, uv).rgb;
-}
-
-vec3 SampleOctaLod(sampler2D tex, vec3 dir, float lod)
-{
-        vec2 uv = EncodeOcta(dir);
-        return textureLod(tex, uv, lod).rgb;
-}
-
-vec3 SampleOctaArray(sampler2DArray tex, vec3 dir, float layer)
-{
-        vec2 uv = EncodeOcta(dir);
-        return texture(tex, vec3(uv, layer)).rgb;
-}
-
-vec3 SampleOctaArrayLod(sampler2DArray tex, vec3 dir, float layer, float lod)
-{
-        vec2 uv = EncodeOcta(dir);
-        return textureLod(tex, vec3(uv, layer), lod).rgb;
-}
 
 mat3 QuaternionToMat3(vec4 q)
 {
@@ -195,25 +155,6 @@ vec3 ApplyParallax(int probeIndex, vec3 dirWS, vec3 worldPos)
 
 uniform mat4 InverseViewMatrix;
 uniform mat4 ProjMatrix;
-
-vec3 SpecF_SchlickRoughness(in float VoH, in vec3 F0, in float roughness)
-{
-	float pow = pow(1.0f - VoH, 5.0f);
-	return F0 + (max(vec3(1.0f - roughness), F0) - F0) * pow;
-}
-vec3 SpecF_SchlickRoughnessApprox(in float VoH, in vec3 F0, in float roughness)
-{
-	//Spherical Gaussian Approximation
-	float pow = exp2((-5.55473f * VoH - 6.98316f) * VoH);
-	return F0 + (max(vec3(1.0f - roughness), F0) - F0) * pow;
-}
-vec3 WorldPosFromDepth(in float depth, in vec2 uv)
-{
-        vec4 clipSpacePosition = vec4(vec3(uv, depth) * 2.0f - 1.0f, 1.0f);
-        vec4 viewSpacePosition = inverse(ProjMatrix) * clipSpacePosition;
-        viewSpacePosition /= viewSpacePosition.w;
-        return (InverseViewMatrix * viewSpacePosition).xyz;
-}
 
 bool ComputeBarycentric(vec3 p, vec3 a, vec3 b, vec3 c, vec3 d, out vec4 bary)
 {
@@ -368,7 +309,7 @@ void main()
         float ao = UseAmbientOcclusion ? pow(texture(AmbientOcclusionTexture, uv).r, max(AmbientOcclusionPower, 0.001f)) : 1.0f;
         float depth = texture(DepthView, uv).r;
         vec3 InLo = max(texture(LightingTexture, uv).rgb, vec3(0.0f));
-        vec3 fragPosWS = WorldPosFromDepth(depth, uv);
+        vec3 fragPosWS = XRENGINE_WorldPosFromDepthRaw(depth, uv, inverse(ProjMatrix), InverseViewMatrix);
         //float fogDensity = noise3(fragPosWS);
 
         float roughness = rmse.x; 
@@ -384,7 +325,7 @@ void main()
 
 	//Calculate specular and diffuse components
 	//Preserve energy by making sure they add up to 1
-	vec3 kS = SpecF_SchlickRoughnessApprox(NoV, F0, roughness) * specularIntensity;
+        vec3 kS = XRENGINE_F_SchlickRoughnessFast(NoV, F0, roughness) * specularIntensity;
 	vec3 kD = (1.0f - kS) * (1.0f - metallic);
         vec3 R = reflect(-V, normal);
 
@@ -425,8 +366,8 @@ void main()
                 float desiredLod = roughness * MAX_REFLECTION_LOD;
                 float clampedLod = min(desiredLod, maxMip);
                 
-                irradianceColor += w * normScale * SampleOctaArray(IrradianceArray, parallaxDir, probeIndices[i]);
-                prefilteredColor += w * normScale * SampleOctaArrayLod(PrefilterArray, reflDir, probeIndices[i], clampedLod);
+                irradianceColor += w * normScale * XRENGINE_SampleOctaArray(IrradianceArray, parallaxDir, probeIndices[i]);
+                prefilteredColor += w * normScale * XRENGINE_SampleOctaArrayLod(PrefilterArray, reflDir, probeIndices[i], clampedLod);
                 totalWeight += w;
         } 
 
@@ -439,8 +380,8 @@ void main()
         { 
                 float maxMip = float(textureQueryLevels(PrefilterArray) - 1);
                 float clampedLod = min(roughness * MAX_REFLECTION_LOD, maxMip);
-                irradianceColor = SampleOctaArray(IrradianceArray, normal, 0.0f); 
-                prefilteredColor = SampleOctaArrayLod(PrefilterArray, normal, 0.0f, clampedLod); 
+                irradianceColor = XRENGINE_SampleOctaArray(IrradianceArray, normal, 0.0f); 
+                prefilteredColor = XRENGINE_SampleOctaArrayLod(PrefilterArray, normal, 0.0f, clampedLod); 
         } 
 
         vec3 diffuse = irradianceColor * albedoColor;

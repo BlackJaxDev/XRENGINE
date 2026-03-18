@@ -252,7 +252,8 @@ namespace XREngine.Rendering.Commands
                     "PerViewDrawCountBuffer",
                     requestedViewCapacity,
                     GPUViewSetBindings.PerViewDrawCountBuffer,
-                    false);
+                    false,
+                    cpuReadable: true);
                 ZeroUIntRange(_perViewDrawCountBuffer, 0u, requestedViewCapacity);
             }
             else if (_perViewDrawCountBuffer.ElementCount < requestedViewCapacity)
@@ -353,7 +354,7 @@ namespace XREngine.Rendering.Commands
             return buffer;
         }
 
-        private static XRDataBuffer CreateUIntBuffer(string name, uint elementCount, int bindingIndex, bool resizable)
+        private static XRDataBuffer CreateUIntBuffer(string name, uint elementCount, int bindingIndex, bool resizable, bool cpuReadable = false)
         {
             var buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, elementCount, EComponentType.UInt, 1, false, true)
             {
@@ -364,6 +365,11 @@ namespace XREngine.Rendering.Commands
                 PadEndingToVec4 = false
             };
             buffer.StorageFlags |= EBufferMapStorageFlags.DynamicStorage;
+            if (cpuReadable)
+            {
+                buffer.StorageFlags |= EBufferMapStorageFlags.Read;
+                buffer.RangeFlags |= EBufferMapRangeFlags.Read;
+            }
             buffer.Generate();
             return buffer;
         }
