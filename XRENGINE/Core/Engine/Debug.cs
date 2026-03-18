@@ -910,13 +910,13 @@ namespace XREngine
                 return null;
             }
 
-            _logSessionId ??= $"{DateTime.Now:yyyyMMdd_HHmmss}_{Environment.ProcessId}";
+            _logSessionId ??= CreateLogSessionId();
 
             if (LogWriters[category] is null)
             {
                 string logsDirectory = GetLogRunDirectory();
-                string fileSuffix = category.ToString().ToLowerInvariant();
-                string fileName = $"log_{fileSuffix}_{_logSessionId}.txt";
+                string fileSuffix = NormalizeLogNameSegment(category.ToString());
+                string fileName = BuildCategoryLogFileName(category);
                 string filePath = Path.Combine(logsDirectory, fileName);
                 var writer = new StreamWriter(new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read))
                 {
@@ -989,12 +989,12 @@ namespace XREngine
                 runsRoot = rootDirectory;
 
             if (_logSessionId is null)
-                _logSessionId = $"{DateTime.Now:yyyyMMdd_HHmmss}_{Environment.ProcessId}";
+                _logSessionId = CreateLogSessionId();
 
             string runDirectory = Path.Combine(runsRoot, _logSessionId);
             if (!TryCreateDirectory(runDirectory))
             {
-                string fallback = Path.Combine(rootDirectory, $"run_{_logSessionId}");
+                string fallback = Path.Combine(rootDirectory, _logSessionId);
                 TryCreateDirectory(fallback);
                 runDirectory = fallback;
             }
@@ -1043,6 +1043,79 @@ namespace XREngine
             {
                 return "unknown_platform";
             }
+        }
+
+        private static string CreateLogSessionId()
+            => BuildLogSessionId(GetLogApplicationIdentifier(), DateTime.Now, Environment.ProcessId);
+
+        private static string GetLogApplicationIdentifier()
+        {
+            try
+            {
+                string? friendlyName = AppDomain.CurrentDomain.FriendlyName;
+                if (!string.IsNullOrWhiteSpace(friendlyName))
+                    return Path.GetFileNameWithoutExtension(friendlyName);
+            }
+            catch
+            {
+                // Ignore and fall back to the process name.
+            }
+
+            try
+            {
+                return Process.GetCurrentProcess().ProcessName;
+            }
+            catch
+            {
+                return "XREngine";
+            }
+        }
+
+        internal static string BuildLogSessionId(string applicationIdentifier, DateTime timestamp, int processId)
+        {
+            string appSegment = NormalizeLogNameSegment(applicationIdentifier);
+            string timestampSegment = timestamp.ToString("yyyy-MM-dd_HH-mm-ss");
+            string processSegment = processId > 0 ? $"pid{processId}" : "pid0";
+            return $"{appSegment}_{timestampSegment}_{processSegment}";
+        }
+
+        internal static string BuildCategoryLogFileName(ELogCategory category)
+            => $"log_{NormalizeLogNameSegment(category.ToString())}.txt";
+
+        internal static string NormalizeLogNameSegment(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return "unknown";
+
+            char[] buffer = new char[value.Length];
+            int length = 0;
+            bool lastWasSeparator = false;
+
+            foreach (char rawChar in value)
+            {
+                char ch = char.ToLowerInvariant(rawChar);
+                if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))
+                {
+                    buffer[length++] = ch;
+                    lastWasSeparator = false;
+                    continue;
+                }
+
+                if (lastWasSeparator)
+                    continue;
+
+                buffer[length++] = '-';
+                lastWasSeparator = true;
+            }
+
+            while (length > 0 && buffer[length - 1] == '-')
+                length--;
+
+            int start = 0;
+            while (start < length && buffer[start] == '-')
+                start++;
+
+            return start >= length ? "unknown" : new string(buffer, start, length - start);
         }
 
         private static string SanitizePathSegment(string segment)

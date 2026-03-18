@@ -29,6 +29,36 @@ namespace XREngine.Rendering.Vulkan
         private int _vulkanLastFrameDroppedDrawOps;
         private int _vulkanLastFrameDroppedOps;
 
+        private static string BuildFrameOpFailureContext(FrameOp op)
+        {
+            string pipelineLabel = op.Context.PipelineInstance?.Pipeline?.GetType().Name ?? "<no pipeline>";
+            string targetName = op.Target?.Name ?? "<swapchain/null>";
+
+            if (op is MeshDrawOp drawOp)
+            {
+                var meshRenderer = drawOp.Draw.Renderer.MeshRenderer;
+                var material = drawOp.Draw.MaterialOverride ?? meshRenderer.Material;
+                string meshName = meshRenderer.Mesh?.Name ?? "<unnamed mesh>";
+                string materialName = material?.Name ?? "<unnamed material>";
+                string fragmentShaderName =
+                    material is not null && material.FragmentShaders.Count > 0
+                        ? material.FragmentShaders[0].Name ?? material.FragmentShaders[0].Source?.Name ?? "<unnamed shader>"
+                        : "<none>";
+
+                return
+                    $"{Environment.NewLine}[Vulkan]   Context: pass={drawOp.PassIndex} target='{targetName}' pipe={drawOp.Context.PipelineIdentity}({pipelineLabel}) vp={drawOp.Context.ViewportIdentity} mesh='{meshName}' material='{materialName}' fragment='{fragmentShaderName}' instances={drawOp.Draw.Instances} stereo={drawOp.Draw.IsStereoPass} unjittered={drawOp.Draw.UseUnjitteredProjection}";
+            }
+
+            if (op is IndirectDrawOp indirectOp)
+            {
+                return
+                    $"{Environment.NewLine}[Vulkan]   Context: pass={indirectOp.PassIndex} target='{targetName}' pipe={indirectOp.Context.PipelineIdentity}({pipelineLabel}) vp={indirectOp.Context.ViewportIdentity} drawCount={indirectOp.DrawCount} stride={indirectOp.Stride} useCount={indirectOp.UseCount}";
+            }
+
+            return
+                $"{Environment.NewLine}[Vulkan]   Context: pass={op.PassIndex} target='{targetName}' pipe={op.Context.PipelineIdentity}({pipelineLabel}) vp={op.Context.ViewportIdentity}";
+        }
+
         private void UpdateVulkanOnScreenDiagnostic(string pipelineLabel, ColorF4 clearColor, int droppedDrawOps, int droppedOps, string swapchainWriter)
         {
             string currentTitle = Window?.Title ?? string.Empty;
@@ -1522,12 +1552,15 @@ namespace XREngine.Rendering.Vulkan
                             renderPassLabelActive = false;
                         }
 
+                        string opContext = BuildFrameOpFailureContext(op);
+
                         Debug.VulkanEvery(
                             $"Vulkan.FrameOpError.{GetHashCode()}",
                             TimeSpan.FromSeconds(1),
-                            "[Vulkan] Frame op recording failed for {0}: {1}",
+                            "[Vulkan] Frame op recording failed for {0}: {1}{2}",
                             op.GetType().Name,
-                            opEx.Message);
+                            opEx.Message,
+                            opContext);
 
                         // Continue recording remaining ops instead of aborting the
                         // entire command buffer.  A single broken shader/pipeline
