@@ -44,36 +44,36 @@ New files to create (all under `XRENGINE/Rendering/Pipelines/Types/`):
 > Break the 500-line `CreateViewportTargetCommands()` into named sub-builders. No behavioral changes.
 
 ### 1A: Create CommandChain partial file
-- [ ] **1A.1** Create `DefaultRenderPipeline2.CommandChain.cs`
-- [ ] **1A.2** Move `GenerateCommandChain()`, `CreateViewportTargetCommands()`, `CreateFBOTargetCommands()`, `CreateFinalBlitCommands()`, and `CreateVendorUpscaleCommands()` into it
+- [x] **1A.1** Create `DefaultRenderPipeline2.CommandChain.cs`
+- [x] **1A.2** Move `GenerateCommandChain()`, `CreateViewportTargetCommands()`, `CreateFBOTargetCommands()`, `CreateFinalBlitCommands()`, and `CreateVendorUpscaleCommands()` into it
 
 ### 1B: Decompose CreateViewportTargetCommands
-- [ ] **1B.1** Extract `AppendVoxelConeTracingPass(c)` — VCT cache + dispatch
-- [ ] **1B.2** Extract `AppendAmbientOcclusionSwitch(c, enableCompute)` — AO mode VPRC_Switch with all 8 cases
-- [ ] **1B.3** Extract `AppendDeferredGBufferPass(c)` — GBuffer geometry + MSAA GBuffer FBO caching + conditional resolve
-- [ ] **1B.4** Extract `AppendForwardDepthPrePass(c)` — Forward pre-pass IfElse (shared vs separate)
-- [ ] **1B.5** Extract `AppendAmbientOcclusionResolve(c)` — AO resolve VPRC_Switch (HBAO+ / GTAO / default)
-- [ ] **1B.6** Extract `AppendLightingPass(c, enableCompute)` — LightCombine FBO, MSAA mark, MSAA/non-MSAA lighting branch
-- [ ] **1B.7** Extract `AppendForwardPass(c, enableCompute)` — MSAA FBO caching, bind forward pass, opaque/masked/GI/debug shapes
-- [ ] **1B.8** Extract `AppendTransparencyPasses(c)` — WB-OIT accum/resolve + exact transparency
-- [ ] **1B.9** Extract `AppendVelocityPass(c)` — velocity FBO caching, clear, motion vector render
-- [ ] **1B.10** Extract `AppendBloomPass(c)` — bloom dispatch
-- [ ] **1B.11** Extract `AppendMotionBlurAndDoF(c)` — conditional motion blur + DoF sub-chains
-- [ ] **1B.12** Extract `AppendTemporalAccumulation(c)` — TAA accumulate + pop jitter
-- [ ] **1B.13** Extract `AppendPostTemporalForwardPasses(c)` — transparent + on-top forward after temporal
-- [ ] **1B.14** Extract `AppendPostProcessResourceCaching(c)` — PostProcess FBO caching
-- [ ] **1B.15** Extract `AppendDebugVisualizationCaching(c)` — 5 conditional debug FBO blocks
-- [ ] **1B.16** Extract `AppendAntiAliasingResourceCaching(c)` — FXAA/TSR texture + FBO caching
-- [ ] **1B.17** Extract `AppendFxaaTsrUpscaleChain(c)` — FXAA/TSR upscale IfElse
-- [ ] **1B.18** Extract `AppendExposureUpdate(c)` — auto-exposure compute dispatch
-- [ ] **1B.19** Extract `AppendTemporalCommit(c)` — temporal commit phase
-- [ ] **1B.20** Extract `AppendFinalOutput(c, bypassVendorUpscale)` — output FBO bind, debug viz / vendor upscale / AA output selection
+- [x] **1B.1** Extract `AppendVoxelConeTracingPass(c)` — VCT cache + dispatch
+- [x] **1B.2** Extract `AppendAmbientOcclusionSwitch(c, enableCompute)` — AO mode VPRC_Switch with all 8 cases
+- [x] **1B.3** Extract `AppendDeferredGBufferPass(c)` — GBuffer geometry + MSAA GBuffer FBO caching + conditional resolve
+- [x] **1B.4** Extract `AppendForwardDepthPrePass(c)` — Forward pre-pass IfElse (shared vs separate)
+- [x] **1B.5** Extract `AppendAmbientOcclusionResolve(c)` — AO resolve VPRC_Switch (HBAO+ / GTAO / default)
+- [x] **1B.6** Extract `AppendLightingPass(c, enableCompute)` — LightCombine FBO, MSAA mark, MSAA/non-MSAA lighting branch
+- [x] **1B.7** Extract `AppendForwardPass(c, enableCompute)` — MSAA FBO caching, bind forward pass, opaque/masked/GI/debug shapes
+- [x] **1B.8** Extract `AppendTransparencyPasses(c)` — WB-OIT accum/resolve + exact transparency
+- [x] **1B.9** Extract `AppendVelocityPass(c)` — velocity FBO caching, clear, motion vector render
+- [x] **1B.10** Extract `AppendBloomPass(c)` — bloom dispatch
+- [x] **1B.11** Extract `AppendMotionBlurAndDoF(c)` — conditional motion blur + DoF sub-chains
+- [x] **1B.12** Extract `AppendTemporalAccumulation(c)` — TAA accumulate + pop jitter
+- [x] **1B.13** Extract `AppendPostTemporalForwardPasses(c)` — transparent + on-top forward after temporal
+- [x] **1B.14** Extract `AppendPostProcessResourceCaching(c)` — PostProcess FBO caching
+- [x] **1B.15** Extract `AppendDebugVisualizationCaching(c)` — 5 conditional debug FBO blocks
+- [x] **1B.16** Extract `AppendAntiAliasingResourceCaching(c)` — FXAA/TSR texture + FBO caching
+- [x] **1B.17** Extract `AppendFxaaTsrUpscaleChain(c)` — FXAA/TSR upscale IfElse
+- [x] **1B.18** Extract `AppendExposureUpdate(c)` — auto-exposure compute dispatch
+- [x] **1B.19** Extract `AppendTemporalCommit(c)` — temporal commit phase
+- [x] **1B.20** Extract `AppendFinalOutput(c, bypassVendorUpscale)` — output FBO bind, debug viz / vendor upscale / AA output selection
 
 ### 1C: Group CacheTextures
-- [ ] **1C.1** Split `CacheTextures()` into: `CacheGBufferTextures`, `CacheHistoryTextures`, `CacheMsaaDeferredTextures`, `CacheLightingTextures`, `CacheVelocityTextures`, `CacheTemporalTextures`, `CachePostProcessTextures`, `CacheTransparencyTextures`, `CacheExactTransparencyTextures`, `CacheGITextures`, `CacheAOTextures`
+- [x] **1C.1** Split `CacheTextures()` into: `CacheGBufferTextures`, `CacheMsaaDeferredTextures`, `CacheLightingTextures`, `CacheVelocityTextures`, `CacheTemporalTextures`, `CachePostProcessTextures`, `CacheTransparencyTextures`, `CacheGITextures` (8 sub-methods; `CacheExactTransparencyTextures` already existed in ExactTransparency partial)
 
 ### 1D: Validate
-- [ ] **1D.1** Build — zero new errors/warnings
+- [x] **1D.1** Build — zero new errors/warnings
 - [ ] **1D.2** Run editor — identical visual output to Phase 0 baseline (screenshot A/B)
 
 ---

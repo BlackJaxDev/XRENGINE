@@ -347,12 +347,55 @@ internal static class VulkanShaderAutoUniforms
         if (declarationsToMove.Count == 0)
             return moved;
 
-        StringBuilder updated = new(source);
-        foreach (Match declaration in declarationsToMove.OrderByDescending(m => m.Index))
+        // Find any const int/uint constants referenced as array bounds inside the structs
+        // being moved.  If those constants also appear after the insertion threshold (e.g.
+        // because a #pragma snippet pushed them late), move them too so the struct definition
+        // doesn't reference an undeclared identifier.
+        HashSet<string> neededConstantNames = new(StringComparer.Ordinal);
+        foreach (Match structDecl in declarationsToMove)
         {
-            updated.Remove(declaration.Index, declaration.Length);
-            moved.Insert(0, declaration.Value.Trim());
+            foreach (Match arrayBound in ArrayRegex.Matches(structDecl.Value))
+            {
+                string sizeToken = arrayBound.Groups["size"].Value;
+                if (!uint.TryParse(sizeToken, System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out _))
+                    neededConstantNames.Add(sizeToken);
+            }
         }
+
+        List<Match> constantsToMove = [];
+        if (neededConstantNames.Count > 0)
+        {
+            foreach (Match constMatch in ConstIntegralRegex.Matches(source))
+            {
+                if (!constMatch.Success) continue;
+                string name = constMatch.Groups["name"].Value;
+                if (neededConstantNames.Contains(name) && constMatch.Index >= threshold)
+                    constantsToMove.Add(constMatch);
+            }
+            foreach (Match defineMatch in DefineIntegralRegex.Matches(source))
+            {
+                if (!defineMatch.Success) continue;
+                string name = defineMatch.Groups["name"].Value;
+                if (neededConstantNames.Contains(name) && defineMatch.Index >= threshold)
+                    constantsToMove.Add(defineMatch);
+            }
+        }
+
+        // Remove all items from the source in reverse index order to preserve positions.
+        var allToMove = declarationsToMove
+            .Concat(constantsToMove)
+            .OrderByDescending(m => m.Index)
+            .ToList();
+
+        StringBuilder updated = new(source);
+        foreach (Match m in allToMove)
+            updated.Remove(m.Index, m.Length);
+
+        // Return declarations in forward source order so constants come before
+        // the structs that depend on them.
+        foreach (Match m in declarationsToMove.Concat(constantsToMove).OrderBy(m => m.Index))
+            moved.Add(m.Value.Trim());
 
         source = updated.ToString();
         return moved;
@@ -630,6 +673,60 @@ internal static class VulkanShaderAutoUniforms
     /// declarations to appear before their usage, unlike typical OpenGL GLSL compilers
     /// which resolve global-scope symbols regardless of declaration order.
     /// </summary>
+    /// <summary>
+    /// Returns the character ranges (start inclusive, end exclusive) of all text inside
+    /// preprocessor conditional blocks (#ifdef / #ifndef / #if … #endif).
+    /// Used by HoistOpaqueUniforms to avoid pulling uniforms out of their conditional context.
+    /// </summary>
+    private static List<(int Start, int End)> GetPreprocessorConditionalRanges(string source)
+    {
+        var ranges = new List<(int Start, int End)>();
+        var openStack = new Stack<int>();
+
+        int lineStart = 0;
+        int len = source.Length;
+        while (lineStart < len)
+        {
+            int lineEnd = source.IndexOf('\n', lineStart);
+            if (lineEnd < 0)
+                lineEnd = len;
+
+            // Get line text without the newline (and strip optional \r).
+            int contentEnd = lineEnd > lineStart && source[lineEnd - 1] == '\r' ? lineEnd - 1 : lineEnd;
+            string trimmed = source.Substring(lineStart, contentEnd - lineStart).TrimStart();
+
+            if (trimmed.StartsWith("#ifdef", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("#ifndef", StringComparison.OrdinalIgnoreCase) ||
+                (trimmed.StartsWith("#if", StringComparison.OrdinalIgnoreCase) &&
+                 trimmed.Length > 3 && (trimmed[3] == ' ' || trimmed[3] == '\t')))
+            {
+                openStack.Push(lineStart);
+            }
+            else if (trimmed.StartsWith("#endif", StringComparison.OrdinalIgnoreCase) && openStack.Count > 0)
+            {
+                int start = openStack.Pop();
+                int end = lineEnd < len ? lineEnd + 1 : len; // include the newline after #endif
+                ranges.Add((start, end));
+            }
+
+            lineStart = lineEnd < len ? lineEnd + 1 : len;
+        }
+
+        // Any unclosed blocks extend to the end of the source.
+        while (openStack.Count > 0)
+            ranges.Add((openStack.Pop(), len));
+
+        return ranges;
+    }
+
+    private static bool IsInsideConditionalRange(int charIndex, List<(int Start, int End)> ranges)
+    {
+        foreach (var (start, end) in ranges)
+            if (charIndex >= start && charIndex < end)
+                return true;
+        return false;
+    }
+
     private static string HoistOpaqueUniforms(string source)
     {
         if (string.IsNullOrWhiteSpace(source))
@@ -639,6 +736,10 @@ internal static class VulkanShaderAutoUniforms
         if (firstFuncIndex < 0)
             return source;
 
+        // Precompute ranges of text inside preprocessor conditionals so we don't
+        // hoist opaque uniforms out of their #ifdef / #else context.
+        var conditionalRanges = GetPreprocessorConditionalRanges(source);
+
         var toHoist = new List<(int Start, int Length, string Line)>();
         foreach (Match match in OpaqueUniformRegex.Matches(source))
         {
@@ -647,6 +748,11 @@ internal static class VulkanShaderAutoUniforms
 
             string glslType = match.Groups["type"].Value;
             if (!IsOpaque(glslType))
+                continue;
+
+            // Skip uniforms that live inside a preprocessor conditional block.
+            // Those declarations must remain in their branch context.
+            if (IsInsideConditionalRange(match.Index, conditionalRanges))
                 continue;
 
             toHoist.Add((match.Index, match.Length, match.Value.Trim()));
@@ -1216,6 +1322,41 @@ internal static class VulkanShaderAutoUniforms
                 return true;
         }
     }
+
+    internal static IReadOnlyList<string> FindOpaqueLikeTypesMissingClassification(string source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            return Array.Empty<string>();
+
+        List<string> types = [];
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+
+        foreach (Match match in UniformStatementRegex.Matches(source))
+        {
+            if (!match.Success)
+                continue;
+
+            if (!TryExtractTypeAndDeclarators(match.Groups["statement"].Value, out string glslType, out _))
+                continue;
+
+            if (IsOpaque(glslType) || !LooksLikeOpaqueType(glslType))
+                continue;
+
+            if (seen.Add(glslType))
+                types.Add(glslType);
+        }
+
+        types.Sort(StringComparer.OrdinalIgnoreCase);
+        return types;
+    }
+
+    private static bool LooksLikeOpaqueType(string glslType)
+        => glslType.StartsWith("sampler", StringComparison.OrdinalIgnoreCase) ||
+           glslType.StartsWith("image", StringComparison.OrdinalIgnoreCase) ||
+           glslType.StartsWith("iimage", StringComparison.OrdinalIgnoreCase) ||
+           glslType.StartsWith("uimage", StringComparison.OrdinalIgnoreCase) ||
+           glslType.StartsWith("subpassInput", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(glslType, "atomic_uint", StringComparison.OrdinalIgnoreCase);
 }
 
 internal static class VulkanShaderCompiler
@@ -1251,6 +1392,9 @@ internal static class VulkanShaderCompiler
     private static readonly Regex NvLayerAssignmentRegex = new(
         @"^\s*gl_Layer\s*=\s*.*;\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+    private static readonly Regex ShaderCompileLineRegex = new(
+        @"(?m)(?<shader>[A-Za-z0-9_./\\-]+):(?<line>\d+):",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public static unsafe byte[] Compile(
         XRShader shader,
@@ -1311,6 +1455,11 @@ internal static class VulkanShaderCompiler
             if (status != CompilationStatus.Success)
             {
                 string message = SilkMarshal.PtrToString((nint)ShadercApi.ResultGetErrorMessage(result)) ?? "Unknown error";
+                string diagnostics = BuildCompileFailureDiagnostics(shader, source, rewrittenSource, autoUniformBlock, message);
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.ShaderCompileDiagnostics.{shader.Name ?? "UnnamedShader"}.{shader.Type}",
+                    TimeSpan.FromSeconds(2),
+                    diagnostics);
                 bool includePreview = string.Equals(
                     Environment.GetEnvironmentVariable("XRE_VK_DUMP_SHADER_ON_ERROR"),
                     "1",
@@ -1379,6 +1528,138 @@ internal static class VulkanShaderCompiler
             builder.AppendLine($"{i + 1,4}: {lines[i]}");
 
         return builder.ToString();
+    }
+
+    private static string BuildCompileFailureDiagnostics(
+        XRShader shader,
+        string source,
+        string rewrittenSource,
+        AutoUniformBlockInfo? autoUniformBlock,
+        string compileMessage)
+    {
+        string shaderName = shader.Name ?? "UnnamedShader";
+        StringBuilder builder = new();
+        builder.AppendLine($"[Vulkan] Shader compile diagnostics for '{shaderName}' ({shader.Type}).");
+        builder.AppendLine($"[Vulkan]   File='{shader.Source?.FilePath ?? "<embedded>"}' SourceLines={CountLines(source)} RewrittenLines={CountLines(rewrittenSource)}");
+        builder.AppendLine($"[Vulkan]   AutoUniformBlock={DescribeAutoUniformBlock(autoUniformBlock)}");
+
+        IReadOnlyList<string> unclassifiedOpaqueLikeTypes = VulkanShaderAutoUniforms.FindOpaqueLikeTypesMissingClassification(source);
+        if (unclassifiedOpaqueLikeTypes.Count > 0)
+        {
+            builder.AppendLine(
+                $"[Vulkan]   OpaqueLikeUniformTypesNotClassified={string.Join(", ", unclassifiedOpaqueLikeTypes)}");
+        }
+
+        string compileSummary = ExtractFirstCompileErrorLine(compileMessage);
+        if (!string.IsNullOrWhiteSpace(compileSummary))
+            builder.AppendLine($"[Vulkan]   FirstError={compileSummary}");
+
+        string errorContext = BuildErrorContextPreview(shaderName, rewrittenSource, compileMessage, surroundingLines: 2, maxErrors: 10);
+        builder.Append(!string.IsNullOrWhiteSpace(errorContext)
+            ? errorContext
+            : BuildSourcePreview(rewrittenSource, 80));
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string DescribeAutoUniformBlock(AutoUniformBlockInfo? autoUniformBlock)
+    {
+        if (autoUniformBlock is null)
+            return "<none>";
+
+        IReadOnlyList<AutoUniformMember> members = autoUniformBlock.Members;
+        int previewCount = Math.Min(members.Count, 8);
+        string[] previews = new string[previewCount];
+        for (int i = 0; i < previewCount; i++)
+        {
+            AutoUniformMember member = members[i];
+            previews[i] = member.IsArray && member.ArrayLength > 0
+                ? $"{member.GlslType} {member.Name}[{member.ArrayLength}]"
+                : $"{member.GlslType} {member.Name}";
+        }
+
+        string suffix = members.Count > previewCount ? ", ..." : string.Empty;
+        return $"name='{autoUniformBlock.BlockName}' set={autoUniformBlock.Set} binding={autoUniformBlock.Binding} size={autoUniformBlock.Size} members={members.Count} [{string.Join(", ", previews)}{suffix}]";
+    }
+
+    private static string ExtractFirstCompileErrorLine(string compileMessage)
+    {
+        using StringReader reader = new(compileMessage);
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            line = line.Trim();
+            if (!string.IsNullOrWhiteSpace(line))
+                return line;
+        }
+
+        return string.Empty;
+    }
+
+    private static string BuildErrorContextPreview(string shaderName, string source, string compileMessage, int surroundingLines, int maxErrors)
+    {
+        if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(compileMessage))
+            return string.Empty;
+
+        string[] lines = source.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        List<int> errorLines = [];
+        HashSet<int> seenLines = [];
+
+        foreach (Match match in ShaderCompileLineRegex.Matches(compileMessage))
+        {
+            if (!match.Success)
+                continue;
+
+            if (!int.TryParse(match.Groups["line"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int lineNumber))
+                continue;
+
+            if (lineNumber < 1 || lineNumber > lines.Length || !seenLines.Add(lineNumber))
+                continue;
+
+            errorLines.Add(lineNumber);
+            if (errorLines.Count >= maxErrors)
+                break;
+        }
+
+        if (errorLines.Count == 0)
+            return string.Empty;
+
+        StringBuilder builder = new();
+        builder.AppendLine("--- Rewritten GLSL error context ---");
+
+        for (int index = 0; index < errorLines.Count; index++)
+        {
+            int errorLine = errorLines[index];
+            int start = Math.Max(1, errorLine - surroundingLines);
+            int end = Math.Min(lines.Length, errorLine + surroundingLines);
+
+            if (index > 0)
+                builder.AppendLine();
+
+            builder.AppendLine($"[{shaderName}:{errorLine}]");
+            for (int lineIndex = start; lineIndex <= end; lineIndex++)
+            {
+                string marker = lineIndex == errorLine ? ">" : " ";
+                builder.AppendLine($"{marker}{lineIndex,4}: {lines[lineIndex - 1]}");
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static int CountLines(string source)
+    {
+        if (string.IsNullOrEmpty(source))
+            return 0;
+
+        int count = 1;
+        for (int i = 0; i < source.Length; i++)
+        {
+            if (source[i] == '\n')
+                count++;
+        }
+
+        return count;
     }
 
     private static string RewriteLegacyMultiviewExtensionsForVulkan(string source)

@@ -15,10 +15,10 @@ layout(binding = 1) uniform sampler2DMS Normal;
 layout(binding = 2) uniform sampler2DMS RMSE;
 layout(binding = 3) uniform sampler2DMS DepthView;
 #else
-uniform sampler2D AlbedoOpacity; //AlbedoOpacity
-uniform sampler2D Normal; //Normal
-uniform sampler2D RMSE; //PBR: Roughness, Metallic, Specular, Index of refraction
-uniform sampler2D DepthView; //Depth
+layout(binding = 0) uniform sampler2D AlbedoOpacity; //AlbedoOpacity
+layout(binding = 1) uniform sampler2D Normal; //Normal
+layout(binding = 2) uniform sampler2D RMSE; //PBR: Roughness, Metallic, Specular, Index of refraction
+layout(binding = 3) uniform sampler2D DepthView; //Depth
 #endif
 uniform sampler2D ShadowMap; //Directional Shadow Map
 uniform sampler2DArray ShadowMapArray; //Directional Cascaded Shadow Map
