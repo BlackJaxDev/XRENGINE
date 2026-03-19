@@ -74,6 +74,12 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     private bool _showGpuTimingRawMsLine = true;
     private bool _showGpuTimingSmoothedMsLine = true;
     private bool _interpolateGpuTimingGraphs = true;
+
+    private enum TimingDisplayMode { Latest, Average, Worst }
+    private static readonly string[] TimingDisplayModeLabels = ["Latest", "Average", "Worst"];
+    private TimingDisplayMode _cpuTimingDisplayMode = TimingDisplayMode.Latest;
+    private TimingDisplayMode _gpuTimingDisplayMode = TimingDisplayMode.Latest;
+
     private readonly Dictionary<string, bool> _nodeOpenCache = new();
 
     // Render-stats history (shared by editor + external profiler)
@@ -108,6 +114,22 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     private GpuPipelineTimingNodeData[] _gpuPipelineDisplayRoots = [];
     private readonly Dictionary<string, TimingGraphInterpolationState> _cpuTimingInterpolationStates = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TimingGraphInterpolationState> _gpuTimingInterpolationStates = new(StringComparer.Ordinal);
+
+    // Horizontal smoothing: stores previous update's raw samples per plot (replaces vertical EMA)
+    private sealed class PreviousSamplesState
+    {
+        public readonly float[] Previous;    // Displayed as the "smoothed" line (1-update-behind data)
+        public readonly float[] LastCurrent; // Last known raw data (to detect when new data arrives)
+        public bool HasPrevious;
+
+        public PreviousSamplesState(int count)
+        {
+            Previous = new float[count];
+            LastCurrent = new float[count];
+        }
+    }
+
+    private readonly Dictionary<string, PreviousSamplesState> _previousTimingSamples = new(StringComparer.Ordinal);
 
     // ═══════════════════════════════════════════════════════════════
     //  Public entry points — called per-frame
@@ -470,14 +492,14 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 
         ImGui.Separator();
         ImGui.Text("Vulkan Frame Lifecycle Timing:");
-        ImGui.Text($"  CPU Total: {stats.VulkanFrameTotalMs:F3} ms");
-        ImGui.Text($"  CPU Wait Fence: {stats.VulkanFrameWaitFenceMs:F3} ms");
+        ImGui.Text($"  CPU Total: {GetRingBufferStat(_vulkanFrameTotalMsHistory, _cpuTimingDisplayMode):F3} ms");
+        ImGui.Text($"  CPU Wait Fence: {GetRingBufferStat(_vulkanFrameWaitFenceMsHistory, _cpuTimingDisplayMode):F3} ms");
         ImGui.Text($"  CPU Acquire: {stats.VulkanFrameAcquireImageMs:F3} ms");
-        ImGui.Text($"  CPU Record CmdBuf: {stats.VulkanFrameRecordCommandBufferMs:F3} ms");
+        ImGui.Text($"  CPU Record CmdBuf: {GetRingBufferStat(_vulkanFrameRecordCommandBufferMsHistory, _cpuTimingDisplayMode):F3} ms");
         ImGui.Text($"  CPU Submit: {stats.VulkanFrameSubmitMs:F3} ms");
         ImGui.Text($"  CPU Trim: {stats.VulkanFrameTrimMs:F3} ms");
         ImGui.Text($"  CPU Present: {stats.VulkanFramePresentMs:F3} ms");
-        ImGui.Text($"  GPU CmdBuf: {stats.VulkanFrameGpuCommandBufferMs:F3} ms");
+        ImGui.Text($"  GPU CmdBuf: {GetRingBufferStat(_vulkanFrameGpuCommandBufferMsHistory, _cpuTimingDisplayMode):F3} ms");
 
         if (_renderStatsHistoryCount > 1 && ImGui.CollapsingHeader("Vulkan Frame Timing History", ImGuiTreeNodeFlags.DefaultOpen))
         {
@@ -651,7 +673,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                     interpolatedScratch: _gpuPipelineRootHistoryInterpolatedScratch,
                     rawColor: new Vector4(1.00f, 0.78f, 0.40f, 0.78f),
                     smoothedColor: new Vector4(0.95f, 0.58f, 0.18f, 1.0f),
-                    smoothedFillColor: new Vector4(0.95f, 0.58f, 0.18f, 0.16f));
+                    smoothedFillColor: new Vector4(0.95f, 0.58f, 0.18f, 0.16f),
+                    displayMode: _gpuTimingDisplayMode);
             }
         }
 
@@ -1116,16 +1139,26 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.SeparatorText("CPU Timing Graphs");
         ImGui.Checkbox("Show CPU Raw ms", ref _showCpuTimingRawMsLine);
         ImGui.SameLine();
-        ImGui.Checkbox("Show CPU Smoothed ms", ref _showCpuTimingSmoothedMsLine);
+        ImGui.Checkbox("Show CPU Previous ms", ref _showCpuTimingSmoothedMsLine);
         ImGui.SameLine();
         ImGui.Checkbox("Interpolate CPU", ref _interpolateCpuTimingGraphs);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(90);
+        int cpuMode = (int)_cpuTimingDisplayMode;
+        if (ImGui.Combo("CPU Display##cpuDisplayMode", ref cpuMode, TimingDisplayModeLabels, TimingDisplayModeLabels.Length))
+            _cpuTimingDisplayMode = (TimingDisplayMode)cpuMode;
 
         ImGui.SeparatorText("GPU Timing Graphs");
         ImGui.Checkbox("Show GPU Raw ms", ref _showGpuTimingRawMsLine);
         ImGui.SameLine();
-        ImGui.Checkbox("Show GPU Smoothed ms", ref _showGpuTimingSmoothedMsLine);
+        ImGui.Checkbox("Show GPU Previous ms", ref _showGpuTimingSmoothedMsLine);
         ImGui.SameLine();
         ImGui.Checkbox("Interpolate GPU", ref _interpolateGpuTimingGraphs);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(90);
+        int gpuMode = (int)_gpuTimingDisplayMode;
+        if (ImGui.Combo("GPU Display##gpuDisplayMode", ref gpuMode, TimingDisplayModeLabels, TimingDisplayModeLabels.Length))
+            _gpuTimingDisplayMode = (TimingDisplayMode)gpuMode;
     }
 
     /// <summary>Draws the shared profiler settings as a standalone ImGui window.</summary>
@@ -1947,13 +1980,14 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         bool open = ImGui.TreeNodeEx(node.Name, flags | ImGuiTreeNodeFlags.SpanFullWidth);
 
         ImGui.TableSetColumnIndex(1);
-        ImGui.Text($"{node.ElapsedMs:F3}");
+        float displayMs = owner.GetGpuPipelineRootStat(node.Name, (float)node.ElapsedMs, owner._gpuTimingDisplayMode);
+        ImGui.Text($"{displayMs:F3}");
 
         ImGui.TableSetColumnIndex(2);
         ImGui.Text(node.SampleCount.ToString());
 
         ImGui.TableSetColumnIndex(3);
-        double percent = frameMs <= 0.0001 ? 0.0 : (node.ElapsedMs / frameMs) * 100.0;
+        double percent = frameMs <= 0.0001 ? 0.0 : (displayMs / frameMs) * 100.0;
         ImGui.Text($"{percent:F1}%");
 
         if (open)
@@ -2083,7 +2117,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             interpolatedScratch: _renderStatsHistoryInterpolatedScratch,
             rawColor: new Vector4(0.52f, 0.86f, 1.00f, 0.78f),
             smoothedColor: new Vector4(0.40f, 0.80f, 1.00f, 1.00f),
-            smoothedFillColor: new Vector4(0.40f, 0.80f, 1.00f, 0.15f));
+            smoothedFillColor: new Vector4(0.40f, 0.80f, 1.00f, 0.15f),
+            displayMode: _cpuTimingDisplayMode);
     }
 
     private void DrawTimingHistoryPlot(
@@ -2102,12 +2137,13 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         float[] interpolatedScratch,
         Vector4 rawColor,
         Vector4 smoothedColor,
-        Vector4 smoothedFillColor)
+        Vector4 smoothedFillColor,
+        TimingDisplayMode displayMode = TimingDisplayMode.Latest)
     {
         if (sampleCount <= 0)
             return;
 
-        BuildSmoothedHistory(rawSamples, sampleCount, smoothedScratch);
+        BuildPreviousUpdateSamples(label, rawSamples, sampleCount, smoothedScratch);
         float[] displaySamples = ResolveTimingDisplaySamples(label, rawSamples, smoothedScratch, sampleCount, interpolate, interpolationStates, interpolatedScratch);
         float[] statsSamples = showSmoothedLine ? smoothedScratch : rawSamples;
 
@@ -2125,9 +2161,21 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 
         int decimals = string.Equals(units, "ms", StringComparison.Ordinal) ? 3 : 1;
         string format = $"F{decimals}";
-        float fps = latest > 0.0001f && string.Equals(units, "ms", StringComparison.Ordinal) ? 1000.0f / latest : 0.0f;
+        float primary = displayMode switch
+        {
+            TimingDisplayMode.Average => average,
+            TimingDisplayMode.Worst => maximum,
+            _ => latest,
+        };
+        float fps = primary > 0.0001f && string.Equals(units, "ms", StringComparison.Ordinal) ? 1000.0f / primary : 0.0f;
 
-        ImGui.Text($"{label}: {latest.ToString(format)} {units}  avg {average.ToString(format)}  min {minimum.ToString(format)}  max {maximum.ToString(format)}{(fps > 0.0f ? $"  ({fps:F1} FPS)" : string.Empty)}");
+        if (displayMode == TimingDisplayMode.Latest)
+            ImGui.Text($"{label}: {latest.ToString(format)} {units}  avg {average.ToString(format)}  min {minimum.ToString(format)}  max {maximum.ToString(format)}{(fps > 0.0f ? $"  ({fps:F1} FPS)" : string.Empty)}");
+        else
+        {
+            string modeTag = displayMode == TimingDisplayMode.Average ? "avg" : "worst";
+            ImGui.Text($"{label}: {primary.ToString(format)} {units} ({modeTag})  latest {latest.ToString(format)}  avg {average.ToString(format)}  worst {maximum.ToString(format)}{(fps > 0.0f ? $"  ({fps:F1} FPS)" : string.Empty)}");
+        }
         DrawMultiHistoryPlot(
             id,
             rawSamples,
@@ -2145,20 +2193,35 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         DrawTimingHistoryHoverTooltip(rawSamples, displaySamples, sampleCount, units, decimals, latest, average, minimum, maximum, showRawLine, showSmoothedLine);
     }
 
-    private void BuildSmoothedHistory(float[] rawSamples, int sampleCount, float[] destination)
+    /// <summary>
+    /// Horizontal smoothing: outputs the raw samples from one update cycle ago.
+    /// Detects when <paramref name="currentRaw"/> actually changes (new update arrived)
+    /// and rotates last-known → previous, current → last-known.
+    /// </summary>
+    private void BuildPreviousUpdateSamples(string label, float[] currentRaw, int sampleCount, float[] destination)
     {
-        float previous = 0f;
-        bool hasPrevious = false;
-        for (int i = 0; i < sampleCount; i++)
+        if (!_previousTimingSamples.TryGetValue(label, out PreviousSamplesState? state) || state.Previous.Length != sampleCount)
         {
-            float value = rawSamples[i];
-            if (_smoothingAlpha > 0.001f && hasPrevious)
-                value = (previous * _smoothingAlpha) + (value * (1.0f - _smoothingAlpha));
-
-            destination[i] = value;
-            previous = value;
-            hasPrevious = true;
+            state = new PreviousSamplesState(sampleCount);
+            _previousTimingSamples[label] = state;
+            Array.Copy(currentRaw, state.LastCurrent, sampleCount);
+            Array.Copy(currentRaw, destination, sampleCount);
+            return;
         }
+
+        // Detect if raw data changed (new update arrived)
+        if (!SamplesEqual(currentRaw, state.LastCurrent, sampleCount))
+        {
+            // What was "current" last cycle becomes "previous"
+            Array.Copy(state.LastCurrent, state.Previous, sampleCount);
+            Array.Copy(currentRaw, state.LastCurrent, sampleCount);
+            state.HasPrevious = true;
+        }
+
+        if (state.HasPrevious)
+            Array.Copy(state.Previous, destination, sampleCount);
+        else
+            Array.Copy(currentRaw, destination, sampleCount);
     }
 
     private float[] ResolveTimingDisplaySamples(
@@ -2291,12 +2354,12 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (showRawLine)
             ImGui.Text($"Raw: {rawSamples[sampleIndex].ToString(format)} {units}");
         if (showDisplayLine)
-            ImGui.Text($"Display: {displaySamples[sampleIndex].ToString(format)} {units}");
+            ImGui.Text($"Previous: {displaySamples[sampleIndex].ToString(format)} {units}");
         ImGui.Text($"Latest: {latest.ToString(format)} {units}");
         ImGui.Text($"Average: {average.ToString(format)} {units}");
         ImGui.Text($"Min/Max: {minimum.ToString(format)} / {maximum.ToString(format)} {units}");
         if (string.Equals(units, "ms", StringComparison.Ordinal))
-            ImGui.TextDisabled($"Update={FormatUpdateIntervalLabel()}, Smoothing={_smoothingAlpha:F2}");
+            ImGui.TextDisabled($"Update={FormatUpdateIntervalLabel()}");
         ImGui.EndTooltip();
     }
 
@@ -2375,6 +2438,40 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         float padding = MathF.Max(0.05f, range * 0.12f);
         plotMin = minimum >= 0f ? 0f : minimum - padding;
         plotMax = MathF.Max(plotMin + 0.1f, maximum + padding);
+    }
+
+    /// <summary>Returns the latest, average, or worst (max) value from a render-stats ring buffer.</summary>
+    private float GetRingBufferStat(float[] ring, TimingDisplayMode mode)
+    {
+        if (_renderStatsHistoryCount <= 0)
+            return 0f;
+
+        int count = Math.Min(_renderStatsHistoryCount, RenderStatsHistorySamples);
+        int lastIdx = (_renderStatsHistoryHead - 1 + RenderStatsHistorySamples) % RenderStatsHistorySamples;
+        float latest = ring[lastIdx];
+        if (mode == TimingDisplayMode.Latest)
+            return latest;
+
+        int start = (_renderStatsHistoryHead - count + RenderStatsHistorySamples) % RenderStatsHistorySamples;
+        double sum = 0;
+        float max = float.MinValue;
+        for (int i = 0; i < count; i++)
+        {
+            float v = ring[(start + i) % RenderStatsHistorySamples];
+            sum += v;
+            if (v > max) max = v;
+        }
+
+        return mode == TimingDisplayMode.Worst ? max : (float)(sum / count);
+    }
+
+    /// <summary>Returns the latest, average, or worst (max) value from a GPU pipeline root ring buffer.</summary>
+    private float GetGpuPipelineRootStat(string nodeName, float latestMs, TimingDisplayMode mode)
+    {
+        if (mode == TimingDisplayMode.Latest || !_gpuPipelineRootHistory.TryGetValue(nodeName, out float[]? series))
+            return latestMs;
+
+        return GetRingBufferStat(series, mode);
     }
 
     private void UpdateFpsDropSpikeLog(ProfilerFramePacket frame, Dictionary<int, float[]> history)
