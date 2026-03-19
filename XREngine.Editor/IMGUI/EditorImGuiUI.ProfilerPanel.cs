@@ -16,6 +16,27 @@ public static partial class EditorImGuiUI
     private const string ProfilerDockSpaceWindowId = "Profiler Dockspace";
     private const string ProfilerDockSpaceId = "ProfilerDockSpace";
 
+    internal static void HandleProfilerToggleHotkey()
+    {
+        var io = ImGui.GetIO();
+        if ((io.WantCaptureKeyboard || io.WantTextInput) && ImGui.IsKeyPressed(ImGuiKey.F11, false))
+            HandleProfilerToggleShortcutFromImGui();
+    }
+
+    internal static void HandleProfilerToggleShortcutFromImGui()
+    {
+        if (EditorUnitTests.Toggles.EditorType == EditorUnitTests.UnitTestEditorType.IMGUI)
+        {
+            ToggleProfilerVisible();
+            return;
+        }
+
+        if (Engine.State.MainPlayer?.ControlledPawnComponent is EditorFlyingCameraPawnComponent pawn)
+            pawn.ToggleProfilerShortcutFromImGui();
+        else
+            ToggleProfilerVisible();
+    }
+
     internal static void SetProfilerVisible(bool visible)
     {
         bool changed = _showProfiler != visible;
@@ -34,6 +55,7 @@ public static partial class EditorImGuiUI
 
     internal static void RenderProfilerOverlay()
     {
+        HandleProfilerToggleHotkey();
         if (!_showProfiler)
             return;
 
@@ -76,8 +98,12 @@ public static partial class EditorImGuiUI
     {
         if (!_showProfiler) return;
 
+        _profilerUdpEnabled = Engine.EditorPreferences.Debug.EnableProfilerUdpSending;
         EnsureProfilerInitialized();
         DrawProfilerDockSpace();
+
+        if (!_showProfiler)
+            return;
 
         // If UDP sending is active, show a thin notice instead of the full panels.
         if (_profilerUdpEnabled)
@@ -114,37 +140,51 @@ public static partial class EditorImGuiUI
         // Controls / toggles window
         if (ImGui.Begin("Profiler"))
         {
-            // Engine-specific toggles (these are not in the shared renderer)
+            // ── Graph / Display Settings (shared) ──
+            _engineProfilerRenderer!.DrawSettingsContent();
+
+            ImGui.Separator();
+
+            // ── Engine Data Collection ──
+            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "Data Collection:");
+
             bool enableFrameLogging = Engine.EditorPreferences.Debug.EnableProfilerFrameLogging;
-            if (ImGui.Checkbox("Enable Frame Logging", ref enableFrameLogging))
+            if (ImGui.Checkbox("Frame Logging", ref enableFrameLogging))
                 Engine.EditorPreferences.Debug.EnableProfilerFrameLogging = enableFrameLogging;
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("When disabled, profiler method timing is skipped to reduce overhead.");
 
             ImGui.SameLine();
+            bool enableComponentTiming = Engine.EditorPreferences.Debug.EnableProfilerComponentTiming;
+            if (ImGui.Checkbox("Component Timing", ref enableComponentTiming))
+                Engine.EditorPreferences.Debug.EnableProfilerComponentTiming = enableComponentTiming;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("When disabled, per-component tick timings are not recorded for the Components panel.");
+
+            ImGui.SameLine();
             bool enableStatsTracking = Engine.EditorPreferences.Debug.EnableRenderStatisticsTracking;
-            if (ImGui.Checkbox("Enable Stats Tracking", ref enableStatsTracking))
+            if (ImGui.Checkbox("Stats Tracking", ref enableStatsTracking))
                 Engine.EditorPreferences.Debug.EnableRenderStatisticsTracking = enableStatsTracking;
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("When disabled, per-frame render statistics (draw calls, triangles) are not tracked.");
 
             ImGui.SameLine();
             bool enableGpuPipelineProfiling = Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling;
-            if (ImGui.Checkbox("Enable GPU Pipeline Profiling", ref enableGpuPipelineProfiling))
+            if (ImGui.Checkbox("GPU Pipeline", ref enableGpuPipelineProfiling))
                 Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling = enableGpuPipelineProfiling;
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Collect GPU timestamp timings for generic render-pipeline commands when supported by the active renderer.");
 
             ImGui.SameLine();
             bool enableAllocTracking = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
-            if (ImGui.Checkbox("Enable Alloc Tracking", ref enableAllocTracking))
+            if (ImGui.Checkbox("Alloc Tracking", ref enableAllocTracking))
                 Engine.EditorPreferences.Debug.EnableThreadAllocationTracking = enableAllocTracking;
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("When disabled, GC allocation deltas are not measured per tick/frame.");
 
             ImGui.Separator();
 
-            // UDP toggle
+            // ── External Profiler ──
             ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "External Profiler:");
             ImGui.SameLine();
             bool udpEnabled = _profilerUdpEnabled;
@@ -161,7 +201,7 @@ public static partial class EditorImGuiUI
 
             ImGui.Separator();
 
-            // Sub-panel visibility toggles
+            // ── Panel Visibility ──
             ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "Panels:");
             ImGui.SameLine(); ImGui.Checkbox("Tree", ref _showProfilerTree);
             ImGui.SameLine(); ImGui.Checkbox("Spikes", ref _showFpsDropSpikes);
@@ -175,8 +215,10 @@ public static partial class EditorImGuiUI
         }
         ImGui.End();
 
-        // Draw shared profiler panels
+        // Draw shared profiler panels (no separate settings panel — settings are embedded above)
+        bool showSettingsFalse = false;
         _engineProfilerRenderer!.DrawCorePanels(
+            ref showSettingsFalse,
             ref _showProfilerTree,
             ref _showFpsDropSpikes,
             ref _showRenderStats,
@@ -211,7 +253,22 @@ public static partial class EditorImGuiUI
             ImGuiWindowFlags.NoScrollbar |
             ImGuiWindowFlags.NoScrollWithMouse;
 
-        ImGui.Begin(ProfilerDockSpaceWindowId, flags);
+        bool profilerDockOpen = _showProfiler;
+        bool dockWindowVisible = ImGui.Begin(ProfilerDockSpaceWindowId, ref profilerDockOpen, flags);
+
+        if (!profilerDockOpen)
+        {
+            ImGui.End();
+            if (_showProfiler)
+                HandleProfilerToggleShortcutFromImGui();
+            return;
+        }
+
+        if (!dockWindowVisible)
+        {
+            ImGui.End();
+            return;
+        }
 
         uint dockSpaceId = ImGui.GetID(ProfilerDockSpaceId);
         ImGui.DockSpace(dockSpaceId, Vector2.Zero, ImGuiDockNodeFlags.PassthruCentralNode);
@@ -265,29 +322,38 @@ public static partial class EditorImGuiUI
     {
         if (ImGui.Button("Launch External Profiler"))
         {
-            try
-            {
-                string? profilerExe = FindExternalProfilerExe();
-                if (!string.IsNullOrWhiteSpace(profilerExe) && File.Exists(profilerExe))
-                {
-                    Process.Start(new ProcessStartInfo(profilerExe!)
-                    {
-                        UseShellExecute = true,
-                        WorkingDirectory = Path.GetDirectoryName(profilerExe) ?? ".",
-                    });
-                }
-                else
-                {
-                    Console.Error.WriteLine($"[Profiler] External profiler not found. Build XREngine.Profiler first.");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"[Profiler] Failed to launch external profiler: {ex.Message}");
-            }
+            if (!TryLaunchExternalProfiler(out string? error) && !string.IsNullOrWhiteSpace(error))
+                Console.Error.WriteLine(error);
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Launch the standalone XREngine.Profiler application.\nMake sure UDP sending is enabled to stream data to it.");
+    }
+
+    internal static bool TryLaunchExternalProfiler(out string? error)
+    {
+        try
+        {
+            string? profilerExe = FindExternalProfilerExe();
+            if (!string.IsNullOrWhiteSpace(profilerExe) && File.Exists(profilerExe))
+            {
+                Process.Start(new ProcessStartInfo(profilerExe!)
+                {
+                    UseShellExecute = true,
+                    WorkingDirectory = Path.GetDirectoryName(profilerExe) ?? ".",
+                });
+
+                error = null;
+                return true;
+            }
+
+            error = "[Profiler] External profiler not found. Build XREngine.Profiler first.";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            error = $"[Profiler] Failed to launch external profiler: {ex.Message}";
+            return false;
+        }
     }
 
     private static string? FindExternalProfilerExe()

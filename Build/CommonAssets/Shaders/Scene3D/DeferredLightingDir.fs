@@ -97,7 +97,8 @@ int GetCascadeIndex(in vec3 fragPosWS)
 //0 is fully in shadow, 1 is fully lit
 float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightMatrix)
 {
-		vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, fragPosWS);
+		vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;
+		vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, offsetPosWS);
 
 		if (!XRENGINE_ShadowCoordInBounds(fragCoord))
 			return 1.0f;
@@ -114,7 +115,8 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL, in mat4 lightM
 float ReadCascadeShadowMap(in vec3 fragPosWS, in vec3 N, in float NoL, in int cascadeIndex)
 {
 		mat4 lightMatrix = LightData.CascadeMatrices[cascadeIndex];
-		vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, fragPosWS);
+		vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax;
+		vec3 fragCoord = XRENGINE_ProjectShadowCoord(lightMatrix, offsetPosWS);
 
 		if (!XRENGINE_ShadowCoordInBounds(fragCoord))
 			return 1.0f;

@@ -151,7 +151,7 @@
     <None Update="Assets\Rive\weather_icons_ss.riv">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="Assets\UnitTestingWorldSettings.json">
+    <None Update="Assets\UnitTestingWorldSettings.jsonc">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

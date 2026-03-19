@@ -33,6 +33,7 @@ internal sealed class ProfilerImGuiApp : IDisposable
     private bool _showJobSystem = true;
     private bool _showMainThreadInvokes = true;
     private bool _showConnectionInfo = true;
+    private bool _showSettings = true;
 
     private bool _dockLayoutInitialized;
 
@@ -109,6 +110,7 @@ internal sealed class ProfilerImGuiApp : IDisposable
         DrawDockSpace();
 
         _renderer.DrawCorePanelsWithConnectionInfo(
+            ref _showSettings,
             ref _showProfilerTree,
             ref _showFpsDropSpikes,
             ref _showRenderStats,
@@ -144,6 +146,7 @@ internal sealed class ProfilerImGuiApp : IDisposable
             ImGui.MenuItem("Job System", null, ref _showJobSystem);
             ImGui.MenuItem("Main Thread Invokes", null, ref _showMainThreadInvokes);
             ImGui.Separator();
+            ImGui.MenuItem("Settings", null, ref _showSettings);
             ImGui.MenuItem("Connection Info", null, ref _showConnectionInfo);
             ImGui.Separator();
             if (ImGui.MenuItem("Reset Layout"))
@@ -308,6 +311,7 @@ internal sealed class ProfilerImGuiApp : IDisposable
         ImGuiDockBuilderNative.DockWindow("Job System", rightLowerId);
         ImGuiDockBuilderNative.DockWindow("Main Thread Invokes", rightLowerId); // tabbed
         ImGuiDockBuilderNative.DockWindow("Connection Info", rightLowerId);     // tabbed
+        ImGuiDockBuilderNative.DockWindow("Profiler Settings", leftBottomId);   // tabbed with FPS Spikes
 
         ImGuiDockBuilderNative.Finish(dockSpaceId);
     }

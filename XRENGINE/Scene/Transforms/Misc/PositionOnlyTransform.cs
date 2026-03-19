@@ -12,6 +12,30 @@ namespace XREngine.Scene.Transforms
         public PositionOnlyTransform(TransformBase parent)
             : base(parent) { }
 
+        public override Vector3 LocalTranslation
+            => Vector3.Zero;
+
+        public override Quaternion LocalRotation
+            => Quaternion.Identity;
+
+        public override Quaternion InverseLocalRotation
+            => Quaternion.Identity;
+
+        public override Vector3 WorldTranslation
+            => Parent?.WorldTranslation ?? Vector3.Zero;
+
+        public override Quaternion WorldRotation
+            => Quaternion.Identity;
+
+        public override Quaternion InverseWorldRotation
+            => Quaternion.Identity;
+
+        public override Quaternion RenderRotation
+            => Quaternion.Identity;
+
+        public override Quaternion InverseRenderRotation
+            => Quaternion.Identity;
+
         protected override Matrix4x4 CreateWorldMatrix()
             => Parent is null
                 ? Matrix4x4.Identity

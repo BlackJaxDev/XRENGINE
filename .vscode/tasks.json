@@ -50,6 +50,22 @@
             "problemMatcher": "$msCompile"
         },
         {
+            "label": "Generate-UnitTestingWorldSettings",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\Tools\\Generate-UnitTestingWorldSettings.ps1"
+            ],
+            "presentation": {
+                "reveal": "always"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "Start-Editor-NoDebug",
             "type": "shell",
             "command": "cmd",

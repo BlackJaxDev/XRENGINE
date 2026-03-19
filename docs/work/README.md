@@ -19,6 +19,7 @@ In-flight design notes, investigations, and backlogs. These change frequently; p
 
 ## Design & Investigations
 - [Indirect GPU Rendering Architecture](design/IndirectGPURendering-Design.md)
+- [Affine Matrix Integration Plan](design/affine-matrix-integration-plan.md)
 - [Zero-Readback GPU-Driven Rendering Plan](design/zero-readback-gpu-driven-rendering-plan.md)
 - [Bindless Deferred Texturing Plan](design/bindless-deferred-texturing-plan.md)
 - [Vulkan Parity Report](design/vulkan-parity-report.md)

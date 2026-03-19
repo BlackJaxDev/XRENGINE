@@ -185,12 +185,12 @@ namespace XREngine.Data.Geometry
         public Frustum() { }
         public Frustum(Matrix4x4 invProj) : this(
             DivideW(Vector4.Transform(new Vector3(-1.0f, -1.0f, 0.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(1.0f, -1.0f, 0.0f), invProj)),
             DivideW(Vector4.Transform(new Vector3(-1.0f, 1.0f, 0.0f), invProj)),
+            DivideW(Vector4.Transform(new Vector3(1.0f, -1.0f, 0.0f), invProj)),
             DivideW(Vector4.Transform(new Vector3(1.0f, 1.0f, 0.0f), invProj)),
             DivideW(Vector4.Transform(new Vector3(-1.0f, -1.0f, 1.0f), invProj)),
-            DivideW(Vector4.Transform(new Vector3(1.0f, -1.0f, 1.0f), invProj)),
             DivideW(Vector4.Transform(new Vector3(-1.0f, 1.0f, 1.0f), invProj)),
+            DivideW(Vector4.Transform(new Vector3(1.0f, -1.0f, 1.0f), invProj)),
             DivideW(Vector4.Transform(new Vector3(1.0f, 1.0f, 1.0f), invProj))) { }
         
         private static Vector3 DivideW(Vector4 v)

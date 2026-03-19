@@ -600,22 +600,35 @@ namespace XREngine.Scene.Transforms
             (float)BitConverter.ToHalf(arr, offset + 2),
             (float)BitConverter.ToHalf(arr, offset + 4));
 
-        //public override Vector3 WorldTranslation
-        //{
-        //    get => base.WorldTranslation;
-        //    set
-        //    {
-        //        Translation = Vector3.Transform(value, ParentInverseWorldMatrix);
-        //    }
-        //}
-        //public override Quaternion WorldRotation
-        //{
-        //    get => base.WorldRotation;
-        //    set
-        //    {
-        //        Rotation = Quaternion.Normalize(ParentInverseWorldRotation * value);
-        //    }
-        //}
+        [YamlIgnore]
+        public override Vector3 LocalTranslation
+            => Translation;
+
+        [YamlIgnore]
+        public override Quaternion LocalRotation
+            => Quaternion.Normalize(Rotation);
+
+        [YamlIgnore]
+        public override Quaternion InverseLocalRotation
+            => Quaternion.Normalize(Quaternion.Inverse(Rotation));
+
+        [YamlIgnore]
+        public override Vector3 WorldTranslation
+            => Parent is null
+                ? Translation
+                : Vector3.Transform(Translation, ParentWorldMatrix);
+
+        [YamlIgnore]
+        public override Quaternion WorldRotation
+            => Parent is null
+                ? Quaternion.Normalize(Rotation)
+                : Quaternion.Normalize(ParentWorldRotation * Rotation);
+
+        [YamlIgnore]
+        public override Quaternion InverseWorldRotation
+            => Parent is null
+                ? Quaternion.Normalize(Quaternion.Inverse(Rotation))
+                : Quaternion.Normalize(Quaternion.Inverse(Rotation) * ParentInverseWorldRotation);
 
         public void AddWorldScaleDelta(Vector3 worldDelta, bool networkSmoothed = false)
         {

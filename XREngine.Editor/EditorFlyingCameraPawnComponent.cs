@@ -2237,6 +2237,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         SetEditorImGuiOverlayEnabled(world, enable);
     }
 
+    internal void ToggleProfilerShortcutFromImGui()
+        => ToggleEditorImGuiOverlay();
+
     private static bool IsEditorImGuiOverlayEnabled(XRWorldInstance world)
     {
         var node = FindEditorImGuiNode(world);

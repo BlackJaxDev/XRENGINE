@@ -1,5 +1,7 @@
 using System.Numerics;
+using XREngine.Animation;
 using XREngine.Components;
+using XREngine.Components.Animation;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -24,6 +26,7 @@ public static partial class EditorUnitTests
             Lighting.AddDirLight(rootNode);
 
         AddGroundCrosshair(rootNode);
+        AddProjectionMatrixCombinerRig(rootNode);
         AddFrustumIntersectionRig(rootNode);
         AddFrustumContainmentRig(rootNode);
         AddRaySphereRig(rootNode);
@@ -94,6 +97,233 @@ public static partial class EditorUnitTests
 
             DrawFrustumIntersection(intersectionDebug, frustumA, frustumB);
         });
+    }
+
+    private static void AddProjectionMatrixCombinerRig(SceneNode rootNode)
+    {
+        var rigRootNode = rootNode.NewChild("ProjectionMatrixCombinerRig");
+        var rigRootTransform = rigRootNode.SetTransform<Transform>();
+        rigRootTransform.Translation = new Vector3(-10.0f, 2.5f, -10.0f);
+
+        var cyclopsEyeNode = rigRootNode.NewChild("CyclopsEye");
+        var cyclopsEyeTransform = cyclopsEyeNode.SetTransform<Transform>();
+        cyclopsEyeTransform.Translation = Vector3.Zero;
+
+        var leftEyeNode = rigRootNode.NewChild("LeftEye");
+        leftEyeNode.SetTransform<Transform>();
+        var rightEyeNode = rigRootNode.NewChild("RightEye");
+        rightEyeNode.SetTransform<Transform>();
+
+        var debugDraw = rigRootNode.AddComponent<DebugDrawComponent>()!;
+
+        var cyclopsEyeCamera = cyclopsEyeNode.AddComponent<CameraComponent>()!;
+        cyclopsEyeCamera.Name = "CyclopsEyeCamera";
+        var leftEyeCamera = leftEyeNode.AddComponent<CameraComponent>()!;
+        leftEyeCamera.Name = "LeftEyeCamera";
+        var rightEyeCamera = rightEyeNode.AddComponent<CameraComponent>()!;
+        rightEyeCamera.Name = "RightEyeCamera";
+
+        var combinerComponent = rigRootNode.AddComponent<ProjectionMatrixCombinerDebugComponent>()!;
+        combinerComponent.Name = "ProjectionMatrixCombiner";
+        combinerComponent.Configure(leftEyeCamera, rightEyeCamera, cyclopsEyeCamera, debugDraw, cyclopsEyeTransform);
+        combinerComponent.HighSpeedMode = true;
+
+        var customUi = rigRootNode.AddComponent<CustomUIComponent>()!;
+        customUi.Name = "CombinerControls";
+        customUi.AddFloatField(
+            "Rotation Angle (deg)",
+            () => combinerComponent.RotationAngleDegrees,
+            value => combinerComponent.RotationAngleDegrees = value,
+            0.0f,
+            60.0f,
+            0.25f,
+            "%.2f",
+            "Angular radius used by the cyclops-eye orbit clip.");
+        customUi.AddFloatField(
+            "Eye Separation (m)",
+            () => combinerComponent.EyeSeparationDistance,
+            value => combinerComponent.EyeSeparationDistance = value,
+            0.0f,
+            0.5f,
+            0.001f,
+            "%.3f",
+            "Distance between the left and right eye cameras.");
+
+        var animationClipComponent = rigRootNode.AddComponent<AnimationClipComponent>()!;
+        animationClipComponent.Name = "CyclopsOrbitClip";
+        animationClipComponent.Animation = CreateCyclopsOrbitClip();
+        animationClipComponent.StartOnActivate = true;
+
+        customUi.AddFloatField(
+            "Vertical FOV (deg)",
+            () => combinerComponent.VerticalFieldOfView,
+            value => combinerComponent.VerticalFieldOfView = value,
+            20.0f,
+            140.0f,
+            0.25f,
+            "%.2f",
+            "Shared vertical field of view used by the left and right eye cameras.");
+        customUi.AddFloatField(
+            "Cyclops FOV (deg)",
+            () => combinerComponent.CyclopsVerticalFieldOfView,
+            value => combinerComponent.CyclopsVerticalFieldOfView = value,
+            20.0f,
+            140.0f,
+            0.25f,
+            "%.2f",
+            "Independent vertical field of view for the cyclops camera only.");
+        customUi.AddFloatField(
+            "Aspect Ratio",
+            () => combinerComponent.AspectRatio,
+            value => combinerComponent.AspectRatio = value,
+            0.25f,
+            4.0f,
+            0.01f,
+            "%.3f",
+            "Projection aspect ratio applied to all three eye cameras.");
+        customUi.AddFloatField(
+            "Near Plane (m)",
+            () => combinerComponent.NearPlane,
+            value => combinerComponent.NearPlane = value,
+            0.01f,
+            5.0f,
+            0.01f,
+            "%.3f",
+            "Near clip plane shared by the test cameras.");
+        customUi.AddFloatField(
+            "Far Plane (m)",
+            () => combinerComponent.FarPlane,
+            value => combinerComponent.FarPlane = value,
+            1.0f,
+            200.0f,
+            0.1f,
+            "%.2f",
+            "Far clip plane shared by the test cameras.");
+        customUi.AddFloatField(
+            "Orbit Speed",
+            () => animationClipComponent.Speed,
+            value => animationClipComponent.Speed = value,
+            0.1f,
+            4.0f,
+            0.01f,
+            "%.2f",
+            "Playback speed multiplier for the cyclops-eye orbit animation clip.");
+        customUi.AddVector3Field(
+            "Rig Offset",
+            () => combinerComponent.RigOffset,
+            value => combinerComponent.RigOffset = value,
+            0.05f,
+            "%.3f",
+            "Local offset applied to the animated cyclops rig transform.");
+        customUi.AddFloatField(
+            "Yaw Amplitude Scale",
+            () => combinerComponent.YawAmplitudeScale,
+            value => combinerComponent.YawAmplitudeScale = value,
+            0.0f,
+            2.0f,
+            0.01f,
+            "%.2f",
+            "Ellipse scale multiplier for yaw motion around the orbit.");
+        customUi.AddFloatField(
+            "Pitch Amplitude Scale",
+            () => combinerComponent.PitchAmplitudeScale,
+            value => combinerComponent.PitchAmplitudeScale = value,
+            0.0f,
+            2.0f,
+            0.01f,
+            "%.2f",
+            "Ellipse scale multiplier for pitch motion around the orbit.");
+        customUi.AddBoolField(
+            "Show Left Frustum",
+            () => combinerComponent.ShowLeftFrustum,
+            value => combinerComponent.ShowLeftFrustum = value,
+            "Toggle left-eye frustum debug rendering.");
+        customUi.AddBoolField(
+            "Show Right Frustum",
+            () => combinerComponent.ShowRightFrustum,
+            value => combinerComponent.ShowRightFrustum = value,
+            "Toggle right-eye frustum debug rendering.");
+        customUi.AddBoolField(
+            "Show Cyclops Frustum",
+            () => combinerComponent.ShowCyclopsFrustum,
+            value => combinerComponent.ShowCyclopsFrustum = value,
+            "Toggle cyclops frustum debug rendering.");
+        customUi.AddBoolField(
+            "Show Combined Frustum",
+            () => combinerComponent.ShowCombinedFrustum,
+            value => combinerComponent.ShowCombinedFrustum = value,
+            "Toggle the final combined-frustum debug rendering.");
+        customUi.AddBoolField(
+            "Show Eye Markers",
+            () => combinerComponent.ShowEyeMarkers,
+            value => combinerComponent.ShowEyeMarkers = value,
+            "Toggle the eye-origin points and forward markers.");
+        customUi.AddBoolField(
+            "Prefer Stereo Far Distance",
+            () => combinerComponent.PreferStereoFarDistance,
+            value => combinerComponent.PreferStereoFarDistance = value,
+            "When enabled, the combined frustum uses only the left and right eye frusta to determine its far distance.");
+        customUi.AddBoolField(
+            "Solve Combined View Orientation",
+            () => combinerComponent.SolveCombinedViewOrientation,
+            value => combinerComponent.SolveCombinedViewOrientation = value,
+            "When enabled, the combiner also searches for a better shared view orientation before fitting the enclosing projection.");
+        customUi.AddBoolField(
+            "Refine Combined View Orientation",
+            () => combinerComponent.RefineCombinedViewOrientation,
+            value => combinerComponent.RefineCombinedViewOrientation = value,
+            "Runs the local yaw/pitch/roll refinement pass after the initial combined-view orientation candidate search. Disable this to reduce solve cost.");
+        customUi.AddBoolField(
+            "High Speed Mode",
+            () => combinerComponent.HighSpeedMode,
+            value => combinerComponent.HighSpeedMode = value,
+            "Bundles the fast path for this debug rig: skips refinement, reuses per-candidate transformed points, and caches source frustum point clouds while the inputs stay unchanged.");
+        customUi.AddBoolField(
+            "Show Combined View Basis",
+            () => combinerComponent.ShowCombinedViewBasis,
+            value => combinerComponent.ShowCombinedViewBasis = value,
+            "Draw the solved combined-view basis axes at the rig origin for debugging.");
+        customUi.AddFloatField(
+            "Combined View Basis Length",
+            () => combinerComponent.CombinedViewBasisLength,
+            value => combinerComponent.CombinedViewBasisLength = value,
+            0.1f,
+            10.0f,
+            0.05f,
+            "%.2f",
+            "Length of the debug axes for the solved combined-view basis.");
+        customUi.AddTextField(
+            "Combined View Candidate",
+            () => combinerComponent.LastCombinedViewCandidateLabel,
+            "Which orientation candidate won the combined-view solve.");
+        customUi.AddTextField(
+            "Combined View Cost",
+            () => combinerComponent.LastCombinedViewCost.ToString("0.0000"),
+            "Current enclosure cost for the solved combined view.");
+        customUi.AddColorField(
+            "Left Frustum Color",
+            () => combinerComponent.LeftFrustumColor,
+            value => combinerComponent.LeftFrustumColor = value,
+            true,
+            "Debug color for the left-eye frustum and marker.");
+        customUi.AddColorField(
+            "Right Frustum Color",
+            () => combinerComponent.RightFrustumColor,
+            value => combinerComponent.RightFrustumColor = value,
+            true,
+            "Debug color for the right-eye frustum and marker.");
+        customUi.AddColorField(
+            "Cyclops Frustum Color",
+            () => combinerComponent.CyclopsFrustumColor,
+            value => combinerComponent.CyclopsFrustumColor = value,
+            true,
+            "Debug color for the cyclops frustum and marker.");
+        customUi.AddColorField(
+            "Combined Frustum Color",
+            () => combinerComponent.CombinedFrustumColor,
+            value => combinerComponent.CombinedFrustumColor = value,
+            true,
+            "Debug color for the final combined frustum.");
     }
 
     private static void AddRaySphereRig(SceneNode rootNode)
@@ -316,5 +546,48 @@ public static partial class EditorUnitTests
 
         distance = t0 >= 0.0f ? t0 : t1;
         return distance >= 0.0f;
+    }
+
+    private static AnimationClip CreateCyclopsOrbitClip()
+    {
+        const float durationSeconds = 4.0f;
+        const int sampleCount = 17;
+
+        PropAnimFloat yawAnimation = new(durationSeconds, looped: true, useKeyframes: true);
+        PropAnimFloat pitchAnimation = new(durationSeconds, looped: true, useKeyframes: true);
+
+        for (int i = 0; i < sampleCount; i++)
+        {
+            float t = i / (float)(sampleCount - 1);
+            float time = durationSeconds * t;
+            float orbitRadians = MathF.Tau * t;
+            yawAnimation.Keyframes.Add(new FloatKeyframe(time, MathF.Cos(orbitRadians), 0.0f, EVectorInterpType.Linear));
+            pitchAnimation.Keyframes.Add(new FloatKeyframe(time, MathF.Sin(orbitRadians), 0.0f, EVectorInterpType.Linear));
+        }
+
+        var root = new AnimationMember("Root", EAnimationMemberType.Group);
+        var sceneNodeMember = new AnimationMember("SceneNode", EAnimationMemberType.Property);
+        var controllerMember = new AnimationMember("GetComponent", EAnimationMemberType.Method)
+        {
+            MethodArguments = [nameof(ProjectionMatrixCombinerDebugComponent)],
+            AnimatedMethodArgumentIndex = -1,
+            CacheReturnValue = true,
+            Children =
+            [
+                new AnimationMember(nameof(ProjectionMatrixCombinerDebugComponent.OrbitYawNormalized), EAnimationMemberType.Property, yawAnimation),
+                new AnimationMember(nameof(ProjectionMatrixCombinerDebugComponent.OrbitPitchNormalized), EAnimationMemberType.Property, pitchAnimation),
+            ]
+        };
+
+        root.Children.Add(sceneNodeMember);
+        sceneNodeMember.Children.Add(controllerMember);
+
+        return new AnimationClip(root)
+        {
+            Name = "CyclopsEyeOrbit",
+            LengthInSeconds = durationSeconds,
+            Looped = true,
+            SampleRate = sampleCount - 1,
+        };
     }
 }

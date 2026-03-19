@@ -140,10 +140,11 @@ internal class Program
             // Unit test initialization that must run after editor preferences are loaded 
             // but before windows are created (e.g., that may affect render pipeline selection).
             UnitTest_Init();
+            ApplyStartupProfilerPreferences();
 
             // LoadSandboxSettings() replaces Engine.UserSettings with persisted values,
-            // which may differ from the JSON-specified unit-test overrides. Re-apply them
-            // so that RenderAPI/PhysicsAPI from UnitTestingWorldSettings.json win.
+            // which may differ from the unit-test settings file overrides. Re-apply them
+            // so that RenderAPI/PhysicsAPI from UnitTestingWorldSettings.jsonc win.
             XREngine.Engine.UserSettings.RenderLibrary = EditorUnitTests.Toggles.RenderAPI;
             XREngine.Engine.UserSettings.PhysicsLibrary = EditorUnitTests.Toggles.PhysicsAPI;
             WriteBootstrapTrace($"Applied unit-test overrides: Render={EditorUnitTests.Toggles.RenderAPI}, Physics={EditorUnitTests.Toggles.PhysicsAPI}");
@@ -269,6 +270,30 @@ internal class Program
             opts.SkipIndirectTailClear = false;
             opts.DisableCountDrawPath = false;
         });
+    }
+
+    private static void ApplyStartupProfilerPreferences()
+    {
+        if (!Engine.EditorPreferences.Debug.StartExternalProfilerOnStartup)
+            return;
+
+        if (!Engine.EditorPreferences.Debug.EnableProfilerUdpSending)
+        {
+            Engine.EditorPreferences.Debug.EnableProfilerUdpSending = true;
+            WriteBootstrapTrace("Enabled profiler UDP sending from startup profiler preference.");
+        }
+
+        if (EditorImGuiUI.TryLaunchExternalProfiler(out string? error))
+        {
+            WriteBootstrapTrace("Launched external profiler from startup profiler preference.");
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            EngineDebug.LogWarning(error);
+            WriteBootstrapTrace($"External profiler launch requested but failed: {error}");
+        }
     }
 
     private static void UnitTest_VerifyPlayModeStart()

@@ -341,6 +341,30 @@ namespace XREngine.Scene.Transforms
             }
         }
 
+        public override Vector3 LocalTranslation
+            => Vector3.Zero;
+
+        public override Quaternion LocalRotation
+            => Quaternion.Identity;
+
+        public override Quaternion InverseLocalRotation
+            => Quaternion.Identity;
+
+        public override Vector3 WorldTranslation
+            => PositionOffset + Position;
+
+        public override Quaternion WorldRotation
+            => Quaternion.Normalize(PostRotationOffset * Rotation * PreRotationOffset);
+
+        public override Quaternion InverseWorldRotation
+            => Quaternion.Normalize(Quaternion.Inverse(WorldRotation));
+
+        public override Quaternion RenderRotation
+            => WorldRotation;
+
+        public override Quaternion InverseRenderRotation
+            => InverseWorldRotation;
+
         protected override Matrix4x4 CreateLocalMatrix()
             => Matrix4x4.Identity;
         protected override Matrix4x4 CreateWorldMatrix()

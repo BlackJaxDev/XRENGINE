@@ -516,6 +516,7 @@ public static partial class EditorImGuiUI
 
             var io = ImGui.GetIO();
             bool captureKeyboard = !inPlayMode && (io.WantCaptureKeyboard || io.WantTextInput);
+            HandleProfilerToggleHotkey();
             ImGuiUndoHelper.BeginFrame();
             
             bool showSettings = EditorUnitTests.Toggles.EditorType == EditorUnitTests.UnitTestEditorType.IMGUI;

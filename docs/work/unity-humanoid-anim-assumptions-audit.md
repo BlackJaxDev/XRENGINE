@@ -4,7 +4,7 @@ Date: 2026-03-03 (updated 2026-03-07)
 
 Scope:
 - Clip: `Assets/Walks/Sexy Walk.anim` — confirmed full Unity humanoid muscle clip (Path A)
-- Current test settings: `Assets/UnitTestingWorldSettings.json`
+- Current test settings: `Assets/UnitTestingWorldSettings.jsonc`
 - Runtime path traced through `.anim` import, `AnimationClipComponent`, and `HumanoidComponent`
 - Goal: identify incorrect assumptions, not propose code changes
 
@@ -25,10 +25,10 @@ Update 2026-03-07:
 ## Runtime Path Verified
 
 1. `AnimationClip.Load3rdParty()` routes `.anim` files to `AnimYamlImporter.Import()` (`XREngine.Animation/Property/Core/AnimationClip.cs:252`, `XREngine.Animation/Importers/UnityAnimImporter.cs`).
-2. The current unit-test world loads `Assets/Walks/Sexy Walk.anim` and attaches it with `AnimationClipComponent` (`Assets/UnitTestingWorldSettings.json:102-108`, `XREngine.Editor/Unit Tests/Default/UnitTestingWorld.Models.cs:455-470`).
+2. The current unit-test world loads `Assets/Walks/Sexy Walk.anim` and attaches it with `AnimationClipComponent` (`Assets/UnitTestingWorldSettings.jsonc`, `XREngine.Editor/Unit Tests/Default/UnitTestingWorld.Models.cs:455-470`).
 3. `AnimationClipComponent` evaluates animated members in `ETickOrder.Animation` and then applies values to methods/properties (`XRENGINE/Scene/Components/Animation/AnimationClipComponent.cs:95-128`).
 4. `HumanoidComponent.ApplyMusclePose()` runs later in `ETickOrder.Scene`, so the muscle values are sampled first and applied second (`XRENGINE/Scene/Components/Animation/HumanoidComponent.cs:29,151`, `XRENGINE/Scene/Components/XRComponent.cs:407-425`).
-5. In the current settings, `AddCharacterIK` is `false`, and avatar import explicitly sets `HumanoidComponent.SolveIK = false` unless extra test IK is enabled (`Assets/UnitTestingWorldSettings.json:108`, `XREngine.Editor/Unit Tests/Default/UnitTestingWorld.Models.cs:271-272,326`).
+5. In the current settings, `AddCharacterIK` is `false`, and avatar import explicitly sets `HumanoidComponent.SolveIK = false` unless extra test IK is enabled (`Assets/UnitTestingWorldSettings.jsonc`, `XREngine.Editor/Unit Tests/Default/UnitTestingWorld.Models.cs:271-272,326`).
 
 **Confirmed**: `Sexy Walk.anim` is a full Unity humanoid clip containing root channels (`RootT`, `RootQ`), IK goal channels (`LeftFootT/Q`, `RightFootT/Q`, `LeftHandT/Q`, `RightHandT/Q`), full humanoid muscle channels, and blendshapes. It routes entirely through **Path A** (muscle values → `HumanoidComponent.SetValue` → `ApplyMusclePose`). No explicit per-bone transform quaternions are involved for the main pose. The `ConvertRotation` path at importer line 261 is **not exercised** for this clip's primary data.
 

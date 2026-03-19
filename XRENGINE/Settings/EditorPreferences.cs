@@ -1081,10 +1081,12 @@ namespace XREngine
         private bool _forceGpuPassthroughCulling = false;
         private bool _allowGpuCpuFallback = false;
         private bool _enableProfilerFrameLogging = true;
+        private bool _enableProfilerComponentTiming = true;
         private bool _enableRenderStatisticsTracking = true;
         private bool _enableGpuRenderPipelineProfiling = false;
         private bool _enableUILayoutDebugLogging = false;
         private bool _enableProfilerUdpSending = false;
+        private bool _startExternalProfilerOnStartup = false;
         private EDebugShapePopulationMode _debugShapePopulationMode = EDebugShapePopulationMode.JobSystem;
         private EDebugVisualizerPopulationMode _debugVisualizerPopulationMode = EDebugVisualizerPopulationMode.Tasks;
         private EDebugPrimitiveBufferFormat _debugPrimitiveBufferFormat = EDebugPrimitiveBufferFormat.Compressed;
@@ -1391,6 +1393,30 @@ namespace XREngine
         }
 
         [Category("Profiling")]
+        [DisplayName("Enable Profiler Component Timing")]
+        [Description("When enabled, the profiler records per-component tick timings for the Profiler panel's Components view. Disable to remove that tracking overhead while leaving frame logging unchanged.")]
+        public bool EnableProfilerComponentTiming
+        {
+            get
+            {
+#if XRE_PUBLISHED
+                return false;
+#else
+                return _enableProfilerComponentTiming;
+#endif
+            }
+            set
+            {
+#if XRE_PUBLISHED
+                SetField(ref _enableProfilerComponentTiming, false);
+#else
+                if (SetField(ref _enableProfilerComponentTiming, value))
+                    Engine.Profiler.EnableComponentTiming = value;
+#endif
+            }
+        }
+
+        [Category("Profiling")]
         [DisplayName("Enable Render Statistics Tracking")]
         [Description("When enabled, tracks per-frame rendering statistics (draw calls, triangles, etc.). Disable to reduce overhead.")]
         public bool EnableRenderStatisticsTracking
@@ -1541,6 +1567,15 @@ namespace XREngine
             }
         }
 
+        [Category("Profiling")]
+        [DisplayName("Start External Profiler On Startup")]
+        [Description("When enabled, the editor launches XREngine.Profiler during startup and forces profiler UDP sending on for that session.")]
+        public bool StartExternalProfilerOnStartup
+        {
+            get => _startExternalProfilerOnStartup;
+            set => SetField(ref _startExternalProfilerOnStartup, value);
+        }
+
         public void CopyFrom(EditorDebugOptions source)
         {
             if (source is null)
@@ -1571,10 +1606,12 @@ namespace XREngine
             ForceGpuPassthroughCulling = source.ForceGpuPassthroughCulling;
             AllowGpuCpuFallback = source.AllowGpuCpuFallback;
             EnableProfilerFrameLogging = source.EnableProfilerFrameLogging;
+            EnableProfilerComponentTiming = source.EnableProfilerComponentTiming;
             EnableRenderStatisticsTracking = source.EnableRenderStatisticsTracking;
             EnableGpuRenderPipelineProfiling = source.EnableGpuRenderPipelineProfiling;
             EnableUILayoutDebugLogging = source.EnableUILayoutDebugLogging;
             EnableProfilerUdpSending = source.EnableProfilerUdpSending;
+            StartExternalProfilerOnStartup = source.StartExternalProfilerOnStartup;
             DebugShapePopulationMode = source.DebugShapePopulationMode;
             DebugVisualizerPopulationMode = source.DebugVisualizerPopulationMode;
             DebugPrimitiveBufferFormat = source.DebugPrimitiveBufferFormat;
@@ -1637,6 +1674,8 @@ namespace XREngine
                 AllowGpuCpuFallback = cpuFallback.Value;
             if (overrides.EnableProfilerFrameLoggingOverride is { HasOverride: true } profilerLogging)
                 EnableProfilerFrameLogging = profilerLogging.Value;
+            if (overrides.EnableProfilerComponentTimingOverride is { HasOverride: true } componentTiming)
+                EnableProfilerComponentTiming = componentTiming.Value;
             if (overrides.EnableRenderStatisticsTrackingOverride is { HasOverride: true } statsTracking)
                 EnableRenderStatisticsTracking = statsTracking.Value;
             if (overrides.EnableGpuRenderPipelineProfilingOverride is { HasOverride: true } gpuPipelineProfiling)
@@ -1645,6 +1684,8 @@ namespace XREngine
                 EnableUILayoutDebugLogging = uiLayoutDebug.Value;
             if (overrides.EnableProfilerUdpSendingOverride is { HasOverride: true } profilerUdp)
                 EnableProfilerUdpSending = profilerUdp.Value;
+            if (overrides.StartExternalProfilerOnStartupOverride is { HasOverride: true } startExternalProfiler)
+                StartExternalProfilerOnStartup = startExternalProfiler.Value;
             if (overrides.DebugShapePopulationModeOverride is { HasOverride: true } shapePop)
                 DebugShapePopulationMode = shapePop.Value;
             if (overrides.DebugVisualizerPopulationModeOverride is { HasOverride: true } vizPop)

@@ -269,11 +269,14 @@ namespace XREngine.Components.Lights
             Vector3 right = Vector3.Normalize(Vector3.Cross(up, lightDir));
             up = Vector3.Normalize(Vector3.Cross(lightDir, right));
 
-            // World-to-light: rows are right, up, lightDir (light Z points along light direction).
+            // World-to-light rotation (no translation).
+            // C#'s Vector3.Transform(v, M) computes v * M (row-vector convention),
+            // so basis vectors must occupy COLUMNS, not rows.
+            // This matches Matrix4x4.CreateLookToLeftHanded(Zero, lightDir, up).
             worldToLight = new(
-                right.X, right.Y, right.Z, 0,
-                up.X, up.Y, up.Z, 0,
-                lightDir.X, lightDir.Y, lightDir.Z, 0,
+                right.X, up.X, lightDir.X, 0,
+                right.Y, up.Y, lightDir.Y, 0,
+                right.Z, up.Z, lightDir.Z, 0,
                 0, 0, 0, 1);
 
             Matrix4x4.Invert(worldToLight, out lightToWorld);
@@ -370,6 +373,12 @@ namespace XREngine.Components.Lights
             Transform transform = _cascadeShadowTransforms[slot];
             transform.Translation = center - lightDirection * halfExtents.Z;
             transform.Rotation = orientation;
+
+            // Cascade shadow transforms are standalone (World == null), so their
+            // WorldMatrix and RenderMatrix are never updated by the scene graph.
+            // Force a full recalculation so InverseRenderMatrix returns the correct
+            // view matrix instead of Identity.
+            transform.RecalculateMatrices(forceWorldRecalc: true);
 
             XRCamera camera = _cascadeShadowCameras[slot];
             float width = MathF.Max(halfExtents.X * 2.0f, 1e-3f);

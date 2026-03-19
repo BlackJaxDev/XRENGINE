@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Reflection;
+using System.Threading;
 using XREngine.Core.Files;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
@@ -291,7 +292,7 @@ namespace XREngine.Scene.Transforms
         [Browsable(false)]
         [YamlIgnore]
         public Vector3 ParentInverseWorldTranslation
-            => Vector3.Transform(Vector3.Zero, ParentInverseWorldMatrix);
+            => Parent?.InverseWorldMatrix.Translation ?? Vector3.Zero;
 
         /// <summary>
         /// Returns the parent world matrix, or identity if no parent.
@@ -337,28 +338,83 @@ namespace XREngine.Scene.Transforms
 
         #endregion
 
+        #region Space Snapshots
+
+        /// <summary>
+        /// Snapshot of cached basis vectors and rotations for a spatial coordinate space.
+        /// Zero heap allocations — this is a value type copied under lock.
+        /// </summary>
+        public readonly struct SpaceSnapshot
+        {
+            public readonly Vector3 Forward;
+            public readonly Vector3 Up;
+            public readonly Vector3 Right;
+            public readonly Quaternion Rotation;
+            public readonly Quaternion InverseRotation;
+
+            public SpaceSnapshot(
+                Vector3 forward, Vector3 up, Vector3 right,
+                Quaternion rotation, Quaternion inverseRotation)
+            {
+                Forward = forward;
+                Up = up;
+                Right = right;
+                Rotation = rotation;
+                InverseRotation = inverseRotation;
+            }
+        }
+
+        private static Quaternion DecomposeRotation(Matrix4x4 matrix)
+        {
+            if (!Matrix4x4.Decompose(matrix, out _, out Quaternion rotation, out _))
+                rotation = Quaternion.Identity;
+            return Quaternion.Normalize(rotation);
+        }
+
+        private static SpaceSnapshot ComputeSpaceSnapshot(Matrix4x4 matrix)
+        {
+            Quaternion rotation = DecomposeRotation(matrix);
+            return new SpaceSnapshot(
+                Vector3.TransformNormal(Globals.Forward, matrix).Normalized(),
+                Vector3.TransformNormal(Globals.Up, matrix).Normalized(),
+                Vector3.TransformNormal(Globals.Right, matrix).Normalized(),
+                rotation,
+                Quaternion.Normalize(Quaternion.Inverse(rotation)));
+        }
+
+        #endregion
+
         #region World Space Properties
 
         /// <summary>
         /// This transform's world up vector.
+        /// Computed on-the-fly from the world matrix.
+        /// For bulk reads, prefer <see cref="GetWorldSnapshot"/>.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
-        public Vector3 WorldUp => Vector3.TransformNormal(Globals.Up, WorldMatrix).Normalized();
+        public Vector3 WorldUp
+            => Vector3.TransformNormal(Globals.Up, WorldMatrix).Normalized();
 
         /// <summary>
         /// This transform's world right vector.
+        /// Computed on-the-fly from the world matrix.
+        /// For bulk reads, prefer <see cref="GetWorldSnapshot"/>.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
-        public Vector3 WorldRight => Vector3.TransformNormal(Globals.Right, WorldMatrix).Normalized();
+        public Vector3 WorldRight
+            => Vector3.TransformNormal(Globals.Right, WorldMatrix).Normalized();
 
         /// <summary>
         /// This transform's world forward vector.
+        /// Computed on-the-fly from the world matrix.
+        /// For bulk reads, prefer <see cref="GetWorldSnapshot"/>.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
-        public Vector3 WorldForward => Vector3.TransformNormal(Globals.Forward, WorldMatrix).Normalized();
+        public Vector3 WorldForward
+            => Vector3.TransformNormal(Globals.Forward, WorldMatrix).Normalized();
 
         /// <summary>
         /// This transform's position in world space.
@@ -366,39 +422,42 @@ namespace XREngine.Scene.Transforms
         [Browsable(false)]
         [YamlIgnore]
         public virtual Vector3 WorldTranslation
-        {
-            get
-            {
-                Matrix4x4.Decompose(WorldMatrix, out _, out _, out Vector3 translation);
-                return translation;
-            }
-        }
+            => WorldMatrix.Translation;
 
         /// <summary>
         /// This transform's rotation in world space.
+        /// Computed on-the-fly from the world matrix.
+        /// For bulk reads, prefer <see cref="GetWorldSnapshot"/>.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
         public virtual Quaternion WorldRotation
-        {
-            get
-            {
-                Matrix4x4.Decompose(WorldMatrix, out _, out Quaternion rotation, out _);
-                return rotation;
-            }
-        }
+            => DecomposeRotation(WorldMatrix);
 
         /// <summary>
         /// This transform's inverse rotation in world space.
+        /// Computed on-the-fly from the world matrix.
+        /// For bulk reads, prefer <see cref="GetWorldSnapshot"/>.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
         public virtual Quaternion InverseWorldRotation
+            => Quaternion.Normalize(Quaternion.Inverse(DecomposeRotation(WorldMatrix)));
+
+        /// <summary>
+        /// Enables world-space snapshot caching for this transform (if not already enabled)
+        /// and returns all cached world-space basis vectors and rotations under a single lock.
+        /// </summary>
+        public SpaceSnapshot GetWorldSnapshot()
         {
-            get
+            lock (_worldMatrixLock)
             {
-                Matrix4x4.Decompose(InverseWorldMatrix, out _, out Quaternion rotation, out _);
-                return rotation;
+                if (!_worldSnapshotEnabled)
+                {
+                    _worldSnapshotEnabled = true;
+                    _worldSnapshot = ComputeSpaceSnapshot(_worldMatrix);
+                }
+                return _worldSnapshot;
             }
         }
 
@@ -411,64 +470,76 @@ namespace XREngine.Scene.Transforms
 
         /// <summary>
         /// This transform's local up vector.
+        /// Computed on-the-fly from the local matrix.
+        /// For bulk reads, prefer <see cref="GetLocalSnapshot"/>.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
-        public Vector3 LocalUp => Vector3.TransformNormal(Globals.Up, LocalMatrix).Normalized();
+        public Vector3 LocalUp
+            => Vector3.TransformNormal(Globals.Up, LocalMatrix).Normalized();
 
         /// <summary>
         /// This transform's local right vector.
+        /// Computed on-the-fly from the local matrix.
+        /// For bulk reads, prefer <see cref="GetLocalSnapshot"/>.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
-        public Vector3 LocalRight => Vector3.TransformNormal(Globals.Right, LocalMatrix).Normalized();
+        public Vector3 LocalRight
+            => Vector3.TransformNormal(Globals.Right, LocalMatrix).Normalized();
 
         /// <summary>
         /// This transform's local forward vector.
+        /// Computed on-the-fly from the local matrix.
+        /// For bulk reads, prefer <see cref="GetLocalSnapshot"/>.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
-        public Vector3 LocalForward => Vector3.TransformNormal(Globals.Forward, LocalMatrix).Normalized();
+        public Vector3 LocalForward
+            => Vector3.TransformNormal(Globals.Forward, LocalMatrix).Normalized();
 
         /// <summary>
         /// This transform's position in local space relative to the parent.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
-        public Vector3 LocalTranslation
-        {
-            get
-            {
-                Matrix4x4.Decompose(LocalMatrix, out _, out _, out Vector3 translation);
-                return translation;
-            }
-        }
+        public virtual Vector3 LocalTranslation
+            => LocalMatrix.Translation;
 
         /// <summary>
         /// This transform's rotation relative to its parent.
+        /// Computed on-the-fly from the local matrix.
+        /// For bulk reads, prefer <see cref="GetLocalSnapshot"/>.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
         public virtual Quaternion LocalRotation
-        {
-            get
-            {
-                Matrix4x4.Decompose(LocalMatrix, out _, out Quaternion rotation, out _);
-                return rotation;
-            }
-        }
+            => DecomposeRotation(LocalMatrix);
 
         /// <summary>
         /// This transform's inverse rotation relative to its parent.
+        /// Computed on-the-fly from the local matrix.
+        /// For bulk reads, prefer <see cref="GetLocalSnapshot"/>.
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
         public virtual Quaternion InverseLocalRotation
+            => Quaternion.Normalize(Quaternion.Inverse(DecomposeRotation(LocalMatrix)));
+
+        /// <summary>
+        /// Enables local-space snapshot caching for this transform (if not already enabled)
+        /// and returns all cached local-space basis vectors and rotations under a single lock.
+        /// </summary>
+        public SpaceSnapshot GetLocalSnapshot()
         {
-            get
+            lock (_localMatrixLock)
             {
-                Matrix4x4.Decompose(InverseLocalMatrix, out _, out Quaternion rotation, out _);
-                return rotation;
+                if (!_localSnapshotEnabled)
+                {
+                    _localSnapshotEnabled = true;
+                    _localSnapshot = ComputeSpaceSnapshot(_localMatrix);
+                }
+                return _localSnapshot;
             }
         }
 
@@ -478,15 +549,18 @@ namespace XREngine.Scene.Transforms
 
         [Browsable(false)]
         [YamlIgnore]
-        public Vector3 RenderForward => Vector3.TransformNormal(Globals.Forward, RenderMatrix).Normalized();
+        public Vector3 RenderForward
+            => Vector3.TransformNormal(Globals.Forward, RenderMatrix).Normalized();
 
         [Browsable(false)]
         [YamlIgnore]
-        public Vector3 RenderUp => Vector3.TransformNormal(Globals.Up, RenderMatrix).Normalized();
+        public Vector3 RenderUp
+            => Vector3.TransformNormal(Globals.Up, RenderMatrix).Normalized();
 
         [Browsable(false)]
         [YamlIgnore]
-        public Vector3 RenderRight => Vector3.TransformNormal(Globals.Right, RenderMatrix).Normalized();
+        public Vector3 RenderRight
+            => Vector3.TransformNormal(Globals.Right, RenderMatrix).Normalized();
 
         [Browsable(false)]
         [YamlIgnore]
@@ -494,23 +568,28 @@ namespace XREngine.Scene.Transforms
 
         [Browsable(false)]
         [YamlIgnore]
-        public Quaternion RenderRotation
-        {
-            get
-            {
-                Matrix4x4.Decompose(RenderMatrix, out _, out Quaternion rotation, out _);
-                return rotation;
-            }
-        }
+        public virtual Quaternion RenderRotation
+            => DecomposeRotation(RenderMatrix);
 
         [Browsable(false)]
         [YamlIgnore]
-        public Quaternion InverseRenderRotation
+        public virtual Quaternion InverseRenderRotation
+            => Quaternion.Normalize(Quaternion.Inverse(DecomposeRotation(RenderMatrix)));
+
+        /// <summary>
+        /// Enables render-space snapshot caching for this transform (if not already enabled)
+        /// and returns all cached render-space basis vectors and rotations under a single lock.
+        /// </summary>
+        public SpaceSnapshot GetRenderSnapshot()
         {
-            get
+            lock (_renderMatrixLock)
             {
-                Matrix4x4.Decompose(InverseRenderMatrix, out _, out Quaternion rotation, out _);
-                return rotation;
+                if (!_renderSnapshotEnabled)
+                {
+                    _renderSnapshotEnabled = true;
+                    _renderSnapshot = ComputeSpaceSnapshot(_renderMatrix);
+                }
+                return _renderSnapshot;
             }
         }
 
@@ -519,7 +598,10 @@ namespace XREngine.Scene.Transforms
         #region Render Matrix
 
         private Matrix4x4 _renderMatrix = Matrix4x4.Identity;
+        private Matrix4x4 _inverseRenderMatrix = Matrix4x4.Identity;
         private readonly object _renderMatrixLock = new();
+        private bool _renderSnapshotEnabled;
+        private SpaceSnapshot _renderSnapshot;
 
         /// <summary>
         /// This transform's render matrix.
@@ -533,39 +615,13 @@ namespace XREngine.Scene.Transforms
             internal set { lock (_renderMatrixLock) _renderMatrix = value; }
         }
 
-        private Matrix4x4 _inverseRenderMatrix = Matrix4x4.Identity;
-        private readonly object _inverseRenderMatrixLock = new();
-
         /// <summary>
         /// This transform's inverse render matrix.
-        /// Thread-safe with lazy calculation and locking.
+        /// Always computed (render hot-path).
         /// </summary>
         [Browsable(false)]
         [YamlIgnore]
-        public Matrix4x4 InverseRenderMatrix
-        {
-            get
-            {
-                /*
-                if (!_inverseRenderMatrixDirty)
-                {
-                    lock (_inverseRenderMatrixLock)
-                        return _inverseRenderMatrix;
-                }
-
-                lock (_inverseRenderMatrixLock)
-                {
-                    if (!_inverseRenderMatrixDirty)
-                        return _inverseRenderMatrix;
-*/
-                    var inverted = Matrix4x4.Invert(RenderMatrix, out var inv) ? inv : Matrix4x4.Identity;
-                    _inverseRenderMatrix = inverted;
-                    return inverted;
-                    /*
-                }
-                */
-            }
-        }
+        public Matrix4x4 InverseRenderMatrix { get { lock (_renderMatrixLock) return _inverseRenderMatrix; } }
 
         #endregion
 
@@ -582,6 +638,8 @@ namespace XREngine.Scene.Transforms
 
         private Matrix4x4 _localMatrix;
         private readonly object _localMatrixLock = new();
+        private bool _localSnapshotEnabled;
+        private SpaceSnapshot _localSnapshot;
 
         /// <summary>
         /// This transform's local matrix relative to its parent.
@@ -606,6 +664,8 @@ namespace XREngine.Scene.Transforms
 
         private Matrix4x4 _worldMatrix;
         private readonly object _worldMatrixLock = new();
+        private bool _worldSnapshotEnabled;
+        private SpaceSnapshot _worldSnapshot;
 
         /// <summary>
         /// This transform's world matrix relative to the root of the scene (all ancestor transforms accounted for).
@@ -979,6 +1039,7 @@ namespace XREngine.Scene.Transforms
         public void RecalcLocal()
         {
             Matrix4x4 localMatrix = CreateLocalMatrix();
+            UpdateLocalCache(localMatrix);
             lock (_localMatrixLock)
                 _localMatrix = localMatrix;
             RecalcLocalInv();
@@ -989,6 +1050,7 @@ namespace XREngine.Scene.Transforms
         public void RecalcWorld()
         {
             Matrix4x4 worldMatrix = CreateWorldMatrix();
+            UpdateWorldCache(worldMatrix);
             lock (_worldMatrixLock)
                 _worldMatrix = worldMatrix;
             RecalcWorldInv();
@@ -1019,12 +1081,44 @@ namespace XREngine.Scene.Transforms
         public Task SetRenderMatrix(Matrix4x4 matrix, bool recalcAllChildRenderMatrices = true)
         {
             RenderMatrix = matrix;
+            UpdateRenderCache(matrix);
             OnRenderMatrixChanged();
 
             if (recalcAllChildRenderMatrices)
                 return RecalculateRenderMatrixHierarchy(RuntimeTransformServices.Current?.ChildRecalculationLoopType ?? ELoopType.Sequential);
             else
                 return Task.CompletedTask;
+        }
+
+        private void UpdateRenderCache(Matrix4x4 matrix)
+        {
+            Matrix4x4 inverseRenderMatrix = Matrix4x4.Invert(matrix, out var inv) ? inv : Matrix4x4.Identity;
+            lock (_renderMatrixLock)
+            {
+                _inverseRenderMatrix = inverseRenderMatrix;
+                if (_renderSnapshotEnabled)
+                    _renderSnapshot = ComputeSpaceSnapshot(matrix);
+            }
+        }
+
+        private void UpdateLocalCache(Matrix4x4 matrix)
+        {
+            if (_localSnapshotEnabled)
+            {
+                var snap = ComputeSpaceSnapshot(matrix);
+                lock (_localMatrixLock)
+                    _localSnapshot = snap;
+            }
+        }
+
+        private void UpdateWorldCache(Matrix4x4 matrix)
+        {
+            if (_worldSnapshotEnabled)
+            {
+                var snap = ComputeSpaceSnapshot(matrix);
+                lock (_worldMatrixLock)
+                    _worldSnapshot = snap;
+            }
         }
 
         #endregion
