@@ -11,6 +11,7 @@ using XREngine.Core.Files;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Transforms;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Scene.Transforms
@@ -1167,6 +1168,32 @@ namespace XREngine.Scene.Transforms
         /// Creates the world matrix by multiplying local matrix with parent's world matrix.
         /// Snapshots parent matrix atomically to avoid reading partially-written data during recalculation.
         /// </summary>
+        protected virtual bool IsGuaranteedAffine => false;
+
+        protected virtual bool TryGetLocalAffineMatrix(out AffineMatrix4x3 matrix)
+        {
+            if (!IsGuaranteedAffine)
+            {
+                matrix = default;
+                return false;
+            }
+
+            matrix = AffineMatrix4x3.FromMatrix4x4(LocalMatrix);
+            return true;
+        }
+
+        internal bool TryGetWorldAffineMatrix(out AffineMatrix4x3 matrix)
+        {
+            if (!IsGuaranteedAffine)
+            {
+                matrix = default;
+                return false;
+            }
+
+            matrix = AffineMatrix4x3.FromMatrix4x4(WorldMatrix);
+            return true;
+        }
+
         protected virtual Matrix4x4 CreateWorldMatrix()
         {
             // Snapshot parent reference and matrix atomically to avoid race conditions
@@ -1174,8 +1201,13 @@ namespace XREngine.Scene.Transforms
             if (parent is null)
                 return LocalMatrix;
 
-            // Capture parent's world matrix once - this uses Volatile.Read internally
-            // to ensure we get a complete, consistent matrix value
+            if (TryGetLocalAffineMatrix(out AffineMatrix4x3 localAffine)
+                && parent.TryGetWorldAffineMatrix(out AffineMatrix4x3 parentWorldAffine))
+            {
+                return (localAffine * parentWorldAffine).ToMatrix4x4();
+            }
+
+            // Capture parent's world matrix once to ensure we get a complete, consistent matrix value.
             Matrix4x4 parentWorldMatrix = parent.WorldMatrix;
             return LocalMatrix * parentWorldMatrix;
         }
@@ -1570,13 +1602,15 @@ namespace XREngine.Scene.Transforms
             var childrenCopy = RentChildrenCopy(out int count);
             // Snapshot render matrix once for all children
             Matrix4x4 parentRenderMatrix = RenderMatrix;
+            AffineMatrix4x3 parentRenderAffine = default;
+            bool canUseAffine = IsGuaranteedAffine && AffineMatrix4x3.TryFromMatrix4x4(parentRenderMatrix, out parentRenderAffine);
             try
             {
                 // NOTE: Parallel.For does not understand async delegates. Use a synchronous body.
                 Parallel.For(0, count, i =>
                 {
                     TransformBase child = childrenCopy[i];
-                    child.SetRenderMatrix(child.LocalMatrix * parentRenderMatrix, false)
+                    child.SetRenderMatrix(ComposeChildRenderMatrix(child, parentRenderMatrix, canUseAffine, parentRenderAffine), false)
                         .GetAwaiter()
                         .GetResult();
                 });
@@ -1604,12 +1638,14 @@ namespace XREngine.Scene.Transforms
             var childrenCopy = RentChildrenCopy(out int count);
             // Snapshot render matrix once for all children
             Matrix4x4 parentRenderMatrix = RenderMatrix;
+            AffineMatrix4x3 parentRenderAffine = default;
+            bool canUseAffine = IsGuaranteedAffine && AffineMatrix4x3.TryFromMatrix4x4(parentRenderMatrix, out parentRenderAffine);
             try
             {
                 for (int i = 0; i < count; i++)
                 {
                     TransformBase child = childrenCopy[i];
-                    await child.SetRenderMatrix(child.LocalMatrix * parentRenderMatrix, false);
+                    await child.SetRenderMatrix(ComposeChildRenderMatrix(child, parentRenderMatrix, canUseAffine, parentRenderAffine), false);
                 }
             }
             finally
@@ -1623,13 +1659,15 @@ namespace XREngine.Scene.Transforms
             var childrenCopy = RentChildrenCopy(out int count);
             // Snapshot render matrix once for all children
             Matrix4x4 parentRenderMatrix = RenderMatrix;
+            AffineMatrix4x3 parentRenderAffine = default;
+            bool canUseAffine = IsGuaranteedAffine && AffineMatrix4x3.TryFromMatrix4x4(parentRenderMatrix, out parentRenderAffine);
             try
             {
                 var tasks = new Task[count];
                 for (int i = 0; i < count; i++)
                 {
                     TransformBase child = childrenCopy[i];
-                    tasks[i] = child.SetRenderMatrix(child.LocalMatrix * parentRenderMatrix, true);
+                    tasks[i] = child.SetRenderMatrix(ComposeChildRenderMatrix(child, parentRenderMatrix, canUseAffine, parentRenderAffine), true);
                 }
                 await Task.WhenAll(tasks);
             }
@@ -1638,6 +1676,11 @@ namespace XREngine.Scene.Transforms
                 ReturnChildrenCopy(childrenCopy);
             }
         }
+
+        private static Matrix4x4 ComposeChildRenderMatrix(TransformBase child, in Matrix4x4 parentRenderMatrix, bool canUseAffine, in AffineMatrix4x3 parentRenderAffine)
+            => canUseAffine && child.TryGetLocalAffineMatrix(out AffineMatrix4x3 localAffine)
+                ? (localAffine * parentRenderAffine).ToMatrix4x4()
+                : child.LocalMatrix * parentRenderMatrix;
 
         private TransformBase[] RentChildrenCopy(out int count)
         {

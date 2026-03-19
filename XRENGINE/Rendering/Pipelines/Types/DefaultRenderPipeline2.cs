@@ -144,6 +144,43 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     private bool EnableFxaa => Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Fxaa;
     private uint MsaaSampleCount => Math.Max(1u, Engine.EffectiveSettings.MsaaSampleCount);
 
+    private bool NeedsRecreateMsaaTextureInternalSize(XRTexture texture)
+    {
+        if (NeedsRecreateTextureInternalSize(texture))
+            return true;
+
+        return texture switch
+        {
+            XRTexture2D texture2D => texture2D.MultiSampleCount != MsaaSampleCount,
+            XRTexture2DArray texture2DArray =>
+                !texture2DArray.MultiSample ||
+                texture2DArray.Textures.Length == 0 ||
+                texture2DArray.Textures[0].MultiSampleCount != MsaaSampleCount,
+            _ => true,
+        };
+    }
+
+    private bool NeedsRecreateTextureView(XRTexture texture, string viewedTextureName)
+    {
+        XRTexture? viewedTexture = GetTexture<XRTexture>(viewedTextureName);
+        return texture switch
+        {
+            XRTexture2DView texture2DView => viewedTexture is not XRTexture2D expected || !ReferenceEquals(texture2DView.ViewedTexture, expected),
+            XRTexture2DArrayView texture2DArrayView => viewedTexture is not XRTexture2DArray expected || !ReferenceEquals(texture2DArrayView.ViewedTexture, expected),
+            _ => true,
+        };
+    }
+
+    private bool NeedsRecreateMsaaFbo(XRFrameBuffer fbo)
+        => fbo.EffectiveSampleCount != MsaaSampleCount;
+
+    /// <summary>
+    /// Deferred MSAA remains opt-in because the forward path benefits from MSAA independently,
+    /// while the deferred MSAA branches are substantially more fragile and don't improve the
+    /// final full-screen deferred lighting edge quality on their own.
+    /// </summary>
+    public bool EnableDeferredMsaa { get; set; } = false;
+
     private string BrightPassShaderName() => 
         Stereo ? "BrightPassStereo.fs" : 
         "BrightPass.fs";
@@ -247,6 +284,8 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     public const string TransformIdTextureName = "TransformId";
     public const string DepthStencilTextureName = "DepthStencil";
     public const string ForwardPrePassDepthStencilTextureName = "ForwardPrePassDepthStencil";
+    public const string ForwardPassMsaaDepthStencilTextureName = "ForwardPassMsaaDepthStencil";
+    public const string ForwardPassMsaaDepthViewTextureName = "ForwardPassMsaaDepthView";
     public const string DiffuseTextureName = "LightingTexture";
     public const string HDRSceneTextureName = "HDRSceneTex";
     public const string TransparentSceneCopyTextureName = "TransparentSceneCopyTex";
@@ -292,7 +331,8 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
     /// True when the current camera uses MSAA and the deferred pipeline should run in MSAA mode.
     /// </summary>
     internal static bool RuntimeEnableMsaaDeferred
-        => RuntimeEnableMsaa;
+        => RuntimeEnableMsaa
+        && (Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline2)?.EnableDeferredMsaa == true;
 
     private const string TonemappingStageKey = "tonemapping";
     private const string ColorGradingStageKey = "colorGrading";
@@ -328,7 +368,8 @@ public partial class DefaultRenderPipeline2 : RenderPipeline
 
     private static readonly string[] AntiAliasingFrameBufferDependencies =
     [
-        AmbientOcclusionFBOName,
+        // AmbientOcclusionFBO is managed by AO passes (not CacheOrCreateFBO),
+        // so it must not be destroyed here — the AO pass owns its lifecycle.
         LightCombineFBOName,
         ForwardPassFBOName,
         PostProcessOutputFBOName,

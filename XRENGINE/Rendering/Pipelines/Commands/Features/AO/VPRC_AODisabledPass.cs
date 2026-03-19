@@ -43,6 +43,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             public int LastWidth;
             public int LastHeight;
             public XRTexture? AoTexture;
+            public XRTexture? NormalTexture;
+            public XRTexture? DepthViewTexture;
+            public XRTexture? AlbedoTexture;
+            public XRTexture? RmseTexture;
+            public XRTexture? TransformIdTexture;
+            public XRTexture? DepthStencilTexture;
         }
 
         private static readonly ConditionalWeakTable<XRRenderPipelineInstance, InstanceState> _instanceStates = new();
@@ -114,8 +120,17 @@ namespace XREngine.Rendering.Pipelines.Commands
                 XRTexture? registeredAo = instance.GetTexture<XRTexture>(IntensityTextureName);
                 forceRebuild = state.AoTexture is null
                     || registeredAo is null
-                    || !ReferenceEquals(state.AoTexture, registeredAo);
+                    || !ReferenceEquals(state.AoTexture, registeredAo)
+                    || !ReferenceEquals(state.NormalTexture, normalTex)
+                    || !ReferenceEquals(state.DepthViewTexture, depthViewTex)
+                    || !ReferenceEquals(state.AlbedoTexture, albedoTex)
+                    || !ReferenceEquals(state.RmseTexture, rmseTex)
+                    || !ReferenceEquals(state.TransformIdTexture, transformIdTex)
+                    || !ReferenceEquals(state.DepthStencilTexture, depthStencilTex);
             }
+
+            if (!forceRebuild)
+                forceRebuild = !instance.TryGetFBO(GenerationFBOName, out _);
 
             if (!forceRebuild && width == state.LastWidth && height == state.LastHeight)
                 return;
@@ -136,9 +151,15 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             state.LastWidth = width;
             state.LastHeight = height;
+            state.AlbedoTexture = albedoTex;
+            state.NormalTexture = normalTex;
+            state.RmseTexture = rmseTex;
+            state.TransformIdTexture = transformIdTex;
+            state.DepthStencilTexture = depthStencilTex;
 
             state.AoTexture?.Destroy();
             state.AoTexture = CreateAoTexture(width, height);
+            state.DepthViewTexture = instance.GetTexture<XRTexture>(DepthViewTextureName);
             instance.SetTexture(state.AoTexture);
             InvalidateDependentFbos(instance);
 

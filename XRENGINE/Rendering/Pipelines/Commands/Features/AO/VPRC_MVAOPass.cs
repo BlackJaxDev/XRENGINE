@@ -158,6 +158,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.ResourcesDirty = false;
             bool sizeChanged = width != state.LastWidth || height != state.LastHeight;
 
+            if (!forceRebuild)
+                forceRebuild = !instance.TryGetFBO(GenerationFBOName, out _);
+
             if (!forceRebuild && !sizeChanged)
             {
                 Log($"Skipping MVAO regen; size unchanged at {width}x{height}");

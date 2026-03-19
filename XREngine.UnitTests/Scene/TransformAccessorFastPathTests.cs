@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using Shouldly;
 using System.Numerics;
+using XREngine.Animation;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Components.Scene;
 using XREngine.Data.Core;
@@ -133,6 +134,200 @@ public sealed class TransformAccessorFastPathTests
         VectorShouldBeClose(root.WorldUp, Vector3.Normalize(Vector3.TransformNormal(Globals.Up, localMatrix)));
         VectorShouldBeClose(root.WorldRight, Vector3.Normalize(Vector3.TransformNormal(Globals.Right, localMatrix)));
     }
+
+    [Test]
+    public void AffineWorldComposition_MatchesMatrix4x4HierarchyComposition()
+    {
+        Transform root = new()
+        {
+            Scale = new Vector3(1.3f, 0.7f, 1.8f),
+            Translation = new Vector3(5.0f, -2.0f, 9.0f),
+            Rotation = Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(0.4f, -0.15f, 0.25f)),
+        };
+        root.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        Transform child = new(root)
+        {
+            Scale = new Vector3(0.8f, 1.4f, 1.1f),
+            Translation = new Vector3(-3.0f, 1.0f, 2.0f),
+            Rotation = Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(-0.2f, 0.3f, 0.1f)),
+        };
+        child.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        Matrix4x4 expectedWorldMatrix = child.LocalMatrix * root.WorldMatrix;
+
+        MatrixShouldBeClose(child.WorldMatrix, expectedWorldMatrix);
+        VectorShouldBeClose(child.WorldTranslation, expectedWorldMatrix.Translation);
+    }
+
+    [Test]
+    public void RenderHierarchyPropagation_MatchesMatrix4x4Composition()
+    {
+        Transform parent = new()
+        {
+            Scale = new Vector3(1.2f, 0.9f, 1.1f),
+            Translation = new Vector3(7.0f, -1.0f, 2.0f),
+            Rotation = Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(0.2f, 0.15f, -0.1f)),
+        };
+        parent.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        Transform child = new(parent)
+        {
+            Scale = new Vector3(0.6f, 1.25f, 1.4f),
+            Translation = new Vector3(1.0f, 2.0f, 3.0f),
+            Rotation = Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(0.05f, -0.25f, 0.3f)),
+        };
+        child.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        Matrix4x4 parentRenderMatrix = Matrix4x4.CreateScale(new Vector3(1.1f, 0.8f, 1.3f))
+            * Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(-0.45f, 0.35f, 0.2f)))
+            * Matrix4x4.CreateTranslation(new Vector3(20.0f, -3.0f, 11.0f));
+
+        parent.SetRenderMatrix(parentRenderMatrix, recalcAllChildRenderMatrices: true).Wait();
+
+        Matrix4x4 expectedChildRenderMatrix = child.LocalMatrix * parentRenderMatrix;
+        MatrixShouldBeClose(child.RenderMatrix, expectedChildRenderMatrix);
+    }
+
+    [Test]
+    public void NonAffineParentWorldComposition_FallsBackToMatrix4x4Path()
+    {
+        Matrix4x4 projectiveWorld = Matrix4x4.CreateTranslation(new Vector3(8.0f, -4.0f, 2.0f));
+        projectiveWorld.M14 = 0.25f;
+
+        DrivenWorldTransform parent = new(projectiveWorld);
+        parent.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        Transform child = new(parent)
+        {
+            Scale = new Vector3(1.1f, 0.95f, 1.2f),
+            Translation = new Vector3(1.0f, 2.0f, 3.0f),
+            Rotation = Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(-0.2f, 0.5f, 0.25f)),
+        };
+        child.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        Matrix4x4 expectedWorldMatrix = child.LocalMatrix * parent.WorldMatrix;
+        MatrixShouldBeClose(child.WorldMatrix, expectedWorldMatrix);
+        child.WorldMatrix.M14.ShouldBe(expectedWorldMatrix.M14, 1e-4f);
+    }
+
+    [Test]
+    public void NonAffineParentRenderPropagation_FallsBackToMatrix4x4Path()
+    {
+        Transform parent = new()
+        {
+            Translation = new Vector3(2.0f, -1.0f, 5.0f),
+            Rotation = Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(0.1f, 0.2f, -0.15f)),
+        };
+        parent.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        Transform child = new(parent)
+        {
+            Scale = new Vector3(0.75f, 1.1f, 1.25f),
+            Translation = new Vector3(4.0f, -2.0f, 1.5f),
+            Rotation = Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(0.35f, -0.1f, 0.22f)),
+        };
+        child.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        Matrix4x4 nonAffineRenderMatrix = Matrix4x4.CreateTranslation(new Vector3(12.0f, -6.0f, 3.0f));
+        nonAffineRenderMatrix.M24 = -0.4f;
+
+        parent.SetRenderMatrix(nonAffineRenderMatrix, recalcAllChildRenderMatrices: true).Wait();
+
+        Matrix4x4 expectedChildRenderMatrix = child.LocalMatrix * nonAffineRenderMatrix;
+        MatrixShouldBeClose(child.RenderMatrix, expectedChildRenderMatrix);
+        child.RenderMatrix.M24.ShouldBe(expectedChildRenderMatrix.M24, 1e-4f);
+    }
+
+    [TestCase(ETransformOrder.TRS)]
+    [TestCase(ETransformOrder.STR)]
+    [TestCase(ETransformOrder.RST)]
+    [TestCase(ETransformOrder.RTS)]
+    [TestCase(ETransformOrder.TSR)]
+    [TestCase(ETransformOrder.SRT)]
+    public void LocalMatrix_AllTransformOrders_MatchMatrix4x4Composition(ETransformOrder order)
+    {
+        Vector3 scale = new(1.3f, 0.7f, 1.8f);
+        Vector3 translation = new(5.0f, -2.0f, 9.0f);
+        Quaternion rotation = Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(0.4f, -0.15f, 0.25f));
+
+        Transform transform = new(scale, translation, rotation, order: order);
+        transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        MatrixShouldBeClose(transform.LocalMatrix, CreateExpectedLocalMatrix(scale, translation, rotation, order));
+    }
+
+    [Test]
+    public void LocalMatrix_TrsRepresentativeSamples_MatchMatrix4x4Composition()
+    {
+        var random = new Random(20260319);
+
+        for (int index = 0; index < 128; index++)
+        {
+            Vector3 scale = new(
+                0.5f + (float)random.NextDouble() * 3.0f,
+                0.5f + (float)random.NextDouble() * 3.0f,
+                0.5f + (float)random.NextDouble() * 3.0f);
+            Vector3 translation = new(
+                -50.0f + (float)random.NextDouble() * 100.0f,
+                -50.0f + (float)random.NextDouble() * 100.0f,
+                -50.0f + (float)random.NextDouble() * 100.0f);
+            Quaternion rotation = Quaternion.Normalize(new Quaternion(
+                (float)random.NextDouble(),
+                (float)random.NextDouble(),
+                (float)random.NextDouble(),
+                (float)random.NextDouble()));
+
+            Transform transform = new(scale, translation, rotation, order: ETransformOrder.TRS);
+            transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+            MatrixShouldBeClose(transform.LocalMatrix, CreateExpectedLocalMatrix(scale, translation, rotation, ETransformOrder.TRS));
+        }
+    }
+
+    [Test]
+    public void LocalMatrix_RecomputeAfterOrderChange_MatchesExpectedMatrix()
+    {
+        Transform transform = new()
+        {
+            Scale = new Vector3(1.5f, 0.8f, 1.2f),
+            Translation = new Vector3(-4.0f, 3.0f, 2.0f),
+            Rotation = Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(-0.35f, 0.25f, 0.15f)),
+            Order = ETransformOrder.TRS,
+        };
+
+        transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+        Matrix4x4 trsMatrix = transform.LocalMatrix;
+
+        transform.Order = ETransformOrder.SRT;
+        transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        trsMatrix.ShouldNotBe(transform.LocalMatrix);
+        MatrixShouldBeClose(transform.LocalMatrix, CreateExpectedLocalMatrix(transform.Scale, transform.Translation, transform.Rotation, ETransformOrder.SRT));
+    }
+
+    private static Matrix4x4 CreateExpectedLocalMatrix(Vector3 scale, Vector3 translation, Quaternion rotation, ETransformOrder order)
+        => order switch
+        {
+            ETransformOrder.STR => Matrix4x4.CreateFromQuaternion(rotation)
+                * Matrix4x4.CreateTranslation(translation)
+                * Matrix4x4.CreateScale(scale),
+            ETransformOrder.RST => Matrix4x4.CreateTranslation(translation)
+                * Matrix4x4.CreateScale(scale)
+                * Matrix4x4.CreateFromQuaternion(rotation),
+            ETransformOrder.RTS => Matrix4x4.CreateScale(scale)
+                * Matrix4x4.CreateTranslation(translation)
+                * Matrix4x4.CreateFromQuaternion(rotation),
+            ETransformOrder.TSR => Matrix4x4.CreateFromQuaternion(rotation)
+                * Matrix4x4.CreateScale(scale)
+                * Matrix4x4.CreateTranslation(translation),
+            ETransformOrder.SRT => Matrix4x4.CreateTranslation(translation)
+                * Matrix4x4.CreateFromQuaternion(rotation)
+                * Matrix4x4.CreateScale(scale),
+            _ => Matrix4x4.CreateScale(scale)
+                * Matrix4x4.CreateFromQuaternion(rotation)
+                * Matrix4x4.CreateTranslation(translation),
+        };
 
     private static void VectorShouldBeClose(Vector3 actual, Vector3 expected)
     {

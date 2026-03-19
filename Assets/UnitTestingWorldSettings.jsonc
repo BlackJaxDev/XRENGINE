@@ -139,7 +139,7 @@
       "Kind": "Static",
       // Material/shader pipeline family used for this imported model.
       // MaterialMode: Deferred, Forward, Uber
-      "MaterialMode": "Deferred",
+      "MaterialMode": "Forward",
       // When true and MaterialMode is Deferred, alpha-textured materials are routed through the forward lit path for proper transparency.
       "UseForwardForTransparent": true,
       // Asset-relative path to the model file to import.

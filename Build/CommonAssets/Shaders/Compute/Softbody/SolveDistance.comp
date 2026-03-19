@@ -1,0 +1,125 @@
+#version 460 core
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+struct ParticleData
+{
+    vec3 CurrentPosition;
+    float InverseMass;
+    vec3 PreviousPosition;
+    float Radius;
+    vec3 RestPosition;
+    int ClusterMemberStart;
+    int ClusterMemberCount;
+    int InstanceIndex;
+    int Flags;
+    int _pad0;
+};
+
+struct DistanceConstraintData
+{
+    int ParticleA;
+    int ParticleB;
+    float RestLength;
+    float Compliance;
+    float Stiffness;
+    int InstanceIndex;
+    float _pad0;
+    float _pad1;
+};
+
+struct DispatchData
+{
+    ivec4 ParticleConstraintRanges;
+    ivec4 ClusterRanges;
+    ivec4 ColliderBindingRanges;
+    vec4 SimulationScalars;
+    vec4 GravitySubsteps;
+    vec4 ForceIterations;
+};
+
+layout(std430, binding = 0) readonly buffer ParticlesBuffer
+{
+    ParticleData Particles[];
+};
+
+layout(std430, binding = 1) readonly buffer ConstraintsBuffer
+{
+    DistanceConstraintData Constraints[];
+};
+
+layout(std430, binding = 6) readonly buffer DispatchParamsBuffer
+{
+    DispatchData Dispatches[];
+};
+
+layout(std430, binding = 7) writeonly buffer SolvedParticlesBuffer
+{
+    ParticleData SolvedParticles[];
+};
+
+uniform int particleCount;
+uniform int constraintCount;
+uniform int currentSubstep;
+uniform int currentSolverIteration;
+
+void main()
+{
+    uint particleIndex = gl_GlobalInvocationID.x;
+    if (particleIndex >= uint(particleCount))
+        return;
+
+    ParticleData particle = Particles[particleIndex];
+    if (particle.InstanceIndex < 0)
+    {
+        SolvedParticles[particleIndex] = particle;
+        return;
+    }
+
+    DispatchData dispatchData = Dispatches[particle.InstanceIndex];
+    int substeps = max(int(round(dispatchData.GravitySubsteps.w)), 1);
+    int solverIterations = max(int(round(dispatchData.ForceIterations.w)), 1);
+    if (currentSubstep >= substeps || currentSolverIteration >= solverIterations || particle.InverseMass <= 0.0)
+    {
+        SolvedParticles[particleIndex] = particle;
+        return;
+    }
+
+    vec3 correctedPosition = particle.CurrentPosition;
+
+    for (int constraintIndex = 0; constraintIndex < constraintCount; ++constraintIndex)
+    {
+        DistanceConstraintData constraint = Constraints[constraintIndex];
+        if (constraint.InstanceIndex != particle.InstanceIndex || constraint.ParticleA < 0 || constraint.ParticleB < 0)
+            continue;
+
+        bool affectsParticleA = constraint.ParticleA == int(particleIndex);
+        bool affectsParticleB = constraint.ParticleB == int(particleIndex);
+        if (!affectsParticleA && !affectsParticleB)
+            continue;
+
+        int otherParticleIndex = affectsParticleA ? constraint.ParticleB : constraint.ParticleA;
+        if (otherParticleIndex < 0 || otherParticleIndex >= particleCount)
+            continue;
+
+        ParticleData otherParticle = Particles[otherParticleIndex];
+        vec3 delta = correctedPosition - otherParticle.CurrentPosition;
+        float lengthDelta = length(delta);
+        if (lengthDelta <= 0.000001)
+            continue;
+
+        float inverseMassSum = particle.InverseMass + otherParticle.InverseMass;
+        if (inverseMassSum <= 0.000001)
+            continue;
+
+        float correctionMagnitude = lengthDelta - constraint.RestLength;
+        float correctionScale = clamp(constraint.Stiffness, 0.0, 1.0) / (1.0 + max(constraint.Compliance, 0.0));
+        vec3 correctionDirection = delta / lengthDelta;
+        vec3 correction = correctionDirection * correctionMagnitude * (particle.InverseMass / inverseMassSum) * correctionScale;
+
+        correctedPosition -= correction;
+    }
+
+    particle.CurrentPosition = correctedPosition;
+    SolvedParticles[particleIndex] = particle;
+}

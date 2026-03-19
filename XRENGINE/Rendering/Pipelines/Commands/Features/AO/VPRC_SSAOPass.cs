@@ -61,6 +61,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             public int LastHeight;
             public XRTexture2D? NoiseTexture;
             public Vector2 NoiseScale;
+            public XRTexture? NormalTexture;
+            public XRTexture? DepthViewTexture;
+            public XRTexture? AlbedoTexture;
+            public XRTexture? RmseTexture;
+            public XRTexture? TransformIdTexture;
+            public XRTexture? DepthStencilTexture;
         }
 
         private static readonly ConditionalWeakTable<XRRenderPipelineInstance, InstanceState> _instanceStates = new();
@@ -167,6 +173,19 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             //Log($"Execute start: forceRebuild={forceRebuild}, last={state.LastWidth}x{state.LastHeight}, current={width}x{height}");
 
+            if (!forceRebuild)
+            {
+                forceRebuild = !ReferenceEquals(state.NormalTexture, normalTex)
+                    || !ReferenceEquals(state.DepthViewTexture, depthViewTex)
+                    || !ReferenceEquals(state.AlbedoTexture, albedoTex)
+                    || !ReferenceEquals(state.RmseTexture, rmseTex)
+                    || !ReferenceEquals(state.TransformIdTexture, transformIdTex)
+                    || !ReferenceEquals(state.DepthStencilTexture, depthStencilTex);
+            }
+
+            if (!forceRebuild)
+                forceRebuild = !instance.TryGetFBO(SSAOFBOName, out _);
+
             if (!forceRebuild &&
                 width == state.LastWidth && 
                 height == state.LastHeight)
@@ -214,6 +233,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             //Debug.Out($"SSAO: Regenerating FBOs for {width}x{height}");
             state.LastWidth = width;
             state.LastHeight = height;
+            state.NormalTexture = normalTex;
+            state.DepthViewTexture = depthViewTex;
+            state.AlbedoTexture = albedoTex;
+            state.RmseTexture = rmseTex;
+            state.TransformIdTexture = transformIdTex;
+            state.DepthStencilTexture = depthStencilTex;
 
             //Log($"Regenerating resources: size={width}x{height}, stereo={Stereo}");
 

@@ -5,6 +5,7 @@ using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine.Data.Transforms;
 using XREngine.Data.Transforms.Rotations;
 using YamlDotNet.Serialization;
 
@@ -19,6 +20,8 @@ namespace XREngine.Scene.Transforms
     [XRTransformEditor("XREngine.Editor.TransformEditors.StandardTransformEditor")]
     public class Transform : TransformBase
     {
+        protected override bool IsGuaranteedAffine => true;
+
         public override string ToString()
             => $"{Name} | T:[{Translation}], R:[{Rotation}], S:[{Scale}]";
 
@@ -337,15 +340,6 @@ namespace XREngine.Scene.Transforms
                     VerifySmoothingTick();
                     break;
                 case nameof(Order):
-                    _localMatrixGen = Order switch
-                    {
-                        ETransformOrder.RST => RST,
-                        ETransformOrder.STR => STR,
-                        ETransformOrder.TSR => TSR,
-                        ETransformOrder.SRT => SRT,
-                        ETransformOrder.RTS => RTS,
-                        _ => TRS,
-                    };
                     MarkLocalModified();
                     break;
             }
@@ -397,39 +391,53 @@ namespace XREngine.Scene.Transforms
         public void ApplyScale(Vector3 scale)
             => Scale *= scale;
 
-        private Func<Matrix4x4>? _localMatrixGen;
+        protected override bool TryGetLocalAffineMatrix(out AffineMatrix4x3 matrix)
+        {
+            matrix = CreateLocalAffineMatrix();
+            return true;
+        }
+
+        protected virtual AffineMatrix4x3 CreateLocalAffineMatrix()
+            => Order switch
+            {
+                ETransformOrder.RST => CreateLocalAffineRst(),
+                ETransformOrder.STR => CreateLocalAffineStr(),
+                ETransformOrder.TSR => CreateLocalAffineTsr(),
+                ETransformOrder.SRT => CreateLocalAffineSrt(),
+                ETransformOrder.RTS => CreateLocalAffineRts(),
+                _ => CreateLocalAffineTrs(),
+            };
+
         protected override Matrix4x4 CreateLocalMatrix()
-            => _localMatrixGen?.Invoke() ?? Matrix4x4.Identity;
+            => CreateLocalAffineMatrix().ToMatrix4x4();
 
-        protected virtual Matrix4x4 STR() =>
-            Matrix4x4.CreateFromQuaternion(Rotation) *
-            Matrix4x4.CreateTranslation(Translation) *
-            Matrix4x4.CreateScale(Scale);
+        protected virtual AffineMatrix4x3 CreateLocalAffineStr() =>
+            AffineMatrix4x3.CreateFromQuaternion(Rotation) *
+            AffineMatrix4x3.CreateTranslation(Translation) *
+            AffineMatrix4x3.CreateScale(Scale);
 
-        protected virtual Matrix4x4 TRS() =>
-            Matrix4x4.CreateScale(Scale) *
-            Matrix4x4.CreateFromQuaternion(Rotation) *
-            Matrix4x4.CreateTranslation(Translation);
+        protected virtual AffineMatrix4x3 CreateLocalAffineTrs()
+            => AffineMatrix4x3.CreateTRS(Scale, Rotation, Translation);
 
-        protected virtual Matrix4x4 RST() =>
-            Matrix4x4.CreateTranslation(Translation) *
-            Matrix4x4.CreateScale(Scale) *
-            Matrix4x4.CreateFromQuaternion(Rotation);
+        protected virtual AffineMatrix4x3 CreateLocalAffineRst() =>
+            AffineMatrix4x3.CreateTranslation(Translation) *
+            AffineMatrix4x3.CreateScale(Scale) *
+            AffineMatrix4x3.CreateFromQuaternion(Rotation);
 
-        protected virtual Matrix4x4 RTS() =>
-            Matrix4x4.CreateScale(Scale) *
-            Matrix4x4.CreateTranslation(Translation) *
-            Matrix4x4.CreateFromQuaternion(Rotation);
+        protected virtual AffineMatrix4x3 CreateLocalAffineRts() =>
+            AffineMatrix4x3.CreateScale(Scale) *
+            AffineMatrix4x3.CreateTranslation(Translation) *
+            AffineMatrix4x3.CreateFromQuaternion(Rotation);
 
-        protected virtual Matrix4x4 TSR() =>
-            Matrix4x4.CreateFromQuaternion(Rotation) *
-            Matrix4x4.CreateScale(Scale) *
-            Matrix4x4.CreateTranslation(Translation);
+        protected virtual AffineMatrix4x3 CreateLocalAffineTsr() =>
+            AffineMatrix4x3.CreateFromQuaternion(Rotation) *
+            AffineMatrix4x3.CreateScale(Scale) *
+            AffineMatrix4x3.CreateTranslation(Translation);
 
-        protected virtual Matrix4x4 SRT() =>
-            Matrix4x4.CreateTranslation(Translation) *
-            Matrix4x4.CreateFromQuaternion(Rotation) *
-            Matrix4x4.CreateScale(Scale);
+        protected virtual AffineMatrix4x3 CreateLocalAffineSrt() =>
+            AffineMatrix4x3.CreateTranslation(Translation) *
+            AffineMatrix4x3.CreateFromQuaternion(Rotation) *
+            AffineMatrix4x3.CreateScale(Scale);
 
         /// <summary>
         /// Transforms the position in the direction of the local forward vector.

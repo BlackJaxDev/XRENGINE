@@ -48,6 +48,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             public XRTexture? RawAoTexture;
             public XRTexture? HorizontalBlurTexture;
             public XRTexture? FinalAoTexture;
+            public XRTexture? NormalTexture;
+            public XRTexture? DepthViewTexture;
+            public XRTexture? AlbedoTexture;
+            public XRTexture? RmseTexture;
+            public XRTexture? TransformIdTexture;
+            public XRTexture? DepthStencilTexture;
         }
 
         private static readonly ConditionalWeakTable<XRRenderPipelineInstance, InstanceState> _instanceStates = new();
@@ -122,8 +128,17 @@ namespace XREngine.Rendering.Pipelines.Commands
                     || state.HorizontalBlurTexture is null
                     || state.FinalAoTexture is null
                     || registeredAo is null
-                    || !ReferenceEquals(state.FinalAoTexture, registeredAo);
+                    || !ReferenceEquals(state.FinalAoTexture, registeredAo)
+                    || !ReferenceEquals(state.NormalTexture, normalTex)
+                    || !ReferenceEquals(state.DepthViewTexture, depthViewTex)
+                    || !ReferenceEquals(state.AlbedoTexture, albedoTex)
+                    || !ReferenceEquals(state.RmseTexture, rmseTex)
+                    || !ReferenceEquals(state.TransformIdTexture, transformIdTex)
+                    || !ReferenceEquals(state.DepthStencilTexture, depthStencilTex);
             }
+
+            if (!forceRebuild)
+                forceRebuild = !instance.TryGetFBO(GenerationFBOName, out _);
 
             if (!forceRebuild && width == state.LastWidth && height == state.LastHeight)
                 return;
@@ -155,6 +170,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             state.LastWidth = width;
             state.LastHeight = height;
+            state.NormalTexture = normalTex;
+            state.DepthViewTexture = depthViewTex;
+            state.AlbedoTexture = albedoTex;
+            state.RmseTexture = rmseTex;
+            state.TransformIdTexture = transformIdTex;
+            state.DepthStencilTexture = depthStencilTex;
 
             state.RawAoTexture?.Destroy();
             state.HorizontalBlurTexture?.Destroy();

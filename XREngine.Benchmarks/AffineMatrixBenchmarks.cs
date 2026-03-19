@@ -169,6 +169,401 @@ public class AffineMatrixBenchmarks
 [MemoryDiagnoser]
 [Config(typeof(InProcessShortRunConfig))]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
+public class AffineMatrixScenarioBenchmarks
+{
+    private static readonly Vector3[] CornerSigns =
+    [
+        new(-1.0f, -1.0f, -1.0f),
+        new(-1.0f, -1.0f, 1.0f),
+        new(-1.0f, 1.0f, -1.0f),
+        new(-1.0f, 1.0f, 1.0f),
+        new(1.0f, -1.0f, -1.0f),
+        new(1.0f, -1.0f, 1.0f),
+        new(1.0f, 1.0f, -1.0f),
+        new(1.0f, 1.0f, 1.0f),
+    ];
+
+    private Matrix4x4[] _chainLocals4x4 = null!;
+    private AffineMatrix4x3[] _chainLocalsAffine = null!;
+    private Matrix4x4[] _chainWorlds4x4 = null!;
+    private AffineMatrix4x3[] _chainWorldsAffine = null!;
+    private Matrix4x4[] _wideChildLocals4x4 = null!;
+    private AffineMatrix4x3[] _wideChildLocalsAffine = null!;
+    private Matrix4x4[] _wideChildRenders4x4 = null!;
+    private AffineMatrix4x3[] _wideChildRendersAffine = null!;
+    private Matrix4x4[] _boundsMatrices4x4 = null!;
+    private AffineMatrix4x3[] _boundsMatricesAffine = null!;
+    private Vector3[] _boundsCenters = null!;
+    private Vector3[] _boundsExtents = null!;
+    private Matrix4x4 _parentRender4x4;
+    private AffineMatrix4x3 _parentRenderAffine;
+
+    [Params(64, 512)]
+    public int Count { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        var random = new Random(20260318);
+
+        _chainLocals4x4 = new Matrix4x4[Count];
+        _chainLocalsAffine = new AffineMatrix4x3[Count];
+        _chainWorlds4x4 = new Matrix4x4[Count];
+        _chainWorldsAffine = new AffineMatrix4x3[Count];
+        _wideChildLocals4x4 = new Matrix4x4[Count];
+        _wideChildLocalsAffine = new AffineMatrix4x3[Count];
+        _wideChildRenders4x4 = new Matrix4x4[Count];
+        _wideChildRendersAffine = new AffineMatrix4x3[Count];
+        _boundsMatrices4x4 = new Matrix4x4[Count];
+        _boundsMatricesAffine = new AffineMatrix4x3[Count];
+        _boundsCenters = new Vector3[Count];
+        _boundsExtents = new Vector3[Count];
+
+        _parentRenderAffine = CreateRandomAffine(random);
+        _parentRender4x4 = _parentRenderAffine.ToMatrix4x4();
+
+        for (int index = 0; index < Count; index++)
+        {
+            AffineMatrix4x3 chainLocal = CreateRandomAffine(random);
+            _chainLocalsAffine[index] = chainLocal;
+            _chainLocals4x4[index] = chainLocal.ToMatrix4x4();
+
+            AffineMatrix4x3 wideChildLocal = CreateRandomAffine(random);
+            _wideChildLocalsAffine[index] = wideChildLocal;
+            _wideChildLocals4x4[index] = wideChildLocal.ToMatrix4x4();
+
+            AffineMatrix4x3 boundsMatrix = CreateRandomAffine(random);
+            _boundsMatricesAffine[index] = boundsMatrix;
+            _boundsMatrices4x4[index] = boundsMatrix.ToMatrix4x4();
+            _boundsCenters[index] = new Vector3(
+                -5.0f + (float)random.NextDouble() * 10.0f,
+                -5.0f + (float)random.NextDouble() * 10.0f,
+                -5.0f + (float)random.NextDouble() * 10.0f);
+            _boundsExtents[index] = new Vector3(
+                0.25f + (float)random.NextDouble() * 4.0f,
+                0.25f + (float)random.NextDouble() * 4.0f,
+                0.25f + (float)random.NextDouble() * 4.0f);
+        }
+    }
+
+    [Benchmark(Baseline = true)]
+    public float Matrix4x4_DirtyTransformChainUpdate()
+    {
+        float accumulator = 0.0f;
+        Matrix4x4 parentWorld = Matrix4x4.Identity;
+        for (int index = 0; index < Count; index++)
+        {
+            Matrix4x4 world = _chainLocals4x4[index] * parentWorld;
+            _chainWorlds4x4[index] = world;
+            parentWorld = world;
+            accumulator += world.M11 + world.M22 + world.M33 + world.M41 + world.M42 + world.M43;
+        }
+
+        return accumulator;
+    }
+
+    [Benchmark]
+    public float Affine4x3_DirtyTransformChainUpdate()
+    {
+        float accumulator = 0.0f;
+        AffineMatrix4x3 parentWorld = AffineMatrix4x3.Identity;
+        for (int index = 0; index < Count; index++)
+        {
+            AffineMatrix4x3 world = _chainLocalsAffine[index] * parentWorld;
+            _chainWorldsAffine[index] = world;
+            parentWorld = world;
+            accumulator += world.M11 + world.M22 + world.M33 + world.M41 + world.M42 + world.M43;
+        }
+
+        return accumulator;
+    }
+
+    [Benchmark]
+    public float Matrix4x4_WideRenderPropagation()
+    {
+        float accumulator = 0.0f;
+        for (int index = 0; index < Count; index++)
+        {
+            Matrix4x4 render = _wideChildLocals4x4[index] * _parentRender4x4;
+            _wideChildRenders4x4[index] = render;
+            accumulator += render.M11 + render.M22 + render.M33 + render.M41 + render.M42 + render.M43;
+        }
+
+        return accumulator;
+    }
+
+    [Benchmark]
+    public float Affine4x3_WideRenderPropagation()
+    {
+        float accumulator = 0.0f;
+        for (int index = 0; index < Count; index++)
+        {
+            AffineMatrix4x3 render = _wideChildLocalsAffine[index] * _parentRenderAffine;
+            _wideChildRendersAffine[index] = render;
+            accumulator += render.M11 + render.M22 + render.M33 + render.M41 + render.M42 + render.M43;
+        }
+
+        return accumulator;
+    }
+
+    [Benchmark]
+    public float Matrix4x4_CpuBoundsUpdate()
+    {
+        float accumulator = 0.0f;
+        for (int index = 0; index < Count; index++)
+        {
+            Matrix4x4 matrix = _boundsMatrices4x4[index];
+            Vector3 center = _boundsCenters[index];
+            Vector3 extent = _boundsExtents[index];
+            Vector3 worldCenter = Vector3.Transform(center, matrix);
+            Vector3 min = new(float.PositiveInfinity);
+            Vector3 max = new(float.NegativeInfinity);
+
+            for (int cornerIndex = 0; cornerIndex < CornerSigns.Length; cornerIndex++)
+            {
+                Vector3 corner = center + extent * CornerSigns[cornerIndex];
+                Vector3 transformed = Vector3.Transform(corner, matrix);
+                min = Vector3.Min(min, transformed);
+                max = Vector3.Max(max, transformed);
+            }
+
+            accumulator += worldCenter.X + worldCenter.Y + worldCenter.Z;
+            accumulator += max.X - min.X + max.Y - min.Y + max.Z - min.Z;
+        }
+
+        return accumulator;
+    }
+
+    [Benchmark]
+    public float Affine4x3_CpuBoundsUpdate()
+    {
+        float accumulator = 0.0f;
+        for (int index = 0; index < Count; index++)
+        {
+            AffineMatrix4x3 matrix = _boundsMatricesAffine[index];
+            Vector3 center = _boundsCenters[index];
+            Vector3 extent = _boundsExtents[index];
+            Vector3 worldCenter = matrix.TransformPosition(center);
+            Vector3 min = new(float.PositiveInfinity);
+            Vector3 max = new(float.NegativeInfinity);
+
+            for (int cornerIndex = 0; cornerIndex < CornerSigns.Length; cornerIndex++)
+            {
+                Vector3 corner = center + extent * CornerSigns[cornerIndex];
+                Vector3 transformed = matrix.TransformPosition(corner);
+                min = Vector3.Min(min, transformed);
+                max = Vector3.Max(max, transformed);
+            }
+
+            accumulator += worldCenter.X + worldCenter.Y + worldCenter.Z;
+            accumulator += max.X - min.X + max.Y - min.Y + max.Z - min.Z;
+        }
+
+        return accumulator;
+    }
+
+    private static AffineMatrix4x3 CreateRandomAffine(Random random)
+    {
+        Vector3 scale = new(
+            0.25f + (float)random.NextDouble() * 3.0f,
+            0.25f + (float)random.NextDouble() * 3.0f,
+            0.25f + (float)random.NextDouble() * 3.0f);
+        Quaternion rotation = Quaternion.Normalize(new Quaternion(
+            (float)random.NextDouble(),
+            (float)random.NextDouble(),
+            (float)random.NextDouble(),
+            (float)random.NextDouble()));
+        Vector3 translation = new(
+            -100.0f + (float)random.NextDouble() * 200.0f,
+            -100.0f + (float)random.NextDouble() * 200.0f,
+            -100.0f + (float)random.NextDouble() * 200.0f);
+
+        return AffineMatrix4x3.CreateTRS(scale, rotation, translation);
+    }
+}
+
+[MemoryDiagnoser]
+[Config(typeof(InProcessMediumRunConfig))]
+[Orderer(SummaryOrderPolicy.FastestToSlowest)]
+public class TransformHierarchyBenchmarks
+{
+    private BenchmarkTransform[] _affineChain = null!;
+    private BenchmarkTransform[] _matrixChain = null!;
+    private BenchmarkTransform _affineRenderParent = null!;
+    private BenchmarkTransform _matrixRenderParent = null!;
+    private BenchmarkTransform[] _affineRenderChildren = null!;
+    private BenchmarkTransform[] _matrixRenderChildren = null!;
+    private Matrix4x4 _parentRenderMatrix;
+
+    [Params(64, 512)]
+    public int Count { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        var random = new Random(20260318);
+
+        _affineChain = new BenchmarkTransform[Count];
+        _matrixChain = new BenchmarkTransform[Count];
+        BenchmarkTransform? affineParent = null;
+        BenchmarkTransform? matrixParent = null;
+
+        for (int index = 0; index < Count; index++)
+        {
+            Matrix4x4 localMatrix = CreateRandomAffineMatrix(random);
+
+            BenchmarkTransform affineTransform = new(localMatrix, isGuaranteedAffine: true, affineParent);
+            affineTransform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+            _affineChain[index] = affineTransform;
+            affineParent = affineTransform;
+
+            BenchmarkTransform matrixTransform = new(localMatrix, isGuaranteedAffine: false, matrixParent);
+            matrixTransform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+            _matrixChain[index] = matrixTransform;
+            matrixParent = matrixTransform;
+        }
+
+        _parentRenderMatrix = CreateRandomAffineMatrix(random);
+        _affineRenderParent = new(CreateRandomAffineMatrix(random), isGuaranteedAffine: true, parent: null);
+        _matrixRenderParent = new(CreateRandomAffineMatrix(random), isGuaranteedAffine: false, parent: null);
+        _affineRenderParent.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+        _matrixRenderParent.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+
+        _affineRenderChildren = new BenchmarkTransform[Count];
+        _matrixRenderChildren = new BenchmarkTransform[Count];
+        for (int index = 0; index < Count; index++)
+        {
+            Matrix4x4 localMatrix = CreateRandomAffineMatrix(random);
+
+            BenchmarkTransform affineChild = new(localMatrix, isGuaranteedAffine: true, _affineRenderParent);
+            affineChild.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+            _affineRenderChildren[index] = affineChild;
+
+            BenchmarkTransform matrixChild = new(localMatrix, isGuaranteedAffine: false, _matrixRenderParent);
+            matrixChild.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
+            _matrixRenderChildren[index] = matrixChild;
+        }
+    }
+
+    [Benchmark(Baseline = true)]
+    public float MatrixBacked_DirtyHierarchyRecalc()
+    {
+        float accumulator = 0.0f;
+        for (int index = 0; index < Count; index++)
+        {
+            BenchmarkTransform transform = _matrixChain[index];
+            transform.RecalcWorld();
+            Matrix4x4 world = transform.WorldMatrix;
+            accumulator += world.M11 + world.M22 + world.M33 + world.M41 + world.M42 + world.M43;
+        }
+
+        return accumulator;
+    }
+
+    [Benchmark]
+    public float AffineEligible_DirtyHierarchyRecalc()
+    {
+        float accumulator = 0.0f;
+        for (int index = 0; index < Count; index++)
+        {
+            BenchmarkTransform transform = _affineChain[index];
+            transform.RecalcWorld();
+            Matrix4x4 world = transform.WorldMatrix;
+            accumulator += world.M11 + world.M22 + world.M33 + world.M41 + world.M42 + world.M43;
+        }
+
+        return accumulator;
+    }
+
+    [Benchmark]
+    public float MatrixBacked_RenderHierarchyPropagation()
+    {
+        _matrixRenderParent.SetRenderMatrix(_parentRenderMatrix, recalcAllChildRenderMatrices: true).Wait();
+
+        float accumulator = 0.0f;
+        for (int index = 0; index < Count; index++)
+        {
+            Matrix4x4 render = _matrixRenderChildren[index].RenderMatrix;
+            accumulator += render.M11 + render.M22 + render.M33 + render.M41 + render.M42 + render.M43;
+        }
+
+        return accumulator;
+    }
+
+    [Benchmark]
+    public float AffineEligible_RenderHierarchyPropagation()
+    {
+        _affineRenderParent.SetRenderMatrix(_parentRenderMatrix, recalcAllChildRenderMatrices: true).Wait();
+
+        float accumulator = 0.0f;
+        for (int index = 0; index < Count; index++)
+        {
+            Matrix4x4 render = _affineRenderChildren[index].RenderMatrix;
+            accumulator += render.M11 + render.M22 + render.M33 + render.M41 + render.M42 + render.M43;
+        }
+
+        return accumulator;
+    }
+
+    private static Matrix4x4 CreateRandomAffineMatrix(Random random)
+        => AffineMatrixScenarioBenchmarks_CreateRandomAffine(random).ToMatrix4x4();
+
+    private static AffineMatrix4x3 AffineMatrixScenarioBenchmarks_CreateRandomAffine(Random random)
+    {
+        Vector3 scale = new(
+            0.25f + (float)random.NextDouble() * 3.0f,
+            0.25f + (float)random.NextDouble() * 3.0f,
+            0.25f + (float)random.NextDouble() * 3.0f);
+        Quaternion rotation = Quaternion.Normalize(new Quaternion(
+            (float)random.NextDouble(),
+            (float)random.NextDouble(),
+            (float)random.NextDouble(),
+            (float)random.NextDouble()));
+        Vector3 translation = new(
+            -100.0f + (float)random.NextDouble() * 200.0f,
+            -100.0f + (float)random.NextDouble() * 200.0f,
+            -100.0f + (float)random.NextDouble() * 200.0f);
+
+        return AffineMatrix4x3.CreateTRS(scale, rotation, translation);
+    }
+
+    private sealed class BenchmarkTransform : TransformBase
+    {
+        private readonly Matrix4x4 _localMatrix;
+        private readonly AffineMatrix4x3 _localAffineMatrix;
+        private readonly bool _isGuaranteedAffine;
+
+        public BenchmarkTransform(Matrix4x4 localMatrix, bool isGuaranteedAffine, TransformBase? parent)
+            : base(parent)
+        {
+            _localMatrix = localMatrix;
+            _localAffineMatrix = AffineMatrix4x3.FromMatrix4x4(localMatrix);
+            _isGuaranteedAffine = isGuaranteedAffine;
+            MarkLocalModified();
+        }
+
+        protected override bool IsGuaranteedAffine => _isGuaranteedAffine;
+
+        protected override bool TryGetLocalAffineMatrix(out AffineMatrix4x3 matrix)
+        {
+            if (!_isGuaranteedAffine)
+            {
+                matrix = default;
+                return false;
+            }
+
+            matrix = _localAffineMatrix;
+            return true;
+        }
+
+        protected override Matrix4x4 CreateLocalMatrix()
+            => _localMatrix;
+    }
+}
+
+[MemoryDiagnoser]
+[Config(typeof(InProcessShortRunConfig))]
+[Orderer(SummaryOrderPolicy.FastestToSlowest)]
 public class TransformAccessorBenchmarks
 {
     private Transform[] _transforms = null!;
@@ -408,4 +803,10 @@ public sealed class InProcessShortRunConfig : ManualConfig
 {
     public InProcessShortRunConfig()
         => AddJob(Job.ShortRun.WithToolchain(InProcessNoEmitToolchain.Instance));
+}
+
+public sealed class InProcessMediumRunConfig : ManualConfig
+{
+    public InProcessMediumRunConfig()
+        => AddJob(Job.MediumRun.WithToolchain(InProcessNoEmitToolchain.Instance));
 }

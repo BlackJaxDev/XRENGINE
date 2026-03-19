@@ -2307,15 +2307,12 @@ namespace XREngine.Rendering
             => renderer?.Buffers is not null && renderer.Buffers.TryGetValue(binding, out _);
 
         private static List<string> GetRendererBuffersWithPrefix(XRMeshRenderer? renderer, string prefix)
-        {
-            if (renderer?.Buffers is null)
-                return [];
-
-            return [.. renderer.Buffers
+            => renderer?.Buffers is null
+                ? []
+                : (List<string>)[.. renderer.Buffers
                 .Where(kvp => kvp.Key.StartsWith(prefix, StringComparison.Ordinal))
                 .Select(kvp => kvp.Key)
                 .OrderBy(name => name, StringComparer.Ordinal)];
-        }
 
         // Traditional indirect path but issuing separate MultiDraw calls per material batch
         private void RenderTraditionalBatched(

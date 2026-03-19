@@ -21,17 +21,24 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public Func<(uint x, uint y)>? SizeVerifier { get; set; }
 
+        /// <summary>
+        /// Optional predicate that forces a full FBO recreation when the cached
+        /// instance is no longer compatible with the current pipeline state.
+        /// </summary>
+        public Func<XRFrameBuffer, bool>? NeedsRecreate { get; set; }
+
         private const string InternalSizeMethod = "GetDesiredFBOSizeInternal";
         private const string FullSizeMethod = "GetDesiredFBOSizeFull";
 
         private RenderResourceSizePolicy? _sizePolicyOverride;
         private RenderResourceLifetime _lifetime = RenderResourceLifetime.Persistent;
 
-        public VPRC_CacheOrCreateFBO SetOptions(string name, Func<XRFrameBuffer> factory, Func<(uint x, uint y)>? sizeVerifier)
+        public VPRC_CacheOrCreateFBO SetOptions(string name, Func<XRFrameBuffer> factory, Func<(uint x, uint y)>? sizeVerifier, Func<XRFrameBuffer, bool>? needsRecreate = null)
         {
             Name = name;
             FrameBufferFactory = factory;
             SizeVerifier = sizeVerifier;
+            NeedsRecreate = needsRecreate;
             return this;
         }
 
@@ -54,6 +61,21 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (ActivePipelineInstance.TryGetFBO(Name, out var fbo) && fbo is not null)
             {
+                if (NeedsRecreate?.Invoke(fbo) == true)
+                    fbo = null;
+
+                if (fbo is null)
+                {
+                    if (FrameBufferFactory is null)
+                        return;
+
+                    XRFrameBuffer recreated = FrameBufferFactory();
+                    recreated.Name = Name;
+                    FrameBufferResourceDescriptor recreatedDescriptor = BuildDescriptor(recreated);
+                    ActivePipelineInstance.SetFBO(recreated, recreatedDescriptor);
+                    return;
+                }
+
                 if (SizeVerifier is not null)
                 {
                     (uint x, uint y) = SizeVerifier();

@@ -405,16 +405,12 @@ public partial class DefaultRenderPipeline2
         };
         colorBuffer.Allocate();
 
-        XRRenderBuffer depthBuffer = new(InternalWidth, InternalHeight, ERenderBufferStorage.Depth24Stencil8, MsaaSampleCount)
-        {
-            FrameBufferAttachment = EFrameBufferAttachment.DepthStencilAttachment,
-            Name = $"{ForwardPassMsaaFBOName}_DepthStencil"
-        };
-        depthBuffer.Allocate();
+        if (GetTexture<XRTexture>(ForwardPassMsaaDepthStencilTextureName) is not IFrameBufferAttachement depthAttach)
+            throw new InvalidOperationException("Forward MSAA depth/stencil texture is not an FBO-attachable texture.");
 
         XRFrameBuffer fbo = new(
             (colorBuffer, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-            (depthBuffer, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+            (depthAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
             Name = ForwardPassMsaaFBOName
         };

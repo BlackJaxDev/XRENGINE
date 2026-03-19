@@ -106,6 +106,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                     || !ReferenceEquals(state.AoTexture, registeredAo);
             }
 
+            if (!forceRebuild)
+                forceRebuild = !instance.TryGetFBO(MSVOFBOName, out _);
+
             if (!forceRebuild && width == state.LastWidth && height == state.LastHeight)
                 return;
 
