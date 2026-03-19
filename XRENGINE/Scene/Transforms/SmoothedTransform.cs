@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Data.Transforms;
 
 namespace XREngine.Scene.Transforms
 {
@@ -60,30 +61,31 @@ namespace XREngine.Scene.Transforms
             }
         }
 
-        protected override Matrix4x4 TRS() =>
-            Matrix4x4.CreateScale(_currentScale) *
-            Matrix4x4.CreateFromQuaternion(_currentRotation) *
-            Matrix4x4.CreateTranslation(_currentTranslation);
-        protected override Matrix4x4 STR() =>
-            Matrix4x4.CreateFromQuaternion(_currentRotation) *
-            Matrix4x4.CreateTranslation(_currentTranslation) *
-            Matrix4x4.CreateScale(_currentScale);
-        protected override Matrix4x4 RST() =>
-            Matrix4x4.CreateTranslation(_currentTranslation) *
-            Matrix4x4.CreateScale(_currentScale) *
-            Matrix4x4.CreateFromQuaternion(_currentRotation);
-        protected override Matrix4x4 SRT() =>
-            Matrix4x4.CreateTranslation(_currentTranslation) *
-            Matrix4x4.CreateFromQuaternion(_currentRotation) *
-            Matrix4x4.CreateScale(_currentScale);
-        protected override Matrix4x4 TSR() =>
-            Matrix4x4.CreateFromQuaternion(_currentRotation) *
-            Matrix4x4.CreateScale(_currentScale) *
-            Matrix4x4.CreateTranslation(_currentTranslation);
-        protected override Matrix4x4 RTS() =>
-            Matrix4x4.CreateScale(_currentScale) *
-            Matrix4x4.CreateTranslation(_currentTranslation) *
-            Matrix4x4.CreateFromQuaternion(_currentRotation);
+        protected override AffineMatrix4x3 CreateLocalAffineMatrix()
+            => Order switch
+            {
+                XREngine.Animation.ETransformOrder.RST =>
+                    AffineMatrix4x3.CreateTranslation(_currentTranslation)
+                    * AffineMatrix4x3.CreateScale(_currentScale)
+                    * AffineMatrix4x3.CreateFromQuaternion(_currentRotation),
+                XREngine.Animation.ETransformOrder.STR =>
+                    AffineMatrix4x3.CreateFromQuaternion(_currentRotation)
+                    * AffineMatrix4x3.CreateTranslation(_currentTranslation)
+                    * AffineMatrix4x3.CreateScale(_currentScale),
+                XREngine.Animation.ETransformOrder.TSR =>
+                    AffineMatrix4x3.CreateFromQuaternion(_currentRotation)
+                    * AffineMatrix4x3.CreateScale(_currentScale)
+                    * AffineMatrix4x3.CreateTranslation(_currentTranslation),
+                XREngine.Animation.ETransformOrder.SRT =>
+                    AffineMatrix4x3.CreateTranslation(_currentTranslation)
+                    * AffineMatrix4x3.CreateFromQuaternion(_currentRotation)
+                    * AffineMatrix4x3.CreateScale(_currentScale),
+                XREngine.Animation.ETransformOrder.RTS =>
+                    AffineMatrix4x3.CreateScale(_currentScale)
+                    * AffineMatrix4x3.CreateTranslation(_currentTranslation)
+                    * AffineMatrix4x3.CreateFromQuaternion(_currentRotation),
+                _ => AffineMatrix4x3.CreateTRS(_currentScale, _currentRotation, _currentTranslation),
+            };
 
         private void Lerp()
         {

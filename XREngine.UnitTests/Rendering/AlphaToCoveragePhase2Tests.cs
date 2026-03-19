@@ -68,7 +68,23 @@ public sealed class AlphaToCoveragePhase2Tests
         string glSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/OpenGL/OpenGLRenderer.cs");
         glSource.ShouldContain("ApplyAlphaToCoverage(parameters);");
         glSource.ShouldContain("EnableCap.SampleAlphaToCoverage");
+        glSource.ShouldContain("XRFrameBuffer.BoundForWriting");
         glSource.ShouldContain("RenderingTargetOutputFBO");
+
+        string pipelineSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline.cs");
+        pipelineSource.ShouldContain("public bool EnableDeferredMsaa { get; set; } = false;");
+        pipelineSource.ShouldContain("&& (Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;");
+        pipelineSource.ShouldContain("public const string ForwardPassMsaaDepthViewTextureName = \"ForwardPassMsaaDepthView\";");
+        pipelineSource.ShouldContain("depthViewTextureName: ForwardPassMsaaDepthViewTextureName");
+
+        string pipeline2Source = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.cs");
+        pipeline2Source.ShouldContain("public bool EnableDeferredMsaa { get; set; } = false;");
+        pipeline2Source.ShouldContain("&& (Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline2)?.EnableDeferredMsaa == true;");
+        pipeline2Source.ShouldContain("public const string ForwardPassMsaaDepthViewTextureName = \"ForwardPassMsaaDepthView\";");
+
+        string resolveSource = ReadWorkspaceFile("XRENGINE/Rendering/Pipelines/Commands/Features/VPRC_ResolveMsaaGBuffer.cs");
+        resolveSource.ShouldContain("public string DepthViewTextureName { get; set; } = DefaultRenderPipeline.MsaaDepthViewTextureName;");
+        resolveSource.ShouldContain("ActivePipelineInstance.GetTexture<XRTexture>(DepthViewTextureName)");
 
         string vkSource = ReadWorkspaceFile("XRENGINE/Rendering/API/Rendering/Vulkan/Drawing.RenderState.cs");
         vkSource.ShouldContain("_state.SetAlphaToCoverageEnabled(parameters.AlphaToCoverage == ERenderParamUsage.Enabled);");

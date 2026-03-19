@@ -47,6 +47,7 @@ using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Transforms;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Compute;
@@ -101,13 +102,40 @@ namespace XREngine.Rendering.Commands
             return s;
         }
 
+        private static float ComputeMaxAxisScale(in AffineMatrix4x3 m)
+        {
+            Vector3 xAxis = new(m.M11, m.M21, m.M31);
+            Vector3 yAxis = new(m.M12, m.M22, m.M32);
+            Vector3 zAxis = new(m.M13, m.M23, m.M33);
+
+            float sx = xAxis.Length();
+            float sy = yAxis.Length();
+            float sz = zAxis.Length();
+
+            float s = MathF.Max(sx, MathF.Max(sy, sz));
+            if (float.IsNaN(s) || float.IsInfinity(s) || s < 0f)
+                return 0f;
+
+            return s;
+        }
+
         private static void SetWorldSpaceBoundingSphere(ref GPUIndirectRenderCommand cmd, in AABB localBounds, in Matrix4x4 modelMatrix)
         {
             Vector3 localCenter = localBounds.Center;
             float localRadius = localBounds.HalfExtents.Length();
 
-            Vector3 worldCenter = Vector3.Transform(localCenter, modelMatrix);
-            float maxScale = ComputeMaxAxisScale(modelMatrix);
+            Vector3 worldCenter;
+            float maxScale;
+            if (AffineMatrix4x3.TryFromMatrix4x4(modelMatrix, out AffineMatrix4x3 affineModelMatrix))
+            {
+                worldCenter = affineModelMatrix.TransformPosition(localCenter);
+                maxScale = ComputeMaxAxisScale(affineModelMatrix);
+            }
+            else
+            {
+                worldCenter = Vector3.Transform(localCenter, modelMatrix);
+                maxScale = ComputeMaxAxisScale(modelMatrix);
+            }
             float worldRadius = localRadius * maxScale;
 
             if (float.IsNaN(worldRadius) || float.IsInfinity(worldRadius) || worldRadius < 0f)

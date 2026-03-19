@@ -3930,6 +3930,10 @@ void main()
 
         private static bool IsAlphaToCoverageSupportedForCurrentTarget()
         {
+            XRFrameBuffer? currentDrawFbo = XRFrameBuffer.BoundForWriting;
+            if (currentDrawFbo is not null)
+                return currentDrawFbo.IsMultisampled;
+
             XRFrameBuffer? outputFbo = Engine.Rendering.State.RenderingTargetOutputFBO;
             if (outputFbo is not null)
                 return outputFbo.IsMultisampled;

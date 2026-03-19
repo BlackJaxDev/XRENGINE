@@ -207,7 +207,43 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
+                BindMeshDeformSourceBuffers();
+
                 Dbg("Bound skinned vertex buffers as SSBOs for compute pre-pass", "Buffers");
+            }
+
+            private void BindMeshDeformSourceBuffers()
+            {
+                if (MeshRenderer.DeformerPositionsBuffer is null || MeshRenderer.DeformMeshRenderer is null || MeshRenderer.MeshDeformInfluences is null)
+                    return;
+
+                var deformerRenderer = MeshRenderer.DeformMeshRenderer;
+                if (deformerRenderer.SkinnedInterleavedBuffer is not null)
+                {
+                    Dbg("Mesh deform compute-source aliasing skipped for interleaved deformer output; CPU mirror path remains active.", "Buffers");
+                    return;
+                }
+
+                BindStorageBufferAtBinding(deformerRenderer.SkinnedPositionsBuffer, 0u);
+
+                uint nextBinding = 2u;
+                if (MeshRenderer.DeformerNormalsBuffer is not null)
+                    BindStorageBufferAtBinding(deformerRenderer.SkinnedNormalsBuffer, nextBinding++);
+                if (MeshRenderer.DeformerTangentsBuffer is not null)
+                    BindStorageBufferAtBinding(deformerRenderer.SkinnedTangentsBuffer, nextBinding);
+            }
+
+            private void BindStorageBufferAtBinding(XRDataBuffer? buffer, uint binding)
+            {
+                if (buffer is null)
+                    return;
+
+                var glBuffer = Renderer.GenericToAPI<GLDataBuffer>(buffer);
+                if (glBuffer is null)
+                    return;
+
+                glBuffer.Generate();
+                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, binding, glBuffer.BindingId);
             }
 
             /// <summary>

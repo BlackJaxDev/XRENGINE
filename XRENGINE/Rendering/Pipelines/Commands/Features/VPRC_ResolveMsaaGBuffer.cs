@@ -17,6 +17,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         public string? SourceMsaaFBOName { get; set; }
         public string? DestinationFBOName { get; set; }
+        public string DepthViewTextureName { get; set; } = DefaultRenderPipeline.MsaaDepthViewTextureName;
 
         /// <summary>
         /// Number of color attachments to resolve (CA0 through CA(N-1)).
@@ -29,12 +30,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             string sourceMsaaFBO,
             string destinationFBO,
             int colorAttachmentCount = 4,
-            bool resolveDepthStencil = true)
+            bool resolveDepthStencil = true,
+            string? depthViewTextureName = null)
         {
             SourceMsaaFBOName = sourceMsaaFBO;
             DestinationFBOName = destinationFBO;
             ColorAttachmentCount = colorAttachmentCount;
             ResolveDepthStencil = resolveDepthStencil;
+            if (!string.IsNullOrWhiteSpace(depthViewTextureName))
+                DepthViewTextureName = depthViewTextureName!;
             return this;
         }
 
@@ -137,7 +141,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void DepthResolveMaterial_SettingUniforms(XRMaterialBase _, XRRenderProgram program)
         {
-            var msaaDepthView = ActivePipelineInstance.GetTexture<XRTexture>(DefaultRenderPipeline.MsaaDepthViewTextureName);
+            var msaaDepthView = ActivePipelineInstance.GetTexture<XRTexture>(DepthViewTextureName);
             if (msaaDepthView is null)
                 return;
 

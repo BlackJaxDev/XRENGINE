@@ -1,6 +1,7 @@
 using Extensions;
 using MemoryPack;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -451,6 +452,53 @@ namespace XREngine.Rendering
             }
         }
 
+        private uint _meshDeformLastTargetVertexCount;
+        private uint _meshDeformLastDeformerVertexCount;
+        private int _meshDeformLastInvalidInfluenceCount;
+        private int _meshDeformLastTruncatedVertexCount;
+
+        [Category("Mesh Deform Diagnostics")]
+        [DisplayName("Mesh Deform Enabled")]
+        public bool MeshDeformEnabled => DeformMeshRenderer is not null && _meshDeformInfluences is not null;
+
+        [Category("Mesh Deform Diagnostics")]
+        [DisplayName("Mesh Deform Influence Mode")]
+        public string MeshDeformInfluenceMode
+            => OptimizeMeshDeformToVec4 && MaxMeshDeformInfluences <= 4 ? "Vec4" : "SSBO";
+
+        [Category("Mesh Deform Diagnostics")]
+        [DisplayName("Mesh Deform Source Path")]
+        public string MeshDeformSourcePath
+        {
+            get
+            {
+                if (DeformMeshRenderer is null)
+                    return "None";
+                if (DeformMeshRenderer.SkinnedPositionsBuffer is not null)
+                    return "ComputeSkinnedSeparateBuffers";
+                if (DeformMeshRenderer.SkinnedInterleavedBuffer is not null)
+                    return "ComputeSkinnedInterleavedFallbackCopy";
+                return "MeshBuffers";
+            }
+        }
+
+        [Category("Mesh Deform Diagnostics")]
+        [DisplayName("Mesh Deform Validation")]
+        public string MeshDeformValidationSummary
+            => !MeshDeformEnabled
+                ? "Inactive"
+                : $"targetVerts={_meshDeformLastTargetVertexCount}, deformerVerts={_meshDeformLastDeformerVertexCount}, invalidInfluences={_meshDeformLastInvalidInfluenceCount}, truncatedVertices={_meshDeformLastTruncatedVertexCount}";
+
+        [Category("Mesh Deform Diagnostics")]
+        [DisplayName("Mesh Deform Normal Source")]
+        public string MeshDeformNormalSource
+            => DeformerNormalsBuffer is null ? "NotBound" : ResolveMeshDeformChannelSource(DeformMeshRenderer?.SkinnedNormalsBuffer, DeformMeshRenderer?.SkinnedInterleavedBuffer, DeformMeshRenderer?.Mesh?.NormalOffset.HasValue == true);
+
+        [Category("Mesh Deform Diagnostics")]
+        [DisplayName("Mesh Deform Tangent Source")]
+        public string MeshDeformTangentSource
+            => DeformerTangentsBuffer is null ? "NotBound" : ResolveMeshDeformChannelSource(DeformMeshRenderer?.SkinnedTangentsBuffer, DeformMeshRenderer?.SkinnedInterleavedBuffer, DeformMeshRenderer?.Mesh?.TangentOffset.HasValue == true);
+
         private bool _optimizeMeshDeformToVec4 = true;
         /// <summary>
         /// If true and MaxMeshDeformInfluences = 4, packs indices and weights into vec4 attributes for better performance.
@@ -801,35 +849,50 @@ namespace XREngine.Rendering
 
         private void ResetMeshDeformBuffers()
         {
+            RemoveMeshDeformBuffer(DeformerPositionsBuffer);
             DeformerPositionsBuffer?.Destroy();
             DeformerPositionsBuffer = null;
 
+            RemoveMeshDeformBuffer(DeformerRestPositionsBuffer);
             DeformerRestPositionsBuffer?.Destroy();
             DeformerRestPositionsBuffer = null;
 
+            RemoveMeshDeformBuffer(DeformerNormalsBuffer);
             DeformerNormalsBuffer?.Destroy();
             DeformerNormalsBuffer = null;
 
+            RemoveMeshDeformBuffer(DeformerTangentsBuffer);
             DeformerTangentsBuffer?.Destroy();
             DeformerTangentsBuffer = null;
 
+            RemoveMeshDeformBuffer(MeshDeformIndicesBuffer);
             MeshDeformIndicesBuffer?.Destroy();
             MeshDeformIndicesBuffer = null;
 
+            RemoveMeshDeformBuffer(MeshDeformWeightsBuffer);
             MeshDeformWeightsBuffer?.Destroy();
             MeshDeformWeightsBuffer = null;
 
+            RemoveMeshDeformBuffer(MeshDeformVertexIndicesBuffer);
             MeshDeformVertexIndicesBuffer?.Destroy();
             MeshDeformVertexIndicesBuffer = null;
 
+            RemoveMeshDeformBuffer(MeshDeformVertexWeightsBuffer);
             MeshDeformVertexWeightsBuffer?.Destroy();
             MeshDeformVertexWeightsBuffer = null;
 
+            RemoveMeshDeformBuffer(MeshDeformVertexOffsetBuffer);
             MeshDeformVertexOffsetBuffer?.Destroy();
             MeshDeformVertexOffsetBuffer = null;
 
+            RemoveMeshDeformBuffer(MeshDeformVertexCountBuffer);
             MeshDeformVertexCountBuffer?.Destroy();
             MeshDeformVertexCountBuffer = null;
+
+            _meshDeformLastTargetVertexCount = 0;
+            _meshDeformLastDeformerVertexCount = 0;
+            _meshDeformLastInvalidInfluenceCount = 0;
+            _meshDeformLastTruncatedVertexCount = 0;
         }
 
         [MemoryPackIgnore]
@@ -1072,10 +1135,19 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
-        /// Sets up mesh deformation with the specified deformer mesh and influence data.
+        /// Sets up mesh-to-mesh deformation using another renderer as the deformer source.
         /// </summary>
-        /// <param name="deformerRenderer">The mesh renderer providing deformation data.</param>
-        /// <param name="influences">Per-vertex influence data. Array index = vertex index in this mesh.</param>
+        /// <param name="deformerRenderer">Renderer supplying the live deformer positions. Its mesh defines the deformer vertex index space referenced by <paramref name="influences"/>.</param>
+        /// <param name="influences">Per-target-vertex influence lists. The outer array is indexed by this renderer's mesh vertex index. Each inner list contains deformer vertex indices and weights. Invalid or non-positive influences are ignored during buffer build.</param>
+        /// <remarks>
+        /// Contract summary:
+        /// - The target mesh is this renderer's <see cref="Mesh"/>.
+        /// - The deformer mesh is <paramref name="deformerRenderer"/>'s <see cref="Mesh"/>.
+        /// - Influence array length should match the target mesh vertex count. Missing entries are treated as uninfluenced vertices.
+        /// - When <see cref="OptimizeMeshDeformToVec4"/> is enabled and <see cref="MaxMeshDeformInfluences"/> is 4 or less, only the first 4 valid influences per vertex are serialized.
+        /// - Positions are always required. Normals and tangents are only bound when both meshes expose those channels.
+        /// - If the deformer renderer has compute-skinned outputs, the mesh-deform path prefers those over the static mesh buffers.
+        /// </remarks>
         public void SetupMeshDeformation(XRMeshRenderer deformerRenderer, MeshDeformInfluence[][] influences)
         {
             _deformMeshRenderer = deformerRenderer;
@@ -1101,6 +1173,8 @@ namespace XREngine.Rendering
             var deformerMesh = DeformMeshRenderer.Mesh;
             uint deformerVertexCount = (uint)deformerMesh.VertexCount;
             uint vertexCount = (uint)Mesh.VertexCount;
+
+            ValidateMeshDeformConfiguration(vertexCount, deformerVertexCount);
 
             // Create deformer position buffers
             DeformerPositionsBuffer = new XRDataBuffer(
@@ -1137,6 +1211,9 @@ namespace XREngine.Rendering
                 DeformerRestPositionsBuffer.SetVector4(i, new Vector4(pos, 1.0f));
             }
 
+            if (TryCopySkinnedDeformerPositions(deformerMesh))
+                _meshDeformInvalidated = true;
+
             Buffers.Add(DeformerPositionsBuffer.AttributeName, DeformerPositionsBuffer);
             Buffers.Add(DeformerRestPositionsBuffer.AttributeName, DeformerRestPositionsBuffer);
 
@@ -1162,6 +1239,8 @@ namespace XREngine.Rendering
                     DeformerNormalsBuffer.SetVector4(i, new Vector4(nrm, 0.0f));
                 }
 
+                TryCopySkinnedDeformerNormals(deformerMesh);
+
                 Buffers.Add(DeformerNormalsBuffer.AttributeName, DeformerNormalsBuffer);
             }
 
@@ -1185,6 +1264,8 @@ namespace XREngine.Rendering
                 {
                     DeformerTangentsBuffer.SetVector4(i, deformerMesh.GetTangentWithSign(i));
                 }
+
+                TryCopySkinnedDeformerTangents(deformerMesh);
 
                 Buffers.Add(DeformerTangentsBuffer.AttributeName, DeformerTangentsBuffer);
             }
@@ -1243,10 +1324,13 @@ namespace XREngine.Rendering
 
                 if (influences is not null)
                 {
-                    int count = Math.Min(influences.Length, 4);
-                    for (int i = 0; i < count; i++)
+                    int writeIndex = 0;
+                    for (int i = 0; i < influences.Length && writeIndex < 4; i++)
                     {
-                        switch (i)
+                        if (!IsValidMeshDeformInfluence(influences[i], DeformerPositionsBuffer?.ElementCount ?? 0u))
+                            continue;
+
+                        switch (writeIndex)
                         {
                             case 0:
                                 indices.X = influences[i].VertexIndex;
@@ -1265,6 +1349,8 @@ namespace XREngine.Rendering
                                 weights.W = influences[i].Weight;
                                 break;
                         }
+
+                        writeIndex++;
                     }
                 }
 
@@ -1290,7 +1376,14 @@ namespace XREngine.Rendering
             for (int v = 0; v < _meshDeformInfluences!.Length; v++)
             {
                 var influences = _meshDeformInfluences[v];
-                totalInfluences += (uint)(influences?.Length ?? 0);
+                if (influences is null)
+                    continue;
+
+                for (int i = 0; i < influences.Length; i++)
+                {
+                    if (IsValidMeshDeformInfluence(influences[i], DeformerPositionsBuffer?.ElementCount ?? 0u))
+                        totalInfluences++;
+                }
             }
 
             // Create SSBO buffers for indices and weights
@@ -1352,7 +1445,15 @@ namespace XREngine.Rendering
             for (uint v = 0; v < vertexCount; v++)
             {
                 var influences = v < _meshDeformInfluences!.Length ? _meshDeformInfluences[v] : null;
-                int count = influences?.Length ?? 0;
+                int count = 0;
+                if (influences is not null)
+                {
+                    for (int i = 0; i < influences.Length; i++)
+                    {
+                        if (IsValidMeshDeformInfluence(influences[i], DeformerPositionsBuffer?.ElementCount ?? 0u))
+                            count++;
+                    }
+                }
 
                 if (Engine.Rendering.Settings.UseIntegerUniformsInShaders)
                 {
@@ -1367,10 +1468,15 @@ namespace XREngine.Rendering
 
                 if (influences is not null)
                 {
-                    for (int i = 0; i < count; i++)
+                    int writeIndex = 0;
+                    for (int i = 0; i < influences.Length; i++)
                     {
-                        MeshDeformIndicesBuffer.Set(currentOffset + (uint)i, influences[i].VertexIndex);
-                        MeshDeformWeightsBuffer.Set(currentOffset + (uint)i, influences[i].Weight);
+                        if (!IsValidMeshDeformInfluence(influences[i], DeformerPositionsBuffer?.ElementCount ?? 0u))
+                            continue;
+
+                        MeshDeformIndicesBuffer.Set(currentOffset + (uint)writeIndex, influences[i].VertexIndex);
+                        MeshDeformWeightsBuffer.Set(currentOffset + (uint)writeIndex, influences[i].Weight);
+                        writeIndex++;
                     }
                 }
 
@@ -1393,12 +1499,9 @@ namespace XREngine.Rendering
                 return;
 
             var deformerMesh = DeformMeshRenderer.Mesh;
-            
-            // If deformer has skinned positions buffer, use that (already transformed)
-            if (DeformMeshRenderer.SkinnedPositionsBuffer is not null)
+
+            if (TryCopySkinnedDeformerPositions(deformerMesh))
             {
-                // Copy from skinned buffer - they should have the same format
-                // Mark as invalidated to push on next render
                 _meshDeformInvalidated = true;
                 return;
             }
@@ -1424,6 +1527,12 @@ namespace XREngine.Rendering
 
             var deformerMesh = DeformMeshRenderer.Mesh;
 
+            if (TryCopySkinnedDeformerNormals(deformerMesh))
+            {
+                _meshDeformInvalidated = true;
+                return;
+            }
+
             uint count = DeformerNormalsBuffer.ElementCount;
             for (uint i = 0; i < count; i++)
             {
@@ -1443,6 +1552,12 @@ namespace XREngine.Rendering
                 return;
 
             var deformerMesh = DeformMeshRenderer.Mesh;
+
+            if (TryCopySkinnedDeformerTangents(deformerMesh))
+            {
+                _meshDeformInvalidated = true;
+                return;
+            }
 
             uint count = DeformerTangentsBuffer.ElementCount;
             for (uint i = 0; i < count; i++)
@@ -1466,6 +1581,169 @@ namespace XREngine.Rendering
             DeformerPositionsBuffer?.PushSubData();
             DeformerNormalsBuffer?.PushSubData();
             DeformerTangentsBuffer?.PushSubData();
+        }
+
+        private void ValidateMeshDeformConfiguration(uint vertexCount, uint deformerVertexCount)
+        {
+            if (_meshDeformInfluences is null)
+                return;
+
+            _meshDeformLastTargetVertexCount = vertexCount;
+            _meshDeformLastDeformerVertexCount = deformerVertexCount;
+
+            if (_meshDeformInfluences.Length != vertexCount)
+            {
+                Debug.LogWarning($"XRMeshRenderer mesh-deform influence array length ({_meshDeformInfluences.Length}) does not match target mesh vertex count ({vertexCount}). Missing entries will be treated as uninfluenced vertices.");
+            }
+
+            int invalidInfluenceCount = 0;
+            int truncatedVertices = 0;
+            bool usingVec4Optimization = OptimizeMeshDeformToVec4 && MaxMeshDeformInfluences <= 4;
+
+            foreach (var influences in _meshDeformInfluences)
+            {
+                if (influences is null || influences.Length == 0)
+                    continue;
+
+                int validCount = 0;
+                for (int i = 0; i < influences.Length; i++)
+                {
+                    if (IsValidMeshDeformInfluence(influences[i], deformerVertexCount))
+                        validCount++;
+                    else
+                        invalidInfluenceCount++;
+                }
+
+                if (usingVec4Optimization && validCount > 4)
+                    truncatedVertices++;
+            }
+
+            _meshDeformLastInvalidInfluenceCount = invalidInfluenceCount;
+            _meshDeformLastTruncatedVertexCount = truncatedVertices;
+
+            if (invalidInfluenceCount > 0)
+            {
+                Debug.LogWarning($"XRMeshRenderer mesh-deform setup skipped {invalidInfluenceCount} invalid influence(s) that referenced missing deformer vertices or had non-positive weights.");
+            }
+
+            if (truncatedVertices > 0)
+            {
+                Debug.LogWarning($"XRMeshRenderer mesh-deform vec4 optimization truncates influences to 4 per vertex. {truncatedVertices} vertex/vertices exceed that limit.");
+            }
+        }
+
+        private static bool IsValidMeshDeformInfluence(MeshDeformInfluence influence, uint deformerVertexCount)
+            => influence.Weight > 0.0001f && influence.VertexIndex >= 0 && influence.VertexIndex < deformerVertexCount;
+
+        private bool TryCopySkinnedDeformerPositions(XRMesh deformerMesh)
+        {
+            if (DeformerPositionsBuffer is null || DeformMeshRenderer is null)
+                return false;
+
+            if (TryCopyVector4Buffer(DeformMeshRenderer.SkinnedPositionsBuffer, DeformerPositionsBuffer))
+                return true;
+
+            return TryCopyInterleavedVector3Buffer(DeformMeshRenderer.SkinnedInterleavedBuffer, DeformerPositionsBuffer, deformerMesh.InterleavedStride, deformerMesh.PositionOffset, 1.0f);
+        }
+
+        private bool TryCopySkinnedDeformerNormals(XRMesh deformerMesh)
+        {
+            if (DeformerNormalsBuffer is null || DeformMeshRenderer is null)
+                return false;
+
+            if (TryCopyVector4Buffer(DeformMeshRenderer.SkinnedNormalsBuffer, DeformerNormalsBuffer))
+                return true;
+
+            if (deformerMesh.NormalOffset.HasValue)
+                return TryCopyInterleavedVector3Buffer(DeformMeshRenderer.SkinnedInterleavedBuffer, DeformerNormalsBuffer, deformerMesh.InterleavedStride, deformerMesh.NormalOffset.Value, 0.0f);
+
+            return false;
+        }
+
+        private bool TryCopySkinnedDeformerTangents(XRMesh deformerMesh)
+        {
+            if (DeformerTangentsBuffer is null || DeformMeshRenderer is null)
+                return false;
+
+            if (TryCopyVector4Buffer(DeformMeshRenderer.SkinnedTangentsBuffer, DeformerTangentsBuffer))
+                return true;
+
+            if (deformerMesh.TangentOffset.HasValue)
+                return TryCopyInterleavedVector4Buffer(DeformMeshRenderer.SkinnedInterleavedBuffer, DeformerTangentsBuffer, deformerMesh.InterleavedStride, deformerMesh.TangentOffset.Value);
+
+            return false;
+        }
+
+        private static unsafe bool TryCopyVector4Buffer(XRDataBuffer? source, XRDataBuffer target)
+        {
+            if (source is null || source.ComponentType != EComponentType.Float || source.ComponentCount != 4 || source.ClientSideSource is null)
+                return false;
+
+            uint copyCount = Math.Min(source.ElementCount, target.ElementCount);
+            if (copyCount == 0)
+                return false;
+
+            Memory.Move(target.Address, source.Address, copyCount * target.ElementSize);
+            return true;
+        }
+
+        private static bool TryCopyInterleavedVector3Buffer(XRDataBuffer? source, XRDataBuffer target, uint strideBytes, uint offsetBytes, float w)
+        {
+            if (source?.ClientSideSource is null)
+                return false;
+
+            if (strideBytes == 0)
+                return false;
+
+            uint vertexCount = Math.Min(target.ElementCount, source.Length / strideBytes);
+            if (vertexCount == 0)
+                return false;
+
+            for (uint i = 0; i < vertexCount; i++)
+            {
+                uint byteOffset = i * strideBytes + offsetBytes;
+                target.SetVector4(i, new Vector4(source.GetVector3AtOffset(byteOffset), w));
+            }
+
+            return true;
+        }
+
+        private static bool TryCopyInterleavedVector4Buffer(XRDataBuffer? source, XRDataBuffer target, uint strideBytes, uint offsetBytes)
+        {
+            if (source?.ClientSideSource is null)
+                return false;
+
+            if (strideBytes == 0)
+                return false;
+
+            uint vertexCount = Math.Min(target.ElementCount, source.Length / strideBytes);
+            if (vertexCount == 0)
+                return false;
+
+            for (uint i = 0; i < vertexCount; i++)
+            {
+                uint byteOffset = i * strideBytes + offsetBytes;
+                target.SetVector4(i, source.GetVector4AtOffset(byteOffset));
+            }
+
+            return true;
+        }
+
+        private void RemoveMeshDeformBuffer(XRDataBuffer? buffer)
+        {
+            if (buffer is null || string.IsNullOrWhiteSpace(buffer.AttributeName))
+                return;
+
+            Buffers.Remove(buffer.AttributeName);
+        }
+
+        private static string ResolveMeshDeformChannelSource(XRDataBuffer? separateSource, XRDataBuffer? interleavedSource, bool hasInterleavedLayout)
+        {
+            if (separateSource is not null)
+                return "ComputeSkinnedSeparateBuffers";
+            if (interleavedSource is not null && hasInterleavedLayout)
+                return "ComputeSkinnedInterleavedFallbackCopy";
+            return "MeshBuffers";
         }
 
         #endregion

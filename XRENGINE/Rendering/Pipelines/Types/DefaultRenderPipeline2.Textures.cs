@@ -496,6 +496,38 @@ public partial class DefaultRenderPipeline2
         };
     }
 
+    private XRTexture CreateForwardPassMsaaDepthStencilTexture()
+    {
+        XRTexture2D t = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.Depth24Stencil8,
+            EPixelFormat.DepthStencil,
+            EPixelType.UnsignedInt248,
+            EFrameBufferAttachment.DepthStencilAttachment);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
+        t.MultiSampleCount = MsaaSampleCount;
+        t.MinFilter = ETexMinFilter.Nearest;
+        t.MagFilter = ETexMagFilter.Nearest;
+        t.Name = ForwardPassMsaaDepthStencilTextureName;
+        t.SamplerName = ForwardPassMsaaDepthStencilTextureName;
+        return t;
+    }
+
+    private XRTexture CreateForwardPassMsaaDepthViewTexture()
+    {
+        return new XRTexture2DView(
+            GetTexture<XRTexture2D>(ForwardPassMsaaDepthStencilTextureName)!,
+            0u, 1u,
+            ESizedInternalFormat.Depth24Stencil8,
+            false, true)
+        {
+            DepthStencilViewFormat = EDepthStencilFmt.Depth,
+            Name = ForwardPassMsaaDepthViewTextureName,
+            SamplerName = ForwardPassMsaaDepthViewTextureName,
+        };
+    }
+
     private XRTexture CreateMsaaTransformIdTexture()
     {
         var t = XRTexture2D.CreateFrameBufferTexture(

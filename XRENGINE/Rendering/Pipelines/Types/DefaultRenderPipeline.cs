@@ -144,6 +144,43 @@ public partial class DefaultRenderPipeline : RenderPipeline
     private bool EnableFxaa => Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Fxaa;
     private uint MsaaSampleCount => Math.Max(1u, Engine.EffectiveSettings.MsaaSampleCount);
 
+    private bool NeedsRecreateMsaaTextureInternalSize(XRTexture texture)
+    {
+        if (NeedsRecreateTextureInternalSize(texture))
+            return true;
+
+        return texture switch
+        {
+            XRTexture2D texture2D => texture2D.MultiSampleCount != MsaaSampleCount,
+            XRTexture2DArray texture2DArray =>
+                !texture2DArray.MultiSample ||
+                texture2DArray.Textures.Length == 0 ||
+                texture2DArray.Textures[0].MultiSampleCount != MsaaSampleCount,
+            _ => true,
+        };
+    }
+
+    private bool NeedsRecreateTextureView(XRTexture texture, string viewedTextureName)
+    {
+        XRTexture? viewedTexture = GetTexture<XRTexture>(viewedTextureName);
+        return texture switch
+        {
+            XRTexture2DView texture2DView => viewedTexture is not XRTexture2D expected || !ReferenceEquals(texture2DView.ViewedTexture, expected),
+            XRTexture2DArrayView texture2DArrayView => viewedTexture is not XRTexture2DArray expected || !ReferenceEquals(texture2DArrayView.ViewedTexture, expected),
+            _ => true,
+        };
+    }
+
+    private bool NeedsRecreateMsaaFbo(XRFrameBuffer fbo)
+        => fbo.EffectiveSampleCount != MsaaSampleCount;
+
+    /// <summary>
+    /// Deferred MSAA remains opt-in because the forward path benefits from MSAA independently,
+    /// while the deferred MSAA branches are substantially more fragile and don't improve the
+    /// final full-screen deferred lighting edge quality on their own.
+    /// </summary>
+    public bool EnableDeferredMsaa { get; set; } = false;
+
     private string BrightPassShaderName() => 
         Stereo ? "BrightPassStereo.fs" : 
         "BrightPass.fs";
@@ -247,6 +284,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
     public const string TransformIdTextureName = "TransformId";
     public const string DepthStencilTextureName = "DepthStencil";
     public const string ForwardPrePassDepthStencilTextureName = "ForwardPrePassDepthStencil";
+    public const string ForwardPassMsaaDepthStencilTextureName = "ForwardPassMsaaDepthStencil";
+    public const string ForwardPassMsaaDepthViewTextureName = "ForwardPassMsaaDepthView";
     public const string DiffuseTextureName = "LightingTexture";
     public const string HDRSceneTextureName = "HDRSceneTex";
     public const string TransparentSceneCopyTextureName = "TransparentSceneCopyTex";
@@ -292,7 +331,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
     /// True when the current camera uses MSAA and the deferred pipeline should run in MSAA mode.
     /// </summary>
     internal static bool RuntimeEnableMsaaDeferred
-        => RuntimeEnableMsaa;
+        => RuntimeEnableMsaa
+        && (Engine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;
 
     private const string TonemappingStageKey = "tonemapping";
     private const string ColorGradingStageKey = "colorGrading";
@@ -328,7 +368,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
     private static readonly string[] AntiAliasingFrameBufferDependencies =
     [
-        AmbientOcclusionFBOName,
+        // AmbientOcclusionFBO is managed by AO passes (not CacheOrCreateFBO),
+        // so it must not be destroyed here — the AO pass owns its lifecycle.
         LightCombineFBOName,
         ForwardPassFBOName,
         PostProcessOutputFBOName,
@@ -615,11 +656,13 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 MsaaGBufferFBOName,
                 CreateMsaaGBufferFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal,
+                NeedsRecreateMsaaFbo);
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 MsaaLightingFBOName,
                 CreateMsaaLightingFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal,
+                NeedsRecreateMsaaFbo);
 
             // Deferred GBuffer geometry rendering.
             // When MSAA deferred is active, renders into the MSAA GBuffer FBO for per-sample surface data.
@@ -764,7 +807,8 @@ public partial class DefaultRenderPipeline : RenderPipeline
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 ForwardPassMsaaFBOName,
                 CreateForwardPassMsaaFBO,
-                GetDesiredFBOSizeInternal);
+                GetDesiredFBOSizeInternal,
+                NeedsRecreateMsaaFbo);
             c.Add<VPRC_CacheOrCreateFBO>().SetOptions(
                 DepthPreloadFBOName,
                 CreateDepthPreloadFBO,
@@ -843,15 +887,18 @@ public partial class DefaultRenderPipeline : RenderPipeline
 
             //Render forward pass - GBuffer results + forward lit meshes + debug data
             // FBO target and clear flags are resolved at render time so per-camera AA overrides work.
-            // When MSAA is active, renders into the MSAA FBO and clears color/depth (MSAA renderbuffers contain garbage).
-            // Otherwise renders into the regular forward FBO without clearing color/depth.
+            // Color is always cleared: the LightCombine quad overwrites every pixel, but stale
+            // HDRSceneTexture content from the previous frame can bleed through if the quad
+            // doesn't cover fully (e.g., edge of viewport) or if the MSAA resolve blit fails.
+            // Depth is only cleared for MSAA (renderbuffers start undefined); the non-MSAA path
+            // preserves GBuffer depth so forward materials depth-test against deferred geometry.
             // Stencil is always cleared so post-process outline is driven only by current-frame writes.
             using (c.AddUsing<VPRC_BindFBOByName>(x =>
             {
                 x.Write = true;
                 x.ClearStencil = true;
                 x.DynamicName = () => RuntimeEnableMsaa ? ForwardPassMsaaFBOName : ForwardPassFBOName;
-                x.DynamicClearColor = () => RuntimeEnableMsaa;
+                x.ClearColor = true;
                 x.DynamicClearDepth = () => RuntimeEnableMsaa;
             }))
             {
@@ -904,14 +951,12 @@ public partial class DefaultRenderPipeline : RenderPipeline
                 msaaResolve.ConditionEvaluator = () => RuntimeEnableMsaa;
                 {
                     var resolveCmds = new ViewportRenderCommandContainer(this);
-                    resolveCmds.Add<VPRC_BlitFrameBuffer>().SetOptions(
+                    resolveCmds.Add<VPRC_ResolveMsaaGBuffer>().SetOptions(
                         ForwardPassMsaaFBOName,
                         ForwardPassFBOName,
-                        EReadBufferMode.ColorAttachment0,
-                        blitColor: true,
-                        blitDepth: false,
-                        blitStencil: false,
-                        linearFilter: false);
+                        colorAttachmentCount: 1,
+                        resolveDepthStencil: true,
+                        depthViewTextureName: ForwardPassMsaaDepthViewTextureName);
                     msaaResolve.TrueCommands = resolveCmds;
                 }
             }
@@ -1287,6 +1332,18 @@ public partial class DefaultRenderPipeline : RenderPipeline
             NeedsRecreateTextureInternalSize,
             ResizeTextureInternalSize);
 
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            ForwardPassMsaaDepthStencilTextureName,
+            CreateForwardPassMsaaDepthStencilTexture,
+            NeedsRecreateMsaaTextureInternalSize,
+            ResizeTextureInternalSize);
+
+        c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
+            ForwardPassMsaaDepthViewTextureName,
+            CreateForwardPassMsaaDepthViewTexture,
+            t => NeedsRecreateTextureView(t, ForwardPassMsaaDepthStencilTextureName),
+            ResizeTextureInternalSize);
+
         //Depth view texture
         //This is a view of the depth/stencil texture that only shows the depth values.
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
@@ -1359,37 +1416,37 @@ public partial class DefaultRenderPipeline : RenderPipeline
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             MsaaAlbedoOpacityTextureName,
             CreateMsaaAlbedoOpacityTexture,
-            NeedsRecreateTextureInternalSize,
+            NeedsRecreateMsaaTextureInternalSize,
             ResizeTextureInternalSize);
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             MsaaNormalTextureName,
             CreateMsaaNormalTexture,
-            NeedsRecreateTextureInternalSize,
+            NeedsRecreateMsaaTextureInternalSize,
             ResizeTextureInternalSize);
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             MsaaRMSETextureName,
             CreateMsaaRMSETexture,
-            NeedsRecreateTextureInternalSize,
+            NeedsRecreateMsaaTextureInternalSize,
             ResizeTextureInternalSize);
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             MsaaDepthStencilTextureName,
             CreateMsaaDepthStencilTexture,
-            NeedsRecreateTextureInternalSize,
+            NeedsRecreateMsaaTextureInternalSize,
             ResizeTextureInternalSize);
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             MsaaDepthViewTextureName,
             CreateMsaaDepthViewTexture,
-            NeedsRecreateTextureInternalSize,
+            t => NeedsRecreateTextureView(t, MsaaDepthStencilTextureName),
             ResizeTextureInternalSize);
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             MsaaTransformIdTextureName,
             CreateMsaaTransformIdTexture,
-            NeedsRecreateTextureInternalSize,
+            NeedsRecreateMsaaTextureInternalSize,
             ResizeTextureInternalSize);
         c.Add<VPRC_CacheOrCreateTexture>().SetOptions(
             MsaaLightingTextureName,
             CreateMsaaLightingTexture,
-            NeedsRecreateTextureInternalSize,
+            NeedsRecreateMsaaTextureInternalSize,
             ResizeTextureInternalSize);
 
         //SSAO FBO texture, this is created later by the SSAO command

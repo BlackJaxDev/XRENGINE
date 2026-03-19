@@ -221,6 +221,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 depthViewTex.Name ?? "null",
                 IntensityTextureName);
 
+            if (!forceRebuild)
+                forceRebuild = !instance.TryGetFBO(GenerationFBOName, out _);
+
             if (forceRebuild || width != state.LastWidth || height != state.LastHeight)
             {
                 RegenerateResources(

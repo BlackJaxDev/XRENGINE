@@ -11,6 +11,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Data.Transforms;
 using SimpleScene.Util.ssBVH;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
@@ -358,6 +359,49 @@ namespace XREngine.Components.Scene.Mesh
         private static Matrix4x4 GetCurrentCullingBasisMatrix(TransformBase transform)
             => Engine.IsRenderThread ? transform.RenderMatrix : transform.WorldMatrix;
 
+        private static Vector3 TransformPosition(in Vector3 position, in Matrix4x4 matrix)
+            => AffineMatrix4x3.TryFromMatrix4x4(matrix, out AffineMatrix4x3 affine)
+                ? affine.TransformPosition(position)
+                : Vector3.Transform(position, matrix);
+
+        private static AABB TransformBounds(in AABB bounds, in Matrix4x4 matrix)
+        {
+            if (!AffineMatrix4x3.TryFromMatrix4x4(matrix, out AffineMatrix4x3 affine))
+            {
+                Matrix4x4 matrixCopy = matrix;
+                return bounds.Transformed(p => Vector3.Transform(p, matrixCopy));
+            }
+
+            bounds.GetCorners(
+                out Vector3 tbl,
+                out Vector3 tbr,
+                out Vector3 tfl,
+                out Vector3 tfr,
+                out Vector3 bbl,
+                out Vector3 bbr,
+                out Vector3 bfl,
+                out Vector3 bfr);
+
+            Vector3 min = affine.TransformPosition(tbl);
+            Vector3 max = min;
+
+            ExpandAffineBounds(ref min, ref max, affine.TransformPosition(tbr));
+            ExpandAffineBounds(ref min, ref max, affine.TransformPosition(tfl));
+            ExpandAffineBounds(ref min, ref max, affine.TransformPosition(tfr));
+            ExpandAffineBounds(ref min, ref max, affine.TransformPosition(bbl));
+            ExpandAffineBounds(ref min, ref max, affine.TransformPosition(bbr));
+            ExpandAffineBounds(ref min, ref max, affine.TransformPosition(bfl));
+            ExpandAffineBounds(ref min, ref max, affine.TransformPosition(bfr));
+
+            return new AABB(min, max);
+        }
+
+        private static void ExpandAffineBounds(ref Vector3 min, ref Vector3 max, in Vector3 point)
+        {
+            min = Vector3.Min(min, point);
+            max = Vector3.Max(max, point);
+        }
+
         internal SkinnedMeshBoundsCalculator.Result EnsureLocalBounds(SkinnedMeshBoundsCalculator.Result result)
         {
             if (!IsSkinned || !result.IsWorldSpace)
@@ -371,7 +415,7 @@ namespace XREngine.Components.Scene.Mesh
 
             var localPositions = new Vector3[worldPositions.Length];
             for (int i = 0; i < worldPositions.Length; i++)
-                localPositions[i] = Vector3.Transform(worldPositions[i], invBasis);
+                localPositions[i] = TransformPosition(worldPositions[i], invBasis);
 
             var localBounds = SkinnedMeshBoundsCalculator.CalculateBounds(localPositions);
             return new SkinnedMeshBoundsCalculator.Result(localPositions, localBounds, basis);
@@ -609,7 +653,7 @@ namespace XREngine.Components.Scene.Mesh
             for (int i = 0; i < vertices.Length; i++)
             {
                 Vector3 worldPos = ComputeSkinnedPosition(vertices[i], fallbackMatrix);
-                Vector3 localPos = Vector3.Transform(worldPos, invBasis);
+                Vector3 localPos = TransformPosition(worldPos, invBasis);
                 _skinnedVertexPositions[i] = localPos;
 
                 if (!initialized)
@@ -638,14 +682,14 @@ namespace XREngine.Components.Scene.Mesh
         private Vector3 ComputeSkinnedPosition(Vertex vertex, Matrix4x4 fallbackMatrix)
         {
             if (vertex.Weights is not { Count: > 0 })
-                return Vector3.Transform(vertex.Position, fallbackMatrix);
+                return TransformPosition(vertex.Position, fallbackMatrix);
 
             Vector3 result = Vector3.Zero;
             foreach (var (bone, data) in vertex.Weights)
             {
                 if (!_currentSkinMatrices.TryGetValue(bone, out Matrix4x4 boneMatrix))
                     boneMatrix = data.bindInvWorldMatrix * bone.RenderMatrix;
-                result += Vector3.Transform(vertex.Position, boneMatrix) * data.weight;
+                result += TransformPosition(vertex.Position, boneMatrix) * data.weight;
             }
             return result;
         }
@@ -797,7 +841,7 @@ namespace XREngine.Components.Scene.Mesh
             // Prefer the live skinned bounds when skinning is active and successfully computed.
             if (IsSkinned && EnsureSkinnedBounds())
             {
-                worldBounds = _skinnedLocalBounds.Transformed(p => Vector3.Transform(p, _skinnedRootRenderMatrix));
+                worldBounds = TransformBounds(_skinnedLocalBounds, _skinnedRootRenderMatrix);
                 return worldBounds.IsValid;
             }
 
@@ -807,7 +851,7 @@ namespace XREngine.Components.Scene.Mesh
                 return false;
 
             Matrix4x4 basis = Component.Transform.RenderMatrix;
-            worldBounds = localBounds.Transformed(p => Vector3.Transform(p, basis));
+            worldBounds = TransformBounds(localBounds, basis);
             return worldBounds.IsValid;
         }
 

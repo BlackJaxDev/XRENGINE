@@ -80,6 +80,34 @@ public class GpuRenderingBacklogTests
     }
 
     [Test]
+    public void GPUScene_UpdateCommand_RotatedAffineTransform_MatchesExpectedBoundingSphere()
+    {
+        var method = typeof(GPUScene).GetMethod("SetWorldSpaceBoundingSphere", BindingFlags.NonPublic | BindingFlags.Static);
+        method.ShouldNotBeNull();
+
+        GPUIndirectRenderCommand command = default;
+        var localBounds = new AABB(new Vector3(-2f, -1f, -3f), new Vector3(2f, 1f, 3f));
+        Matrix4x4 model = Matrix4x4.CreateScale(1.5f, 2.5f, 0.75f)
+            * Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(Quaternion.CreateFromYawPitchRoll(0.35f, -0.2f, 0.15f)))
+            * Matrix4x4.CreateTranslation(7f, -4f, 11f);
+
+        object?[] args = [command, localBounds, model];
+        method!.Invoke(null, args);
+        command = (GPUIndirectRenderCommand)args[0]!;
+
+        Vector3 expectedCenter = Vector3.Transform(localBounds.Center, model);
+        Vector3 xAxis = new(model.M11, model.M21, model.M31);
+        Vector3 yAxis = new(model.M12, model.M22, model.M32);
+        Vector3 zAxis = new(model.M13, model.M23, model.M33);
+        float expectedRadius = localBounds.HalfExtents.Length() * MathF.Max(xAxis.Length(), MathF.Max(yAxis.Length(), zAxis.Length()));
+
+        command.BoundingSphere.X.ShouldBe(expectedCenter.X, 0.0001f);
+        command.BoundingSphere.Y.ShouldBe(expectedCenter.Y, 0.0001f);
+        command.BoundingSphere.Z.ShouldBe(expectedCenter.Z, 0.0001f);
+        command.BoundingSphere.W.ShouldBe(expectedRadius, 0.0001f);
+    }
+
+    [Test]
     public void GPURenderPass_BvhCull_UsesRealCullingPath_WhenEnabled()
     {
         var pass = new GPURenderPassCollection(renderPass: 0);
