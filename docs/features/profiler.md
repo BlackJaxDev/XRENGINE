@@ -160,8 +160,21 @@ In the editor's Settings panel, toggle **Enable Profiler UDP Sending** under
 Debug Options. This starts/stops the sender thread at runtime with zero residual
 overhead when off.
 
+If you want the external profiler every time the editor boots, enable
+**Start External Profiler On Startup** in either Global Editor Preferences or
+Editor Preferences Overrides. Startup uses that setting to launch
+`XREngine.Profiler` and force profiler UDP sending on for the session.
+
 The in-editor profiler window also exposes **Enable GPU Pipeline Profiling**,
 which turns on command-level GPU timestamp collection for supported renderers.
+
+The in-editor profiler window also exposes **Enable Profiler Component Timing**,
+which independently controls per-component tick timing capture for the
+Components panel without affecting frame logging or render statistics.
+
+Profiler settings also allow **Update (s)** to be set to `0` for every-render
+graph refresh, and expose per-category CPU/GPU timing graph toggles for raw ms
+lines, smoothed display lines, and interpolation between buffered updates.
 
 ### Option 3: Programmatic
 

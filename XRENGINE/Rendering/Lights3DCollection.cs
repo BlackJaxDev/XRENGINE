@@ -5,6 +5,7 @@ using System.Linq;
 using System.Numerics;
 using MIConvexHull;
 using YamlDotNet.Serialization;
+using XREngine.Components;
 using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
@@ -39,6 +40,16 @@ namespace XREngine.Scene
         /// </summary>
         private static XRTexture2D? _dummyShadowMap;
         private static XRTexture2D DummyShadowMap => _dummyShadowMap ??= new XRTexture2D(1, 1, ColorF4.White);
+
+        /// <summary>
+        /// A 1x1x1 dummy depth texture array used as a fallback for forward cascaded shadow sampling.
+        /// </summary>
+        private static XRTexture2DArray? _dummyShadowMapArray;
+        private static XRTexture2DArray DummyShadowMapArray => _dummyShadowMapArray ??= new XRTexture2DArray(
+            1, 1, 1,
+            EPixelInternalFormat.DepthComponent16,
+            EPixelFormat.DepthComponent,
+            EPixelType.Float);
 
         /// <summary>
         /// A 1x1 black cubemap used as a fallback environment/reflection map when no light probe is available.
@@ -283,9 +294,12 @@ namespace XREngine.Scene
             // (e.g., Sponza) and manifests as "shadow" sampling a regular color texture.
             // Pick a dedicated high unit for forward shadow sampling.
             const int forwardShadowMapUnit = 15;
+            const int forwardShadowMapArrayUnit = 16;
             XRTexture? forwardShadowTex = null;
+            XRTexture2DArray? forwardCascadeShadowTex = null;
             Matrix4x4 primaryDirLightWorldToLightInvView = Matrix4x4.Identity;
             Matrix4x4 primaryDirLightWorldToLightProj = Matrix4x4.Identity;
+            bool useCascadedDirectionalShadows = false;
             if (DynamicDirectionalLights.Count > 0)
             {
                 var firstDirLight = DynamicDirectionalLights[0];
@@ -297,6 +311,16 @@ namespace XREngine.Scene
                         primaryDirLightWorldToLightInvView = oneView.ShadowCamera.Transform.RenderMatrix;
                         primaryDirLightWorldToLightProj = oneView.ShadowCamera.ProjectionMatrix;
                     }
+
+                    var cameraComponent = currentPipeline?.RenderState.WindowViewport?.CameraComponent;
+                    useCascadedDirectionalShadows =
+                        cameraComponent?.DirectionalShadowRenderingMode == EDirectionalShadowRenderingMode.Cascaded &&
+                        firstDirLight.EnableCascadedShadows &&
+                        firstDirLight.CascadedShadowMapTexture is not null &&
+                        firstDirLight.ActiveCascadeCount > 0;
+
+                    if (useCascadedDirectionalShadows)
+                        forwardCascadeShadowTex = firstDirLight.CascadedShadowMapTexture;
                 }
                 else
                 {
@@ -310,6 +334,7 @@ namespace XREngine.Scene
             }
             bool shadowEnabled = forwardShadowTex != null;
             program.Uniform("ShadowMapEnabled", shadowEnabled);
+            program.Uniform("UseCascadedDirectionalShadows", useCascadedDirectionalShadows);
             program.Uniform("PrimaryDirLightWorldToLightInvViewMatrix", primaryDirLightWorldToLightInvView);
             program.Uniform("PrimaryDirLightWorldToLightProjMatrix", primaryDirLightWorldToLightProj);
             if (!_loggedShadowMapEnabledOnce)
@@ -323,6 +348,7 @@ namespace XREngine.Scene
             // The shader's layout(binding=15) should handle this, but we force it to be safe against
             // cached shader binaries that might not have the layout qualifier.
             program.Uniform("ShadowMap", forwardShadowMapUnit);
+            program.Uniform("ShadowMapArray", forwardShadowMapArrayUnit);
 
             for (int i = 0; i < DynamicDirectionalLights.Count; ++i)
             {
@@ -344,6 +370,7 @@ namespace XREngine.Scene
             // ALWAYS bind a texture to unit 15 - if no shadow map, use a 1x1 white dummy.
             // This prevents OpenGL from sampling stale texture state.
             program.Sampler("ShadowMap", forwardShadowTex ?? DummyShadowMap, forwardShadowMapUnit);
+            program.Sampler("ShadowMapArray", forwardCascadeShadowTex ?? DummyShadowMapArray, forwardShadowMapArrayUnit);
 
             // Bind environment/reflection cubemap to dedicated high units.
             // The uber PBR shader (pbr.glsl) declares samplerCube _PBRReflCube and u_EnvironmentMap.

@@ -14,6 +14,7 @@ uniform float Emission = 0.0;
 uniform bool AmbientOcclusionMultiBounce;
 uniform bool SpecularOcclusionEnabled;
 uniform bool ForwardPbrResourcesEnabled;
+uniform mat4 InverseViewMatrix;
 
 layout(binding = 6) uniform sampler2D BRDF;
 layout(binding = 7) uniform sampler2DArray IrradianceArray;
@@ -65,7 +66,9 @@ uniform bool UseProbeGrid;
 // Use explicit binding at unit 15 to avoid collision with material textures (which use 0..N).
 // The layout(binding) ensures the sampler defaults to unit 15 even if runtime binding fails.
 layout(binding = 15) uniform sampler2D ShadowMap;
+layout(binding = 16) uniform sampler2DArray ShadowMapArray;
 uniform bool ShadowMapEnabled;
+uniform bool UseCascadedDirectionalShadows;
 uniform mat4 PrimaryDirLightWorldToLightInvViewMatrix;
 uniform mat4 PrimaryDirLightWorldToLightProjMatrix;
 uniform float ShadowBase;
@@ -447,14 +450,75 @@ float XRENGINE_GetShadowBias(float diffuseFactor)
     return mix(ShadowBiasMin, ShadowBiasMax, mapped);
 }
 
+float XRENGINE_ViewDepthFromWorldPos(vec3 fragPosWS)
+{
+    mat4 viewMatrix = inverse(InverseViewMatrix);
+    vec4 viewPos = viewMatrix * vec4(fragPosWS, 1.0);
+    return abs(viewPos.z);
+}
+
+int XRENGINE_GetPrimaryDirLightCascadeIndex(vec3 fragPosWS)
+{
+    if (!UseCascadedDirectionalShadows || DirLightCount <= 0)
+        return -1;
+
+    DirLight primaryLight = DirectionalLights[0];
+    if (primaryLight.CascadeCount <= 0)
+        return -1;
+
+    float viewDepth = XRENGINE_ViewDepthFromWorldPos(fragPosWS);
+    int cascadeCount = min(primaryLight.CascadeCount, XRENGINE_MAX_CASCADES);
+    for (int i = 0; i < cascadeCount; ++i)
+    {
+        if (viewDepth <= primaryLight.CascadeSplits[i])
+            return i;
+    }
+
+    return cascadeCount - 1;
+}
+
+float XRENGINE_ReadCascadeShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor, int cascadeIndex)
+{
+    mat4 lightMatrix = DirectionalLights[0].CascadeMatrices[cascadeIndex];
+    vec3 offsetPosWS = fragPos + normal * ShadowBiasMax;
+    vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0);
+    vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    fragCoord = fragCoord * 0.5 + 0.5;
+
+    if (fragCoord.x < 0.0 || fragCoord.x > 1.0 ||
+        fragCoord.y < 0.0 || fragCoord.y > 1.0 ||
+        fragCoord.z < 0.0 || fragCoord.z > 1.0)
+        return 1.0;
+
+    float bias = XRENGINE_GetShadowBias(diffuseFactor);
+
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / vec2(textureSize(ShadowMapArray, 0).xy);
+    for (int x = -1; x <= 1; ++x)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            float pcfDepth = texture(ShadowMapArray, vec3(fragCoord.xy + vec2(x, y) * texelSize, float(cascadeIndex))).r;
+            shadow += (fragCoord.z - bias) > pcfDepth ? 0.0 : 1.0;
+        }
+    }
+
+    return shadow * 0.111111111;
+}
+
 // Shadow map reading for primary directional light (uses standalone ShadowMap sampler)
 float XRENGINE_ReadShadowMapDir(vec3 fragPos, vec3 normal, float diffuseFactor)
 {
     if (!ShadowMapEnabled)
         return 1.0;
 
+    int cascadeIndex = XRENGINE_GetPrimaryDirLightCascadeIndex(fragPos);
+    if (cascadeIndex >= 0)
+        return XRENGINE_ReadCascadeShadowMapDir(fragPos, normal, diffuseFactor, cascadeIndex);
+
     mat4 lightMatrix = PrimaryDirLightWorldToLightProjMatrix * inverse(PrimaryDirLightWorldToLightInvViewMatrix);
-    vec4 fragPosLightSpace = lightMatrix * vec4(fragPos, 1.0);
+    vec3 offsetPosWS = fragPos + normal * ShadowBiasMax;
+    vec4 fragPosLightSpace = lightMatrix * vec4(offsetPosWS, 1.0);
     vec3 fragCoord = fragPosLightSpace.xyz / fragPosLightSpace.w;
     fragCoord = fragCoord * 0.5 + 0.5;
 

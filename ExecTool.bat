@@ -27,6 +27,7 @@ call :AddSep
 call :AddTool "Editor" "Tools\Start-Editor.bat" "Launch the XREngine Editor via dotnet run"
 call :AddTool "Editor" "Tools\Start-NetworkTest.bat" "Launch a network test (server+client or pose sync)"
 call :AddTool "Editor" "Tools\Capture-EditorWindow.bat" "Capture a screenshot of the Editor window to Build\Logs\capture.png"
+call :AddTool "Editor" "Tools\Generate-UnitTestingWorldSettings.ps1" "Regenerate UnitTestingWorldSettings schema and JSONC files"
 call :AddSep
 call :AddTool "Repo" "Tools\Initialize-Submodules.bat" "Initialize and update all git submodules recursively"
 call :AddTool "Repo" "Tools\Reset-GlobalConfig.bat" "Delete global editor preferences (factory reset)"

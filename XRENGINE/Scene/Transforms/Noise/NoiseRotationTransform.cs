@@ -84,6 +84,35 @@ namespace XREngine.Components.Scene.Transforms
             MarkLocalModified();
         }
 
+        public override Vector3 LocalTranslation
+            => Vector3.Zero;
+
+        public override Quaternion LocalRotation
+            => Quaternion.Normalize(_rotation.ToQuaternion());
+
+        public override Quaternion InverseLocalRotation
+            => Quaternion.Normalize(Quaternion.Inverse(LocalRotation));
+
+        public override Quaternion WorldRotation
+            => Parent is null
+                ? LocalRotation
+                : Quaternion.Normalize(ParentWorldRotation * LocalRotation);
+
+        public override Quaternion InverseWorldRotation
+            => Parent is null
+                ? InverseLocalRotation
+                : Quaternion.Normalize(InverseLocalRotation * ParentInverseWorldRotation);
+
+        public override Quaternion RenderRotation
+            => Parent is null
+                ? LocalRotation
+                : Quaternion.Normalize(Parent.RenderRotation * LocalRotation);
+
+        public override Quaternion InverseRenderRotation
+            => Parent is null
+                ? InverseLocalRotation
+                : Quaternion.Normalize(InverseLocalRotation * Parent.InverseRenderRotation);
+
         protected override Matrix4x4 CreateLocalMatrix()
             => _rotation.GetMatrix();
     }

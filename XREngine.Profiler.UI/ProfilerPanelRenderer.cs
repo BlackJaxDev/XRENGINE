@@ -68,6 +68,12 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     private int _graphSampleCount = 120;
     private float _rootHierarchyMinMs;
     private float _rootHierarchyMaxMs;
+    private bool _showCpuTimingRawMsLine = true;
+    private bool _showCpuTimingSmoothedMsLine = true;
+    private bool _interpolateCpuTimingGraphs = true;
+    private bool _showGpuTimingRawMsLine = true;
+    private bool _showGpuTimingSmoothedMsLine = true;
+    private bool _interpolateGpuTimingGraphs = true;
     private readonly Dictionary<string, bool> _nodeOpenCache = new();
 
     // Render-stats history (shared by editor + external profiler)
@@ -82,12 +88,16 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     private readonly float[] _vulkanFrameRecordCommandBufferMsHistory = new float[RenderStatsHistorySamples];
     private readonly float[] _vulkanFrameGpuCommandBufferMsHistory = new float[RenderStatsHistorySamples];
     private readonly float[] _renderStatsHistoryScratch = new float[RenderStatsHistorySamples];
+    private readonly float[] _renderStatsHistoryRawScratch = new float[RenderStatsHistorySamples];
+    private readonly float[] _renderStatsHistoryInterpolatedScratch = new float[RenderStatsHistorySamples];
     private int _renderStatsHistoryHead;
     private int _renderStatsHistoryCount;
     private readonly Dictionary<string, float[]> _gpuPipelineRootHistory = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _gpuPipelineRootHistoryLastSeen = new(StringComparer.Ordinal);
     private readonly List<string> _gpuPipelineRootHistoryStaleKeys = new();
     private readonly float[] _gpuPipelineRootHistoryScratch = new float[RenderStatsHistorySamples];
+    private readonly float[] _gpuPipelineRootHistoryRawScratch = new float[RenderStatsHistorySamples];
+    private readonly float[] _gpuPipelineRootHistoryInterpolatedScratch = new float[RenderStatsHistorySamples];
     private int _gpuPipelineRootSampleSerial;
     private bool _gpuPipelineDisplayEnabled;
     private bool _gpuPipelineDisplaySupported;
@@ -96,6 +106,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     private string _gpuPipelineDisplayStatusMessage = string.Empty;
     private double _gpuPipelineDisplayFrameMs;
     private GpuPipelineTimingNodeData[] _gpuPipelineDisplayRoots = [];
+    private readonly Dictionary<string, TimingGraphInterpolationState> _cpuTimingInterpolationStates = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TimingGraphInterpolationState> _gpuTimingInterpolationStates = new(StringComparer.Ordinal);
 
     // ═══════════════════════════════════════════════════════════════
     //  Public entry points — called per-frame
@@ -107,9 +119,13 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (_paused) return;
 
         var nowUtc = DateTime.UtcNow;
-        var minInterval = TimeSpan.FromSeconds(Math.Clamp(_updateIntervalSeconds, 0.1f, 2.0f));
+        double updateIntervalSeconds = GetEffectiveUpdateIntervalSeconds();
+        var minInterval = updateIntervalSeconds <= 0.0
+            ? TimeSpan.Zero
+            : TimeSpan.FromSeconds(updateIntervalSeconds);
         bool shouldRefreshDisplay =
             _lastDisplayRefreshUtc == DateTime.MinValue ||
+            minInterval == TimeSpan.Zero ||
             nowUtc - _lastDisplayRefreshUtc >= minInterval;
 
         var frame = _source.LatestFrame;
@@ -130,11 +146,12 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 UpdateThreadCache(frame.Threads!, nowUtc);
                 UpdateRootMethodCache(frame, history, nowUtc);
                 UpdateFpsDropSpikeLog(frame, history);
-
-                if (renderStats is not null)
-                    PushRenderStatsSample(renderStats);
             }
         }
+
+        // Push render stats independently of frame logging so GPU/render graphs keep updating
+        if (renderStats is not null && shouldRefreshDisplay)
+            PushRenderStatsSample(renderStats);
 
         RefreshThreadCacheState(nowUtc);
 
@@ -185,30 +202,6 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 
         var nowUtc = DateTime.UtcNow;
 
-        // Controls
-        ImGui.Checkbox("Pause", ref _paused);
-        ImGui.SameLine();
-        ImGui.Checkbox("Sort by Time", ref _sortByTime);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(100);
-        ImGui.SliderFloat("Smoothing", ref _smoothingAlpha, 0.0f, 0.95f, "%.2f");
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(100);
-        ImGui.DragFloat("Update (s)", ref _updateIntervalSeconds, 0.05f, 0.1f, 2.0f);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(100);
-        ImGui.DragFloat("Persist (s)", ref _persistenceSeconds, 0.1f, 0.5f, 10.0f);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(110);
-        ImGui.DragInt("Graph Samples", ref _graphSampleCount, 1.0f, 30, 720);
-        _graphSampleCount = Math.Clamp(_graphSampleCount, 30, 720);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(90);
-        ImGui.DragFloat("Min ms", ref _rootHierarchyMinMs, 0.05f, 0.0f, 1000.0f);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(90);
-        ImGui.DragFloat("Max ms", ref _rootHierarchyMaxMs, 0.05f, 0.0f, 1000.0f);
-
         // Status
         if (_threadCache.Count == 0)
         {
@@ -236,15 +229,18 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         // ── Root Method Graphs ──
         if (ImGui.CollapsingHeader("Root Method Graphs", ImGuiTreeNodeFlags.DefaultOpen))
         {
-            ImGui.TextDisabled($"Hz graph uses display pipeline (update={_updateIntervalSeconds:F2}s, smoothing={_smoothingAlpha:F2})");
+            ImGui.TextDisabled($"Per-call Hz graph (update={FormatUpdateIntervalLabel()}, smoothing={_smoothingAlpha:F2})");
             ImGui.TextColored(new Vector4(0.55f, 0.75f, 1.00f, 1.00f), "Raw Hz");
             ImGui.SameLine();
             ImGui.TextColored(new Vector4(1.00f, 0.70f, 0.25f, 1.00f), "Display Hz");
             foreach (var rm in _cachedGraphList)
             {
-                bool isStale = nowUtc - rm.LastSeen > TimeSpan.FromSeconds(_updateIntervalSeconds);
-                float fps = rm.DisplayTotalTimeMs > 0.001f ? 1000.0f / rm.DisplayTotalTimeMs : 0.0f;
-                string label = $"{rm.Name} ({rm.DisplayTotalTimeMs:F3} ms, {fps:F1} FPS, {rm.DisplayThreadCount} thread(s))";
+                bool isStale = nowUtc - rm.LastSeen > TimeSpan.FromSeconds(GetStaleWindowSeconds());
+                int calls = Math.Max(1, rm.DisplayRootNodeCount);
+                float avgCallMs = rm.DisplayTotalTimeMs / calls;
+                string label = calls > 1
+                    ? $"{rm.Name} ({avgCallMs:F3} ms/call, {calls} calls, {rm.DisplayTotalTimeMs:F3} ms total, {rm.DisplayThreadCount} thread(s))"
+                    : $"{rm.Name} ({rm.DisplayTotalTimeMs:F3} ms, {rm.DisplayThreadCount} thread(s))";
                 if (isStale) label += " (inactive)";
 
                 if (isStale) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.65f, 0.65f, 0.70f, 1.0f));
@@ -623,24 +619,6 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (!string.IsNullOrWhiteSpace(_gpuPipelineDisplayStatusMessage))
             ImGui.TextDisabled(_gpuPipelineDisplayStatusMessage);
 
-        ImGui.Checkbox("Sort by Time", ref _sortByTime);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(100);
-        ImGui.SliderFloat("Smoothing", ref _smoothingAlpha, 0.0f, 0.95f, "%.2f");
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(100);
-        ImGui.DragFloat("Update (s)", ref _updateIntervalSeconds, 0.05f, 0.1f, 2.0f);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(110);
-        ImGui.DragInt("Graph Samples", ref _graphSampleCount, 1.0f, 30, 720);
-        _graphSampleCount = Math.Clamp(_graphSampleCount, 30, 720);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(90);
-        ImGui.DragFloat("Min ms", ref _rootHierarchyMinMs, 0.05f, 0.0f, 1000.0f);
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(90);
-        ImGui.DragFloat("Max ms", ref _rootHierarchyMaxMs, 0.05f, 0.0f, 1000.0f);
-
         if (_gpuPipelineRootHistory.Count > 0 && ImGui.CollapsingHeader("Root History", ImGuiTreeNodeFlags.DefaultOpen))
         {
             GpuPipelineTimingNodeData[] roots = GetOrderedGpuPipelineRoots(_gpuPipelineDisplayRoots);
@@ -653,33 +631,27 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 if (!_gpuPipelineRootHistory.TryGetValue(root.Name, out float[]? series))
                     continue;
 
-                int sampleCount = BuildOrderedRenderStatsHistory(series, _gpuPipelineRootHistoryScratch);
+                int sampleCount = BuildOrderedRenderStatsHistory(series, _gpuPipelineRootHistoryRawScratch, smooth: false);
                 if (sampleCount <= 0)
                     continue;
 
-                float min = float.MaxValue;
-                float max = float.MinValue;
-                for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++)
-                {
-                    float value = _gpuPipelineRootHistoryScratch[sampleIndex];
-                    if (value < min) min = value;
-                    if (value > max) max = value;
-                }
-
-                if (!float.IsFinite(min) || !float.IsFinite(max))
-                {
-                    min = 0f;
-                    max = 1f;
-                }
-                else if (MathF.Abs(max - min) < 0.001f)
-                {
-                    float pad = MathF.Max(0.001f, MathF.Abs(max) * 0.05f);
-                    min = MathF.Max(0f, min - pad);
-                    max += pad;
-                }
-
-                ImGui.Text($"{root.Name}: {root.ElapsedMs:F3} ms");
-                ImGui.PlotLines($"##GpuPipeline_{i}", ref _gpuPipelineRootHistoryScratch[0], sampleCount, 0, null, min, max, new Vector2(-1f, 44f));
+                DrawTimingHistoryPlot(
+                    root.Name,
+                    $"##GpuPipeline_{i}",
+                    _gpuPipelineRootHistoryRawScratch,
+                    sampleCount,
+                    units: "ms",
+                    minY: 0f,
+                    maxY: 0f,
+                    showRawLine: _showGpuTimingRawMsLine,
+                    showSmoothedLine: _showGpuTimingSmoothedMsLine,
+                    interpolate: _interpolateGpuTimingGraphs,
+                    interpolationStates: _gpuTimingInterpolationStates,
+                    smoothedScratch: _gpuPipelineRootHistoryScratch,
+                    interpolatedScratch: _gpuPipelineRootHistoryInterpolatedScratch,
+                    rawColor: new Vector4(1.00f, 0.78f, 0.40f, 0.78f),
+                    smoothedColor: new Vector4(0.95f, 0.58f, 0.18f, 1.0f),
+                    smoothedFillColor: new Vector4(0.95f, 0.58f, 0.18f, 0.16f));
             }
         }
 
@@ -1112,7 +1084,78 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.End();
     }
 
+    /// <summary>Draws the shared profiler settings controls (no Begin/End). Embed in any host window.</summary>
+    public void DrawSettingsContent()
+    {
+        ImGui.Checkbox("Pause", ref _paused);
+        ImGui.SameLine();
+        ImGui.Checkbox("Sort by Time", ref _sortByTime);
+
+        ImGui.SetNextItemWidth(100);
+        ImGui.SliderFloat("Smoothing", ref _smoothingAlpha, 0.0f, 0.95f, "%.2f");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(100);
+        if (ImGui.DragFloat("Update (s)", ref _updateIntervalSeconds, 0.05f, 0.0f, 2.0f))
+            _updateIntervalSeconds = Math.Clamp(_updateIntervalSeconds, 0.0f, 2.0f);
+        ImGui.SameLine();
+        ImGui.TextDisabled(_updateIntervalSeconds <= 0.0f ? "every render" : "buffered");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(100);
+        ImGui.DragFloat("Persist (s)", ref _persistenceSeconds, 0.1f, 0.5f, 10.0f);
+
+        ImGui.SetNextItemWidth(110);
+        ImGui.DragInt("Graph Samples", ref _graphSampleCount, 1.0f, 30, 720);
+        _graphSampleCount = Math.Clamp(_graphSampleCount, 30, 720);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(90);
+        ImGui.DragFloat("Min ms", ref _rootHierarchyMinMs, 0.05f, 0.0f, 1000.0f);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(90);
+        ImGui.DragFloat("Max ms", ref _rootHierarchyMaxMs, 0.05f, 0.0f, 1000.0f);
+
+        ImGui.SeparatorText("CPU Timing Graphs");
+        ImGui.Checkbox("Show CPU Raw ms", ref _showCpuTimingRawMsLine);
+        ImGui.SameLine();
+        ImGui.Checkbox("Show CPU Smoothed ms", ref _showCpuTimingSmoothedMsLine);
+        ImGui.SameLine();
+        ImGui.Checkbox("Interpolate CPU", ref _interpolateCpuTimingGraphs);
+
+        ImGui.SeparatorText("GPU Timing Graphs");
+        ImGui.Checkbox("Show GPU Raw ms", ref _showGpuTimingRawMsLine);
+        ImGui.SameLine();
+        ImGui.Checkbox("Show GPU Smoothed ms", ref _showGpuTimingSmoothedMsLine);
+        ImGui.SameLine();
+        ImGui.Checkbox("Interpolate GPU", ref _interpolateGpuTimingGraphs);
+    }
+
+    /// <summary>Draws the shared profiler settings as a standalone ImGui window.</summary>
+    public void DrawSettingsPanel(ref bool open, bool allowClose = true)
+    {
+        if (!open)
+            return;
+        if (allowClose)
+        {
+            if (!ImGui.Begin("Profiler Settings", ref open))
+            {
+                ImGui.End();
+                return;
+            }
+        }
+        else
+        {
+            if (!ImGui.Begin("Profiler Settings"))
+            {
+                ImGui.End();
+                return;
+            }
+        }
+
+        DrawSettingsContent();
+        ImGui.End();
+    }
+
     public void DrawCorePanels(
+        ref bool showSettings,
         ref bool showProfilerTree,
         ref bool showFpsDropSpikes,
         ref bool showRenderStats,
@@ -1124,6 +1167,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ref bool showMainThreadInvokes,
         bool allowClose = true)
     {
+        if (showSettings) DrawSettingsPanel(ref showSettings, allowClose);
         if (showProfilerTree) DrawProfilerTreePanel(ref showProfilerTree, allowClose);
         if (showFpsDropSpikes) DrawFpsDropSpikesPanel(ref showFpsDropSpikes, allowClose);
         if (showRenderStats) DrawRenderStatsPanel(ref showRenderStats, allowClose);
@@ -1136,6 +1180,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     }
 
     public void DrawCorePanelsWithConnectionInfo(
+        ref bool showSettings,
         ref bool showProfilerTree,
         ref bool showFpsDropSpikes,
         ref bool showRenderStats,
@@ -1149,6 +1194,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         bool allowClose = true)
     {
         DrawCorePanels(
+            ref showSettings,
             ref showProfilerTree,
             ref showFpsDropSpikes,
             ref showRenderStats,
@@ -1295,6 +1341,24 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             entry.AccumulatedMaxThreadCount = Math.Max(entry.AccumulatedMaxThreadCount, entry.ThreadIds.Count);
             entry.AccumulatedMaxRootNodeCount = Math.Max(entry.AccumulatedMaxRootNodeCount, entry.RootNodes.Count);
             UpdateAggregatedChildrenMaxRecursive(entry.Children);
+
+            // Push per-method per-snapshot history
+            int callCount = entry.RootNodes.Count;
+            if (callCount > 0)
+            {
+                float avgCallMs = entry.TotalTimeMs / callCount;
+                entry.PerCallMsHistory.Enqueue(avgCallMs);
+                entry.CallCountHistory.Enqueue(callCount);
+            }
+            else
+            {
+                entry.PerCallMsHistory.Enqueue(0f);
+                entry.CallCountHistory.Enqueue(0);
+            }
+            while (entry.PerCallMsHistory.Count > ProfilerRootMethodAggregate.MethodHistoryCapacity)
+                entry.PerCallMsHistory.Dequeue();
+            while (entry.CallCountHistory.Count > ProfilerRootMethodAggregate.MethodHistoryCapacity)
+                entry.CallCountHistory.Dequeue();
         }
 
         foreach (var agg in _rootMethodCache.Values)
@@ -1376,6 +1440,45 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 
     private void UpdateGraphSeries(ProfilerRootMethodAggregate entry)
     {
+        // Use per-method per-call-average history when available (accurate per-call Hz).
+        // Falls back to thread-based Samples for backward compat with old data sources.
+        int historyCount = entry.PerCallMsHistory.Count;
+        if (historyCount > 0)
+        {
+            int sampleCount = Math.Min(Math.Clamp(_graphSampleCount, 30, 720), historyCount);
+            int skip = historyCount - sampleCount;
+
+            if (entry.RawHzSamples.Length != sampleCount)
+                entry.RawHzSamples = new float[sampleCount];
+            if (entry.DisplayHzSamples.Length != sampleCount)
+                entry.DisplayHzSamples = new float[sampleCount];
+
+            float clampedUpdateSec = (float)GetEffectiveUpdateIntervalSeconds();
+            float heldDisplayMs = 0.0001f;
+            float elapsedSinceRefresh = 0.0f;
+            int idx = 0;
+
+            foreach (float avgMs in entry.PerCallMsHistory)
+            {
+                if (idx < skip) { idx++; continue; }
+                int i = idx - skip;
+                float incomingMs = Math.Max(avgMs, 0.0001f);
+                entry.RawHzSamples[i] = 1000.0f / incomingMs;
+                elapsedSinceRefresh += incomingMs * 0.001f;
+
+                if (i == 0 || clampedUpdateSec <= 0.0f || elapsedSinceRefresh >= clampedUpdateSec)
+                {
+                    heldDisplayMs = ApplyDisplaySmoothing(heldDisplayMs, incomingMs);
+                    elapsedSinceRefresh = 0.0f;
+                }
+
+                entry.DisplayHzSamples[i] = heldDisplayMs > 0.0001f ? 1000.0f / heldDisplayMs : 0.0f;
+                idx++;
+            }
+            return;
+        }
+
+        // Fallback: thread-based Samples (sum of all roots on thread per snapshot)
         var msSamples = entry.Samples;
         if (msSamples.Length == 0)
         {
@@ -1384,31 +1487,31 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             return;
         }
 
-        int sampleCount = Math.Min(Math.Clamp(_graphSampleCount, 30, 720), msSamples.Length);
-        int start = msSamples.Length - sampleCount;
+        int fallbackCount = Math.Min(Math.Clamp(_graphSampleCount, 30, 720), msSamples.Length);
+        int start = msSamples.Length - fallbackCount;
 
-        if (entry.RawHzSamples.Length != sampleCount)
-            entry.RawHzSamples = new float[sampleCount];
-        if (entry.DisplayHzSamples.Length != sampleCount)
-            entry.DisplayHzSamples = new float[sampleCount];
+        if (entry.RawHzSamples.Length != fallbackCount)
+            entry.RawHzSamples = new float[fallbackCount];
+        if (entry.DisplayHzSamples.Length != fallbackCount)
+            entry.DisplayHzSamples = new float[fallbackCount];
 
-        float clampedUpdateSec = Math.Clamp(_updateIntervalSeconds, 0.1f, 2.0f);
-        float heldDisplayMs = Math.Max(msSamples[start], 0.0001f);
-        float elapsedSinceRefresh = 0.0f;
+        float fbClampedUpdateSec = (float)GetEffectiveUpdateIntervalSeconds();
+        float fbHeldDisplayMs = Math.Max(msSamples[start], 0.0001f);
+        float fbElapsedSinceRefresh = 0.0f;
 
-        for (int i = 0; i < sampleCount; i++)
+        for (int i = 0; i < fallbackCount; i++)
         {
             float incomingMs = Math.Max(msSamples[start + i], 0.0001f);
             entry.RawHzSamples[i] = 1000.0f / incomingMs;
-            elapsedSinceRefresh += incomingMs * 0.001f;
+            fbElapsedSinceRefresh += incomingMs * 0.001f;
 
-            if (i == 0 || elapsedSinceRefresh >= clampedUpdateSec)
+            if (i == 0 || fbClampedUpdateSec <= 0.0f || fbElapsedSinceRefresh >= fbClampedUpdateSec)
             {
-                heldDisplayMs = ApplyDisplaySmoothing(heldDisplayMs, incomingMs);
-                elapsedSinceRefresh = 0.0f;
+                fbHeldDisplayMs = ApplyDisplaySmoothing(fbHeldDisplayMs, incomingMs);
+                fbElapsedSinceRefresh = 0.0f;
             }
 
-            entry.DisplayHzSamples[i] = heldDisplayMs > 0.0001f ? 1000.0f / heldDisplayMs : 0.0f;
+            entry.DisplayHzSamples[i] = fbHeldDisplayMs > 0.0001f ? 1000.0f / fbHeldDisplayMs : 0.0f;
         }
     }
 
@@ -1435,6 +1538,199 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 
         DrawHzSeriesLine(drawList, rawHzSamples, sampleCount, pMin, pMax, minHz, maxHz, new Vector4(0.55f, 0.75f, 1.00f, 1.00f));
         DrawHzSeriesLine(drawList, displayHzSamples, sampleCount, pMin, pMax, minHz, maxHz, new Vector4(1.00f, 0.70f, 0.25f, 1.00f));
+    }
+
+    private void DrawHistoryPlot(
+        string id,
+        float[] samples,
+        int sampleCount,
+        Vector2 requestedSize,
+        float minY,
+        float maxY,
+        Vector4 lineColor,
+        Vector4 fillColor,
+        bool showFrameBudgetGuides)
+    {
+        if (sampleCount <= 0)
+            return;
+
+        Vector2 size = requestedSize;
+        if (size.X <= 0f)
+            size.X = MathF.Max(1f, ImGui.GetContentRegionAvail().X);
+        size.Y = MathF.Max(1f, size.Y);
+
+        ImGui.InvisibleButton(id, size);
+
+        Vector2 pMin = ImGui.GetItemRectMin();
+        Vector2 pMax = ImGui.GetItemRectMax();
+        ImDrawListPtr drawList = ImGui.GetWindowDrawList();
+
+        const float padding = 4.0f;
+        Vector2 plotMin = new(pMin.X + padding, pMin.Y + padding);
+        Vector2 plotMax = new(pMax.X - padding, pMax.Y - padding);
+
+        drawList.AddRectFilled(pMin, pMax, ImGui.GetColorU32(ImGuiCol.FrameBg), 3.0f);
+        drawList.AddRect(pMin, pMax, ImGui.GetColorU32(ImGuiCol.Border), 3.0f);
+
+        DrawHistoryPlotGuides(drawList, plotMin, plotMax, minY, maxY, showFrameBudgetGuides);
+        DrawHistorySeriesFill(drawList, samples, sampleCount, plotMin, plotMax, minY, maxY, fillColor);
+        DrawHistorySeriesLine(drawList, samples, sampleCount, plotMin, plotMax, minY, maxY, lineColor, 1.8f);
+        DrawHistoryLatestMarker(drawList, samples[sampleCount - 1], plotMin, plotMax, minY, maxY, lineColor);
+
+        if (ImGui.IsItemHovered())
+            DrawHistoryHoveredSampleMarker(drawList, samples, sampleCount, plotMin, plotMax, minY, maxY, lineColor);
+    }
+
+    private static void DrawHistoryPlotGuides(ImDrawListPtr drawList, Vector2 plotMin, Vector2 plotMax, float minY, float maxY, bool showFrameBudgetGuides)
+    {
+        float width = plotMax.X - plotMin.X;
+        float height = plotMax.Y - plotMin.Y;
+        if (width <= 0f || height <= 0f)
+            return;
+
+        uint gridColor = ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.08f));
+        for (int i = 1; i < 4; i++)
+        {
+            float y = plotMin.Y + (height * i / 4f);
+            drawList.AddLine(new Vector2(plotMin.X, y), new Vector2(plotMax.X, y), gridColor, 1.0f);
+        }
+
+        if (!showFrameBudgetGuides)
+            return;
+
+        DrawHistoryGuideLine(drawList, plotMin, plotMax, minY, maxY, 8.3333f, "120", new Vector4(0.55f, 0.92f, 1.00f, 0.80f));
+        DrawHistoryGuideLine(drawList, plotMin, plotMax, minY, maxY, 11.1111f, "90", new Vector4(0.42f, 0.88f, 0.88f, 0.80f));
+        DrawHistoryGuideLine(drawList, plotMin, plotMax, minY, maxY, 16.6667f, "60", new Vector4(0.30f, 0.85f, 0.45f, 0.80f));
+        DrawHistoryGuideLine(drawList, plotMin, plotMax, minY, maxY, 33.3333f, "30", new Vector4(0.95f, 0.55f, 0.20f, 0.75f));
+    }
+
+    private static void DrawHistoryGuideLine(ImDrawListPtr drawList, Vector2 plotMin, Vector2 plotMax, float minY, float maxY, float value, string label, Vector4 color)
+    {
+        if (value < minY || value > maxY)
+            return;
+
+        float t = NormalizePlotValue(value, minY, maxY);
+        float y = plotMax.Y - ((plotMax.Y - plotMin.Y) * t);
+        uint colorU32 = ImGui.GetColorU32(color);
+        drawList.AddLine(new Vector2(plotMin.X, y), new Vector2(plotMax.X, y), colorU32, 1.0f);
+
+        Vector2 textSize = ImGui.CalcTextSize(label);
+        float labelX = plotMax.X - textSize.X - 2f;
+        float labelY = y - textSize.Y - 1f;
+        if (labelY < plotMin.Y)
+            labelY = y + 1f;
+        drawList.AddText(new Vector2(labelX, labelY), colorU32, label);
+    }
+
+    private static void DrawHistorySeriesFill(ImDrawListPtr drawList, float[] samples, int sampleCount, Vector2 plotMin, Vector2 plotMax, float minY, float maxY, Vector4 color)
+    {
+        if (sampleCount < 2)
+            return;
+
+        float width = plotMax.X - plotMin.X;
+        float height = plotMax.Y - plotMin.Y;
+        if (width <= 0f || height <= 0f)
+            return;
+
+        uint colorU32 = ImGui.GetColorU32(color);
+        for (int i = 1; i < sampleCount; i++)
+        {
+            Vector2 previous = GetPlotPoint(samples, i - 1, sampleCount, plotMin, plotMax, minY, maxY);
+            Vector2 current = GetPlotPoint(samples, i, sampleCount, plotMin, plotMax, minY, maxY);
+            drawList.AddQuadFilled(
+                new Vector2(previous.X, plotMax.Y),
+                previous,
+                current,
+                new Vector2(current.X, plotMax.Y),
+                colorU32);
+        }
+    }
+
+    private static void DrawHistorySeriesLine(ImDrawListPtr drawList, float[] samples, int sampleCount, Vector2 plotMin, Vector2 plotMax, float minY, float maxY, Vector4 color, float thickness)
+    {
+        if (sampleCount < 2)
+            return;
+
+        uint colorU32 = ImGui.GetColorU32(color);
+        Vector2 previous = GetPlotPoint(samples, 0, sampleCount, plotMin, plotMax, minY, maxY);
+        for (int i = 1; i < sampleCount; i++)
+        {
+            Vector2 current = GetPlotPoint(samples, i, sampleCount, plotMin, plotMax, minY, maxY);
+            drawList.AddLine(previous, current, colorU32, thickness);
+            previous = current;
+        }
+    }
+
+    private static void DrawHistoryLatestMarker(ImDrawListPtr drawList, float latestValue, Vector2 plotMin, Vector2 plotMax, float minY, float maxY, Vector4 color)
+    {
+        float t = NormalizePlotValue(latestValue, minY, maxY);
+        float y = plotMax.Y - ((plotMax.Y - plotMin.Y) * t);
+        drawList.AddCircleFilled(new Vector2(plotMax.X, y), 3.0f, ImGui.GetColorU32(color), 12);
+    }
+
+    private void DrawHistoryHoveredSampleMarker(ImDrawListPtr drawList, float[] samples, int sampleCount, Vector2 plotMin, Vector2 plotMax, float minY, float maxY, Vector4 color)
+    {
+        int sampleIndex = GetHoveredHistorySampleIndex(sampleCount);
+        if (sampleIndex < 0)
+            return;
+
+        Vector2 point = GetPlotPoint(samples, sampleIndex, sampleCount, plotMin, plotMax, minY, maxY);
+        uint lineColor = ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.20f));
+        drawList.AddLine(new Vector2(point.X, plotMin.Y), new Vector2(point.X, plotMax.Y), lineColor, 1.0f);
+        drawList.AddCircleFilled(point, 3.5f, ImGui.GetColorU32(color), 12);
+    }
+
+    private int GetHoveredHistorySampleIndex(int sampleCount)
+    {
+        if (sampleCount <= 0 || !ImGui.IsItemHovered())
+            return -1;
+
+        Vector2 min = ImGui.GetItemRectMin();
+        Vector2 max = ImGui.GetItemRectMax();
+        float width = max.X - min.X;
+        if (width <= 1.0f)
+            return -1;
+
+        float mouseX = ImGui.GetIO().MousePos.X;
+        float t = Math.Clamp((mouseX - min.X) / width, 0.0f, 1.0f);
+        return Math.Clamp((int)MathF.Round(t * (sampleCount - 1)), 0, sampleCount - 1);
+    }
+
+    private void DrawHistoryPlotHoverTooltip(float[] samples, int sampleCount, string units, int decimals, float latest, float average, float minimum, float maximum)
+    {
+        if (!ImGui.IsItemHovered())
+            return;
+
+        int sampleIndex = GetHoveredHistorySampleIndex(sampleCount);
+        if (sampleIndex < 0)
+            return;
+
+        float value = samples[sampleIndex];
+        string format = $"F{decimals}";
+
+        ImGui.BeginTooltip();
+        ImGui.Text($"Sample {sampleIndex + 1}/{sampleCount}");
+        ImGui.Separator();
+        ImGui.Text($"Value: {value.ToString(format)} {units}");
+        ImGui.Text($"Latest: {latest.ToString(format)} {units}");
+        ImGui.Text($"Average: {average.ToString(format)} {units}");
+        ImGui.Text($"Min/Max: {minimum.ToString(format)} / {maximum.ToString(format)} {units}");
+        ImGui.EndTooltip();
+    }
+
+    private static Vector2 GetPlotPoint(float[] samples, int index, int sampleCount, Vector2 plotMin, Vector2 plotMax, float minY, float maxY)
+    {
+        float xT = sampleCount == 1 ? 0f : (float)index / (sampleCount - 1);
+        float yT = NormalizePlotValue(samples[index], minY, maxY);
+        return new Vector2(
+            plotMin.X + ((plotMax.X - plotMin.X) * xT),
+            plotMax.Y - ((plotMax.Y - plotMin.Y) * yT));
+    }
+
+    private static float NormalizePlotValue(float value, float minY, float maxY)
+    {
+        float range = MathF.Max(maxY - minY, 0.001f);
+        return Math.Clamp((value - minY) / range, 0.0f, 1.0f);
     }
 
     private static void DrawHzSeriesLine(ImDrawListPtr drawList, float[] samples, int sampleCount, Vector2 pMin, Vector2 pMax, float minHz, float maxHz, Vector4 color)
@@ -1491,8 +1787,20 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         ImGui.Text($"Raw: {rawMs:F3} ms ({rawHz:F1} Hz)");
         ImGui.Text($"Display: {displayMs:F3} ms ({displayHz:F1} Hz)");
         ImGui.Text($"Delta: {deltaHz:+0.0;-0.0;0.0} Hz");
-        ImGui.TextDisabled($"Update={_updateIntervalSeconds:F2}s, Smoothing={_smoothingAlpha:F2}");
+        ImGui.TextDisabled($"Update={FormatUpdateIntervalLabel()}, Smoothing={_smoothingAlpha:F2}");
         ImGui.EndTooltip();
+    }
+
+    private double GetEffectiveUpdateIntervalSeconds()
+        => Math.Clamp(_updateIntervalSeconds, 0.0f, 2.0f);
+
+    private string FormatUpdateIntervalLabel()
+        => GetEffectiveUpdateIntervalSeconds() <= 0.0 ? "every render" : $"{GetEffectiveUpdateIntervalSeconds():F2}s";
+
+    private double GetStaleWindowSeconds()
+    {
+        double interval = GetEffectiveUpdateIntervalSeconds();
+        return interval > 0.0 ? interval : (1.0 / 60.0);
     }
 
     private void RebuildCachedRootMethodLists(DateTime nowUtc)
@@ -1602,7 +1910,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         }
     }
 
-    private int BuildOrderedRenderStatsHistory(float[] ring, float[] destination)
+    private int BuildOrderedRenderStatsHistory(float[] ring, float[] destination, bool smooth = true)
     {
         if (_renderStatsHistoryCount <= 0)
             return 0;
@@ -1615,7 +1923,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         {
             int idx = (start + i) % RenderStatsHistorySamples;
             float value = ring[idx];
-            if (_smoothingAlpha > 0.001f && hasPrevious)
+            if (smooth && _smoothingAlpha > 0.001f && hasPrevious)
                 value = (previous * _smoothingAlpha) + (value * (1.0f - _smoothingAlpha));
 
             destination[i] = value;
@@ -1732,33 +2040,341 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         if (_renderStatsHistoryCount <= 0)
             return;
 
-        int start = (_renderStatsHistoryHead - _renderStatsHistoryCount + RenderStatsHistorySamples) % RenderStatsHistorySamples;
-        float min = float.MaxValue;
-        float max = float.MinValue;
+        int sampleCount = BuildOrderedRenderStatsHistory(ring, _renderStatsHistoryRawScratch, smooth: false);
+        if (sampleCount <= 0)
+            return;
 
-        for (int i = 0; i < _renderStatsHistoryCount; i++)
+        bool isTimingPlot = string.Equals(units, "ms", StringComparison.Ordinal);
+        if (!isTimingPlot)
         {
-            int idx = (start + i) % RenderStatsHistorySamples;
-            float value = ring[idx];
-            _renderStatsHistoryScratch[i] = value;
-            if (value < min) min = value;
-            if (value > max) max = value;
+            DrawTimingHistoryPlot(
+                label,
+                $"##{label}",
+                _renderStatsHistoryRawScratch,
+                sampleCount,
+                units,
+                minY,
+                maxY,
+                showRawLine: true,
+                showSmoothedLine: false,
+                interpolate: false,
+                interpolationStates: _cpuTimingInterpolationStates,
+                smoothedScratch: _renderStatsHistoryScratch,
+                interpolatedScratch: _renderStatsHistoryInterpolatedScratch,
+                rawColor: new Vector4(0.65f, 0.82f, 1.00f, 1.00f),
+                smoothedColor: new Vector4(0.65f, 0.82f, 1.00f, 1.00f),
+                smoothedFillColor: new Vector4(0.65f, 0.82f, 1.00f, 0.12f));
+            return;
         }
 
-        if (maxY > minY)
+        DrawTimingHistoryPlot(
+            label,
+            $"##{label}",
+            _renderStatsHistoryRawScratch,
+            sampleCount,
+            units,
+            minY,
+            maxY,
+            showRawLine: _showCpuTimingRawMsLine,
+            showSmoothedLine: _showCpuTimingSmoothedMsLine,
+            interpolate: _interpolateCpuTimingGraphs,
+            interpolationStates: _cpuTimingInterpolationStates,
+            smoothedScratch: _renderStatsHistoryScratch,
+            interpolatedScratch: _renderStatsHistoryInterpolatedScratch,
+            rawColor: new Vector4(0.52f, 0.86f, 1.00f, 0.78f),
+            smoothedColor: new Vector4(0.40f, 0.80f, 1.00f, 1.00f),
+            smoothedFillColor: new Vector4(0.40f, 0.80f, 1.00f, 0.15f));
+    }
+
+    private void DrawTimingHistoryPlot(
+        string label,
+        string id,
+        float[] rawSamples,
+        int sampleCount,
+        string units,
+        float minY,
+        float maxY,
+        bool showRawLine,
+        bool showSmoothedLine,
+        bool interpolate,
+        Dictionary<string, TimingGraphInterpolationState> interpolationStates,
+        float[] smoothedScratch,
+        float[] interpolatedScratch,
+        Vector4 rawColor,
+        Vector4 smoothedColor,
+        Vector4 smoothedFillColor)
+    {
+        if (sampleCount <= 0)
+            return;
+
+        BuildSmoothedHistory(rawSamples, sampleCount, smoothedScratch);
+        float[] displaySamples = ResolveTimingDisplaySamples(label, rawSamples, smoothedScratch, sampleCount, interpolate, interpolationStates, interpolatedScratch);
+        float[] statsSamples = showSmoothedLine ? smoothedScratch : rawSamples;
+
+        ComputeHistoryStats(
+            statsSamples,
+            sampleCount,
+            minY,
+            maxY,
+            out float plotMin,
+            out float plotMax,
+            out float latest,
+            out float average,
+            out float minimum,
+            out float maximum);
+
+        int decimals = string.Equals(units, "ms", StringComparison.Ordinal) ? 3 : 1;
+        string format = $"F{decimals}";
+        float fps = latest > 0.0001f && string.Equals(units, "ms", StringComparison.Ordinal) ? 1000.0f / latest : 0.0f;
+
+        ImGui.Text($"{label}: {latest.ToString(format)} {units}  avg {average.ToString(format)}  min {minimum.ToString(format)}  max {maximum.ToString(format)}{(fps > 0.0f ? $"  ({fps:F1} FPS)" : string.Empty)}");
+        DrawMultiHistoryPlot(
+            id,
+            rawSamples,
+            showRawLine,
+            displaySamples,
+            showSmoothedLine,
+            sampleCount,
+            new Vector2(-1f, 52f),
+            plotMin,
+            plotMax,
+            rawColor,
+            smoothedColor,
+            smoothedFillColor,
+            showFrameBudgetGuides: string.Equals(units, "ms", StringComparison.Ordinal));
+        DrawTimingHistoryHoverTooltip(rawSamples, displaySamples, sampleCount, units, decimals, latest, average, minimum, maximum, showRawLine, showSmoothedLine);
+    }
+
+    private void BuildSmoothedHistory(float[] rawSamples, int sampleCount, float[] destination)
+    {
+        float previous = 0f;
+        bool hasPrevious = false;
+        for (int i = 0; i < sampleCount; i++)
         {
-            min = minY;
-            max = maxY;
+            float value = rawSamples[i];
+            if (_smoothingAlpha > 0.001f && hasPrevious)
+                value = (previous * _smoothingAlpha) + (value * (1.0f - _smoothingAlpha));
+
+            destination[i] = value;
+            previous = value;
+            hasPrevious = true;
         }
-        else if (!float.IsFinite(min) || !float.IsFinite(max) || MathF.Abs(max - min) < 0.001f)
+    }
+
+    private float[] ResolveTimingDisplaySamples(
+        string label,
+        float[] rawSamples,
+        float[] smoothedSamples,
+        int sampleCount,
+        bool interpolate,
+        Dictionary<string, TimingGraphInterpolationState> interpolationStates,
+        float[] interpolatedScratch)
+    {
+        if (!interpolate || GetEffectiveUpdateIntervalSeconds() <= 0.0)
         {
-            min = 0f;
-            max = MathF.Max(1f, max + 0.001f);
+            if (interpolationStates.ContainsKey(label))
+                interpolationStates.Remove(label);
+            return smoothedSamples;
         }
 
-        float latest = _renderStatsHistoryScratch[_renderStatsHistoryCount - 1];
-        ImGui.Text($"{label}: {latest:F1} {units}");
-        ImGui.PlotLines($"##{label}", ref _renderStatsHistoryScratch[0], _renderStatsHistoryCount, 0, null, min, max, new Vector2(-1f, 52f));
+        bool exists = interpolationStates.TryGetValue(label, out TimingGraphInterpolationState? state);
+        DateTime nowUtc = DateTime.UtcNow;
+        if (!exists || state is null || state.SampleCount != sampleCount)
+        {
+            state = new TimingGraphInterpolationState(sampleCount);
+            interpolationStates[label] = state;
+            Array.Copy(rawSamples, state.StartSamples, sampleCount);
+            Array.Copy(smoothedSamples, state.TargetSamples, sampleCount);
+            state.LastRefreshUtc = nowUtc;
+            Array.Copy(smoothedSamples, interpolatedScratch, sampleCount);
+            return interpolatedScratch;
+        }
+
+        if (!SamplesEqual(smoothedSamples, state.TargetSamples, sampleCount))
+        {
+            Array.Copy(state.TargetSamples, state.StartSamples, sampleCount);
+            Array.Copy(smoothedSamples, state.TargetSamples, sampleCount);
+            state.LastRefreshUtc = nowUtc;
+        }
+
+        float t = (float)Math.Clamp((nowUtc - state.LastRefreshUtc).TotalSeconds / GetEffectiveUpdateIntervalSeconds(), 0.0, 1.0);
+        for (int i = 0; i < sampleCount; i++)
+            interpolatedScratch[i] = state.StartSamples[i] + ((state.TargetSamples[i] - state.StartSamples[i]) * t);
+
+        return interpolatedScratch;
+    }
+
+    private void DrawMultiHistoryPlot(
+        string id,
+        float[] rawSamples,
+        bool drawRaw,
+        float[] displaySamples,
+        bool drawDisplay,
+        int sampleCount,
+        Vector2 requestedSize,
+        float minY,
+        float maxY,
+        Vector4 rawColor,
+        Vector4 displayColor,
+        Vector4 displayFillColor,
+        bool showFrameBudgetGuides)
+    {
+        if (sampleCount <= 0)
+            return;
+
+        Vector2 size = requestedSize;
+        if (size.X <= 0f)
+            size.X = MathF.Max(1f, ImGui.GetContentRegionAvail().X);
+        size.Y = MathF.Max(1f, size.Y);
+
+        ImGui.InvisibleButton(id, size);
+
+        Vector2 pMin = ImGui.GetItemRectMin();
+        Vector2 pMax = ImGui.GetItemRectMax();
+        ImDrawListPtr drawList = ImGui.GetWindowDrawList();
+
+        const float padding = 4.0f;
+        Vector2 plotMin = new(pMin.X + padding, pMin.Y + padding);
+        Vector2 plotMax = new(pMax.X - padding, pMax.Y - padding);
+
+        drawList.AddRectFilled(pMin, pMax, ImGui.GetColorU32(ImGuiCol.FrameBg), 3.0f);
+        drawList.AddRect(pMin, pMax, ImGui.GetColorU32(ImGuiCol.Border), 3.0f);
+
+        DrawHistoryPlotGuides(drawList, plotMin, plotMax, minY, maxY, showFrameBudgetGuides);
+        if (drawDisplay)
+            DrawHistorySeriesFill(drawList, displaySamples, sampleCount, plotMin, plotMax, minY, maxY, displayFillColor);
+        if (drawRaw)
+            DrawHistorySeriesLine(drawList, rawSamples, sampleCount, plotMin, plotMax, minY, maxY, rawColor, 1.2f);
+        if (drawDisplay)
+        {
+            DrawHistorySeriesLine(drawList, displaySamples, sampleCount, plotMin, plotMax, minY, maxY, displayColor, 1.8f);
+            DrawHistoryLatestMarker(drawList, displaySamples[sampleCount - 1], plotMin, plotMax, minY, maxY, displayColor);
+        }
+        else if (drawRaw)
+        {
+            DrawHistoryLatestMarker(drawList, rawSamples[sampleCount - 1], plotMin, plotMax, minY, maxY, rawColor);
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            if (drawRaw)
+                DrawHistoryHoveredSampleMarker(drawList, rawSamples, sampleCount, plotMin, plotMax, minY, maxY, rawColor);
+            if (drawDisplay)
+                DrawHistoryHoveredSampleMarker(drawList, displaySamples, sampleCount, plotMin, plotMax, minY, maxY, displayColor);
+        }
+    }
+
+    private void DrawTimingHistoryHoverTooltip(
+        float[] rawSamples,
+        float[] displaySamples,
+        int sampleCount,
+        string units,
+        int decimals,
+        float latest,
+        float average,
+        float minimum,
+        float maximum,
+        bool showRawLine,
+        bool showDisplayLine)
+    {
+        if (!ImGui.IsItemHovered())
+            return;
+
+        int sampleIndex = GetHoveredHistorySampleIndex(sampleCount);
+        if (sampleIndex < 0)
+            return;
+
+        string format = $"F{decimals}";
+        ImGui.BeginTooltip();
+        ImGui.Text($"Sample {sampleIndex + 1}/{sampleCount}");
+        ImGui.Separator();
+        if (showRawLine)
+            ImGui.Text($"Raw: {rawSamples[sampleIndex].ToString(format)} {units}");
+        if (showDisplayLine)
+            ImGui.Text($"Display: {displaySamples[sampleIndex].ToString(format)} {units}");
+        ImGui.Text($"Latest: {latest.ToString(format)} {units}");
+        ImGui.Text($"Average: {average.ToString(format)} {units}");
+        ImGui.Text($"Min/Max: {minimum.ToString(format)} / {maximum.ToString(format)} {units}");
+        if (string.Equals(units, "ms", StringComparison.Ordinal))
+            ImGui.TextDisabled($"Update={FormatUpdateIntervalLabel()}, Smoothing={_smoothingAlpha:F2}");
+        ImGui.EndTooltip();
+    }
+
+    private static bool SamplesEqual(float[] left, float[] right, int sampleCount)
+    {
+        if (left.Length < sampleCount || right.Length < sampleCount)
+            return false;
+
+        for (int i = 0; i < sampleCount; i++)
+        {
+            if (MathF.Abs(left[i] - right[i]) > 0.0001f)
+                return false;
+        }
+
+        return true;
+    }
+
+    private static void ComputeHistoryStats(
+        float[] samples,
+        int sampleCount,
+        float requestedMinY,
+        float requestedMaxY,
+        out float plotMin,
+        out float plotMax,
+        out float latest,
+        out float average,
+        out float minimum,
+        out float maximum)
+    {
+        latest = 0f;
+        average = 0f;
+        minimum = 0f;
+        maximum = 0f;
+        plotMin = 0f;
+        plotMax = 1f;
+        if (sampleCount <= 0)
+            return;
+
+        minimum = float.MaxValue;
+        maximum = float.MinValue;
+        double total = 0.0;
+
+        for (int i = 0; i < sampleCount; i++)
+        {
+            float value = samples[i];
+            if (value < minimum)
+                minimum = value;
+            if (value > maximum)
+                maximum = value;
+            total += value;
+        }
+
+        latest = samples[sampleCount - 1];
+        average = (float)(total / sampleCount);
+
+        if (requestedMaxY > requestedMinY)
+        {
+            plotMin = requestedMinY;
+            plotMax = requestedMaxY;
+            return;
+        }
+
+        if (!float.IsFinite(minimum) || !float.IsFinite(maximum))
+        {
+            minimum = 0f;
+            maximum = 1f;
+            plotMin = 0f;
+            plotMax = 1f;
+            return;
+        }
+
+        float range = maximum - minimum;
+        if (range < 0.001f)
+            range = MathF.Max(0.1f, MathF.Abs(maximum) * 0.2f);
+
+        float padding = MathF.Max(0.05f, range * 0.12f);
+        plotMin = minimum >= 0f ? 0f : minimum - padding;
+        plotMax = MathF.Max(plotMin + 0.1f, maximum + padding);
     }
 
     private void UpdateFpsDropSpikeLog(ProfilerFramePacket frame, Dictionary<int, float[]> history)
@@ -1862,7 +2478,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         var children = rm.CachedSortedChildren;
         float untracked = rm.CachedUntrackedTime;
         int allCount = rm.Children.Count;
-        bool isStale = !_paused && nowUtc - rm.LastSeen > TimeSpan.FromSeconds(_updateIntervalSeconds);
+        bool isStale = !_paused && nowUtc - rm.LastSeen > TimeSpan.FromSeconds(GetStaleWindowSeconds());
 
         ImGui.TableNextRow();
         ImGui.TableSetColumnIndex(0);
@@ -1883,7 +2499,9 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             _nodeOpenCache[key] = nodeOpen;
 
         if (isStale) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.65f, 0.65f, 0.70f, 1.0f));
-        ImGui.TableSetColumnIndex(1); ImGui.Text($"{rm.DisplayTotalTimeMs:F3}");
+        int hierCalls = Math.Max(1, rm.DisplayRootNodeCount);
+        float hierAvgMs = rm.DisplayTotalTimeMs / hierCalls;
+        ImGui.TableSetColumnIndex(1); ImGui.Text(hierCalls > 1 ? $"{hierAvgMs:F3} ({rm.DisplayTotalTimeMs:F3})" : $"{rm.DisplayTotalTimeMs:F3}");
         ImGui.TableSetColumnIndex(2); ImGui.Text($"{rm.DisplayRootNodeCount}");
         if (isStale) ImGui.PopStyleColor();
 
@@ -1910,7 +2528,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         var children = node.CachedSortedChildren;
         float untracked = node.CachedUntrackedTime;
         int allCount = node.Children.Count;
-        bool isStale = !_paused && nowUtc - node.LastSeen > TimeSpan.FromSeconds(_updateIntervalSeconds);
+        bool isStale = !_paused && nowUtc - node.LastSeen > TimeSpan.FromSeconds(GetStaleWindowSeconds());
 
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.OpenOnDoubleClick | ImGuiTreeNodeFlags.SpanFullWidth;
         if (children.Length == 0 && (untracked < 0.1f || allCount == 0))
@@ -2207,6 +2825,11 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         public DateTime LastSeen { get; set; }
         public Dictionary<string, AggregatedChildNode> Children { get; } = new();
         public AggregatedChildNode[] CachedSortedChildren { get; set; } = [];
+
+        // Per-method per-snapshot history (maintained by the renderer)
+        public Queue<float> PerCallMsHistory { get; } = new();
+        public Queue<int> CallCountHistory { get; } = new();
+        public const int MethodHistoryCapacity = 720;
     }
 
     private sealed class ProfilerThreadCacheEntry
@@ -2214,6 +2837,21 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         public int ThreadId;
         public DateTime LastSeen;
         public bool IsStale;
+    }
+
+    private sealed class TimingGraphInterpolationState
+    {
+        public TimingGraphInterpolationState(int sampleCount)
+        {
+            SampleCount = sampleCount;
+            StartSamples = new float[sampleCount];
+            TargetSamples = new float[sampleCount];
+        }
+
+        public int SampleCount { get; }
+        public float[] StartSamples { get; }
+        public float[] TargetSamples { get; }
+        public DateTime LastRefreshUtc { get; set; }
     }
 
     private readonly record struct FpsDropSpikePathEntry(

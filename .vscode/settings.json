@@ -1,4 +1,13 @@
 {
     "cmake.sourceDirectory": "${workspaceFolder}/Build/Dependencies/CoACD/sources/spdlog/example",
-    "python.terminal.activateEnvironment": false
+    "python.terminal.activateEnvironment": false,
+    "json.schemas": [
+        {
+            "fileMatch": [
+                "Assets/UnitTestingWorldSettings.jsonc",
+                "XREngine.Server/Assets/UnitTestingWorldSettings.jsonc"
+            ],
+            "url": "./.vscode/schemas/unit-testing-world-settings.schema.json"
+        }
+    ]
 }

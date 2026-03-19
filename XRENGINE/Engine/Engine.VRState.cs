@@ -662,9 +662,9 @@ namespace XREngine
 
                 try
                 {
-                    var leftEyeView = leftCam.Transform.LocalMatrix;
+                    var leftEyeView = leftCam.Transform.InverseLocalMatrix;
                     var leftProj = leftCam.ProjectionMatrix;
-                    var rightEyeView = rightCam.Transform.LocalMatrix;
+                    var rightEyeView = rightCam.Transform.InverseLocalMatrix;
                     var rightProj = rightCam.ProjectionMatrix;
 
                     _stereoCullingFrustum = new Frustum((_combinedProjectionMatrix = ProjectionMatrixCombiner.CombineProjectionMatrices(leftProj, rightProj, leftEyeView, rightEyeView)).Inverted());

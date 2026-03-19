@@ -1,0 +1,570 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "./.vscode/schemas/unit-testing-world-settings.schema.json",
+  "title": "Unit Testing World Settings",
+  "type": "object",
+  "description": "Startup settings for the XREngine Unit Testing World. Use this schema with the JSONC settings files. Hover descriptions explain what each property controls, and enum-backed properties expose selectable values in VS Code.",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional schema pointer used by editors. Ignored by the runtime loader.",
+      "default": "../.vscode/schemas/unit-testing-world-settings.schema.json"
+    },
+    "$id": {
+      "type": "string",
+      "description": "Optional document identifier. Not consumed by the runtime settings loader."
+    },
+    "WorldKind": {
+      "$ref": "#/definitions/UnitTestWorldKind",
+      "markdownDescription": "Supported values: `Default`, `AudioTesting`, `MathIntersections`, `MeshEditing`, `UberShader`, `PhysxTesting`, `NetworkingPose`.",
+      "description": "Selects which unit-test world factory the editor or server boots into."
+    },
+    "VisualizeOctree": {
+      "type": "boolean",
+      "description": "Draws octree structure overlays for visibility and partitioning diagnostics."
+    },
+    "VisualizeQuadtree": {
+      "type": "boolean",
+      "description": "Draws quadtree structure overlays for visibility and partitioning diagnostics."
+    },
+    "EditorType": {
+      "$ref": "#/definitions/UnitTestEditorType",
+      "description": "Selects which editor UI pipeline is created for the unit-testing world.",
+      "markdownDescription": "Supported values: `None`, `Native`, `IMGUI`."
+    },
+    "CameraUIDrawSpaceOnInit": {
+      "$ref": "#/definitions/CameraUIDrawMode",
+      "description": "Initial draw-space mode for camera UI surfaces.",
+      "markdownDescription": "Supported values: `Screen`, `World`, `Camera`, `WorldOffscreen`, `CameraOffscreen`."
+    },
+    "TransformTool": {
+      "type": "boolean",
+      "description": "Enables the transform gizmo tool in the unit-testing world."
+    },
+    "AllowEditingInVR": {
+      "type": "boolean",
+      "description": "Allows scene editing interactions while VR is active. Leave this off when you want a pure runtime test without editor manipulation."
+    },
+    "PreviewVRStereoViews": {
+      "type": "boolean",
+      "description": "Shows stereo eye previews in non-VR windows while VR is active."
+    },
+    "VideoStreaming": {
+      "type": "boolean",
+      "description": "Enables the video-streaming test path."
+    },
+    "VideoStreamingAudio": {
+      "type": "boolean",
+      "description": "When video streaming is enabled, also route audio from the stream."
+    },
+    "VideoStreamingUrl": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Source URL used by the video-streaming test content."
+    },
+    "UltralightWebView": {
+      "type": "boolean",
+      "description": "Enables the Ultralight web-view test content."
+    },
+    "UltralightWebViewUrl": {
+      "type": "string",
+      "description": "Initial URL for the Ultralight web-view test content."
+    },
+    "EnableProfilerLogging": {
+      "type": "boolean",
+      "description": "Enables profiler logging output for startup and runtime diagnostics."
+    },
+    "RiveUI": {
+      "type": "boolean",
+      "description": "Adds the Rive UI test content."
+    },
+    "GPURenderDispatch": {
+      "type": "boolean",
+      "description": "Enables GPU-driven render dispatch paths instead of the more conventional CPU-driven cull-and-submit path. This is experimental rendering work rather than the conservative default."
+    },
+    "StartInPlayModeWithoutTransitions": {
+      "type": "boolean",
+      "description": "Starts directly in play mode and skips editor transition flows."
+    },
+    "Skybox": {
+      "type": "boolean",
+      "description": "Adds the default skybox to the scene."
+    },
+    "Spline": {
+      "type": "boolean",
+      "description": "Adds the spline test content."
+    },
+    "DeferredDecal": {
+      "type": "boolean",
+      "description": "Adds the deferred decal test content."
+    },
+    "AddCameraVRPickup": {
+      "type": "boolean",
+      "description": "Adds the camera pickup VR interaction test content."
+    },
+    "Mirror": {
+      "type": "boolean",
+      "description": "Adds the mirror test content."
+    },
+    "ForceDebugOpaquePipeline": {
+      "type": "boolean",
+      "description": "Forces the debug opaque pipeline instead of the normal material-driven opaque path."
+    },
+    "DirLight": {
+      "type": "boolean",
+      "description": "Adds the primary directional light."
+    },
+    "SpotLight": {
+      "type": "boolean",
+      "description": "Adds a spotlight to the scene."
+    },
+    "DirLight2": {
+      "type": "boolean",
+      "description": "Adds a secondary directional light for lighting stress tests."
+    },
+    "PointLight": {
+      "type": "boolean",
+      "description": "Adds a point light to the scene."
+    },
+    "LightProbe": {
+      "type": "boolean",
+      "description": "Adds the realtime light-probe test content used for image-based lighting and probe capture validation."
+    },
+    "LightProbeCaptureMs": {
+      "type": "number",
+      "description": "Target light-probe capture interval in milliseconds.",
+      "minimum": 0
+    },
+    "StopRealtimeCaptureSec": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Optional timeout, in seconds, after which realtime capture stops. Use null to keep capturing indefinitely.",
+      "minimum": 0
+    },
+    "VRPawn": {
+      "type": "boolean",
+      "description": "Spawns the VR pawn and enables the VR-side test setup. Pair this with UseOpenXR or EmulatedVRPawn depending on the runtime path you want."
+    },
+    "UseOpenXR": {
+      "type": "boolean",
+      "description": "Selects OpenXR instead of the default tested OpenVR path for VR."
+    },
+    "EmulatedVRPawn": {
+      "type": "boolean",
+      "description": "Uses the emulated VR pawn for desktop-driven VR testing."
+    },
+    "Locomotion": {
+      "type": "boolean",
+      "description": "Enables locomotion logic on the spawned pawn. This matters primarily when a VR or character pawn is active."
+    },
+    "ThirdPersonPawn": {
+      "type": "boolean",
+      "description": "Spawns the third-person pawn instead of a VR-only setup."
+    },
+    "CharacterControllerCapsuleTranslationY": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Optional Y offset applied to the character-controller capsule. Use null to leave the engine default."
+    },
+    "PhysicsChain": {
+      "type": "boolean",
+      "description": "Adds the chain physics test content."
+    },
+    "AddPhysics": {
+      "type": "boolean",
+      "description": "Initializes the selected physics backend and enables physics-driven test content. This should be on for PhysX/Jolt/Jitter behavior checks."
+    },
+    "PhysicsBallCount": {
+      "type": "integer",
+      "description": "Number of test physics balls to spawn in the physics test content.",
+      "minimum": 0
+    },
+    "ModelsToImport": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ModelImportSettings"
+      },
+      "description": "Models imported during startup. Each entry can target different import and material settings."
+    },
+    "SoundNode": {
+      "type": "boolean",
+      "description": "Adds the sound-node audio test content."
+    },
+    "Microphone": {
+      "type": "boolean",
+      "description": "Enables microphone capture in the unit-testing world."
+    },
+    "AttachMicToAnimatedModel": {
+      "type": "boolean",
+      "description": "Attaches the microphone source to the animated model when both features are active."
+    },
+    "AudioArchitectureV2": {
+      "type": "boolean",
+      "description": "Toggles the second-generation audio architecture path before startup applies audio overrides into the engine singleton."
+    },
+    "AudioTransport": {
+      "$ref": "#/definitions/EAudioTransport",
+      "markdownDescription": "Supported values: `OpenAL`, `NAudio`.",
+      "description": "Audio transport backend used by the runtime audio layer."
+    },
+    "AudioEffects": {
+      "$ref": "#/definitions/EAudioEffects",
+      "markdownDescription": "Supported values: `OpenAL_EFX`, `SteamAudio`, `Passthrough`.",
+      "description": "Audio effects processor used by the runtime audio layer."
+    },
+    "VMC": {
+      "type": "boolean",
+      "description": "Enables the VMC avatar-streaming test path for external motion data ingest."
+    },
+    "LipSync": {
+      "type": "boolean",
+      "description": "Enables lip-sync test content on applicable avatar setups."
+    },
+    "FaceMotion3D": {
+      "type": "boolean",
+      "description": "Enables FaceMotion3D integration test content."
+    },
+    "FaceTracking": {
+      "type": "boolean",
+      "description": "Enables face-tracking test content."
+    },
+    "AnimationClipVMD": {
+      "type": "boolean",
+      "description": "Loads a VMD animation clip path instead of or in addition to other clip tests, depending on the world setup."
+    },
+    "AnimationClipAnim": {
+      "type": "boolean",
+      "description": "Loads an .anim animation clip during startup."
+    },
+    "AnimClipPath": {
+      "type": "string",
+      "description": "Path to the animation clip asset loaded by the clip test path."
+    },
+    "AnimLooped": {
+      "type": "boolean",
+      "description": "Loops the test animation clip when true."
+    },
+    "HumanoidPoseAuditEnabled": {
+      "type": "boolean",
+      "description": "Enables humanoid pose-audit capture during animation playback."
+    },
+    "HumanoidPoseAuditOutputPath": {
+      "type": "string",
+      "description": "Output file path for pose-audit capture data."
+    },
+    "HumanoidPoseAuditReferencePath": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional reference pose-audit file used for comparisons."
+    },
+    "HumanoidPoseAuditComparisonOutputPath": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional output path for comparison results against the reference audit file."
+    },
+    "HumanoidPoseAuditSampleRateOverride": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Optional sample-rate override for pose auditing, in samples per second.",
+      "minimum": 1
+    },
+    "IKTest": {
+      "type": "boolean",
+      "description": "Enables the inverse-kinematics test path."
+    },
+    "TestAnimation": {
+      "type": "boolean",
+      "description": "Enables the broader animation test setup beyond loading an individual clip file."
+    },
+    "AllowShaderPipelines": {
+      "type": "boolean",
+      "description": "Enables separable shader-program pipelines where supported by the selected renderer. Useful for pipeline experiments, but the editor notes this can break some debug-shape rendering and may be slower than linked programs."
+    },
+    "RenderMeshBounds": {
+      "type": "boolean",
+      "description": "Draws imported mesh bounds for debugging."
+    },
+    "RenderAPI": {
+      "$ref": "#/definitions/ERenderLibrary",
+      "markdownDescription": "Supported values: `OpenGL`, `Vulkan`.",
+      "description": "Rendering backend to initialize for the unit-testing world."
+    },
+    "PhysicsAPI": {
+      "$ref": "#/definitions/EPhysicsLibrary",
+      "markdownDescription": "Supported values: `PhysX`, `Jolt`, `Jitter`.",
+      "description": "Physics backend to initialize for the unit-testing world."
+    },
+    "RecalcChildMatricesType": {
+      "$ref": "#/definitions/ELoopType",
+      "markdownDescription": "Supported values: `Sequential`, `Asynchronous`, `Parallel`.",
+      "description": "Controls how child transform matrix recalculation is scheduled."
+    },
+    "TickGroupedItemsInParallel": {
+      "type": "boolean",
+      "description": "When true, grouped tick items are executed in parallel where the engine supports it."
+    },
+    "SinglePassStereoVR": {
+      "type": "boolean",
+      "description": "Enables single-pass stereo rendering for VR where supported."
+    },
+    "RenderPhysicsDebug": {
+      "type": "boolean",
+      "description": "Draws physics debug visualization for the selected physics backend."
+    },
+    "RenderWindowsWhileInVR": {
+      "type": "boolean",
+      "description": "Keeps desktop render windows active while VR is running so you can monitor output or debug from the desktop at the same time."
+    },
+    "RenderTransformDebugInfo": {
+      "type": "boolean",
+      "description": "Enables transform debug rendering. Individual shape toggles below further refine what is drawn."
+    },
+    "RenderTransformPoints": {
+      "type": "boolean",
+      "description": "Draw transform debug points when transform debug rendering is enabled."
+    },
+    "RenderTransformCapsules": {
+      "type": "boolean",
+      "description": "Draw transform debug capsules when transform debug rendering is enabled."
+    },
+    "RenderTransformLines": {
+      "type": "boolean",
+      "description": "Draw transform debug lines when transform debug rendering is enabled."
+    },
+    "BackgroundShader": {
+      "type": "boolean",
+      "description": "Enables the background shader test path."
+    },
+    "AddCharacterIK": {
+      "type": "boolean",
+      "description": "Adds character IK components to applicable animated characters so imported humanoids can run extra IK-specific tests."
+    },
+    "CreateUnitBox": {
+      "type": "boolean",
+      "description": "Creates the default unit box test object."
+    },
+    "RenderFPS": {
+      "type": "number",
+      "description": "Target rate for the render loop. Set to 0 for uncapped rendering.",
+      "minimum": 0
+    },
+    "UpdateFPS": {
+      "type": "number",
+      "description": "Target rate for the main update loop. Set to 0 to leave the loop uncapped if supported by the runtime.",
+      "minimum": 0
+    },
+    "FixedFPS": {
+      "type": "number",
+      "description": "Target rate for the fixed-timestep simulation loop, typically physics and deterministic ticks.",
+      "minimum": 0
+    }
+  },
+  "required": [],
+  "definitions": {
+    "UnitTestWorldKind": {
+      "type": "string",
+      "enum": [
+        "Default",
+        "AudioTesting",
+        "MathIntersections",
+        "MeshEditing",
+        "UberShader",
+        "PhysxTesting",
+        "NetworkingPose"
+      ],
+      "markdownDescription": "Supported values: `Default`, `AudioTesting`, `MathIntersections`, `MeshEditing`, `UberShader`, `PhysxTesting`, `NetworkingPose`."
+    },
+    "UnitTestEditorType": {
+      "type": "string",
+      "enum": [
+        "None",
+        "Native",
+        "IMGUI"
+      ],
+      "markdownDescription": "Supported values: `None`, `Native`, `IMGUI`. The repo currently recommends `IMGUI` for day-to-day editor work."
+    },
+    "CameraUIDrawMode": {
+      "type": "string",
+      "enum": [
+        "Screen",
+        "World",
+        "Camera",
+        "WorldOffscreen",
+        "CameraOffscreen"
+      ],
+      "markdownDescription": "Supported values: `Screen`, `World`, `Camera`, `WorldOffscreen`, `CameraOffscreen`."
+    },
+    "ModelImportSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Enabled": {
+          "type": "boolean",
+          "description": "When false, this model import entry is ignored."
+        },
+        "Kind": {
+          "$ref": "#/definitions/UnitTestModelImportKind",
+          "markdownDescription": "Supported values: `Static`, `Animated`.",
+          "description": "Whether this import should be treated as a static or animated model."
+        },
+        "MaterialMode": {
+          "$ref": "#/definitions/ModelImportMaterialMode",
+          "markdownDescription": "Supported values: `Deferred`, `Forward`, `Uber`.",
+          "description": "Material/shader pipeline family used for this imported model."
+        },
+        "UseForwardForTransparent": {
+          "type": "boolean",
+          "description": "When true and MaterialMode is Deferred, alpha-textured materials are routed through the forward lit path for proper transparency."
+        },
+        "Path": {
+          "type": "string",
+          "description": "Asset-relative path to the model file to import."
+        },
+        "ImportFlags": {
+          "type": "string",
+          "description": "Comma-separated Assimp PostProcessSteps flags. These are parsed as enum flag names, so keep the exact symbolic names separated by commas.",
+          "markdownDescription": "Comma-separated Assimp `PostProcessSteps` flags. Keep the exact symbolic names separated by commas. Common presets:\n\n- Static environment mesh: `CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs`\n- Animated character import: `Triangulate, FlipUVs, GenerateNormals, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes`\n- Preserve authored normals/tangents where possible: `Triangulate, FlipUVs, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes`\n\nFrequently used individual flags include `Triangulate`, `FlipUVs`, `GenerateNormals`, `CalculateTangentSpace`, `JoinIdenticalVertices`, `SplitLargeMeshes`, `ImproveCacheLocality`, `OptimizeGraph`, `OptimizeMeshes`, and `SortByPrimitiveType`.",
+          "examples": [
+            "Triangulate, FlipUVs, GenerateNormals",
+            "CalculateTangentSpace, JoinIdenticalVertices, Triangulate"
+          ],
+          "defaultSnippets": [
+            {
+              "label": "Static environment preset",
+              "description": "High-quality static environment import flags used by the Sponza-style test scenes.",
+              "body": "CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs"
+            },
+            {
+              "label": "Animated character preset",
+              "description": "Balanced preset for animated FBX-style character imports.",
+              "body": "Triangulate, FlipUVs, GenerateNormals, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes"
+            },
+            {
+              "label": "Minimal cleanup preset",
+              "description": "Conservative cleanup when you want fewer import-time transforms.",
+              "body": "Triangulate, JoinIdenticalVertices, SplitLargeMeshes"
+            }
+          ]
+        },
+        "Scale": {
+          "type": "number",
+          "description": "Uniform import scale multiplier."
+        },
+        "ZUp": {
+          "type": "boolean",
+          "description": "Treats the source model as Z-up when true."
+        },
+        "GenerateCoacdCollidersPerSubmesh": {
+          "type": "boolean",
+          "description": "For static models, splits submeshes and auto-attaches CoACD-generated PhysX convex colliders per submesh."
+        },
+        "SplitSubmeshesIntoSeparateModelComponents": {
+          "type": "boolean",
+          "description": "Creates one ModelComponent per imported submesh instead of grouping by source node."
+        },
+        "YawPitchRoll": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/YawPitchRollDegrees"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional Euler rotation offset, in degrees, applied after import."
+        }
+      }
+    },
+    "UnitTestModelImportKind": {
+      "type": "string",
+      "enum": [
+        "Static",
+        "Animated"
+      ],
+      "markdownDescription": "Supported values: `Static`, `Animated`."
+    },
+    "ModelImportMaterialMode": {
+      "type": "string",
+      "enum": [
+        "Deferred",
+        "Forward",
+        "Uber"
+      ],
+      "markdownDescription": "Supported values: `Deferred`, `Forward`, `Uber`."
+    },
+    "YawPitchRollDegrees": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Yaw": {
+          "type": "number",
+          "description": "Yaw rotation in degrees."
+        },
+        "Pitch": {
+          "type": "number",
+          "description": "Pitch rotation in degrees."
+        },
+        "Roll": {
+          "type": "number",
+          "description": "Roll rotation in degrees."
+        }
+      }
+    },
+    "EAudioTransport": {
+      "type": "string",
+      "enum": [
+        "OpenAL",
+        "NAudio"
+      ],
+      "markdownDescription": "Supported values: `OpenAL`, `NAudio`."
+    },
+    "EAudioEffects": {
+      "type": "string",
+      "enum": [
+        "OpenAL_EFX",
+        "SteamAudio",
+        "Passthrough"
+      ],
+      "markdownDescription": "Supported values: `OpenAL_EFX`, `SteamAudio`, `Passthrough`."
+    },
+    "ERenderLibrary": {
+      "type": "string",
+      "enum": [
+        "OpenGL",
+        "Vulkan"
+      ],
+      "markdownDescription": "Supported values: `OpenGL`, `Vulkan`."
+    },
+    "EPhysicsLibrary": {
+      "type": "string",
+      "enum": [
+        "PhysX",
+        "Jolt",
+        "Jitter"
+      ],
+      "markdownDescription": "Supported values: `PhysX`, `Jolt`, `Jitter`. `Physx` is accepted here because existing settings files already use that casing."
+    },
+    "ELoopType": {
+      "type": "string",
+      "enum": [
+        "Sequential",
+        "Asynchronous",
+        "Parallel"
+      ],
+      "markdownDescription": "Supported values: `Sequential`, `Asynchronous`, `Parallel`."
+    }
+  }
+}

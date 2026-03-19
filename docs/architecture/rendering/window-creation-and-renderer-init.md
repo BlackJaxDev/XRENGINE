@@ -117,7 +117,7 @@ DefaultUserSettings = new UserSettings()
 }
 ```
 
-The settings JSON (`Assets/UnitTestingWorldSettings.json`) determines which API is used. The Editor typically defaults to Vulkan; the Server defaults to OpenGL.
+The unit-test settings file (`Assets/UnitTestingWorldSettings.jsonc`) determines which API is used. The Editor typically defaults to Vulkan; the Server defaults to OpenGL.
 
 ---
 

@@ -5,7 +5,7 @@ namespace XREngine.Runtime.Bootstrap;
 
 public static class UnitTestingWorldSettingsStore
 {
-    public const string SettingsFileName = "UnitTestingWorldSettings.json";
+    public const string SettingsFileName = "UnitTestingWorldSettings.jsonc";
 
     public static UnitTestingWorldSettings Load(bool writeBackAfterRead)
     {

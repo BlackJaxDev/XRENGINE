@@ -277,7 +277,7 @@ namespace XREngine.Components
             set => SetField(ref _cullWithFrustum, value);
         }
 
-        private EDirectionalShadowRenderingMode _directionalShadowRenderingMode = EDirectionalShadowRenderingMode.NonCascaded;
+        private EDirectionalShadowRenderingMode _directionalShadowRenderingMode = EDirectionalShadowRenderingMode.Cascaded;
         [Category("Shadows")]
         [DisplayName("Directional Shadow Rendering")]
         [Description("Selects whether this camera uses a single directional shadow map or cascaded directional shadows.")]

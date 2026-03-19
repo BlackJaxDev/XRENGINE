@@ -46,6 +46,30 @@ namespace XREngine.Components.Scene.Transforms
             private set => SetField(ref _laggingDistance, value);
         }
 
+        public override Vector3 LocalTranslation
+            => Vector3.Zero;
+
+        public override Quaternion LocalRotation
+            => Quaternion.Identity;
+
+        public override Quaternion InverseLocalRotation
+            => Quaternion.Identity;
+
+        public override Vector3 WorldTranslation
+            => _interpPoint;
+
+        public override Quaternion WorldRotation
+            => Quaternion.Identity;
+
+        public override Quaternion InverseWorldRotation
+            => Quaternion.Identity;
+
+        public override Quaternion RenderRotation
+            => Quaternion.Identity;
+
+        public override Quaternion InverseRenderRotation
+            => Quaternion.Identity;
+
         protected override Matrix4x4 CreateLocalMatrix()
         {
             //We're not using the local matrix for this component

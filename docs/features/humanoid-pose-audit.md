@@ -46,7 +46,7 @@ The export also captures Unity's neutral humanoid base pose: the pose produced w
 
 ## XRENGINE export and compare
 
-Configure the unit-test world in [UnitTestingWorldSettings.json](/d:/Documents/XRENGINE/Assets/UnitTestingWorldSettings.json):
+Configure the unit-test world in [Assets/UnitTestingWorldSettings.jsonc](Assets/UnitTestingWorldSettings.jsonc):
 
 - `HumanoidPoseAuditEnabled`
 - `HumanoidPoseAuditOutputPath`

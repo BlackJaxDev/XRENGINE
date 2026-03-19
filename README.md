@@ -85,17 +85,21 @@ Shortcut script:
 
 Running the editor launches the Unit Testing World, a collection of scenes that exercise rendering, animation, physics, audio, and XR workflows. Use this environment to verify changes and explore current functionality.
 
-## Unit Testing World Settings (JSON)
+## Unit Testing World Settings (JSONC)
 
-The Unit Testing World is configured by a JSON file and loaded on startup.
+The Unit Testing World is configured by a settings file and loaded on startup.
 
 - **How it’s selected**: launch the Editor with `--unit-testing` (or set `XRE_WORLD_MODE=UnitTesting`).
-- **Where the JSON is loaded from**: the Editor looks for `Assets/UnitTestingWorldSettings.json` relative to the process **working directory** (`Environment.CurrentDirectory`). In the provided VS Code launch configs, the working directory is set to the workspace root, so the file used is `Assets/UnitTestingWorldSettings.json`.
+- **Where the settings are loaded from**: the Editor loads `Assets/UnitTestingWorldSettings.jsonc` relative to the process **working directory** (`Environment.CurrentDirectory`). In the provided VS Code launch configs, the working directory is set to the workspace root.
+- **Preferred editing workflow**: edit `Assets/UnitTestingWorldSettings.jsonc` directly. The runtime and workspace tooling now treat JSONC as the canonical format for this file.
+- **How to inspect properties and enum choices while editing**: the workspace maps the settings file to `.vscode/schemas/unit-testing-world-settings.schema.json`. In VS Code, hover a property to see its description, use completion inside enum-backed string values to see supported choices, and use the `ImportFlags` snippets for common Assimp flag combinations.
 - **What happens on load**: the JSON is deserialized into `UnitTestingWorld.Toggles` (type `UnitTestingWorld.Settings`). If the file doesn’t exist yet, a default one is written out.
 - **How it affects the world**: `UnitTestingWorld.CreateSelectedWorld(...)` switches on `Toggles.WorldKind` to choose which unit-test world factory to run, and the other toggle values control what gets added (models to import, lighting, physics, UI overlays, etc.).
 - **Per-model material selection**: each entry in `ModelsToImport` now owns its own `MaterialMode` value. Supported values are `Deferred`, `Forward`, and `Uber`, and they apply to both `Static` and `Animated` model imports.
 - **Per-model static collider generation**: static `ModelsToImport` entries can set `GenerateCoacdCollidersPerSubmesh` to `true` to split imported submeshes into separate model components and auto-attach CoACD-generated PhysX convex colliders for each one.
 - **It also influences engine startup**: the Editor loads these toggles early so render/update settings (render API, tick rates, pipeline choices, etc.) can be applied consistently.
+- **Comments and rewrites**: inline `//` comments are part of the intended workflow. The schema still matters because it provides hover docs, enum completions, and `ImportFlags` presets that comments alone cannot provide.
+- **Regenerating schema and settings**: run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Generate-UnitTestingWorldSettings.ps1` to regenerate `.vscode/schemas/unit-testing-world-settings.schema.json` and refresh the JSONC settings files from `UnitTestingWorld.Toggles`. Existing JSONC files keep matching property values and pick up new defaults for newly added members.
 
 ## Launch Options (VS Code)
 

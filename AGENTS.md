@@ -39,7 +39,7 @@ These are repository-default expectations unless a task explicitly says otherwis
 - `XREngine.Server/` - dedicated server executable.
 - `XREngine.VRClient/` - standalone VR client executable.
 - `XREngine.UnitTests/` - test project for engine/editor subsystems.
-- `Assets/UnitTestingWorldSettings.json` - startup world toggles used by unit-testing world flows.
+- `Assets/UnitTestingWorldSettings.jsonc` - startup world toggles file used by unit-testing world flows.
 - `.vscode/tasks.json` and `.vscode/launch.json` - source of truth for local run/debug task orchestration.
 - `ExecTool.bat` - interactive launcher for all `Tools/` scripts (see §6).
 - `docs/` - architecture, API guides, rendering notes, backlog/design docs.

@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="XREngine.Benchmarks/XREngine.Benchmarks.csproj" />
   <Project Path="XREngine.Animation/XREngine.Animation.csproj" />
   <Project Path="XREngine.Audio/XREngine.Audio.csproj" />
   <Project Path="XREngine.Data/XREngine.Data.csproj" />

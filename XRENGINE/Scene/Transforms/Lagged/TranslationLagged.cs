@@ -34,6 +34,32 @@ namespace XREngine.Components.Scene.Transforms
             set => SetField(ref _invTransInterpSec, value);
         }
 
+        public override Vector3 LocalTranslation
+            => _currentTranslation;
+
+        public override Quaternion LocalRotation
+            => Quaternion.Identity;
+
+        public override Quaternion InverseLocalRotation
+            => Quaternion.Identity;
+
+        public override Vector3 WorldTranslation
+            => Parent is null
+                ? _currentTranslation
+                : Vector3.Transform(_currentTranslation, ParentWorldMatrix);
+
+        public override Quaternion WorldRotation
+            => Parent?.WorldRotation ?? Quaternion.Identity;
+
+        public override Quaternion InverseWorldRotation
+            => Parent?.InverseWorldRotation ?? Quaternion.Identity;
+
+        public override Quaternion RenderRotation
+            => Parent?.RenderRotation ?? Quaternion.Identity;
+
+        public override Quaternion InverseRenderRotation
+            => Parent?.InverseRenderRotation ?? Quaternion.Identity;
+
         protected override void OnSceneNodeActivated()
             => RegisterTick(ETickGroup.Normal, (int)ETickOrder.Logic, Tick);
         protected override void OnSceneNodeDeactivated()

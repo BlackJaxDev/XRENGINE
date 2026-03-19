@@ -442,10 +442,12 @@ namespace XREngine
         private OverrideableSetting<bool> _forceGpuPassthroughCullingOverride = new();
         private OverrideableSetting<bool> _allowGpuCpuFallbackOverride = new();
         private OverrideableSetting<bool> _enableProfilerFrameLoggingOverride = new();
+        private OverrideableSetting<bool> _enableProfilerComponentTimingOverride = new();
         private OverrideableSetting<bool> _enableRenderStatisticsTrackingOverride = new();
         private OverrideableSetting<bool> _enableGpuRenderPipelineProfilingOverride = new();
         private OverrideableSetting<bool> _enableUILayoutDebugLoggingOverride = new();
         private OverrideableSetting<bool> _enableProfilerUdpSendingOverride = new();
+        private OverrideableSetting<bool> _startExternalProfilerOnStartupOverride = new();
         private OverrideableSetting<EDebugShapePopulationMode> _debugShapePopulationModeOverride = new();
         private OverrideableSetting<EDebugVisualizerPopulationMode> _debugVisualizerPopulationModeOverride = new();
         private OverrideableSetting<EDebugPrimitiveBufferFormat> _debugPrimitiveBufferFormatOverride = new();
@@ -602,6 +604,12 @@ namespace XREngine
             set => SetField(ref _enableProfilerFrameLoggingOverride, value ?? new());
         }
 
+        public OverrideableSetting<bool> EnableProfilerComponentTimingOverride
+        {
+            get => _enableProfilerComponentTimingOverride;
+            set => SetField(ref _enableProfilerComponentTimingOverride, value ?? new());
+        }
+
         public OverrideableSetting<bool> EnableRenderStatisticsTrackingOverride
         {
             get => _enableRenderStatisticsTrackingOverride;
@@ -624,6 +632,12 @@ namespace XREngine
         {
             get => _enableProfilerUdpSendingOverride;
             set => SetField(ref _enableProfilerUdpSendingOverride, value ?? new());
+        }
+
+        public OverrideableSetting<bool> StartExternalProfilerOnStartupOverride
+        {
+            get => _startExternalProfilerOnStartupOverride;
+            set => SetField(ref _startExternalProfilerOnStartupOverride, value ?? new());
         }
 
         public OverrideableSetting<EDebugShapePopulationMode> DebugShapePopulationModeOverride

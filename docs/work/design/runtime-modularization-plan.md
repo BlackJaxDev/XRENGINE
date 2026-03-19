@@ -370,7 +370,7 @@ Only category 4 belongs in `XREngine.Editor`.
 Create `XREngine.Runtime.Bootstrap` and move the following into it:
 
 - unit testing world toggle/settings types currently owned by `EditorUnitTests.Settings`
-- settings loading and writing helpers for `Assets/UnitTestingWorldSettings.json`
+- settings loading and writing helpers for `Assets/UnitTestingWorldSettings.jsonc`
 - world-kind selection and startup profile resolution
 - runtime-safe world factories currently used by both editor and server startup
 - composition helpers like player pawn, skybox, and lighting builders when they do not require editor UI types
@@ -494,7 +494,7 @@ Create `XREngine.Runtime.Bootstrap` first and move only the server/editor shared
 Move into it:
 
 - unit-testing-world settings types,
-- settings loader/writer for `Assets/UnitTestingWorldSettings.json`,
+- settings loader/writer for `Assets/UnitTestingWorldSettings.jsonc`,
 - shared world factories,
 - shared runtime-safe builder groups.
 

@@ -14,8 +14,6 @@ Blog
 
 Support
 
-Login
-
 Meta Platform Technologies SDK License Agreement
 Effective date: October 25, 2022
 Copyright Â© Meta Platform Technologies, LLC and its affiliates. All rights reserved.
